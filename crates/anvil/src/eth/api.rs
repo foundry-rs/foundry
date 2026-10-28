@@ -1589,7 +1589,7 @@ impl<N: Network> EthApi<N> {
         N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
     {
         node_info!("trace_call");
-        let block_id = block_id.unwrap_or_default();
+        let block_id = self.monad_pending_as_latest(block_id.unwrap_or_default());
         let block_request = match &block_id {
             BlockId::Number(BlockNumber::Pending) => {
                 let pending_txs = self.pool.ready_transactions().collect();
@@ -1677,6 +1677,18 @@ impl<N: Network> EthApi<N> {
         node_info!("trace_replayTransaction");
         self.backend.trace_replay_transaction(transaction, trace_types).await
     }
+
+    /// Reads the `pending` tag as `latest` on Monad, whose RPC has no pending block.
+    ///
+    /// Call it before any branch on `pending`: anvil cannot build Monad's sender context for a
+    /// block made from pool transactions.
+    fn monad_pending_as_latest<T: From<BlockNumber> + PartialEq>(&self, block: T) -> T {
+        if self.backend.is_monad() && block == BlockNumber::Pending.into() {
+            BlockNumber::Latest.into()
+        } else {
+            block
+        }
+    }
 }
 
 impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> EthApi<N> {
@@ -1701,6 +1713,7 @@ impl EthApi<FoundryNetwork> {
         idx: Index,
     ) -> Result<Option<AnyRpcTransaction>> {
         node_info!("eth_getTransactionByBlockNumberAndIndex");
+        let block = self.monad_pending_as_latest(block);
         if block.is_pending() {
             return Ok(self.pending_block_full().await?.and_then(|block| {
                 let WithOtherFields { inner: block, .. } = block.0;
@@ -1741,6 +1754,7 @@ impl EthApi<FoundryNetwork> {
         &self,
         block_number: Option<BlockId>,
     ) -> Result<BlockRequest<FoundryTxEnvelope>> {
+        let block_number = block_number.map(|block| self.monad_pending_as_latest(block));
         let block_request = match block_number {
             Some(BlockId::Number(BlockNumber::Pending)) => {
                 let pending_txs = self.pool.ready_transactions().collect();
@@ -2845,6 +2859,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_getBlockByNumber`
     pub async fn block_by_number(&self, number: BlockNumber) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getBlockByNumber");
+        let number = self.monad_pending_as_latest(number);
         if number.is_pending() {
             return Ok(Some(self.pending_block().await?));
         }
@@ -2860,6 +2875,7 @@ impl EthApi<FoundryNetwork> {
         number: BlockNumber,
     ) -> Result<Option<WithOtherFields<AnyRpcHeader>>> {
         node_info!("eth_getHeaderByNumber");
+        let number = self.monad_pending_as_latest(number);
         if number.is_pending() {
             let WithOtherFields { inner: block, other } = self.pending_block().await?.0;
             return Ok(Some(WithOtherFields { inner: block.header, other }));
@@ -2876,6 +2892,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_getBlockByNumber`
     pub async fn block_by_number_full(&self, number: BlockNumber) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getBlockByNumber");
+        let number = self.monad_pending_as_latest(number);
         if number.is_pending() {
             return self.pending_block_full().await;
         }
@@ -3036,6 +3053,7 @@ impl EthApi<FoundryNetwork> {
         block_number: BlockNumber,
     ) -> Result<Option<U256>> {
         node_info!("eth_getBlockTransactionCountByNumber");
+        let block_number = self.monad_pending_as_latest(block_number);
         if block_number.is_pending() {
             let txs = self.pool.ready_transactions().collect();
             let block = self.backend.pending_block(txs).await?;
@@ -3812,7 +3830,12 @@ impl EthApi<FoundryNetwork> {
             None => self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)?,
         };
 
-        let nonce = self.request_nonce_for_transaction(&request, from).await?;
+        // Monad fills the nonce from the latest state, so pool transactions do not count.
+        let nonce = if self.backend.is_monad() && request.nonce().is_none() {
+            self.get_transaction_count(from, None).await?
+        } else {
+            self.request_nonce_for_transaction(&request, from).await?
+        };
 
         // Prefill gas limit with estimated gas and bubble up estimation errors directly.
         if request.gas_limit().is_none() {
@@ -3988,6 +4011,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_getBlockReceipts`
     pub async fn block_receipts(&self, number: BlockId) -> Result<Option<Vec<FoundryTxReceipt>>> {
         node_info!("eth_getBlockReceipts");
+        let number = self.monad_pending_as_latest(number);
         if number == BlockId::pending() {
             let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
             return Ok(Some(self.backend.pending_block_receipts(transactions).await?));
@@ -4098,6 +4122,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for RPC call: `debug_getRawReceipts`.
     pub async fn raw_receipts(&self, block: BlockId) -> Result<Vec<Bytes>> {
         node_info!("debug_getRawReceipts");
+        let block = self.monad_pending_as_latest(block);
 
         // In fork mode, serve pre-fork blocks from the upstream provider.
         if let BlockRequest::Number(number) = self.block_request(Some(block)).await?
@@ -4126,6 +4151,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for RPC call: `debug_getRawTransactions`.
     pub async fn raw_transactions(&self, block: BlockId) -> Result<Vec<Bytes>> {
         node_info!("debug_getRawTransactions");
+        let block = self.monad_pending_as_latest(block);
 
         if let Some(block) = self.backend.get_block(block) {
             return Ok(block
@@ -4171,6 +4197,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for RPC call: `debug_getRawHeader`.
     pub async fn raw_header(&self, block: BlockId) -> Result<Bytes> {
         node_info!("debug_getRawHeader");
+        let block = self.monad_pending_as_latest(block);
         let block = self.backend.get_block(block).ok_or(BlockchainError::BlockNotFound)?;
         Ok(alloy_rlp::encode(&block.header).into())
     }
@@ -4180,6 +4207,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for RPC call: `debug_getRawBlock`.
     pub async fn raw_block(&self, block: BlockId) -> Result<Bytes> {
         node_info!("debug_getRawBlock");
+        let block = self.monad_pending_as_latest(block);
         let block = self.backend.get_block(block).ok_or(BlockchainError::BlockNotFound)?;
         Ok(alloy_rlp::encode(canonical_block(block)).into())
     }
@@ -5298,7 +5326,8 @@ impl EthApi<FoundryNetwork> {
         if let Some(nonce) = request.nonce {
             Ok(nonce)
         } else {
-            self.get_transaction_count(from, Some(BlockId::pending())).await
+            let pending_txs = self.pool.ready_transactions().collect();
+            self.backend.get_nonce(from, BlockRequest::Pending(pending_txs)).await
         }
     }
 

@@ -286,6 +286,81 @@ async fn monad_call_uses_parent_sender_context() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn monad_pending_tag_reads_latest() {
+    let (api, handle) = spawn(monad_nine_config().with_no_mining(true)).await;
+    let provider = handle.http_provider();
+    let sender = provider.get_accounts().await.unwrap()[0];
+    let recipient = Address::random();
+    let transfer =
+        TransactionRequest::default().with_from(sender).with_to(recipient).with_value(mon(1));
+
+    // Anvil still counts pool transactions when it picks the nonce itself.
+    for _ in 0..2 {
+        let _pending = provider.send_transaction(transfer.clone().into()).await.unwrap();
+    }
+
+    // Calls at `pending` run on the latest state, not on a block built from the pool.
+    let latest_gas = provider.estimate_gas(transfer.clone().into()).latest().await.unwrap();
+    assert_eq!(provider.estimate_gas(transfer.clone().into()).pending().await.unwrap(), latest_gas);
+    // `eth_estimateGas` with no block reads `pending`.
+    let default_gas: U256 =
+        provider.client().request("eth_estimateGas", (transfer.clone(),)).await.unwrap();
+    assert_eq!(default_gas, U256::from(latest_gas));
+    assert_eq!(provider.call(transfer.clone().into()).pending().await.unwrap(), Bytes::new());
+    let pending_trace: TraceResults = provider
+        .client()
+        .request("trace_call", (transfer.clone(), vec![TraceType::Trace], BlockId::pending()))
+        .await
+        .unwrap();
+    let latest_trace: TraceResults = provider
+        .client()
+        .request("trace_call", (transfer.clone(), vec![TraceType::Trace], BlockId::latest()))
+        .await
+        .unwrap();
+    assert_eq!(pending_trace, latest_trace);
+
+    // monad-rpc fills the nonce from the latest state.
+    assert_eq!(api.fill_transaction(transfer.into()).await.unwrap().tx.nonce(), 0);
+
+    let latest = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    let pending = provider.get_block_by_number(BlockNumberOrTag::Pending).await.unwrap().unwrap();
+    assert_eq!(pending.header.hash, latest.header.hash);
+    assert_eq!(
+        provider.get_block_transaction_count_by_number(BlockNumberOrTag::Pending).await.unwrap(),
+        Some(0)
+    );
+    assert!(
+        provider
+            .get_transaction_by_block_number_and_index(BlockNumberOrTag::Pending, 0)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        provider.get_block_receipts(BlockId::pending()).await.unwrap().map(|r| r.len()),
+        Some(0)
+    );
+    for method in ["debug_getRawHeader", "debug_getRawBlock", "debug_getRawReceipts"] {
+        let pending: serde_json::Value =
+            provider.client().request(method, ("pending",)).await.unwrap();
+        let latest: serde_json::Value =
+            provider.client().request(method, ("latest",)).await.unwrap();
+        assert_eq!(pending, latest, "{method}");
+    }
+    assert_eq!(provider.get_transaction_count(sender).pending().await.unwrap(), 0);
+    assert_eq!(provider.get_balance(recipient).pending().await.unwrap(), U256::ZERO);
+
+    // After mining, `pending` returns the latest block's transactions.
+    api.mine_one().await.unwrap();
+    let pending: Vec<Bytes> =
+        provider.client().request("debug_getRawTransactions", ("pending",)).await.unwrap();
+    let latest: Vec<Bytes> =
+        provider.client().request("debug_getRawTransactions", ("latest",)).await.unwrap();
+    assert_eq!(latest.len(), 2);
+    assert_eq!(pending, latest);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn monad_simulate_tracks_current_block_senders() {
     let (api, handle) = spawn(monad_nine_config()).await;
     let sender = handle.http_provider().get_accounts().await.unwrap()[0];
