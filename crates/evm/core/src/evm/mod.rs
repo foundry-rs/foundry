@@ -295,39 +295,6 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
         )
     }
 
-    /// Creates a Foundry-configured EVM with the given inspector.
-    fn create_foundry_evm_with_inspector<'a, I: FoundryInspectorExt<Self::Types> + 'a>(
-        &self,
-        db: impl FoundryDatabase + 'a,
-        env: EvmEnv<Self::Types>,
-        inspector: I,
-    ) -> Evm<'a, Self::Types> {
-        let mut evm = self.create_evm(db, env);
-        evm.set_inspector(inspector);
-        evm
-    }
-
-    /// Creates a nested EVM without an inspector.
-    ///
-    /// Nested EVMs are ordinary [`Evm`]s.
-    fn create_nested_evm<'a>(
-        &self,
-        db: impl FoundryDatabase + 'a,
-        env: EvmEnv<Self::Types>,
-    ) -> Evm<'a, Self::Types> {
-        self.create_evm(db, env)
-    }
-
-    /// Creates a nested EVM with the given inspector.
-    fn create_nested_evm_with_inspector<'a, I: FoundryInspectorExt<Self::Types> + 'a>(
-        &self,
-        db: impl FoundryDatabase + 'a,
-        env: EvmEnv<Self::Types>,
-        inspector: I,
-    ) -> Evm<'a, Self::Types> {
-        self.create_foundry_evm_with_inspector(db, env, inspector)
-    }
-
     /// Returns `env` with `spec`, keeping Foundry's execution toggles and limits.
     fn env_with_spec(&self, env: EvmEnv<Self::Types>, spec: SpecOf<Self>) -> EvmEnv<Self::Types> {
         let current_default = self.version(env.spec, env.chain_id());

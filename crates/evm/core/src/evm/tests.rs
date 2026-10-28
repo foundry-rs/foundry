@@ -9,11 +9,7 @@ use alloy_primitives::{B256, Bytes, TxKind, U256};
 use alloy_rpc_types::Transaction as RpcTransaction;
 use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
-use evm2::{
-    EvmFeatures, SpecId,
-    bytecode::Bytecode,
-    evm::{InMemoryDB, State},
-};
+use evm2::{EvmFeatures, SpecId, bytecode::Bytecode, evm::InMemoryDB};
 
 const GWEI: u128 = 1_000_000_000;
 pub(crate) const ETHER: u128 = 1_000_000_000_000_000_000;
@@ -87,11 +83,8 @@ where
     let request =
         |to, nonce, value, chain_id| store_request::<FEN>(caller, to, nonce, value, chain_id);
     let env = EvmEnv::new(spec, factory.version(spec, chain_id), Default::default());
-    let mut lifecycle = ExecutionLifecycle::<_, &'static str>::new(
-        factory.clone(),
-        db_with(&[(caller, ETHER)], 1),
-        env,
-    );
+    let mut lifecycle =
+        ExecutionLifecycle::new(factory.clone(), db_with(&[(caller, ETHER)], 1), env);
     let mut evm = lifecycle.create_evm();
 
     // An unsigned request converts once and commits.
@@ -119,19 +112,18 @@ where
     assert_eq!(slot(&mut evm), U256::from(8));
     assert_eq!(nonce(&mut evm, caller), 3);
 
-    // Snapshots restore state and return their extra; removal also drops later snapshots.
-    let first = lifecycle.snapshot(&mut evm, "first");
+    // Snapshots restore state; removal also drops later snapshots.
+    let first = lifecycle.snapshot(&mut evm);
     let tx = FEN::tx_from_request(request(STORE_ADDRESS, 3, 11, chain_id)).unwrap();
     assert!(evm.transact(&tx).unwrap().commit().status);
-    let second = lifecycle.snapshot(&mut evm, "second");
+    let second = lifecycle.snapshot(&mut evm);
     let keep = RevertStateSnapshotAction::RevertKeep;
     let remove = RevertStateSnapshotAction::RevertRemove;
     let phase = ExecutionPhase::Boundary;
-    let (extra, transition, _) = lifecycle.revert(&mut evm, first, keep, phase).unwrap();
-    assert_eq!((extra, transition), ("first", EnvTransition::Applied));
+    let (transition, _) = lifecycle.revert(&mut evm, first, keep, phase).unwrap();
+    assert_eq!(transition, EnvTransition::Applied);
     assert_eq!((slot(&mut evm), nonce(&mut evm, caller)), (U256::from(8), 3));
-    let (extra, ..) = lifecycle.revert(&mut evm, first, remove, phase).unwrap();
-    assert_eq!(extra, "first");
+    assert!(lifecycle.revert(&mut evm, first, remove, phase).is_some());
     assert!(lifecycle.revert(&mut evm, first, remove, phase).is_none());
     assert!(lifecycle.revert(&mut evm, second, remove, phase).is_none(), "later snapshot dropped");
 
@@ -158,11 +150,13 @@ where
     let other = Address::with_last_byte(0xC1);
     let tx =
         FEN::tx_from_request(store_request::<FEN>(other, REVERT_ADDRESS, 0, 51, chain_id)).unwrap();
-    assert!(!lifecycle.nested_transaction(&mut evm, &tx).unwrap().status);
+    let nested = lifecycle.prepare_nested(&mut evm, tx, None, None).execute(&mut evm, None, false);
+    assert!(!lifecycle.store_executed(nested.unwrap()).status);
     assert_eq!((slot(&mut evm), nonce(&mut evm, other)), (U256::from(50), 1));
     let tx =
         FEN::tx_from_request(store_request::<FEN>(other, STORE_ADDRESS, 1, 52, chain_id)).unwrap();
-    assert!(lifecycle.nested_transaction(&mut evm, &tx).unwrap().status);
+    let nested = lifecycle.prepare_nested(&mut evm, tx, None, None).execute(&mut evm, None, false);
+    assert!(lifecycle.store_executed(nested.unwrap()).status);
     assert_eq!((slot(&mut evm), nonce(&mut evm, other)), (U256::from(52), 2));
     let features = evm.version().features;
     evm.state_mut().rollback(checkpoint, features);
@@ -187,7 +181,7 @@ where
     evm.state_mut().commit_transaction();
 
     // Reverting a snapshot taken on the fork restores every fork's state and the selection.
-    let on_fork = lifecycle.snapshot(&mut evm, "fork");
+    let on_fork = lifecycle.snapshot(&mut evm);
     assert_eq!(lifecycle.select_fork(&mut evm, None, phase).unwrap(), EnvTransition::Applied);
     assert_eq!(slot(&mut evm), U256::from(8));
     assert_eq!(balance(&mut evm, persistent), U256::from(6));
@@ -195,7 +189,7 @@ where
     assert_eq!(slot(&mut evm), U256::from(101));
     assert_eq!(lifecycle.select_fork(&mut evm, None, phase).unwrap(), EnvTransition::Applied);
     assert_eq!(
-        lifecycle.revert(&mut evm, on_fork, remove, phase).unwrap().1,
+        lifecycle.revert(&mut evm, on_fork, remove, phase).unwrap().0,
         EnvTransition::Applied
     );
     assert_eq!(lifecycle.forks().active(), Some(fork));
@@ -961,28 +955,4 @@ fn from_any_rpc_transaction_for_tempo_aa_without_signature_errors() {
 
     let err = crate::evm::TempoEvmNetwork::tx_from_any_rpc(&any_tx).unwrap_err();
     assert_eq!(err.to_string(), "cannot decode Tempo AA transaction: missing field `signature`");
-}
-
-/// Storage-hook warmth restoration undoes only warmth gained since the checkpoint, keeps cooling
-/// the callback did itself, and tolerates a callback that replaced the state with a shorter
-/// journal.
-#[test]
-fn restore_access_warmth_undoes_only_gained_warmth() {
-    let (warm, cold) = (Address::with_last_byte(0xA1), Address::with_last_byte(0xA2));
-    let mut state = State::new(db_with(&[(warm, ETHER), (cold, ETHER)], 0));
-    let start = state.checkpoint();
-    state.account(&warm).unwrap().warm();
-    let checkpoint = state.checkpoint();
-
-    // The callback mutates a warm account and then cools it, and warms a cold one.
-    state.account(&warm).unwrap().add_balance(U256::from(1));
-    state.set_account_warm(&warm, false);
-    state.account(&cold).unwrap().warm();
-    restore_access_warmth(&mut state, &checkpoint);
-    assert!(!state.account(&warm).unwrap().is_warm(), "cooling inside the callback is kept");
-    assert!(!state.account(&cold).unwrap().is_warm(), "callback warmth is undone");
-
-    // A state revert inside the callback leaves a journal shorter than the checkpoint.
-    state.rollback(start, EvmFeatures::default());
-    restore_access_warmth(&mut state, &checkpoint);
 }

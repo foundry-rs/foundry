@@ -3,13 +3,13 @@ pragma solidity ^0.8.18;
 
 import "utils/Test.sol";
 
-contract ExecuteTransactionSelfDestructTest is Test {
-    address constant SENDER = 0x5316812db67073C4d4af8BB3000C5B86c2877e94;
-    address constant TARGET = 0x6Fd0A0CFF9A87aDF51695b40b4fA267855a8F4c6;
-    // Transfers 17 wei from `SENDER` to `TARGET` at nonce 0 on chain 1.
-    bytes constant RAW_TX =
-        hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856";
+address constant SENDER = 0x5316812db67073C4d4af8BB3000C5B86c2877e94;
+address constant TARGET = 0x6Fd0A0CFF9A87aDF51695b40b4fA267855a8F4c6;
+// Transfers 17 wei from `SENDER` to `TARGET` at nonce 0 on chain 1.
+bytes constant RAW_TX =
+    hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856";
 
+contract ExecuteTransactionSelfDestructTest is Test {
     function beforeTestSetup(bytes4) public view returns (bytes[] memory calls) {
         calls = new bytes[](1);
         calls[0] = abi.encodeCall(this.destroyInRevertedCall, ());
@@ -53,13 +53,8 @@ contract ExecuteTransactionSelfDestructTest is Test {
 }
 
 /// Before the test transaction ends, an account the nested transaction self-destructed keeps the
-/// state the transaction left it in, also when an enclosing call reverts, as on master.
+/// state the transaction left it in, also when an enclosing call reverts.
 contract ExecuteTransactionSelfDestructInTransactionTest is Test {
-    address constant SENDER = 0x5316812db67073C4d4af8BB3000C5B86c2877e94;
-    address constant TARGET = 0x6Fd0A0CFF9A87aDF51695b40b4fA267855a8F4c6;
-    bytes constant RAW_TX =
-        hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856";
-
     function executeThenRevert() external {
         // The nested transaction only reads slot 2, so the revert still undoes this store.
         vm.store(TARGET, bytes32(uint256(2)), bytes32(uint256(42)));

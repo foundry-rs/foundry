@@ -8,7 +8,7 @@ use crate::inspectors::{
 };
 use alloy_consensus::transaction::Recovered;
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
-use alloy_eips::{eip4788::BEACON_ROOTS_ADDRESS, eip7702::SignedAuthorization};
+use alloy_eips::{Typed2718, eip4788::BEACON_ROOTS_ADDRESS, eip7702::SignedAuthorization};
 use alloy_json_abi::Function;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{
@@ -84,6 +84,9 @@ pub use showmap::{
 pub use trace::{TracingExecutor, TracingFork};
 
 const DURATION_BETWEEN_METRICS_REPORT: Duration = Duration::from_secs(5);
+
+/// EIP-8130 transaction type.
+const EIP8130_TX_TYPE: u8 = 0x79;
 
 sol! {
     interface ITest {
@@ -715,14 +718,13 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     ) -> eyre::Result<RawCallResult<FEN>> {
         // EIP-8130 requires phase-aware execution and has no ordinary call/create kind.
         // Check the entire prefix before executing anything.
-        use alloy_eips::Typed2718;
         eyre::ensure!(
-            target.ty() != 0x79,
+            target.ty() != EIP8130_TX_TYPE,
             "EIP-8130 target transactions are not supported by tooling replay"
         );
         for (hash, tx) in replay {
             eyre::ensure!(
-                tx.ty() != 0x79,
+                tx.ty() != EIP8130_TX_TYPE,
                 "EIP-8130 prefix transaction {hash} is not supported by tooling replay"
             );
         }

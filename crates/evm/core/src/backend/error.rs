@@ -18,8 +18,6 @@ pub enum BackendError {
     Database(#[from] DatabaseError),
     #[error(transparent)]
     State(#[from] evm2::DatabaseError),
-    #[error("failed to fetch account info for {0}")]
-    MissingAccount(Address),
     #[error(
         "CREATE2 Deployer (0x4e59b44847b379578588920ca78fbf26c0b4956c) not present on this chain.\n\
          For a production environment, you can deploy it using the pre-signed transaction from \

@@ -698,7 +698,7 @@ mod tests {
             inspector_with_cmp.enable_cmp_log(true);
             let (status, inspector) = inspect::<FEN, _>(BRANCH, U256::from(input), inspector);
             assert!(status);
-            // The top-level frame has depth 1, as in REVM's journal.
+            // The top-level frame has depth 1.
             let edge = EdgeKey {
                 address: TARGET,
                 depth: Some(1),
