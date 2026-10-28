@@ -965,6 +965,15 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
     }
 
+    /// Whether a frame at `depth` runs as an isolated transaction: a top-level frame, or a
+    /// synthetic `deployCode` create rewritten to a CREATE2 factory call.
+    fn isolates(&self, depth: u16) -> bool {
+        self.inner.enable_isolation
+            && !self.inner.in_inner_context
+            && self.backend.is_some()
+            && (depth == 1 || self.inner.synthetic_create_depth == Some(depth))
+    }
+
     /// Converts the result of a CREATE frame redirected to the CREATE2 factory, if `message` is
     /// one, into the result of the CREATE.
     fn finish_create2_redirect(
@@ -1904,12 +1913,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         // and broadcasts. Keep the trace lifecycle ordering, but remember the node so its caller
         // can be synchronized with the inputs that are actually executed.
         let trace_idx = self.inner.tracer.as_ref().map(|tracer| tracer.traces().nodes().len() - 1);
-        // Also isolate a synthetic `deployCode` create that was rewritten to a CREATE2 factory
-        // call.
-        let isolate = self.inner.enable_isolation
-            && !self.inner.in_inner_context
-            && self.backend.is_some()
-            && (depth == 1 || self.inner.synthetic_create_depth == Some(depth));
+        let isolate = self.isolates(depth);
         let precharged_state = if isolate && depth == 1 && message.kind == MessageKind::Call {
             account_creation_state_gas::<FEN>(interp, message)
         } else {
@@ -2091,12 +2095,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
             return Some(message_result(message, InstrStop::Revert, error));
         }
 
-        if message.kind != MessageKind::Create2
-            && self.inner.enable_isolation
-            && !self.inner.in_inner_context
-            && self.backend.is_some()
-            && (depth == 1 || self.inner.synthetic_create_depth == Some(depth))
-        {
+        if message.kind != MessageKind::Create2 && self.isolates(depth) {
             return Some(self.transact_inner(interp, message, precharged_state));
         }
 
