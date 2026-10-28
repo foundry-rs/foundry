@@ -6320,7 +6320,8 @@ fn random_failure_reason(stdout: &str) -> String {
 }
 
 // `forge fuzz replay` warns when a persisted failure is replayed at a different fork block, and
-// keeps persisted handler failures it cannot judge on the changed state.
+// keeps persisted handler failures it cannot judge on the changed state. Forks selected by
+// `beforeTestSetup` count as the recorded fork block.
 #[forgetest_init]
 async fn fuzz_replay_warns_on_fork_block_change(prj: _, cmd: _) {
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -6331,7 +6332,7 @@ async fn fuzz_replay_warns_on_fork_block_change(prj: _, cmd: _) {
     });
     prj.add_test(
         "ForkBlockReplay.t.sol",
-        r#"
+        &r#"
 contract Touch {
     bool public touched;
     function touch() external { touched = true; }
@@ -6360,14 +6361,50 @@ contract ForkBlockHandlerTest {
     function setUp() public { target = new BlockAssert(); }
     function invariant_ok() public view {}
 }
-   "#,
+
+interface Vm {
+    function createSelectFork(string calldata url) external returns (uint256);
+}
+
+contract BeforeSetupForkTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function beforeTestSetup(bytes4) public view returns (bytes[] memory calls) {
+        calls = new bytes[](1);
+        calls[0] = abi.encodeCall(this.forkAnvil, ());
+    }
+
+    function forkAnvil() public {
+        vm.createSelectFork("FORK_URL");
+    }
+
+    function testFuzz_beforeSetupBlock(uint256) public view {
+        require(block.number != 0, "block 0");
+    }
+}
+   "#
+        .replace("FORK_URL", &fork_url),
     );
 
     cmd.args(["test", "--fork-url", &fork_url, "--mc", "^ForkBlock"]).assert_failure();
     let handlers_dir = prj.root().join("cache/invariant/failures/ForkBlockHandlerTest/handlers");
     assert_eq!(find_json_files(&handlers_dir).len(), 1);
+    cmd.forge_fuse().args(["test", "--mc", "BeforeSetupForkTest"]).assert_failure();
 
     api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+
+    cmd.forge_fuse()
+        .args(["fuzz", "replay", "--mc", "BeforeSetupForkTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[PASS] testFuzz_beforeSetupBlock(uint256) (runs: 1, [AVG_GAS])
+...
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Persisted failure for testFuzz_beforeSetupBlock was recorded at fork block 0 but is replayed at block 1; pin the fork block (e.g. `--fork-block-number 0` or a block in `vm.createSelectFork`) to replay it against the recorded state.
+
+"#]]);
 
     cmd.forge_fuse()
         .args(["fuzz", "replay", "--fork-url", &fork_url, "--mt", "testFuzz_block"])
