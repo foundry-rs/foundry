@@ -1122,6 +1122,12 @@ pub struct TestArgs {
     /// generated tests.
     #[arg(long, hide = true)]
     pub no_network: bool,
+
+    /// Keep inline config from changing `ffi`, `fs_permissions`, or the fuzz seed, or from raising
+    /// fuzz or invariant runs, invariant depth, or fuzz rejects. `forge properties` and
+    /// `forge exploit` set it for generated tests.
+    #[arg(long, hide = true)]
+    pub restrict_inline_config: bool,
 }
 
 impl TestArgs {
@@ -1649,6 +1655,7 @@ impl TestArgs {
         // Merge all configs.
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts()?;
         evm_opts.no_network = self.no_network;
+        config.restrict_inline_config = self.restrict_inline_config;
 
         self.install_missing_dependencies(&mut config)?;
         let brutalized_workspace =

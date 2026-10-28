@@ -661,6 +661,13 @@ pub struct Config {
     /// Whether to enable script execution protection.
     pub script_execution_protection: bool,
 
+    /// Whether inline config must leave `ffi`, `fs_permissions`, and the fuzz seed unchanged, and
+    /// must not raise fuzz or invariant runs, invariant depth, or fuzz rejects. Commands that run
+    /// generated tests set it, so a test can neither widen its own access nor run unbounded.
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub restrict_inline_config: bool,
+
     /// PRIVATE: This structure may grow, As such, constructing this structure should
     /// _always_ be done using a public constructor or update syntax:
     ///
@@ -915,6 +922,26 @@ impl Config {
         config.invariant.corpus_random_sequence_weight_configured =
             invariant_corpus_random_sequence_weight_configured;
         config.invariant.workers_configured = invariant_workers_configured;
+        config.restrict_inline_config = self.restrict_inline_config;
+        if self.restrict_inline_config {
+            let changed = [
+                ("ffi", config.ffi != self.ffi),
+                ("fs_permissions", config.fs_permissions != self.fs_permissions),
+                ("fuzz.seed", config.fuzz.seed != self.fuzz.seed),
+                ("fuzz.runs", config.fuzz.runs > self.fuzz.runs),
+                (
+                    "fuzz.max_test_rejects",
+                    config.fuzz.max_test_rejects > self.fuzz.max_test_rejects,
+                ),
+                ("invariant.runs", config.invariant.runs > self.invariant.runs),
+                ("invariant.depth", config.invariant.depth > self.invariant.depth),
+            ];
+            if let Some((key, _)) = changed.into_iter().find(|(_, changed)| *changed) {
+                return Err(Error::from(format!(
+                    "inline config cannot change `{key}` in generated tests"
+                )));
+            }
+        }
         config.normalize_hardfork_settings()?;
 
         Ok(config)
@@ -3185,6 +3212,7 @@ impl Default for Config {
             networks: Default::default(),
             transaction_timeout: 120,
             additional_compiler_profiles: Default::default(),
+            restrict_inline_config: false,
             compilation_restrictions: Default::default(),
             script_execution_protection: true,
             _non_exhaustive: (),
