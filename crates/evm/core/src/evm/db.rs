@@ -147,8 +147,7 @@ impl<N: Network, B: ForkBlockEnv> DynDatabase for ForkDb<SharedBackend<N, B>> {
         // otherwise fresh EIP-7702 authorities would be refunded as existing ones. Before, the
         // remote cannot tell an existing empty account apart from an absent one; load it as
         // existing, as the account a historical call reaches usually is.
-        let eip161 = self.eip161.load(Ordering::Relaxed);
-        Ok(info.filter(|info| !eip161 || !info.is_empty()))
+        Ok(existing_account(self.eip161.load(Ordering::Relaxed), info))
     }
 
     fn get_code_by_hash(&mut self, code_hash: &B256) -> DbResult<Bytecode> {
@@ -194,6 +193,13 @@ impl<N: Network, B: ForkBlockEnv> FoundryDatabase for ForkDb<SharedBackend<N, B>
     fn set_eip161(&self, eip161: bool) {
         self.eip161.store(eip161, Ordering::Relaxed);
     }
+}
+
+/// Returns `account`, which a database reports as an existing empty account when it does not hold
+/// it, as an execution applying EIP-161 or not loads it. Under EIP-161 an empty account does not
+/// exist, so it is loaded as absent.
+pub fn existing_account(eip161: bool, account: Option<AccountInfo>) -> Option<AccountInfo> {
+    account.filter(|account| !eip161 || !account.is_empty())
 }
 
 fn fatal(err: impl std::error::Error + Send + Sync + 'static) -> DatabaseError {
