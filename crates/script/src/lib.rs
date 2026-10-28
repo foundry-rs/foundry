@@ -994,13 +994,16 @@ impl<N: Network> ScriptResult<N> {
                     }
 
                     let init_code = node.trace.data.clone();
-                    let contract_name = known_contracts
-                        .find_by_creation_code(init_code.as_ref())
-                        .map(|artifact| artifact.0.name.clone());
+                    let artifact = known_contracts.find_by_creation_code(init_code.as_ref());
+                    let contract_name = artifact.map(|(id, _)| id.name.clone());
+                    let exact_artifact_match = artifact
+                        .and_then(|(_, data)| data.bytecode())
+                        .is_some_and(|bytecode| init_code.starts_with(bytecode));
                     Some(AdditionalContract {
                         call_kind: node.trace.kind,
                         address: node.trace.address,
                         contract_name,
+                        exact_artifact_match,
                         init_code,
                         creator_code_addresses,
                     })

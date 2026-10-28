@@ -1482,8 +1482,8 @@ contract BroadcastKeys is Script {
         ),
         str![[r#"
 top level: chain, commit, libraries, pending, receipts, recovery_generation, returns, timestamp, transactions
-transaction: additionalContracts, arguments, contractAddress, contractName, function, functionAbi, hash, isFixedGasLimit, transaction, transactionType
-additional contract: address, contractName, creatorCodeAddresses, initCode, transactionType
+transaction: additionalContracts, arguments, contractAddress, contractName, exactArtifactMatch, function, functionAbi, hash, isFixedGasLimit, transaction, transactionType
+additional contract: address, contractName, creatorCodeAddresses, exactArtifactMatch, initCode, transactionType
 
 "#]]
     );

@@ -131,6 +131,7 @@ impl<N: Network> ScriptTransactionBuilder<N> {
         } else {
             data
         };
+        self.transaction.exact_artifact_match = creation_code.starts_with(bytecode);
 
         // The constructor args start after bytecode.
         let contains_constructor_args = creation_code.len() > bytecode.len();
