@@ -19,12 +19,17 @@ use foundry_common::retry::Retry;
 use foundry_compilers::PathStyle;
 use foundry_evm::traces::CallKind;
 use foundry_test_utils::{
-    forgetest, str,
+    forgetest,
+    rpc::spawn_rpc_proxy_recording_method,
+    str,
     util::{OutputExt, SOLC_VERSION, TestCommand, TestProject},
 };
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 use tokio::net::TcpListener;
@@ -1013,14 +1018,22 @@ contract MultiVerify is Script {
     );
     let (_api1, handle1) = spawn(NodeConfig::test().with_chain_id(Some(1111u64))).await;
     let (_api2, handle2) = spawn(NodeConfig::test().with_chain_id(Some(2222u64))).await;
+    let (rpc1, transactions1) =
+        spawn_rpc_proxy_recording_method(handle1.http_endpoint(), "eth_sendRawTransaction").await;
+    let (rpc2, transactions2) =
+        spawn_rpc_proxy_recording_method(handle2.http_endpoint(), "eth_sendRawTransaction").await;
 
-    // Records every submitted contract and rejects only `Alpha`.
+    // Initially reject only Alpha, then both contracts, then accept Alpha with Beta already
+    // verified.
+    let attempt = Arc::new(AtomicUsize::new(0));
+    let verifier_attempt = attempt.clone();
     let submissions = Arc::new(Mutex::new(Vec::new()));
     let state = submissions.clone();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let verifier_url = format!("http://{}", listener.local_addr().unwrap());
     let app = Router::new().fallback(move |uri: axum::http::Uri, body: String| {
         let state = state.clone();
+        let attempt = verifier_attempt.load(Ordering::SeqCst);
         async move {
             let encoded = if body.is_empty() { uri.query().unwrap_or_default() } else { &body };
             let form = url::form_urlencoded::parse(encoded.as_bytes())
@@ -1029,10 +1042,12 @@ contract MultiVerify is Script {
             match form.get("action").map(String::as_str) {
                 Some("verifysourcecode") => {
                     let name = form["contractname"].clone();
-                    let failed = name.ends_with(":Alpha");
+                    let alpha = name.ends_with(":Alpha");
                     state.lock().unwrap().push(name);
-                    if failed {
+                    if attempt == 1 || (attempt == 0 && alpha) {
                         r#"{"status":"0","message":"NOTOK","result":"mock failure"}"#
+                    } else if attempt == 2 && !alpha {
+                        r#"{"status":"0","message":"NOTOK","result":"Contract source code already verified"}"#
                     } else {
                         r#"{"status":"1","message":"OK","result":"guid"}"#
                     }
@@ -1046,13 +1061,13 @@ contract MultiVerify is Script {
     });
     let _server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
-    cmd.forge_fuse().args([
+    let args = [
         "script",
         script.to_str().unwrap(),
         "--sig",
         "run(string,string)",
-        &handle1.http_endpoint(),
-        &handle2.http_endpoint(),
+        &rpc1,
+        &rpc2,
         "--private-key",
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
         "--broadcast",
@@ -1067,7 +1082,8 @@ contract MultiVerify is Script {
         "1",
         "--delay",
         "0",
-    ]);
+    ];
+    cmd.forge_fuse().args(args);
     cmd.assert_failure().stderr_eq(str![[r#"
 ...
 Error: chain 1111: Not all (0 / 1) contracts were verified!
@@ -1079,4 +1095,38 @@ Error: chain 1111: Not all (0 / 1) contracts were verified!
         *submissions.lock().unwrap(),
         ["src/Contracts.sol:Alpha", "src/Contracts.sol:Alpha", "src/Contracts.sol:Beta"]
     );
+    assert_eq!(transactions1.lock().unwrap().len(), 1);
+    assert_eq!(transactions2.lock().unwrap().len(), 1);
+
+    // A retry that fails on both chains reports both failures, in sequence order.
+    attempt.store(1, Ordering::SeqCst);
+    submissions.lock().unwrap().clear();
+    cmd.forge_fuse().args(args).args(["--multi", "--resume"]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+...
+Error: chain 1111: Not all (0 / 1) contracts were verified!
+chain 2222: Not all (0 / 1) contracts were verified!
+
+"#]]);
+    assert_eq!(
+        *submissions.lock().unwrap(),
+        [
+            "src/Contracts.sol:Alpha",
+            "src/Contracts.sol:Alpha",
+            "src/Contracts.sol:Beta",
+            "src/Contracts.sol:Beta",
+        ]
+    );
+    assert_eq!(transactions1.lock().unwrap().len(), 1);
+    assert_eq!(transactions2.lock().unwrap().len(), 1);
+
+    // Resume retries verification on every chain, counting an already-verified response as success
+    // without rebroadcasting completed deployments.
+    attempt.store(2, Ordering::SeqCst);
+    submissions.lock().unwrap().clear();
+    cmd.forge_fuse().args(args).args(["--multi", "--resume"]);
+    cmd.assert_success();
+    assert_eq!(*submissions.lock().unwrap(), ["src/Contracts.sol:Alpha", "src/Contracts.sol:Beta"]);
+    assert_eq!(transactions1.lock().unwrap().len(), 1);
+    assert_eq!(transactions2.lock().unwrap().len(), 1);
 }
