@@ -1471,14 +1471,15 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                     }
                 }
             }
-            if restored {
-                // The restored state keeps the warmth it had at the snapshot, except for accounts
-                // the running transaction holds cold.
+            // Unless the call switched forks, the running transaction's state stays in place: it
+            // keeps the warmth it had, except for accounts it holds cold.
+            let keeps_cold = restored || !fork_changed;
+            if keeps_cold {
                 for address in &cold {
                     evm.state_mut().set_account_warm(address, false);
                 }
             }
-            let cold = if restored { cold } else { AddressSet::default() };
+            let cold = if keeps_cold { cold } else { AddressSet::default() };
             !result.status || warm_accessed(evm.state_mut(), &executed.pending_state, &cold).is_ok()
         } else {
             let merged = merge_pending_changes(evm.state_mut(), &executed.pending_state)

@@ -261,7 +261,8 @@ contract CoolProbe is Test {
         touched = target.balance;
     }
 
-    function broadcast(bytes calldata signedTx) external {
+    function touchAndBroadcast(address target, bytes calldata signedTx) external {
+        touched = target.balance;
         vm.broadcastRawTransaction(signedTx);
     }
 
@@ -313,14 +314,19 @@ contract CoolPersistenceIsolatedTest is CoolPersistenceTest {
         assertGe(balanceGas(target), 2600);
     }
 
-    // As on master, an isolated call that broadcasts a transaction leaves its own access list cold.
-    function testCool_broadcastInIsolatedCallKeepsWarmth() public {
+    // As on master, an isolated call that broadcasts a transaction keeps the caller's access list
+    // and the accounts it cooled cold.
+    function testCool_staysColdAfterIsolatedBroadcast() public {
         CoolProbe probe = new CoolProbe();
+        address target = address(preexisting);
+        balanceGas(target);
+        vm.cool(target);
         Vm.AccessListItem[] memory access = new Vm.AccessListItem[](1);
         access[0] = Vm.AccessListItem(address(0xcafe), new bytes32[](0));
         vm.accessList(access);
         uint256 key = 0xA11CE;
-        probe.broadcast(signLegacy(key, vm.getNonce(vm.addr(key)), address(0xbeef), ""));
+        probe.touchAndBroadcast(target, signLegacy(key, vm.getNonce(vm.addr(key)), address(0xbeef), ""));
         assertGe(balanceGas(address(0xcafe)), 2600);
+        assertGe(balanceGas(target), 2600);
     }
 }

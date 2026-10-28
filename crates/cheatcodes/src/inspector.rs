@@ -808,7 +808,8 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// restoration, such as a fork switch, so nested executions know to adopt the replaced state.
     pub state_epoch: u64,
 
-    /// Incremented whenever a cheatcode switches or rolls forks, a subset of `state_epoch`.
+    /// Incremented whenever a cheatcode switches or rolls forks, bumped together with
+    /// `state_epoch`.
     pub fork_epoch: u64,
 
     /// Running states replaced by snapshot restorations in the open frames of the running
