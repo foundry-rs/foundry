@@ -1000,10 +1000,14 @@ impl ReplayGasLimits {
             .get(&tx_hash)
             .ok_or_else(|| eyre::eyre!("receipt not found for Nitro transaction {tx_hash:?}"))?;
         let gas_limit = nitro_execution_gas_limit(tx_hash, tx.gas_limit(), *l1_gas_used)?;
+        let ty = alloy_eips::Typed2718::ty(&*tx.inner.inner);
         let mut tx = tx.clone();
         // The envelope keeps its signature and hash: the sender is taken from the RPC response.
         let AnyTxEnvelope::Ethereum(envelope) = tx.inner.inner.inner_mut() else {
-            return Ok(Some(tx));
+            eyre::bail!(
+                "cannot set the Nitro execution gas limit of transaction {tx_hash:?} of \
+                 unsupported type {ty:#04x}"
+            );
         };
         match envelope {
             EthereumTxEnvelope::Legacy(tx) => tx.tx_mut().gas_limit = gas_limit,
