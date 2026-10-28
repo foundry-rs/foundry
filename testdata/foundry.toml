@@ -1,8 +1,8 @@
 [profile.default]
 src = "src"
 test = "./"
-# These fixtures are assembled into isolated projects by the via-IR CLI tests.
-skip = ["fixtures/PreprocessViaIr/**"]
+# These fixtures are assembled into isolated projects by CLI tests.
+skip = ["fixtures/PreprocessViaIr/**", "fixtures/TempoProof.t.sol", "fixtures/TempoProofVerifier.sol"]
 remappings = ["@cheats/=default/cheats/"]
 optimizer = true
 optimizer_runs = 200
