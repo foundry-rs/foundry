@@ -245,6 +245,7 @@ import "forge-std/Test.sol";
 contract SymbolicBalance is Test {
     function checkSymbolicBalance(address who) public {
         address funded = address(0xBEEF);
+        vm.assume(who == funded || who == address(0xDEAD));
         vm.deal(funded, 123);
 
         uint256 expected = who == funded ? 123 : 0;
@@ -291,6 +292,7 @@ import "forge-std/Test.sol";
 contract SymbolicExtcodeSize is Test {
     function checkSymbolicCodeLength(address who) public {
         address coded = address(0xC0DE);
+        vm.assume(who == coded || who == address(0xDEAD));
         vm.etch(coded, hex"60006000");
 
         uint256 expected = who == coded ? 4 : 0;
@@ -337,6 +339,7 @@ import "forge-std/Test.sol";
 contract SymbolicExtcodeHash is Test {
     function checkSymbolicCodeHash(address who) public {
         address coded = address(0xC0DE);
+        vm.assume(who == coded || who == address(0xDEAD));
         vm.etch(coded, hex"60006000");
 
         bytes32 expected = who == coded ? keccak256(hex"60006000") : bytes32(0);
@@ -383,6 +386,7 @@ import "forge-std/Test.sol";
 contract SymbolicExtcodeCopy is Test {
     function checkSymbolicExtcodeCopy(address who) public {
         address coded = address(0xC0DE);
+        vm.assume(who == coded || who == address(0xDEAD));
         vm.etch(coded, hex"60016002");
 
         bytes32 copied;
@@ -416,6 +420,101 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     .stdout_lossy();
 
     assert!(!stdout.contains("symbolic EXTCODECOPY target"), "{stdout}");
+}
+
+// Symbolic-address account queries must see accounts that exist only in the backend, such as
+// contracts deployed and funded in `setUp`, not just accounts the path already touched. They must
+// also keep cheatcode accounts, whose balances `vm.deal` can set.
+#[forgetest_init]
+fn symbolic_account_queries_see_setup_accounts(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_account_queries_see_setup_accounts");
+
+    prj.add_test(
+        "SymbolicSetupAccounts.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Pinger {
+    function ping() external {}
+}
+
+contract SymbolicSetupAccounts is Test {
+    Pinger a;
+    Pinger b;
+
+    function setUp() public {
+        a = new Pinger();
+        b = new Pinger();
+        vm.deal(address(a), 1 ether);
+        vm.deal(address(b), 1 ether);
+    }
+
+    function checkBalance(address target) public view {
+        vm.assume(target == address(a) || target == address(b));
+        assert(target.balance == 0);
+    }
+
+    function checkCheatcodeBalance(address target) public {
+        vm.assume(target == address(vm) || target == address(0xdead));
+        vm.deal(address(vm), 123);
+        assert(target.balance == 0);
+    }
+
+    function checkCodeLength(address target) public view {
+        vm.assume(target == address(a) || target == address(b));
+        assert(target.code.length == 0);
+    }
+
+    function checkCodeHash(address target) public view {
+        vm.assume(target == address(a) || target == address(b));
+        assert(target.codehash != keccak256(type(Pinger).runtimeCode));
+    }
+
+    function checkCodeCopy(address target) public view {
+        vm.assume(target == address(a) || target == address(b));
+        bytes1 first;
+        assembly {
+            extcodecopy(target, 0x80, 0, 1)
+            first := mload(0x80)
+        }
+        assert(first == 0x00);
+    }
+
+    function checkHighLevelCall(address target, bool skip) public {
+        vm.assume(target == address(a) || target == address(b));
+        if (skip) return;
+        Pinger(target).ping();
+        assert(false);
+    }
+
+    function checkUnconstrainedHighLevelCall(address target) public {
+        Pinger(target).ping();
+        assert(false);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicSetupAccounts",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 7 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkBalance(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeBalance(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeCopy(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeHash(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeLength(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkHighLevelCall(address,bool) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnconstrainedHighLevelCall(address) ([METRICS])
+Suite result: FAILED. 0 passed; 7 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // Cheatcodes that shape external calls: prank, expectRevert, mockFunction and assumeNoRevert.
