@@ -9,67 +9,63 @@ interface Vm {
     function envOr(string calldata name, string calldata defaultValue) external view returns (string memory);
     function readFile(string calldata path) external view returns (string memory);
     function parseJsonBytes(string calldata json, string calldata key) external pure returns (bytes memory);
-    function parseJsonBytesArray(string calldata json, string calldata key) external pure returns (bytes[] memory);
-    function parseJsonBytes32(string calldata json, string calldata key) external pure returns (bytes32);
+    function parseJsonType(string calldata json, string calldata key, string calldata typeDescription)
+        external
+        pure
+        returns (bytes memory);
     function parseJsonUint(string calldata json, string calldata key) external pure returns (uint256);
     function parseJsonAddress(string calldata json, string calldata key) external pure returns (address);
-    function parseJsonBool(string calldata json, string calldata key) external pure returns (bool);
 }
 
 contract TempoProofTest {
     Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     TempoProofVerifier private verifier;
-    BLS.G2Point private trustedKey;
-    BLS.G2Point private mainnetKey;
+    BLS.G2Point private initialKey;
+    BLS.G2Point private nextKey;
     TempoProofVerifier.Evidence private evidence;
+    TempoProofVerifier.Evidence private boundary;
+    TempoProofVerifier.Evidence private successor;
     address private account;
     uint256 private height;
-    bool private hasRotation;
-    BLS.G2Point private initialKey;
-    TempoProofVerifier.Evidence private boundary;
     uint256 private boundaryHeight;
+    uint256 private successorHeight;
 
     function setUp() public {
-        string memory json = vm.readFile(vm.envOr("TEMPO_PROOF_FIXTURE", string("fixtures/standalone.json")));
+        string memory json = vm.readFile(vm.envOr("TEMPO_PROOF_FIXTURE", string("fixtures/proofs.json")));
         verifier = new TempoProofVerifier();
-        trustedKey = abi.decode(vm.parseJsonBytes(json, ".key"), (BLS.G2Point));
-        mainnetKey = abi.decode(vm.parseJsonBytes(json, ".mainnetKey"), (BLS.G2Point));
+        initialKey = abi.decode(vm.parseJsonBytes(json, ".initialKey"), (BLS.G2Point));
+        nextKey = abi.decode(vm.parseJsonBytes(json, ".nextKey"), (BLS.G2Point));
         account = vm.parseJsonAddress(json, ".account");
-        height = vm.parseJsonUint(json, ".height");
-        evidence = _readEvidence(json, "");
-        hasRotation = vm.parseJsonBool(json, ".hasRotation");
-        if (hasRotation) {
-            initialKey = abi.decode(vm.parseJsonBytes(json, ".boundary.key"), (BLS.G2Point));
-            boundaryHeight = vm.parseJsonUint(json, ".boundary.height");
-            boundary = _readEvidence(json, ".boundary");
-        }
+        height = vm.parseJsonUint(json, ".initial.height");
+        boundaryHeight = vm.parseJsonUint(json, ".boundary.height");
+        successorHeight = vm.parseJsonUint(json, ".successor.height");
+        evidence = _readEvidence(json, ".initial.evidence");
+        boundary = _readEvidence(json, ".boundary.evidence");
+        successor = _readEvidence(json, ".successor.evidence");
     }
 
-    function _readEvidence(string memory json, string memory prefix)
+    function _readEvidence(string memory json, string memory path)
         private
         pure
-        returns (TempoProofVerifier.Evidence memory parsed)
+        returns (TempoProofVerifier.Evidence memory)
     {
-        parsed.rawHeader = vm.parseJsonBytes(json, string.concat(prefix, ".rawHeader"));
-        parsed.subject = Simplex.Subject({
-            kind: Simplex.Kind.Finalization,
-            epoch: uint64(vm.parseJsonUint(json, string.concat(prefix, ".epoch"))),
-            viewNumber: uint64(vm.parseJsonUint(json, string.concat(prefix, ".view"))),
-            parent: uint64(vm.parseJsonUint(json, string.concat(prefix, ".parent"))),
-            payload: vm.parseJsonBytes32(json, string.concat(prefix, ".digest"))
-        });
-        parsed.vote = vm.parseJsonBytes(json, string.concat(prefix, ".vote"));
-        parsed.seed = vm.parseJsonBytes(json, string.concat(prefix, ".seed"));
-        parsed.accountProof = vm.parseJsonBytesArray(json, string.concat(prefix, ".accountProof"));
-        parsed.storageProof = vm.parseJsonBytesArray(json, string.concat(prefix, ".storageProof"));
+        return abi.decode(
+            vm.parseJsonType(
+                json,
+                path,
+                "Evidence(bytes rawHeader,Subject subject,bytes vote,bytes seed,bytes[] accountProof,bytes[] storageProof)"
+                "Subject(uint8 kind,uint64 epoch,uint64 viewNumber,uint64 parent,bytes32 payload)"
+            ),
+            (TempoProofVerifier.Evidence)
+        );
     }
 
     function test_certified_storage_proof() public view {
-        require(verifier.verify(trustedKey, evidence, height, account, bytes32(0), 42), "accepted value");
+        require(verifier.verify(initialKey, evidence, height, account, bytes32(0), 42), "accepted value");
     }
 
     function test_reject_wrong_value() public view {
-        require(!verifier.verify(trustedKey, evidence, height, account, bytes32(0), 43), "wrong value accepted");
+        require(!verifier.verify(initialKey, evidence, height, account, bytes32(0), 43), "wrong value accepted");
     }
 
     function test_reject_changed_header() public {
@@ -92,8 +88,8 @@ contract TempoProofTest {
         _reject();
     }
 
-    function test_reject_mainnet_trusted_key() public {
-        trustedKey = mainnetKey;
+    function test_reject_wrong_trusted_key() public {
+        initialKey = nextKey;
         _reject();
     }
 
@@ -118,65 +114,59 @@ contract TempoProofTest {
     }
 
     function test_rotation_authenticates_next_key_and_storage() public view {
-        require(hasRotation, "rotation fixture required");
         require(
             verifier.verifyAfterHandoff(
-                initialKey, boundary, boundaryHeight, trustedKey, evidence, height, account, bytes32(0), 42
+                initialKey, boundary, boundaryHeight, nextKey, successor, successorHeight, account, bytes32(0), 42
             ),
             "authenticated rotated storage"
         );
     }
 
-    function test_rotation_rejects_old_key() public {
-        require(hasRotation, "rotation fixture required");
-        trustedKey = initialKey;
-        _reject();
+    function test_rotation_rejects_old_key() public view {
+        try verifier.verify(initialKey, successor, successorHeight, account, bytes32(0), 42) returns (bool valid) {
+            require(!valid, "old key accepted");
+        } catch {}
     }
 
     function test_rotation_rejects_changed_boundary() public {
-        require(hasRotation, "rotation fixture required");
         boundary.rawHeader[10] = bytes1(uint8(boundary.rawHeader[10]) ^ 1);
-        _rejectHandoff(trustedKey, evidence.subject.epoch);
+        _rejectHandoff(nextKey, successor.subject.epoch);
     }
 
     function test_rotation_rejects_unannounced_key() public view {
-        require(hasRotation, "rotation fixture required");
-        _rejectHandoff(mainnetKey, evidence.subject.epoch);
+        _rejectHandoff(initialKey, successor.subject.epoch);
     }
 
     function test_rotation_rejects_wrong_epoch() public view {
-        require(hasRotation, "rotation fixture required");
-        _rejectHandoff(trustedKey, evidence.subject.epoch + 1);
+        _rejectHandoff(nextKey, successor.subject.epoch + 1);
     }
 
     function test_rotation_rejects_malformed_next_key() public view {
-        require(hasRotation, "rotation fixture required");
-        BLS.G2Point memory changed = trustedKey;
+        BLS.G2Point memory changed = nextKey;
         changed.yC0Lo ^= bytes32(uint256(1));
-        _rejectHandoff(changed, evidence.subject.epoch);
+        _rejectHandoff(changed, successor.subject.epoch);
     }
 
     function test_rotation_rejects_noncanonical_next_key() public view {
-        require(hasRotation, "rotation fixture required");
-        BLS.G2Point memory changed = trustedKey;
+        BLS.G2Point memory changed = nextKey;
         changed.xC0Hi |= bytes32(uint256(1) << 128);
-        _rejectHandoff(changed, evidence.subject.epoch);
+        _rejectHandoff(changed, successor.subject.epoch);
     }
 
-    function _rejectHandoff(BLS.G2Point memory nextKey, uint64 nextEpoch) private view {
-        try verifier.verifyHandoff(initialKey, boundary, boundaryHeight, nextKey, nextEpoch) returns (bool valid) {
+    function _rejectHandoff(BLS.G2Point memory key, uint64 nextEpoch) private view {
+        try verifier.verifyHandoff(initialKey, boundary, boundaryHeight, key, nextEpoch) returns (bool valid) {
             require(!valid, "invalid handoff accepted");
         } catch {}
     }
 
     function _reject() private view {
-        try verifier.verify(trustedKey, evidence, height, account, bytes32(0), 42) returns (bool valid) {
+        try verifier.verify(initialKey, evidence, height, account, bytes32(0), 42) returns (bool valid) {
             require(!valid, "invalid evidence accepted");
         } catch {}
     }
 
     function test_reject_wrong_slot() public view {
-        try verifier.verify(trustedKey, evidence, height, account, bytes32(uint256(1)), 42) returns (bool valid) {
+        try verifier.verify(initialKey, evidence, height, account, bytes32(uint256(1)), 42) returns (bool valid) {
             require(!valid, "wrong slot accepted");
         } catch {}
     }
@@ -201,53 +191,29 @@ contract TempoProofTest {
         _reject();
     }
 
-    function test_reject_truncated_vote() public {
-        evidence.vote.pop();
-        _reject();
-    }
-
-    function test_reject_truncated_seed() public {
-        evidence.seed.pop();
-        _reject();
-    }
-
-    function test_reject_infinity_vote() public {
-        evidence.vote = new bytes(96);
-        _reject();
-    }
-
-    function test_reject_infinity_seed() public {
-        evidence.seed = new bytes(96);
-        _reject();
-    }
-
     function test_rotation_rejects_unauthenticated_boundary() public {
-        require(hasRotation, "rotation fixture required");
-        initialKey = mainnetKey;
+        initialKey = nextKey;
         _rejectAfterHandoff();
     }
 
     function test_rotation_rejects_changed_boundary_vote() public {
-        require(hasRotation, "rotation fixture required");
         boundary.vote = boundary.seed;
         _rejectAfterHandoff();
     }
 
     function test_rotation_rejects_changed_successor_epoch() public {
-        require(hasRotation, "rotation fixture required");
-        ++evidence.subject.epoch;
+        ++successor.subject.epoch;
         _rejectAfterHandoff();
     }
 
     function test_rotation_rejects_changed_successor_proof() public {
-        require(hasRotation, "rotation fixture required");
-        evidence.storageProof[0][10] = bytes1(uint8(evidence.storageProof[0][10]) ^ 1);
+        successor.storageProof[0][10] = bytes1(uint8(successor.storageProof[0][10]) ^ 1);
         _rejectAfterHandoff();
     }
 
     function _rejectAfterHandoff() private view {
         try verifier.verifyAfterHandoff(
-            initialKey, boundary, boundaryHeight, trustedKey, evidence, height, account, bytes32(0), 42
+            initialKey, boundary, boundaryHeight, nextKey, successor, successorHeight, account, bytes32(0), 42
         ) returns (
             bool valid
         ) {

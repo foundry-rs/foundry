@@ -209,7 +209,7 @@ jobs:
           .venv/bin/python bootstrap.py
       - name: Check fixture runner failure handling
         run: testdata/tempo-consensus/.venv/bin/python -m unittest discover -s testdata/tempo-consensus -p 'test_*.py'
-      - name: Verify fresh standalone and authenticated rotation proofs in Solidity
+      - name: Verify fresh proofs before and after authenticated rotation in Solidity
         env:
           ANVIL_BIN: ${{ github.workspace }}/target/debug/anvil
           FORGE_BIN: ${{ github.workspace }}/target/debug/forge

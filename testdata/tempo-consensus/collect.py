@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 """Collect actual Tempo HTTP output and only decompress its BLS points for EIP-2537."""
 
-import argparse
 from contextlib import contextmanager
 import json
-import os
 from pathlib import Path
 import socket
 import subprocess
@@ -17,13 +15,6 @@ from py_ecc.optimized_bls12_381 import normalize
 
 
 ROOT = Path(__file__).resolve().parent
-# Tempo's compiled mainnet key, active from epoch 2042 at the pinned revision.
-# https://github.com/tempoxyz/tempo/blob/2c25f7cd8267b205a6b95e08bbc73baf887bea88/crates/chainspec/src/network_identity.rs
-MAINNET_KEY = (
-    "8627d33753b0d90a8eae75363d6b393ab9204076545b3af6caf831903e4bedde"
-    "4374f1106551b481fb5ea35e59d51c92165c963881c718216e3e4570a307c088"
-    "85af55c274f19488f709afe021ca3d9e567138ab097860d9146e895407bea182"
-)
 
 
 def rpc(url, method, params=(), timeout=20):
@@ -105,7 +96,7 @@ def send(url, transaction):
     return receipt
 
 
-def certificate_record(url, height, key):
+def certificate_record(url, height, account=None):
     finalization = rpc(url, "consensus_getFinalization", [{"height": height}])
     raw_header = rpc(url, "debug_getRawHeader", [hex(height)])
     ethereum = rpc(url, "eth_getBlockByNumber", [hex(height), False])
@@ -117,93 +108,73 @@ def certificate_record(url, height, key):
     assert epoch == finalization["epoch"] and view == finalization["view"]
     assert "0x" + certificate[offset:offset + 32].hex() == finalization["digest"]
     assert len(certificate) == offset + 32 + 48 + 48
-    return {
-        "height": height,
-        "key": "0x" + g2(key),
-        "mainnetKey": "0x" + g2(bytes.fromhex(MAINNET_KEY)),
+    evidence = {
         "rawHeader": raw_header,
-        "epoch": epoch,
-        "view": view,
-        "parent": parent,
-        "digest": finalization["digest"],
+        "subject": {"kind": 2, "epoch": epoch, "viewNumber": view, "parent": parent, "payload": finalization["digest"]},
         "vote": "0x" + g1(certificate[offset + 32:offset + 80]),
         "seed": "0x" + g1(certificate[offset + 80:]),
         "accountProof": [],
         "storageProof": [],
-        "original": {"finalization": finalization, "ethereumBlock": ethereum},
     }
+    original = {"finalization": finalization, "ethereumBlock": ethereum}
+    if account:
+        proof = rpc(url, "eth_getProof", [account, ["0x" + "00" * 32], hex(height)])
+        assert proof["address"].lower() == account.lower()
+        assert len(proof["storageProof"]) == 1
+        assert int(proof["storageProof"][0]["key"], 16) == 0
+        assert int(proof["storageProof"][0]["value"], 16) == 42
+        evidence.update(accountProof=proof["accountProof"], storageProof=proof["storageProof"][0]["proof"])
+        original["proof"] = proof
+    return {"height": height, "evidence": evidence, "original": original}
 
 
-def collect(url, name, rotate=False):
-    identity = rpc(url, "anvil_tempoConsensusIdentity")
-    key = bytes.fromhex(identity["identity"][2:])
-    if rotate:
-        rpc(url, "anvil_tempoRotateConsensusIdentity")
-    artifact = json.loads((ROOT / "out/TempoProofVerifier.sol/ProofStore.json").read_text())
-    deployment = send(url, {"data": artifact["bytecode"]["object"]})
-    account = deployment["contractAddress"]
-    receipt = send(url, {"to": account, "data": "0x60fe47b1" + (42).to_bytes(32, "big").hex()})
-    height = int(receipt["blockNumber"], 16)
-    assert int(deployment["blockNumber"], 16) + 1 == height
-    assert rpc(url, "eth_getCode", [account, hex(height)]) == artifact["deployedBytecode"]["object"]
-    boundary = None
-    if rotate:
-        assert height == 2 and identity["epochLength"] == 3
-        boundary = certificate_record(url, height, key)
+def collect(binary):
+    with node(binary, "--tempo.epoch-length", "4") as url:
+        identity = rpc(url, "anvil_tempoConsensusIdentity")
+        initial_key = bytes.fromhex(identity["identity"][2:])
+        artifact = json.loads((ROOT / "out/TempoProofVerifier.sol/ProofStore.json").read_text())
+        deployment = send(url, {"data": artifact["bytecode"]["object"]})
+        account = deployment["contractAddress"]
+        receipt = send(url, {"to": account, "data": "0x60fe47b1" + (42).to_bytes(32, "big").hex()})
+        assert int(deployment["blockNumber"], 16) == 1 and int(receipt["blockNumber"], 16) == 2
+        assert identity["epochLength"] == 4
+        assert rpc(url, "eth_getCode", [account, "0x2"]) == artifact["deployedBytecode"]["object"]
+        initial = certificate_record(url, 2, account)
+        assert initial["original"]["finalization"]["block"]["header"]["extraData"] == "0x"
+        initial["original"].update(identity=identity, deployment=deployment, write=receipt, hardfork="tempo:T14")
+
+        # Collect the ordinary block before scheduling rotation, then authenticate the boundary.
+        scheduled = rpc(url, "anvil_tempoRotateConsensusIdentity")
+        rpc(url, "anvil_mine", [1])
+        boundary = certificate_record(url, 3)
+        boundary["original"]["rotation"] = scheduled
         extra = bytes.fromhex(boundary["original"]["finalization"]["block"]["header"]["extraData"][2:])
         epoch, offset = integer(extra, 0)
         assert epoch == 1
         offset += 32
         assert extra[offset:offset + 6] == bytes.fromhex("000000000101")
-        key = extra[offset + 6:offset + 102]
-        assert len(key) == 96
+        next_key = extra[offset + 6:offset + 102]
+        assert len(next_key) == 96
         rpc(url, "anvil_mine", [1])
-        height += 1
-    record = certificate_record(url, height, key)
-    proof_params = [account, ["0x" + "00" * 32], hex(height)]
-    proof = rpc(url, "eth_getProof", proof_params)
-    assert proof["address"].lower() == account.lower()
-    assert len(proof["storageProof"]) == 1
-    assert int(proof["storageProof"][0]["key"], 16) == 0
-    assert int(proof["storageProof"][0]["value"], 16) == 42
-    record.update({
-        "account": account,
-        "accountProof": proof["accountProof"],
-        "storageProof": proof["storageProof"][0]["proof"],
-        "hasRotation": rotate,
-    })
-    record["original"].update({"identity": identity, "proof": proof})
-    record["original"].update({"deployment": deployment, "write": receipt, "hardfork": "tempo:T14"})
-    if boundary:
-        record["boundary"] = boundary
-    # Unrelated reads must not change an already certified proof.
-    unrelated = "0x" + "ab" * 20
-    rpc(url, "eth_getBalance", [unrelated, "latest"])
-    rpc(url, "eth_getStorageAt", [unrelated, "0x1", "latest"])
-    assert rpc(url, "eth_getProof", proof_params) == proof, "proof changed after unrelated reads"
-    # The selected proof must remain valid after a later canonical write to the same slot.
-    send(url, {"to": account, "data": "0x60fe47b1" + (99).to_bytes(32, "big").hex()})
-    historical = rpc(url, "eth_getProof", proof_params)
-    assert historical == proof, "historical proof changed after later storage write"
-    path = ROOT / "fixtures" / f"{name}.json"
-    path.parent.mkdir(exist_ok=True)
-    temporary = path.with_suffix(".json.tmp")
-    temporary.write_text(json.dumps(record, indent=2) + "\n")
-    temporary.replace(path)
-    print(f"collected {name}: height={height} account={account}")
-    return record
+        successor = certificate_record(url, 4, account)
+        assert successor["evidence"]["subject"]["epoch"] == epoch
 
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--anvil", default=os.environ.get("ANVIL_BIN"))
-    parser.add_argument("--scenario", choices=["standalone", "rotation"], default="standalone")
-    arguments = parser.parse_args()
-    if not arguments.anvil:
-        parser.error("pass --anvil or set ANVIL_BIN to the candidate binary")
-    if arguments.scenario == "rotation":
-        with node(arguments.anvil, "--tempo.epoch-length", "3") as local:
-            collect(local, "rotation", rotate=True)
-    else:
-        with node(arguments.anvil) as local:
-            collect(local, "standalone")
+        # Both certified proofs must survive unrelated reads and a later write to the same slot.
+        unrelated = "0x" + "ab" * 20
+        rpc(url, "eth_getBalance", [unrelated, "latest"])
+        rpc(url, "eth_getStorageAt", [unrelated, "0x1", "latest"])
+        for record in (initial, successor):
+            proof = rpc(url, "eth_getProof", [account, ["0x" + "00" * 32], hex(record["height"])])
+            assert proof == record["original"]["proof"], "proof changed after unrelated reads"
+        send(url, {"to": account, "data": "0x60fe47b1" + (99).to_bytes(32, "big").hex()})
+        for record in (initial, successor):
+            proof = rpc(url, "eth_getProof", [account, ["0x" + "00" * 32], hex(record["height"])])
+            assert proof == record["original"]["proof"], "historical proof changed after later storage write"
+        return {
+            "initialKey": "0x" + g2(initial_key),
+            "nextKey": "0x" + g2(next_key),
+            "account": account,
+            "initial": initial,
+            "boundary": boundary,
+            "successor": successor,
+        }
