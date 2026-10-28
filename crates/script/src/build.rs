@@ -28,9 +28,13 @@ use foundry_compilers::{
     info::ContractInfo,
     utils::source_files_iter,
 };
-use foundry_evm::{core::evm::FoundryEvmNetwork, traces::debug::ContractSources};
+use foundry_evm::{
+    core::evm::FoundryEvmNetwork,
+    traces::{CallTraceDecoder, debug::ContractSources},
+};
 use foundry_linking::Linker;
 use foundry_wallets::{MultiWalletOpts, wallet_browser::signer::BrowserSigner};
+use itertools::Itertools;
 use std::{
     path::{Path, PathBuf},
     str::FromStr,
@@ -369,45 +373,68 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 sequence.resolve_delegated_hash(attempt_id, hash, &transaction)?;
             }
             let progress = ScriptProgress::default();
+            // Every sequence is reconciled even after one fails, so a failing chain does not leave
+            // the receipts of later chains unrecorded.
+            let mut errors = Vec::new();
             for index in 0..sequence.sequences().len() {
-                let provider = ProviderBuilder::<FEN::Network>::from_config_with_url(
-                    &self.script_config.config,
-                    sequence.rpc_url(index),
-                )?
-                .build()?;
-                // A saved signed attempt whose response was lost before its hash was recorded is
-                // reconciled before requesting signers when its receipt shows it was mined.
-                for operation in 0..sequence.sequences()[index].transactions.len() {
-                    let deployment = &sequence.sequences()[index];
-                    if let Some(hash) = sequence.signed_payload(index, operation).map(|s| s.hash)
-                        && !deployment.pending.contains(&hash)
-                        && !deployment.reverted.contains(&hash)
-                        && !deployment.receipts.iter().any(|r| r.transaction_hash() == hash)
-                        && let Some(receipt) = provider.get_transaction_receipt(hash).await?
-                        && is_mined_receipt_for(&receipt, hash)
-                    {
-                        sequence.sequences_mut()[index].add_pending(operation, hash);
+                // Returns the result of waiting for receipts, if anything is pending.
+                let waited = async {
+                    let provider = ProviderBuilder::<FEN::Network>::from_config_with_url(
+                        &self.script_config.config,
+                        sequence.rpc_url(index),
+                    )?
+                    .build()?;
+                    // A saved signed attempt whose response was lost before its hash was recorded
+                    // is reconciled before requesting signers when its receipt shows it was mined.
+                    for operation in 0..sequence.sequences()[index].transactions.len() {
+                        let deployment = &sequence.sequences()[index];
+                        if let Some(hash) =
+                            sequence.signed_payload(index, operation).map(|s| s.hash)
+                            && !deployment.pending.contains(&hash)
+                            && !deployment.reverted.contains(&hash)
+                            && !deployment.receipts.iter().any(|r| r.transaction_hash() == hash)
+                            && let Some(receipt) = provider.get_transaction_receipt(hash).await?
+                            && is_mined_receipt_for(&receipt, hash)
+                        {
+                            sequence.sequences_mut()[index].add_pending(operation, hash);
+                        }
                     }
+                    if sequence.sequences()[index].pending.is_empty() {
+                        return Ok(None);
+                    }
+                    let (durable_hashes, replayable_hashes) = sequence.submission_hashes(index);
+                    let blocked = blocked_pending(sequence.sequences(), index);
+                    Ok::<_, eyre::Report>(Some(
+                        progress
+                            .wait_for_pending(
+                                index,
+                                &mut sequence.sequences_mut()[index],
+                                &provider,
+                                self.script_config.config.transaction_timeout,
+                                self.args.confirmations,
+                                (&durable_hashes, &replayable_hashes),
+                                &blocked,
+                            )
+                            .await,
+                    ))
                 }
-                if sequence.sequences()[index].pending.is_empty() {
-                    continue;
+                .await;
+                let result = match waited {
+                    Ok(Some(result)) => {
+                        sequence.save(true, false)?;
+                        result.and_then(|()| sequence.ensure_delegated_outcomes_known(index))
+                    }
+                    Ok(None) => Ok(()),
+                    Err(err) => Err(err),
+                };
+                if let Err(err) = result {
+                    errors.push(sequence.label_error(index, err));
                 }
-                let (durable_hashes, replayable_hashes) = sequence.submission_hashes(index);
-                let blocked = blocked_pending(sequence.sequences(), index);
-                let result = progress
-                    .wait_for_pending(
-                        index,
-                        &mut sequence.sequences_mut()[index],
-                        &provider,
-                        self.script_config.config.transaction_timeout,
-                        self.args.confirmations,
-                        (&durable_hashes, &replayable_hashes),
-                        &blocked,
-                    )
-                    .await;
-                sequence.save(true, false)?;
-                result?;
-                sequence.ensure_delegated_outcomes_known(index)?;
+            }
+            match errors.len() {
+                0 => {}
+                1 => return Err(errors.remove(0)),
+                _ => eyre::bail!("{}", errors.iter().format("\n")),
             }
         }
         for deployment in sequence.sequences() {
@@ -439,7 +466,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             }
         }
 
-        let (args, build_data, script_wallets, browser_wallet, script_config) =
+        let (args, build_data, script_wallets, browser_wallet, script_config, resume_script_error) =
             if self.args.unlocked {
                 (
                     self.args,
@@ -447,6 +474,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     self.script_wallets,
                     self.browser_wallet,
                     self.script_config,
+                    None,
                 )
             } else {
                 let remaining_transactions =
@@ -472,6 +500,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                         self.script_wallets,
                         self.browser_wallet,
                         self.script_config,
+                        None,
                     )
                 } else {
                     // IF we are missing required signers, execute script as we might need to
@@ -482,12 +511,25 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                         .update_tempo_session_sender(&state.args.wallets, state.args.evm.sender)
                         .await?;
                     let executed = state.link().await?.prepare_execution().await?.execute().await?;
+                    // A failed run may still have collected every signer, so broadcast decides
+                    // whether this error is fatal.
+                    let resume_script_error = (!executed.execution_result.success).then(|| {
+                        CallTraceDecoder::new()
+                            .revert_decoder
+                            .clone()
+                            .with_abis(executed.build_data.known_contracts.values().map(|c| &c.abi))
+                            .decode(
+                                &executed.execution_result.returned,
+                                executed.execution_result.exit_reason,
+                            )
+                    });
                     (
                         executed.args,
                         executed.build_data.build_data,
                         executed.script_wallets,
                         executed.browser_wallet,
                         executed.script_config,
+                        resume_script_error,
                     )
                 }
             };
@@ -509,6 +551,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             browser_wallet,
             build_data: linked_build_data,
             sequence,
+            resume_script_error,
         })
     }
 
