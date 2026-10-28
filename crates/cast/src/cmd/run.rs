@@ -823,7 +823,6 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
             &target,
             Transaction::kind(&self.tx),
             &replay,
-            None,
         )?;
         let trace_kind = self.trace_kind();
         trace!(tx_hash=?self.tx.tx_hash(), "completed execution");
@@ -953,12 +952,12 @@ impl PreparedRun<MonadEvmNetwork> {
         // The replay records each prefix transaction into the context, so it starts at the
         // beginning of the block; without a prefix, the target takes its own position.
         let position = if replay.is_empty() { target_index } else { 0 };
-        let result = self.executor.transact_with_block_replay(
+        let result = self.executor.transact_with_monad_block_replay(
             self.evm_env,
             &target,
             Transaction::kind(&self.tx),
             &replay,
-            Some(block_context.before_transaction(position)?),
+            block_context.before_transaction(position)?,
         )?;
         Ok(TraceResult::from_raw(result, self.trace_kind()))
     }
