@@ -37,7 +37,7 @@ use foundry_evm_core::{
     utils::tx_warm_addresses,
 };
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_networks::{NetworkConfigs, arbitrum};
+use foundry_evm_networks::arbitrum;
 use foundry_evm_traces::{CallTrace, SparsedTraceArena, TraceRequirements};
 use std::{
     mem,
@@ -83,10 +83,6 @@ pub struct InspectorStackBuilder<BLOCK: Clone> {
     /// In isolation mode all top-level calls are executed as a separate transaction in a separate
     /// EVM context, enabling more precise gas accounting and transaction state changes.
     pub enable_isolation: bool,
-    /// Configuration retained for Celo precompile support.
-    // TODO(celo-execution-owner): Replace this residual with concrete Celo precompile
-    // configuration. This is independent of the Monad lifecycle migration.
-    pub networks: NetworkConfigs,
     /// Concrete Tempo label inspector selected by the Tempo executor builder.
     tempo_labels: Option<Box<TempoLabels>>,
     /// Explicitly resolved additional cheatcode addresses.
@@ -111,7 +107,6 @@ impl<BLOCK: Clone> Default for InspectorStackBuilder<BLOCK> {
             print: None,
             chisel_state: None,
             enable_isolation: false,
-            networks: NetworkConfigs::default(),
             tempo_labels: None,
             extra_cheatcode_addresses: &[],
             wallets: None,
@@ -212,16 +207,6 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         self
     }
 
-    /// Sets networks when building an inspector stack directly.
-    ///
-    /// [`ExecutorBuilder::build`](crate::executors::ExecutorBuilder::build) overrides this with its
-    /// explicit network configuration so the executor, backend, and inspector remain in sync.
-    #[inline]
-    pub const fn networks(mut self, networks: NetworkConfigs) -> Self {
-        self.networks = networks;
-        self
-    }
-
     /// Installs the Tempo label inspector.
     #[inline]
     pub(crate) fn tempo_labels(mut self, inspector: TempoLabels) -> Self {
@@ -259,7 +244,6 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
             print,
             chisel_state,
             enable_isolation,
-            networks,
             tempo_labels,
             extra_cheatcode_addresses,
             wallets,
@@ -294,7 +278,6 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         stack.tracing_requirements(trace_requirements);
 
         stack.enable_isolation(enable_isolation);
-        stack.networks(networks);
         stack.inner.tempo_labels = tempo_labels;
         stack.set_extra_cheatcode_addresses(extra_cheatcode_addresses);
         stack.set_create2_deployer(create2_deployer);
@@ -447,7 +430,6 @@ pub struct InspectorStackInner {
     /// Whether to capture sancov trace-cmp operands for dictionary injection.
     pub sancov_trace_cmp: bool,
     pub enable_isolation: bool,
-    pub networks: NetworkConfigs,
     /// Additional addresses installed and recognized as cheatcode contracts.
     pub extra_cheatcode_addresses: &'static [Address],
     pub create2_deployer: Address,
@@ -820,12 +802,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     #[inline]
     pub const fn enable_isolation(&mut self, yes: bool) {
         self.inner.enable_isolation = yes;
-    }
-
-    /// Set networks with enabled features.
-    #[inline]
-    pub const fn networks(&mut self, networks: NetworkConfigs) {
-        self.inner.networks = networks;
     }
 
     /// Returns additional addresses installed and recognized as cheatcode contracts.

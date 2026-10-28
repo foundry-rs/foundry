@@ -138,12 +138,11 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         mut backend: Backend<FEN>,
         evm_env: EvmEnvFor<FEN>,
         tx: TransactionRequestFor<FEN>,
-        mut inspector: InspectorStack<FEN>,
+        inspector: InspectorStack<FEN>,
         networks: NetworkConfigs,
         gas_limit: u64,
         legacy_assertions: bool,
     ) -> Self {
-        inspector.networks(networks);
         backend.set_networks(networks);
         let extra_cheatcode_addresses = inspector.extra_cheatcode_addresses();
         backend.extend_persistent_accounts(extra_cheatcode_addresses.iter().copied());

@@ -113,11 +113,10 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
         tx: TransactionRequestFor<FEN>,
         db: Backend<FEN>,
         // TODO(monad-fen-lifecycle): Remove this argument after the backend's Monad fork-position
-        // migration and the inspector's separate Celo configuration cleanup are complete.
+        // migration and the Celo factory configuration cleanup are complete.
         networks: NetworkConfigs,
     ) -> Executor<FEN> {
         let Self { mut stack, gas_limit, spec, legacy_assertions, .. } = self;
-        stack.networks = networks;
         if stack.block.is_none() {
             stack.block = Some(evm_env.block);
         }
