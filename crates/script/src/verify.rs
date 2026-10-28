@@ -185,71 +185,62 @@ impl VerifyBundle {
         evm_version: EvmVersion,
     ) -> Option<VerifyArgs> {
         let init_code = data.get(create2_offset..)?;
-        for (artifact, contract) in self.known_contracts.iter() {
-            let Some(bytecode) = contract.bytecode() else { continue };
-            // If it's a CREATE2, the tx.data comes with a 32-byte salt in the beginning
-            // of the transaction
-            if init_code.starts_with(bytecode) {
-                let constructor_args = init_code[bytecode.len()..].to_vec();
+        let (artifact, contract) = self.known_contracts.find_by_creation_code_prefix(init_code)?;
+        let bytecode = contract.bytecode()?;
+        let constructor_args = init_code[bytecode.len()..].to_vec();
 
-                if artifact.source.extension().is_some_and(|e| e.to_str() == Some("vy")) {
-                    warn!("Skipping verification of Vyper contract: {}", artifact.name);
-                    return None;
-                }
-
-                // Strip artifact profile from contract name when creating contract info.
-                let contract = ContractInfo {
-                    path: Some(artifact.source.to_string_lossy().to_string()),
-                    name: artifact
-                        .name
-                        .strip_suffix(&format!(".{}", artifact.profile))
-                        .unwrap_or_else(|| &artifact.name)
-                        .to_string(),
-                };
-
-                // We strip the build metadata information, since it can lead to
-                // etherscan not identifying it correctly. eg:
-                // `v0.8.10+commit.fc410830.Linux.gcc` != `v0.8.10+commit.fc410830`
-                let version = Version::new(
-                    artifact.version.major,
-                    artifact.version.minor,
-                    artifact.version.patch,
-                );
-
-                let verify = VerifyArgs {
-                    address: contract_address,
-                    contract: Some(contract),
-                    compiler_version: Some(version.to_string()),
-                    constructor_args: Some(hex::encode(constructor_args)),
-                    constructor_args_path: None,
-                    no_auto_detect: false,
-                    use_solc: None,
-                    num_of_optimizations: self.num_of_optimizations,
-                    etherscan: self.etherscan.clone(),
-                    rpc: Default::default(),
-                    flatten: false,
-                    force: false,
-                    skip_is_verified_check: true,
-                    watch: true,
-                    print_submission_result_to_stdout: false,
-                    retry: self.retry,
-                    libraries: libraries.to_vec(),
-                    root: None,
-                    verifier: self.verifier.clone(),
-                    via_ir: self.via_ir,
-                    license_type: None,
-                    evm_version: Some(evm_version),
-                    show_standard_json_input: false,
-                    guess_constructor_args: false,
-                    compilation_profile: Some(artifact.profile.clone()),
-                    language: None,
-                    creation_transaction_hash: None,
-                };
-
-                return Some(verify);
-            }
+        if artifact.source.extension().is_some_and(|e| e.to_str() == Some("vy")) {
+            warn!("Skipping verification of Vyper contract: {}", artifact.name);
+            return None;
         }
-        None
+
+        // Strip artifact profile from contract name when creating contract info.
+        let contract = ContractInfo {
+            path: Some(artifact.source.to_string_lossy().to_string()),
+            name: artifact
+                .name
+                .strip_suffix(&format!(".{}", artifact.profile))
+                .unwrap_or_else(|| &artifact.name)
+                .to_string(),
+        };
+
+        // We strip the build metadata information, since it can lead to
+        // etherscan not identifying it correctly. eg:
+        // `v0.8.10+commit.fc410830.Linux.gcc` != `v0.8.10+commit.fc410830`
+        let version =
+            Version::new(artifact.version.major, artifact.version.minor, artifact.version.patch);
+
+        let verify = VerifyArgs {
+            address: contract_address,
+            contract: Some(contract),
+            compiler_version: Some(version.to_string()),
+            constructor_args: Some(hex::encode(constructor_args)),
+            constructor_args_path: None,
+            no_auto_detect: false,
+            use_solc: None,
+            num_of_optimizations: self.num_of_optimizations,
+            etherscan: self.etherscan.clone(),
+            rpc: Default::default(),
+            flatten: false,
+            force: false,
+            skip_is_verified_check: true,
+            watch: true,
+            print_submission_result_to_stdout: false,
+            retry: self.retry,
+            libraries: libraries.to_vec(),
+            root: None,
+            verifier: self.verifier.clone(),
+            via_ir: self.via_ir,
+            license_type: None,
+            evm_version: Some(evm_version),
+            show_standard_json_input: false,
+            guess_constructor_args: false,
+            compilation_profile: Some(artifact.profile.clone()),
+            language: None,
+            creation_transaction_hash: None,
+        };
+
+        Some(verify)
     }
 }
 

@@ -6266,6 +6266,7 @@ contract SaltedScript is Script {
         "salted broadcast must be recorded as CREATE2, got: {tx}"
     );
     assert_eq!(tx["contractName"], "Token");
+    assert_eq!(tx["exactArtifactMatch"], true);
     assert_eq!(tx["arguments"][0], "SaltedTok");
 }
 

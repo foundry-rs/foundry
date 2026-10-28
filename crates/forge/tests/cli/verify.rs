@@ -1127,3 +1127,133 @@ Error: Not all (0 / 2) contracts were verified; no local artifact matches the cr
 
 "#]]);
 }
+
+// Equal sender nonces on different chains must not make one deployment inherit the other's
+// artifact identity when deciding whether verification is required.
+#[forgetest_init]
+async fn script_verify_fork_same_address_different_artifacts(prj: _, cmd: _) {
+    prj.add_source("Alpha.sol", "contract Alpha { uint256 public x = 1; }");
+    prj.add_source("Beta.sol", "contract Beta { uint256 public y = 2; }");
+    let (_api1, handle1) = spawn(NodeConfig::test()).await;
+    let (_api2, handle2) = spawn(NodeConfig::test().with_chain_id(Some(31338u64))).await;
+    let wallet = handle1.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+    prj.add_script(
+        "Deploy.s.sol",
+        &r#"
+import "forge-std/Script.sol";
+import {Alpha} from "../src/Alpha.sol";
+import {Beta} from "../src/Beta.sol";
+contract Deploy is Script {
+    function run() external {
+        vm.createSelectFork("<RPC1>");
+        vm.startBroadcast();
+        address alpha = address(new Alpha());
+        vm.stopBroadcast();
+        vm.createSelectFork("<RPC2>");
+        vm.startBroadcast();
+        address beta = address(new Beta());
+        vm.stopBroadcast();
+        require(alpha == beta, "deployment addresses differ");
+    }
+}
+"#
+        .replace("<RPC1>", &handle1.http_endpoint())
+        .replace("<RPC2>", &handle2.http_endpoint()),
+    );
+    let script = ["script", "script/Deploy.s.sol:Deploy", "--broadcast", "--private-key", &pk];
+    cmd.forge_fuse().args(script).assert_success();
+
+    let (verifier_url, _, _server) = spawn_full_mock_verifier().await;
+    let resume = [
+        "--resume",
+        "--multi",
+        "--verify",
+        "--verifier",
+        "custom",
+        "--verifier-url",
+        verifier_url.as_str(),
+        "--verifier-api-key",
+        "VALID_KEY",
+    ];
+    // Both deployments can be verified against the original artifacts.
+    cmd.forge_fuse().args(script).args(resume).assert_success();
+    prj.add_source("Beta.sol", "contract Beta { uint256 public y = 3; }");
+    cmd.forge_fuse().args(script).args(resume).assert_failure().stderr_eq(str![[r#"
+...
+Error: Not all (0 / 1) contracts were verified; no local artifact matches the creation code of Beta at 0x5FbDB2315678afecb367f032d93F642f64180aa3!
+
+"#]]);
+}
+
+// The EVM permits ignored trailing bytes even without an ABI constructor. Such input must use
+// the same artifact-prefix matching rule when recording deployments and verifying them.
+#[forgetest_init]
+async fn script_verify_nested_creation_with_trailing_data(prj: _, cmd: _) {
+    prj.add_source("Child.sol", "contract Child { uint256 public x = 1; }");
+    prj.add_source(
+        "Factory.sol",
+        r#"
+contract Factory {
+    function deploy(bytes memory code) external {
+        assembly { pop(create(0, add(code, 0x20), mload(code))) }
+    }
+}
+"#,
+    );
+    prj.add_script(
+        "Deploy.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Child} from "../src/Child.sol";
+import {Factory} from "../src/Factory.sol";
+contract Deploy is Script {
+    function run() external {
+        bytes memory code = bytes.concat(type(Child).creationCode, new bytes(1024));
+        vm.startBroadcast();
+        Factory factory = new Factory();
+        factory.deploy(code);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+    let rpc = handle.http_endpoint();
+    let script = [
+        "script",
+        "script/Deploy.s.sol:Deploy",
+        "--rpc-url",
+        rpc.as_str(),
+        "--broadcast",
+        "--private-key",
+        &pk,
+    ];
+    cmd.forge_fuse().args(script).assert_success();
+    let sequence: ScriptSequence<Ethereum> = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/Deploy.s.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    assert_eq!(sequence.transactions[1].additional_contracts.len(), 1);
+
+    let (verifier_url, _, _server) = spawn_full_mock_verifier().await;
+    let resume = [
+        "--resume",
+        "--verify",
+        "--verifier",
+        "custom",
+        "--verifier-url",
+        verifier_url.as_str(),
+        "--verifier-api-key",
+        "VALID_KEY",
+    ];
+    cmd.forge_fuse().args(script).args(resume).assert_success();
+    prj.add_source("Child.sol", "contract Child { uint256 public x = 2; }");
+    cmd.forge_fuse().args(script).args(resume).assert_failure().stderr_eq(str![[r#"
+...
+Error: Not all (1 / 2) contracts were verified; no local artifact matches the creation code of Child at 0xa16E02E87b7454126E5E10d957A927A7F5B5d2be!
+
+"#]]);
+}

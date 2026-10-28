@@ -27,7 +27,6 @@ use foundry_common::{
     ContractData, ContractsByArtifact, provider::fee::resolve_broadcast_eip1559_fees, shell,
     tempo::known_fee_token_symbol,
 };
-use foundry_compilers::ArtifactId;
 use foundry_evm::{
     core::{FoundryBlock, evm::FoundryEvmNetwork},
     traces::{
@@ -160,6 +159,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                 if to.is_some() {
                     builder.set_call(
                         &address_to_abi,
+                        &self.build_data.known_contracts,
                         decoder,
                         self.script_config.evm_opts.create2_deployer,
                     )?;
@@ -167,7 +167,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                     builder.set_create(
                         false,
                         tx.contract_address.unwrap_or_else(|| sender.create(nonce)),
-                        &address_to_abi,
+                        &self.build_data.known_contracts,
                     )?;
                 }
 
@@ -313,17 +313,17 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         Ok(final_txs)
     }
 
-    /// Build mapping from contract address to its artifact ID and contract data.
-    fn build_address_to_abi_map(&self) -> BTreeMap<Address, (&ArtifactId, &ContractData)> {
+    /// Build mapping from contract address to its ABI, code and contract name.
+    fn build_address_to_abi_map(&self) -> BTreeMap<Address, &ContractData> {
         self.execution_artifacts
             .decoder
             .contracts
             .iter()
             .filter_map(move |(addr, contract_id)| {
-                if let Ok(Some(artifact)) =
+                if let Ok(Some((_, data))) =
                     self.build_data.known_contracts.find_by_name_or_identifier(contract_id)
                 {
-                    return Some((*addr, artifact));
+                    return Some((*addr, data));
                 }
                 None
             })
