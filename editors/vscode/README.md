@@ -2,14 +2,14 @@
 
 Solidity support for [VS Code](https://code.visualstudio.com/), powered by
 Foundry's `forge lsp`: diagnostics, hover, go to definition, references,
-CodeLens and formatting with `forge fmt`. It needs only a recent
-[Foundry](https://getfoundry.sh); no standalone Solar installation is used.
+CodeLens and formatting with `forge fmt`. It needs a recent
+[Foundry](https://getfoundry.sh).
 
 ## Installation
 
-Install `paradigm.forge-lsp` from the
-[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=paradigm.forge-lsp)
-or [Open VSX](https://open-vsx.org/extension/paradigm/forge-lsp).
+Install `paradigm.forge-lsp` from
+[Open VSX](https://open-vsx.org/extension/paradigm/forge-lsp). We are publishing
+it to the Visual Studio Marketplace; until then, install it from source.
 
 To try the extension without installing it, run this in your project:
 
@@ -23,7 +23,7 @@ separate profile that leaves your normal VS Code settings untouched. Run
 
 ### From source
 
-You need [Node.js](https://nodejs.org) and Git:
+You need [Node.js](https://nodejs.org) 20 or newer and Git:
 
 ```sh
 git clone --depth 1 https://github.com/foundry-rs/foundry
@@ -32,6 +32,9 @@ npm ci
 npm run package
 code --install-extension bundle/forge.vsix
 ```
+
+If `code` is not on your `PATH`, run **Extensions: Install from VSIX...** in
+VS Code and select `bundle/forge.vsix`.
 
 ## Configuration
 
@@ -44,8 +47,8 @@ path in your settings:
 }
 ```
 
-Relative paths resolve from the first workspace folder. The same Forge serves
-the language server, formatting and background checks, and inherits
+Relative paths resolve from the first workspace folder. One Forge runs the
+language server, formatting and background checks, and inherits
 `FOUNDRY_PROFILE` from the environment.
 
 CodeLens shows selectors, references and inheritance above declarations. Turn
@@ -60,8 +63,8 @@ set the `Foundry Solidity` output channel's log level to `Trace`;
 the unsaved buffer, using the project's `foundry.toml`.
 
 `solarLsp.formatOnSave` formats on save and defaults to `true`. It yields to
-VS Code's `editor.formatOnSave` when that is enabled, so files are formatted
-only once. To turn off formatting on save, disable both.
+VS Code's `editor.formatOnSave` when that is enabled, so VS Code formats each
+file once. To turn off formatting on save, disable both.
 
 ## Migration from Solar
 
@@ -72,5 +75,6 @@ and `solar.*` commands keep their names.
 
 ## License
 
-Dual licensed under MIT or Apache-2.0. See [NOTICE.md](NOTICE.md) for grammar
+Dual licensed under MIT or Apache-2.0. See
+[NOTICE.md](https://github.com/foundry-rs/foundry/blob/master/editors/vscode/NOTICE.md) for grammar
 attribution.

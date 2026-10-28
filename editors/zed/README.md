@@ -2,13 +2,12 @@
 
 Solidity support for [Zed](https://zed.dev), powered by Foundry's `forge lsp`:
 diagnostics, hover, go to definition, references and formatting with
-`forge fmt`. It needs only a recent [Foundry](https://getfoundry.sh); no
-standalone Solar installation is used.
+`forge fmt`.
 
 ## Installation
 
-Open the extensions page with `zed: extensions` and install
-**Foundry Solidity** (`forge-lsp`).
+We are publishing the extension to Zed's registry as **Foundry Solidity**
+(`forge-lsp`). Until then, install it from source.
 
 ### From source
 
@@ -25,8 +24,10 @@ Then run `zed: install dev extension` from the command palette and select the
 
 The extension runs the `forge` on your worktree's `PATH`, so version managers
 can pick each project's Forge. If there is none, it downloads the latest stable
-Forge and checks for updates once per session. Install Foundry yourself to keep
-the language server and formatter on the same version as your builds.
+Forge and checks for updates once per session. Prebuilt Forge exists for macOS
+and Linux on x86-64 and ARM64, and for Windows on x86-64; elsewhere, install
+[Foundry](https://getfoundry.sh) yourself. Installing it also keeps the language
+server and formatter on the same version as your builds.
 
 To use another Forge, set its absolute path in your user or project settings:
 
@@ -42,10 +43,10 @@ To use another Forge, set its absolute path in your user or project settings:
 }
 ```
 
-The same Forge serves the language server, formatting and background checks.
+One Forge runs the language server, formatting and background checks.
 It inherits the worktree environment, including `FOUNDRY_PROFILE`; set
 `lsp.solar.binary.env` to override variables. If the server fails to start,
-check `dev: open language server logs`.
+check the language server status and `zed: open log`.
 
 ## Formatting
 
@@ -77,8 +78,9 @@ with these exceptions:
   `lsp.solar.settings.forgePath` instead.
 - Move `lsp.solar.initialization_options.forgePath` to
   `lsp.solar.settings.forgePath`.
-- Remove any external `forge fmt` formatter from your settings, or files will
-  be formatted twice.
+- Remove any external `forge fmt` formatter from your settings. On its own it
+  replaces the language server's formatter, and listed with it, it formats
+  each file twice.
 
 ## License
 

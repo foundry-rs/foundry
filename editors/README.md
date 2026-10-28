@@ -119,8 +119,7 @@ ID is `forge-lsp`. In particular, `solar.copySelector`, `solar.showReferences`
 and `solar.showTypeHierarchy` remain registered by the VS Code client.
 
 Executable settings require explicit migration; the old Solar path is never
-silently treated as Forge. See each client's README for exact settings and
-error handling.
+silently treated as Forge. See each client's README for the migration steps.
 
 ## Remaining work outside Foundry
 
