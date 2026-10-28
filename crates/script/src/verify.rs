@@ -16,6 +16,7 @@ use foundry_common::{ContractsByArtifact, FoundryReceiptResponse};
 use foundry_compilers::{Project, artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Chain, Config};
 use foundry_evm::core::evm::FoundryEvmNetwork;
+use itertools::Itertools;
 use semver::Version;
 
 mod external;
@@ -47,11 +48,26 @@ impl<FEN: FoundryEvmNetwork> BroadcastedState<FEN> {
             args.verify_external,
         );
 
-        for sequence in sequence.sequences_mut() {
-            verify_contracts::<FEN>(sequence, &script_config.config, verify.clone()).await?;
+        // Every sequence is verified even after one fails, so a failing chain does not leave the
+        // contracts of later chains unsubmitted.
+        let mut errors = Vec::new();
+        for index in 0..sequence.sequences().len() {
+            let result = verify_contracts::<FEN>(
+                &mut sequence.sequences_mut()[index],
+                &script_config.config,
+                verify.clone(),
+            )
+            .await;
+            if let Err(err) = result {
+                errors.push(sequence.label_error(index, err));
+            }
         }
 
-        Ok(())
+        match errors.len() {
+            0 => Ok(()),
+            1 => Err(errors.remove(0)),
+            _ => Err(eyre!("{}", errors.iter().format("\n"))),
+        }
     }
 }
 
@@ -639,12 +655,20 @@ fn same_endpoint(left: &str, right: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        build::{BuildData, ScriptPredeployLibraries},
+        multi_sequence::MultiChainSequence,
+        sequence::SequenceData,
+    };
+    use alloy_network::Ethereum;
     use alloy_primitives::Bytes;
+    use clap::Parser;
     use forge_verify::provider::VerificationProviderType;
     use foundry_compilers::{
         ArtifactId,
         artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode},
     };
+    use foundry_evm::{core::evm::EthEvmNetwork, executors::ExecutorBuilder};
 
     fn bundle(config: &Config, verifier: VerifierArgs) -> VerifyBundle {
         let project = config.project().unwrap();
@@ -847,5 +871,74 @@ mod tests {
         let concise = concise(&message);
         assert!(!concise.chars().any(char::is_control));
         assert!(concise.chars().count() <= 161);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn multichain_verification_collects_setup_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = Config::with_root(dir.path()).sanitized();
+        // An explicit alias with neither a URL nor a known chain fails during chain setup,
+        // before any contract verification jobs can be collected.
+        config.etherscan_api_key = Some("broken".into());
+        config.etherscan = serde_json::from_str(r#"{"broken":{"key":"KEY"}}"#).unwrap();
+        let target = ArtifactId {
+            path: "out/Script.sol/Script.json".into(),
+            name: "Script".into(),
+            source: "script/Script.sol".into(),
+            version: Version::new(0, 8, 30),
+            build_id: String::new(),
+            profile: "default".into(),
+        };
+        let sequence = MultiChainSequence::new(
+            [1111, 2222]
+                .into_iter()
+                .map(|chain| ScriptSequence::<Ethereum> { chain, ..Default::default() })
+                .collect(),
+            "run()",
+            &target,
+            &config,
+            false,
+        )
+        .unwrap();
+        let sequence =
+            ScriptSequenceKind::create(SequenceData::Multi(sequence), false, None).unwrap();
+        let build_data = LinkedBuildData::new(
+            Default::default(),
+            ScriptPredeployLibraries::Default { onchain: Vec::new(), local: Vec::new() },
+            BuildData {
+                project_root: dir.path().into(),
+                output: config.project().unwrap().compile().unwrap(),
+                target,
+            },
+        )
+        .unwrap();
+        let script_config = ScriptConfig::new(
+            config,
+            Default::default(),
+            ExecutorBuilder::<EthEvmNetwork>::new(),
+            false,
+            Default::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        let state = BroadcastedState {
+            args: ScriptArgs::parse_from([
+                "script",
+                "script/Script.sol",
+                "--verifier",
+                "etherscan",
+            ]),
+            script_config,
+            build_data,
+            sequence,
+        };
+
+        // Both labels must be present: returning the first setup error would hide the later chain.
+        assert_eq!(
+            state.verify().await.unwrap_err().to_string(),
+            "chain 1111: At least one of `url` or `chain` must be present for Etherscan config with unknown alias `broken`\n\
+             chain 2222: At least one of `url` or `chain` must be present for Etherscan config with unknown alias `broken`"
+        );
     }
 }
