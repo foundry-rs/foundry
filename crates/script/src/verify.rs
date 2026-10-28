@@ -16,6 +16,7 @@ use foundry_common::{ContractsByArtifact, FoundryReceiptResponse};
 use foundry_compilers::{Project, artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Chain, Config};
 use foundry_evm::core::evm::FoundryEvmNetwork;
+use itertools::Itertools;
 use semver::Version;
 
 mod external;
@@ -47,11 +48,26 @@ impl<FEN: FoundryEvmNetwork> BroadcastedState<FEN> {
             args.verify_external,
         );
 
-        for sequence in sequence.sequences_mut() {
-            verify_contracts::<FEN>(sequence, &script_config.config, verify.clone()).await?;
+        // Every sequence is verified even after one fails, so a failing chain does not leave the
+        // contracts of later chains unsubmitted.
+        let mut errors = Vec::new();
+        for index in 0..sequence.sequences().len() {
+            let result = verify_contracts::<FEN>(
+                &mut sequence.sequences_mut()[index],
+                &script_config.config,
+                verify.clone(),
+            )
+            .await;
+            if let Err(err) = result {
+                errors.push(sequence.label_error(index, err));
+            }
         }
 
-        Ok(())
+        match errors.len() {
+            0 => Ok(()),
+            1 => Err(errors.remove(0)),
+            _ => Err(eyre!("{}", errors.iter().format("\n"))),
+        }
     }
 }
 

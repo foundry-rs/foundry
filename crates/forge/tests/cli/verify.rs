@@ -978,3 +978,105 @@ async fn create_preflight_warns_on_rate_limit(prj: _, cmd: _) {
         "preflight should warn on rate limit, got: {stderr}"
     );
 }
+
+// A chain whose verification fails does not stop the contracts of later chains from being
+// submitted, and the error names the failing chain.
+#[forgetest_init]
+async fn script_verifies_every_chain_after_a_failure(prj: _, cmd: _) {
+    prj.add_source(
+        "Contracts.sol",
+        r#"
+contract Alpha { function id() external pure returns (uint256) { return 1111; } }
+contract Beta { function id() external pure returns (uint256) { return 2222; } }
+"#,
+    );
+    let script = prj.add_script(
+        "MultiVerify.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Alpha, Beta} from "../src/Contracts.sol";
+
+contract MultiVerify is Script {
+    function run(string memory rpc1, string memory rpc2) external {
+        vm.createSelectFork(rpc1);
+        vm.startBroadcast();
+        new Alpha();
+        vm.stopBroadcast();
+
+        vm.createSelectFork(rpc2);
+        vm.startBroadcast();
+        new Beta();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api1, handle1) = spawn(NodeConfig::test().with_chain_id(Some(1111u64))).await;
+    let (_api2, handle2) = spawn(NodeConfig::test().with_chain_id(Some(2222u64))).await;
+
+    // Records every submitted contract and rejects only `Alpha`.
+    let submissions = Arc::new(Mutex::new(Vec::new()));
+    let state = submissions.clone();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let verifier_url = format!("http://{}", listener.local_addr().unwrap());
+    let app = Router::new().fallback(move |uri: axum::http::Uri, body: String| {
+        let state = state.clone();
+        async move {
+            let encoded = if body.is_empty() { uri.query().unwrap_or_default() } else { &body };
+            let form = url::form_urlencoded::parse(encoded.as_bytes())
+                .into_owned()
+                .collect::<HashMap<_, _>>();
+            match form.get("action").map(String::as_str) {
+                Some("verifysourcecode") => {
+                    let name = form["contractname"].clone();
+                    let failed = name.ends_with(":Alpha");
+                    state.lock().unwrap().push(name);
+                    if failed {
+                        r#"{"status":"0","message":"NOTOK","result":"mock failure"}"#
+                    } else {
+                        r#"{"status":"1","message":"OK","result":"guid"}"#
+                    }
+                }
+                Some("checkverifystatus") => {
+                    r#"{"status":"1","message":"OK","result":"Pass - Verified"}"#
+                }
+                _ => r#"{"status":"0","message":"NOTOK","result":"Contract source code not verified"}"#,
+            }
+        }
+    });
+    let _server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    cmd.forge_fuse().args([
+        "script",
+        script.to_str().unwrap(),
+        "--sig",
+        "run(string,string)",
+        &handle1.http_endpoint(),
+        &handle2.http_endpoint(),
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+        "--verify",
+        "--verifier",
+        "custom",
+        "--verifier-url",
+        &verifier_url,
+        "--verifier-api-key",
+        "KEY",
+        "--retries",
+        "1",
+        "--delay",
+        "0",
+    ]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+...
+Error: chain 1111: Not all (0 / 1) contracts were verified!
+
+"#]]);
+
+    // `--retries 1` submits `Alpha` twice before chain 2222 is verified.
+    assert_eq!(
+        *submissions.lock().unwrap(),
+        ["src/Contracts.sol:Alpha", "src/Contracts.sol:Alpha", "src/Contracts.sol:Beta"]
+    );
+}
