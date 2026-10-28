@@ -68,10 +68,11 @@ fn properties_args(prj: &TestProject, script: &str) -> Vec<String> {
 }
 
 /// Writes the verifier script and returns the arguments that select it. The script starts in the
-/// verifier's workspace and appends a line to `verifier-runs` in the project for each run.
+/// verifier's workspace and appends a line to `cache/verifier-runs` for each run. Forge does not
+/// watch the cache for changes.
 fn verifier_args(prj: &TestProject, script: &str) -> Vec<String> {
     let verifier = prj.root().join("verifier.sh");
-    let runs = prj.root().join("verifier-runs");
+    let runs = prj.root().join("cache/verifier-runs");
     let prelude =
         format!("#!/bin/sh\nset -eu\n[ \"$1\" = --stub ]\necho run >> {}\n", runs.display());
     fs::write(&verifier, format!("{prelude}{script}")).unwrap();
@@ -250,7 +251,7 @@ library Unused {}
 SOL
 "#,
     );
-    cmd.args(args).args(["--agents", "1", "--target", "src/Fee.sol"]).assert_success().stdout_eq(
+    cmd.args(&args).args(["--agents", "1", "--target", "src/Fee.sol"]).assert_success().stdout_eq(
         str![[r#"
 added 2 generated test file(s):
   test/generated/agent-1/Helper.sol
@@ -261,15 +262,35 @@ added 2 generated test file(s):
 
     assert!(!prj.root().join("test/generated/agent-1/Unused.sol").exists());
     cmd.forge_fuse().args(["test", "--match-contract", "PropertyTest"]).assert_success();
+
+    // On a later run, a helper that the project has with other content holds back every kept
+    // file of the agent, so the kept test never compiles against the earlier helper.
+    let agent = prj.root().join("agent.sh");
+    let script = fs::read_to_string(&agent).unwrap().replace("amount / 100", "amount * 1 / 100");
+    fs::write(&agent, script).unwrap();
+    cmd.forge_fuse().args(&args).args(["--agents", "1", "--target", "src/Fee.sol"]);
+    cmd.assert_success().stdout_eq(str![[r#"
+2 generated test file(s) did not compile or were not allowed: see cache/properties/report.json
+no generated test file was kept
+
+"#]]);
+    assert_data_eq!(
+        rejected(&prj),
+        str![[r#"
+["test/generated/agent-1/Helper.sol","test/generated/agent-1/Property.t.sol"] "test/generated/agent-1/Helper.sol exists in the project with other content"
+"#]]
+    );
 }
 
 // Generated tests run outside the agent's sandbox, so `vm.ffi` fails in Forge's copies of the
 // project unless the user passes `--allow-ffi`, and a generated test cannot turn on `ffi` or widen
-// `fs_permissions` in inline config.
+// `fs_permissions` in inline config, in any form that Foundry reads.
 #[forgetest_init]
 fn properties_turns_off_ffi_unless_allowed(prj: _, cmd: _) {
     prj.update_config(|config| config.ffi = true);
-    let marker = prj.root().join("ffi-ran");
+    // Outside the project: a project file that changes during the run fails it.
+    let marker_dir = tempfile::tempdir().unwrap();
+    let marker = marker_dir.path().join("ffi-ran");
     let args = properties_args(
         &prj,
         &format!(
@@ -296,7 +317,7 @@ SOL
 cat > "$out/InlineFs.t.sol" <<'SOL'
 pragma solidity ^0.8.20;
 contract InlineFsTest {{
-    /// forge-config: default.fs_permissions = [{{ access = "read-write", path = "/" }}]
+    /// forge-config: default.fs-permissions = [{{ access = "read-write", path = "/" }}]
     function testWrite() public pure {{}}
 }}
 SOL
@@ -305,19 +326,25 @@ SOL
         ),
     );
     cmd.args(&args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
-2 generated test file(s) did not compile or were not allowed: see cache/properties/report.json
 no generated test file was kept
 
 "#]]).stderr_eq(str![[r#"
-Warning: 1 failing test(s) used a cheatcode that Forge blocks (ffi, environment, or network), so they are not possible bugs: see cache/properties/report.json
+Warning: 3 failing test(s) used something that Forge blocks (ffi, environment, network, or inline config), so they are not possible bugs: see cache/properties/report.json
 
 "#]]);
     assert!(!marker.exists());
+    let blocked = report(&prj)["blocked"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|failure| format!("{} {}", failure["test"], failure["reason"]))
+        .collect::<Vec<_>>();
     assert_data_eq!(
-        rejected(&prj),
+        blocked.join("\n"),
         str![[r#"
-["test/generated/agent-1/InlineFfi.t.sol"] "sets ffi in inline config"
-["test/generated/agent-1/InlineFs.t.sol"] "sets fs_permissions in inline config"
+"FfiTest::testFfi" "seed 24301: vm.ffi: FFI is disabled; add the `--ffi` flag to allow tests to call external commands; seed 12648430: vm.ffi: FFI is disabled; add the `--ffi` flag to allow tests to call external commands"
+"InlineFfiTest::testFfi" "seed 24301: inline config cannot change `ffi` in generated tests; seed 12648430: inline config cannot change `ffi` in generated tests"
+"InlineFsTest::testWrite" "seed 24301: inline config cannot change `fs_permissions` in generated tests; seed 12648430: inline config cannot change `fs_permissions` in generated tests"
 "#]]
     );
 
@@ -354,7 +381,7 @@ SOL
 no generated test file was kept
 
 "#]]).stderr_eq(str![[r#"
-Warning: 4 failing test(s) used a cheatcode that Forge blocks (ffi, environment, or network), so they are not possible bugs: see cache/properties/report.json
+Warning: 4 failing test(s) used something that Forge blocks (ffi, environment, network, or inline config), so they are not possible bugs: see cache/properties/report.json
 
 "#]]);
 
@@ -512,7 +539,8 @@ added 1 generated test file(s):
 "#]]);
 }
 
-// A generated file must not leave the project through a symlinked directory.
+// A generated file must not leave the project through a symlinked directory. The agent's files
+// are held back, and the run still writes its report.
 #[forgetest_init]
 fn properties_rejects_symlinked_generated_directory(prj: _, cmd: _) {
     prj.add_source("Fee.sol", FEE);
@@ -524,11 +552,18 @@ fn properties_rejects_symlinked_generated_directory(prj: _, cmd: _) {
     fs::create_dir_all(failures.parent().unwrap()).unwrap();
     fs::write(&failures, r#"{"version":1,"failures":[]}"#).unwrap();
     let args = properties_args(&prj, FEE_SPEC);
-    cmd.args(args).args(["--agents", "1"]).assert_failure().stderr_eq(str![[r#"
-Error: generated test path test/generated/agent-1/FeeSpec.t.sol escapes project root [..]
+    cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
+1 generated test file(s) did not compile or were not allowed: see cache/properties/report.json
+no generated test file was kept
 
 "#]]);
 
+    assert_data_eq!(
+        rejected(&prj),
+        str![[r#"
+["test/generated/agent-1/FeeSpec.t.sol"] "generated test path test/generated/agent-1/FeeSpec.t.sol escapes project root [..]"
+"#]]
+    );
     assert!(!outside.path().join("FeeSpec.t.sol").exists());
     assert_eq!(fs::read_to_string(&failures).unwrap(), r#"{"version":1,"failures":[]}"#);
 }
@@ -661,17 +696,19 @@ possible bug (1/1 agents): FeeInvariantTest::invariant_totalStaysZero
 possible bug (1/1 agents): HandlerInvariantTest::invariant_one
   agent 1: HandlerInvariantTest::invariant_one (seed 24301: handler test/generated/agent-1/Handler.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..]; seed 12648430: handler test/generated/agent-1/Handler.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..])
     file: cache/properties/agent-1/tests/Handler.t.sol
-2 generated test file(s) did not compile or were not allowed: see cache/properties/report.json
+1 generated test file(s) did not compile or were not allowed: see cache/properties/report.json
 added 1 generated test file(s):
   test/generated/agent-1/FeeCheck.t.sol
+
+"#]]).stderr_eq(str![[r#"
+Warning: 1 failing test(s) used something that Forge blocks (ffi, environment, network, or inline config), so they are not possible bugs: see cache/properties/report.json
 
 "#]]);
     assert_data_eq!(
         rejected(&prj),
-        str![[r#"
-["test/generated/agent-1/Seeded.t.sol"] "sets a seed in inline config"
-["test/generated/agent-1/Broken.t.sol"] "Error: Compiler run failed:/nError (7576): Undeclared identifier./n --> test/generated/agent-1/Broken.t.sol:4:9:/n  |/n4 |         missing();/n  |         ^^^^^^^"
-"#]]
+        str![[
+            r#"["test/generated/agent-1/Broken.t.sol"] "Error: Compiler run failed:/nError (7576): Undeclared identifier./n --> test/generated/agent-1/Broken.t.sol:4:9:/n  |/n4 |         missing();/n  |         ^^^^^^^""#
+        ]]
     );
 
     // The resolved workspace test path must win over an absolute inherited environment path.
@@ -959,42 +996,51 @@ skipped 1 generated test file(s) that repeat a file of another agent or the proj
 "#]]);
 }
 
-// Agents work in copies whose dependency entries link to the project, so Forge reports project
-// files that change while the agents run. A failing test without a comment has its name as the
-// claim.
+// Agents work in copies whose dependency entries link to the project, so a project file that
+// changes while the agents run, also behind a linked package as pnpm makes them, fails the run and
+// Forge keeps no test. A failing test without a comment has its name as the claim.
 #[forgetest_init]
 fn properties_reports_changed_files(prj: _, cmd: _) {
     prj.add_source("Fee.sol", FEE);
+    let store = tempfile::tempdir().unwrap();
+    fs::write(store.path().join("notes.txt"), "original").unwrap();
+    fs::create_dir_all(prj.root().join("node_modules")).unwrap();
+    std::os::unix::fs::symlink(store.path(), prj.root().join("node_modules/pkg")).unwrap();
     let args = properties_args(
         &prj,
-        r#"
-echo changed > lib/forge-std/notes.txt
+        &format!(
+            r#"
+echo changed > node_modules/pkg/notes.txt
+{FEE_SPEC}
 cat > "$out/FeeCap.t.sol" <<'SOL'
 pragma solidity ^0.8.20;
-import {Fee} from "../../../src/Fee.sol";
-contract FeeCapTest {
-    function testDocumentedCap() public pure {
+import {{Fee}} from "../../../src/Fee.sol";
+contract FeeCapTest {{
+    function testDocumentedCap() public pure {{
         require(Fee.fee(1e30) == 100 ether);
-    }
-}
+    }}
+}}
 SOL
-"#,
+"#
+        ),
     );
-    cmd.args(args).args(["--agents", "1", "--target", "src/Fee.sol"]).assert_success().stdout_eq(
+    cmd.args(args).args(["--agents", "1", "--target", "src/Fee.sol"]).assert_failure().stdout_eq(
         str![[r#"
 possible bug (1/1 agents): FeeCapTest::testDocumentedCap
   agent 1: FeeCapTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     file: cache/properties/agent-1/tests/FeeCap.t.sol
-no generated test file was kept
 
 "#]],
     )
     .stderr_eq(str![[r#"
-Warning: 1 project file(s) changed while the agents ran, so the run is tainted: see cache/properties/report.json
+Error: 1 project file(s) changed while the agents ran, so Forge kept no generated test: see cache/properties/report.json
 
 "#]]);
 
-    assert_eq!(report(&prj)["tainted"].to_string(), r#"["lib/forge-std/notes.txt"]"#);
+    let report = report(&prj);
+    assert_eq!(report["tainted"].to_string(), r#"["node_modules/pkg/notes.txt"]"#);
+    assert_eq!(report["kept"].to_string(), "[]");
+    assert!(!prj.root().join("test/generated/agent-1/FeeSpec.t.sol").exists());
 }
 
 // A Soldeer project has `soldeer.lock` and its dependencies under `dependencies/`, which the
@@ -1281,7 +1327,7 @@ no generated test file was kept
         ]]
     );
     // One run for each group above the quorum.
-    let runs = fs::read_to_string(prj.root().join("verifier-runs")).unwrap();
+    let runs = fs::read_to_string(prj.root().join("cache/verifier-runs")).unwrap();
     assert_eq!(runs.lines().count(), 4);
     assert!(prj.root().join("cache/properties/verify-1/prompt.md").exists());
 }

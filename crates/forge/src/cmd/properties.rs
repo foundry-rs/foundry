@@ -12,6 +12,7 @@ use crate::{
 use alloy_primitives::{U256, keccak256};
 use clap::Parser;
 use eyre::{Context, Result, ensure, eyre};
+use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
 use foundry_common::{fs::canonicalize_path, sh_println, sh_warn};
 use foundry_compilers::{
     Graph,
@@ -23,7 +24,7 @@ use foundry_compilers::{
     },
     utils::source_files_iter,
 };
-use foundry_config::{Config, DenyLevel};
+use foundry_config::{Config, DenyLevel, impl_figment_convert};
 use foundry_evm::fuzz::CounterExample;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -34,6 +35,7 @@ use std::{
     fs,
     io::Write,
     ops::Add,
+    panic::{self, AssertUnwindSafe},
     path::{Path, PathBuf},
     process::{Command, ExitStatus, Output, Stdio},
     sync::{
@@ -62,6 +64,8 @@ const DEFAULT_QUORUM: usize = 2;
 /// How often Forge checks whether an agent session with a timeout has exited. Sessions take
 /// minutes, so this adds no noticeable delay.
 const SESSION_POLL: Duration = Duration::from_millis(100);
+/// How long one Forge build or test run in a workspace can take.
+const RUN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// Agent settings and instruction files that a workspace leaves out at every level. Settings can
 /// hold hooks that run commands on the host. `CLAUDE.md` and `AGENTS.md` are project docs, but
 /// they steer the agents that work in the copy, so a user who wants them passes them with
@@ -105,11 +109,11 @@ pub(crate) const SELECT_ALL_TESTS: [&str; 10] = [
 /// file, and the tests of the group.
 const VERIFY_PROMPT: &str = include_str!("properties/verify_prompt.md");
 
-/// The errors of cheatcodes that Forge blocks in its workspaces: `vm.ffi` without `--allow-ffi`,
-/// network cheatcodes without `--allow-network`, and env cheatcodes, which see only a few
-/// variables.
-static BLOCKED_CHEATCODE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"FFI is disabled|network access is disabled|environment variable "[^"]*" not found|failed to resolve env var"#)
+/// The errors of what Forge blocks in its workspaces: `vm.ffi` without `--allow-ffi`, network
+/// cheatcodes without `--allow-network`, env cheatcodes, which see only a few variables, and
+/// inline config that `--restrict-inline-config` refuses.
+static BLOCKED: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"FFI is disabled|network access is disabled|environment variable "[^"]*" not found|failed to resolve env var|inline config cannot change"#)
         .unwrap()
 });
 /// Solidity line and block comments.
@@ -123,10 +127,6 @@ static SESSIONS: Mutex<Vec<Pid>> = Mutex::new(Vec::new());
 /// Run agents that prove bugs with failing tests and report the bugs that they agree on.
 #[derive(Clone, Debug, Parser)]
 pub struct PropertiesArgs {
-    /// Root of the Foundry project.
-    #[arg(long, default_value = ".", value_name = "PATH")]
-    root: PathBuf,
-
     /// Source file to look for bugs in. Can be given more than once.
     ///
     /// Defaults to every source file in the project's source directory.
@@ -158,7 +158,9 @@ pub struct PropertiesArgs {
     /// test that fails on every seed is a possible bug. Its claim is the comment right above the
     /// test function, `// @bug <Contract>.<function> <file>:<line> — <claim>`, else the test name.
     /// Forge keeps the files whose tests all pass. A nonzero exit status is an error, but
-    /// Forge still runs the agent's tests.
+    /// Forge still runs the agent's tests. In Forge's runs, inline config cannot change `ffi`,
+    /// `fs_permissions`, or the fuzz seed, or raise runs, depth, or rejects, and a run that takes
+    /// more than ten minutes ends.
     #[arg(long, required = true, value_name = "PATH", verbatim_doc_comment)]
     agent_command: PathBuf,
 
@@ -234,7 +236,12 @@ pub struct PropertiesArgs {
     /// the copies have no RPC or Etherscan settings.
     #[arg(long)]
     allow_network: bool,
+
+    #[command(flatten)]
+    build: BuildOpts,
 }
+
+impl_figment_convert!(PropertiesArgs, build);
 
 /// Model usage that an agent reports.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
@@ -431,7 +438,7 @@ struct Session {
 }
 
 impl PropertiesArgs {
-    pub fn run(self) -> Result<()> {
+    pub fn run(mut self) -> Result<()> {
         ensure!(self.seed.len() >= 2, "at least two --seed values are required");
         ensure!(
             self.seed.iter().collect::<HashSet<_>>().len() == self.seed.len(),
@@ -444,8 +451,14 @@ impl PropertiesArgs {
             self.target.iter().all(|path| workspace::is_safe_relative_path(path)),
             "--target paths must be project-relative paths"
         );
-        let root = self.root.canonicalize().wrap_err("failed to resolve project root")?;
-        let mut config = Config::load_with_root(&root)?.sanitized();
+        // Workspaces map project paths by the resolved root, so the root must have no links.
+        // `--config-path` resolves already.
+        let paths = &mut self.build.project_paths;
+        if paths.config_path.is_none() {
+            let root = paths.try_project_root()?;
+            paths.root = Some(root.canonicalize().wrap_err("failed to resolve project root")?);
+        }
+        let mut config = self.load_config()?;
         restrict_config(&mut config, self.allow_ffi, self.allow_network);
         let generated_tests =
             workspace::relative_to_root(&config.root, &config.test).join("generated");
@@ -459,6 +472,7 @@ impl PropertiesArgs {
         // Workspaces leave out the project's generated tests, so every agent starts without
         // earlier generated tests.
         let mut sandbox = Sandbox::new(&config, vec![config.root.join(&generated_tests)])?;
+        sandbox.end_on_interrupt()?;
         if let Some(errors) = sandbox.build()? {
             sh_warn!("the project does not build, so every test run builds it: {errors}")?;
         }
@@ -519,7 +533,10 @@ pub(crate) struct Sandbox<'a> {
     /// The workspace whose build output every new workspace copies.
     build_cache: Option<TempDir>,
     /// The home directory of builds and test runs, whose `.svm` links to the installed compilers.
-    home: TempDir,
+    home: PathBuf,
+    /// The temporary directory that holds the home directory and every workspace, so one removal
+    /// cleans up after an interrupt. It drops last.
+    root: TempDir,
 }
 
 /// The inputs that every agent shares.
@@ -552,16 +569,10 @@ impl Campaign<'_> {
             self.args.target.clone()
         };
         let inputs = AgentInputs { agent_command, targets, context };
-
-        // Agent sessions run in their own process groups, so a terminal interrupt does not reach
-        // them. Forge ends them before it exits.
-        #[cfg(unix)]
-        ctrlc::set_handler(|| {
-            for group in SESSIONS.lock().unwrap().iter() {
-                let _ = kill_process_group(*group, Signal::KILL);
-            }
-            std::process::exit(130);
-        })?;
+        // The prompts, logs, usage, verdicts, and test copies of an earlier run go.
+        if self.cache_root.exists() {
+            fs::remove_dir_all(&self.cache_root)?;
+        }
         // Agents work in copies of the project, but the copies link the entries of dependency
         // directories. A project file that changes while they run taints the run.
         let fingerprint = project_fingerprint(self.config);
@@ -574,7 +585,7 @@ impl Campaign<'_> {
                 .collect::<Vec<_>>();
             agents
                 .into_iter()
-                .map(|agent| agent.join().expect("agent thread panicked"))
+                .map(|agent| agent.join().unwrap_or_else(|_| Err(eyre!("agent thread panicked"))))
                 .collect::<Vec<_>>()
         });
         let mut sessions = Vec::new();
@@ -611,10 +622,11 @@ impl Campaign<'_> {
                 file: failure.file.clone(),
             })
             .collect::<Vec<_>>();
-        // A test that fails only because Forge blocked a cheatcode is not evidence of a bug.
+        // A test that fails only because Forge blocked a cheatcode or its inline config is not
+        // evidence of a bug.
         let (blocked, failures) = failures
             .into_iter()
-            .partition::<Vec<_>, _>(|failure| BLOCKED_CHEATCODE.is_match(&failure.failure.reason));
+            .partition::<Vec<_>, _>(|failure| BLOCKED.is_match(&failure.failure.reason));
         let (mut possible_bugs, below_quorum) = group_failures(failures)
             .into_iter()
             .partition::<Vec<_>, _>(|group| group.agents.len() >= self.quorum);
@@ -665,7 +677,64 @@ impl Campaign<'_> {
                 print_group(label, group)?;
             }
         }
-        let rejected = sessions.iter().flat_map(|session| &session.rejected).collect::<Vec<_>>();
+        // An agent's kept files go to the project together or not at all, so a kept test never
+        // compiles against a file that it did not run with. A path that leads outside the project,
+        // or a file that the project has with other content, as after an earlier run, holds back
+        // the agent's files. A file that the project has already is not written, and of the files
+        // that repeat a file of another agent, one copy stays unless an agent's file imports it.
+        // Nothing is kept when project files changed while the agents ran.
+        let mut held_back = Vec::new();
+        let mut seen = HashSet::new();
+        let mut kept = Vec::new();
+        let mut duplicates = Vec::new();
+        for session in sessions.iter().filter(|_| tainted.is_empty()) {
+            let (mut new, mut existing) = (Vec::new(), Vec::new());
+            let conflict = session.kept.iter().find_map(|file| {
+                let path = self.config.root.join(&file.path);
+                // A linked directory on the path must not lead outside the project.
+                if let Err(error) = ensure_inside(&self.config.root, &path, &file.path) {
+                    return Some(format!("{error:#}"));
+                }
+                match fs::read_to_string(&path) {
+                    Ok(content) if content == file.content => existing.push(&file.path),
+                    Ok(_) => {
+                        return Some(format!(
+                            "{} exists in the project with other content",
+                            file.path.display()
+                        ));
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => new.push(file),
+                    Err(error) => {
+                        return Some(format!("failed to read {}: {error}", file.path.display()));
+                    }
+                }
+                None
+            });
+            if let Some(reason) = conflict {
+                let paths = session.kept.iter().map(|file| file.path.clone()).collect();
+                held_back.push(Rejected { agent: session.id, paths, reason });
+                continue;
+            }
+            duplicates.extend(existing);
+            for file in new {
+                let normalized =
+                    COMMENT.replace_all(&file.content, "").split_whitespace().collect::<String>();
+                let imported = session.kept.iter().any(|other| {
+                    other.path != file.path
+                        && session.imports.get(&other.path).is_some_and(|i| i.contains(&file.path))
+                });
+                if seen.insert(normalized) || imported {
+                    kept.push(file);
+                } else {
+                    duplicates.push(&file.path);
+                }
+            }
+        }
+        let rejected = sessions
+            .iter()
+            .flat_map(|session| &session.rejected)
+            .chain(&held_back)
+            .collect::<Vec<_>>();
         if !rejected.is_empty() {
             sh_println!(
                 "{} generated test file(s) did not compile or were not allowed: see {}",
@@ -675,7 +744,7 @@ impl Campaign<'_> {
         }
         if !blocked.is_empty() {
             sh_warn!(
-                "{} failing test(s) used a cheatcode that Forge blocks (ffi, environment, or network), so they are not possible bugs: see {}",
+                "{} failing test(s) used something that Forge blocks (ffi, environment, network, or inline config), so they are not possible bugs: see {}",
                 blocked.len(),
                 report_display.display()
             )?;
@@ -689,13 +758,6 @@ impl Campaign<'_> {
             sh_warn!(
                 "{} agent(s) reached the timeout, so Forge ended them and ran the tests that they wrote",
                 timed_out.len()
-            )?;
-        }
-        if !tainted.is_empty() {
-            sh_warn!(
-                "{} project file(s) changed while the agents ran, so the run is tainted: see {}",
-                tainted.len(),
-                report_display.display()
             )?;
         }
         let usage = sessions
@@ -726,29 +788,6 @@ impl Campaign<'_> {
             )?;
         }
 
-        // Keep one copy of each file. A file that another file of the same agent imports stays,
-        // so the imports still resolve. A file that the project has already is not written.
-        let mut seen = HashSet::new();
-        let mut kept = Vec::new();
-        let mut duplicates = Vec::new();
-        for session in sessions {
-            for file in &session.kept {
-                let normalized =
-                    COMMENT.replace_all(&file.content, "").split_whitespace().collect::<String>();
-                let imported = session.kept.iter().any(|other| {
-                    other.path != file.path
-                        && session.imports.get(&other.path).is_some_and(|i| i.contains(&file.path))
-                });
-                let path = self.config.root.join(&file.path);
-                // A linked directory on the path must not lead outside the project.
-                ensure_inside(&self.config.root, &path, &file.path)?;
-                if (seen.insert(normalized) || imported) && !path.exists() {
-                    kept.push(file);
-                } else {
-                    duplicates.push(&file.path);
-                }
-            }
-        }
         fs::create_dir_all(&self.cache_root)?;
         let report = serde_json::json!({
             "agents": self.args.agents,
@@ -765,6 +804,14 @@ impl Campaign<'_> {
         });
         fs::write(&report_path, serde_json::to_vec_pretty(&report)?)?;
 
+        // Agents can reach the project's dependencies through their copies, so a change can come
+        // from an agent, and no result of the run can be trusted.
+        ensure!(
+            tainted.is_empty(),
+            "{} project file(s) changed while the agents ran, so Forge kept no generated test: see {}",
+            tainted.len(),
+            report_display.display()
+        );
         if kept.is_empty() {
             sh_println!("no generated test file was kept")?;
             return Ok(());
@@ -795,11 +842,7 @@ impl Campaign<'_> {
     /// Runs one agent session in its own copy of the project, then runs the tests that it wrote.
     fn run_agent(&self, id: usize, inputs: &AgentInputs) -> Result<Session> {
         let args = self.args;
-        // The prompt, the log, the usage, and the copies of the tests of an earlier run go.
         let cache = self.cache_root.join(format!("agent-{id}"));
-        if cache.exists() {
-            fs::remove_dir_all(&cache)?;
-        }
         fs::create_dir_all(&cache)?;
         let workspace = self.sandbox.workspace(&[])?;
         let out = self.generated_tests.join(format!("agent-{id}"));
@@ -948,10 +991,15 @@ impl Campaign<'_> {
             let mut command = self.forge_command(workspace, seed);
             command.args(["test", "--json", "--match-path", &format!("{{{paths}}}")]);
             command.args(SELECT_ALL_TESTS);
+            command.arg("--restrict-inline-config");
             if !self.args.allow_network {
                 command.arg("--no-network");
             }
-            let output = command.output().wrap_err("failed to run generated tests")?;
+            let Some(output) = self.sandbox.output(&mut command)? else {
+                run.errors
+                    .push(format!("tests reached the timeout of {RUN_TIMEOUT:?} on seed {seed}"));
+                continue;
+            };
             if !output.status.success() && output.stdout.is_empty() {
                 run.errors.push(format!("tests failed on seed {seed}: {}", stderr(&output)));
                 continue;
@@ -1035,11 +1083,12 @@ impl Campaign<'_> {
                             loop {
                                 let index = next.fetch_add(1, Ordering::Relaxed);
                                 let Some(group) = groups.get(index) else { break };
-                                let verification = self
-                                    .verify(command, index + 1, group, sessions, inputs)
-                                    .unwrap_or_else(|error| {
-                                        Verification::failed(format!("{error:#}"))
-                                    });
+                                // A panic fails only its own group.
+                                let verification = panic::catch_unwind(AssertUnwindSafe(|| {
+                                    self.verify(command, index + 1, group, sessions, inputs)
+                                }))
+                                .unwrap_or_else(|_| Err(eyre!("verifier thread panicked")))
+                                .unwrap_or_else(|error| Verification::failed(format!("{error:#}")));
                                 done.push((index, verification));
                             }
                             done
@@ -1048,7 +1097,7 @@ impl Campaign<'_> {
                     .collect::<Vec<_>>();
                 workers
                     .into_iter()
-                    .flat_map(|worker| worker.join().expect("verifier thread panicked"))
+                    .flat_map(|worker| worker.join().unwrap_or_default())
                     .collect::<Vec<_>>()
             })
         };
@@ -1069,11 +1118,7 @@ impl Campaign<'_> {
         sessions: &[Session],
         inputs: &AgentInputs,
     ) -> Result<Verification> {
-        // The prompt, the log, the usage, and the verdict of an earlier run go.
         let cache = self.cache_root.join(format!("verify-{id}"));
-        if cache.exists() {
-            fs::remove_dir_all(&cache)?;
-        }
         fs::create_dir_all(&cache)?;
         let workspace = self.sandbox.workspace(&group_files(sessions, group))?;
         let prompt_path = cache.join("prompt.md");
@@ -1154,15 +1199,28 @@ impl<'a> Sandbox<'a> {
     /// project paths.
     pub(crate) fn new(config: &'a Config, skipped: Vec<PathBuf>) -> Result<Self> {
         let forge = std::env::current_exe().wrap_err("failed to resolve Forge executable")?;
-        let home = tempfile::Builder::new().prefix("forge-properties-home-").tempdir()?;
+        let root = tempfile::Builder::new().prefix("forge-properties-").tempdir()?;
+        let home = root.path().join("home");
+        fs::create_dir(&home)?;
         if let Some(svm) = Solc::svm_home().filter(|svm| svm.is_dir()) {
-            workspace::symlink_entry(
-                &svm,
-                &home.path().join(".svm"),
-                fs::metadata(&svm)?.file_type(),
-            )?;
+            workspace::symlink_entry(&svm, &home.join(".svm"), fs::metadata(&svm)?.file_type())?;
         }
-        Ok(Self { config, forge, skipped, build_cache: None, home })
+        Ok(Self { config, forge, skipped, build_cache: None, home, root })
+    }
+
+    /// Makes an interrupt end every session and test run and remove the workspaces before Forge
+    /// exits. They run in their own process groups, so a terminal interrupt does not reach them.
+    pub(crate) fn end_on_interrupt(&self) -> Result<()> {
+        let root = self.root.path().to_path_buf();
+        ctrlc::set_handler(move || {
+            #[cfg(unix)]
+            for group in SESSIONS.lock().unwrap().iter() {
+                let _ = kill_process_group(*group, Signal::KILL);
+            }
+            let _ = fs::remove_dir_all(&root);
+            std::process::exit(130);
+        })?;
+        Ok(())
     }
 
     /// Builds the project once in a workspace whose build output later workspaces copy, so a
@@ -1182,11 +1240,10 @@ impl<'a> Sandbox<'a> {
     /// so only the files that this build compiles can warn.
     pub(crate) fn build_errors(&self, workspace: &Path) -> Result<Option<String>> {
         // The lint step can fail where the compiler succeeds, and it does not change the tests.
-        let output = self
-            .command(workspace)
-            .args(["build", "--no-lint"])
-            .output()
-            .wrap_err("failed to build generated tests")?;
+        let Some(output) = self.output(self.command(workspace).args(["build", "--no-lint"]))?
+        else {
+            return Ok(Some(format!("the build reached the timeout of {RUN_TIMEOUT:?}")));
+        };
         if !output.status.success() {
             return Ok(Some(stderr(&output)));
         }
@@ -1200,7 +1257,8 @@ impl<'a> Sandbox<'a> {
     /// files.
     pub(crate) fn workspace(&self, files: &[TestFile]) -> Result<TempDir> {
         let config = self.config;
-        let workspace = tempfile::Builder::new().prefix("forge-properties-").tempdir()?;
+        let workspace =
+            tempfile::Builder::new().prefix("workspace-").tempdir_in(self.root.path())?;
         let dependencies = config
             .libs
             .iter()
@@ -1273,9 +1331,25 @@ impl<'a> Sandbox<'a> {
             .current_dir(workspace)
             .env_clear()
             .envs(PASSED_ENV.iter().filter_map(|key| Some((key, std::env::var_os(key)?))))
-            .env("HOME", self.home.path())
+            .env("HOME", &self.home)
             .env("FOUNDRY_PROFILE", self.config.profile.as_str().as_str());
         command
+    }
+
+    /// Runs a command of [`Sandbox::command`] and returns its output, or `None` if it reached
+    /// [`RUN_TIMEOUT`]. Generated tests can loop for as long as their gas lasts, so Forge ends the
+    /// command and every process that it started at the timeout.
+    pub(crate) fn output(&self, command: &mut Command) -> Result<Option<Output>> {
+        let dir = tempfile::Builder::new().prefix("output-").tempdir_in(self.root.path())?;
+        let (stdout, stderr) = (dir.path().join("stdout"), dir.path().join("stderr"));
+        command
+            .stdin(Stdio::null())
+            .stdout(fs::File::create(&stdout)?)
+            .stderr(fs::File::create(&stderr)?);
+        let Some(status) = run_session(command, Some(RUN_TIMEOUT.as_secs()), "forge")? else {
+            return Ok(None);
+        };
+        Ok(Some(Output { status, stdout: fs::read(stdout)?, stderr: fs::read(stderr)? }))
     }
 }
 
@@ -1346,15 +1420,21 @@ fn session_prompt(targets: &[PathBuf], context: &[PathBuf], out: &Path) -> Strin
 }
 
 /// Returns the Solidity files under the output directory `out` of a workspace, by path relative
-/// to the workspace, in path order. Links are not followed. A file that sets a seed, `ffi`, or
-/// `fs_permissions` in inline config is rejected: the seeds must decide every run, and generated
-/// tests run outside the agent's sandbox, so they cannot widen their own access to the host.
+/// to the workspace, in path order. Links are not followed, and `out` itself must not be one. A
+/// file whose path has a glob character is rejected: Forge selects the files to run by a glob.
 fn collect_tests(
     workspace: &Path,
     out: &Path,
     agent: usize,
     rejected: &mut Vec<Rejected>,
 ) -> Result<Vec<TestFile>> {
+    let out_dir = workspace.join(out);
+    ensure_inside(workspace, &out_dir, out)?;
+    ensure!(
+        fs::symlink_metadata(&out_dir)?.is_dir(),
+        "the generated test directory {} is not a directory",
+        out.display()
+    );
     let mut files = Vec::new();
     let mut pending = vec![out.to_path_buf()];
     while let Some(dir) = pending.pop() {
@@ -1369,27 +1449,19 @@ fn collect_tests(
             if !file_type.is_file() || path.extension().is_none_or(|extension| extension != "sol") {
                 continue;
             }
-            let content = match fs::read_to_string(entry.path()) {
-                Ok(content) => content,
-                Err(error) => {
-                    let reason = error.to_string();
-                    rejected.push(Rejected { agent, paths: vec![path], reason });
-                    continue;
-                }
-            };
-            let setting = [
-                (&["fuzz", "seed"][..], "a seed"),
-                (&["ffi"][..], "ffi"),
-                (&["fs_permissions"][..], "fs_permissions"),
-            ]
-            .into_iter()
-            .find(|(path, _)| has_inline_setting(&content, path));
-            if let Some((_, setting)) = setting {
-                let reason = format!("sets {setting} in inline config");
+            let glob = ['*', '?', '[', ']', '{', '}', ',', '\\'];
+            if path.iter().any(|component| component.to_string_lossy().contains(glob)) {
+                let reason = "the path has a glob character".to_string();
                 rejected.push(Rejected { agent, paths: vec![path], reason });
                 continue;
             }
-            files.push(TestFile { path, content });
+            match fs::read_to_string(entry.path()) {
+                Ok(content) => files.push(TestFile { path, content }),
+                Err(error) => {
+                    let reason = error.to_string();
+                    rejected.push(Rejected { agent, paths: vec![path], reason });
+                }
+            }
         }
     }
     files.sort_by(|a, b| a.path.cmp(&b.path));
@@ -1434,6 +1506,12 @@ fn test_claim(source: &str, contract: &str, function: &str) -> Option<String> {
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
     lines.reverse();
+    // The claim starts at the tag, wherever the comment has it.
+    if let Some(tag) = lines.iter().position(|line| {
+        line.split_whitespace().next().is_some_and(|tag| matches!(tag, "@bug" | "@custom:bug"))
+    }) {
+        lines.drain(..tag);
+    }
     (!lines.is_empty()).then(|| lines.join(" "))
 }
 
@@ -1507,11 +1585,16 @@ fn ensure_inside(root: &Path, path: &Path, orig: &Path) -> Result<()> {
 }
 
 /// Returns the size and modification time of each project file, by path relative to the root.
-/// Hidden entries and the build and cache directories are skipped, and links are not followed.
+/// Hidden entries and the build and cache directories are skipped. Links are followed, as
+/// workspaces link dependency entries, but each directory is read once.
 fn project_fingerprint(config: &Config) -> Fingerprint {
     let mut files = BTreeMap::new();
+    let mut read = HashSet::new();
     let mut pending = vec![config.root.clone()];
     while let Some(dir) = pending.pop() {
+        if !fs::canonicalize(&dir).is_ok_and(|dir| read.insert(dir)) {
+            continue;
+        }
         let Ok(entries) = fs::read_dir(&dir) else { continue };
         for entry in entries.flatten() {
             let path = entry.path();
@@ -1521,11 +1604,12 @@ fn project_fingerprint(config: &Config) -> Fingerprint {
             {
                 continue;
             }
-            let Ok(metadata) = entry.metadata() else { continue };
+            let Ok(metadata) = fs::metadata(&path) else { continue };
             if metadata.is_dir() {
                 pending.push(path);
             } else {
-                let path = workspace::relative_to_root(&config.root, &path);
+                // The path through a link, not the link's target.
+                let path = path.strip_prefix(&config.root).unwrap_or(&path).to_path_buf();
                 files.insert(path, (metadata.len(), metadata.modified().ok()));
             }
         }
@@ -1721,19 +1805,6 @@ fn test_path(test: &RerunFailure) -> PathBuf {
     PathBuf::from(test.contract.rsplit_once(':').map_or(test.contract.as_str(), |(path, _)| path))
 }
 
-/// Returns whether NatSpec inline config sets the setting at `path` in any profile, in dotted or
-/// inline-table form.
-pub(crate) fn has_inline_setting(source: &str, path: &[&str]) -> bool {
-    source.lines().filter_map(|line| line.split_once("forge-config:")).any(|(_, setting)| {
-        let setting = setting.split_once("*/").map_or(setting, |(setting, _)| setting);
-        setting.trim().parse::<toml_edit::DocumentMut>().is_ok_and(|config| {
-            config.iter().any(|(_, profile)| {
-                path.iter().try_fold(profile, |item, key| item.get(*key)).is_some()
-            })
-        })
-    })
-}
-
 /// Returns the directory for one seed's builds and persisted state in a workspace.
 fn seed_dir(config: &Config, workspace: &Path, seed: &U256) -> PathBuf {
     workspace
@@ -1745,7 +1816,7 @@ fn seed_dir(config: &Config, workspace: &Path, seed: &U256) -> PathBuf {
 /// Returns stderr without compiler warning blocks and keeps both ends when it is still long.
 /// Warnings can fill the limit before the decisive error, and many tools print the error last.
 /// Without a compiler error, as with `deny = "warnings"`, the warnings are the errors and stay.
-fn stderr(output: &Output) -> String {
+pub(crate) fn stderr(output: &Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let has_error = stderr.lines().any(|line| line.starts_with("Error ("));
     let mut in_warning = false;
@@ -1771,7 +1842,7 @@ fn stderr(output: &Output) -> String {
 }
 
 /// Keeps both ends of a long tool output. Many tools print the decisive error last.
-fn shorten(text: &str) -> String {
+pub(crate) fn shorten(text: &str) -> String {
     const HALF: usize = 1_000;
     let text = text.trim();
     let chars = text.chars().count();
@@ -1844,11 +1915,17 @@ fn run_session(
 ) -> Result<Option<ExitStatus>> {
     #[cfg(unix)]
     command.process_group(0);
+    // The lock spans the spawn, so an interrupt cannot miss a session that just started.
+    #[cfg(unix)]
+    let mut sessions = SESSIONS.lock().unwrap();
     let mut child = command.spawn().wrap_err_with(|| format!("failed to run {session} command"))?;
     #[cfg(unix)]
     let group = Pid::from_child(&child);
     #[cfg(unix)]
-    SESSIONS.lock().unwrap().push(group);
+    {
+        sessions.push(group);
+        drop(sessions);
+    }
     let status = match timeout {
         Some(timeout) => {
             let deadline = Instant::now() + Duration::from_secs(timeout);
@@ -1963,6 +2040,11 @@ contract FeeTest {
     /// @custom:bug Fee.fee src/Fee.sol:7 — the cap is 10 ether.
     function testCustomTag() public {}
 
+    /// @notice Large amounts.
+    /// @custom:bug Fee.fee src/Fee.sol:7 — the cap is 10 ether,
+    /// not 100 ether.
+    function testLateTag() public {}
+
     // @bug Fee.pay src/Fee.sol:20 — the contract pays twice.
     function testPaysTwice() public {}
 }
@@ -1987,6 +2069,10 @@ contract OtherTest {
         assert_eq!(
             test_claim(source, "FeeTest", "testCustomTag").as_deref(),
             Some("@custom:bug Fee.fee src/Fee.sol:7 — the cap is 10 ether.")
+        );
+        assert_eq!(
+            test_claim(source, "FeeTest", "testLateTag").as_deref(),
+            Some("@custom:bug Fee.fee src/Fee.sol:7 — the cap is 10 ether, not 100 ether.")
         );
         assert_eq!(
             test_claim(source, "FeeTest", "testPaysTwice").as_deref(),
@@ -2015,8 +2101,8 @@ contract OtherTest {
         write("Fee.t.sol", "contract FeeTest {}");
         write("helpers/Helper.sol", "library Helper {}");
         write("notes.md", "notes");
-        write("Seed.t.sol", "/// forge-config: default.fuzz.seed = \"0x3\"\ncontract SeedTest {}");
-        write("Ffi.t.sol", "/// forge-config: default.ffi = true\ncontract FfiTest {}");
+        write("A{B,C}.t.sol", "contract GlobTest {}");
+        write("dir*/Star.t.sol", "contract StarTest {}");
         #[cfg(unix)]
         std::os::unix::fs::symlink(
             workspace.path().join(out).join("Fee.t.sol"),
@@ -2043,9 +2129,19 @@ contract OtherTest {
                 .map(|rejected| format!("{} {}", rejected.paths[0].display(), rejected.reason))
                 .collect::<Vec<_>>(),
             [
-                "test/generated/agent-1/Ffi.t.sol sets ffi in inline config",
-                "test/generated/agent-1/Seed.t.sol sets a seed in inline config",
+                "test/generated/agent-1/A{B,C}.t.sol the path has a glob character",
+                "test/generated/agent-1/dir*/Star.t.sol the path has a glob character",
             ]
         );
+
+        // The output directory itself must not be a link.
+        #[cfg(unix)]
+        {
+            let linked = Path::new("test/generated/agent-2");
+            std::os::unix::fs::symlink(workspace.path().join(out), workspace.path().join(linked))
+                .unwrap();
+            let error = collect_tests(workspace.path(), linked, 2, &mut rejected).unwrap_err();
+            assert!(error.to_string().contains("is not a directory"), "{error}");
+        }
     }
 }
