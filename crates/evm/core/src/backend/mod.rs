@@ -1073,17 +1073,31 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
     /// Moves the running transaction onto a separate frame EVM. See
     /// [`ExecutionLifecycle::begin_frame_evm`].
-    pub fn begin_frame_evm<'a>(
+    ///
+    /// # Safety
+    ///
+    /// See [`ExecutionLifecycle::begin_frame_evm`].
+    pub unsafe fn begin_frame_evm<'a>(
         &self,
         evm: &mut FoundryEvmFor<'_, FEN>,
         env: EvmEnvFor<FEN>,
     ) -> FoundryEvmFor<'a, FEN> {
-        self.lifecycle.begin_frame_evm(evm, env)
+        // SAFETY: Forwarded to the caller.
+        unsafe { self.lifecycle.begin_frame_evm(evm, env) }
     }
 
     /// Hands a frame EVM's state back to `evm`. See [`ExecutionLifecycle::end_frame_evm`].
-    pub fn end_frame_evm(&self, evm: &mut FoundryEvmFor<'_, FEN>, frame: FoundryEvmFor<'_, FEN>) {
-        self.lifecycle.end_frame_evm(evm, frame);
+    ///
+    /// # Safety
+    ///
+    /// See [`ExecutionLifecycle::end_frame_evm`].
+    pub unsafe fn end_frame_evm(
+        &self,
+        evm: &mut FoundryEvmFor<'_, FEN>,
+        frame: FoundryEvmFor<'_, FEN>,
+    ) {
+        // SAFETY: Forwarded to the caller.
+        unsafe { self.lifecycle.end_frame_evm(evm, frame) };
     }
 
     // ---- Running-state operations ----

@@ -19,11 +19,10 @@
 //! evm2 allows replacing state and the block environment while a transaction runs, but not the
 //! spec or runtime [`Version`](evm2::Version), which also carries the chain ID. Operations that
 //! need a different spec or chain ID while a transaction is in flight apply everything else at
-//! once and report [`EnvTransition::Deferred`]; [`ExecutionLifecycle::begin_transaction`] then
-//! applies the deferred environment at the next transaction boundary. Callers must surface a
-//! deferred transition rather than ignore it. Until then, the inspector stack runs frames started
-//! after the change on a frame EVM built with the deferred environment
-//! ([`ExecutionLifecycle::begin_frame_evm`]).
+//! once and record the rest as the pending environment ([`ExecutionLifecycle::pending_env`]);
+//! [`ExecutionLifecycle::begin_transaction`] then applies it at the next transaction boundary.
+//! Until then, the inspector stack runs frames started after the change on a frame EVM built with
+//! the pending environment ([`ExecutionLifecycle::begin_frame_evm`]).
 //!
 //! Suspending a context accepts its in-flight writes, so a fork switch is not undone when an
 //! enclosing call reverts.
@@ -924,8 +923,14 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     /// Execute messages on the returned EVM with [`Host::execute_message`] and hand its state back
     /// with [`Self::end_frame_evm`]; `evm` must not execute in between.
     ///
+    /// # Safety
+    ///
+    /// The running state of `evm` moves into the returned EVM, whose lifetime `'a` the caller
+    /// chooses. Every database in that state must outlive `'a`: it must be one the lifecycle
+    /// installed, all of which are owned (`'static`), not a database borrowed by the caller.
+    ///
     /// [`Host::execute_message`]: evm2::interpreter::Host::execute_message
-    pub fn begin_frame_evm<'a>(
+    pub unsafe fn begin_frame_evm<'a>(
         &self,
         evm: &mut Evm<'_, F::Types>,
         env: EvmEnv<F::Types>,
@@ -934,8 +939,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let factory = self.factory.configure_for(&db, &env);
         let mut frame = factory.new_evm_with_ext(EmptyDB::default(), env, evm.ext().clone());
         let state = mem::replace(evm.state_mut(), State::new(EmptyDB::default()));
-        // SAFETY: `State`'s lifetime only bounds its backing database, and every database the
-        // lifecycle installs is owned (`'static`), so the state outlives both EVMs.
+        // SAFETY: `State`'s lifetime only bounds its databases, which the caller guarantees
+        // outlive `'a`.
         *frame.state_mut() = unsafe { mem::transmute::<State<'_>, State<'a>>(state) };
         self.sync_database_policy(&mut frame);
         frame
@@ -944,11 +949,16 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     /// Hands the state, block and network extension state of a frame EVM created with
     /// [`Self::begin_frame_evm`] back to `evm`, restoring `evm`'s empty-account policy on the
     /// active backing database.
-    pub fn end_frame_evm(&self, evm: &mut Evm<'_, F::Types>, mut frame: Evm<'_, F::Types>) {
+    ///
+    /// # Safety
+    ///
+    /// The running state of `frame` moves into `evm`. Every database in that state must outlive
+    /// `evm`: it must be one the lifecycle installed, as for [`Self::begin_frame_evm`].
+    pub unsafe fn end_frame_evm(&self, evm: &mut Evm<'_, F::Types>, mut frame: Evm<'_, F::Types>) {
         frame.clear_inspector();
         let state = mem::replace(frame.state_mut(), State::new(EmptyDB::default()));
-        // SAFETY: See `begin_frame_evm`; the frame only ever installs owned backing databases,
-        // such as on a fork switch.
+        // SAFETY: `State`'s lifetime only bounds its databases, which the caller guarantees
+        // outlive `evm`.
         *evm.state_mut() = unsafe { mem::transmute::<State<'_>, State<'_>>(state) };
         *evm.ext_mut() = frame.ext().clone();
         evm.set_block(*frame.block());
@@ -1362,12 +1372,17 @@ struct Suspended {
 
 /// Clears `evm`'s inspector and returns the EVM without the borrows the inspector held, such as
 /// to park an EVM whose inspector borrowed the lifecycle's owner.
-pub fn release_inspector<'b, T: EvmTypes>(mut evm: Evm<'_, T>) -> Evm<'b, T> {
+///
+/// # Safety
+///
+/// An EVM's lifetime bounds its inspector, which is cleared, and its databases and precompiles.
+/// Those must outlive `'b`, the lifetime the caller chooses: they must be ones Foundry's
+/// factories and [`ExecutionLifecycle`] installed, all of which are owned (`'static`).
+pub unsafe fn release_inspector<'b, T: EvmTypes>(mut evm: Evm<'_, T>) -> Evm<'b, T> {
     evm.clear_inspector();
     let evm = mem::ManuallyDrop::new(evm);
-    // SAFETY: An EVM's lifetime only bounds its inspector, which is cleared, and its backing
-    // database and precompiles, which Foundry always installs owned (`'static`). The value is
-    // moved out exactly once and the original is never dropped.
+    // SAFETY: The inspector is cleared and the caller guarantees the databases and precompiles
+    // outlive `'b`. The value is moved out exactly once and the original is never dropped.
     unsafe { std::ptr::read((&raw const *evm).cast::<Evm<'b, T>>()) }
 }
 

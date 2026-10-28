@@ -1150,7 +1150,8 @@ fn execute<FEN: FoundryEvmNetwork>(
         evm.set_inspector(stack.as_inspector(&mut *backend));
         evm.transact(tx).map(|executed| executed.detach())
     };
-    let mut evm: Evm<'_, _> = release_inspector(evm);
+    // SAFETY: The EVM was created by the backend's lifecycle over its owned databases.
+    let mut evm: Evm<'_, _> = unsafe { release_inspector(evm) };
     let TxResultWithState { result, pending_state, .. } = executed.map_err(handler_error)?;
     // Permission to replay protocol history belongs to this transaction, not the parked backend.
     evm.ext_mut().set_protocol_replay(false);

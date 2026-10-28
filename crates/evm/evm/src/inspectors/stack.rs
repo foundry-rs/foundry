@@ -515,15 +515,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         // so isolate it as well.
         self.synthetic_create_depth = (message.depth == 2).then_some(2);
         let env = evm_env(evm);
-        let mut frame = backend.backend().begin_frame_evm(evm, env);
-        frame.set_inspector(InspectorStackRefMut {
-            cheatcodes: Some(cheats),
-            inner: &mut *self,
-            backend: Some(&mut *backend),
-        });
-        let result = Host::execute_message(&mut frame, tx_env, message);
-        let frame = release_inspector(frame);
-        backend.backend().end_frame_evm(evm, frame);
+        let result = self.execute_on_frame_evm(Some(cheats), backend, evm, env, tx_env, message);
         self.synthetic_create_depth = previous;
         // Drop redirects left behind if nested execution aborted before their frames ended.
         self.pending_create2_redirects.truncate(create2_redirects);
@@ -561,7 +553,8 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
             backend: Some(&mut *backend),
         });
         let executed = child.transact(tx).map(ExecutedTx::detach);
-        let mut child = release_inspector(child);
+        // SAFETY: The nested EVM runs over the lifecycle's owned databases.
+        let mut child = unsafe { release_inspector(child) };
         let destructed = mem::replace(&mut self.executed_destructs, outer_destructs);
         let result = match executed {
             Ok(TxResultWithState { result, pending_state, .. }) => {
@@ -1175,15 +1168,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
         let mut env = EvmFactoryFor::<FEN>::default().env_with_spec(running, spec);
         env.version.chain_id = chain_id;
-        let mut frame = backend.backend().begin_frame_evm(evm, env);
-        frame.set_inspector(InspectorStackRefMut {
-            cheatcodes: self.cheatcodes.as_deref_mut(),
-            inner: &mut *self.inner,
-            backend: Some(&mut *backend),
-        });
-        let result = Host::execute_message(&mut frame, tx_env, message);
-        let frame = release_inspector(frame);
-        backend.backend().end_frame_evm(evm, frame);
+        let cheatcodes = self.cheatcodes.as_deref_mut();
+        let result =
+            self.inner.execute_on_frame_evm(cheatcodes, backend, evm, env, tx_env, message);
         match result {
             Ok(result) => {
                 // evm2 runs the end hooks right after this hook returns a result.
@@ -1377,7 +1364,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             backend: Some(&mut *backend),
         });
         let executed = child.transact(&tx).map(|executed| executed.detach());
-        let mut child = release_inspector(child);
+        // SAFETY: The nested EVM runs over the lifecycle's owned databases.
+        let mut child = unsafe { release_inspector(child) };
         self.inner.isolated_source_fork = previous_source_fork;
         backend.backend_mut().restore_persistent_warmth(persistent_warmth);
         let switch_warmth = self.inner.isolated_switch_warmth.take();
@@ -1441,7 +1429,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 Some(warm_set(evm.state_mut()))
             };
             child.commit_source(&executed.pending_state);
-            backend.backend().end_frame_evm(evm, child);
+            // SAFETY: The nested EVM runs over the lifecycle's owned databases.
+            unsafe { backend.backend().end_frame_evm(evm, child) };
             if let Some(warmth) = warmth {
                 evm.state_mut().set_prewarm_set(warmth);
             } else if fork_changed && !restored {
@@ -2336,6 +2325,33 @@ impl InspectorStackInner {
         let counter = self.batch_create_counter;
         self.batch_create_counter = counter.wrapping_add(1);
         compute_batch_create_salt(process_salt, chain_id, nonce, counter)
+    }
+
+    /// Executes `message` of the transaction `evm` is running on a separate frame EVM with `env`,
+    /// observed by the whole stack, such as for `deployCode` or an in-flight spec change.
+    fn execute_on_frame_evm<FEN: FoundryEvmNetwork>(
+        &mut self,
+        cheatcodes: Option<&mut Cheatcodes<FEN>>,
+        backend: &mut dyn CheatcodesBackend<FEN>,
+        evm: &mut FoundryEvmFor<'_, FEN>,
+        env: EvmEnvFor<FEN>,
+        tx_env: &TxEnvFor<FEN>,
+        message: &mut MessageFor<FEN>,
+    ) -> Result<MessageResultFor<FEN>, ExecutionError> {
+        // SAFETY: `evm` runs over the lifecycle's owned databases, and so does the frame EVM,
+        // which only lives for this call; its inspector is released before its state moves back.
+        let mut frame = unsafe { backend.backend().begin_frame_evm(evm, env) };
+        frame.set_inspector(InspectorStackRefMut {
+            cheatcodes,
+            inner: self,
+            backend: Some(backend),
+        });
+        let result = Host::execute_message(&mut frame, tx_env, message);
+        // SAFETY: See above.
+        let frame = unsafe { release_inspector(frame) };
+        // SAFETY: See above.
+        unsafe { backend.backend().end_frame_evm(evm, frame) };
+        result
     }
 
     /// Whether this frame is the root of a nested transaction, duplicating a surrounding frame.
