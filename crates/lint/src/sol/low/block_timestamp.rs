@@ -168,7 +168,7 @@ impl<'gcx> Visit<'gcx> for Checker<'_, '_, '_, 'gcx> {
             }
             StmtKind::Block(block)
             | StmtKind::UncheckedBlock(block)
-            | StmtKind::AssemblyBlock(block) => {
+            | StmtKind::AssemblyBlock(block, _) => {
                 self.block(block.stmts);
             }
             // Only the arms control can continue past contribute their aliases.

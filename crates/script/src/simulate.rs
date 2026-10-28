@@ -768,6 +768,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             browser_wallet: self.browser_wallet,
             build_data: self.build_data,
             sequence,
+            resume_script_error: None,
         })
     }
 
