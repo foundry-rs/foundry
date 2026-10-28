@@ -75,9 +75,8 @@ already carries Foundry's host APIs: `loaded_accounts` (#821), `PrewarmSet::remo
 `initial_call_depth` (#824), touched-account metadata (#825), an independent `BLOB_BASE_FEE_CHECK`
 policy (#819) and JS call steps that end before the child runs (#827). Foundry uses no fork-only
 evm2 API; once #744 merges, the pin can move to alloy-rs/evm2 `main`. evm2-networks is pinned to
-`d8f9f29`, the head of foundry-rs/evm2-networks#9, which bumps it to alloy-rs/evm2 `main` and reads
-Monad's destroyed state from the `previous_flags` that #830 introduced; the pin moves to that PR's
-merge commit once it lands.
+`2d57372`, the merge of foundry-rs/evm2-networks#9, which bumps it to alloy-rs/evm2 `main` and reads
+Monad's destroyed state from the `previous_flags` that #830 introduced.
 `mark_created_keeping_storage` keeps an account created for EIP-6780 when a suspended or isolated
 transaction continues on a fresh overlay, without reading its storage as discarded. Foundry
 enables `EIP7702` on every spec so that already-present delegation code resolves before Prague,

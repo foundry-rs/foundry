@@ -383,9 +383,9 @@ tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "680082043ca
 ] }
 tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "680082043ca40b6457f615101ca43bf8c1280b66", default-features = false }
 # Op, Base and Monad evm2 type families.
-op-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "d8f9f2981c81d5ad26a8ef6c07f65a19cbeca984", default-features = false }
-base-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "d8f9f2981c81d5ad26a8ef6c07f65a19cbeca984", default-features = false }
-monad-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "d8f9f2981c81d5ad26a8ef6c07f65a19cbeca984", default-features = false }
+op-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "2d57372e021f470cd3b20688b0a389058480c387", default-features = false }
+base-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "2d57372e021f470cd3b20688b0a389058480c387", default-features = false }
+monad-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "2d57372e021f470cd3b20688b0a389058480c387", default-features = false }
 
 ## alloy
 alloy-consensus = { version = "2.5.0", default-features = false }
@@ -667,8 +667,7 @@ ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]
 # alloy-rs/evm2 `main` plus alloy-rs/evm2#744 squashed. Tempo, reth and evm2-networks pin
 # `alloy-rs/evm2`, while foundry-core pins `mablr/evm2`. Cargo rejects a patch from the same
 # source, so both go through `DaniPopes/evm2`, a URL in the same fork network. evm2-networks is
-# pinned above to the head of foundry-rs/evm2-networks#9, which ports it to alloy-rs/evm2#830;
-# the pin moves to its merge commit once that PR lands.
+# pinned above to its `main` after foundry-rs/evm2-networks#9, which ports it to alloy-rs/evm2#830.
 [patch."https://github.com/alloy-rs/evm2"]
 evm2 = { git = "https://github.com/DaniPopes/evm2", rev = "41d81b926aacafb5208375a38154971ebcb29635" }
 evm2-inspectors = { git = "https://github.com/DaniPopes/evm2", rev = "41d81b926aacafb5208375a38154971ebcb29635" }
