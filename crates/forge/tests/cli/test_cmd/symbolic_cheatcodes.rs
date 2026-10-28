@@ -423,7 +423,8 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 }
 
 // Symbolic-address account queries must see accounts that exist only in the backend, such as
-// contracts deployed and funded in `setUp`, not just accounts the path already touched.
+// contracts deployed and funded in `setUp`, not just accounts the path already touched. They must
+// also keep cheatcode accounts, whose balances `vm.deal` can set.
 #[forgetest_init]
 fn symbolic_account_queries_see_setup_accounts(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_account_queries_see_setup_accounts");
@@ -450,6 +451,12 @@ contract SymbolicSetupAccounts is Test {
 
     function checkBalance(address target) public view {
         vm.assume(target == address(a) || target == address(b));
+        assert(target.balance == 0);
+    }
+
+    function checkCheatcodeBalance(address target) public {
+        vm.assume(target == address(vm) || target == address(0xdead));
+        vm.deal(address(vm), 123);
         assert(target.balance == 0);
     }
 
@@ -497,14 +504,15 @@ contract SymbolicSetupAccounts is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 6 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
+Ran 7 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkBalance(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeBalance(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeCopy(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeHash(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeLength(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkHighLevelCall(address,bool) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnconstrainedHighLevelCall(address) ([METRICS])
-Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 7 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

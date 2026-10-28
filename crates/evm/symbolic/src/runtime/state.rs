@@ -1993,7 +1993,9 @@ impl SymbolicWorld {
         let expr = address_expr;
         let representative = expr.representative_symbolic_address();
         let mut result = self.balance_word_for_address(cx, executor, representative);
-        for address in self.known_addresses(executor) {
+        // Cheatcode accounts can hold balances even though they are not code candidates.
+        let cheatcode_addresses = [CHEATCODE_ADDRESS, SYMBOLIC_VM_COMPAT_ADDRESS];
+        for address in self.known_addresses(executor).into_iter().chain(cheatcode_addresses) {
             let balance = self.balance_word_for_address(cx, executor, address);
             let address = SymExpr::constant(cx, address_word(address));
             let condition = SymBoolExpr::eq(cx, expr.clone(), address);
