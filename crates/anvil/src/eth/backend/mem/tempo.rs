@@ -26,8 +26,8 @@
 //! Locally mined fork headers seal the same partial account and storage trie used by proofs.
 //! Its snapshots live in a separate bounded history cache, sharing the execution history's cache
 //! settings but preserving local trie membership through disk round trips. Only a canonical local
-//! certificate can select a snapshot. Rewinds remove orphaned proof states. Resets can leave
-//! unreachable entries until cache eviction; replacement signing histories cannot select them.
+//! certificate can select a snapshot. Rewinds remove orphaned proof states. Resets clear proof
+//! history before a replacement signing history starts.
 
 use super::{
     Backend,
@@ -91,9 +91,15 @@ impl TempoChain {
 
     /// Resets local trust at an unsigned chain head and clears saved consensus histories.
     pub(super) fn reanchor(&mut self, height: u64) {
+        self.invalidate_state(height);
+        self.snapshots.clear();
+    }
+
+    /// Invalidates the current sealed state while retaining explicit snapshots that can restore it.
+    pub(super) fn invalidate_state(&mut self, height: u64) {
         self.consensus = TempoConsensus::at_height(self.seed, self.epoch_length, height);
         self.latest_block = None;
-        self.snapshots.clear();
+        self.proof_states.write().clear();
     }
 
     pub(super) fn snapshot(&mut self, id: U256, proof_state: Option<Arc<AddressMap<DbAccount>>>) {
@@ -294,7 +300,7 @@ impl<N: Network> Backend<N> {
         keys: &[B256],
         height: u64,
     ) -> Result<Option<AccountProof>, BlockchainError> {
-        let _db = self.db.read().await;
+        let db = self.db.read().await;
         if self.get_fork().is_none() {
             return Ok(None);
         }
@@ -309,9 +315,10 @@ impl<N: Network> Backend<N> {
             }
             (Arc::clone(&tempo.proof_states), hash)
         };
+        drop(db);
 
-        // Canonical selection and cache access share the database guard, without holding storage
-        // while a historical trie is loaded from disk.
+        // Canonical selection uses the database guard; release it before loading and hashing a
+        // historical trie so mining and other database writers are not blocked by proof work.
         let states = proof_states.upgradable_read();
         if let Some(state) = states.get_state(&hash) {
             let accounts = state.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
@@ -319,9 +326,16 @@ impl<N: Network> Backend<N> {
         }
 
         let mut states = RwLockUpgradableReadGuard::upgrade(states);
-        let state = states.get_on_disk_state(&hash).ok_or(BlockchainError::DataUnavailable)?;
-        let accounts = state.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
-        Ok(Some(super::prove_account(accounts, address, keys)))
+        // Loading a disk state mutates the cache, so the write guard is required only for the
+        // load. Clone the loaded account map once, then release the exclusive guard before the
+        // potentially expensive trie construction.
+        let accounts = states
+            .get_on_disk_state(&hash)
+            .and_then(|state| state.maybe_as_full_db())
+            .ok_or(BlockchainError::DataUnavailable)?
+            .clone();
+        drop(states);
+        Ok(Some(super::prove_account(&accounts, address, keys)))
     }
 }
 
@@ -373,7 +387,10 @@ mod tests {
         NodeConfig,
         eth::{
             api::EthApi,
-            backend::{db::SerializableState, mem::MiningCommitHook},
+            backend::{
+                db::{SerializableState, StateDb},
+                mem::MiningCommitHook,
+            },
         },
         spawn,
     };
@@ -382,7 +399,10 @@ mod tests {
     use alloy_serde::WithOtherFields;
     use alloy_trie::{Nibbles, TrieAccount, proof::verify_proof};
     use anvil_core::types::ReorgOptions;
-    use foundry_evm::hardfork::{EthereumHardfork, FoundryHardfork};
+    use foundry_evm::{
+        backend::MemDb,
+        hardfork::{EthereumHardfork, FoundryHardfork},
+    };
     use foundry_primitives::{FoundryHeader, FoundryNetwork};
     use revm::database::AccountState;
     use std::{
@@ -744,6 +764,18 @@ mod tests {
     }
 
     #[test]
+    fn tempo_reanchor_clears_proof_states() {
+        let mut chain = TempoChain::new(B256::ZERO, NonZeroU64::new(3).unwrap(), 0);
+        let hash = B256::repeat_byte(0x42);
+        chain.proof_states.write().insert(hash, StateDb::new(MemDb::default()));
+        assert!(chain.proof_states.read().get_state(&hash).is_some());
+
+        chain.reanchor(3);
+
+        assert!(chain.proof_states.read().get_state(&hash).is_none());
+    }
+
+    #[test]
     fn tempo_cross_anchor_rollback_preserves_exact_snapshot_anchor() {
         let mut chain = TempoChain::new(B256::ZERO, NonZeroU64::new(3).unwrap(), 5);
         chain.consensus.rotate().unwrap();
@@ -791,7 +823,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tempo_unchanged_history_import_preserves_consensus_and_snapshots() {
+    async fn tempo_unchanged_history_import_invalidates_consensus_but_preserves_snapshots() {
         for include_history in [false, true] {
             let (api, _handle) = spawn(tempo_config(4)).await;
             api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
@@ -799,7 +831,7 @@ mod tests {
             let head = consensus(&api).finalization(2).unwrap().clone();
             let account = Address::repeat_byte(0x22);
             api.anvil_set_balance(account, U256::ONE).await.unwrap();
-            let scheduled = rotate_consensus(&api).await;
+            rotate_consensus(&api).await;
             let snapshot = api.evm_snapshot().await.unwrap();
             let next_rotation = consensus(&api).rotate().unwrap();
             let mut state = api.backend.serialized_state(false).await.unwrap();
@@ -815,19 +847,45 @@ mod tests {
             }
 
             api.backend.load_state(state).await.unwrap();
-            assert_eq!(consensus(&api).finalization(1), Some(&first));
-            assert_eq!(consensus(&api).finalization(2), Some(&head));
-            assert_eq!(consensus(&api).rotate().unwrap(), next_rotation);
+            assert!(consensus(&api).latest().is_none());
             assert_eq!(api.balance(account, None).await.unwrap(), U256::from(2));
-            assert_certified_head(&api);
             api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
-            assert_eq!(consensus(&api).identity(), scheduled);
+            assert_certified_head(&api);
             assert!(api.evm_revert(snapshot).await.unwrap());
             assert_eq!(api.balance(account, None).await.unwrap(), U256::ONE);
+            assert_eq!(consensus(&api).finalization(1), Some(&first));
             assert_eq!(consensus(&api).finalization(2), Some(&head));
             assert_eq!(consensus(&api).rotate().unwrap(), next_rotation);
             assert_certified_head(&api);
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn tempo_data_only_state_import_invalidates_sealed_proof() {
+        let config = NodeConfig::test_tempo().with_no_mining(true);
+        let (source_api, source) = spawn(config.clone()).await;
+        source_api.mine_one().await.unwrap();
+        let (api, _handle) = spawn(
+            config
+                .with_eth_rpc_url(Some(source.http_endpoint()))
+                .with_fork_block_number(Some(1u64)),
+        )
+        .await;
+        let account = Address::repeat_byte(0x23);
+        api.anvil_set_balance(account, U256::ONE).await.unwrap();
+        api.mine_one().await.unwrap();
+
+        let original = api.get_proof(account, Vec::new(), None).await.unwrap();
+        assert_eq!(original.balance, U256::ONE);
+        let mut state = api.backend.serialized_state(false).await.unwrap();
+        state.accounts.get_mut(&account).unwrap().balance = U256::from(2);
+
+        api.backend.load_state(state).await.unwrap();
+        assert!(consensus(&api).latest().is_none());
+        assert!(consensus(&api).finalization(1).is_none());
+
+        let updated = api.get_proof(account, Vec::new(), None).await.unwrap();
+        assert_eq!(updated.balance, U256::from(2));
     }
 
     #[tokio::test]
@@ -932,7 +990,10 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn tempo_fork_proof_state_survives_disk_roundtrip() {
-        let config = NodeConfig::test_tempo().with_no_mining(true).with_no_storage_caching(true);
+        let config = NodeConfig::test_tempo()
+            .with_no_mining(true)
+            .with_no_storage_caching(true)
+            .with_max_persisted_states(Some(4usize));
         let (source_api, source) = spawn(config.clone()).await;
         source_api.mine_one().await.unwrap();
         let (api, _handle) = spawn(
@@ -941,10 +1002,10 @@ mod tests {
                 .with_fork_block_number(Some(1u64)),
         )
         .await;
-        let proof_states = Arc::new(RwLock::new(InMemoryBlockStates::new(1, 4)));
-        api.backend.blockchain.storage.write().tempo.as_mut().unwrap().proof_states =
-            Arc::clone(&proof_states);
-
+        let proof_states = {
+            let storage = api.backend.blockchain.storage.read();
+            Arc::clone(&storage.tempo.as_ref().unwrap().proof_states)
+        };
         let address = Address::repeat_byte(0x31);
         let absent = Address::repeat_byte(0x32);
         let keys = [B256::ZERO, B256::with_last_byte(1)];
@@ -978,6 +1039,8 @@ mod tests {
                     .unwrap();
                 api.mine_one().await.unwrap();
                 let mut states = proof_states.write();
+                states.set_cache_limit(1);
+                states.insert(B256::repeat_byte(0x99), StateDb::new(MemDb::default()));
                 assert!(states.get_state(&hash).is_none());
                 let restored = states.get_on_disk_state(&hash).unwrap();
                 assert_eq!(
