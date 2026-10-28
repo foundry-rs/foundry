@@ -19,11 +19,10 @@
 //! evm2 allows replacing state and the block environment while a transaction runs, but not the
 //! spec or runtime [`Version`](evm2::Version), which also carries the chain ID. Operations that
 //! need a different spec or chain ID while a transaction is in flight apply everything else at
-//! once and report [`EnvTransition::Deferred`]; [`ExecutionLifecycle::begin_transaction`] then
-//! applies the deferred environment at the next transaction boundary. Callers must surface a
-//! deferred transition rather than ignore it. Until then, the inspector stack runs frames started
-//! after the change on a frame EVM built with the deferred environment
-//! ([`ExecutionLifecycle::begin_frame_evm`]).
+//! once and record the rest as the pending environment ([`ExecutionLifecycle::pending_env`]);
+//! [`ExecutionLifecycle::begin_transaction`] then applies it at the next transaction boundary.
+//! Until then, the inspector stack runs frames started after the change on a frame EVM built with
+//! the pending environment ([`ExecutionLifecycle::begin_frame_evm`]).
 //!
 //! Suspending a context accepts its in-flight writes, so a fork switch is not undone when an
 //! enclosing call reverts.
@@ -60,17 +59,6 @@ pub enum ExecutionPhase {
     Boundary,
     /// Inside a running transaction.
     InFlight,
-}
-
-/// How an environment change was applied.
-#[must_use = "a deferred spec or chain ID change must be surfaced"]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EnvTransition {
-    /// The whole environment is in effect.
-    Applied,
-    /// State and block are in effect; the spec or chain ID takes effect at the next transaction
-    /// boundary.
-    Deferred,
 }
 
 /// A transaction prepared to execute as a nested transaction of the running one, such as for
@@ -431,10 +419,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
     /// Returns a database reading the active context's accepted state over its backing database,
     /// for reads between executions.
     pub fn accepted_db(&self) -> impl BackingDb + use<F> {
-        let context = self.active();
-        let backing = context.db.clone_backing();
-        backing.set_eip161(context.env.version.feature(EvmFeatures::EIP161));
-        AcceptedView { cache: context.cache.clone().unwrap_or_default(), backing }
+        self.active().accepted_db()
     }
 
     /// Returns whether a snapshot exists.
@@ -468,18 +453,42 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
     /// Call this between transactions, with an EVM created by [`Self::create_evm`] whose
     /// executions were committed. In-flight state that was not committed is discarded, and a
     /// deferred environment change is applied first.
-    pub fn park(&mut self, mut evm: Evm<'_, F::Types>) {
+    pub fn park(&mut self, evm: Evm<'_, F::Types>) {
+        self.accept(evm, true);
+    }
+
+    /// Like [`Self::park`], for an EVM whose executions were not committed, such as a call's: its
+    /// pending writes are discarded, but the accepted state it carries, such as after a fork
+    /// switch, is kept.
+    pub(crate) fn park_detached(&mut self, evm: Evm<'_, F::Types>) {
+        self.accept(evm, false);
+    }
+
+    /// Accepts `evm`'s state, environment and network extension state into the active context.
+    ///
+    /// An EVM that materialized its accepted state holds the context's whole accepted state, which
+    /// replaces the context's. One that still reads it through a shared view only holds what its
+    /// executions read and, if `committed`, wrote, which is merged into the context's; without
+    /// committed writes it only caches reads, so it is dropped rather than copying the shared
+    /// accepted state.
+    fn accept(&mut self, mut evm: Evm<'_, F::Types>, committed: bool) {
         self.begin_transaction(&mut evm);
         evm.state_mut().clear_transaction_state();
         let is_view = AcceptedView::is(evm.database());
         let local = mem::take(&mut evm.state_mut().overlay_db_mut().cache);
         let env = evm_env(&evm);
-        let ext = evm.ext().clone();
+        let mut ext = evm.ext().clone();
+        // Permission to replay protocol history belongs to one transaction, not to the context.
+        ext.set_protocol_replay(false);
         // Release the EVM's handle on the accepted state before updating it in place.
         drop(evm);
         let context = self.active_mut();
         match (is_view, &mut context.cache) {
-            (true, Some(accepted)) => Arc::make_mut(accepted).merge(local),
+            (true, Some(accepted)) => {
+                if committed {
+                    Arc::make_mut(accepted).merge(local);
+                }
+            }
             _ => context.cache = Some(Arc::new(local)),
         }
         context.ext = StoredExt::new(&ext);
@@ -488,18 +497,6 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         context.loaded.clear();
         context.created.clear();
         self.store_env(env);
-    }
-
-    /// Parks accepted state, environment and extensions without committing pending writes.
-    /// Discards unmaterialized caches to avoid copying shared accepted state.
-    pub(crate) fn park_detached(&mut self, mut evm: Evm<'_, F::Types>) {
-        if !AcceptedView::is(evm.database()) {
-            self.park(evm);
-            return;
-        }
-        self.begin_transaction(&mut evm);
-        self.active_mut().ext = StoredExt::new(evm.ext());
-        self.store_env(evm_env(&evm));
     }
 
     /// Materializes the accepted state `evm` reads through a shared view into its own overlay.
@@ -544,12 +541,12 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         evm: &mut Evm<'_, F::Types>,
         id: Option<U256>,
         phase: ExecutionPhase,
-    ) -> eyre::Result<EnvTransition> {
+    ) -> eyre::Result<()> {
         if self.forks.context(id).is_none() {
             eyre::bail!("fork {} does not exist", id.unwrap_or_default());
         }
         if id == self.forks.active() {
-            return Ok(EnvTransition::Applied);
+            return Ok(());
         }
         let suspended = self.suspend(evm);
         if self.forks.active.is_none() {
@@ -559,7 +556,8 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
             }
         }
         self.forks.active = id;
-        Ok(self.resume(evm, suspended, false, phase))
+        self.resume(evm, suspended, false, phase);
+        Ok(())
     }
 
     /// Makes `id` the active context, or the local context for `None`, without suspending the
@@ -582,7 +580,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         db: impl BackingDb,
         env: EvmEnv<F::Types>,
         phase: ExecutionPhase,
-    ) -> eyre::Result<EnvTransition> {
+    ) -> eyre::Result<()> {
         self.roll_fork_with(evm, id, db, env, None, phase)
     }
 
@@ -596,12 +594,11 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         env: EvmEnv<F::Types>,
         cache: Option<Cache>,
         phase: ExecutionPhase,
-    ) -> eyre::Result<EnvTransition> {
+    ) -> eyre::Result<()> {
         let active = self.forks.active();
         let id = id.or(active);
         if id != active {
-            self.replace_inactive(id, db, env, cache)?;
-            return Ok(EnvTransition::Applied);
+            return self.replace_inactive(id, db, env, cache);
         }
         let ext = self.factory.configure_for(&db, &env).evm_ext(&env);
         let mut suspended = self.suspend(evm);
@@ -614,7 +611,8 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         context.cache = cache.map(Arc::new);
         context.inherit_local(&self.forks.local);
         *self.active_mut() = context;
-        Ok(self.resume(evm, suspended, true, phase))
+        self.resume(evm, suspended, true, phase);
+        Ok(())
     }
 
     /// Moves the inactive fork `id`, or the local context for `None`, onto a new backing database
@@ -755,7 +753,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         evm: &mut Evm<'_, F::Types>,
         env: EvmEnv<F::Types>,
         phase: ExecutionPhase,
-    ) -> EnvTransition {
+    ) {
         let db = self.forks.active_db();
         let factory = self.factory.configure_for(&db, &env);
         self.apply_env(&factory, evm, env, phase)
@@ -786,7 +784,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         id: U256,
         action: RevertStateSnapshotAction,
         phase: ExecutionPhase,
-    ) -> Option<(EnvTransition, StateSnapshot)> {
+    ) -> Option<StateSnapshot> {
         let snapshot = if action.is_keep() {
             self.snapshots.get(id).cloned()
         } else {
@@ -828,8 +826,8 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         let replaced = replaced.unwrap_or_else(|| running.snapshot());
         evm.ext_mut().replace_while_executing(ext.into_inner());
         let factory = self.factory.configure_for(&db, &env);
-        let transition = self.apply_env(&factory, evm, env, phase);
-        Some((transition, replaced))
+        self.apply_env(&factory, evm, env, phase);
+        Some(replaced)
     }
 
     /// Deletes a snapshot, returning whether it existed.
@@ -876,8 +874,14 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
     /// Execute messages on the returned EVM with [`Host::execute_message`] and hand its state back
     /// with [`Self::end_frame_evm`]; `evm` must not execute in between.
     ///
+    /// # Safety
+    ///
+    /// The running state of `evm` moves into the returned EVM, whose lifetime `'a` the caller
+    /// chooses. Every database in that state must outlive `'a`: it must be one the lifecycle
+    /// installed, all of which are owned (`'static`), not a database borrowed by the caller.
+    ///
     /// [`Host::execute_message`]: evm2::interpreter::Host::execute_message
-    pub fn begin_frame_evm<'a>(
+    pub unsafe fn begin_frame_evm<'a>(
         &self,
         evm: &mut Evm<'_, F::Types>,
         env: EvmEnv<F::Types>,
@@ -886,8 +890,8 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         let factory = self.factory.configure_for(&db, &env);
         let mut frame = factory.new_evm_with_ext(EmptyDB::default(), env, evm.ext().clone());
         let state = mem::replace(evm.state_mut(), State::new(EmptyDB::default()));
-        // SAFETY: `State`'s lifetime only bounds its backing database, and every database the
-        // lifecycle installs is owned (`'static`), so the state outlives both EVMs.
+        // SAFETY: `State`'s lifetime only bounds its databases, which the caller guarantees
+        // outlive `'a`.
         *frame.state_mut() = unsafe { mem::transmute::<State<'_>, State<'a>>(state) };
         self.sync_database_policy(&mut frame);
         frame
@@ -896,11 +900,16 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
     /// Hands the state, block and network extension state of a frame EVM created with
     /// [`Self::begin_frame_evm`] back to `evm`, restoring `evm`'s empty-account policy on the
     /// active backing database.
-    pub fn end_frame_evm(&self, evm: &mut Evm<'_, F::Types>, mut frame: Evm<'_, F::Types>) {
+    ///
+    /// # Safety
+    ///
+    /// The running state of `frame` moves into `evm`. Every database in that state must outlive
+    /// `evm`: it must be one the lifecycle installed, as for [`Self::begin_frame_evm`].
+    pub unsafe fn end_frame_evm(&self, evm: &mut Evm<'_, F::Types>, mut frame: Evm<'_, F::Types>) {
         frame.clear_inspector();
         let state = mem::replace(frame.state_mut(), State::new(EmptyDB::default()));
-        // SAFETY: See `begin_frame_evm`; the frame only ever installs owned backing databases,
-        // such as on a fork switch.
+        // SAFETY: `State`'s lifetime only bounds its databases, which the caller guarantees
+        // outlive `evm`.
         *evm.state_mut() = unsafe { mem::transmute::<State<'_>, State<'_>>(state) };
         *evm.ext_mut() = frame.ext().clone();
         evm.set_block(*frame.block());
@@ -1097,7 +1106,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         suspended: Suspended,
         carry: bool,
         phase: ExecutionPhase,
-    ) -> EnvTransition {
+    ) {
         let Suspended {
             cache: source,
             loaded: source_loaded,
@@ -1172,7 +1181,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         evm.ext_mut().resume_context(ext);
 
         let factory = self.factory.configure_for(&db, &env);
-        let transition = self.apply_env(&factory, evm, env, phase);
+        self.apply_env(&factory, evm, env, phase);
         evm.warm_precompiles();
         if fresh {
             factory.initialize_evm(evm, db.is_forked_mode());
@@ -1189,7 +1198,6 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
             }
         }
         factory.refresh_switched_transaction(evm, &self.tx_original);
-        transition
     }
 
     /// Applies `env`, deferring a spec or chain ID change while a transaction is in flight.
@@ -1199,7 +1207,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         evm: &mut Evm<'_, F::Types>,
         env: EvmEnv<F::Types>,
         phase: ExecutionPhase,
-    ) -> EnvTransition {
+    ) {
         let current = evm_env(evm);
         self.sync_database_policy(evm);
         if current.spec == env.spec && current.chain_id() == env.chain_id() {
@@ -1210,19 +1218,17 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
                 ExecutionPhase::InFlight if self.pending_env.is_some() => Some(env),
                 _ => None,
             };
-            return EnvTransition::Applied;
+            return;
         }
         match phase {
             ExecutionPhase::Boundary => {
                 factory.set_env(evm, env);
                 self.sync_database_policy(evm);
                 self.pending_env = None;
-                EnvTransition::Applied
             }
             ExecutionPhase::InFlight => {
                 evm.set_block(env.block);
                 self.pending_env = Some(env);
-                EnvTransition::Deferred
             }
         }
     }
@@ -1310,12 +1316,17 @@ struct Suspended {
 
 /// Clears `evm`'s inspector and returns the EVM without the borrows the inspector held, such as
 /// to park an EVM whose inspector borrowed the lifecycle's owner.
-pub fn release_inspector<'b, T: EvmTypes>(mut evm: Evm<'_, T>) -> Evm<'b, T> {
+///
+/// # Safety
+///
+/// An EVM's lifetime bounds its inspector, which is cleared, and its databases and precompiles.
+/// Those must outlive `'b`, the lifetime the caller chooses: they must be ones Foundry's
+/// factories and [`ExecutionLifecycle`] installed, all of which are owned (`'static`).
+pub unsafe fn release_inspector<'b, T: EvmTypes>(mut evm: Evm<'_, T>) -> Evm<'b, T> {
     evm.clear_inspector();
     let evm = mem::ManuallyDrop::new(evm);
-    // SAFETY: An EVM's lifetime only bounds its inspector, which is cleared, and its backing
-    // database and precompiles, which Foundry always installs owned (`'static`). The value is
-    // moved out exactly once and the original is never dropped.
+    // SAFETY: The inspector is cleared and the caller guarantees the databases and precompiles
+    // outlive `'b`. The value is moved out exactly once and the original is never dropped.
     unsafe { std::ptr::read((&raw const *evm).cast::<Evm<'b, T>>()) }
 }
 

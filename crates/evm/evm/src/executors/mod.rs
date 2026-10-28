@@ -36,7 +36,7 @@ use foundry_evm_core::{
         history_window_start,
     },
     evm::{
-        BlockContext, ChainFor, EthEvmNetwork, EvmEnv, EvmEnvFor, EvmFactoryFor, FoundryEvmExt,
+        ChainFor, EthEvmNetwork, EvmEnv, EvmEnvFor, EvmFactoryFor, FoundryEvmExt,
         FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, SpecFor, TransactionRequestFor, TxFor,
         TxResultFor, evm_env, release_inspector,
     },
@@ -54,6 +54,9 @@ use std::{
     },
     time::{Duration, Instant},
 };
+
+#[cfg(feature = "monad")]
+use foundry_evm_core::evm::{BlockContext, MonadEvmNetwork};
 
 mod builder;
 pub use builder::ExecutorBuilder;
@@ -138,12 +141,11 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         mut backend: Backend<FEN>,
         evm_env: EvmEnvFor<FEN>,
         tx: TransactionRequestFor<FEN>,
-        mut inspector: InspectorStack<FEN>,
+        inspector: InspectorStack<FEN>,
         networks: NetworkConfigs,
         gas_limit: u64,
         legacy_assertions: bool,
     ) -> Self {
-        inspector.networks(networks);
         backend.set_networks(networks);
         let extra_cheatcode_addresses = inspector.extra_cheatcode_addresses();
         backend.extend_persistent_accounts(extra_cheatcode_addresses.iter().copied());
@@ -452,18 +454,27 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         );
         trace!(sender=?tx.from(), "deploying contract");
 
-        let mut result = self.transact_with_env(evm_env, tx)?;
-        result = result.into_result(rd)?;
+        let result = self.transact_with_env(evm_env, tx)?;
+        self.persist_deployment(result, rd)
+    }
+
+    /// Turns the committed result of a creation into a deployment, marking the created contract
+    /// persistent so that its state survives fork switches.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a successful creation returned no address.
+    pub fn persist_deployment(
+        &mut self,
+        result: RawCallResult<FEN>,
+        rd: Option<&RevertDecoder>,
+    ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
+        let result = result.into_result(rd)?;
         let Some(address) = result.created_address else {
             panic!("Deployment succeeded, but no address was returned: {result:#?}");
         };
-
-        // also mark this library as persistent, this will ensure that the state of the library is
-        // persistent across fork swaps in forking mode
         self.backend_mut().add_persistent_account(address);
-
         trace!(%address, "deployed contract");
-
         Ok(DeployResult { raw: result, address })
     }
 
@@ -698,11 +709,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     /// Replays the transactions preceding `target` in its block, then executes `target` with the
     /// inspectors and persists the state of all of them.
     ///
-    /// `context` holds the block context of networks whose execution depends on the block
-    /// position, such as Monad's reserve balance; prefix and target transactions are positioned
-    /// in it, and, with a context, the target replays trusted protocol transactions. The caller
-    /// selects which prefix transactions replay; canonical protocol transactions of the network
-    /// replay as such. `target_kind` is the target's kind, which decides the test contract.
+    /// The caller selects which prefix transactions replay. `target_kind` is the target's kind,
+    /// which decides the test contract.
     #[instrument(name = "transact_block_replay", level = "debug", skip_all)]
     pub fn transact_with_block_replay(
         &mut self,
@@ -710,8 +718,23 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         target: &Recovered<TxFor<FEN>>,
         target_kind: TxKind,
         replay: &[(B256, Recovered<TxFor<FEN>>)],
-        mut context: Option<BlockContext<FEN>>,
     ) -> eyre::Result<RawCallResult<FEN>> {
+        self.replay_block_prefix(&mut evm_env, target, target_kind, replay, |evm, tx| {
+            evm.ext_mut().for_next_transaction(tx);
+        })?;
+        self.transact_tx(evm_env, target, None)
+    }
+
+    /// Commits the transactions preceding `target` in its block, each with the network extension
+    /// state `prepare` sets up for it, and initializes the target's caller and test contract.
+    fn replay_block_prefix(
+        &mut self,
+        evm_env: &mut EvmEnvFor<FEN>,
+        target: &Recovered<TxFor<FEN>>,
+        target_kind: TxKind,
+        replay: &[(B256, Recovered<TxFor<FEN>>)],
+        mut prepare: impl FnMut(&mut FoundryEvmFor<'_, FEN>, &Recovered<TxFor<FEN>>),
+    ) -> eyre::Result<()> {
         // EIP-8130 requires phase-aware execution and has no ordinary call/create kind.
         // Check the entire prefix before executing anything.
         eyre::ensure!(
@@ -731,43 +754,27 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             evm_env.set_feature(evm2::EvmFeatures::BALANCE_CHECK, false);
         }
 
-        let factory = EvmFactoryFor::<FEN>::default();
         for (tx_hash, tx) in replay {
-            let is_protocol = ChainFor::<FEN>::is_protocol_transaction(tx);
             let backend = self.backend_mut();
             let mut evm = backend.create_evm();
-            install_env::<FEN>(backend, &mut evm, evm_env);
-            prepare_ext::<FEN>(&mut evm, tx, context.as_mut(), &factory);
-            // The block prefix is trusted history, so its protocol transactions replay.
-            evm.ext_mut().set_protocol_replay(is_protocol);
+            install_env::<FEN>(backend, &mut evm, *evm_env);
+            prepare(&mut evm, tx);
             let result = evm.transact(tx).map(|executed| executed.commit()).map_err(|err| {
                 eyre::eyre!(
                     "Failed to execute transaction: {tx_hash:?} in block {block_number}: {err:?}"
                 )
             })?;
-            evm.ext_mut().set_protocol_replay(false);
             backend.park(evm);
             if result.status
                 && let Some(address) = result.created_address
             {
                 backend.add_persistent_account(address);
             }
-            if let Some(context) = &mut context {
-                context.record_transaction(tx.clone());
-            }
         }
 
         // The prefix has run, so the caller's nonce is the target's canonical nonce.
         self.backend_mut().initialize(caller, target_kind);
-        let ext = context.as_ref().map(|context| {
-            let mut ext = factory.evm_ext(&evm_env);
-            context.prepare_next(&mut ext, target);
-            // The mined target is trusted history: a protocol transaction replays as such, and a
-            // non-canonical envelope from the protocol sender is rejected.
-            ext.set_protocol_replay(true);
-            ext
-        });
-        self.transact_tx(evm_env, target, ext)
+        Ok(())
     }
 
     /// Commits a call's state and inspector. Detached backends replace the executor's backend,
@@ -1068,16 +1075,7 @@ fn install_env<FEN: FoundryEvmNetwork>(
     evm: &mut FoundryEvmFor<'_, FEN>,
     env: EvmEnvFor<FEN>,
 ) {
-    let current = evm_env(evm);
-    let version = &env.version;
-    let same_config = current.spec == env.spec
-        && current.version.chain_id == version.chain_id
-        && current.version.features == version.features
-        && current.version.tx_gas_limit_cap == version.tx_gas_limit_cap
-        && current.version.memory_limit == version.memory_limit
-        && current.version.max_code_size == version.max_code_size
-        && current.version.max_initcode_size == version.max_initcode_size;
-    if same_config {
+    if same_execution_config::<FEN>(&evm_env(evm), &env) {
         evm.set_block(env.block);
         backend.lifecycle().sync_database_policy(evm);
         return;
@@ -1097,20 +1095,65 @@ fn install_env<FEN: FoundryEvmNetwork>(
     backend.lifecycle().sync_database_policy(evm);
 }
 
-/// Prepares `evm`'s network extension state for `tx`, at its position in `context` if any.
-fn prepare_ext<FEN: FoundryEvmNetwork>(
-    evm: &mut FoundryEvmFor<'_, FEN>,
-    tx: &Recovered<TxFor<FEN>>,
-    context: Option<&mut BlockContext<FEN>>,
-    factory: &EvmFactoryFor<FEN>,
-) {
-    match context {
-        Some(context) => {
+/// Returns whether `current` and `next` build the same execution config: the same spec and every
+/// field of their runtime [`Version`](evm2::Version), so only the block differs.
+fn same_execution_config<FEN: FoundryEvmNetwork>(
+    current: &EvmEnvFor<FEN>,
+    next: &EvmEnvFor<FEN>,
+) -> bool {
+    // `Version` has no `PartialEq`; destructure it so a new field fails to compile here.
+    let evm2::Version {
+        gas_params,
+        features,
+        chain_id,
+        tx_gas_limit_cap,
+        memory_limit,
+        max_code_size,
+        max_initcode_size,
+        max_blobs_per_tx,
+        initial_call_depth,
+        _non_exhaustive: (),
+    } = next.version;
+    let version = &current.version;
+    current.spec == next.spec
+        && version.gas_params == gas_params
+        && version.features == features
+        && version.chain_id == chain_id
+        && version.tx_gas_limit_cap == tx_gas_limit_cap
+        && version.memory_limit == memory_limit
+        && version.max_code_size == max_code_size
+        && version.max_initcode_size == max_initcode_size
+        && version.max_blobs_per_tx == max_blobs_per_tx
+        && version.initial_call_depth == initial_call_depth
+}
+
+#[cfg(feature = "monad")]
+impl Executor<MonadEvmNetwork> {
+    /// Like [`Executor::transact_with_block_replay`], positioning the prefix and target in the
+    /// Monad block `context`. The block is trusted history: its canonical protocol transactions
+    /// replay as protocol system calls, and a non-canonical envelope from the protocol sender is
+    /// rejected.
+    #[instrument(name = "transact_monad_block_replay", level = "debug", skip_all)]
+    pub fn transact_with_monad_block_replay(
+        &mut self,
+        mut env: EvmEnvFor<MonadEvmNetwork>,
+        target: &Recovered<TxFor<MonadEvmNetwork>>,
+        target_kind: TxKind,
+        replay: &[(B256, Recovered<TxFor<MonadEvmNetwork>>)],
+        mut context: BlockContext<MonadEvmNetwork>,
+    ) -> eyre::Result<RawCallResult<MonadEvmNetwork>> {
+        let factory = EvmFactoryFor::<MonadEvmNetwork>::default();
+        self.replay_block_prefix(&mut env, target, target_kind, replay, |evm, tx| {
             let mut ext = factory.evm_ext(&evm_env(evm));
             context.prepare_next(&mut ext, tx);
+            ext.set_protocol_replay(ChainFor::<MonadEvmNetwork>::is_protocol_transaction(tx));
             *evm.ext_mut() = ext;
-        }
-        None => evm.ext_mut().for_next_transaction(tx),
+            context.record_transaction(tx.clone());
+        })?;
+        let mut ext = factory.evm_ext(&env);
+        context.prepare_next(&mut ext, target);
+        ext.set_protocol_replay(true);
+        self.transact_tx(env, target, Some(ext))
     }
 }
 
@@ -1148,10 +1191,9 @@ fn execute<FEN: FoundryEvmNetwork>(
         evm.set_inspector(stack.as_inspector(&mut *backend));
         evm.transact(tx).map(|executed| executed.detach())
     };
-    let mut evm: Evm<'_, _> = release_inspector(evm);
+    // SAFETY: The EVM was created by the backend's lifecycle over its owned databases.
+    let evm: Evm<'_, _> = unsafe { release_inspector(evm) };
     let TxResultWithState { result, pending_state, .. } = executed.map_err(handler_error)?;
-    // Permission to replay protocol history belongs to this transaction, not the parked backend.
-    evm.ext_mut().set_protocol_replay(false);
 
     // A spec or chain ID change deferred by a cheatcode applies from the next transaction.
     let mut env = evm_env(&evm);
@@ -1901,7 +1943,7 @@ mod tests {
     use std::{sync::mpsc, thread};
 
     #[cfg(feature = "monad")]
-    use foundry_evm_core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
+    use foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS;
 
     fn eth_executor(builder: ExecutorBuilder<EthEvmNetwork>) -> Executor<EthEvmNetwork> {
         test_executor(builder, NetworkConfigs::default())
@@ -1970,7 +2012,6 @@ mod tests {
 
         let monad =
             test_executor(ExecutorBuilder::<MonadEvmNetwork>::new(), NetworkConfigs::with_monad());
-        assert!(monad.inspector().networks.is_monad());
         assert!(monad.backend().networks().is_monad());
         assert!(monad.backend().is_persistent(&MONAD_CHEATCODE_ADDRESS));
     }
@@ -2099,7 +2140,6 @@ mod tests {
                 &target,
                 TxKind::Call(address),
                 &[(B256::repeat_byte(1), prefix), (B256::repeat_byte(2), reverted_create)],
-                None,
             )
             .unwrap();
 
@@ -2125,7 +2165,6 @@ mod tests {
                 &target,
                 TxKind::Create,
                 &[(B256::repeat_byte(1), prefix)],
-                None,
             )
             .unwrap();
 
@@ -2150,7 +2189,6 @@ mod tests {
                 &target,
                 TxKind::Call(deployed),
                 &[(B256::repeat_byte(1), prefix)],
-                None,
             )
             .unwrap();
 
@@ -2190,13 +2228,13 @@ mod tests {
         // Historical staking state is funded; EIP-161 prunes a touched empty account's storage.
         executor.set_balance(STAKING, U256::ONE).unwrap();
         let env = *executor.evm_env();
-        let context = || Some(BlockContext::new(Vec::new(), Vec::new(), Vec::new()));
+        let context = || BlockContext::new(Vec::new(), Vec::new(), Vec::new());
 
         // The canonical prefix syscall replays as a protocol call, the gas-paying system envelope
         // the caller selected runs as an ordinary transaction, and the canonical target replays
         // at the prefix's nonce.
         let result = executor
-            .transact_with_block_replay(
+            .transact_with_monad_block_replay(
                 env,
                 &epoch_change,
                 TxKind::Call(STAKING),
@@ -2223,7 +2261,13 @@ mod tests {
 
         // A non-canonical target from the system sender is rejected without effects.
         let error = executor
-            .transact_with_block_replay(env, &gas_paying, TxKind::Call(STAKING), &[], context())
+            .transact_with_monad_block_replay(
+                env,
+                &gas_paying,
+                TxKind::Call(STAKING),
+                &[],
+                context(),
+            )
             .unwrap_err();
         assert_eq!(
             error.root_cause().to_string(),

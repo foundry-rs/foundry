@@ -25,11 +25,11 @@
 use crate::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER},
     evm::{
-        BackingDb, BlockContext, ChainFor, EnvTransition, EthEvmNetwork, EvmEnvFor, EvmFactoryFor,
-        ExecutedNested, ExecutionLifecycle, ExecutionPhase, ForkDb, ForkInfo, ForkPosition,
-        FoundryDatabase, FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork,
-        Parked, PersistentWrite, PreparedTx, SpecFor, StoredExt, TxFor, TxResultFor, TypesFor,
-        block_txs, evm_env, merge_untracked_nested_changes,
+        BackingDb, BlockContext, ChainFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested,
+        ExecutionLifecycle, ExecutionPhase, ForkDb, ForkInfo, ForkPosition, FoundryDatabase,
+        FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, PersistentWrite,
+        PreparedTx, SpecFor, StoredExt, TxFor, TxResultFor, TypesFor, block_txs, evm_env,
+        merge_untracked_nested_changes,
     },
     fork::{CreateFork, Fork as RemoteFork, ForkId, ForkResult, MultiFork},
     opts::{EvmOpts, ExecutionSpecContext},
@@ -179,7 +179,24 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         fork: CreateFork,
         configure_env: impl FnOnce(&mut EvmEnvFor<FEN>, ExecutionSpecContext),
     ) -> eyre::Result<Self> {
-        let forks = MultiFork::spawn();
+        Self::new_fork(MultiFork::spawn(), fork, configure_env)
+    }
+
+    /// Creates a backend that starts on `fork` at its resolved block's environment, or locally
+    /// with `local_env`.
+    pub fn spawn_source(fork: Option<CreateFork>, local_env: EvmEnvFor<FEN>) -> eyre::Result<Self> {
+        match fork {
+            Some(fork) => Self::spawn_fork(fork, |_, _| {}),
+            None => Self::spawn(None, local_env),
+        }
+    }
+
+    /// Like [`Self::spawn_fork`], using `forks` for remote fork caches.
+    fn new_fork(
+        forks: MultiFork,
+        fork: CreateFork,
+        configure_env: impl FnOnce(&mut EvmEnvFor<FEN>, ExecutionSpecContext),
+    ) -> eyre::Result<Self> {
         let opts = &fork.evm_opts;
         let resolved = forks.create_fork(fork.clone())?;
         let context = resolved.fork.context();
@@ -198,7 +215,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let mut backend = Self::with_fork_manager(forks, EmptyDB::default(), env);
         let id = backend.insert_prepared_fork(fork.url, resolved, env, track)?;
         let mut evm = backend.lifecycle.create_evm();
-        let _ = backend.lifecycle.select_fork(&mut evm, Some(id), ExecutionPhase::Boundary)?;
+        backend.lifecycle.select_fork(&mut evm, Some(id), ExecutionPhase::Boundary)?;
         backend.lifecycle.park(evm);
         Ok(backend)
     }
@@ -218,7 +235,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             let track = fork.evm_opts.networks.is_monad();
             let id = backend.insert_fork(fork, Some(env), track)?;
             let mut evm = backend.lifecycle.create_evm();
-            let _ = backend.lifecycle.select_fork(&mut evm, Some(id), ExecutionPhase::Boundary)?;
+            backend.lifecycle.select_fork(&mut evm, Some(id), ExecutionPhase::Boundary)?;
             backend.lifecycle.park(evm);
         }
         Ok(backend)
@@ -269,15 +286,19 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         backend
     }
 
-    /// Replaces this backend with one starting on `fork`, reusing the fork manager's remote
-    /// caches.
+    /// Replaces this backend with one starting on `fork` at its resolved block's environment, or
+    /// locally with `local_env`, reusing the fork manager's remote caches.
     pub fn replace_fork(
         &mut self,
         fork: Option<CreateFork>,
-        env: EvmEnvFor<FEN>,
+        local_env: EvmEnvFor<FEN>,
     ) -> eyre::Result<()> {
         let networks = self.networks;
-        *self = Self::new(self.forks.clone(), fork, env)?;
+        let forks = self.forks.clone();
+        *self = match fork {
+            Some(fork) => Self::new_fork(forks, fork, |_, _| {})?,
+            None => Self::new(forks, None, local_env)?,
+        };
         self.set_networks(networks);
         Ok(())
     }
@@ -522,8 +543,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         evm: &mut FoundryEvmFor<'_, FEN>,
         env: EvmEnvFor<FEN>,
         phase: ExecutionPhase,
-    ) -> EnvTransition {
-        self.lifecycle.set_env(evm, env, phase)
+    ) {
+        self.lifecycle.set_env(evm, env, phase);
     }
 
     /// Accepts a detached transaction's state, such as a call's, into the active context's
@@ -762,10 +783,10 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         fork: CreateFork,
         evm: &mut FoundryEvmFor<'_, FEN>,
         phase: ExecutionPhase,
-    ) -> eyre::Result<(LocalForkId, EnvTransition)> {
+    ) -> eyre::Result<LocalForkId> {
         let id = self.create_fork(fork)?;
-        let transition = self.select_fork(id, evm, phase)?;
-        Ok((id, transition))
+        self.select_fork(id, evm, phase)?;
+        Ok(id)
     }
 
     /// Creates a fork positioned right before `transaction` and selects it.
@@ -775,10 +796,10 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         evm: &mut FoundryEvmFor<'_, FEN>,
         phase: ExecutionPhase,
         transaction: B256,
-    ) -> eyre::Result<(LocalForkId, EnvTransition)> {
+    ) -> eyre::Result<LocalForkId> {
         let id = self.create_fork_at_transaction(fork, transaction)?;
-        let transition = self.select_fork(id, evm, phase)?;
-        Ok((id, transition))
+        self.select_fork(id, evm, phase)?;
+        Ok(id)
     }
 
     /// Makes fork `id` the running context of `evm`.
@@ -790,11 +811,11 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         id: LocalForkId,
         evm: &mut FoundryEvmFor<'_, FEN>,
         phase: ExecutionPhase,
-    ) -> eyre::Result<EnvTransition> {
+    ) -> eyre::Result<()> {
         trace!(?id, "select fork");
         self.ensure_fork(Some(id))?;
         if self.is_active_fork(id) {
-            return Ok(EnvTransition::Applied);
+            return Ok(());
         }
         let running = evm_env(evm);
         let factory = self.lifecycle.factory().clone();
@@ -815,7 +836,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         block_number: u64,
         evm: &mut FoundryEvmFor<'_, FEN>,
         phase: ExecutionPhase,
-    ) -> eyre::Result<EnvTransition> {
+    ) -> eyre::Result<()> {
         trace!(?id, ?block_number, "roll fork");
         let id = self.ensure_fork(id)?;
         let info = self.fork_info(id)?.clone();
@@ -830,7 +851,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             None
         };
         let db = ForkDb::new(backend, remote.context().source_chain_id);
-        let transition = self.lifecycle.roll_fork(evm, Some(id), db, env, phase)?;
+        self.lifecycle.roll_fork(evm, Some(id), db, env, phase)?;
         let block = Some(remote.number());
         self.set_fork_info(
             id,
@@ -839,7 +860,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         if let Some((position, cursor)) = cursor {
             self.retain_cursor(id, position, &cursor, Some(evm));
         }
-        Ok(transition)
+        Ok(())
     }
 
     /// Moves fork `id`, or the active fork for `None`, to the state right before `transaction`:
@@ -851,12 +872,12 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         transaction: B256,
         evm: &mut FoundryEvmFor<'_, FEN>,
         phase: ExecutionPhase,
-    ) -> eyre::Result<EnvTransition> {
+    ) -> eyre::Result<()> {
         trace!(?id, ?transaction, "roll fork to transaction");
         let id = self.ensure_fork(id)?;
         let (db, env, cache, info, cursor, replayed) =
             self.prepare_roll_to_transaction(id, transaction, evm_env(evm).spec)?;
-        let transition = self.lifecycle.roll_fork_with(evm, Some(id), db, env, cache, phase)?;
+        self.lifecycle.roll_fork_with(evm, Some(id), db, env, cache, phase)?;
         self.set_fork_info(id, info);
         if let Some((position, cursor)) = cursor {
             self.retain_cursor(id, position, &cursor, Some(evm));
@@ -867,7 +888,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             self.lifecycle.rebase_onto_inactive(evm, Some(id))?;
             self.lifecycle.factory().refresh_transaction(evm);
         }
-        Ok(transition)
+        Ok(())
     }
 
     /// Prepares the mined `transaction` of fork `id`, or of the active fork for `None`, to execute
@@ -1072,17 +1093,31 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
     /// Moves the running transaction onto a separate frame EVM. See
     /// [`ExecutionLifecycle::begin_frame_evm`].
-    pub fn begin_frame_evm<'a>(
+    ///
+    /// # Safety
+    ///
+    /// See [`ExecutionLifecycle::begin_frame_evm`].
+    pub unsafe fn begin_frame_evm<'a>(
         &self,
         evm: &mut FoundryEvmFor<'_, FEN>,
         env: EvmEnvFor<FEN>,
     ) -> FoundryEvmFor<'a, FEN> {
-        self.lifecycle.begin_frame_evm(evm, env)
+        // SAFETY: Forwarded to the caller.
+        unsafe { self.lifecycle.begin_frame_evm(evm, env) }
     }
 
     /// Hands a frame EVM's state back to `evm`. See [`ExecutionLifecycle::end_frame_evm`].
-    pub fn end_frame_evm(&self, evm: &mut FoundryEvmFor<'_, FEN>, frame: FoundryEvmFor<'_, FEN>) {
-        self.lifecycle.end_frame_evm(evm, frame);
+    ///
+    /// # Safety
+    ///
+    /// See [`ExecutionLifecycle::end_frame_evm`].
+    pub unsafe fn end_frame_evm(
+        &self,
+        evm: &mut FoundryEvmFor<'_, FEN>,
+        frame: FoundryEvmFor<'_, FEN>,
+    ) {
+        // SAFETY: Forwarded to the caller.
+        unsafe { self.lifecycle.end_frame_evm(evm, frame) };
     }
 
     // ---- Running-state operations ----
@@ -1126,7 +1161,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             .forks()
             .iter()
             .filter(|(id, entry)| {
-                *id != active && is_contract(context_account(&entry.context, &callee))
+                *id != active
+                    && is_contract(entry.context.accepted_db().get_account(&callee).ok().flatten())
             })
             .map(|(id, _)| id)
             .collect::<Vec<_>>();
@@ -1289,7 +1325,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         evm: &mut FoundryEvmFor<'_, FEN>,
         action: RevertStateSnapshotAction,
         phase: ExecutionPhase,
-    ) -> Option<(EnvTransition, StateSnapshot)> {
+    ) -> Option<StateSnapshot> {
         trace!(?id, "revert snapshot");
         if !self.lifecycle.has_snapshot(id) {
             warn!(target: "backend", "No snapshot to revert for {}", id);
@@ -1680,22 +1716,9 @@ fn parent_block(
     Ok(Some(parent))
 }
 
-/// Returns an account of a context that is not running.
-fn context_account<T: evm2::EvmTypesHost>(
-    context: &Parked<T>,
-    address: &Address,
-) -> Option<AccountInfo> {
-    if let Some(cache) = &context.cache
-        && let Some(account) = cache.accounts.get(address)
-    {
-        return account.clone();
-    }
-    context.db.clone_backing().get_account(address).ok().flatten()
-}
-
+/// Returns whether `account` has code. A zero code hash, which no code hashes to, is not code.
 fn is_contract(account: Option<AccountInfo>) -> bool {
-    account
-        .is_some_and(|account| account.code_hash != KECCAK256_EMPTY && !account.code_hash.is_zero())
+    account.is_some_and(|account| !account.is_empty_code_hash() && !account.code_hash.is_zero())
 }
 
 /// Returns the account-loading policy required by a fork source.

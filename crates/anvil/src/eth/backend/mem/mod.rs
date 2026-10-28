@@ -2609,7 +2609,7 @@ impl<N: Network> Backend<N> {
         let base_activation_admin = None;
         EvmOptions {
             hardfork,
-            networks: self.networks,
+            celo_transfer: self.networks.is_celo(),
             precompile_factory: self.precompile_factory.clone(),
             cheats: Some(self.cheats.clone()),
             arbitrum_block_number: self.arbitrum_block_number(evm_env),

@@ -518,9 +518,6 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         debug_assert!(
             executor.backend().networks().has_same_execution_profile(&self.evm_opts.networks)
         );
-        debug_assert!(
-            executor.inspector().networks.has_same_execution_profile(&self.evm_opts.networks)
-        );
         let inspector = executor.inspector_mut();
         if let Some(cheatcodes) = inspector.cheatcodes.as_mut() {
             let mut config = cheatcodes.core.config.clone_with(&self.config, self.evm_opts.clone());

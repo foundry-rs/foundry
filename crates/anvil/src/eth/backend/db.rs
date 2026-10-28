@@ -19,7 +19,7 @@ use anvil_core::eth::{
 };
 use evm2::evm::{BlockStateAccumulator, DbResult, DynDatabase};
 use foundry_common::errors::FsPathError;
-use foundry_evm_core::evm::FoundryDatabase;
+use foundry_evm_core::evm::{FoundryDatabase, existing_account};
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
@@ -72,19 +72,6 @@ pub(crate) fn cache_block_hash(block_hashes: &mut U256Map<B256>, number: U256, h
         block_hashes.insert(number, hash);
     }
     head
-}
-
-/// Returns `account` as execution at `spec` loads it.
-///
-/// Anvil's databases report an account they do not hold as an existing empty account, and forked
-/// state cannot tell the two apart because RPC endpoints report a missing account as empty. From
-/// Spurious Dragon on an empty account does not exist (EIP-161), so it is loaded as absent.
-pub fn existing_account(spec: SpecId, account: Option<AccountInfo>) -> Option<AccountInfo> {
-    if spec >= SpecId::SPURIOUS_DRAGON {
-        account.filter(|account| !account.is_empty())
-    } else {
-        account
-    }
 }
 
 /// What to do when reverting a state snapshot.
@@ -812,7 +799,10 @@ pub fn evm_db_err(err: DatabaseError) -> evm2::DatabaseError {
 
 impl DynDatabase for EvmDb<'_> {
     fn get_account(&mut self, address: &Address) -> DbResult<Option<AccountInfo>> {
-        Ok(existing_account(self.spec, self.db.basic_ref(*address).map_err(evm_db_err)?))
+        let account = self.db.basic_ref(*address).map_err(evm_db_err)?;
+        // Anvil's databases, like forked state, report an account they do not hold as an existing
+        // empty account.
+        Ok(existing_account(self.spec >= SpecId::SPURIOUS_DRAGON, account))
     }
 
     fn get_code_by_hash(&mut self, code_hash: &B256) -> DbResult<Bytecode> {

@@ -39,12 +39,13 @@ use foundry_evm::{
     core::evm::{
         BlockContext, ChainFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmExt,
         FoundryEvmFactory, FoundryEvmNetwork, TempoEvmNetwork, TransactionRequestFor,
+        eth_envelope_from_any_rpc,
     },
     executors::{Executor, ExecutorBuilder, TracingExecutor},
     opts::{EvmOpts, ForkEndpointIdentity},
     utils::apply_chain_specific_tx_replay_env_changes_for_chain,
 };
-use foundry_evm_networks::{NetworkVariant, celo::CELO_DYNAMIC_FEE_TX_TYPE};
+use foundry_evm_networks::NetworkVariant;
 use std::path::PathBuf;
 
 #[cfg(feature = "base")]
@@ -901,12 +902,10 @@ impl<FEN: FoundryEvmNetwork> RuntimeVerification<FEN> {
         } = self;
         // Keep the network-native transaction and replace only its sender and input.
         let mut tx: TransactionRequestFor<FEN> = FEN::envelope_from_any_rpc(&transaction)?.into();
-        // Restore CREATE's kind only for Ethereum envelopes, including Celo CIP-64 transactions
-        // converted to EIP-1559, preserving native batches.
-        if transaction.as_envelope().is_some()
-            || transaction.transaction_type() == Some(CELO_DYNAMIC_FEE_TX_TYPE)
-        {
-            tx.set_kind(ConsensusTransaction::kind(&transaction));
+        // The request conversion drops CREATE's kind. Restore it only for transactions with an
+        // Ethereum envelope, including Celo CIP-64 transactions, preserving native batches.
+        if let Ok(envelope) = eth_envelope_from_any_rpc(&transaction, "Ethereum") {
+            tx.set_kind(ConsensusTransaction::kind(&envelope));
         }
         tx.set_from(TransactionResponse::from(&transaction));
 

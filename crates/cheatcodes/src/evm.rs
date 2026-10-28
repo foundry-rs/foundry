@@ -586,7 +586,7 @@ impl Cheatcode for chainIdCall {
         env.set_chain_id(chain_id);
         let (evm, db) = ccx.evm_db_mut();
         // A chain ID change is deferred to the next transaction while one is in flight.
-        let _ = db.set_env(evm, env, ExecutionPhase::InFlight);
+        db.set_env(evm, env, ExecutionPhase::InFlight);
         Ok(Default::default())
     }
 }
@@ -1654,7 +1654,7 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
     snapshot_id: U256,
 ) -> Result {
     let (evm, db) = ccx.evm_db_mut();
-    if let Some((_, replaced)) = db.revert_state(
+    if let Some(replaced) = db.revert_state(
         snapshot_id,
         evm,
         RevertStateSnapshotAction::RevertKeep,
@@ -1682,7 +1682,7 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
     snapshot_id: U256,
 ) -> Result {
     let (evm, db) = ccx.evm_db_mut();
-    if let Some((_, replaced)) = db.revert_state(
+    if let Some(replaced) = db.revert_state(
         snapshot_id,
         evm,
         RevertStateSnapshotAction::RevertRemove,
@@ -1906,27 +1906,24 @@ fn set_eip2935_blockhash(
     Ok(())
 }
 
-/// Clears the EIP-2935 history ring buffer with journaled writes, so that reverting the enclosing
-/// frame restores the previous history storage.
-///
-/// Warmth is preserved: slots that were cold stay cold. A database error reverts any partial
-/// clearing.
 /// Installs the addresses a nested transaction in `env` with `access_list` warms when it starts
-/// and that `vm.cool` keeps warm, returning the running transaction's. The inspector stack adds
-/// Arbitrum's ArbSys at the nested transaction's root.
+/// and that `vm.cool` keeps warm, returning the running transaction's.
 fn enter_tx_warm_addresses<FEN: FoundryEvmNetwork>(
     state: &mut Cheatcodes<FEN>,
     env: &EvmEnvFor<FEN>,
     access_list: Option<&alloy_rpc_types::AccessList>,
 ) -> Vec<Address> {
-    let coinbase = env.version.feature(EvmFeatures::EIP3651).then_some(env.block.beneficiary);
-    let access_list = access_list.into_iter().flat_map(|list| list.iter().map(|item| item.address));
     std::mem::replace(
         &mut state.tx_warm_addresses,
-        coinbase.into_iter().chain(access_list).collect(),
+        foundry_evm_core::utils::tx_warm_addresses(env, access_list),
     )
 }
 
+/// Clears the EIP-2935 history ring buffer with journaled writes, so that reverting the enclosing
+/// frame restores the previous history storage.
+///
+/// Warmth is preserved: slots that were cold stay cold. A database error reverts any partial
+/// clearing.
 fn clear_eip2935_history_storage(state: &mut State<'_>, features: EvmFeatures) -> Result<()> {
     let checkpoint = state.checkpoint();
     for slot in 0..HISTORY_SERVE_WINDOW {

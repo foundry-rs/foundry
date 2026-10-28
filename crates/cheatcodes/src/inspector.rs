@@ -179,11 +179,15 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         message: &mut MessageFor<FEN>,
     ) -> Result<MessageResultFor<FEN>, ExecutionError> {
         let env = evm_env(evm);
-        let mut frame = backend.backend().begin_frame_evm(evm, env);
+        // SAFETY: `evm` runs over the lifecycle's owned databases, and so does the frame EVM,
+        // which only lives for this call; its inspector is released before its state moves back.
+        let mut frame = unsafe { backend.backend().begin_frame_evm(evm, env) };
         frame.set_inspector(CheatcodesInspector { cheats, backend: &mut *backend });
         let result = Host::execute_message(&mut frame, tx_env, message);
-        let frame = release_inspector(frame);
-        backend.backend().end_frame_evm(evm, frame);
+        // SAFETY: See above.
+        let frame = unsafe { release_inspector(frame) };
+        // SAFETY: See above.
+        unsafe { backend.backend().end_frame_evm(evm, frame) };
         result
     }
 

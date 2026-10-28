@@ -4,7 +4,6 @@ use super::{
     ScriptExecutionInspector, TempoLabels, TracingInspector,
 };
 use alloy_consensus::transaction::Recovered;
-use alloy_eips::eip2930::AccessList;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, keccak256,
@@ -36,9 +35,10 @@ use foundry_evm_core::{
         merge_untracked_pending_changes_with_warmth, release_inspector, warm_accounts, warm_set,
     },
     precompiles::P256_VERIFY,
+    utils::tx_warm_addresses,
 };
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_networks::{NetworkConfigs, arbitrum};
+use foundry_evm_networks::arbitrum;
 use foundry_evm_traces::{CallTrace, SparsedTraceArena, TraceRequirements};
 use std::{
     mem,
@@ -84,10 +84,6 @@ pub struct InspectorStackBuilder<BLOCK: Clone> {
     /// In isolation mode all top-level calls are executed as a separate transaction in a separate
     /// EVM context, enabling more precise gas accounting and transaction state changes.
     pub enable_isolation: bool,
-    /// Configuration retained for Celo precompile support.
-    // TODO(celo-execution-owner): Replace this residual with concrete Celo precompile
-    // configuration. This is independent of the Monad lifecycle migration.
-    pub networks: NetworkConfigs,
     /// Concrete Tempo label inspector selected by the Tempo executor builder.
     tempo_labels: Option<Box<TempoLabels>>,
     /// Explicitly resolved additional cheatcode addresses.
@@ -112,7 +108,6 @@ impl<BLOCK: Clone> Default for InspectorStackBuilder<BLOCK> {
             print: None,
             chisel_state: None,
             enable_isolation: false,
-            networks: NetworkConfigs::default(),
             tempo_labels: None,
             extra_cheatcode_addresses: &[],
             wallets: None,
@@ -213,16 +208,6 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         self
     }
 
-    /// Sets networks when building an inspector stack directly.
-    ///
-    /// [`ExecutorBuilder::build`](crate::executors::ExecutorBuilder::build) overrides this with its
-    /// explicit network configuration so the executor, backend, and inspector remain in sync.
-    #[inline]
-    pub const fn networks(mut self, networks: NetworkConfigs) -> Self {
-        self.networks = networks;
-        self
-    }
-
     /// Installs the Tempo label inspector.
     #[inline]
     pub(crate) fn tempo_labels(mut self, inspector: TempoLabels) -> Self {
@@ -260,7 +245,6 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
             print,
             chisel_state,
             enable_isolation,
-            networks,
             tempo_labels,
             extra_cheatcode_addresses,
             wallets,
@@ -295,7 +279,6 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         stack.tracing_requirements(trace_requirements);
 
         stack.enable_isolation(enable_isolation);
-        stack.networks(networks);
         stack.inner.tempo_labels = tempo_labels;
         stack.set_extra_cheatcode_addresses(extra_cheatcode_addresses);
         stack.set_create2_deployer(create2_deployer);
@@ -448,7 +431,6 @@ pub struct InspectorStackInner {
     /// Whether to capture sancov trace-cmp operands for dictionary injection.
     pub sancov_trace_cmp: bool,
     pub enable_isolation: bool,
-    pub networks: NetworkConfigs,
     /// Additional addresses installed and recognized as cheatcode contracts.
     pub extra_cheatcode_addresses: &'static [Address],
     pub create2_deployer: Address,
@@ -528,15 +510,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         // so isolate it as well.
         self.synthetic_create_depth = (message.depth == 2).then_some(2);
         let env = evm_env(evm);
-        let mut frame = backend.backend().begin_frame_evm(evm, env);
-        frame.set_inspector(InspectorStackRefMut {
-            cheatcodes: Some(cheats),
-            inner: &mut *self,
-            backend: Some(&mut *backend),
-        });
-        let result = Host::execute_message(&mut frame, tx_env, message);
-        let frame = release_inspector(frame);
-        backend.backend().end_frame_evm(evm, frame);
+        let result = self.execute_on_frame_evm(Some(cheats), backend, evm, env, tx_env, message);
         self.synthetic_create_depth = previous;
         // Drop redirects left behind if nested execution aborted before their frames ended.
         self.pending_create2_redirects.truncate(create2_redirects);
@@ -576,7 +550,8 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
             backend: Some(&mut *backend),
         });
         let executed = child.transact(tx).map(ExecutedTx::detach);
-        let mut child = release_inspector(child);
+        // SAFETY: The nested EVM runs over the lifecycle's owned databases.
+        let mut child = unsafe { release_inspector(child) };
         cheats.applied_access_list = applied_access_list;
         let destructed = mem::replace(&mut self.executed_destructs, outer_destructs);
         let result = match executed {
@@ -637,7 +612,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         // The mined transaction starts with its own block's coinbase and its access list.
         let tx_warm_addresses = mem::replace(
             &mut cheats.tx_warm_addresses,
-            tx_warm_addresses::<FEN>(&prepared.env(), prepared.access_list()),
+            tx_warm_addresses(&prepared.env(), prepared.access_list()),
         );
         let executed = self.replay(cheats, &mut replay, evm, depth, prepared, false);
         cheats.tx_warm_addresses = tx_warm_addresses;
@@ -835,12 +810,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         self.inner.enable_isolation = yes;
     }
 
-    /// Set networks with enabled features.
-    #[inline]
-    pub const fn networks(&mut self, networks: NetworkConfigs) {
-        self.inner.networks = networks;
-    }
-
     /// Returns additional addresses installed and recognized as cheatcode contracts.
     #[inline]
     pub const fn extra_cheatcode_addresses(&self) -> &'static [Address] {
@@ -1000,6 +969,15 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             (Some(cheats), Some(backend)) => Some((cheats, backend, &mut *self.inner)),
             _ => None,
         }
+    }
+
+    /// Whether a frame at `depth` runs as an isolated transaction: a top-level frame, or a
+    /// synthetic `deployCode` create rewritten to a CREATE2 factory call.
+    fn isolates(&self, depth: u16) -> bool {
+        self.inner.enable_isolation
+            && !self.inner.in_inner_context
+            && self.backend.is_some()
+            && (depth == 1 || self.inner.synthetic_create_depth == Some(depth))
     }
 
     /// Converts the result of a CREATE frame redirected to the CREATE2 factory, if `message` is
@@ -1174,15 +1152,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
         let mut env = EvmFactoryFor::<FEN>::default().env_with_spec(running, spec);
         env.version.chain_id = chain_id;
-        let mut frame = backend.backend().begin_frame_evm(evm, env);
-        frame.set_inspector(InspectorStackRefMut {
-            cheatcodes: self.cheatcodes.as_deref_mut(),
-            inner: &mut *self.inner,
-            backend: Some(&mut *backend),
-        });
-        let result = Host::execute_message(&mut frame, tx_env, message);
-        let frame = release_inspector(frame);
-        backend.backend().end_frame_evm(evm, frame);
+        let cheatcodes = self.cheatcodes.as_deref_mut();
+        let result =
+            self.inner.execute_on_frame_evm(cheatcodes, backend, evm, env, tx_env, message);
         match result {
             Ok(result) => {
                 // evm2 runs the end hooks right after this hook returns a result.
@@ -1355,7 +1327,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             );
             let tx_warm_addresses = mem::replace(
                 &mut cheats.tx_warm_addresses,
-                tx_warm_addresses::<FEN>(&env, access_list.as_ref()),
+                tx_warm_addresses(&env, access_list.as_ref()),
             );
             (previous, root_call_target, tx_warm_addresses)
         });
@@ -1378,7 +1350,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             backend: Some(&mut *backend),
         });
         let executed = child.transact(&tx).map(|executed| executed.detach());
-        let mut child = release_inspector(child);
+        // SAFETY: The nested EVM runs over the lifecycle's owned databases.
+        let mut child = unsafe { release_inspector(child) };
         self.inner.isolated_source_fork = previous_source_fork;
         backend.backend_mut().restore_persistent_warmth(persistent_warmth);
         let switch_warmth = self.inner.isolated_switch_warmth.take();
@@ -1457,7 +1430,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 Some(warm_set(evm.state_mut()))
             };
             child.commit_source(&executed.pending_state);
-            backend.backend().end_frame_evm(evm, child);
+            // SAFETY: The nested EVM runs over the lifecycle's owned databases.
+            unsafe { backend.backend().end_frame_evm(evm, child) };
             if let Some(warmth) = warmth {
                 evm.state_mut().set_prewarm_set(warmth);
             } else if fork_changed && !restored {
@@ -1550,7 +1524,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         self.inner.tx_created.clear();
         if let Some(cheatcodes) = &mut self.cheatcodes {
             // Transactions run from the test or script carry no access list.
-            cheatcodes.tx_warm_addresses = tx_warm_addresses::<FEN>(&evm_env(interp.host()), None);
+            cheatcodes.tx_warm_addresses = tx_warm_addresses(&evm_env(interp.host()), None);
             cheatcodes.clear_storage_hook_mapping_slots();
             cheatcodes.snapshot_restores = SnapshotRestores::default();
             // A transaction that ended with an error did not drop its persistent writes.
@@ -1607,13 +1581,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             return false;
         };
         warm_arbitrum_system_contract::<FEN>(interp);
-        // Nested transactions that cheatcodes execute install their own coinbase and access list.
-        if arbitrum::is_arbitrum_chain(interp.host().version().chain_id)
-            && let Some(cheatcodes) = self.cheatcodes.as_deref_mut()
-            && !cheatcodes.tx_warm_addresses.contains(&arbitrum::ARB_SYS_ADDRESS)
-        {
-            cheatcodes.tx_warm_addresses.push(arbitrum::ARB_SYS_ADDRESS);
-        }
         if !root.observe
             && !matches!(message.kind, MessageKind::Create | MessageKind::Create2)
             && let Some(cheatcodes) = self.cheatcodes.as_deref()
@@ -1972,12 +1939,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         // and broadcasts. Keep the trace lifecycle ordering, but remember the node so its caller
         // can be synchronized with the inputs that are actually executed.
         let trace_idx = self.inner.tracer.as_ref().map(|tracer| tracer.traces().nodes().len() - 1);
-        // Also isolate a synthetic `deployCode` create that was rewritten to a CREATE2 factory
-        // call.
-        let isolate = self.inner.enable_isolation
-            && !self.inner.in_inner_context
-            && self.backend.is_some()
-            && (depth == 1 || self.inner.synthetic_create_depth == Some(depth));
+        let isolate = self.isolates(depth);
         let precharged_state = if isolate && depth == 1 && message.kind == MessageKind::Call {
             account_creation_state_gas::<FEN>(interp, message)
         } else {
@@ -2046,6 +2008,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         message: &MessageFor<FEN>,
         result: &mut MessageResultFor<FEN>,
     ) {
+        // A frame handed off to a frame EVM already ran its end hooks there.
+        if mem::take(&mut self.inner.env_handoff_ended) {
+            return;
+        }
         self.end_snapshot_frame(interp, message, result);
 
         // The root frame of a nested transaction duplicates a frame whose hooks run in the
@@ -2053,9 +2019,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if self.inner.is_inner_context_root(message.depth) {
             self.capture_switch_warmth(interp, result);
             self.capture_executed_destructs(interp);
-            return;
-        }
-        if mem::take(&mut self.inner.env_handoff_ended) {
             return;
         }
 
@@ -2158,12 +2121,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
             return Some(message_result(message, InstrStop::Revert, error));
         }
 
-        if message.kind != MessageKind::Create2
-            && self.inner.enable_isolation
-            && !self.inner.in_inner_context
-            && self.backend.is_some()
-            && (depth == 1 || self.inner.synthetic_create_depth == Some(depth))
-        {
+        if message.kind != MessageKind::Create2 && self.isolates(depth) {
             return Some(self.transact_inner(interp, message, precharged_state));
         }
 
@@ -2176,6 +2134,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         message: &MessageFor<FEN>,
         result: &mut MessageResultFor<FEN>,
     ) {
+        // A frame handed off to a frame EVM already ran its end hooks there.
         if mem::take(&mut self.inner.env_handoff_ended) {
             return;
         }
@@ -2351,6 +2310,33 @@ impl InspectorStackInner {
         let counter = self.batch_create_counter;
         self.batch_create_counter = counter.wrapping_add(1);
         compute_batch_create_salt(process_salt, chain_id, nonce, counter)
+    }
+
+    /// Executes `message` of the transaction `evm` is running on a separate frame EVM with `env`,
+    /// observed by the whole stack, such as for `deployCode` or an in-flight spec change.
+    fn execute_on_frame_evm<FEN: FoundryEvmNetwork>(
+        &mut self,
+        cheatcodes: Option<&mut Cheatcodes<FEN>>,
+        backend: &mut dyn CheatcodesBackend<FEN>,
+        evm: &mut FoundryEvmFor<'_, FEN>,
+        env: EvmEnvFor<FEN>,
+        tx_env: &TxEnvFor<FEN>,
+        message: &mut MessageFor<FEN>,
+    ) -> Result<MessageResultFor<FEN>, ExecutionError> {
+        // SAFETY: `evm` runs over the lifecycle's owned databases, and so does the frame EVM,
+        // which only lives for this call; its inspector is released before its state moves back.
+        let mut frame = unsafe { backend.backend().begin_frame_evm(evm, env) };
+        frame.set_inspector(InspectorStackRefMut {
+            cheatcodes,
+            inner: self,
+            backend: Some(backend),
+        });
+        let result = Host::execute_message(&mut frame, tx_env, message);
+        // SAFETY: See above.
+        let frame = unsafe { release_inspector(frame) };
+        // SAFETY: See above.
+        unsafe { backend.backend().end_frame_evm(evm, frame) };
+        result
     }
 
     /// Whether this frame is the root of a nested transaction, duplicating a surrounding frame.
@@ -2542,20 +2528,6 @@ fn warm_arbitrum_system_contract<FEN: FoundryEvmNetwork>(interp: &mut Interprete
     }
     // Other selectors can still execute code at the address.
     evm.state_mut().prewarm(&arbitrum::ARB_SYS_ADDRESS);
-}
-
-/// Returns the addresses a transaction in `env` with `access_list` warms when it starts and that
-/// `vm.cool` keeps warm: the EIP-3651 coinbase, the access list and
-/// Arbitrum's ArbSys.
-fn tx_warm_addresses<FEN: FoundryEvmNetwork>(
-    env: &EvmEnvFor<FEN>,
-    access_list: Option<&AccessList>,
-) -> Vec<Address> {
-    let coinbase = env.version.feature(EvmFeatures::EIP3651).then_some(env.block.beneficiary);
-    let arb_sys =
-        arbitrum::is_arbitrum_chain(env.version.chain_id).then_some(arbitrum::ARB_SYS_ADDRESS);
-    let access_list = access_list.into_iter().flat_map(|list| list.iter().map(|item| item.address));
-    coinbase.into_iter().chain(arb_sys).chain(access_list).collect()
 }
 
 /// Answers `ArbSys.arbBlockNumber()` on Arbitrum chains.

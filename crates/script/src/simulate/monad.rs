@@ -21,7 +21,7 @@ use foundry_evm::{
         BlockContext, ChainFor, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork,
         MonadEvmNetwork, TxFor,
     },
-    executors::{DeployResult, EvmError, RawCallResult},
+    executors::{EvmError, RawCallResult},
 };
 
 struct MonadSimulation {
@@ -128,14 +128,10 @@ impl MonadSimulation {
                     value,
                 )
             };
-            let result = self.transact(env, tx).map_err(EvmError::from).and_then(|raw| {
-                let raw = raw.into_result(None)?;
-                let Some(address) = raw.created_address else {
-                    panic!("Deployment succeeded, but no address was returned: {raw:#?}");
-                };
-                self.runner.executor.backend_mut().add_persistent_account(address);
-                Ok(DeployResult { raw, address })
-            });
+            let result = self
+                .transact(env, tx)
+                .map_err(EvmError::from)
+                .and_then(|raw| self.runner.executor.persist_deployment(raw, None));
             return self.runner.deployment_result(result);
         };
 
