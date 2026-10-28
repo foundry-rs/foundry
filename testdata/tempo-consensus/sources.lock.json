@@ -1,0 +1,62 @@
+[
+  {
+    "path": "lib/commonware/LICENSE-APACHE",
+    "url": "https://raw.githubusercontent.com/commonwarexyz/monorepo/456538f0e63a2d8e4ee309af27af836f9466d5a1/LICENSE-APACHE",
+    "sha256": "335998abc649a326acdae907b666b5adc3d2e4811e71946fa2ee930731307eac"
+  },
+  {
+    "path": "lib/commonware/LICENSE-MIT",
+    "url": "https://raw.githubusercontent.com/commonwarexyz/monorepo/456538f0e63a2d8e4ee309af27af836f9466d5a1/LICENSE-MIT",
+    "sha256": "32ff3cca43d7fcec3458ae2a517a4a6b3cdf27ae82ae3dec1aa5ba78ceab8ff5"
+  },
+  {
+    "path": "lib/commonware/src/certificate/LibBLS12381.sol",
+    "url": "https://raw.githubusercontent.com/commonwarexyz/monorepo/456538f0e63a2d8e4ee309af27af836f9466d5a1/sol/src/certificate/LibBLS12381.sol",
+    "sha256": "e7b0235512a85e8468b70261d1c21ffe9bc9490acf93eea1ca0a36c2b0ab7cce"
+  },
+  {
+    "path": "lib/commonware/src/certificate/LibBLS12381Threshold.sol",
+    "url": "https://raw.githubusercontent.com/commonwarexyz/monorepo/456538f0e63a2d8e4ee309af27af836f9466d5a1/sol/src/certificate/LibBLS12381Threshold.sol",
+    "sha256": "c29ecf783aaf7933dec8b997dc088c4b1b414629e8edce40cab8a9831fedf546"
+  },
+  {
+    "path": "lib/commonware/src/codec/LibCodec.sol",
+    "url": "https://raw.githubusercontent.com/commonwarexyz/monorepo/456538f0e63a2d8e4ee309af27af836f9466d5a1/sol/src/codec/LibCodec.sol",
+    "sha256": "6c0bd458b727ddc6535cea85189426a4cddfc4117551a085bc2437430357ac73"
+  },
+  {
+    "path": "lib/commonware/src/simplex/LibSimplex.sol",
+    "url": "https://raw.githubusercontent.com/commonwarexyz/monorepo/456538f0e63a2d8e4ee309af27af836f9466d5a1/sol/src/simplex/LibSimplex.sol",
+    "sha256": "063726fdb2b4572379664042a10cfd2250296caaf37c6dd6a413b7cf41f90421"
+  },
+  {
+    "path": "lib/commonware/src/simplex/LibSimplexBLS12381Threshold.sol",
+    "url": "https://raw.githubusercontent.com/commonwarexyz/monorepo/456538f0e63a2d8e4ee309af27af836f9466d5a1/sol/src/simplex/LibSimplexBLS12381Threshold.sol",
+    "sha256": "5277ae8eec8bc7e1c7e1c177786151789a62a6884e9846bec0be96039cda08f3"
+  },
+  {
+    "path": "lib/optimism/LICENSE",
+    "url": "https://raw.githubusercontent.com/ethereum-optimism/optimism/b84018de4fc5ea47f13b6ebdf7a2f793d8334ea8/LICENSE",
+    "sha256": "1c7806fae35858a40b2f69dfe2a08e5fabdabf658d8337759078767b96fa3b8c"
+  },
+  {
+    "path": "lib/optimism/src/libraries/Bytes.sol",
+    "url": "https://raw.githubusercontent.com/ethereum-optimism/optimism/b84018de4fc5ea47f13b6ebdf7a2f793d8334ea8/packages/contracts-bedrock/src/libraries/Bytes.sol",
+    "sha256": "235a1dcaf00fb7eeb2033033fdca135790c7415054aeb8303e5e070baca6e879"
+  },
+  {
+    "path": "lib/optimism/src/libraries/rlp/RLPErrors.sol",
+    "url": "https://raw.githubusercontent.com/ethereum-optimism/optimism/b84018de4fc5ea47f13b6ebdf7a2f793d8334ea8/packages/contracts-bedrock/src/libraries/rlp/RLPErrors.sol",
+    "sha256": "c775036bad8a0e00beeeae9fd20c733dcfdc2ddc57464d70299cb5c148aeec60"
+  },
+  {
+    "path": "lib/optimism/src/libraries/rlp/RLPReader.sol",
+    "url": "https://raw.githubusercontent.com/ethereum-optimism/optimism/b84018de4fc5ea47f13b6ebdf7a2f793d8334ea8/packages/contracts-bedrock/src/libraries/rlp/RLPReader.sol",
+    "sha256": "12384103fca5620247d8ca17187a65a61bdf5839b85908132de54d03969dd79b"
+  },
+  {
+    "path": "lib/optimism/src/libraries/trie/MerkleTrie.sol",
+    "url": "https://raw.githubusercontent.com/ethereum-optimism/optimism/b84018de4fc5ea47f13b6ebdf7a2f793d8334ea8/packages/contracts-bedrock/src/libraries/trie/MerkleTrie.sol",
+    "sha256": "9ce13ec201485c87989df0ec89407dde9da8d95d54baf3c4d68fbfeb9d421b0a"
+  }
+]

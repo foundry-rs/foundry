@@ -1,0 +1,7 @@
+/lib/
+/.venv/
+/out/
+/cache/
+/fixtures/
+/__pycache__/
+/.run.lock
