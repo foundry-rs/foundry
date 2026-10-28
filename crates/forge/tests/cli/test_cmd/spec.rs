@@ -2532,7 +2532,8 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 }
 
 // As on master, the reported test gas subtracts the intrinsic gas of the access list
-// `vm.accessList` applied to the test transaction, which its execution never pays.
+// `vm.accessList` applied to the test transaction, which its execution never pays, but not of one
+// only a nested transaction's calls applied.
 #[forgetest]
 fn test_access_list_stipend(prj: _, cmd: _) {
     prj.add_test(
@@ -2545,6 +2546,7 @@ interface Vm {
     }
 
     function accessList(AccessListItem[] calldata access) external;
+    function executeTransaction(bytes calldata raw) external returns (bytes memory);
 }
 
 contract Counter {
@@ -2565,6 +2567,14 @@ contract AccessListStipendTest {
         vm.accessList(accessList);
         counter.increment();
     }
+
+    function test_nested_transaction_access_list() public {
+        Vm.AccessListItem[] memory accessList = new Vm.AccessListItem[](1);
+        accessList[0] = Vm.AccessListItem(address(this), new bytes32[](1));
+        vm.accessList(accessList);
+        // A contract creation whose initcode calls 0x1234.
+        vm.executeTransaction(hex"f8598080830186a080808b5f5f5f5f5f6112345af10082f4f5a0a179c1ebd288da19ddfa85cb1771c4ae040734caf301e41b5100b9041c775cfea0084528766ecf99513cb32ab48cfb49b61939187b049917c079700ba4c39e8743");
+    }
 }
 "#,
     );
@@ -2576,8 +2586,9 @@ contract AccessListStipendTest {
             .assert_success()
             .stdout_eq(format!(
                 "...
-Ran 1 test for test/AccessListStipend.t.sol:AccessListStipendTest
+Ran 2 tests for test/AccessListStipend.t.sol:AccessListStipendTest
 [PASS] test_access_list_stipend() (gas: {gas})
+[PASS] test_nested_transaction_access_list() (gas: 6201)
 ...
 "
             ));

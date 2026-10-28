@@ -1403,6 +1403,10 @@ pub fn merge_untracked_nested_changes<T: EvmTypesHost>(
     state: &mut State<'_>,
     executed: &ExecutedTx<'_, '_, T>,
 ) -> DbResult<Vec<PersistentWrite>> {
+    // As on master, which committed the transaction to the database, accounts and slots the
+    // running transaction has not loaded start from its writes.
+    let unloaded = unloaded_changes(state, executed.account_changes());
+    state.commit_source(&unloaded);
     let mut persistent = Vec::new();
     merge_changes(state, executed.account_changes(), |_| true, Some(&mut persistent), None)?;
     Ok(persistent)

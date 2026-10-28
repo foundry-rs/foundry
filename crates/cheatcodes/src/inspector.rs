@@ -35,6 +35,7 @@ use evm2::{
         derive_create_destination, op,
     },
 };
+use eyre::WrapErr;
 use foundry_common::{
     FoundryTransactionBuilder, SELECTOR_LEN, TransactionMaybeSigned,
     mapping_slots::{
@@ -197,18 +198,28 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
     ) -> eyre::Result<TxResultFor<FEN>> {
         EvmFactoryFor::<FEN>::default().sync_transaction(evm);
         let mut child = backend.backend().nested_evm(evm, tx, env);
-        child.set_inspector(CheatcodesInspector { cheats, backend: &mut *backend });
-        let executed = child.transact(tx).map_err(|err| eyre::eyre!("{err:?}"))?;
-        let TxResultWithState { result, pending_state, .. } = executed.detach();
-        // A failed transaction keeps its nonce increment.
-        let persistent = foundry_evm_core::evm::merge_untracked_pending_changes_with_warmth(
-            evm.state_mut(),
-            &mut child,
-            pending_state,
-            // Without the inspector stack, destroyed accounts keep no pre-destruct state.
-            Default::default(),
-        )?;
+        // The nested transaction's calls do not apply access lists to the running one.
+        let applied_access_list = cheats.applied_access_list.take();
+        child.set_inspector(CheatcodesInspector { cheats: &mut *cheats, backend: &mut *backend });
+        let executed = child.transact(tx).map(|executed| executed.detach());
+        let merged = match executed {
+            Ok(TxResultWithState { result, pending_state, .. }) => {
+                // A failed transaction keeps its nonce increment.
+                foundry_evm_core::evm::merge_untracked_pending_changes_with_warmth(
+                    evm.state_mut(),
+                    &mut child,
+                    pending_state,
+                    // Without the inspector stack, destroyed accounts keep no pre-destruct state.
+                    Default::default(),
+                )
+                .map(|persistent| (result, persistent))
+                .map_err(Into::into)
+            }
+            Err(err) => Err(eyre::eyre!("{err:?}")),
+        };
         drop(child);
+        cheats.applied_access_list = applied_access_list;
+        let (result, persistent) = merged?;
         cheats.record_persistent(usize::from(depth).saturating_sub(1), evm.state(), persistent);
         // The nested transaction's changes are not the running transaction's execution.
         EvmFactoryFor::<FEN>::default().refresh_transaction(evm);
@@ -234,7 +245,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
             0,
             cheats.isolation_env.as_ref(),
         )?;
-        let executed = prepared.execute(evm, None, false)?;
+        let executed = prepared
+            .execute(evm, None, false)
+            .wrap_err("backend: failed committing transaction")?;
         let result = backend.backend_mut().store_executed(evm, executed);
         result.logs.iter().for_each(|log| cheats.log_hook(log));
         Ok(result)
@@ -796,6 +809,9 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// restoration, such as a fork switch, so nested executions know to adopt the replaced state.
     pub state_epoch: u64,
 
+    /// Incremented whenever a cheatcode switches or rolls forks, a subset of `state_epoch`.
+    pub fork_epoch: u64,
+
     /// Running states replaced by snapshot restorations in the open frames of the running
     /// transaction, reinstated when a frame that was open at the restoration fails.
     pub snapshot_restores: SnapshotRestores,
@@ -1010,6 +1026,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             pending_gas_price: Default::default(),
             pending_emit_failure: Default::default(),
             state_epoch: Default::default(),
+            fork_epoch: Default::default(),
             snapshot_restores: Default::default(),
             root_call_target: Default::default(),
             tx_warm_addresses: Default::default(),
