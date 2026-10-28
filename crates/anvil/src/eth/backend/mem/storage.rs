@@ -268,7 +268,7 @@ impl InMemoryBlockStates {
     }
 
     /// Retains the current state in addition to the configured historical states.
-    pub(crate) fn with_current_state(mut self) -> Self {
+    pub(crate) const fn with_current_state(mut self) -> Self {
         if !self.current_state_slot {
             self.in_memory_limit = self.in_memory_limit.saturating_add(1);
             self.min_in_memory_limit = self.min_in_memory_limit.saturating_add(1);
