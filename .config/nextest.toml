@@ -38,7 +38,7 @@ test-group = "tempo-canary"
 
 # Cold runs fetch pinned Solidity sources and install the fixture's Solc version.
 [[profile.default.overrides]]
-filter = "package(=forge) & binary(=cli) & test(/(^|::)tempo_proofs$/)"
+filter = "package(=forge) & binary(=cli) & test(/(^|::)tempo_proofs_fork$/)"
 slow-timeout = { period = "5m", terminate-after = 2, grace-period = "0s" }
 
 # Do not re-run so that `cargo cheats` is ran locally.
