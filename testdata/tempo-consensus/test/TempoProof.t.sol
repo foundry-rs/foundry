@@ -4,18 +4,7 @@ pragma solidity ^0.8.24;
 import {TempoProofVerifier} from "../src/TempoProofVerifier.sol";
 import {LibBLS12381 as BLS} from "commonware/certificate/LibBLS12381.sol";
 import {LibSimplex as Simplex} from "commonware/simplex/LibSimplex.sol";
-
-interface Vm {
-    function envOr(string calldata name, string calldata defaultValue) external view returns (string memory);
-    function readFile(string calldata path) external view returns (string memory);
-    function parseJsonBytes(string calldata json, string calldata key) external pure returns (bytes memory);
-    function parseJsonType(string calldata json, string calldata key, string calldata typeDescription)
-        external
-        pure
-        returns (bytes memory);
-    function parseJsonUint(string calldata json, string calldata key) external pure returns (uint256);
-    function parseJsonAddress(string calldata json, string calldata key) external pure returns (address);
-}
+import {Vm} from "utils/Vm.sol";
 
 contract TempoProofTest {
     Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));

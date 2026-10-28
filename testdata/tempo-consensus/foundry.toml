@@ -6,4 +6,4 @@ evm_version = "prague"
 optimizer = true
 via_ir = true
 fs_permissions = [{ access = "read", path = "./fixtures" }]
-remappings = ["commonware/=lib/commonware/src/", "src/libraries/=lib/optimism/src/libraries/"]
+remappings = ["commonware/=lib/commonware/src/", "src/libraries/=lib/optimism/src/libraries/", "utils/=../utils/"]
