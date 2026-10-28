@@ -19,12 +19,17 @@ use foundry_common::retry::Retry;
 use foundry_compilers::PathStyle;
 use foundry_evm::traces::CallKind;
 use foundry_test_utils::{
-    forgetest, str,
+    forgetest,
+    rpc::spawn_rpc_proxy_recording_method,
+    str,
     util::{OutputExt, SOLC_VERSION, TestCommand, TestProject},
 };
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 use tokio::net::TcpListener;
@@ -977,4 +982,151 @@ async fn create_preflight_warns_on_rate_limit(prj: _, cmd: _) {
         stderr.contains("verifier credential check inconclusive"),
         "preflight should warn on rate limit, got: {stderr}"
     );
+}
+
+// A chain whose verification fails does not stop the contracts of later chains from being
+// submitted, and the error names the failing chain.
+#[forgetest_init]
+async fn script_verifies_every_chain_after_a_failure(prj: _, cmd: _) {
+    prj.add_source(
+        "Contracts.sol",
+        r#"
+contract Alpha { function id() external pure returns (uint256) { return 1111; } }
+contract Beta { function id() external pure returns (uint256) { return 2222; } }
+"#,
+    );
+    let script = prj.add_script(
+        "MultiVerify.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Alpha, Beta} from "../src/Contracts.sol";
+
+contract MultiVerify is Script {
+    function run(string memory rpc1, string memory rpc2) external {
+        vm.createSelectFork(rpc1);
+        vm.startBroadcast();
+        new Alpha();
+        vm.stopBroadcast();
+
+        vm.createSelectFork(rpc2);
+        vm.startBroadcast();
+        new Beta();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api1, handle1) = spawn(NodeConfig::test().with_chain_id(Some(1111u64))).await;
+    let (_api2, handle2) = spawn(NodeConfig::test().with_chain_id(Some(2222u64))).await;
+    let (rpc1, transactions1) =
+        spawn_rpc_proxy_recording_method(handle1.http_endpoint(), "eth_sendRawTransaction").await;
+    let (rpc2, transactions2) =
+        spawn_rpc_proxy_recording_method(handle2.http_endpoint(), "eth_sendRawTransaction").await;
+
+    // Initially reject only Alpha, then both contracts, then accept Alpha with Beta already
+    // verified.
+    let attempt = Arc::new(AtomicUsize::new(0));
+    let verifier_attempt = attempt.clone();
+    let submissions = Arc::new(Mutex::new(Vec::new()));
+    let state = submissions.clone();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let verifier_url = format!("http://{}", listener.local_addr().unwrap());
+    let app = Router::new().fallback(move |uri: axum::http::Uri, body: String| {
+        let state = state.clone();
+        let attempt = verifier_attempt.load(Ordering::SeqCst);
+        async move {
+            let encoded = if body.is_empty() { uri.query().unwrap_or_default() } else { &body };
+            let form = url::form_urlencoded::parse(encoded.as_bytes())
+                .into_owned()
+                .collect::<HashMap<_, _>>();
+            match form.get("action").map(String::as_str) {
+                Some("verifysourcecode") => {
+                    let name = form["contractname"].clone();
+                    let alpha = name.ends_with(":Alpha");
+                    state.lock().unwrap().push(name);
+                    if attempt == 1 || (attempt == 0 && alpha) {
+                        r#"{"status":"0","message":"NOTOK","result":"mock failure"}"#
+                    } else if attempt == 2 && !alpha {
+                        r#"{"status":"0","message":"NOTOK","result":"Contract source code already verified"}"#
+                    } else {
+                        r#"{"status":"1","message":"OK","result":"guid"}"#
+                    }
+                }
+                Some("checkverifystatus") => {
+                    r#"{"status":"1","message":"OK","result":"Pass - Verified"}"#
+                }
+                _ => r#"{"status":"0","message":"NOTOK","result":"Contract source code not verified"}"#,
+            }
+        }
+    });
+    let _server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let args = [
+        "script",
+        script.to_str().unwrap(),
+        "--sig",
+        "run(string,string)",
+        &rpc1,
+        &rpc2,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+        "--verify",
+        "--verifier",
+        "custom",
+        "--verifier-url",
+        &verifier_url,
+        "--verifier-api-key",
+        "KEY",
+        "--retries",
+        "1",
+        "--delay",
+        "0",
+    ];
+    cmd.forge_fuse().args(args);
+    cmd.assert_failure().stderr_eq(str![[r#"
+...
+Error: chain 1111: Not all (0 / 1) contracts were verified!
+
+"#]]);
+
+    // `--retries 1` submits `Alpha` twice before chain 2222 is verified.
+    assert_eq!(
+        *submissions.lock().unwrap(),
+        ["src/Contracts.sol:Alpha", "src/Contracts.sol:Alpha", "src/Contracts.sol:Beta"]
+    );
+    assert_eq!(transactions1.lock().unwrap().len(), 1);
+    assert_eq!(transactions2.lock().unwrap().len(), 1);
+
+    // A retry that fails on both chains reports both failures, in sequence order.
+    attempt.store(1, Ordering::SeqCst);
+    submissions.lock().unwrap().clear();
+    cmd.forge_fuse().args(args).args(["--multi", "--resume"]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+...
+Error: chain 1111: Not all (0 / 1) contracts were verified!
+chain 2222: Not all (0 / 1) contracts were verified!
+
+"#]]);
+    assert_eq!(
+        *submissions.lock().unwrap(),
+        [
+            "src/Contracts.sol:Alpha",
+            "src/Contracts.sol:Alpha",
+            "src/Contracts.sol:Beta",
+            "src/Contracts.sol:Beta",
+        ]
+    );
+    assert_eq!(transactions1.lock().unwrap().len(), 1);
+    assert_eq!(transactions2.lock().unwrap().len(), 1);
+
+    // Resume retries verification on every chain, counting an already-verified response as success
+    // without rebroadcasting completed deployments.
+    attempt.store(2, Ordering::SeqCst);
+    submissions.lock().unwrap().clear();
+    cmd.forge_fuse().args(args).args(["--multi", "--resume"]);
+    cmd.assert_success();
+    assert_eq!(*submissions.lock().unwrap(), ["src/Contracts.sol:Alpha", "src/Contracts.sol:Beta"]);
+    assert_eq!(transactions1.lock().unwrap().len(), 1);
+    assert_eq!(transactions2.lock().unwrap().len(), 1);
 }

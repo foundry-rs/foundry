@@ -148,6 +148,81 @@ async fn can_order_transactions() {
     assert_eq!(block.transactions, BlockTransactions::Hashes(vec![higher_price, lower_price]))
 }
 
+// Fee ordering must rank EIP-1559 transactions by the effective miner tip, not the fee cap.
+#[tokio::test(flavor = "multi_thread")]
+async fn can_order_transactions_by_effective_tip() {
+    let gwei = 1_000_000_000u128;
+    let (api, handle) = spawn(NodeConfig::test().with_base_fee(Some(gwei as u64))).await;
+    let provider = handle.http_provider();
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let send = async |from: Address, max_fee: u128, tip: u128| {
+        let tx = TransactionRequest::default()
+            .from(from)
+            .to(accounts[2].address())
+            .max_fee_per_gas(max_fee)
+            .max_priority_fee_per_gas(tip);
+        provider.send_transaction(WithOtherFields::new(tx)).await.unwrap()
+    };
+
+    // Sent first with the higher fee cap, but pays the miner only 1 gwei.
+    let high_cap = send(accounts[0].address(), 100 * gwei, gwei).await;
+    // Sent second with the lower fee cap, but pays the miner 2 gwei.
+    let high_tip = send(accounts[1].address(), 3 * gwei, 2 * gwei).await;
+
+    api.mine_one().await.unwrap();
+
+    let high_tip = high_tip.get_receipt().await.unwrap().transaction_hash;
+    let high_cap = high_cap.get_receipt().await.unwrap().transaction_hash;
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(block.transactions, BlockTransactions::Hashes(vec![high_tip, high_cap]));
+}
+
+// Tips must be compared at the base fee of the block being mined, not the base fee at admission.
+#[tokio::test(flavor = "multi_thread")]
+async fn can_order_transactions_by_tip_at_mining_base_fee() {
+    let gwei = 1_000_000_000u128;
+    for base_fee in [100 * gwei, 87_500_000_000] {
+        let (api, handle) = spawn(NodeConfig::test()).await;
+        let provider = handle.http_provider();
+        api.anvil_set_auto_mine(false).await.unwrap();
+
+        let accounts = handle.dev_wallets().collect::<Vec<_>>();
+        let send = async |from: Address, nonce: u64, max_fee: u128, tip: u128| {
+            let tx = TransactionRequest::default()
+                .from(from)
+                .to(accounts[2].address())
+                .nonce(nonce)
+                .max_fee_per_gas(max_fee)
+                .max_priority_fee_per_gas(tip);
+            provider.send_transaction(WithOtherFields::new(tx)).await.unwrap()
+        };
+
+        // Admit both contenders at 100 gwei, with the first queued behind a nonce gap.
+        api.anvil_set_next_block_base_fee_per_gas(U256::from(100 * gwei)).await.unwrap();
+        let queued = send(accounts[0].address(), 1, 110 * gwei, 30 * gwei).await;
+        let independent = send(accounts[1].address(), 0, 150 * gwei, 15 * gwei).await;
+        let predecessor = send(accounts[0].address(), 0, 200 * gwei, 100 * gwei).await;
+
+        api.anvil_set_next_block_base_fee_per_gas(U256::from(base_fee)).await.unwrap();
+        api.mine_one().await.unwrap();
+
+        let predecessor = predecessor.get_receipt().await.unwrap().transaction_hash;
+        let queued = queued.get_receipt().await.unwrap().transaction_hash;
+        let independent = independent.get_receipt().await.unwrap().transaction_hash;
+        // At 100 gwei, tips are 10 and 15 gwei; at 87.5 gwei, they are 22.5 and 15 gwei.
+        // The high-base case rejects always-zero ranking; the low-base case rejects stale ranking.
+        let expected = if base_fee == 100 * gwei {
+            vec![predecessor, independent, queued]
+        } else {
+            vec![predecessor, queued, independent]
+        };
+        let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+        assert_eq!(block.transactions, BlockTransactions::Hashes(expected), "base fee {base_fee}");
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn can_respect_nonces() {
     let (api, handle) = spawn(NodeConfig::test()).await;

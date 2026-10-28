@@ -607,6 +607,8 @@ pub struct BundledState<FEN: FoundryEvmNetwork> {
     pub browser_wallet: Option<BrowserSigner<FEN::Network>>,
     pub build_data: LinkedBuildData,
     pub sequence: ScriptSequenceKind<FEN::Network>,
+    /// Error from the script run that `--resume` performed to collect missing signers.
+    pub resume_script_error: Option<String>,
 }
 
 impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
@@ -769,11 +771,13 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             missing_addresses.dedup();
 
             if !missing_addresses.is_empty() {
-                eyre::bail!(
-                    "No associated wallet for addresses: {:?}. Unlocked wallets: {:?}",
-                    missing_addresses,
-                    signers
+                let mut message = format!(
+                    "No associated wallet for addresses: {missing_addresses:?}. Unlocked wallets: {signers:?}"
                 );
+                if let Some(error) = &self.resume_script_error {
+                    message = format!("{message}\n{}", resume_script_failure(error));
+                }
+                eyre::bail!(message);
             }
 
             let signers = self.script_wallets.into_multi_wallet().into_signers()?;
@@ -782,6 +786,9 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
             SendTransactionsKind::Raw { eth_wallets, browser: self.browser_wallet, access_keys }
         };
+        if let Some(error) = &self.resume_script_error {
+            sh_warn!("{}", resume_script_failure(error))?;
+        }
 
         let tempo_sponsor = if has_unprepared_transactions {
             self.script_config.tempo.sponsor_config().await?.map(Arc::new)
@@ -1561,10 +1568,17 @@ impl BundledState<TempoEvmNetwork> {
                 {
                     BatchSigner::TempoKeychain(Box::new(wallet.with_chain_id(chain_id)))
                 } else {
-                    bail!("No wallet found for sender {}", sender);
+                    let mut message = format!("No wallet found for sender {sender}");
+                    if let Some(error) = &self.resume_script_error {
+                        message = format!("{message}\n{}", resume_script_failure(error));
+                    }
+                    bail!(message);
                 }
             }
         };
+        if let Some(error) = &self.resume_script_error {
+            sh_warn!("{}", resume_script_failure(error))?;
+        }
 
         // CREATE2 deployer must exist on-chain for any rewritten CREATEs.
         let create2_deployer = self.script_config.evm_opts.create2_deployer;
@@ -1963,6 +1977,11 @@ fn fee_totals(receipts: impl IntoIterator<Item = (u64, u128)>) -> (u64, Option<u
             )
         });
     (total_gas, total_gas_price.checked_div(count), total_paid)
+}
+
+/// Describes the failed script run that `--resume` performed to collect missing signers.
+fn resume_script_failure(error: &str) -> String {
+    format!("Resume re-ran the script to collect signers, but it failed: {error}")
 }
 
 #[cfg(test)]
