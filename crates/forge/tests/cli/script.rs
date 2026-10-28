@@ -2107,7 +2107,8 @@ async fn can_resume_script(prj: _, cmd: _) {
         .await;
 }
 
-// Resume reports a failed signer-collecting run, and only fails if signers are still missing.
+// Resume reports a failed signer-collecting run from `setUp` or `run`, and only fails if signers
+// are still missing.
 #[forgetest_init]
 async fn resume_reports_failed_signer_rerun(prj: _, cmd: _) {
     let (_api, handle) = spawn(NodeConfig::test()).await;
@@ -2121,8 +2122,14 @@ import "forge-std/Script.sol";
 contract ResumeRerunTarget {}
 
 contract ResumeRerun is Script {
+    uint256 key;
+
+    function setUp() public {
+        key = vm.envUint("RESUME_RERUN_PK");
+    }
+
     function run() external {
-        vm.startBroadcast(vm.envUint("RESUME_RERUN_PK"));
+        vm.startBroadcast(key);
         new ResumeRerunTarget();
         vm.stopBroadcast();
         require(vm.envOr("RESUME_RERUN_GO", false), "resume gate closed");
@@ -2136,7 +2143,7 @@ contract ResumeRerun is Script {
     cmd.env("RESUME_RERUN_GO", "true");
     cmd.assert_success();
 
-    // The run fails before it reaches the signer.
+    // `setUp` fails before the signer is reached.
     cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--resume"]);
     cmd.assert_failure().stderr_eq(str![[r#"
 Error: No associated wallet for addresses: [0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266]. Unlocked wallets: []
@@ -2144,7 +2151,7 @@ Resume re-ran the script to collect signers, but it failed: vm.envUint: environm
 
 "#]]);
 
-    // The run fails after it collects the signer, so resume still broadcasts.
+    // `run` fails after the signer is collected, so resume still broadcasts.
     cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--resume"]);
     cmd.env("RESUME_RERUN_PK", private_key);
     cmd.assert_success().stderr_eq(str![[r#"
