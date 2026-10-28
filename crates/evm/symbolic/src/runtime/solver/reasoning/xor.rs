@@ -114,6 +114,9 @@ pub(in super::super) fn checked_xor_result(
 
     // Free columns are zero. Back-substitution assigns pivot columns; opaque expressions are
     // never independently assignable, so only variable columns enter the candidate model.
+    if constraints.iter().any(SymBoolExpr::contains_gasleft) {
+        return None;
+    }
     let mut values = [U256::ZERO; MAX_XOR_ATOMS];
     for (pivot, row) in basis.iter().enumerate().rev() {
         if let Some(row) = row {

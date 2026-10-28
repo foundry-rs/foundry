@@ -7580,8 +7580,8 @@ contract CheckedXorTest {
 
     function checkNonlinearFallback(uint256 a, uint256 b) external pure {
         require(a ^ b == A);
-        require(a == 7);
-        assert(b != A ^ 7);
+        require(a > 5 && a < 8);
+        assert(a == 0);
     }
 
     function checkNegatedConjunction(uint256 a, uint256 b, uint256 c) external pure {
@@ -7627,7 +7627,7 @@ contract CheckedXorTest {
 }
 
 // The expected result comes from exhaustive concrete evaluation, independently of the symbolic
-// solver, for systems mixing equalities, disequalities, repeated terms, and four-bit constants.
+// solver, for systems mixing equalities, disequalities, repeated terms, and two-bit constants.
 #[forgetest_init]
 fn symbolic_xor_matches_exhaustive_models(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_xor_matches_exhaustive_models");
