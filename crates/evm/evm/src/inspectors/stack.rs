@@ -17,6 +17,7 @@ use evm2::{
     interpreter::{GasTracker, Host, InstrStop, MessageKind, op},
     registry::HandlerError,
 };
+use eyre::WrapErr;
 use foundry_cheatcodes::{
     CheatcodeAnalysis, CheatcodesBackend, CheatcodesExecutor, Wallets, message_result,
 };
@@ -627,7 +628,8 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         cheats.tx_warm_addresses = tx_warm_addresses;
         cheats.env_overrides.swap(fork_id, &mut overrides);
         drop(replay);
-        Ok(backend.backend_mut().store_executed(evm, executed?))
+        let executed = executed.wrap_err("backend: failed committing transaction")?;
+        Ok(backend.backend_mut().store_executed(evm, executed))
     }
 
     fn transact_from_tx(
