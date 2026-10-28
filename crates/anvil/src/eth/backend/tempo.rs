@@ -19,7 +19,6 @@ use foundry_evm_core::tempo::{
     initialize_tempo_genesis_inner,
 };
 use foundry_evm_hardforks::FoundryHardfork;
-use foundry_evm_networks::NetworkConfigs;
 use tempo_precompiles::{
     TIP_FEE_MANAGER_ADDRESS,
     account_keychain::{
@@ -53,8 +52,7 @@ pub fn with_tempo_storage<R>(
     hardfork: FoundryHardfork,
     f: impl FnOnce() -> R,
 ) -> Result<R, BlockchainError> {
-    let opts =
-        EvmOptions { hardfork, networks: NetworkConfigs::with_tempo(), ..Default::default() };
+    let opts = EvmOptions { hardfork, ..Default::default() };
     let (result, changes) = {
         let state: &dyn DatabaseRef = &*db;
         let mut evm = build_evm::<TempoEvmNetwork>(state, env, &opts)?;

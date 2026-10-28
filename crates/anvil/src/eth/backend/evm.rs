@@ -473,8 +473,8 @@ pub struct PrecompileInput<'a> {
 pub struct EvmOptions {
     /// Executed hardfork.
     pub hardfork: FoundryHardfork,
-    /// Active network configuration.
-    pub networks: NetworkConfigs,
+    /// Whether Celo's transfer precompile is installed.
+    pub celo_transfer: bool,
     /// Extra precompiles installed by a library user.
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
     /// Cheat state providing ecrecover overrides.
@@ -495,7 +495,7 @@ impl Default for EvmOptions {
     fn default() -> Self {
         Self {
             hardfork: FoundryHardfork::Ethereum(Default::default()),
-            networks: Default::default(),
+            celo_transfer: false,
             precompile_factory: None,
             cheats: None,
             arbitrum_block_number: None,
@@ -511,7 +511,7 @@ impl fmt::Debug for EvmOptions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("EvmOptions")
             .field("hardfork", &self.hardfork)
-            .field("networks", &self.networks)
+            .field("celo_transfer", &self.celo_transfer)
             .field("arbitrum_block_number", &self.arbitrum_block_number)
             .field("precompile_moves", &self.precompile_moves)
             .finish_non_exhaustive()
@@ -827,7 +827,7 @@ impl<'a, T: evm2::EvmTypes> AnvilPrecompiles<'a, T> {
     /// Wraps `inner` with the extras configured by `opts`.
     pub fn new(inner: Box<dyn PrecompileProvider<T> + 'a>, opts: &EvmOptions) -> Self {
         let mut extra = AddressMap::default();
-        if opts.networks.is_celo() {
+        if opts.celo_transfer {
             extra.insert(CELO_TRANSFER_ADDRESS, ExtraPrecompile::CeloTransfer);
         }
         let mut removed = AddressSet::default();
