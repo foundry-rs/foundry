@@ -1507,7 +1507,10 @@ impl SymbolicExecutor {
                         parents.extend(branch_worklist);
                     }
                     StepOutcome::AssumeRejected => {}
-                    outcome => return Ok(outcome),
+                    outcome => {
+                        *state = branch;
+                        return Ok(outcome);
+                    }
                 }
             }
         }
