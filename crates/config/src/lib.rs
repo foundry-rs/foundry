@@ -661,9 +661,10 @@ pub struct Config {
     /// Whether to enable script execution protection.
     pub script_execution_protection: bool,
 
-    /// Whether inline config must leave `ffi`, `fs_permissions`, and the fuzz seed unchanged, and
-    /// must not raise fuzz or invariant runs, invariant depth, or fuzz rejects. Commands that run
-    /// generated tests set it, so a test can neither widen its own access nor run unbounded.
+    /// Whether inline config can only lower the runs, depth, and rejects of fuzz and invariant
+    /// tests and change a few settings that steer them, and must leave every other setting as it
+    /// is. Commands that run generated tests set it, so a test can neither widen its own access,
+    /// write outside the project, nor run unbounded.
     #[doc(hidden)]
     #[serde(skip)]
     pub restrict_inline_config: bool,
@@ -923,28 +924,80 @@ impl Config {
             invariant_corpus_random_sequence_weight_configured;
         config.invariant.workers_configured = invariant_workers_configured;
         config.restrict_inline_config = self.restrict_inline_config;
-        if self.restrict_inline_config {
-            let changed = [
-                ("ffi", config.ffi != self.ffi),
-                ("fs_permissions", config.fs_permissions != self.fs_permissions),
-                ("fuzz.seed", config.fuzz.seed != self.fuzz.seed),
-                ("fuzz.runs", config.fuzz.runs > self.fuzz.runs),
-                (
-                    "fuzz.max_test_rejects",
-                    config.fuzz.max_test_rejects > self.fuzz.max_test_rejects,
-                ),
-                ("invariant.runs", config.invariant.runs > self.invariant.runs),
-                ("invariant.depth", config.invariant.depth > self.invariant.depth),
-            ];
-            if let Some((key, _)) = changed.into_iter().find(|(_, changed)| *changed) {
-                return Err(Error::from(format!(
-                    "inline config cannot change `{key}` in generated tests"
-                )));
-            }
-        }
         config.normalize_hardfork_settings()?;
+        if self.restrict_inline_config
+            && let Some(change) = self.restricted_inline_change(&config)
+        {
+            return Err(Error::from(format!("inline config cannot {change} in generated tests")));
+        }
 
         Ok(config)
+    }
+
+    /// Returns what a restricted inline config changed that it must not: a raised bound on the work
+    /// of a test, or any setting outside a few that only steer the fuzzer and invariant runs. An
+    /// allowlist, so a new setting, such as a path that Forge writes to, stays fixed.
+    fn restricted_inline_change(&self, inline: &Self) -> Option<String> {
+        let (fuzz, invariant) = (&inline.fuzz, &inline.invariant);
+        let raised = [
+            ("fuzz.runs", fuzz.runs > self.fuzz.runs),
+            ("fuzz.max_test_rejects", fuzz.max_test_rejects > self.fuzz.max_test_rejects),
+            ("invariant.runs", invariant.runs > self.invariant.runs),
+            ("invariant.depth", invariant.depth > self.invariant.depth),
+            ("invariant.min_depth", invariant.min_depth > self.invariant.min_depth),
+            (
+                "invariant.shrink_run_limit",
+                invariant.shrink_run_limit > self.invariant.shrink_run_limit,
+            ),
+            (
+                "invariant.max_assume_rejects",
+                invariant.max_assume_rejects > self.invariant.max_assume_rejects,
+            ),
+        ];
+        if let Some((key, _)) = raised.into_iter().find(|(_, raised)| *raised) {
+            return Some(format!("raise `{key}`"));
+        }
+        let mut allowed = inline.clone();
+        allowed.fuzz.runs = self.fuzz.runs;
+        allowed.fuzz.max_test_rejects = self.fuzz.max_test_rejects;
+        allowed.fuzz.fail_on_revert = self.fuzz.fail_on_revert;
+        allowed.fuzz.dictionary = self.fuzz.dictionary;
+        allowed.fuzz.show_logs = self.fuzz.show_logs;
+        allowed.invariant.runs = self.invariant.runs;
+        allowed.invariant.depth = self.invariant.depth;
+        allowed.invariant.min_depth = self.invariant.min_depth;
+        allowed.invariant.depth_mode = self.invariant.depth_mode;
+        allowed.invariant.shrink_run_limit = self.invariant.shrink_run_limit;
+        allowed.invariant.max_assume_rejects = self.invariant.max_assume_rejects;
+        allowed.invariant.fail_on_revert = self.invariant.fail_on_revert;
+        allowed.invariant.call_override = self.invariant.call_override;
+        allowed.invariant.dictionary = self.invariant.dictionary;
+        allowed.invariant.max_time_delay = self.invariant.max_time_delay;
+        allowed.invariant.max_block_delay = self.invariant.max_block_delay;
+        allowed.invariant.check_interval = self.invariant.check_interval;
+        allowed.invariant.show_metrics = self.invariant.show_metrics;
+        allowed.invariant.show_solidity = self.invariant.show_solidity;
+        allowed.allow_internal_expect_revert = self.allow_internal_expect_revert;
+        fn changed_key(base: &serde_json::Value, other: &serde_json::Value) -> Option<String> {
+            match (base, other) {
+                (serde_json::Value::Object(base), serde_json::Value::Object(other)) => {
+                    base.keys().chain(other.keys()).find_map(|key| {
+                        let null = serde_json::Value::Null;
+                        let (a, b) =
+                            (base.get(key).unwrap_or(&null), other.get(key).unwrap_or(&null));
+                        changed_key(a, b).map(|rest| {
+                            if rest.is_empty() { key.clone() } else { format!("{key}.{rest}") }
+                        })
+                    })
+                }
+                _ => (base != other).then(String::new),
+            }
+        }
+        let (Ok(base), Ok(allowed)) = (serde_json::to_value(self), serde_json::to_value(&allowed))
+        else {
+            return Some("change settings that do not serialize".to_string());
+        };
+        Some(format!("change `{}`", changed_key(&base, &allowed)?))
     }
 
     #[doc(hidden)]
