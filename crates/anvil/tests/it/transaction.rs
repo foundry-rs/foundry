@@ -183,39 +183,44 @@ async fn can_order_transactions_by_effective_tip() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_order_transactions_by_tip_at_mining_base_fee() {
     let gwei = 1_000_000_000u128;
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
-    api.anvil_set_auto_mine(false).await.unwrap();
+    for base_fee in [100 * gwei, 87_500_000_000] {
+        let (api, handle) = spawn(NodeConfig::test()).await;
+        let provider = handle.http_provider();
+        api.anvil_set_auto_mine(false).await.unwrap();
 
-    let accounts = handle.dev_wallets().collect::<Vec<_>>();
-    let send = async |from: Address, nonce: u64, gas_price: u128| {
-        let tx = TransactionRequest::default()
-            .from(from)
-            .to(accounts[2].address())
-            .nonce(nonce)
-            .gas_price(gas_price);
-        provider.send_transaction(WithOtherFields::new(tx)).await.unwrap()
-    };
+        let accounts = handle.dev_wallets().collect::<Vec<_>>();
+        let send = async |from: Address, nonce: u64, max_fee: u128, tip: u128| {
+            let tx = TransactionRequest::default()
+                .from(from)
+                .to(accounts[2].address())
+                .nonce(nonce)
+                .max_fee_per_gas(max_fee)
+                .max_priority_fee_per_gas(tip);
+            provider.send_transaction(WithOtherFields::new(tx)).await.unwrap()
+        };
 
-    // Queued behind a nonce gap while the base fee is 100 gwei.
-    api.anvil_set_next_block_base_fee_per_gas(U256::from(100 * gwei)).await.unwrap();
-    let queued = send(accounts[0].address(), 1, 110 * gwei).await;
+        // Admit both contenders at 100 gwei, with the first queued behind a nonce gap.
+        api.anvil_set_next_block_base_fee_per_gas(U256::from(100 * gwei)).await.unwrap();
+        let queued = send(accounts[0].address(), 1, 110 * gwei, 30 * gwei).await;
+        let independent = send(accounts[1].address(), 0, 150 * gwei, 15 * gwei).await;
+        let predecessor = send(accounts[0].address(), 0, 200 * gwei, 100 * gwei).await;
 
-    api.anvil_set_next_block_base_fee_per_gas(U256::from(87_500_000_000u128)).await.unwrap();
-    let independent = send(accounts[1].address(), 0, 105 * gwei).await;
-    let predecessor = send(accounts[0].address(), 0, 200 * gwei).await;
+        api.anvil_set_next_block_base_fee_per_gas(U256::from(base_fee)).await.unwrap();
+        api.mine_one().await.unwrap();
 
-    api.mine_one().await.unwrap();
-
-    // At an 87.5 gwei base fee the queued transaction tips 22.5 gwei and the other 17.5 gwei.
-    let predecessor = predecessor.get_receipt().await.unwrap().transaction_hash;
-    let queued = queued.get_receipt().await.unwrap().transaction_hash;
-    let independent = independent.get_receipt().await.unwrap().transaction_hash;
-    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
-    assert_eq!(
-        block.transactions,
-        BlockTransactions::Hashes(vec![predecessor, queued, independent])
-    );
+        let predecessor = predecessor.get_receipt().await.unwrap().transaction_hash;
+        let queued = queued.get_receipt().await.unwrap().transaction_hash;
+        let independent = independent.get_receipt().await.unwrap().transaction_hash;
+        // At 100 gwei, tips are 10 and 15 gwei; at 87.5 gwei, they are 22.5 and 15 gwei.
+        // The high-base case rejects always-zero ranking; the low-base case rejects stale ranking.
+        let expected = if base_fee == 100 * gwei {
+            vec![predecessor, independent, queued]
+        } else {
+            vec![predecessor, queued, independent]
+        };
+        let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+        assert_eq!(block.transactions, BlockTransactions::Hashes(expected), "base fee {base_fee}");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
