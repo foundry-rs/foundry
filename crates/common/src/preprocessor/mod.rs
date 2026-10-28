@@ -1,6 +1,6 @@
 use crate::{errors::convert_solar_errors, fs::normalize_path};
 use foundry_compilers::{
-    ProjectPathsConfig, SourceParser, apply_updates,
+    ProjectPathsConfig, SourceParser, Updates, apply_updates,
     artifacts::{EvmVersion, SolcLanguage},
     error::Result,
     multi::{MultiCompiler, MultiCompilerInput, MultiCompilerLanguage},
@@ -54,7 +54,7 @@ impl DynamicTestLinkingPreprocessor {
 
 impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        13
+        14
     }
 
     fn preprocess(
@@ -112,6 +112,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
                 (0, 8, 15..=25)
             );
         let original_sources = input.input.sources.clone();
+        let mut updates = Updates::default();
         let mut parser_paths = paths.clone();
         parser_paths.include_paths.extend(input.cli_settings.include_paths.iter().cloned());
         let mut compiler =
@@ -174,9 +175,9 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
             sources.extend(create_deploy_helpers(gcx, constructor_context, &data));
 
             // Generate and apply preprocessor source updates.
-            let updates =
+            updates =
                 remove_bytecode_dependencies(gcx, &deps, &data, &paths.root, use_uint160_return);
-            apply_updates(sources, updates);
+            apply_updates(sources, updates.clone());
 
             Ok(())
         });
@@ -204,8 +205,12 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
                     .unwrap_or_else(|| "Solar analysis failed".to_string());
                 let _ = sh_warn!("dynamic test linking disabled for {affected} files: {reason}");
             }
-        } else if input.input.sources != original_sources {
-            self.rewrote_sources.store(true, Ordering::Relaxed);
+        } else {
+            // Lets source locations reported by the compiler be mapped back to the files on disk.
+            preprocessor_state.record_source_updates(&updates);
+            if input.input.sources != original_sources {
+                self.rewrote_sources.store(true, Ordering::Relaxed);
+            }
         }
 
         Ok(())
