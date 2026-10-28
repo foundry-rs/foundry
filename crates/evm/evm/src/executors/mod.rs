@@ -1070,16 +1070,7 @@ fn install_env<FEN: FoundryEvmNetwork>(
     evm: &mut FoundryEvmFor<'_, FEN>,
     env: EvmEnvFor<FEN>,
 ) {
-    let current = evm_env(evm);
-    let version = &env.version;
-    let same_config = current.spec == env.spec
-        && current.version.chain_id == version.chain_id
-        && current.version.features == version.features
-        && current.version.tx_gas_limit_cap == version.tx_gas_limit_cap
-        && current.version.memory_limit == version.memory_limit
-        && current.version.max_code_size == version.max_code_size
-        && current.version.max_initcode_size == version.max_initcode_size;
-    if same_config {
+    if same_execution_config::<FEN>(&evm_env(evm), &env) {
         evm.set_block(env.block);
         backend.lifecycle().sync_database_policy(evm);
         return;
@@ -1097,6 +1088,38 @@ fn install_env<FEN: FoundryEvmNetwork>(
         precompiles,
     );
     backend.lifecycle().sync_database_policy(evm);
+}
+
+/// Returns whether `current` and `next` build the same execution config: the same spec and every
+/// field of their runtime [`Version`](evm2::Version), so only the block differs.
+fn same_execution_config<FEN: FoundryEvmNetwork>(
+    current: &EvmEnvFor<FEN>,
+    next: &EvmEnvFor<FEN>,
+) -> bool {
+    // `Version` has no `PartialEq`; destructure it so a new field fails to compile here.
+    let evm2::Version {
+        gas_params,
+        features,
+        chain_id,
+        tx_gas_limit_cap,
+        memory_limit,
+        max_code_size,
+        max_initcode_size,
+        max_blobs_per_tx,
+        initial_call_depth,
+        _non_exhaustive: (),
+    } = next.version;
+    let version = &current.version;
+    current.spec == next.spec
+        && version.gas_params == gas_params
+        && version.features == features
+        && version.chain_id == chain_id
+        && version.tx_gas_limit_cap == tx_gas_limit_cap
+        && version.memory_limit == memory_limit
+        && version.max_code_size == max_code_size
+        && version.max_initcode_size == max_initcode_size
+        && version.max_blobs_per_tx == max_blobs_per_tx
+        && version.initial_call_depth == initial_call_depth
 }
 
 /// Prepares `evm`'s network extension state for `tx`, at its position in `context` if any.
