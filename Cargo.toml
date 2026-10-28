@@ -383,9 +383,9 @@ tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "680082043ca
 ] }
 tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "680082043ca40b6457f615101ca43bf8c1280b66", default-features = false }
 # Op, Base and Monad evm2 type families.
-op-evm2 = { git = "https://github.com/mablr/evm2-networks", rev = "7781c8c5a931dec3016d95c9becd45fbc055aad1", default-features = false }
-base-evm2 = { git = "https://github.com/mablr/evm2-networks", rev = "7781c8c5a931dec3016d95c9becd45fbc055aad1", default-features = false }
-monad-evm2 = { git = "https://github.com/mablr/evm2-networks", rev = "7781c8c5a931dec3016d95c9becd45fbc055aad1", default-features = false }
+op-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "1d4b318e35c18bee282ba9b6c35b300ad6598ee1", default-features = false }
+base-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "1d4b318e35c18bee282ba9b6c35b300ad6598ee1", default-features = false }
+monad-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "1d4b318e35c18bee282ba9b6c35b300ad6598ee1", default-features = false }
 
 ## alloy
 alloy-consensus = { version = "2.5.0", default-features = false }
@@ -664,8 +664,8 @@ reth-zstd-compressors = { git = "https://github.com/paradigmxyz/reth-core", rev 
 ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]
 
 # The single evm2 revision for the whole graph: `mablr/evm2` `mablr/foundry-completion`, which is
-# tempoxyz/tempo#7871's alloy-rs/evm2 revision plus Foundry's host APIs. Tempo and reth pin
-# `alloy-rs/evm2`, while evm2-networks and foundry-core pin `mablr/evm2`. Cargo rejects a patch
+# tempoxyz/tempo#7871's alloy-rs/evm2 revision plus Foundry's host APIs. Tempo, reth and
+# evm2-networks pin `alloy-rs/evm2`, while foundry-core pins `mablr/evm2`. Cargo rejects a patch
 # from the same source, so both go through `DaniPopes/evm2`, a URL in the same fork network.
 [patch."https://github.com/alloy-rs/evm2"]
 evm2 = { git = "https://github.com/DaniPopes/evm2", rev = "ee1f36084a038cfcd2396164a2753eda1970b181" }
