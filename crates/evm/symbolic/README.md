@@ -312,6 +312,9 @@ EVM `XOR` and `NOT` equalities using Gaussian elimination. It also detects when
 those equalities contradict an asserted disequality. Other word expressions,
 including masked values, are treated as opaque terms without assuming they are
 independent.
+The recognizer recovers equality boundaries compiled through constant addition
+or subtraction using wrapping EVM arithmetic; addition inside an XOR remains
+opaque because of carries.
 
 Every specialist answer is checked against the original query. A candidate model
 must satisfy all original constraints, including predicates outside the affine
