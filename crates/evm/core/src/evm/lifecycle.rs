@@ -465,7 +465,25 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     /// Call this between transactions, with an EVM created by [`Self::create_evm`] whose
     /// executions were committed. In-flight state that was not committed is discarded, and a
     /// deferred environment change is applied first.
-    pub fn park(&mut self, mut evm: Evm<'_, F::Types>) {
+    pub fn park(&mut self, evm: Evm<'_, F::Types>) {
+        self.accept(evm, true);
+    }
+
+    /// Like [`Self::park`], for an EVM whose executions were not committed, such as a call's: its
+    /// pending writes are discarded, but the accepted state it carries, such as after a fork
+    /// switch, is kept.
+    pub(crate) fn park_detached(&mut self, evm: Evm<'_, F::Types>) {
+        self.accept(evm, false);
+    }
+
+    /// Accepts `evm`'s state, environment and network extension state into the active context.
+    ///
+    /// An EVM that materialized its accepted state holds the context's whole accepted state, which
+    /// replaces the context's. One that still reads it through a shared view only holds what its
+    /// executions read and, if `committed`, wrote, which is merged into the context's; without
+    /// committed writes it only caches reads, so it is dropped rather than copying the shared
+    /// accepted state.
+    fn accept(&mut self, mut evm: Evm<'_, F::Types>, committed: bool) {
         self.begin_transaction(&mut evm);
         evm.state_mut().clear_transaction_state();
         let is_view = AcceptedView::is(evm.database());
@@ -476,7 +494,11 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         drop(evm);
         let context = self.active_mut();
         match (is_view, &mut context.cache) {
-            (true, Some(accepted)) => Arc::make_mut(accepted).merge(local),
+            (true, Some(accepted)) => {
+                if committed {
+                    Arc::make_mut(accepted).merge(local);
+                }
+            }
             _ => context.cache = Some(Arc::new(local)),
         }
         context.ext = StoredExt::new(&ext);
@@ -485,18 +507,6 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         context.loaded.clear();
         context.created.clear();
         self.store_env(env);
-    }
-
-    /// Parks accepted state, environment and extensions without committing pending writes.
-    /// Discards unmaterialized caches to avoid copying shared accepted state.
-    pub(crate) fn park_detached(&mut self, mut evm: Evm<'_, F::Types>) {
-        if !AcceptedView::is(evm.database()) {
-            self.park(evm);
-            return;
-        }
-        self.begin_transaction(&mut evm);
-        self.active_mut().ext = StoredExt::new(evm.ext());
-        self.store_env(evm_env(&evm));
     }
 
     /// Materializes the accepted state `evm` reads through a shared view into its own overlay.
