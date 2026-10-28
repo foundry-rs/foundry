@@ -1222,10 +1222,6 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let factory = self.factory.configure_for(&db, &env);
         let transition = self.apply_env(&factory, evm, env, phase);
         evm.warm_precompiles();
-        if evm.feature(EvmFeatures::EIP3651) {
-            let beneficiary = evm.block().beneficiary;
-            evm.state_mut().prewarm(&beneficiary);
-        }
         if fresh {
             factory.initialize_evm(evm, db.is_forked_mode());
         }
