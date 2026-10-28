@@ -702,7 +702,7 @@ impl<'gcx> Analyzer<'gcx> {
                 }
                 !is_exit_call(self.gcx, expr)
             }
-            StmtKind::AssemblyBlock(_) | StmtKind::Err(_) => {
+            StmtKind::AssemblyBlock(..) | StmtKind::Err(_) => {
                 // Inline assembly is opaque and may observe any local before changing it. Flush
                 // deferred recoveries before discarding facts so assembly cannot hide a warning.
                 self.use_all_pending();
