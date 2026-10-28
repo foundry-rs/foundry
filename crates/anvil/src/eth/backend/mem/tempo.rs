@@ -22,20 +22,38 @@
 //! upstream responses are never cached into the replacement chain. Upstream committees remain
 //! independent of the local development identity. Height-bounded forwarding does not establish
 //! an authenticated committee or ancestry chain from upstream history to locally signed blocks.
+//!
+//! Locally mined fork headers seal the same partial account and storage trie used by proofs.
+//! Its snapshots live in a separate bounded history cache, sharing the execution history's cache
+//! settings but preserving local trie membership through disk round trips. Only a canonical local
+//! certificate can select a snapshot. Rewinds remove orphaned proof states. Resets can leave
+//! unreachable entries until cache eviction; replacement signing histories cannot select them.
 
-use super::{Backend, storage::BlockchainStorage};
+use super::{
+    Backend,
+    storage::{BlockchainStorage, InMemoryBlockStates},
+};
 use crate::eth::{
-    backend::tempo_consensus::{TempoConsensus, TempoConsensusIdentity, TempoFinalization},
+    backend::{
+        db::MaybeFullDatabase,
+        tempo_consensus::{TempoConsensus, TempoConsensusIdentity, TempoFinalization},
+    },
     error::BlockchainError,
     tempo_consensus::TempoCertifiedBlock,
 };
 use alloy_consensus::{BlockHeader, Sealable, proofs::calculate_transaction_root};
 use alloy_network::Network;
-use alloy_primitives::{B256, U256, map::HashMap};
+use alloy_primitives::{
+    Address, B256, U256,
+    map::{AddressMap, HashMap},
+};
 use alloy_provider::Provider;
+use alloy_rpc_types::EIP1186AccountProofResponse as AccountProof;
 use anvil_core::eth::block::{Block, canonical_block};
 use anvil_rpc::error::{ErrorCode, RpcError};
-use std::{fmt, num::NonZeroU64};
+use parking_lot::{RwLock, RwLockUpgradableReadGuard};
+use revm::database::DbAccount;
+use std::{fmt, num::NonZeroU64, sync::Arc};
 use tempo_hardfork::TempoHardfork;
 use tempo_primitives::TempoHeader;
 
@@ -46,7 +64,17 @@ pub(crate) struct TempoChain {
     epoch_length: NonZeroU64,
     consensus: TempoConsensus,
     latest_block: Option<Block>,
-    snapshots: HashMap<U256, (TempoConsensus, Option<Block>)>,
+    snapshots: HashMap<U256, TempoSnapshot>,
+    /// Immutable local tries sealed by locally mined fork blocks, with bounded retention.
+    pub(super) proof_states: Arc<RwLock<InMemoryBlockStates>>,
+}
+
+/// Consensus and the sealed head trie retained by an explicit EVM snapshot.
+#[derive(Clone)]
+struct TempoSnapshot {
+    consensus: TempoConsensus,
+    latest_block: Option<Block>,
+    proof_state: Option<Arc<AddressMap<DbAccount>>>,
 }
 
 impl TempoChain {
@@ -57,6 +85,7 @@ impl TempoChain {
             consensus: TempoConsensus::at_height(seed, epoch_length, height),
             latest_block: None,
             snapshots: Default::default(),
+            proof_states: Default::default(),
         }
     }
 
@@ -67,20 +96,32 @@ impl TempoChain {
         self.snapshots.clear();
     }
 
-    pub(super) fn snapshot(&mut self, id: U256) {
-        self.snapshots.insert(id, (self.consensus.clone(), self.latest_block.clone()));
+    pub(super) fn snapshot(&mut self, id: U256, proof_state: Option<Arc<AddressMap<DbAccount>>>) {
+        self.snapshots.insert(
+            id,
+            TempoSnapshot {
+                consensus: self.consensus.clone(),
+                latest_block: self.latest_block.clone(),
+                proof_state,
+            },
+        );
     }
 
     /// Restores saved consensus, or starts unsigned if an import discarded that history.
     ///
-    /// The caller supplies the saved database height, which may differ from the imported head.
-    pub(super) fn restore(&mut self, id: U256, height: u64) {
-        let (consensus, latest_block) = self.snapshots.remove(&id).unwrap_or_else(|| {
-            (TempoConsensus::at_height(self.seed, self.epoch_length, height), None)
-        });
+    /// The caller supplies the saved database height, which may differ from the imported head,
+    /// and restores the returned proof state after releasing the chain storage lock.
+    pub(super) fn restore(&mut self, id: U256, height: u64) -> Option<Arc<AddressMap<DbAccount>>> {
+        let TempoSnapshot { consensus, latest_block, proof_state } =
+            self.snapshots.remove(&id).unwrap_or_else(|| TempoSnapshot {
+                consensus: TempoConsensus::at_height(self.seed, self.epoch_length, height),
+                latest_block: None,
+                proof_state: None,
+            });
         self.consensus = consensus;
         self.latest_block = latest_block;
         self.snapshots.retain(|snapshot_id, _| *snapshot_id < id);
+        proof_state
     }
 
     /// Rewinds signed history or starts a new unsigned segment below the imported anchor.
@@ -245,6 +286,43 @@ impl<N: Network> Backend<N> {
         }
         Ok(Some(certified))
     }
+
+    /// Proves against the immutable local trie committed by a locally certified fork block.
+    pub(super) async fn prove_tempo_account_at(
+        &self,
+        address: Address,
+        keys: &[B256],
+        height: u64,
+    ) -> Result<Option<AccountProof>, BlockchainError> {
+        let _db = self.db.read().await;
+        if self.get_fork().is_none() {
+            return Ok(None);
+        }
+        let (proof_states, hash) = {
+            let storage = self.blockchain.storage.read();
+            let Some(tempo) = &storage.tempo else { return Ok(None) };
+            let Some(finalization) = tempo.consensus.finalization(height) else { return Ok(None) };
+            let hash =
+                storage.hashes.get(&height).copied().ok_or(BlockchainError::DataUnavailable)?;
+            if finalization.digest != hash {
+                return Err(BlockchainError::DataUnavailable);
+            }
+            (Arc::clone(&tempo.proof_states), hash)
+        };
+
+        // Canonical selection and cache access share the database guard, without holding storage
+        // while a historical trie is loaded from disk.
+        let states = proof_states.upgradable_read();
+        if let Some(state) = states.get_state(&hash) {
+            let accounts = state.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
+            return Ok(Some(super::prove_account(accounts, address, keys)));
+        }
+
+        let mut states = RwLockUpgradableReadGuard::upgrade(states);
+        let state = states.get_on_disk_state(&hash).ok_or(BlockchainError::DataUnavailable)?;
+        let accounts = state.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
+        Ok(Some(super::prove_account(accounts, address, keys)))
+    }
 }
 
 fn tempo_chain<N: Network>(storage: &BlockchainStorage<N>) -> Result<&TempoChain, BlockchainError> {
@@ -299,17 +377,16 @@ mod tests {
         },
         spawn,
     };
-    use alloy_primitives::Address;
+    use alloy_primitives::keccak256;
     use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest, anvil::Forking};
     use alloy_serde::WithOtherFields;
+    use alloy_trie::{Nibbles, TrieAccount, proof::verify_proof};
     use anvil_core::types::ReorgOptions;
     use foundry_evm::hardfork::{EthereumHardfork, FoundryHardfork};
     use foundry_primitives::{FoundryHeader, FoundryNetwork};
+    use revm::database::AccountState;
     use std::{
-        sync::{
-            Arc,
-            atomic::{AtomicBool, Ordering},
-        },
+        sync::atomic::{AtomicBool, Ordering},
         time::Duration,
     };
     use tokio::{sync::Notify, time::timeout};
@@ -673,12 +750,12 @@ mod tests {
         let next_rotation = chain.consensus.clone().rotate().unwrap();
         chain.unwind(&unsigned_tempo_block(5)).unwrap();
         assert_eq!(chain.consensus.clone().rotate().unwrap(), next_rotation);
-        chain.snapshot(U256::ONE);
+        chain.snapshot(U256::ONE, None);
         let mut expected = chain.consensus.clone();
 
         chain.unwind(&unsigned_tempo_block(3)).unwrap();
         assert!(chain.consensus.latest().is_none());
-        chain.restore(U256::ONE, 5);
+        let _ = chain.restore(U256::ONE, 5);
         assert_eq!(chain.consensus.rotate().unwrap(), expected.rotate().unwrap());
 
         // Restoring the snapshot restores anchor 5, so height 4 is an unsigned ancestor again.
@@ -810,20 +887,20 @@ mod tests {
     #[test]
     fn tempo_cross_import_snapshots_preserve_revert_order() {
         let mut chain = TempoChain::new(B256::ZERO, NonZeroU64::new(3).unwrap(), 0);
-        chain.snapshot(U256::ONE);
+        chain.snapshot(U256::ONE, None);
         chain.reanchor(3);
         assert!(chain.snapshots.is_empty());
-        chain.snapshot(U256::from(2));
-        chain.snapshot(U256::from(3));
+        chain.snapshot(U256::from(2), None);
+        chain.snapshot(U256::from(3), None);
         let expected = chain.consensus.clone().rotate().unwrap();
         chain.consensus.rotate().unwrap();
-        chain.snapshot(U256::from(4));
-        chain.restore(U256::from(3), 3);
+        chain.snapshot(U256::from(4), None);
+        let _ = chain.restore(U256::from(3), 3);
         assert_eq!(chain.consensus.rotate().unwrap(), expected);
         assert_eq!(chain.snapshots.keys().copied().collect::<Vec<_>>(), vec![U256::from(2)]);
 
         // Restoring a pre-import snapshot uses its database height, not the current anchor.
-        chain.restore(U256::ONE, 1);
+        let _ = chain.restore(U256::ONE, 1);
         assert!(chain.snapshots.is_empty());
         assert_eq!(chain.consensus.anchor_height(), 1);
         assert!(chain.consensus.latest().is_none());
@@ -851,5 +928,126 @@ mod tests {
         let mut header = TempoHeader::default();
         header.inner.number = height;
         Block::new(header.into(), Default::default())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn tempo_fork_proof_state_survives_disk_roundtrip() {
+        let config = NodeConfig::test_tempo().with_no_mining(true).with_no_storage_caching(true);
+        let (source_api, source) = spawn(config.clone()).await;
+        source_api.mine_one().await.unwrap();
+        let (api, _handle) = spawn(
+            config
+                .with_eth_rpc_url(Some(source.http_endpoint()))
+                .with_fork_block_number(Some(1u64)),
+        )
+        .await;
+        let proof_states = Arc::new(RwLock::new(InMemoryBlockStates::new(1, 4)));
+        api.backend.blockchain.storage.write().tempo.as_mut().unwrap().proof_states =
+            Arc::clone(&proof_states);
+
+        let address = Address::repeat_byte(0x31);
+        let absent = Address::repeat_byte(0x32);
+        let keys = [B256::ZERO, B256::with_last_byte(1)];
+        api.anvil_set_balance(address, U256::from(42)).await.unwrap();
+        api.anvil_set_code(address, alloy_primitives::bytes!("60005460005260206000f3"))
+            .await
+            .unwrap();
+        api.anvil_set_storage_at(address, U256::ZERO, B256::with_last_byte(7)).await.unwrap();
+        api.backend
+            .db
+            .write()
+            .await
+            .maybe_as_full_db_mut()
+            .unwrap()
+            .insert(absent, DbAccount::new_not_existing());
+        api.mine_one().await.unwrap();
+        let certified = api.backend.tempo_finalization(Some(2)).await.unwrap();
+        let root = certified.block.header.state_root();
+        let hash = certified.finalization.digest;
+        let original =
+            api.backend.prove_tempo_account_at(address, &keys, 2).await.unwrap().unwrap();
+        let excluded = api.backend.prove_tempo_account_at(absent, &keys, 2).await.unwrap().unwrap();
+        assert_eq!(original.balance, U256::from(42));
+        assert_eq!(original.storage_proof[0].value, U256::from(7));
+        assert_eq!(original.storage_proof[1].value, U256::ZERO);
+
+        for spilled in [false, true] {
+            if spilled {
+                api.anvil_set_storage_at(address, U256::ZERO, B256::with_last_byte(9))
+                    .await
+                    .unwrap();
+                api.mine_one().await.unwrap();
+                let mut states = proof_states.write();
+                assert!(states.get_state(&hash).is_none());
+                let restored = states.get_on_disk_state(&hash).unwrap();
+                assert_eq!(
+                    restored.maybe_as_full_db().unwrap()[&absent].account_state,
+                    AccountState::NotExisting,
+                );
+            }
+            let proof =
+                api.backend.prove_tempo_account_at(address, &keys, 2).await.unwrap().unwrap();
+            assert_eq!(proof, original);
+            assert_eq!(keccak256(&proof.account_proof[0]), root);
+            let account =
+                TrieAccount::new(proof.nonce, proof.balance, proof.storage_hash, proof.code_hash);
+            verify_proof(
+                root,
+                Nibbles::unpack(keccak256(address)),
+                Some(alloy_rlp::encode(account)),
+                &proof.account_proof,
+            )
+            .unwrap();
+            for storage in &proof.storage_proof {
+                verify_proof(
+                    proof.storage_hash,
+                    Nibbles::unpack(keccak256(storage.key.as_b256())),
+                    (!storage.value.is_zero()).then(|| alloy_rlp::encode(storage.value)),
+                    &storage.proof,
+                )
+                .unwrap();
+            }
+            let proof =
+                api.backend.prove_tempo_account_at(absent, &keys, 2).await.unwrap().unwrap();
+            assert_eq!(proof, excluded);
+            verify_proof(root, Nibbles::unpack(keccak256(absent)), None, &proof.account_proof)
+                .unwrap();
+            let retained = api.backend.tempo_finalization(Some(2)).await.unwrap();
+            assert_eq!(retained.finalization, certified.finalization);
+            assert_eq!(retained.block.header.state_root(), root);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn tempo_fork_snapshot_restores_evicted_proof_state() {
+        let config = NodeConfig::test_tempo().with_no_mining(true).set_pruned_history(Some(None));
+        let (source_api, source) = spawn(config.clone()).await;
+        source_api.mine_one().await.unwrap();
+        let (api, handle) = spawn(
+            config
+                .with_eth_rpc_url(Some(source.http_endpoint()))
+                .with_fork_block_number(Some(1u64))
+                .with_no_storage_caching(true),
+        )
+        .await;
+        let provider = handle.http_provider();
+        let address = Address::repeat_byte(0x33);
+        api.anvil_set_storage_at(address, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
+        api.mine_one().await.unwrap();
+        let certified = api.backend.tempo_finalization(Some(2)).await.unwrap();
+        let original = provider.get_proof(address, vec![B256::ZERO]).await.unwrap();
+        assert_eq!(original.storage_proof[0].value, U256::ONE);
+
+        // The execution snapshot includes an unmined edit, while the sealed trie does not.
+        api.anvil_set_storage_at(address, U256::ZERO, B256::with_last_byte(9)).await.unwrap();
+        let snapshot = api.evm_snapshot().await.unwrap();
+        api.mine_one().await.unwrap();
+        assert!(api.evm_revert(snapshot).await.unwrap());
+        assert_eq!(
+            api.backend.tempo_finalization(Some(2)).await.unwrap().finalization,
+            certified.finalization
+        );
+        assert_eq!(provider.get_proof(address, vec![B256::ZERO]).await.unwrap(), original);
+        assert_eq!(provider.get_storage_at(address, U256::ZERO).await.unwrap(), U256::from(9));
     }
 }
