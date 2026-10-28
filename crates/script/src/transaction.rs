@@ -6,6 +6,7 @@ use alloy_primitives::{Address, B256, Selector, hex};
 use eyre::Result;
 use forge_script_sequence::TransactionWithMetadata;
 use foundry_common::{ContractData, SELECTOR_LEN, TransactionMaybeSigned, fmt::format_token_raw};
+use foundry_compilers::ArtifactId;
 use foundry_evm::traces::{CallKind, CallTraceDecoder};
 use itertools::Itertools;
 use std::collections::BTreeMap;
@@ -28,7 +29,7 @@ impl<N: Network> ScriptTransactionBuilder<N> {
     /// Populate the transaction as CALL tx
     pub fn set_call(
         &mut self,
-        local_contracts: &BTreeMap<Address, &ContractData>,
+        local_contracts: &BTreeMap<Address, (&ArtifactId, &ContractData)>,
         decoder: &CallTraceDecoder,
         create2_deployer: Address,
     ) -> Result<()> {
@@ -64,7 +65,7 @@ impl<N: Network> ScriptTransactionBuilder<N> {
                 let (selector, data) = data.split_at(SELECTOR_LEN);
                 let selector = Selector::from_slice(selector);
 
-                let function = if let Some(info) = local_contracts.get(&to) {
+                let function = if let Some((_, info)) = local_contracts.get(&to) {
                     // This CALL is made to a local contract.
                     self.transaction.contract_name = Some(info.name.clone());
                     info.abi.functions().find(|function| function.selector() == selector)
@@ -106,7 +107,7 @@ impl<N: Network> ScriptTransactionBuilder<N> {
         &mut self,
         is_create2: bool,
         address: Address,
-        contracts: &BTreeMap<Address, &ContractData>,
+        contracts: &BTreeMap<Address, (&ArtifactId, &ContractData)>,
     ) -> Result<()> {
         if is_create2 {
             self.transaction.call_kind = CallKind::Create2;
@@ -114,12 +115,12 @@ impl<N: Network> ScriptTransactionBuilder<N> {
             self.transaction.call_kind = CallKind::Create;
         }
 
-        let info = contracts.get(&address);
-        self.transaction.contract_name = info.map(|info| info.name.clone());
+        let artifact = contracts.get(&address);
+        self.transaction.contract_name = artifact.map(|(_, info)| info.name.clone());
         self.transaction.contract_address = Some(address);
 
         let Some(data) = self.transaction.transaction.input() else { return Ok(()) };
-        let Some(info) = info else { return Ok(()) };
+        let Some((id, info)) = artifact else { return Ok(()) };
         let Some(bytecode) = info.bytecode() else { return Ok(()) };
 
         // `create2` transactions are prefixed by a 32 byte salt.
@@ -131,7 +132,9 @@ impl<N: Network> ScriptTransactionBuilder<N> {
         } else {
             data
         };
-        self.transaction.exact_artifact_match = creation_code.starts_with(bytecode);
+        // Script verification skips Vyper, so a Vyper deployment never has to match on resume.
+        self.transaction.exact_artifact_match = creation_code.starts_with(bytecode)
+            && !id.source.extension().is_some_and(|ext| ext == "vy");
 
         // The constructor args start after bytecode.
         let contains_constructor_args = creation_code.len() > bytecode.len();

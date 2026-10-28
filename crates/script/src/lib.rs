@@ -996,9 +996,12 @@ impl<N: Network> ScriptResult<N> {
                     let init_code = node.trace.data.clone();
                     let artifact = known_contracts.find_by_creation_code(init_code.as_ref());
                     let contract_name = artifact.map(|(id, _)| id.name.clone());
-                    let exact_artifact_match = artifact
-                        .and_then(|(_, data)| data.bytecode())
-                        .is_some_and(|bytecode| init_code.starts_with(bytecode));
+                    let exact_artifact_match = artifact.is_some_and(|(id, data)| {
+                        !id.source.extension().is_some_and(|ext| ext == "vy")
+                            && data
+                                .bytecode()
+                                .is_some_and(|bytecode| init_code.starts_with(bytecode))
+                    });
                     Some(AdditionalContract {
                         call_kind: node.trace.kind,
                         address: node.trace.address,

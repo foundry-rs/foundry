@@ -27,6 +27,7 @@ use foundry_common::{
     ContractData, ContractsByArtifact, provider::fee::resolve_broadcast_eip1559_fees, shell,
     tempo::known_fee_token_symbol,
 };
+use foundry_compilers::ArtifactId;
 use foundry_evm::{
     core::{FoundryBlock, evm::FoundryEvmNetwork},
     traces::{
@@ -312,17 +313,17 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         Ok(final_txs)
     }
 
-    /// Build mapping from contract address to its ABI, code and contract name.
-    fn build_address_to_abi_map(&self) -> BTreeMap<Address, &ContractData> {
+    /// Build mapping from contract address to its artifact ID and contract data.
+    fn build_address_to_abi_map(&self) -> BTreeMap<Address, (&ArtifactId, &ContractData)> {
         self.execution_artifacts
             .decoder
             .contracts
             .iter()
             .filter_map(move |(addr, contract_id)| {
-                if let Ok(Some((_, data))) =
+                if let Ok(Some(artifact)) =
                     self.build_data.known_contracts.find_by_name_or_identifier(contract_id)
                 {
-                    return Some((*addr, data));
+                    return Some((*addr, artifact));
                 }
                 None
             })

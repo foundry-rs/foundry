@@ -13,7 +13,7 @@ use forge_verify::{
 };
 use foundry_cli::opts::{EtherscanOpts, ProjectPathOpts};
 use foundry_common::{ContractsByArtifact, FoundryReceiptResponse};
-use foundry_compilers::{ArtifactId, Project, artifacts::EvmVersion, info::ContractInfo};
+use foundry_compilers::{Project, artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Chain, Config};
 use foundry_evm::core::evm::FoundryEvmNetwork;
 use semver::Version;
@@ -251,21 +251,6 @@ impl VerifyBundle {
         }
         None
     }
-
-    /// Returns whether a contract created from `init_code` is Vyper, which script verification
-    /// skips: a Vyper artifact matches `init_code`, or every artifact named `exact_name` is Vyper,
-    /// as when its source changed after the broadcast.
-    fn is_vyper(&self, init_code: &[u8], exact_name: Option<&str>) -> bool {
-        let is_vy = |id: &ArtifactId| id.source.extension().is_some_and(|ext| ext == "vy");
-        let mut named = self
-            .known_contracts
-            .keys()
-            .filter(|id| Some(id.name.as_str()) == exact_name)
-            .peekable();
-        self.known_contracts.iter().any(|(id, contract)| {
-            is_vy(id) && contract.bytecode().is_some_and(|bytecode| init_code.starts_with(bytecode))
-        }) || (named.peek().is_some() && named.all(is_vy))
-    }
 }
 
 fn source_api_key(config: &Config, chain: Chain) -> Option<String> {
@@ -450,21 +435,15 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
         let mut skipped = 0;
         // A contract whose creation code exactly matched a project artifact at broadcast time must
         // still verify; a mismatch means the sources changed since. Callers pass its name only in
-        // that case. Vyper contracts and contracts that were only named by fuzzy matching, or not
-        // at all, are skipped with a warning.
-        let mut add_unverifiable =
-            |address: Address, init_code: &[u8], exact_name: Option<&str>| {
-                if verify.is_vyper(init_code, exact_name) {
-                    skipped += 1;
-                    let _ = sh_warn!("Skipping verification of Vyper contract at {address}.");
-                } else if let Some(name) = exact_name {
-                    unverifiable_contracts.push(address);
-                    unmatched_contracts.push(format!("{name} at {address}"));
-                } else {
-                    unverifiable_contracts.push(address);
-                    skipped += 1;
-                }
-            };
+        // that case. Other unmatched contracts are skipped with a warning.
+        let mut add_unverifiable = |address: Address, exact_name: Option<&str>| {
+            unverifiable_contracts.push(address);
+            if let Some(name) = exact_name {
+                unmatched_contracts.push(format!("{name} at {address}"));
+            } else {
+                skipped += 1;
+            }
+        };
         let mut resolver = None;
         let mut external_jobs = 0;
         let mut skipped_external = 0;
@@ -521,7 +500,6 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
                     Some(verify) => verification_jobs.push(VerificationJob::Local(verify)),
                     None => add_unverifiable(
                         address,
-                        &data[offset..],
                         tx.contract_name.as_deref().filter(|_| tx.exact_artifact_match),
                     ),
                 };
@@ -547,7 +525,6 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
                     Some(args) => verification_jobs.push(VerificationJob::Local(args)),
                     None if !verify.verify_external => add_unverifiable(
                         *address,
-                        init_code,
                         contract_name.as_deref().filter(|_| *exact_artifact_match),
                     ),
                     None if config.offline => {
@@ -699,7 +676,10 @@ mod tests {
     use super::*;
     use alloy_primitives::Bytes;
     use forge_verify::provider::VerificationProviderType;
-    use foundry_compilers::artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode};
+    use foundry_compilers::{
+        ArtifactId,
+        artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode},
+    };
 
     fn bundle(config: &Config, verifier: VerifierArgs) -> VerifyBundle {
         let project = config.project().unwrap();

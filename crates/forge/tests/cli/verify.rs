@@ -990,7 +990,6 @@ async fn script_verify_fails_when_deployed_contract_no_longer_matches(prj: _, cm
     );
     prj.add_source("Beta.sol", "contract Beta { uint256 public y = 1; }");
     prj.add_raw_source("Alpha.vy", "x: public(uint256)\n");
-    prj.add_raw_source("Gamma.vy", "y: public(uint256)\n");
     prj.add_script(
         "Deploy.s.sol",
         r#"
@@ -1023,7 +1022,7 @@ contract DeployAlpha is Script {
         bytes memory raw = RAW;
         vm.startBroadcast();
         new Alpha();
-        vm.deployCode("src/Gamma.vy:Gamma");
+        vm.deployCode("src/Alpha.vy:Alpha");
         assembly { pop(create(0, add(raw, 0x20), mload(raw))) }
         vm.stopBroadcast();
     }
@@ -1093,20 +1092,21 @@ Verified (0) contracts; skipped (2) contracts (see warnings above).
     assert_eq!(broadcast["transactions"][1]["contractName"], "Beta");
 
     // A Vyper contract is skipped even when a Solidity contract shares its name.
-    cmd.forge_fuse().args(script("DeployVyper")).args(verify).assert_success().stderr_eq(str![[
-        r#"
-Warning: Skipping verification of Vyper contract at 0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0.
+    cmd.forge_fuse().args(script("DeployVyper")).args(verify).assert_success().stderr_eq(str![[r#"
+Warning: We haven't found any matching bytecode for the following contracts: [0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0].
+
+This may occur when resuming a verification, but the underlying source code or compiler version has changed.
+Run `forge clean` to make sure builds are in sync with project files, then try again. Alternatively, use `forge verify-contract` to verify contracts that are already deployed.
 ##
 Start verification for (0) contracts
 Verified (0) contracts; skipped (1) contracts (see warnings above).
 
-"#
-    ]]);
+"#]]);
 
-    // After the source edits, `Alpha` and its nested `Child` no longer match and fail, even though
-    // a Vyper `Alpha` exists; the edited Vyper `Gamma` and raw bytecode only warn.
+    // After both `Alpha` sources change, the Solidity `Alpha` and its nested `Child` fail, while
+    // the Vyper `Alpha` and raw bytecode only warn.
     cmd.forge_fuse().args(script("DeployAlpha")).assert_success();
-    prj.add_raw_source("Gamma.vy", "y: public(uint256)\nz: public(uint256)\n");
+    prj.add_raw_source("Alpha.vy", "x: public(uint256)\nz: public(uint256)\n");
     prj.add_source(
         "Alpha.sol",
         "contract Child { uint256 public x = 2; } contract Alpha { Child public child = new Child(); }",
@@ -1117,8 +1117,7 @@ Verified (0) contracts; skipped (1) contracts (see warnings above).
         .args(verify)
         .assert_failure()
         .stderr_eq(str![[r#"
-Warning: Skipping verification of Vyper contract at 0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9.
-Warning: We haven't found any matching bytecode for the following contracts: [0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9, 0xd8058efe0198ae9dd7d563e1b4938dcbc86a1f81, 0x5fc8d32690cc91d4c39d9d3abcbd16989f875707].
+Warning: We haven't found any matching bytecode for the following contracts: [0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9, 0xd8058efe0198ae9dd7d563e1b4938dcbc86a1f81, 0xdc64a140aa3e981100a9beca4e685f962f0cf6c9, 0x5fc8d32690cc91d4c39d9d3abcbd16989f875707].
 
 This may occur when resuming a verification, but the underlying source code or compiler version has changed.
 Run `forge clean` to make sure builds are in sync with project files, then try again. Alternatively, use `forge verify-contract` to verify contracts that are already deployed.

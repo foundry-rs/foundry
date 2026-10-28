@@ -11,6 +11,7 @@ pub struct AdditionalContract {
     pub call_kind: CallKind,
     pub contract_name: Option<String>,
     /// Whether `init_code` starts with the creation bytecode of the `contract_name` artifact.
+    /// Never set for Vyper artifacts, which script verification skips.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exact_artifact_match: bool,
     pub address: Address,
@@ -34,7 +35,7 @@ pub struct TransactionWithMetadata<N: Network> {
     #[serde(default = "default_string")]
     pub contract_name: Option<String>,
     /// Whether the creation code starts with the creation bytecode of the `contract_name`
-    /// artifact.
+    /// artifact. Never set for Vyper artifacts, which script verification skips.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exact_artifact_match: bool,
     #[serde(default = "default_address")]
