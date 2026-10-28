@@ -140,26 +140,32 @@ fn same_file(a: &str, b: &str) -> bool {
 
 /// Returns a group number for the claim of each failing test: tests with the same number have one
 /// root cause. Two tagged claims agree by their tags. Otherwise the word matcher compares the
-/// claims, also when only one of them has a tag. Groups use single linkage: a chain of agreeing
-/// pairs links two tests. A test without a claim, or whose claim names no Solidity file, agrees
-/// with no other test.
+/// claims, also when only one of them has a tag. Groups use complete linkage: in claim order, a
+/// test joins the first group whose every test agrees with it, else starts a group numbered by its
+/// index. A chain of agreeing pairs, such as a bare `Vault.sol` between two `Vault.sol` files or
+/// lines that step across the line window, does not link two tests, so it cannot inflate the
+/// quorum. A test without a claim, or whose claim names no Solidity file, agrees with no other
+/// test.
 pub(super) fn root_cause_groups(claims: &[Option<&str>]) -> Vec<usize> {
     let tags = claims.iter().map(|claim| BugTag::new((*claim)?)).collect::<Vec<_>>();
     let causes = claims.iter().map(|claim| RootCause::new((*claim)?)).collect::<Vec<_>>();
-    let mut group_of = (0..causes.len()).collect::<Vec<_>>();
-    for i in 0..causes.len() {
-        for j in i + 1..causes.len() {
-            let agree = match (&tags[i], &tags[j]) {
-                (Some(a), Some(b)) => a.agrees(b),
-                _ => matches!((&causes[i], &causes[j]), (Some(a), Some(b)) if a.agrees(b)),
-            };
-            if agree && group_of[i] != group_of[j] {
-                let (from, to) = (group_of[j], group_of[i]);
-                group_of.iter_mut().filter(|group| **group == from).for_each(|group| *group = to);
+    let agree = |i: usize, j: usize| match (&tags[i], &tags[j]) {
+        (Some(a), Some(b)) => a.agrees(b),
+        _ => matches!((&causes[i], &causes[j]), (Some(a), Some(b)) if a.agrees(b)),
+    };
+    let mut groups = Vec::<Vec<usize>>::new();
+    (0..claims.len())
+        .map(|i| match groups.iter_mut().find(|group| group.iter().all(|&j| agree(i, j))) {
+            Some(group) => {
+                group.push(i);
+                group[0]
             }
-        }
-    }
-    group_of
+            None => {
+                groups.push(vec![i]);
+                i
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -238,7 +244,9 @@ mod tests {
 
     // Tagged claims group on the file and the function, whatever their words, and lines far apart
     // or files with one name in different directories split them. Free-text claims, and pairs
-    // with only one tag, fall back to the word matcher.
+    // with only one tag, fall back to the word matcher. A test joins a group only if it agrees
+    // with every test in it, so the free-text claim about `fee()` stays apart from the group that
+    // holds a tagged claim it does not agree with.
     #[test]
     fn tagged_claims_group_on_file_and_function() {
         let groups = root_cause_groups(&[
@@ -253,6 +261,21 @@ mod tests {
             Some("@bug A.f src/one/Vault.sol:2 — returns zero"),
             Some("@bug B.f src/two/Vault.sol:2 — returns one"),
         ]);
-        assert_eq!(groups, [0, 0, 2, 3, 4, 3, 0, 7, 8, 9]);
+        assert_eq!(groups, [0, 0, 2, 3, 4, 3, 6, 7, 8, 9]);
+    }
+
+    // Agreeing pairs do not chain: a bare file name agrees with both `Vault.sol` files, and the
+    // middle line is near both ends, but each end starts its own group.
+    #[test]
+    fn groups_need_every_pair_to_agree() {
+        let groups = root_cause_groups(&[
+            Some("@bug A.f src/one/Vault.sol:2 — returns zero"),
+            Some("@bug A.f Vault.sol:2 — returns zero"),
+            Some("@bug A.f src/two/Vault.sol:2 — returns zero"),
+            Some("@bug A.g src/Pool.sol:7 — wrong"),
+            Some("@bug A.g src/Pool.sol:50 — wrong"),
+            Some("@bug A.g src/Pool.sol:95 — wrong"),
+        ]);
+        assert_eq!(groups, [0, 0, 2, 3, 3, 5]);
     }
 }

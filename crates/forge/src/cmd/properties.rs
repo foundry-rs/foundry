@@ -209,8 +209,9 @@ pub struct PropertiesArgs {
     ///
     /// Two failing tests have the same root cause when their `@bug` tags name the same function
     /// in the same Solidity file at near lines. Without both tags, their claims must name the same
-    /// Solidity file and share a function name at near lines or at least 30% of their words. Forge
-    /// lists the groups below the quorum after the possible bugs. Defaults to 2, or 1 with a
+    /// Solidity file and share a function name at near lines or at least 30% of their words. A
+    /// test joins a group only when it has the same root cause as every test in it. Forge lists
+    /// the groups below the quorum after the possible bugs. Defaults to 2, or 1 with a
     /// single agent.
     #[arg(long, value_name = "K")]
     quorum: Option<usize>,
@@ -1929,7 +1930,9 @@ mod tests {
         assert_eq!(
             groups,
             [
-                (vec![1, 2], vec!["A::cap", "B::cap", "B::limit"]),
+                (vec![1, 2], vec!["A::cap", "B::cap"]),
+                // It agrees with `B::cap` but not with `A::cap`, so it does not join their group.
+                (vec![2], vec!["B::limit"]),
                 (vec![3], vec!["C::zero"]),
                 (vec![1], vec!["D::none"]),
             ]
