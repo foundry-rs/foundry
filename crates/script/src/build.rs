@@ -336,8 +336,11 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             sequence
         };
 
-        // A single-chain resume reaches the chain through `--rpc-url`, not the saved endpoint.
-        if let Some((fork_url, chain)) = endpoint {
+        // A single-chain resume reaches the chain through an explicit `--rpc-url` instead of the
+        // saved endpoint. A configured RPC only selects the chain.
+        if let Some((fork_url, chain)) = endpoint
+            && self.args.evm.rpc.rpc_url.is_some()
+        {
             let saved = sequence.sequences()[0].chain;
             if saved != chain {
                 eyre::bail!(
