@@ -498,7 +498,7 @@ fn record_fork_roll<FEN: FoundryEvmNetwork>(
 }
 
 /// Makes `CHAINID` on the fork `fork_id` just switched to or rolled read the fork's chain ID at
-/// once, as REVM did, replacing an earlier `vm.chainId`.
+/// once, replacing an earlier `vm.chainId`.
 ///
 /// The switch or roll defers the chain ID to the next transaction, and `CHAINID` reads the
 /// transaction's until then. `ccx.evm` can be a frame EVM that already runs the pending chain ID,

@@ -33,7 +33,7 @@ contract Dealer {
 }
 
 /// `deal` and nonce cheatcodes survive reverts of the enclosing calls, and compose with the
-/// transfers and nonce bumps those reverts undo, as on master.
+/// transfers and nonce bumps those reverts undo.
 contract PersistentWritesTest is Test {
     address payable constant A = payable(address(0xA11CE));
     address constant EOA = address(0xE0A);

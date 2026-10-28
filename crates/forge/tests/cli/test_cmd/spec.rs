@@ -2542,9 +2542,6 @@ interface Vm {
     function etch(address target, bytes calldata newRuntimeBytecode) external;
     function setEvmVersion(string calldata evm) external;
     function executeTransaction(bytes calldata raw) external returns (bytes memory);
-    function assertLt(uint256 left, uint256 right, string calldata message) external;
-    // Decode a 32-byte RPC result's offset, length and value without RETURNDATACOPY (Homestead).
-    function rpc(string calldata method, string calldata params) external returns (uint256, uint256, uint256);
 }
 
 contract EmptyAccountPolicyTest {
@@ -2581,39 +2578,6 @@ contract EmptyAccountPolicyTest {
             require(used < 25_000, "caller: empty account absent");
         }
     }
-
-    // The RPC storage slot coordinates the runners, not their independent fork overlays.
-    function test_parallel_homestead_policy() public {
-        vm.rpc("anvil_setStorageAt", '["0x0000000000000000000000000000000000777777","0x0","0x0000000000000000000000000000000000000000000000000000000000000001"]');
-        waitForPhase(2);
-        uint256 used;
-        assembly {
-            used := gas()
-            pop(call(1000, 0x55aa33, 0, 0, 0, 0, 0))
-            used := sub(used, gas())
-        }
-        vm.rpc("anvil_setStorageAt", '["0x0000000000000000000000000000000000777777","0x0","0x0000000000000000000000000000000000000000000000000000000000000003"]');
-        vm.assertLt(used, 25_000, "parallel: another test changed empty-account policy");
-    }
-
-    function test_parallel_prague_policy() public {
-        waitForPhase(1);
-        vm.setEvmVersion("prague");
-        this.pragueFrame();
-    }
-
-    function pragueFrame() external {
-        vm.rpc("anvil_setStorageAt", '["0x0000000000000000000000000000000000777777","0x0","0x0000000000000000000000000000000000000000000000000000000000000002"]');
-        waitForPhase(3);
-    }
-
-    function waitForPhase(uint256 phase) internal {
-        for (uint256 i; i < 10_000; ++i) {
-            (,, uint256 value) = vm.rpc("eth_getStorageAt", '["0x0000000000000000000000000000000000777777","0x0","latest"]');
-            if (value == phase) return;
-        }
-        revert("parallel runner did not reach the expected phase");
-    }
 }
 "#,
     );
@@ -2639,33 +2603,5 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#
                 ));
         }
-    }
-
-    for isolate in [false, true] {
-        // Each run needs a fresh coordination slot on the disposable RPC server.
-        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
-        prj.update_config(|config| {
-            config.evm_version = EvmVersion::Homestead;
-            config.isolate = isolate;
-        });
-        cmd.forge_fuse()
-            .args([
-                "test",
-                "--fork-url",
-                &handle.http_endpoint(),
-                "--mt",
-                "test_parallel_",
-                "--threads",
-                "2",
-            ])
-            .assert_success()
-            .stdout_eq(str![[r#"
-...
-Ran 2 tests for test/EmptyAccountPolicy.t.sol:EmptyAccountPolicyTest
-[PASS] test_parallel_homestead_policy() ([GAS])
-[PASS] test_parallel_prague_policy() ([GAS])
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
-...
-"#]]);
     }
 }

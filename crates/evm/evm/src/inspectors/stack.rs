@@ -335,6 +335,17 @@ macro_rules! call_inspectors {
     }};
 }
 
+/// Runs an end hook on `$result` and returns whether it changed the frame's outcome from `$stop`:
+/// a different status or a revert with a different message.
+macro_rules! changed {
+    ($result:ident, $stop:ident, $call:expr) => {{
+        let previous_output = $result.output.clone();
+        $call;
+        $result.stop != $stop
+            || ($result.stop == InstrStop::Revert && $result.output != previous_output)
+    }};
+}
+
 /// The collected results of [`InspectorStack`].
 pub struct InspectorData<FEN: FoundryEvmNetwork> {
     pub logs: Vec<Log>,
@@ -1028,39 +1039,27 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let stop = result.stop;
         let backend = self.backend.as_deref_mut();
         let cheats = self.cheatcodes.as_deref_mut().filter(|_| backend.is_some());
-        macro_rules! changed {
-            ($call:expr) => {{
-                let previous_output = result.output.clone();
-                $call;
-                // If the inspector returns a different status or a revert with a non-empty
-                // message, we assume it wants to tell us something.
-                result.stop != stop
-                    || (result.stop == InstrStop::Revert && result.output != previous_output)
-            }};
-        }
         'inspectors: {
             if let Some(tracer) = &mut self.inner.tracer
-                && changed!(Inspector::<TypesFor<FEN>>::call_end(
-                    &mut **tracer,
-                    interp,
-                    message,
-                    result
-                ))
+                && changed!(
+                    result,
+                    stop,
+                    Inspector::<TypesFor<FEN>>::call_end(&mut **tracer, interp, message, result)
+                )
             {
                 break 'inspectors;
             }
             if let (Some(cheats), Some(backend)) = (cheats, backend)
-                && changed!(cheats.call_end_hook(interp, message, result, backend))
+                && changed!(result, stop, cheats.call_end_hook(interp, message, result, backend))
             {
                 break 'inspectors;
             }
             if let Some(printer) = &mut self.inner.printer
-                && changed!(Inspector::<TypesFor<FEN>>::call_end(
-                    &mut **printer,
-                    interp,
-                    message,
-                    result
-                ))
+                && changed!(
+                    result,
+                    stop,
+                    Inspector::<TypesFor<FEN>>::call_end(&mut **printer, interp, message, result)
+                )
             {
                 break 'inspectors;
             }
@@ -1090,37 +1089,32 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
         let backend = self.backend.as_deref_mut();
         let cheats = self.cheatcodes.as_deref_mut().filter(|_| backend.is_some());
-        macro_rules! changed {
-            ($call:expr) => {{
-                let previous_output = result.output.clone();
-                $call;
-                result.stop != stop
-                    || (result.stop == InstrStop::Revert && result.output != previous_output)
-            }};
-        }
         'inspectors: {
             if let Some(line_coverage) = &mut self.inner.line_coverage
-                && changed!(Inspector::<TypesFor<FEN>>::create_end(
-                    &mut **line_coverage,
-                    interp,
-                    message,
-                    result
-                ))
+                && changed!(
+                    result,
+                    stop,
+                    Inspector::<TypesFor<FEN>>::create_end(
+                        &mut **line_coverage,
+                        interp,
+                        message,
+                        result
+                    )
+                )
             {
                 break 'inspectors;
             }
             if let Some(tracer) = &mut self.inner.tracer
-                && changed!(Inspector::<TypesFor<FEN>>::create_end(
-                    &mut **tracer,
-                    interp,
-                    message,
-                    result
-                ))
+                && changed!(
+                    result,
+                    stop,
+                    Inspector::<TypesFor<FEN>>::create_end(&mut **tracer, interp, message, result)
+                )
             {
                 break 'inspectors;
             }
             if let (Some(cheats), Some(backend)) = (cheats, backend)
-                && changed!(cheats.create_end_hook(interp, message, result, backend))
+                && changed!(result, stop, cheats.create_end_hook(interp, message, result, backend))
             {
                 break 'inspectors;
             }
@@ -1135,9 +1129,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     ///
     /// evm2 fixes the spec and chain ID of a running EVM, so a change deferred by an in-flight
     /// operation, such as `vm.chainId` or a fork switch, or requested by `vm.setEvmVersion`,
-    /// moves new frames onto a frame EVM built with it while the running frames keep theirs, as
-    /// REVM applied such changes to the frames started after them. The message's hooks run on the
-    /// frame EVM.
+    /// moves new frames onto a frame EVM built with it while the running frames keep theirs, so the
+    /// change applies to the frames started after it. The message's hooks run on the frame EVM.
     ///
     /// Cheatcode calls run on the running EVM: they execute no code, and the cheatcodes that read
     /// or change the environment act on the running EVM and the in-flight request.
@@ -1258,7 +1251,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let outer_basefee = env.block.basefee;
         env.block.basefee = U256::ZERO;
         env.set_feature(EvmFeatures::FEE_CHARGE, false);
-        // As on master, a call without a fee charge skips the sender balance check, so an
+        // A call without a fee charge skips the sender balance check, so an
         // underfunded value transfer fails in the call and keeps the nonce increment. An
         // underfunded create keeps the check, which leaves the nonce unchanged.
         if !is_create {
@@ -1388,7 +1381,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
         let executed = match executed {
             Ok(executed) => executed,
-            // As on master, an underfunded create fails in its frame, without a nonce increment,
+            // An underfunded create fails in its frame, without a nonce increment,
             // after its transaction paid the intrinsic gas.
             Err(HandlerError::InsufficientFunds { .. }) if is_create => {
                 let mut outcome = not_executed(Bytes::new());
@@ -1434,8 +1427,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             if let Some(warmth) = warmth {
                 evm.state_mut().set_prewarm_set(warmth);
             } else if fork_changed && !restored {
-                // As on master, persistent slots the call had warmed when it switched forks stay
-                // warm after it fails, without their accounts.
+                // Persistent slots the call had warmed when it switched forks stay warm after it
+                // fails, without their accounts.
                 let slots = backend.backend().lifecycle().switch_slots().clone();
                 for (address, keys) in slots {
                     for key in keys {
@@ -1449,9 +1442,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 || warm_accessed(evm.state_mut(), &executed.pending_state, &AddressSet::default())
                     .is_ok()
         } else {
-            // As on master, accounts the running transaction holds cold, such as after `vm.cool`
-            // or a static call cooled them, stay cold. Accounts it no longer holds, such as after
-            // a snapshot revert, are imported warm.
+            // Accounts the running transaction holds cold, such as after `vm.cool` or a static
+            // call cooled them, stay cold. Accounts it no longer holds, such as after a snapshot
+            // revert, are imported warm.
             let state = evm.state_mut();
             let cooled = state.loaded_accounts().map(|(address, _)| *address).collect::<Vec<_>>();
             let cold = cooled
@@ -1838,8 +1831,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         let inner = &mut *self.inner;
         // Network transaction hooks emit logs outside the root frame, when the tracer has no call
         // to attach them to: Tempo's 2D nonce increment before it starts and its fee settlement
-        // after it ends. As on master, where REVM only reports logs of running frames, they stay
-        // out of the trace. Until the root frame starts, the arena's entry node is a placeholder.
+        // after it ends. Only logs of running frames are traced, so they stay out of the trace.
+        // Until the root frame starts, the arena's entry node is a placeholder.
         let tracer = inner.tracer.as_mut().filter(|tracer| {
             tracer.traces().nodes().first().is_none_or(|root| {
                 root.trace.status.is_none() && root.trace != CallTrace::default()
@@ -2198,10 +2191,6 @@ impl<FEN: FoundryEvmNetwork> FoundryInspectorExt<TypesFor<FEN>> for InspectorSta
         }
     }
 
-    fn get_networks(&self) -> NetworkConfigs {
-        self.inner.networks
-    }
-
     fn create2_deployer(&self) -> Address {
         self.inner.create2_deployer
     }
@@ -2223,8 +2212,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         {
             state.set_prewarm_set(prewarm.clone());
         }
-        // As on master, the recipient cools like any other account the transaction loaded, unlike
-        // the addresses `vm.cool` also keeps warm.
+        // The recipient cools like any other account the transaction loaded, unlike the addresses
+        // `vm.cool` keeps warm.
         if !is_precompile
             && !self
                 .cheatcodes
@@ -2479,8 +2468,8 @@ fn warm_accessed(state: &mut State<'_>, pending: &PendingState, cold: &AddressSe
 }
 
 /// Warms in `state` the accounts and storage slots still warm at the end of a failed nested
-/// transaction detached into `pending`, which reattaching it to `child` exposes. As on master,
-/// warmth no revert undid survives the failure, such as of the accounts a `vm.executeTransaction`
+/// transaction detached into `pending`, which reattaching it to `child` exposes. Warmth no revert
+/// undid survives the failure, such as of the accounts a `vm.executeTransaction`
 /// within it touched, while accesses of its reverted frames do not. Accounts in `cold` stay cold,
 /// but not their slots.
 fn warm_surviving(
@@ -2492,8 +2481,8 @@ fn warm_surviving(
     child.set_pending_state(pending.clone());
     let warm = warm_accounts(child);
     child.clear_transaction_state();
-    // As on master, the running transaction holds every account the nested one loaded, cold
-    // unless warmed below, so that a later failure leaves them cold.
+    // The running transaction holds every account the nested one loaded, cold unless warmed
+    // below, so that a later failure leaves them cold.
     for change in pending.account_changes() {
         state.account(&change.address)?;
     }

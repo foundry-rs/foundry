@@ -3,7 +3,6 @@
 use crate::constants::DEFAULT_CREATE2_DEPLOYER;
 use alloy_primitives::Address;
 use evm2::{EvmTypesHost, Inspector, NoopInspector, interpreter::Message};
-use foundry_evm_networks::NetworkConfigs;
 
 /// Foundry's hooks on top of evm2's [`Inspector`].
 pub trait FoundryInspectorExt<T: EvmTypesHost>: Inspector<T> {
@@ -16,11 +15,6 @@ pub trait FoundryInspectorExt<T: EvmTypesHost>: Inspector<T> {
 
     /// Simulates `console.log` invocation.
     fn console_log(&mut self, _msg: &str) {}
-
-    /// Returns configuration retained for Celo precompile support.
-    fn get_networks(&self) -> NetworkConfigs {
-        NetworkConfigs::default()
-    }
 
     /// Returns the CREATE2 deployer address.
     fn create2_deployer(&self) -> Address {

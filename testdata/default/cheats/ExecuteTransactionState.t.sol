@@ -58,7 +58,7 @@ contract ExecuteTransactionStateTest is Test {
     }
 
     // An underfunded sender fails validation without a nonce increment, also inside an isolated
-    // call. As on master, the sender only needs to afford the value, not the gas.
+    // call. The sender only needs to afford the value, not the gas.
     function test_execute_underfunded_sender_keeps_nonce() public {
         vm.chainId(1);
         vm.deal(SENDER, 16);
