@@ -1708,6 +1708,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 storage,
                 failure_site,
                 fingerprint_provenance,
+                fork_block_number,
                 ..
             }) = persisted_call_sequence(&path, current_settings)
             else {
@@ -1717,6 +1718,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 let _ = std::fs::remove_file(&path);
                 continue;
             }
+            // Keep files that `forge fuzz replay` cannot judge because the fork block changed.
+            let keep_stale = self.cr.mcr.tcfg.fuzz_failure_replay
+                && warn_fork_block_mismatch(
+                    path.display(),
+                    fork_block_number,
+                    self.setup.fork_block_number,
+                );
             let expected_site = failure_site.and_then(|site| match site {
                 SymbolicInvariantFailureSite::SequenceCall { target, selector, fingerprint } => {
                     Some((target, selector, fingerprint))
@@ -1760,7 +1768,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         let verified_fingerprint_mismatch = fingerprint_provenance.is_some()
                             && fingerprint != outcome.anchor_fingerprint;
                         if different_handler || verified_fingerprint_mismatch {
-                            let _ = std::fs::remove_file(&path);
+                            if !keep_stale {
+                                let _ = std::fs::remove_file(&path);
+                            }
                             continue;
                         }
                         if canonical_handler {
@@ -1813,7 +1823,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 }
                 // Stale: anchor doesn't assert or earlier call asserts.
                 Ok(_) => {
-                    let _ = std::fs::remove_file(&path);
+                    if !keep_stale {
+                        let _ = std::fs::remove_file(&path);
+                    }
                 }
                 Err(err) => {
                     error!(%err, "Failed to replay handler-side assertion bug");
@@ -3940,6 +3952,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &sender_filters,
             invariant_config.fail_on_revert,
         );
+        let setup_fork_block = self.setup.fork_block_number;
 
         let showmap = self.cr.mcr.tcfg.showmap.as_ref();
         let minimize = self.cr.mcr.tcfg.fuzz_minimize.as_ref();
@@ -4012,11 +4025,19 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 assertion_failure,
                 storage,
                 failure_site,
+                fork_block_number,
                 ..
             }) = persisted_invariant_failure(&failure_dir, replay_invariant, &current_settings)
             else {
                 continue;
             };
+            if fuzz_failure_replay {
+                warn_fork_block_mismatch(
+                    &replay_invariant.name,
+                    fork_block_number,
+                    setup_fork_block,
+                );
+            }
             replayed_persisted_invariant = true;
             let replay_anchor_idx = invariant_contract
                 .invariant_fns
@@ -4163,6 +4184,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         &storage,
                         Some(confirmed_failure_site),
                         None,
+                        setup_fork_block,
                     );
                 }
                 Ok(_) => {}
@@ -4236,6 +4258,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     &[],
                     Some(failure_site),
                     None,
+                    setup_fork_block,
                 );
                 replayed_predicate_failures.push((
                     replay_invariant.name.clone(),
@@ -4518,6 +4541,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         &storage,
                         failure_site,
                         None,
+                        setup_fork_block,
                     );
                     let mut invariant_failures = vec![InvariantFailure::Predicate {
                         name: anchor.name.clone(),
@@ -4741,6 +4765,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             &[],
                             None,
                             None,
+                            setup_fork_block,
                         );
                     }
                     any_failure_persisted = true;
@@ -4807,6 +4832,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                     &[],
                                     None,
                                     None,
+                                    setup_fork_block,
                                 );
                             }
                             any_failure_persisted = true;
@@ -4912,6 +4938,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         &current_settings,
                         symbolic_storage,
                         fingerprint_provenance,
+                        setup_fork_block,
                     );
                 }
                 let artifact = self.persist_sequence_artifact(
@@ -5016,6 +5043,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         if self.prepare_test(func).is_err() {
             return self.result;
         }
+        // Includes forks selected or rolled by `beforeTestSetup` calls.
+        let fork_block_number = self.result.fork_block_number;
 
         let runner = self.fuzz_runner();
         let mut fuzz_config = self.config.fuzz.clone();
@@ -5107,7 +5136,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 {
                     Some(format!("persisted fuzz failure selector does not match {}", func.name))
                 }
-                Some(_) => None,
+                Some(failure) => {
+                    warn_fork_block_mismatch(
+                        &func.name,
+                        failure.fork_block_number,
+                        fork_block_number,
+                    );
+                    None
+                }
             };
             if let Some(reason) = skip_reason {
                 self.result.fuzz_result(FuzzTestResult {
@@ -5177,10 +5213,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         if !self.cr.mcr.tcfg.fuzz_failure_replay
             && let Some(CounterExample::Single(counterexample)) = &result.counterexample
         {
+            let counterexample = BaseCounterExample { fork_block_number, ..counterexample.clone() };
             if let Err(err) = foundry_common::fs::create_dir_all(failure_dir) {
                 error!(%err, "Failed to create fuzz failure dir");
             } else if let Err(err) =
-                foundry_common::fs::write_json_file(&failure_file, counterexample)
+                foundry_common::fs::write_json_file(&failure_file, &counterexample)
             {
                 error!(%err, "Failed to record call sequence");
             }
@@ -5413,6 +5450,9 @@ struct InvariantPersistedFailure {
     /// Versioned configuration used to produce a reproducible edge fingerprint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     fingerprint_provenance: Option<PersistedFingerprintProvenance>,
+    /// Active fork block after setup when the counterexample was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fork_block_number: Option<u64>,
 }
 
 /// Reproducible edge-fingerprint algorithms and their capture configuration.
@@ -5473,6 +5513,26 @@ fn persisted_call_sequence(
         return None;
     }
     Some(persisted)
+}
+
+/// Warns when a persisted failure is replayed on a different fork block than it was recorded on.
+/// Returns whether the blocks differ.
+fn warn_fork_block_mismatch(
+    label: impl std::fmt::Display,
+    recorded: Option<u64>,
+    current: Option<u64>,
+) -> bool {
+    let Some(recorded) = recorded else { return false };
+    if current == Some(recorded) {
+        return false;
+    }
+    let current = current.map_or_else(|| "without a fork".to_string(), |b| format!("at block {b}"));
+    let _ = sh_warn!(
+        "Persisted failure for {label} was recorded at fork block {recorded} but is replayed \
+         {current}; pin the fork block (e.g. `--fork-block-number {recorded}` or a block in \
+         `vm.createSelectFork`) to replay it against the recorded state."
+    );
+    true
 }
 
 /// Returns the current invariant failure cache path.
@@ -5793,6 +5853,7 @@ fn symbolic_artifact_file_name(
 }
 
 /// Persists an invariant failure, with any symbolic replay storage and confirmed failure site.
+#[expect(clippy::too_many_arguments)]
 fn record_invariant_failure(
     failure_file: &Path,
     call_sequence: &[BaseCounterExample],
@@ -5801,6 +5862,7 @@ fn record_invariant_failure(
     storage: &[SymbolicStorageAssignment],
     failure_site: Option<SymbolicInvariantFailureSite>,
     fingerprint_provenance: Option<PersistedFingerprintProvenance>,
+    fork_block_number: Option<u64>,
 ) {
     if let Some(parent) = failure_file.parent()
         && let Err(err) = foundry_common::fs::create_dir_all(parent)
@@ -5818,6 +5880,7 @@ fn record_invariant_failure(
             storage: storage.to_vec(),
             failure_site,
             fingerprint_provenance,
+            fork_block_number,
         },
     ) {
         error!(%err, "Failed to record call sequence");
@@ -5835,6 +5898,7 @@ fn record_handler_failure(
     settings: &InvariantSettings,
     storage: &[SymbolicStorageAssignment],
     fingerprint_provenance: Option<PersistedFingerprintProvenance>,
+    fork_block_number: Option<u64>,
 ) {
     let handlers_dir = failure_dir.join("handlers");
     let file = handler_failure_file(&handlers_dir, reverter, selector);
@@ -5850,6 +5914,7 @@ fn record_handler_failure(
             fingerprint,
         }),
         fingerprint_provenance,
+        fork_block_number,
     );
 }
 

@@ -4405,9 +4405,9 @@ dependencies = [
 
 [[package]]
 name = "cranelift-isle"
-version = "0.136.2"
+version = "0.136.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a2f30ea3fd5a11f7d3473976d3b62b5b3f2b62fa943c85e0331d88bf505082c"
+checksum = "9ea6526ebf9064fff8ce3b1e26afad7027f9e6bb0e45d2b9200e4cbab8343345"
 
 [[package]]
 name = "crc"
@@ -12549,7 +12549,7 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43#3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43"
+source = "git+https://github.com/paradigmxyz/solar?rev=80dda83915a18768fc3608f1535f0978acb91d10#80dda83915a18768fc3608f1535f0978acb91d10"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -12564,7 +12564,7 @@ dependencies = [
 [[package]]
 name = "solar-cli"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43#3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43"
+source = "git+https://github.com/paradigmxyz/solar?rev=80dda83915a18768fc3608f1535f0978acb91d10#80dda83915a18768fc3608f1535f0978acb91d10"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -12595,7 +12595,7 @@ dependencies = [
 [[package]]
 name = "solar-codegen"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43#3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43"
+source = "git+https://github.com/paradigmxyz/solar?rev=80dda83915a18768fc3608f1535f0978acb91d10#80dda83915a18768fc3608f1535f0978acb91d10"
 dependencies = [
  "alloy-primitives",
  "arrayvec",
@@ -12607,6 +12607,7 @@ dependencies = [
  "solar-ast",
  "solar-config",
  "solar-data-structures",
+ "solar-evmir",
  "solar-interface",
  "solar-parse",
  "solar-sema",
@@ -12616,13 +12617,14 @@ dependencies = [
 [[package]]
 name = "solar-compiler"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43#3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43"
+source = "git+https://github.com/paradigmxyz/solar?rev=80dda83915a18768fc3608f1535f0978acb91d10#80dda83915a18768fc3608f1535f0978acb91d10"
 dependencies = [
  "alloy-primitives",
  "idna_adapter",
  "solar-ast",
  "solar-config",
  "solar-data-structures",
+ "solar-evmir",
  "solar-interface",
  "solar-lint",
  "solar-macros",
@@ -12633,7 +12635,7 @@ dependencies = [
 [[package]]
 name = "solar-config"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43#3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43"
+source = "git+https://github.com/paradigmxyz/solar?rev=80dda83915a18768fc3608f1535f0978acb91d10#80dda83915a18768fc3608f1535f0978acb91d10"
 dependencies = [
  "alloy-primitives",
  "clap",
@@ -12647,7 +12649,7 @@ dependencies = [
 [[package]]
 name = "solar-data-structures"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43#3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43"
+source = "git+https://github.com/paradigmxyz/solar?rev=80dda83915a18768fc3608f1535f0978acb91d10#80dda83915a18768fc3608f1535f0978acb91d10"
 dependencies = [
  "bumpalo",
  "diff",
@@ -12660,9 +12662,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "solar-evmir"
+version = "0.2.0"
+source = "git+https://github.com/paradigmxyz/solar?rev=80dda83915a18768fc3608f1535f0978acb91d10#80dda83915a18768fc3608f1535f0978acb91d10"
+dependencies = [
+ "alloy-primitives",
+ "smallvec",
+ "solar-ast",
+ "solar-config",
+ "solar-data-structures",
+ "solar-interface",
+ "solar-parse",
+]
+
+[[package]]
 name = "solar-interface"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43#3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43"
+source = "git+https://github.com/paradigmxyz/solar?rev=80dda83915a18768fc3608f1535f0978acb91d10#80dda83915a18768fc3608f1535f0978acb91d10"
 dependencies = [
  "annotate-snippets 0.12.16",
  "anstream",
@@ -12689,7 +12705,7 @@ dependencies = [
 [[package]]
 name = "solar-lint"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43#3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43"
+source = "git+https://github.com/paradigmxyz/solar?rev=80dda83915a18768fc3608f1535f0978acb91d10#80dda83915a18768fc3608f1535f0978acb91d10"
 dependencies = [
  "rayon",
  "solar-ast",
@@ -12700,7 +12716,7 @@ dependencies = [
 [[package]]
 name = "solar-lsp"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43#3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43"
+source = "git+https://github.com/paradigmxyz/solar?rev=80dda83915a18768fc3608f1535f0978acb91d10#80dda83915a18768fc3608f1535f0978acb91d10"
 dependencies = [
  "arc-swap",
  "async-lsp",
@@ -12727,7 +12743,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43#3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43"
+source = "git+https://github.com/paradigmxyz/solar?rev=80dda83915a18768fc3608f1535f0978acb91d10#80dda83915a18768fc3608f1535f0978acb91d10"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -12737,7 +12753,7 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43#3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43"
+source = "git+https://github.com/paradigmxyz/solar?rev=80dda83915a18768fc3608f1535f0978acb91d10#80dda83915a18768fc3608f1535f0978acb91d10"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.13.2",
@@ -12758,7 +12774,7 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43#3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43"
+source = "git+https://github.com/paradigmxyz/solar?rev=80dda83915a18768fc3608f1535f0978acb91d10#80dda83915a18768fc3608f1535f0978acb91d10"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",

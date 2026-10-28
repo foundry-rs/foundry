@@ -36,6 +36,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue, sol};
 use anvil::{NodeConfig, eth::pool::transactions::TransactionOrder, spawn};
 use anvil_core::{eth::block::Block, types::ReorgOptions};
+use axum::{Json, Router, routing::post};
 use commonware_codec::{DecodeExt, Encode, ReadExt, varint::UInt};
 use commonware_cryptography::bls12381::primitives::{
     group::{G1, G2},
@@ -49,10 +50,17 @@ use foundry_evm_core::tempo::{
     active_tempo_precompile_addresses,
 };
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, TempoTransactionRequest};
-use foundry_test_utils::rpc::spawn_rpc_proxy_canned_method;
+use foundry_test_utils::rpc::{spawn_rpc_proxy_canned_method, spawn_rpc_proxy_mapping_method};
 use futures::StreamExt;
 use serde::Deserialize;
-use std::{num::NonZeroU64, sync::atomic::Ordering};
+use std::{
+    num::NonZeroU64,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 use tempo_alloy::{TempoNetwork, primitives::TempoTxEnvelope, rpc::TempoHeaderResponse};
 use tempo_dkg_onchain_artifacts::OnchainDkgOutcome;
 use tempo_hardfork::{
@@ -81,6 +89,7 @@ use tempo_primitives::{
         SignatureType, TEMPO_GAS_PRICE_SCALING_FACTOR, TokenLimit, calc_gas_balance_spending,
     },
 };
+use tokio::sync::Notify;
 
 #[cfg(feature = "cli")]
 use crate::utils::http_provider;
@@ -93,7 +102,6 @@ use std::{
     net::TcpListener,
     path::PathBuf,
     process::{Child, Command, Stdio},
-    time::Duration,
 };
 
 const PATH_USD: Address = PATH_USD_ADDRESS;
@@ -7157,12 +7165,24 @@ async fn tempo_consensus_latest_survives_body_pruning_and_snapshot() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn tempo_consensus_fork_signs_local_successors_after_reset() {
+async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     let config = NodeConfig::test_tempo()
+        .with_no_mining(true)
         .with_tempo_epoch_length(NonZeroU64::new(3).unwrap())
         .with_hardfork(Some(TempoHardfork::T7.into()));
     let (source_api, source) = spawn(config.clone()).await;
-    source_api.anvil_mine(Some(U256::from(4)), None).await.unwrap();
+    let source_provider = source.http_provider();
+    let sender = source.dev_accounts().next().unwrap();
+    let request = TransactionRequest::default()
+        .from(sender)
+        .to(Address::repeat_byte(0x33))
+        .gas_limit(1_000_000);
+    source_api.mine_one().await.unwrap();
+    source_provider.client().request::<_, B256>("eth_sendTransaction", (&request,)).await.unwrap();
+    source_api.mine_one().await.unwrap();
+    let parent = source_provider.get_block(2.into()).full().await.unwrap().unwrap();
+    assert_eq!(parent.transactions.len(), 1);
+    source_api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
     let (api, handle) = spawn(
         config
             .with_eth_rpc_url(Some(source.http_endpoint()))
@@ -7172,23 +7192,506 @@ async fn tempo_consensus_fork_signs_local_successors_after_reset() {
     .await;
     let provider = handle.http_provider();
     let identity = tempo_consensus_identity(&provider).await;
-    assert_tempo_missing(&provider, serde_json::json!("latest"), "certifications").await;
+    let source_root = tempo_finalization(&source_provider, 2).await;
+    let latest: TempoCertifiedBlock =
+        provider.client().request("consensus_getFinalization", ("latest",)).await.unwrap();
+    assert_eq!(latest, source_root);
+    let nonce = provider.get_transaction_count(sender).await.unwrap();
+    assert_eq!(nonce, 1);
+    let transaction =
+        provider.client().request::<_, B256>("eth_sendTransaction", (&request,)).await.unwrap();
     api.mine_one().await.unwrap();
+    assert!(provider.get_transaction_receipt(transaction).await.unwrap().unwrap().status());
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), nonce + 1);
     let local = tempo_finalization(&provider, 3).await;
-    let parent = source.http_provider().get_block_by_number(2.into()).await.unwrap().unwrap();
     assert_eq!(local.block.header.parent_hash(), parent.header.hash);
     assert_eq!((local.epoch, local.view), (1, 1));
     assert_tempo_certificate(&identity, &local);
+
+    provider.client().request::<_, serde_json::Value>("anvil_rollback", (1,)).await.unwrap();
+    assert_eq!(provider.get_block(BlockId::latest()).full().await.unwrap().unwrap(), parent);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), nonce);
+    assert_tempo_missing(&provider, serde_json::json!({ "height": 3 }), "certificate").await;
+    let latest: TempoCertifiedBlock =
+        provider.client().request("consensus_getFinalization", ("latest",)).await.unwrap();
+    assert_eq!(latest, source_root);
+    api.mine_one().await.unwrap();
+    let remined = tempo_finalization(&provider, 3).await;
+    assert_eq!(remined.block.header.parent_hash(), parent.header.hash);
+    assert_tempo_certificate(&identity, &remined);
+
+    api.anvil_set_coinbase(Address::repeat_byte(0x44)).await.unwrap();
+    api.anvil_reorg(ReorgOptions { depth: 1, tx_block_pairs: Vec::new() }).await.unwrap();
+    let replacement = tempo_finalization(&provider, 3).await;
+    assert_ne!(replacement.digest, remined.digest);
+    assert_eq!(replacement.block.header.parent_hash(), parent.header.hash);
+    assert_tempo_certificate(&identity, &replacement);
+
     api.anvil_reset(Some(Forking {
         json_rpc_url: Some(source.http_endpoint()),
         block_number: Some(4),
     }))
     .await
     .unwrap();
-    assert_tempo_missing(&provider, serde_json::json!({ "height": 3 }), "certificate").await;
+    let reset_root = tempo_finalization(&source.http_provider(), 3).await;
+    assert_eq!(tempo_finalization(&provider, 3).await, reset_root);
     assert_eq!(tempo_consensus_identity(&provider).await.from_epoch, 1);
     api.mine_one().await.unwrap();
     assert_tempo_certificate(&identity, &tempo_finalization(&provider, 5).await);
+    provider.client().request::<_, serde_json::Value>("anvil_rollback", (1,)).await.unwrap();
+    let parent = source_provider.get_block(4.into()).full().await.unwrap().unwrap();
+    assert_eq!(provider.get_block(BlockId::latest()).full().await.unwrap().unwrap(), parent);
+    assert_tempo_missing(&provider, serde_json::json!({ "height": 5 }), "certificate").await;
+    let latest: TempoCertifiedBlock =
+        provider.client().request("consensus_getFinalization", ("latest",)).await.unwrap();
+    assert_eq!(latest, tempo_finalization(&source_provider, 4).await);
+    api.mine_one().await.unwrap();
+    let remined = tempo_finalization(&provider, 5).await;
+    assert_eq!(remined.block.header.parent_hash(), parent.header.hash);
+    assert_tempo_certificate(&identity, &remined);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fork_rollback_rejects_invalid_root() {
+    let config = NodeConfig::test_tempo().with_no_mining(true);
+    let (source_api, source) = spawn(config.clone()).await;
+    source_api.mine_one().await.unwrap();
+    let root = source.http_provider().get_block(1.into()).await.unwrap().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let url = spawn_rpc_proxy_mapping_method(source.http_endpoint(), "eth_getBlockByHash", {
+        let calls = calls.clone();
+        move |_, mut result| {
+            if calls.fetch_add(1, Ordering::Relaxed) == 0 {
+                result["timestampMillisPart"] = serde_json::json!("0x1");
+            }
+            result
+        }
+    })
+    .await;
+    let (api, handle) =
+        spawn(config.with_eth_rpc_url(Some(url)).with_fork_block_number(Some(1u64))).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let pending = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(sender)
+                .to(Address::repeat_byte(0x42))
+                .gas_limit(1_000_000),
+        ))
+        .await
+        .unwrap();
+    api.mine_one().await.unwrap();
+    assert!(pending.get_receipt().await.unwrap().status());
+    let head = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    let consensus: serde_json::Value =
+        provider.client().request("consensus_getLatest", ()).await.unwrap();
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+
+    let error = provider
+        .client()
+        .request::<_, serde_json::Value>("anvil_rollback", (1,))
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        serde_json::to_value(error.as_error_resp().unwrap()).unwrap(),
+        serde_json::json!({
+            "code": -32603,
+            "message": "Fork root header does not match its pinned hash",
+            "data": null,
+        }),
+    );
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+    assert_eq!(provider.get_block(BlockId::latest()).await.unwrap().unwrap(), head);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+    assert_eq!(
+        provider.client().request::<_, serde_json::Value>("consensus_getLatest", ()).await.unwrap(),
+        consensus,
+    );
+
+    // Retry before querying the root so a successful query cannot hide a polluted cache.
+    provider.client().request::<_, serde_json::Value>("anvil_rollback", (1,)).await.unwrap();
+    assert_eq!(calls.load(Ordering::Relaxed), 2);
+    // A validated root remains reusable without another upstream request.
+    provider.client().request::<_, serde_json::Value>("anvil_rollback", (0,)).await.unwrap();
+    assert_eq!(provider.get_block(root.header.hash.into()).await.unwrap().unwrap(), root);
+    assert_eq!(provider.get_block(1.into()).await.unwrap().unwrap(), root);
+    assert_eq!(provider.get_block(BlockId::latest()).await.unwrap().unwrap(), root);
+    assert_eq!(calls.load(Ordering::Relaxed), 2);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 0);
+    let latest: TempoCertifiedBlock =
+        provider.client().request("consensus_getFinalization", ("latest",)).await.unwrap();
+    assert_eq!(latest, tempo_finalization(&source.http_provider(), 1).await);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_fork_forwards_only_pinned_history() {
+    let config = NodeConfig::test_tempo().with_no_mining(true);
+    let (source_api, source) = spawn(config.clone()).await;
+    let source_provider = source.http_provider();
+    source_api.mine_one().await.unwrap();
+    let accounts = source.dev_accounts().collect::<Vec<_>>();
+    source_provider
+        .client()
+        .request::<_, B256>(
+            "eth_sendTransaction",
+            (TransactionRequest::default().from(accounts[0]).to(accounts[1]).gas_limit(1_000_000),),
+        )
+        .await
+        .unwrap();
+    source_api.mine_one().await.unwrap();
+    let historical = tempo_finalization(&source_provider, 1).await;
+    let root = tempo_finalization(&source_provider, 2).await;
+    assert_eq!(root.block.body.transactions.len(), 1);
+    let (api, handle) = spawn(
+        config
+            .clone()
+            .with_eth_rpc_url(Some(source.http_endpoint()))
+            .with_fork_block_number(Some(2u64))
+            .with_tempo_consensus_seed(Some(B256::repeat_byte(0x42))),
+    )
+    .await;
+    let provider = handle.http_provider();
+    source_api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
+    assert_eq!(tempo_finalization(&provider, 1).await, historical);
+    assert_eq!(tempo_finalization(&provider, 2).await, root);
+    let latest: TempoCertifiedBlock =
+        provider.client().request("consensus_getFinalization", ("latest",)).await.unwrap();
+    assert_eq!(latest, root);
+    let state: TempoConsensusState =
+        provider.client().request("consensus_getLatest", ()).await.unwrap();
+    assert_eq!(state.finalized, Some(root));
+    assert!(state.notarized.is_none());
+    assert_tempo_missing(&provider, serde_json::json!({ "height": 3 }), "certificate").await;
+
+    api.mine_one().await.unwrap();
+    let local = tempo_finalization(&provider, 3).await;
+    assert_ne!(local.digest, tempo_finalization(&source_provider, 3).await.digest);
+    assert_tempo_certificate(&tempo_consensus_identity(&provider).await, &local);
+    let latest: TempoCertifiedBlock =
+        provider.client().request("consensus_getFinalization", ("latest",)).await.unwrap();
+    assert_eq!(latest, local);
+    assert_eq!(tempo_finalization(&provider, 1).await, historical);
+
+    let (replacement_api, replacement) =
+        spawn(config.with_tempo_consensus_seed(Some(B256::repeat_byte(0x24)))).await;
+    replacement_api.anvil_mine(Some(U256::from(4)), None).await.unwrap();
+    let replacement_provider = replacement.http_provider();
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(replacement.http_endpoint()),
+        block_number: Some(4),
+    }))
+    .await
+    .unwrap();
+    let replacement_third = tempo_finalization(&replacement_provider, 3).await;
+    assert_ne!(replacement_third.digest, local.digest);
+    assert_eq!(tempo_finalization(&provider, 3).await, replacement_third);
+    let latest: TempoCertifiedBlock =
+        provider.client().request("consensus_getFinalization", ("latest",)).await.unwrap();
+    assert_eq!(latest, tempo_finalization(&replacement_provider, 4).await);
+
+    api.anvil_reset(None).await.unwrap();
+    assert_tempo_missing(&provider, serde_json::json!({ "height": 1 }), "certificate").await;
+    let state: TempoConsensusState =
+        provider.client().request("consensus_getLatest", ()).await.unwrap();
+    assert!(state.finalized.is_none());
+    assert!(state.notarized.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_fork_keeps_pruned_local_certificates_authoritative() {
+    let config = NodeConfig::test_tempo().with_no_mining(true);
+    let (source_api, source) = spawn(config.clone()).await;
+    source_api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
+    let upstream: serde_json::Value = source
+        .http_provider()
+        .client()
+        .request("consensus_getFinalization", (serde_json::json!({ "height": 3 }),))
+        .await
+        .unwrap();
+    let (endpoint, calls) = spawn_rpc_proxy_canned_method(
+        source.http_endpoint(),
+        "consensus_getFinalization",
+        upstream,
+    )
+    .await;
+    let (api, handle) = spawn(
+        config
+            .with_eth_rpc_url(Some(endpoint))
+            .with_fork_block_number(Some(2u64))
+            .with_transaction_block_keeper(Some(0usize))
+            .with_tempo_consensus_seed(Some(B256::repeat_byte(0x42))),
+    )
+    .await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_accounts().collect::<Vec<_>>();
+    provider
+        .client()
+        .request::<_, B256>(
+            "eth_sendTransaction",
+            (TransactionRequest::default().from(accounts[0]).to(accounts[1]).gas_limit(1_000_000),),
+        )
+        .await
+        .unwrap();
+    api.mine_one().await.unwrap();
+    assert_tempo_missing(&provider, serde_json::json!({ "height": 3 }), "block").await;
+    let latest: TempoCertifiedBlock =
+        provider.client().request("consensus_getFinalization", ("latest",)).await.unwrap();
+    assert_eq!(latest.block.body.transactions.len(), 1);
+    assert_tempo_certificate(&tempo_consensus_identity(&provider).await, &latest);
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_fork_rejects_invalid_upstream_blocks() {
+    let config = NodeConfig::test_tempo().with_no_mining(true);
+    let (source_api, source) = spawn(config.clone()).await;
+    let accounts = source.dev_accounts().collect::<Vec<_>>();
+    source
+        .http_provider()
+        .client()
+        .request::<_, B256>(
+            "eth_sendTransaction",
+            (TransactionRequest::default().from(accounts[0]).to(accounts[1]).gas_limit(1_000_000),),
+        )
+        .await
+        .unwrap();
+    source_api.mine_one().await.unwrap();
+    let upstream = source
+        .http_provider()
+        .client()
+        .request::<_, anvil::eth::tempo_consensus::TempoCertifiedBlock>(
+            "consensus_getFinalization",
+            (serde_json::json!({ "height": 1 }),),
+        )
+        .await
+        .unwrap();
+    assert_eq!(upstream.block.body.transactions.len(), 1);
+
+    for corruption in 0..6 {
+        let mut certified = upstream.clone();
+        match corruption {
+            0 => certified.block.header.inner.number += 1,
+            1 => certified.finalization.digest = B256::repeat_byte(0x44),
+            2 => {
+                certified.block.header.inner.extra_data = bytes!("1234");
+                certified.finalization.digest = certified.block.header.hash_slow();
+            }
+            3 => certified.block.body.transactions.clear(),
+            4 => certified.block.body.ommers.push(Default::default()),
+            _ => certified.block.body.withdrawals = None,
+        }
+        let (endpoint, _) = spawn_rpc_proxy_canned_method(
+            source.http_endpoint(),
+            "consensus_getFinalization",
+            serde_json::to_value(certified).unwrap(),
+        )
+        .await;
+        let (_, handle) = spawn(
+            config.clone().with_eth_rpc_url(Some(endpoint)).with_fork_block_number(Some(1u64)),
+        )
+        .await;
+        assert_tempo_missing(
+            &handle.http_provider(),
+            serde_json::json!({ "height": 1 }),
+            "upstream finalization does not match the pinned fork history",
+        )
+        .await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_fork_preserves_upstream_errors() {
+    let config = NodeConfig::test_tempo().with_no_mining(true);
+    let (source_api, source) = spawn(config.clone()).await;
+    source_api.mine_one().await.unwrap();
+    for (code, message) in [
+        (204, "the requested content was not available"),
+        (503, "the consensus subservice was not available, but the request can be retried later"),
+    ] {
+        let expected = serde_json::json!({ "code": code, "message": message, "data": { "height": 1, "content": "certificate" } });
+        let response_error = expected.clone();
+        let (endpoint, proxy) = spawn_tempo_consensus_proxy(source.http_endpoint(), move |request| {
+            let error = response_error.clone();
+            async move {
+                Some(serde_json::json!({ "jsonrpc": "2.0", "id": request["id"], "error": error }))
+            }
+        }).await;
+        let (_, handle) = spawn(
+            config.clone().with_eth_rpc_url(Some(endpoint)).with_fork_block_number(Some(1u64)),
+        )
+        .await;
+        let provider = handle.http_provider();
+        for (method, params) in [
+            ("consensus_getFinalization", serde_json::json!([{ "height": 1 }])),
+            ("consensus_getFinalization", serde_json::json!(["latest"])),
+            ("consensus_getLatest", serde_json::json!([])),
+        ] {
+            let error = provider
+                .client()
+                .request::<_, serde_json::Value>(method, params)
+                .await
+                .unwrap_err();
+            assert_eq!(serde_json::to_value(error.as_error_resp().unwrap()).unwrap(), expected);
+        }
+        proxy.abort();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_fork_reset_does_not_wait_for_upstream() {
+    let config = NodeConfig::test_tempo().with_no_mining(true);
+    let (source_api, source) = spawn(config.clone()).await;
+    source_api.mine_one().await.unwrap();
+    let root = tempo_finalization(&source.http_provider(), 1).await;
+    for latest in [false, true] {
+        let reached = Arc::new(Notify::new());
+        let resume = Arc::new(Notify::new());
+        let (endpoint, proxy) = spawn_tempo_consensus_proxy(source.http_endpoint(), {
+            let reached = reached.clone();
+            let resume = resume.clone();
+            move |_| {
+                let reached = reached.clone();
+                let resume = resume.clone();
+                async move {
+                    reached.notify_one();
+                    resume.notified().await;
+                    None
+                }
+            }
+        })
+        .await;
+        let (api, handle) = spawn(
+            config.clone().with_eth_rpc_url(Some(endpoint)).with_fork_block_number(Some(1u64)),
+        )
+        .await;
+        let provider = handle.http_provider();
+        let pending_provider = provider.clone();
+        let pending = tokio::spawn(async move {
+            if latest {
+                let state: TempoConsensusState =
+                    pending_provider.client().request("consensus_getLatest", ()).await.unwrap();
+                state.finalized.unwrap()
+            } else {
+                tempo_finalization(&pending_provider, 1).await
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(10), reached.notified()).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(10), api.anvil_reset(None))
+            .await
+            .unwrap()
+            .unwrap();
+        let state: TempoConsensusState =
+            provider.client().request("consensus_getLatest", ()).await.unwrap();
+        assert!(state.finalized.is_none());
+        resume.notify_one();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(10), pending).await.unwrap().unwrap(),
+            root
+        );
+        assert_tempo_missing(&provider, serde_json::json!({ "height": 1 }), "certificate").await;
+        proxy.abort();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_fork_rejects_conflicting_imported_history() {
+    let config = NodeConfig::test_tempo().with_no_mining(true);
+    let (source_api, source) = spawn(config.clone()).await;
+    source_api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
+    let source_provider = source.http_provider();
+    let historical = tempo_finalization(&source_provider, 1).await;
+    let root = tempo_finalization(&source_provider, 2).await;
+    let (_, handle) = spawn(
+        config
+            .clone()
+            .with_eth_rpc_url(Some(source.http_endpoint()))
+            .with_fork_block_number(Some(2u64)),
+    )
+    .await;
+    let provider = handle.http_provider();
+
+    // Importing matching history still permits upstream certificates for known canonical blocks.
+    let saved: Bytes = source_provider.client().request("anvil_dumpState", ()).await.unwrap();
+    assert!(provider.client().request::<_, bool>("anvil_loadState", (saved,)).await.unwrap());
+    assert_eq!(provider.get_block_number().await.unwrap(), 3);
+    assert_eq!(tempo_finalization(&provider, 1).await, historical);
+    assert_eq!(tempo_finalization(&provider, 2).await, root);
+
+    let (replacement_api, replacement) = spawn(config).await;
+    replacement_api.anvil_set_coinbase(Address::repeat_byte(0x33)).await.unwrap();
+    replacement_api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
+    let replacement_provider = replacement.http_provider();
+    let saved: Bytes = replacement_provider.client().request("anvil_dumpState", ()).await.unwrap();
+    assert!(provider.client().request::<_, bool>("anvil_loadState", (saved,)).await.unwrap());
+
+    // A higher imported head can replace canonical history without changing the fork provider.
+    for (height, original) in [(1, historical), (2, root)] {
+        let imported = tempo_finalization(&replacement_provider, height).await;
+        let canonical = provider.get_block_by_number(height.into()).await.unwrap().unwrap();
+        assert_eq!(canonical.header.hash, imported.digest);
+        assert_ne!(canonical.header.hash, original.digest);
+    }
+    for (method, params) in [
+        ("consensus_getFinalization", serde_json::json!([{ "height": 1 }])),
+        ("consensus_getFinalization", serde_json::json!([{ "height": 2 }])),
+        ("consensus_getFinalization", serde_json::json!(["latest"])),
+        ("consensus_getLatest", serde_json::json!([])),
+    ] {
+        let error =
+            provider.client().request::<_, serde_json::Value>(method, params).await.unwrap_err();
+        assert_eq!(
+            serde_json::to_value(error.as_error_resp().unwrap()).unwrap(),
+            serde_json::json!({
+                "code": 503,
+                "message": "the consensus subservice was not available, but the request can be retried later",
+                "data": "upstream finalization does not match the pinned fork history",
+            }),
+        );
+    }
+}
+
+async fn spawn_tempo_consensus_proxy<F, Fut>(
+    endpoint: String,
+    intercept: F,
+) -> (String, tokio::task::JoinHandle<()>)
+where
+    F: Fn(serde_json::Value) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Option<serde_json::Value>> + Send,
+{
+    let client = reqwest::Client::new();
+    let intercept = Arc::new(intercept);
+    let router = Router::new().route(
+        "/",
+        post(move |Json(request): Json<serde_json::Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            let intercept = intercept.clone();
+            async move {
+                if request["method"] == "consensus_getFinalization"
+                    && let Some(response) = intercept(request.clone()).await
+                {
+                    return Json(response);
+                }
+                Json(
+                    client
+                        .post(endpoint)
+                        .json(&request)
+                        .send()
+                        .await
+                        .unwrap()
+                        .json::<serde_json::Value>()
+                        .await
+                        .unwrap(),
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let proxy = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (format!("http://{address}"), proxy)
 }
 
 async fn assert_tempo_missing(provider: &RetryProvider, query: serde_json::Value, data: &str) {

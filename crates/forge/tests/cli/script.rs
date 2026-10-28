@@ -1902,6 +1902,60 @@ contract RebindResume is Script {
 }
 
 #[forgetest_init]
+async fn resume_without_rpc_url_uses_saved_endpoint(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "SavedResume.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract SavedResumeTarget {}
+
+contract SavedResume is Script {
+    function run() external {
+        vm.startBroadcast();
+        new SavedResumeTarget();
+        new SavedResumeTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (rpc_a, submissions_a) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let (rpc_b, submissions_b) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = handle.dev_accounts().next().unwrap();
+
+    // Simulate through A, then make B the configured RPC for the same chain.
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "SavedResume",
+        "--rpc-url",
+        &rpc_a,
+        "--private-key",
+        private_key,
+    ]);
+    cmd.assert_success();
+    prj.update_config(|config| config.eth_rpc_url = Some(rpc_b));
+
+    // Without `--rpc-url`, the configured RPC selects the chain but the saved endpoint submits.
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "SavedResume",
+        "--private-key",
+        private_key,
+        "--resume",
+    ]);
+    cmd.assert_success();
+
+    assert_eq!(submissions_a.lock().unwrap().len(), 2);
+    assert!(submissions_b.lock().unwrap().is_empty());
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 2);
+}
+
+#[forgetest_init]
 async fn broadcast_reports_submission_without_receipt(prj: _, cmd: _) {
     let script = prj.add_script(
         "InvisibleSubmission.s.sol",

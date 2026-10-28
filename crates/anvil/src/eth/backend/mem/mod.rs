@@ -1941,7 +1941,9 @@ impl<N: Network> Backend<N> {
     ) -> (u64, BlobExcessGasAndPrice) {
         let blob_params = self.fees.blob_params();
         let update_fraction = blob_params.update_fraction as u64;
-        if !self.is_fork() && parent.number() == self.genesis_number() {
+        let is_fork_root =
+            self.get_fork().is_some_and(|fork| fork.block_number() == parent.number());
+        if is_fork_root || (!self.is_fork() && parent.number() == self.genesis_number()) {
             let Some(child) = self.get_block(parent.number() + 1) else {
                 let fees = self.fees.snapshot();
                 return (fees.base_fee, fees.blob_excess_gas_and_price);
@@ -7472,6 +7474,23 @@ where
         };
 
         // Acquire the only awaited mutation lock before publishing any part of the rewind.
+        let (rollback_gas_limit, rollback_base_fee) = if self
+            .get_fork()
+            .is_some_and(|fork| fork.block_number() == common_block.header.number())
+        {
+            let node_config = self.node_config.read().await;
+            (
+                self.get_block(common_block.header.number().saturating_add(1))
+                    .map(|child| child.header.gas_limit())
+                    .unwrap_or_else(|| node_config.gas_limit()),
+                node_config.base_fee.unwrap_or_default(),
+            )
+        } else {
+            (
+                common_block.header.gas_limit(),
+                common_block.header.base_fee_per_gas().unwrap_or_default(),
+            )
+        };
         let mut db = self.db.write().await;
         // Read the next-block fees while the retained block's child is still canonical.
         let (next_base_fee, next_blob_fees) = self.next_block_fees_after(&common_block.header);
@@ -7508,10 +7527,10 @@ where
             let mut env = self.evm_env.write();
             env.block_env.number = self.evm_block_number(common_block.header.number());
             env.block_env.timestamp = U256::from(common_block.header.timestamp());
-            env.block_env.gas_limit = common_block.header.gas_limit();
+            env.block_env.gas_limit = rollback_gas_limit;
             env.block_env.difficulty = common_block.header.difficulty();
             env.block_env.prevrandao = common_block.header.mix_hash();
-            env.block_env.basefee = common_block.header.base_fee_per_gas().unwrap_or_default();
+            env.block_env.basefee = rollback_base_fee;
             // Keep the blob environment set whenever Cancun is active, even for fork blocks whose
             // headers omit blob fields, because the EVM requires it.
             env.block_env.blob_excess_gas_and_price = self.fees.is_eip4844().then(|| {
