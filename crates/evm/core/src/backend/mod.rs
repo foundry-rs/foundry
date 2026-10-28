@@ -179,7 +179,24 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         fork: CreateFork,
         configure_env: impl FnOnce(&mut EvmEnvFor<FEN>, ExecutionSpecContext),
     ) -> eyre::Result<Self> {
-        let forks = MultiFork::spawn();
+        Self::new_fork(MultiFork::spawn(), fork, configure_env)
+    }
+
+    /// Creates a backend that starts on `fork` at its resolved block's environment, or locally
+    /// with `local_env`.
+    pub fn spawn_source(fork: Option<CreateFork>, local_env: EvmEnvFor<FEN>) -> eyre::Result<Self> {
+        match fork {
+            Some(fork) => Self::spawn_fork(fork, |_, _| {}),
+            None => Self::spawn(None, local_env),
+        }
+    }
+
+    /// Like [`Self::spawn_fork`], using `forks` for remote fork caches.
+    fn new_fork(
+        forks: MultiFork,
+        fork: CreateFork,
+        configure_env: impl FnOnce(&mut EvmEnvFor<FEN>, ExecutionSpecContext),
+    ) -> eyre::Result<Self> {
         let opts = &fork.evm_opts;
         let resolved = forks.create_fork(fork.clone())?;
         let context = resolved.fork.context();
@@ -269,15 +286,19 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         backend
     }
 
-    /// Replaces this backend with one starting on `fork`, reusing the fork manager's remote
-    /// caches.
+    /// Replaces this backend with one starting on `fork` at its resolved block's environment, or
+    /// locally with `local_env`, reusing the fork manager's remote caches.
     pub fn replace_fork(
         &mut self,
         fork: Option<CreateFork>,
-        env: EvmEnvFor<FEN>,
+        local_env: EvmEnvFor<FEN>,
     ) -> eyre::Result<()> {
         let networks = self.networks;
-        *self = Self::new(self.forks.clone(), fork, env)?;
+        let forks = self.forks.clone();
+        *self = match fork {
+            Some(fork) => Self::new_fork(forks, fork, |_, _| {})?,
+            None => Self::new(forks, None, local_env)?,
+        };
         self.set_networks(networks);
         Ok(())
     }

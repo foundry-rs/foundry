@@ -1053,10 +1053,9 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     ) -> Result<Self> {
         // Linking and execution share the backend created here, before any preflight reads.
         prepare_script_source(&mut config, &mut evm_opts, None).await?;
-        let (env, _, _) = evm_opts.env_with_fork_context::<FEN>().await?;
-        let backend = Backend::spawn(
+        let backend = Backend::spawn_source(
             evm_opts.get_fork(&config, evm_opts.env.chain_id.unwrap_or_default(), None),
-            env,
+            evm_opts.local_evm_env::<FEN>(),
         )?;
         let sender_nonce = if let Some(sender_nonce) = sender_nonce_override {
             sender_nonce
@@ -1109,14 +1108,13 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         if !self.prepare_requested_source().await? {
             return Ok(());
         }
-        let (env, _, _) = self.evm_opts.env_with_fork_context::<FEN>().await?;
         self.backend.replace_fork(
             self.evm_opts.get_fork(
                 &self.config,
                 self.evm_opts.env.chain_id.unwrap_or_default(),
                 None,
             ),
-            env,
+            self.evm_opts.local_evm_env::<FEN>(),
         )
     }
 

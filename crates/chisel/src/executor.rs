@@ -300,14 +300,13 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             backend.clone()
         } else {
             let opts = &self.config.evm_opts;
-            let (env, _, _) = opts.env_with_fork_context::<FEN>().await?;
-            let backend = Backend::spawn(
+            let backend = Backend::spawn_source(
                 opts.get_fork(
                     &self.config.foundry_config,
                     opts.env.chain_id.unwrap_or_default(),
                     None,
                 ),
-                env,
+                opts.local_evm_env::<FEN>(),
             )?;
             self.config.cached_backend = Some(backend.clone());
             backend

@@ -176,10 +176,9 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         evm_opts.fork_state_by_number = false;
         evm_opts.infer_network_from_fork().await?;
         let networks = evm_opts.networks;
-        let (env, _, _) = evm_opts.env_with_fork_context::<FEN>().await?;
-        let fork = Backend::<FEN>::spawn(
+        let fork = Backend::<FEN>::spawn_source(
             evm_opts.get_fork(config, evm_opts.env.chain_id.unwrap_or_default(), None),
-            env,
+            evm_opts.local_evm_env::<FEN>(),
         )?;
         let (evm_env, tx) = fork.env(&evm_opts).await?;
         let fork_context =
