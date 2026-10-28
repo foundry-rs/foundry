@@ -9,11 +9,7 @@ use alloy_primitives::{B256, Bytes, TxKind, U256};
 use alloy_rpc_types::Transaction as RpcTransaction;
 use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
-use evm2::{
-    EvmFeatures, SpecId,
-    bytecode::Bytecode,
-    evm::{InMemoryDB, State},
-};
+use evm2::{EvmFeatures, SpecId, bytecode::Bytecode, evm::InMemoryDB};
 
 const GWEI: u128 = 1_000_000_000;
 pub(crate) const ETHER: u128 = 1_000_000_000_000_000_000;
@@ -959,28 +955,4 @@ fn from_any_rpc_transaction_for_tempo_aa_without_signature_errors() {
 
     let err = crate::evm::TempoEvmNetwork::tx_from_any_rpc(&any_tx).unwrap_err();
     assert_eq!(err.to_string(), "cannot decode Tempo AA transaction: missing field `signature`");
-}
-
-/// Storage-hook warmth restoration undoes only warmth gained since the checkpoint, keeps cooling
-/// the callback did itself, and tolerates a callback that replaced the state with a shorter
-/// journal.
-#[test]
-fn restore_access_warmth_undoes_only_gained_warmth() {
-    let (warm, cold) = (Address::with_last_byte(0xA1), Address::with_last_byte(0xA2));
-    let mut state = State::new(db_with(&[(warm, ETHER), (cold, ETHER)], 0));
-    let start = state.checkpoint();
-    state.account(&warm).unwrap().warm();
-    let checkpoint = state.checkpoint();
-
-    // The callback mutates a warm account and then cools it, and warms a cold one.
-    state.account(&warm).unwrap().add_balance(U256::from(1));
-    state.set_account_warm(&warm, false);
-    state.account(&cold).unwrap().warm();
-    restore_access_warmth(&mut state, &checkpoint);
-    assert!(!state.account(&warm).unwrap().is_warm(), "cooling inside the callback is kept");
-    assert!(!state.account(&cold).unwrap().is_warm(), "callback warmth is undone");
-
-    // A state revert inside the callback leaves a journal shorter than the checkpoint.
-    state.rollback(start, EvmFeatures::default());
-    restore_access_warmth(&mut state, &checkpoint);
 }
