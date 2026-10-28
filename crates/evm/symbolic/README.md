@@ -305,6 +305,33 @@ Current modeling notes:
   not isolated.
 - Counterexamples are shown only after successful concrete replay.
 
+### Checked XOR specialization
+
+Before launching an SMT solver, the executor can solve affine systems of 256-bit
+EVM `XOR` and `NOT` equalities using Gaussian elimination. It also detects when
+those equalities contradict an asserted disequality. Other word expressions,
+including masked values, are treated as opaque terms without assuming they are
+independent.
+The recognizer recovers equality boundaries compiled through constant addition
+or subtraction using wrapping EVM arithmetic; addition inside an XOR remains
+opaque because of carries.
+
+Every specialist answer is checked against the original query. A candidate model
+must satisfy all original constraints, including predicates outside the affine
+system, and counterexamples still require concrete replay. An unsatisfiable
+answer carries a selection of asserted equalities; a separate checker XORs their
+original terms to verify a contradiction or an equality forbidden by an asserted
+disequality. The checker does not trust the elimination rows. These checks are
+implemented in Rust; they are not a formally verified proof-checking toolchain.
+
+The specialist handles at most 256 relations and 256 opaque terms, with bounded
+expression traversal. Exceeding a limit, an unsupported query, or a failed check
+falls through to the existing solver pipeline. This applies the workload-specific,
+checked-result approach from
+[The Case for Automated Hyperspecialization: Evidence from SAT](https://arxiv.org/abs/2609.14836v1)
+to one EVM query family; it does not change the configured exploration bounds or
+the meaning of `PASS`.
+
 ## Writing Symbolic Tests
 
 Stateless symbolic tests use ordinary ABI parameters. The executor creates
