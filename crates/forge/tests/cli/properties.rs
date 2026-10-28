@@ -132,8 +132,8 @@ printf '%s\n' "$FORGE_PROPERTIES_TARGETS" | grep -qx src/Fee.sol
 grep -q context-marker "$FORGE_PROPERTIES_CONTEXT"
 case "$FORGE_PROPERTIES_SEED" in 0x*) ;; *) exit 1 ;; esac
 # The output directory is in the agent's copy of the project and starts empty.
-[ "$(cd "$out" && pwd -P)" = "$(pwd -P)/test/generated/agent-$agent" ]
-[ "$(ls -A test/generated)" = "agent-$agent" ]
+[ "$(cd "$out" && pwd -P)" = "$(pwd -P)/test/generated/run-1-agent-$agent" ]
+[ "$(ls -A test/generated)" = "run-1-agent-$agent" ]
 [ -z "$(ls -A "$out")" ]
 # The copy has the project's other files, without agent settings and instructions.
 grep -q readme-marker README.md
@@ -205,8 +205,8 @@ single-agent (1/3 agents): A zero amount is charged; src/Fee.sol:11 charges() re
     file: cache/properties/agent-3/tests/FeeCharges.t.sol
 agent usage: 3000 input tokens, 600 output tokens, 0.03 USD
 added 2 generated test file(s):
-  test/generated/agent-1/FeeSpec.t.sol
-  test/generated/agent-2/FeeRounding.t.sol
+  test/generated/run-1-agent-1/FeeSpec.t.sol
+  test/generated/run-1-agent-2/FeeRounding.t.sol
 skipped 2 generated test file(s) that repeat a file of another agent or the project
 
 "#]]);
@@ -220,7 +220,7 @@ skipped 2 generated test file(s) that repeat a file of another agent or the proj
     assert_data_eq!(
         report["duplicates"].to_string(),
         str![[
-            r#"["test/generated/agent-2/FeeSpec.t.sol","test/generated/agent-3/FeeSpec.t.sol"]"#
+            r#"["test/generated/run-1-agent-2/FeeSpec.t.sol","test/generated/run-1-agent-3/FeeSpec.t.sol"]"#
         ]]
     );
     // Forge keeps a copy of each test that an agent wrote, also of the failing ones.
@@ -254,32 +254,33 @@ SOL
     cmd.args(&args).args(["--agents", "1", "--target", "src/Fee.sol"]).assert_success().stdout_eq(
         str![[r#"
 added 2 generated test file(s):
-  test/generated/agent-1/Helper.sol
-  test/generated/agent-1/Property.t.sol
+  test/generated/run-1-agent-1/Helper.sol
+  test/generated/run-1-agent-1/Property.t.sol
 
 "#]],
     );
 
-    assert!(!prj.root().join("test/generated/agent-1/Unused.sol").exists());
+    assert!(!prj.root().join("test/generated/run-1-agent-1/Unused.sol").exists());
     cmd.forge_fuse().args(["test", "--match-contract", "PropertyTest"]).assert_success();
 
-    // On a later run, a helper that the project has with other content holds back every kept
-    // file of the agent, so the kept test never compiles against the earlier helper.
+    // A later run writes to directories of its own. A test that repeats one of the project is
+    // written again when a helper that it imports changed, so it runs against that helper.
     let agent = prj.root().join("agent.sh");
     let script = fs::read_to_string(&agent).unwrap().replace("amount / 100", "amount * 1 / 100");
     fs::write(&agent, script).unwrap();
     cmd.forge_fuse().args(&args).args(["--agents", "1", "--target", "src/Fee.sol"]);
     cmd.assert_success().stdout_eq(str![[r#"
-2 generated test file(s) did not compile or were not allowed: see cache/properties/report.json
+added 2 generated test file(s):
+  test/generated/run-2-agent-1/Helper.sol
+  test/generated/run-2-agent-1/Property.t.sol
+
+"#]]);
+    // A run whose files all repeat earlier ones writes nothing.
+    cmd.forge_fuse().args(&args).args(["--agents", "1", "--target", "src/Fee.sol"]);
+    cmd.assert_success().stdout_eq(str![[r#"
 no generated test file was kept
 
 "#]]);
-    assert_data_eq!(
-        rejected(&prj),
-        str![[r#"
-["test/generated/agent-1/Helper.sol","test/generated/agent-1/Property.t.sol"] "test/generated/agent-1/Helper.sol exists in the project with other content"
-"#]]
-    );
 }
 
 // Generated tests run outside the agent's sandbox, so `vm.ffi` fails in Forge's copies of the
@@ -350,7 +351,7 @@ Warning: 3 failing test(s) used something that Forge blocks (ffi, environment, n
 
     cmd.forge_fuse().args(&args).args(["--agents", "1", "--allow-ffi"]).assert_success();
     assert!(marker.exists());
-    assert!(prj.root().join("test/generated/agent-1/Ffi.t.sol").exists());
+    assert!(prj.root().join("test/generated/run-1-agent-1/Ffi.t.sol").exists());
 }
 
 // Generated tests cannot read Forge's environment or open network connections. Their failures
@@ -534,7 +535,7 @@ SOL
         .assert_success()
         .stdout_eq(str![[r#"
 added 1 generated test file(s):
-  test/generated/agent-1/ArithmeticLower.t.sol
+  test/generated/run-1-agent-1/ArithmeticLower.t.sol
 
 "#]]);
 }
@@ -545,8 +546,7 @@ added 1 generated test file(s):
 fn properties_rejects_symlinked_generated_directory(prj: _, cmd: _) {
     prj.add_source("Fee.sol", FEE);
     let outside = tempfile::tempdir().unwrap();
-    fs::create_dir_all(prj.root().join("test/generated")).unwrap();
-    std::os::unix::fs::symlink(outside.path(), prj.root().join("test/generated/agent-1")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), prj.root().join("test/generated")).unwrap();
     // Internal runs keep their own `--rerun` state; the project's file stays as it is.
     let failures = prj.root().join("cache/test-failures");
     fs::create_dir_all(failures.parent().unwrap()).unwrap();
@@ -561,7 +561,7 @@ no generated test file was kept
     assert_data_eq!(
         rejected(&prj),
         str![[r#"
-["test/generated/agent-1/FeeSpec.t.sol"] "generated test path test/generated/agent-1/FeeSpec.t.sol escapes project root [..]"
+["test/generated/run-1-agent-1/FeeSpec.t.sol"] "generated test path test/generated/run-1-agent-1/FeeSpec.t.sol escapes project root [..]"
 "#]]
     );
     assert!(!outside.path().join("FeeSpec.t.sol").exists());
@@ -694,11 +694,11 @@ possible bug (1/1 agents): FeeInvariantTest::invariant_totalStaysZero
   agent 1: FeeInvariantTest::invariant_totalStaysZero (seed 24301: assertion failed: [..] != 0; counterexample: [..]; seed 12648430: assertion failed: [..] != 0; counterexample: [..])
     file: cache/properties/agent-1/tests/FeeInvariant.t.sol
 possible bug (1/1 agents): HandlerInvariantTest::invariant_one
-  agent 1: HandlerInvariantTest::invariant_one (seed 24301: handler test/generated/agent-1/Handler.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..]; seed 12648430: handler test/generated/agent-1/Handler.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..])
+  agent 1: HandlerInvariantTest::invariant_one (seed 24301: handler test/generated/run-1-agent-1/Handler.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..]; seed 12648430: handler test/generated/run-1-agent-1/Handler.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..])
     file: cache/properties/agent-1/tests/Handler.t.sol
 1 generated test file(s) did not compile or were not allowed: see cache/properties/report.json
 added 1 generated test file(s):
-  test/generated/agent-1/FeeCheck.t.sol
+  test/generated/run-1-agent-1/FeeCheck.t.sol
 
 "#]]).stderr_eq(str![[r#"
 Warning: 1 failing test(s) used something that Forge blocks (ffi, environment, network, or inline config), so they are not possible bugs: see cache/properties/report.json
@@ -707,7 +707,7 @@ Warning: 1 failing test(s) used something that Forge blocks (ffi, environment, n
     assert_data_eq!(
         rejected(&prj),
         str![[
-            r#"["test/generated/agent-1/Broken.t.sol"] "Error: Compiler run failed:/nError (7576): Undeclared identifier./n --> test/generated/agent-1/Broken.t.sol:4:9:/n  |/n4 |         missing();/n  |         ^^^^^^^""#
+            r#"["test/generated/run-1-agent-1/Broken.t.sol"] "Error: Compiler run failed:/nError (7576): Undeclared identifier./n --> test/generated/run-1-agent-1/Broken.t.sol:4:9:/n  |/n4 |         missing();/n  |         ^^^^^^^""#
         ]]
     );
 
@@ -727,7 +727,7 @@ no generated test file was kept
 "#]]);
     assert_eq!(
         report(&prj)["duplicates"].to_string(),
-        r#"["test/generated/agent-1/FeeCheck.t.sol"]"#
+        r#"["test/generated/run-2-agent-1/FeeCheck.t.sol"]"#
     );
 }
 
@@ -741,9 +741,10 @@ cat > "$out/Helper.sol" <<'SOL'
 pragma solidity ^0.8.20;
 library Helper { function value() internal pure returns (uint) { return 1; } }
 SOL
-cat > "$out/Property.t.sol" <<'SOL'
+dir=$(basename "$out")
+cat > "$out/Property.t.sol" <<SOL
 pragma solidity ^0.8.20;
-import {Helper} from 'generated/agent-1/Helper.sol';
+import {Helper} from 'generated/$dir/Helper.sol';
 contract Property { function testValue() public pure { require(Helper.value() == 1); } }
 SOL
 "#,
@@ -752,15 +753,15 @@ SOL
     fs::write(prj.root().join("remappings.txt"), &mapping).unwrap();
     cmd.args(&args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
 added 2 generated test file(s):
-  test/generated/agent-1/Helper.sol
-  test/generated/agent-1/Property.t.sol
+  test/generated/run-1-agent-1/Helper.sol
+  test/generated/run-1-agent-1/Property.t.sol
 
 "#]]);
     fs::remove_file(prj.root().join("remappings.txt")).unwrap();
     for variable in ["FOUNDRY_REMAPPINGS", "DAPP_REMAPPINGS"] {
         cmd.forge_fuse().env(variable, &mapping);
         cmd.args(&args).args(["--agents", "1"]).assert_success();
-        assert_eq!(report(&prj)["kept"].to_string(), "[]");
+        assert_eq!(report(&prj)["kept"].as_array().unwrap().len(), 2);
         assert_eq!(report(&prj)["rejected"].to_string(), "[]");
         cmd.unset_env(variable);
     }
@@ -808,7 +809,7 @@ SOL
     );
     cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
 added 1 generated test file(s):
-  test/generated/agent-1/Stub.t.sol
+  test/generated/run-1-agent-1/Stub.t.sol
 
 "#]]);
 }
@@ -843,7 +844,7 @@ SOL
     );
     cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
 added 1 generated test file(s):
-  test/generated/agent-1/Stub.t.sol
+  test/generated/run-1-agent-1/Stub.t.sol
 
 "#]]);
 }
@@ -882,13 +883,13 @@ SOL
     cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
 1 generated test file(s) did not compile or were not allowed: see cache/properties/report.json
 added 1 generated test file(s):
-  test/generated/agent-1/Passing.t.sol
+  test/generated/run-1-agent-1/Passing.t.sol
 
 "#]]);
     assert_data_eq!(
         rejected(&prj),
         str![[r#"
-["test/generated/agent-1/Warning.t.sol"] "the project denies compiler warnings: Warning (2072): Unused local variable./n --> test/generated/agent-1/Warning.t.sol:4:9:/n  |/n4 |         uint256 unused = 1;/n  |         ^^^^^^^^^^^^^^"
+["test/generated/run-1-agent-1/Warning.t.sol"] "the project denies compiler warnings: Warning (2072): Unused local variable./n --> test/generated/run-1-agent-1/Warning.t.sol:4:9:/n  |/n4 |         uint256 unused = 1;/n  |         ^^^^^^^^^^^^^^"
 "#]]
     );
 }
@@ -908,7 +909,7 @@ forge="$1"
 "$forge" build > build.log 2>&1
 grep -q 'No files changed, compilation skipped' build.log
 {FEE_SPEC}
-"$forge" test --match-path "test/generated/agent-$agent/FeeSpec.t.sol" > test.log 2>&1
+"$forge" test --match-path "test/generated/run-1-agent-$agent/FeeSpec.t.sol" > test.log 2>&1
 # The compiler builds only the new test, not the project's other files.
 grep -q 'Compiling 1 files' test.log
 "#
@@ -917,7 +918,7 @@ grep -q 'Compiling 1 files' test.log
     args.extend(["--agent-arg".to_string(), prj.foundry_bin_path("forge").display().to_string()]);
     cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
 added 1 generated test file(s):
-  test/generated/agent-1/FeeSpec.t.sol
+  test/generated/run-1-agent-1/FeeSpec.t.sol
 
 "#]]);
 }
@@ -990,7 +991,7 @@ single-agent (1/4 agents): deposit(amount) accepts a zero amount; src/Vault.sol:
     claim: deposit(amount) accepts a zero amount; src/Vault.sol:11 deposit() reverts ZeroAmount.
     file: cache/properties/agent-1/tests/VaultBug.t.sol
 added 1 generated test file(s):
-  test/generated/agent-3/VaultSpec.t.sol
+  test/generated/run-1-agent-3/VaultSpec.t.sol
 skipped 1 generated test file(s) that repeat a file of another agent or the project
 
 "#]]);
@@ -1040,7 +1041,7 @@ Error: 1 project file(s) changed while the agents ran, so Forge kept no generate
     let report = report(&prj);
     assert_eq!(report["tainted"].to_string(), r#"["node_modules/pkg/notes.txt"]"#);
     assert_eq!(report["kept"].to_string(), "[]");
-    assert!(!prj.root().join("test/generated/agent-1/FeeSpec.t.sol").exists());
+    assert!(!prj.root().join("test/generated/run-1-agent-1/FeeSpec.t.sol").exists());
 }
 
 // A Soldeer project has `soldeer.lock` and its dependencies under `dependencies/`, which the
@@ -1120,7 +1121,7 @@ SOL
     );
     cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
 added 1 generated test file(s):
-  test/generated/agent-1/Stub.t.sol
+  test/generated/run-1-agent-1/Stub.t.sol
 
 "#]]);
 }
@@ -1184,7 +1185,7 @@ fn properties_keeps_quoted_profile_names(prj: _, cmd: _) {
     let args = properties_args(&prj, FEE_SPEC);
     cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
 added 1 generated test file(s):
-  test/generated/agent-1/FeeSpec.t.sol
+  test/generated/run-1-agent-1/FeeSpec.t.sol
 
 "#]]);
 }
@@ -1236,13 +1237,13 @@ grep -qF -- "$FORGE_PROPERTIES_GROUP" "$FORGE_PROPERTIES_VERIFY_PROMPT"
 grep -qF -- "$FORGE_PROPERTIES_VERDICT" "$FORGE_PROPERTIES_VERIFY_PROMPT"
 grep -q '"claim"' "$FORGE_PROPERTIES_GROUP"
 # The workspace holds the tests of this group only, and no agent settings or hidden files.
-[ "$(ls test/generated)" = "agent-1
-agent-2" ]
-[ "$(ls test/generated/agent-1 | wc -l)" -eq 1 ]
-[ "$(ls test/generated/agent-2 | wc -l)" -eq 1 ]
+[ "$(ls test/generated)" = "run-1-agent-1
+run-1-agent-2" ]
+[ "$(ls test/generated/run-1-agent-1 | wc -l)" -eq 1 ]
+[ "$(ls test/generated/run-1-agent-2 | wc -l)" -eq 1 ]
 [ ! -e CLAUDE.md ] && [ ! -e .env ]
-name=$(ls test/generated/agent-1)
-grep -qF -- "- file: test/generated/agent-1/$name" "$FORGE_PROPERTIES_VERIFY_PROMPT"
+name=$(ls test/generated/run-1-agent-1)
+grep -qF -- "- file: test/generated/run-1-agent-1/$name" "$FORGE_PROPERTIES_VERIFY_PROMPT"
 case "$name" in
 Confirmed.t.sol)
     cat > "$FORGE_PROPERTIES_VERDICT" <<'JSON'
@@ -1342,7 +1343,7 @@ fn properties_verifier_errors_need_validation(prj: _, cmd: _) {
     args.extend(verifier_args(
         &prj,
         r#"
-name=$(ls test/generated/agent-1)
+name=$(ls test/generated/run-1-agent-1)
 confirmed='{"verdict": "confirmed", "reason": "Every disproof failed."}'
 case "$name" in
 Failing.t.sol) printf '%s' "$confirmed" > "$FORGE_PROPERTIES_VERDICT"; echo "quota exceeded" >&2; exit 3 ;;
@@ -1472,8 +1473,8 @@ possible bug (1/1 agents): CycleBTest::testB
     file: cache/properties/agent-1/tests/CycleB.t.sol
 1 generated test file(s) did not compile or were not allowed: see cache/properties/report.json
 added 2 generated test file(s):
-  test/generated/agent-1/Kept.t.sol
-  test/generated/agent-1/KeptHelper.sol
+  test/generated/run-1-agent-1/Kept.t.sol
+  test/generated/run-1-agent-1/KeptHelper.sol
 
 "#]]);
 }
@@ -1502,11 +1503,8 @@ SOL
 "#,
     );
     cmd.args(args).args(["--agents", "2"]).assert_success().stdout_eq(str![[r#"
-added 4 generated test file(s):
-  test/generated/agent-1/Helper.sol
-  test/generated/agent-1/Property.t.sol
-  test/generated/agent-2/Helper.sol
-  test/generated/agent-2/Property.t.sol
+2 generated test file(s) did not compile or were not allowed: see cache/properties/report.json
+no generated test file was kept
 
 "#]]);
 

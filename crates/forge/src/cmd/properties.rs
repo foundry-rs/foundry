@@ -35,7 +35,6 @@ use std::{
     fs,
     io::Write,
     ops::Add,
-    panic::{self, AssertUnwindSafe},
     path::{Path, PathBuf},
     process::{Command, ExitStatus, Output, Stdio},
     sync::{
@@ -113,7 +112,7 @@ const VERIFY_PROMPT: &str = include_str!("properties/verify_prompt.md");
 /// cheatcodes without `--allow-network`, env cheatcodes, which see only a few variables, and
 /// inline config that `--restrict-inline-config` refuses.
 static BLOCKED: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"FFI is disabled|network access is disabled|environment variable "[^"]*" not found|failed to resolve env var|inline config cannot change"#)
+    Regex::new(r#"FFI is disabled|network access is disabled|environment variable "[^"]*" not found|failed to resolve env var|inline config cannot"#)
         .unwrap()
 });
 /// Solidity line and block comments.
@@ -158,8 +157,8 @@ pub struct PropertiesArgs {
     /// test that fails on every seed is a possible bug. Its claim is the comment right above the
     /// test function, `// @bug <Contract>.<function> <file>:<line> — <claim>`, else the test name.
     /// Forge keeps the files whose tests all pass. A nonzero exit status is an error, but
-    /// Forge still runs the agent's tests. In Forge's runs, inline config cannot change `ffi`,
-    /// `fs_permissions`, or the fuzz seed, or raise runs, depth, or rejects, and a run that takes
+    /// Forge still runs the agent's tests. In Forge's runs, inline config can only lower runs,
+    /// depth, and rejects and change a few fuzzer and invariant settings, and a run that takes
     /// more than ten minutes ends.
     #[arg(long, required = true, value_name = "PATH", verbatim_doc_comment)]
     agent_command: PathBuf,
@@ -463,6 +462,15 @@ impl PropertiesArgs {
         let generated_tests =
             workspace::relative_to_root(&config.root, &config.test).join("generated");
         workspace::ensure_safe_relative_path(&generated_tests, "generated test", &config.test)?;
+        // Each run writes to directories of its own, so a run never meets the files of another.
+        let run = (1..)
+            .find(|run| {
+                (1..=self.agents).all(|id| {
+                    let out = generated_tests.join(format!("run-{run}-agent-{id}"));
+                    fs::symlink_metadata(config.root.join(out)).is_err()
+                })
+            })
+            .expect("some run number is free");
         let cache_root = config.cache_path.join("properties");
         let verifier_command = self
             .verifier_command
@@ -482,6 +490,7 @@ impl PropertiesArgs {
             sandbox,
             verifier_command,
             generated_tests,
+            run,
             cache_root,
             quorum,
         };
@@ -501,6 +510,8 @@ struct Campaign<'a> {
     verifier_command: Option<PathBuf>,
     /// The directory of generated tests, relative to the project root.
     generated_tests: PathBuf,
+    /// The number of this run. Agent `N` writes to `run-<run>-agent-<N>` in `generated_tests`.
+    run: usize,
     cache_root: PathBuf,
     quorum: usize,
 }
@@ -574,8 +585,8 @@ impl Campaign<'_> {
             fs::remove_dir_all(&self.cache_root)?;
         }
         // Agents work in copies of the project, but the copies link the entries of dependency
-        // directories. A project file that changes while they run taints the run.
-        let fingerprint = project_fingerprint(self.config);
+        // directories. A shared file that changes while they run taints the run.
+        let fingerprint = project_fingerprint(self.config, &self.sandbox.dependencies());
         // An agent error ends only that agent, and the run reports it after the other agents, so
         // their results are not lost.
         let results = thread::scope(|scope| {
@@ -585,7 +596,7 @@ impl Campaign<'_> {
                 .collect::<Vec<_>>();
             agents
                 .into_iter()
-                .map(|agent| agent.join().unwrap_or_else(|_| Err(eyre!("agent thread panicked"))))
+                .map(|agent| agent.join().expect("agent thread panicked"))
                 .collect::<Vec<_>>()
         });
         let mut sessions = Vec::new();
@@ -633,7 +644,7 @@ impl Campaign<'_> {
         if let Some(command) = &self.verifier_command {
             self.verify_groups(command, &mut possible_bugs, sessions, inputs);
         }
-        let after = project_fingerprint(self.config);
+        let after = project_fingerprint(self.config, &self.sandbox.dependencies());
         let tainted = after
             .iter()
             .filter(|(path, metadata)| fingerprint.get(*path) != Some(*metadata))
@@ -677,53 +688,52 @@ impl Campaign<'_> {
                 print_group(label, group)?;
             }
         }
-        // An agent's kept files go to the project together or not at all, so a kept test never
-        // compiles against a file that it did not run with. A path that leads outside the project,
-        // or a file that the project has with other content, as after an earlier run, holds back
-        // the agent's files. A file that the project has already is not written, and of the files
-        // that repeat a file of another agent, one copy stays unless an agent's file imports it.
-        // Nothing is kept when project files changed while the agents ran.
+        // An agent's kept files go to the project together or not at all: a path that leads
+        // outside the project, or that a concurrent run took, holds back the agent's files. A
+        // file that repeats a generated test of the project or of another agent is not written,
+        // unless a written file of its agent imports it or it imports one, so every written test
+        // compiles against the files that it ran with. Nothing is kept when files that the
+        // workspaces share with the project changed while the agents ran.
+        let normalize =
+            |content: &str| COMMENT.replace_all(content, "").split_whitespace().collect::<String>();
+        let mut seen = collect_tests(&self.config.root, &self.generated_tests, 0, &mut vec![])
+            .unwrap_or_default()
+            .iter()
+            .map(|file| normalize(&file.content))
+            .collect::<HashSet<_>>();
         let mut held_back = Vec::new();
-        let mut seen = HashSet::new();
         let mut kept = Vec::new();
         let mut duplicates = Vec::new();
         for session in sessions.iter().filter(|_| tainted.is_empty()) {
-            let (mut new, mut existing) = (Vec::new(), Vec::new());
             let conflict = session.kept.iter().find_map(|file| {
                 let path = self.config.root.join(&file.path);
                 // A linked directory on the path must not lead outside the project.
                 if let Err(error) = ensure_inside(&self.config.root, &path, &file.path) {
                     return Some(format!("{error:#}"));
                 }
-                match fs::read_to_string(&path) {
-                    Ok(content) if content == file.content => existing.push(&file.path),
-                    Ok(_) => {
-                        return Some(format!(
-                            "{} exists in the project with other content",
-                            file.path.display()
-                        ));
-                    }
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => new.push(file),
-                    Err(error) => {
-                        return Some(format!("failed to read {}: {error}", file.path.display()));
-                    }
-                }
-                None
+                path.exists().then(|| format!("{} exists already", file.path.display()))
             });
             if let Some(reason) = conflict {
                 let paths = session.kept.iter().map(|file| file.path.clone()).collect();
                 held_back.push(Rejected { agent: session.id, paths, reason });
                 continue;
             }
-            duplicates.extend(existing);
-            for file in new {
-                let normalized =
-                    COMMENT.replace_all(&file.content, "").split_whitespace().collect::<String>();
-                let imported = session.kept.iter().any(|other| {
-                    other.path != file.path
-                        && session.imports.get(&other.path).is_some_and(|i| i.contains(&file.path))
-                });
-                if seen.insert(normalized) || imported {
+            let files = &session.kept;
+            let imports = |file: &TestFile, other: &TestFile| {
+                session.imports.get(&file.path).is_some_and(|i| i.contains(&other.path))
+            };
+            let mut write =
+                files.iter().map(|file| seen.insert(normalize(&file.content))).collect::<Vec<_>>();
+            while let Some(index) = (0..files.len()).find(|&i| {
+                !write[i]
+                    && files.iter().zip(&write).any(|(other, written)| {
+                        *written && (imports(other, &files[i]) || imports(&files[i], other))
+                    })
+            }) {
+                write[index] = true;
+            }
+            for (file, write) in files.iter().zip(write) {
+                if write {
                     kept.push(file);
                 } else {
                     duplicates.push(&file.path);
@@ -845,7 +855,7 @@ impl Campaign<'_> {
         let cache = self.cache_root.join(format!("agent-{id}"));
         fs::create_dir_all(&cache)?;
         let workspace = self.sandbox.workspace(&[])?;
-        let out = self.generated_tests.join(format!("agent-{id}"));
+        let out = self.generated_tests.join(format!("run-{}-agent-{id}", self.run));
         let out_dir = workspace.path().join(&out);
         ensure_inside(workspace.path(), &out_dir, &out)?;
         fs::create_dir_all(&out_dir)?;
@@ -1083,12 +1093,11 @@ impl Campaign<'_> {
                             loop {
                                 let index = next.fetch_add(1, Ordering::Relaxed);
                                 let Some(group) = groups.get(index) else { break };
-                                // A panic fails only its own group.
-                                let verification = panic::catch_unwind(AssertUnwindSafe(|| {
-                                    self.verify(command, index + 1, group, sessions, inputs)
-                                }))
-                                .unwrap_or_else(|_| Err(eyre!("verifier thread panicked")))
-                                .unwrap_or_else(|error| Verification::failed(format!("{error:#}")));
+                                let verification = self
+                                    .verify(command, index + 1, group, sessions, inputs)
+                                    .unwrap_or_else(|error| {
+                                        Verification::failed(format!("{error:#}"))
+                                    });
                                 done.push((index, verification));
                             }
                             done
@@ -1097,7 +1106,7 @@ impl Campaign<'_> {
                     .collect::<Vec<_>>();
                 workers
                     .into_iter()
-                    .flat_map(|worker| worker.join().unwrap_or_default())
+                    .flat_map(|worker| worker.join().expect("verifier thread panicked"))
                     .collect::<Vec<_>>()
             })
         };
@@ -1213,8 +1222,11 @@ impl<'a> Sandbox<'a> {
     pub(crate) fn end_on_interrupt(&self) -> Result<()> {
         let root = self.root.path().to_path_buf();
         ctrlc::set_handler(move || {
+            // The lock stays held until Forge exits, so no thread starts another process.
             #[cfg(unix)]
-            for group in SESSIONS.lock().unwrap().iter() {
+            let sessions = SESSIONS.lock().unwrap();
+            #[cfg(unix)]
+            for group in sessions.iter() {
                 let _ = kill_process_group(*group, Signal::KILL);
             }
             let _ = fs::remove_dir_all(&root);
@@ -1259,13 +1271,7 @@ impl<'a> Sandbox<'a> {
         let config = self.config;
         let workspace =
             tempfile::Builder::new().prefix("workspace-").tempdir_in(self.root.path())?;
-        let dependencies = config
-            .libs
-            .iter()
-            .map(|lib| lib.as_path())
-            .chain(["node_modules".as_ref(), "dependencies".as_ref()])
-            .map(|path| config.root.join(path))
-            .collect::<Vec<_>>();
+        let dependencies = self.dependencies();
         let skipped = [config.out.clone(), config.cache_path.clone()]
             .into_iter()
             .chain(self.skipped.iter().cloned())
@@ -1320,6 +1326,19 @@ impl<'a> Sandbox<'a> {
             fs::write(path, &file.content)?;
         }
         Ok(workspace)
+    }
+
+    /// Returns the dependency directories of the project, whose entries workspaces link instead of
+    /// copying them.
+    fn dependencies(&self) -> Vec<PathBuf> {
+        let config = self.config;
+        config
+            .libs
+            .iter()
+            .map(|lib| lib.as_path())
+            .chain(["node_modules".as_ref(), "dependencies".as_ref()])
+            .map(|path| config.root.join(path))
+            .collect()
     }
 
     /// Returns a Forge command in a workspace. A workspace has its own resolved `foundry.toml`, so
@@ -1430,11 +1449,18 @@ fn collect_tests(
 ) -> Result<Vec<TestFile>> {
     let out_dir = workspace.join(out);
     ensure_inside(workspace, &out_dir, out)?;
-    ensure!(
-        fs::symlink_metadata(&out_dir)?.is_dir(),
-        "the generated test directory {} is not a directory",
-        out.display()
-    );
+    match fs::symlink_metadata(&out_dir) {
+        Ok(metadata) => ensure!(
+            metadata.is_dir(),
+            "the generated test directory {} is not a directory",
+            out.display()
+        ),
+        // The agent removed it.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(error) => {
+            return Err(error).wrap_err_with(|| format!("failed to read {}", out.display()));
+        }
+    }
     let mut files = Vec::new();
     let mut pending = vec![out.to_path_buf()];
     while let Some(dir) = pending.pop() {
@@ -1584,14 +1610,17 @@ fn ensure_inside(root: &Path, path: &Path, orig: &Path) -> Result<()> {
     }
 }
 
-/// Returns the size and modification time of each project file, by path relative to the root.
-/// Hidden entries and the build and cache directories are skipped. Links are followed, as
-/// workspaces link dependency entries, but each directory is read once.
-fn project_fingerprint(config: &Config) -> Fingerprint {
+/// Returns the size and modification time of each file that workspaces share with the project, by
+/// path relative to the root: the files in the `dependencies` directories, whose entries workspaces
+/// link, and behind links that lead outside the project. Workspaces copy every other file, so a
+/// change to one cannot come from an agent. Hidden entries and the build and cache directories are
+/// skipped. Each directory is read once.
+fn project_fingerprint(config: &Config, dependencies: &[PathBuf]) -> Fingerprint {
     let mut files = BTreeMap::new();
     let mut read = HashSet::new();
-    let mut pending = vec![config.root.clone()];
-    while let Some(dir) = pending.pop() {
+    // Each directory, and whether workspaces share its files.
+    let mut pending = vec![(config.root.clone(), false)];
+    while let Some((dir, shared)) = pending.pop() {
         if !fs::canonicalize(&dir).is_ok_and(|dir| read.insert(dir)) {
             continue;
         }
@@ -1604,10 +1633,17 @@ fn project_fingerprint(config: &Config) -> Fingerprint {
             {
                 continue;
             }
-            let Ok(metadata) = fs::metadata(&path) else { continue };
+            let shared = shared
+                || dependencies.contains(&path)
+                || (entry.file_type().is_ok_and(|file_type| file_type.is_symlink())
+                    && fs::canonicalize(&path)
+                        .is_ok_and(|target| !target.starts_with(&config.root)));
+            let Ok(metadata) = (if shared { fs::metadata(&path) } else { entry.metadata() }) else {
+                continue;
+            };
             if metadata.is_dir() {
-                pending.push(path);
-            } else {
+                pending.push((path, shared));
+            } else if shared && metadata.is_file() {
                 // The path through a link, not the link's target.
                 let path = path.strip_prefix(&config.root).unwrap_or(&path).to_path_buf();
                 files.insert(path, (metadata.len(), metadata.modified().ok()));
