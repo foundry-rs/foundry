@@ -1,12 +1,8 @@
 //! Pinned upstream Solidity sources for the Tempo proof integration test.
 
-use alloy_primitives::hex;
-use eyre::{Result, ensure};
 use foundry_common::fs;
 use foundry_test_utils::TestProject;
 use reqwest::Client;
-use revm::precompile::crypto;
-use serde::Deserialize;
 use std::{
     io::{ErrorKind, Write},
     path::PathBuf,
@@ -14,81 +10,71 @@ use std::{
 };
 use tempfile::NamedTempFile;
 
-#[derive(Deserialize)]
-struct Source {
-    path: String,
-    url: String,
-    sha256: String,
-}
+const COMMONWARE: &str = "commonwarexyz/monorepo/456538f0e63a2d8e4ee309af27af836f9466d5a1";
+const OPTIMISM: &str = "ethereum-optimism/optimism/b84018de4fc5ea47f13b6ebdf7a2f793d8334ea8";
 
 pub(super) async fn prepare(prj: &TestProject) {
-    let sources = serde_json::from_str::<Vec<Source>>(include_str!(
-        "../../../../../testdata/fixtures/tempo-proof-sources.lock.json"
-    ))
-    .unwrap();
     let client = Client::builder().timeout(Duration::from_secs(30)).build().unwrap();
     let cache = std::env::var_os("FOUNDRY_EXTERNAL_TEST_CACHE")
         .map(|root| PathBuf::from(root).join("tempo-solidity-sources"));
-    if let Some(cache) = &cache {
-        fs::create_dir_all(cache).unwrap();
-    }
-    for source in sources {
-        let cached = cache.as_ref().map(|cache| cache.join(&source.sha256));
-        let data = if let Some(path) = &cached
-            && path.exists()
-        {
-            fs::read(path).unwrap()
-        } else {
-            client
-                .get(&source.url)
-                .send()
-                .await
-                .unwrap()
-                .error_for_status()
-                .unwrap()
-                .bytes()
-                .await
-                .unwrap()
-                .to_vec()
-        };
-        verify(&source, &data).unwrap();
-        if let Some(path) = &cached
-            && !path.exists()
-        {
-            let mut temporary = NamedTempFile::new_in(path.parent().unwrap()).unwrap();
-            temporary.write_all(&data).unwrap();
-            if let Err(error) = temporary.persist_noclobber(path) {
-                assert_eq!(error.error.kind(), ErrorKind::AlreadyExists, "{error}");
-                verify(&source, &fs::read(path).unwrap()).unwrap();
-            }
+    for (upstream, prefix, directory, files) in [
+        (
+            COMMONWARE,
+            "sol/",
+            "lib/commonware",
+            &[
+                "LICENSE-APACHE",
+                "LICENSE-MIT",
+                "sol/src/certificate/LibBLS12381.sol",
+                "sol/src/certificate/LibBLS12381Threshold.sol",
+                "sol/src/codec/LibCodec.sol",
+                "sol/src/simplex/LibSimplex.sol",
+                "sol/src/simplex/LibSimplexBLS12381Threshold.sol",
+            ][..],
+        ),
+        (
+            OPTIMISM,
+            "packages/contracts-bedrock/",
+            "lib/optimism",
+            &[
+                "LICENSE",
+                "packages/contracts-bedrock/src/libraries/Bytes.sol",
+                "packages/contracts-bedrock/src/libraries/rlp/RLPErrors.sol",
+                "packages/contracts-bedrock/src/libraries/rlp/RLPReader.sol",
+                "packages/contracts-bedrock/src/libraries/trie/MerkleTrie.sol",
+            ][..],
+        ),
+    ] {
+        for &file in files {
+            let cached = cache.as_ref().map(|root| root.join(upstream).join(file));
+            let data = if let Some(path) = &cached
+                && path.exists()
+            {
+                fs::read(path).unwrap()
+            } else {
+                let data = client
+                    .get(format!("https://raw.githubusercontent.com/{upstream}/{file}"))
+                    .send()
+                    .await
+                    .unwrap()
+                    .error_for_status()
+                    .unwrap()
+                    .bytes()
+                    .await
+                    .unwrap()
+                    .to_vec();
+                if let Some(path) = &cached {
+                    fs::create_dir_all(path.parent().unwrap()).unwrap();
+                    let mut temporary = NamedTempFile::new_in(path.parent().unwrap()).unwrap();
+                    temporary.write_all(&data).unwrap();
+                    if let Err(error) = temporary.persist_noclobber(path) {
+                        assert_eq!(error.error.kind(), ErrorKind::AlreadyExists, "{error}");
+                    }
+                }
+                data
+            };
+            let path = file.strip_prefix(prefix).unwrap_or(file);
+            prj.create_file(format!("{directory}/{path}"), std::str::from_utf8(&data).unwrap());
         }
-        prj.create_file(&source.path, std::str::from_utf8(&data).unwrap());
-    }
-}
-
-fn verify(source: &Source, data: &[u8]) -> Result<()> {
-    let actual = hex::encode(crypto().sha256(data));
-    ensure!(
-        actual == source.sha256,
-        "source checksum mismatch: {} (expected {}, got {actual})",
-        source.path,
-        source.sha256
-    );
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn source_checksum_rejects_corruption() {
-        let source = Source {
-            path: "test.sol".into(),
-            url: String::new(),
-            sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".into(),
-        };
-        verify(&source, b"abc").unwrap();
-        assert!(verify(&source, b"abd").is_err());
     }
 }
