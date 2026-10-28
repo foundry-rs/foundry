@@ -229,8 +229,10 @@ replayed.
 
 The saved RPC is part of the sensitive sequence. A single-chain resume uses the `--rpc-url`
 endpoint for Forge-managed reconciliation and submission, after checking that it reports the saved
-chain, without rewriting the saved endpoint. Browser-wallet submission stays wallet-controlled, and
-multichain resume keeps the saved endpoints and warns when `--rpc-url` is passed.
+chain, without rewriting the saved endpoint. Without `--rpc-url`, it uses the saved endpoint; a
+configured `eth_rpc_url` or `FOUNDRY_ETH_RPC_URL` only selects the chain and sequence.
+Browser-wallet submission stays wallet-controlled, and multichain resume keeps the saved endpoints
+and warns when `--rpc-url` is passed.
 
 ## Tempo and multichain behavior
 
@@ -374,8 +376,9 @@ fees or validity fields. Replacement workflows are not supported.
 - Pre-signed envelopes, saved signed payloads, and saved batch attempts do not require a signer for
   recovery. Other incomplete unsigned requests remain eligible for signer acquisition. Unknown
   delegated outcomes block resume before signer acquisition.
-- A single-chain resume reaches the chain through `--rpc-url` instead of the saved endpoint, so a
-  handoff does not need the original operator's RPC. Multichain resume keeps the saved endpoints.
+- A single-chain resume reaches the chain through an explicit `--rpc-url` instead of the saved
+  endpoint, so a handoff does not need the original operator's RPC. Without the flag, it uses the
+  saved endpoint. Multichain resume keeps the saved endpoints.
 - Legacy batch-attempt import validates transaction, hash, pending, receipt, and sensitive-metadata
   associations. If it cannot prove a safe batch state, it fails closed rather than guessing.
 
