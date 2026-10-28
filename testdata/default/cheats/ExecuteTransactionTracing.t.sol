@@ -68,7 +68,11 @@ contract ExecuteTransactionTracingTest is Test {
 
     function broadcast(bytes memory rawTx) external {
         vm.broadcastRawTransaction(rawTx);
+        // The signed transaction's write is the slot's original value, as after a mined
+        // transaction, so writing the slot again is charged as a clean write.
+        uint256 start = gasleft();
         this.leaf();
+        assertEq(start - gasleft(), 5602);
     }
 
     function executeFailure(bytes memory rawTx, string memory expectedError) external {
