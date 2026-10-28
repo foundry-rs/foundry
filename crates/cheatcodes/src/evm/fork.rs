@@ -69,7 +69,7 @@ impl Cheatcode for rollFork_0Call {
         let Self { blockNumber } = self;
         persist_caller(ccx);
         let result = fork_op(ccx, |db, evm| {
-            db.roll_fork(None, (*blockNumber).to(), evm, ExecutionPhase::InFlight).map(drop)
+            db.roll_fork(None, (*blockNumber).to(), evm, ExecutionPhase::InFlight)
         })?;
         record_fork_roll(ccx, None);
         Ok(result)
@@ -81,7 +81,7 @@ impl Cheatcode for rollFork_1Call {
         let Self { txHash } = self;
         persist_caller(ccx);
         let result = fork_op(ccx, |db, evm| {
-            db.roll_fork_to_transaction(None, *txHash, evm, ExecutionPhase::InFlight).map(drop)
+            db.roll_fork_to_transaction(None, *txHash, evm, ExecutionPhase::InFlight)
         })?;
         record_fork_roll(ccx, None);
         Ok(result)
@@ -94,7 +94,6 @@ impl Cheatcode for rollFork_2Call {
         persist_caller(ccx);
         let result = fork_op(ccx, |db, evm| {
             db.roll_fork(Some(*forkId), (*blockNumber).to(), evm, ExecutionPhase::InFlight)
-                .map(drop)
         })?;
         record_fork_roll(ccx, Some(*forkId));
         Ok(result)
@@ -107,7 +106,6 @@ impl Cheatcode for rollFork_3Call {
         persist_caller(ccx);
         let result = fork_op(ccx, |db, evm| {
             db.roll_fork_to_transaction(Some(*forkId), *txHash, evm, ExecutionPhase::InFlight)
-                .map(drop)
         })?;
         record_fork_roll(ccx, Some(*forkId));
         Ok(result)
@@ -122,9 +120,8 @@ impl Cheatcode for selectForkCall {
         let source_fork_id = ccx.active_fork_id();
         let initial = ccx.state.created_account_bindings(None);
         let propagated = persistent_created_accounts(ccx);
-        let result = fork_op(ccx, |db, evm| {
-            db.select_fork(*forkId, evm, ExecutionPhase::InFlight).map(drop)
-        })?;
+        let result =
+            fork_op(ccx, |db, evm| db.select_fork(*forkId, evm, ExecutionPhase::InFlight))?;
         record_fork_switch(ccx, source_fork_id, initial, propagated);
         Ok(result)
     }
@@ -362,9 +359,8 @@ fn create_select_fork<FEN: FoundryEvmNetwork>(
     let source_fork_id = ccx.active_fork_id();
     let initial = ccx.state.created_account_bindings(None);
     let propagated = persistent_created_accounts(ccx);
-    let result = fork_op(ccx, |db, evm| {
-        db.create_select_fork(fork, evm, ExecutionPhase::InFlight).map(|(id, _)| id)
-    })?;
+    let result =
+        fork_op(ccx, |db, evm| db.create_select_fork(fork, evm, ExecutionPhase::InFlight))?;
     record_fork_switch(ccx, source_fork_id, initial, propagated);
     Ok(result)
 }
@@ -394,7 +390,6 @@ fn create_select_fork_at_transaction<FEN: FoundryEvmNetwork>(
     let propagated = persistent_created_accounts(ccx);
     let result = fork_op(ccx, |db, evm| {
         db.create_select_fork_at_transaction(fork, evm, ExecutionPhase::InFlight, *transaction)
-            .map(|(id, _)| id)
     })?;
     record_fork_switch(ccx, source_fork_id, initial, propagated);
     Ok(result)

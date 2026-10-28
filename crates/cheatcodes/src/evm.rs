@@ -586,7 +586,7 @@ impl Cheatcode for chainIdCall {
         env.set_chain_id(chain_id);
         let (evm, db) = ccx.evm_db_mut();
         // A chain ID change is deferred to the next transaction while one is in flight.
-        let _ = db.set_env(evm, env, ExecutionPhase::InFlight);
+        db.set_env(evm, env, ExecutionPhase::InFlight);
         Ok(Default::default())
     }
 }
@@ -1654,7 +1654,7 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
     snapshot_id: U256,
 ) -> Result {
     let (evm, db) = ccx.evm_db_mut();
-    if let Some((_, replaced)) = db.revert_state(
+    if let Some(replaced) = db.revert_state(
         snapshot_id,
         evm,
         RevertStateSnapshotAction::RevertKeep,
@@ -1682,7 +1682,7 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
     snapshot_id: U256,
 ) -> Result {
     let (evm, db) = ccx.evm_db_mut();
-    if let Some((_, replaced)) = db.revert_state(
+    if let Some(replaced) = db.revert_state(
         snapshot_id,
         evm,
         RevertStateSnapshotAction::RevertRemove,

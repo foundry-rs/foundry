@@ -131,12 +131,7 @@ where
     evm.state_mut().storage_slot(&CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT).unwrap().set(U256::ONE);
     evm.state_mut().commit_transaction();
     let remove = RevertStateSnapshotAction::RevertRemove;
-    assert_eq!(
-        backend
-            .revert_state(snapshot, &mut evm, remove, boundary)
-            .map(|(transition, _)| transition),
-        Some(EnvTransition::Applied)
-    );
+    assert!(backend.revert_state(snapshot, &mut evm, remove, boundary).is_some());
     assert_eq!((slot(&mut evm), nonce(&mut evm, caller)), (U256::from(7), 1));
     assert!(backend.has_state_snapshot_failure());
     assert!(backend.revert_state(snapshot, &mut evm, remove, boundary).is_none());
@@ -144,7 +139,7 @@ where
     // Persistent accounts follow fork selection; everything else stays per fork.
     let fork = memory_fork(&mut backend, db_with(&[(caller, ETHER)], 100), env);
     assert!(backend.add_persistent_account(alloc));
-    assert_eq!(backend.select_fork(fork, &mut evm, boundary).unwrap(), EnvTransition::Applied);
+    backend.select_fork(fork, &mut evm, boundary).unwrap();
     assert_eq!(backend.active_fork_id(), Some(fork));
     assert_eq!(slot(&mut evm), U256::from(100));
     assert_eq!((balance(&mut evm, alloc), nonce(&mut evm, caller)), (U256::from(9), 0));
@@ -174,9 +169,10 @@ where
     let rolled = db_with(&[(caller, ETHER)], 200);
     let block = rpc_block(vec![rpc_store_tx(caller, 0, 201), rpc_store_tx(caller, 1, 202)]);
     let cache = backend.replay_until(&rolled, env, &block, 1, None, CHAIN_ID).unwrap();
-    let transition =
-        backend.lifecycle.roll_fork_with(&mut evm, Some(fork), rolled, env, Some(cache), boundary);
-    assert_eq!(transition.unwrap(), EnvTransition::Applied);
+    backend
+        .lifecycle
+        .roll_fork_with(&mut evm, Some(fork), rolled, env, Some(cache), boundary)
+        .unwrap();
     assert_eq!((slot(&mut evm), nonce(&mut evm, caller)), (U256::from(201), 1));
     assert_eq!(balance(&mut evm, alloc), U256::from(9));
 

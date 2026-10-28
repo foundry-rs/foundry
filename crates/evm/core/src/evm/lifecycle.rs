@@ -61,17 +61,6 @@ pub enum ExecutionPhase {
     InFlight,
 }
 
-/// How an environment change was applied.
-#[must_use = "a deferred spec or chain ID change must be surfaced"]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EnvTransition {
-    /// The whole environment is in effect.
-    Applied,
-    /// State and block are in effect; the spec or chain ID takes effect at the next transaction
-    /// boundary.
-    Deferred,
-}
-
 /// Environment, inspector and network state of a nested transaction.
 pub struct NestedTx<'a, T: EvmTypesHost> {
     /// Environment to execute with; the running environment if `None`.
@@ -555,12 +544,12 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         evm: &mut Evm<'_, F::Types>,
         id: Option<U256>,
         phase: ExecutionPhase,
-    ) -> eyre::Result<EnvTransition> {
+    ) -> eyre::Result<()> {
         if self.forks.context(id).is_none() {
             eyre::bail!("fork {} does not exist", id.unwrap_or_default());
         }
         if id == self.forks.active() {
-            return Ok(EnvTransition::Applied);
+            return Ok(());
         }
         let suspended = self.suspend(evm);
         if self.forks.active.is_none() {
@@ -570,7 +559,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             }
         }
         self.forks.active = id;
-        Ok(self.resume(evm, suspended, false, phase))
+        self.resume(evm, suspended, false, phase);
+        Ok(())
     }
 
     /// Makes `id` the active context, or the local context for `None`, without suspending the
@@ -593,7 +583,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         db: impl BackingDb,
         env: EvmEnv<F::Types>,
         phase: ExecutionPhase,
-    ) -> eyre::Result<EnvTransition> {
+    ) -> eyre::Result<()> {
         self.roll_fork_with(evm, id, db, env, None, phase)
     }
 
@@ -607,12 +597,11 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         env: EvmEnv<F::Types>,
         cache: Option<Cache>,
         phase: ExecutionPhase,
-    ) -> eyre::Result<EnvTransition> {
+    ) -> eyre::Result<()> {
         let active = self.forks.active();
         let id = id.or(active);
         if id != active {
-            self.replace_inactive(id, db, env, cache)?;
-            return Ok(EnvTransition::Applied);
+            return self.replace_inactive(id, db, env, cache);
         }
         let ext = self.factory.configure_for(&db, &env).evm_ext(&env);
         let mut suspended = self.suspend(evm);
@@ -625,7 +614,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         context.cache = cache.map(Arc::new);
         context.inherit_local(&self.forks.local);
         *self.active_mut() = context;
-        Ok(self.resume(evm, suspended, true, phase))
+        self.resume(evm, suspended, true, phase);
+        Ok(())
     }
 
     /// Moves the inactive fork `id`, or the local context for `None`, onto a new backing database
@@ -766,7 +756,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         evm: &mut Evm<'_, F::Types>,
         env: EvmEnv<F::Types>,
         phase: ExecutionPhase,
-    ) -> EnvTransition {
+    ) {
         let db = self.forks.active_db();
         let factory = self.factory.configure_for(&db, &env);
         self.apply_env(&factory, evm, env, phase)
@@ -798,7 +788,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         id: U256,
         action: RevertStateSnapshotAction,
         phase: ExecutionPhase,
-    ) -> Option<(C, EnvTransition, StateSnapshot)> {
+    ) -> Option<(C, StateSnapshot)> {
         let snapshot = if action.is_keep() {
             self.snapshots.get(id).cloned()
         } else {
@@ -840,8 +830,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let replaced = replaced.unwrap_or_else(|| running.snapshot());
         evm.ext_mut().replace_while_executing(ext.into_inner());
         let factory = self.factory.configure_for(&db, &env);
-        let transition = self.apply_env(&factory, evm, env, phase);
-        Some((extra, transition, replaced))
+        self.apply_env(&factory, evm, env, phase);
+        Some((extra, replaced))
     }
 
     /// Deletes a snapshot, returning whether it existed.
@@ -1155,7 +1145,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         suspended: Suspended,
         carry: bool,
         phase: ExecutionPhase,
-    ) -> EnvTransition {
+    ) {
         let Suspended {
             cache: source,
             loaded: source_loaded,
@@ -1230,7 +1220,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         evm.ext_mut().resume_context(ext);
 
         let factory = self.factory.configure_for(&db, &env);
-        let transition = self.apply_env(&factory, evm, env, phase);
+        self.apply_env(&factory, evm, env, phase);
         evm.warm_precompiles();
         if evm.feature(EvmFeatures::EIP3651) {
             let beneficiary = evm.block().beneficiary;
@@ -1251,7 +1241,6 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             }
         }
         factory.refresh_switched_transaction(evm, &self.tx_original);
-        transition
     }
 
     /// Applies `env`, deferring a spec or chain ID change while a transaction is in flight.
@@ -1261,7 +1250,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         evm: &mut Evm<'_, F::Types>,
         env: EvmEnv<F::Types>,
         phase: ExecutionPhase,
-    ) -> EnvTransition {
+    ) {
         let current = evm_env(evm);
         self.sync_database_policy(evm);
         if current.spec == env.spec && current.chain_id() == env.chain_id() {
@@ -1272,19 +1261,17 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
                 ExecutionPhase::InFlight if self.pending_env.is_some() => Some(env),
                 _ => None,
             };
-            return EnvTransition::Applied;
+            return;
         }
         match phase {
             ExecutionPhase::Boundary => {
                 factory.set_env(evm, env);
                 self.sync_database_policy(evm);
                 self.pending_env = None;
-                EnvTransition::Applied
             }
             ExecutionPhase::InFlight => {
                 evm.set_block(env.block);
                 self.pending_env = Some(env);
-                EnvTransition::Deferred
             }
         }
     }

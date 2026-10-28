@@ -25,11 +25,11 @@
 use crate::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER},
     evm::{
-        BackingDb, BlockContext, ChainFor, EnvTransition, EthEvmNetwork, EvmEnvFor, EvmFactoryFor,
-        ExecutedNested, ExecutionLifecycle, ExecutionPhase, ForkDb, ForkInfo, ForkPosition,
-        FoundryDatabase, FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork,
-        Parked, PersistentWrite, PreparedTx, SpecFor, StoredExt, TxFor, TxResultFor, TypesFor,
-        block_txs, evm_env, merge_untracked_nested_changes,
+        BackingDb, BlockContext, ChainFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested,
+        ExecutionLifecycle, ExecutionPhase, ForkDb, ForkInfo, ForkPosition, FoundryDatabase,
+        FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, Parked,
+        PersistentWrite, PreparedTx, SpecFor, StoredExt, TxFor, TxResultFor, TypesFor, block_txs,
+        evm_env, merge_untracked_nested_changes,
     },
     fork::{CreateFork, Fork as RemoteFork, ForkId, ForkResult, MultiFork},
     opts::{EvmOpts, ExecutionSpecContext},
@@ -522,8 +522,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         evm: &mut FoundryEvmFor<'_, FEN>,
         env: EvmEnvFor<FEN>,
         phase: ExecutionPhase,
-    ) -> EnvTransition {
-        self.lifecycle.set_env(evm, env, phase)
+    ) {
+        self.lifecycle.set_env(evm, env, phase);
     }
 
     /// Accepts a detached transaction's state, such as a call's, into the active context's
@@ -762,10 +762,10 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         fork: CreateFork,
         evm: &mut FoundryEvmFor<'_, FEN>,
         phase: ExecutionPhase,
-    ) -> eyre::Result<(LocalForkId, EnvTransition)> {
+    ) -> eyre::Result<LocalForkId> {
         let id = self.create_fork(fork)?;
-        let transition = self.select_fork(id, evm, phase)?;
-        Ok((id, transition))
+        self.select_fork(id, evm, phase)?;
+        Ok(id)
     }
 
     /// Creates a fork positioned right before `transaction` and selects it.
@@ -775,10 +775,10 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         evm: &mut FoundryEvmFor<'_, FEN>,
         phase: ExecutionPhase,
         transaction: B256,
-    ) -> eyre::Result<(LocalForkId, EnvTransition)> {
+    ) -> eyre::Result<LocalForkId> {
         let id = self.create_fork_at_transaction(fork, transaction)?;
-        let transition = self.select_fork(id, evm, phase)?;
-        Ok((id, transition))
+        self.select_fork(id, evm, phase)?;
+        Ok(id)
     }
 
     /// Makes fork `id` the running context of `evm`.
@@ -790,11 +790,11 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         id: LocalForkId,
         evm: &mut FoundryEvmFor<'_, FEN>,
         phase: ExecutionPhase,
-    ) -> eyre::Result<EnvTransition> {
+    ) -> eyre::Result<()> {
         trace!(?id, "select fork");
         self.ensure_fork(Some(id))?;
         if self.is_active_fork(id) {
-            return Ok(EnvTransition::Applied);
+            return Ok(());
         }
         let running = evm_env(evm);
         let factory = self.lifecycle.factory().clone();
@@ -815,7 +815,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         block_number: u64,
         evm: &mut FoundryEvmFor<'_, FEN>,
         phase: ExecutionPhase,
-    ) -> eyre::Result<EnvTransition> {
+    ) -> eyre::Result<()> {
         trace!(?id, ?block_number, "roll fork");
         let id = self.ensure_fork(id)?;
         let info = self.fork_info(id)?.clone();
@@ -830,7 +830,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             None
         };
         let db = ForkDb::new(backend, remote.context().source_chain_id);
-        let transition = self.lifecycle.roll_fork(evm, Some(id), db, env, phase)?;
+        self.lifecycle.roll_fork(evm, Some(id), db, env, phase)?;
         let block = Some(remote.number());
         self.set_fork_info(
             id,
@@ -839,7 +839,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         if let Some((position, cursor)) = cursor {
             self.retain_cursor(id, position, &cursor, Some(evm));
         }
-        Ok(transition)
+        Ok(())
     }
 
     /// Moves fork `id`, or the active fork for `None`, to the state right before `transaction`:
@@ -851,12 +851,12 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         transaction: B256,
         evm: &mut FoundryEvmFor<'_, FEN>,
         phase: ExecutionPhase,
-    ) -> eyre::Result<EnvTransition> {
+    ) -> eyre::Result<()> {
         trace!(?id, ?transaction, "roll fork to transaction");
         let id = self.ensure_fork(id)?;
         let (db, env, cache, info, cursor, replayed) =
             self.prepare_roll_to_transaction(id, transaction, evm_env(evm).spec)?;
-        let transition = self.lifecycle.roll_fork_with(evm, Some(id), db, env, cache, phase)?;
+        self.lifecycle.roll_fork_with(evm, Some(id), db, env, cache, phase)?;
         self.set_fork_info(id, info);
         if let Some((position, cursor)) = cursor {
             self.retain_cursor(id, position, &cursor, Some(evm));
@@ -867,7 +867,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             self.lifecycle.rebase_onto_inactive(evm, Some(id))?;
             self.lifecycle.factory().refresh_transaction(evm);
         }
-        Ok(transition)
+        Ok(())
     }
 
     /// Prepares the mined `transaction` of fork `id`, or of the active fork for `None`, to execute
@@ -1304,7 +1304,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         evm: &mut FoundryEvmFor<'_, FEN>,
         action: RevertStateSnapshotAction,
         phase: ExecutionPhase,
-    ) -> Option<(EnvTransition, StateSnapshot)> {
+    ) -> Option<StateSnapshot> {
         trace!(?id, "revert snapshot");
         if !self.lifecycle.has_snapshot(id) {
             warn!(target: "backend", "No snapshot to revert for {}", id);
@@ -1320,9 +1320,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         {
             self.has_state_snapshot_failure = true;
         }
-        self.lifecycle
-            .revert(evm, id, action, phase)
-            .map(|((), transition, replaced)| (transition, replaced))
+        self.lifecycle.revert(evm, id, action, phase).map(|((), replaced)| replaced)
     }
 
     /// Deletes a snapshot, returning whether it existed.

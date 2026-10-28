@@ -127,8 +127,8 @@ where
     let keep = RevertStateSnapshotAction::RevertKeep;
     let remove = RevertStateSnapshotAction::RevertRemove;
     let phase = ExecutionPhase::Boundary;
-    let (extra, transition, _) = lifecycle.revert(&mut evm, first, keep, phase).unwrap();
-    assert_eq!((extra, transition), ("first", EnvTransition::Applied));
+    let (extra, _) = lifecycle.revert(&mut evm, first, keep, phase).unwrap();
+    assert_eq!(extra, "first");
     assert_eq!((slot(&mut evm), nonce(&mut evm, caller)), (U256::from(8), 3));
     let (extra, ..) = lifecycle.revert(&mut evm, first, remove, phase).unwrap();
     assert_eq!(extra, "first");
@@ -177,7 +177,7 @@ where
     let fork_env = EvmEnv::new(spec, factory.version(spec, chain_id), Default::default());
     let info = |n: u64| ForkInfo::new(ForkId::new("http://fork", Some(n)), "http://fork", Some(n));
     let fork = lifecycle.create_fork(info(1), db_with(&[(caller, ETHER)], 100), fork_env);
-    assert_eq!(lifecycle.select_fork(&mut evm, Some(fork), phase).unwrap(), EnvTransition::Applied);
+    lifecycle.select_fork(&mut evm, Some(fork), phase).unwrap();
     assert_eq!(lifecycle.forks().active(), Some(fork));
     assert_eq!(slot(&mut evm), U256::from(100));
     assert_eq!(balance(&mut evm, persistent), U256::from(5));
@@ -188,24 +188,20 @@ where
 
     // Reverting a snapshot taken on the fork restores every fork's state and the selection.
     let on_fork = lifecycle.snapshot(&mut evm, "fork");
-    assert_eq!(lifecycle.select_fork(&mut evm, None, phase).unwrap(), EnvTransition::Applied);
+    lifecycle.select_fork(&mut evm, None, phase).unwrap();
     assert_eq!(slot(&mut evm), U256::from(8));
     assert_eq!(balance(&mut evm, persistent), U256::from(6));
-    assert_eq!(lifecycle.select_fork(&mut evm, Some(fork), phase).unwrap(), EnvTransition::Applied);
+    lifecycle.select_fork(&mut evm, Some(fork), phase).unwrap();
     assert_eq!(slot(&mut evm), U256::from(101));
-    assert_eq!(lifecycle.select_fork(&mut evm, None, phase).unwrap(), EnvTransition::Applied);
-    assert_eq!(
-        lifecycle.revert(&mut evm, on_fork, remove, phase).unwrap().1,
-        EnvTransition::Applied
-    );
+    lifecycle.select_fork(&mut evm, None, phase).unwrap();
+    assert!(lifecycle.revert(&mut evm, on_fork, remove, phase).is_some());
     assert_eq!(lifecycle.forks().active(), Some(fork));
     assert_eq!(slot(&mut evm), U256::from(101));
     assert!(lifecycle.select_fork(&mut evm, Some(U256::from(9)), phase).is_err());
 
     // Rolling drops the fork's own writes but keeps persistent accounts.
     let rolled = db_with(&[(caller, ETHER)], 200);
-    let transition = lifecycle.roll_fork(&mut evm, None, rolled, fork_env, phase).unwrap();
-    assert_eq!(transition, EnvTransition::Applied);
+    lifecycle.roll_fork(&mut evm, None, rolled, fork_env, phase).unwrap();
     assert_eq!(slot(&mut evm), U256::from(200));
     assert_eq!(nonce(&mut evm, caller), 0);
     assert_eq!(balance(&mut evm, persistent), U256::from(6));
@@ -213,12 +209,12 @@ where
     // A chain ID change in flight is deferred to the next transaction boundary.
     let other_chain = EvmEnv::new(spec, factory.version(spec, 1), Default::default());
     let chain_fork = lifecycle.create_fork(info(2), db_with(&[(caller, ETHER)], 300), other_chain);
-    let transition =
-        lifecycle.select_fork(&mut evm, Some(chain_fork), ExecutionPhase::InFlight).unwrap();
-    assert_eq!(transition, EnvTransition::Deferred);
+    lifecycle.select_fork(&mut evm, Some(chain_fork), ExecutionPhase::InFlight).unwrap();
+    assert_eq!(lifecycle.pending_env().map(EvmEnv::chain_id), Some(1));
     assert_eq!((slot(&mut evm), evm.version().chain_id), (U256::from(300), chain_id));
     lifecycle.begin_transaction(&mut evm);
     assert_eq!(evm.version().chain_id, 1);
+    assert!(lifecycle.pending_env().is_none());
 }
 
 #[test]
