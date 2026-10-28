@@ -2015,10 +2015,11 @@ impl<N: Network> Backend<N> {
         let proof_state = proof_states.and_then(|states| {
             // Explicit snapshots keep the sealed head independently of bounded proof history.
             // Live execution may already contain unmined development edits.
-            let mut states = states.write();
+            let states = states.upgradable_read();
             if let Some(state) = states.get_state(&hash) {
                 return state.maybe_as_full_db().cloned().map(Arc::new);
             }
+            let mut states = RwLockUpgradableReadGuard::upgrade(states);
             states
                 .get_on_disk_state(&hash)
                 .and_then(|state| state.maybe_as_full_db().cloned())
