@@ -449,18 +449,27 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         );
         trace!(sender=?tx.from(), "deploying contract");
 
-        let mut result = self.transact_with_env(evm_env, tx)?;
-        result = result.into_result(rd)?;
+        let result = self.transact_with_env(evm_env, tx)?;
+        self.persist_deployment(result, rd)
+    }
+
+    /// Turns the committed result of a creation into a deployment, marking the created contract
+    /// persistent so that its state survives fork switches.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a successful creation returned no address.
+    pub fn persist_deployment(
+        &mut self,
+        result: RawCallResult<FEN>,
+        rd: Option<&RevertDecoder>,
+    ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
+        let result = result.into_result(rd)?;
         let Some(address) = result.created_address else {
             panic!("Deployment succeeded, but no address was returned: {result:#?}");
         };
-
-        // also mark this library as persistent, this will ensure that the state of the library is
-        // persistent across fork swaps in forking mode
         self.backend_mut().add_persistent_account(address);
-
         trace!(%address, "deployed contract");
-
         Ok(DeployResult { raw: result, address })
     }
 
