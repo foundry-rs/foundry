@@ -7590,6 +7590,21 @@ contract CheckedXorTest {
         require(a ^ c == A ^ B ^ 1);
         assert(false);
     }
+
+    function checkWrappedEquality(uint256 a, uint256 b) external pure {
+        unchecked {
+            require(a + 1 == 0);
+            require(a ^ b == B);
+            assert(a == type(uint256).max);
+        }
+    }
+
+    function checkAdditionInsideXor(uint256 a, uint256 b) external pure {
+        unchecked {
+            require(a ^ b == 0);
+            assert((a + 1) ^ b == 1);
+        }
+    }
 }
 "#,
     );
@@ -7610,12 +7625,15 @@ contract CheckedXorTest {
         }
         let result = json_test_result(&output, "checkOpaqueCycle(uint256,uint256,uint256)");
         assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        let result = json_test_result(&output, "checkWrappedEquality(uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
         for signature in [
             "checkWrongCycle(uint256,uint256,uint256)",
             "checkNegatedEqualities(uint256,uint256,uint256)",
             "checkRelatedAtoms(uint256)",
             "checkNonlinearFallback(uint256,uint256)",
             "checkNegatedConjunction(uint256,uint256,uint256)",
+            "checkAdditionInsideXor(uint256,uint256)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(

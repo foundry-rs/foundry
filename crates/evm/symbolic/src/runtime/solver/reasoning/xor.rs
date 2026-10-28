@@ -37,7 +37,9 @@ pub(in super::super) fn checked_xor_result(
 ) -> Option<CheckedXorResult> {
     let relations = asserted_relations(constraints)?;
     // Most EVM queries are not XOR workloads. Do not run elimination for ordinary equalities.
-    if !relations.iter().any(|relation| is_affine_op(relation.left) || is_affine_op(relation.right))
+    if !relations
+        .iter()
+        .any(|relation| affine_terms(relation).0.into_iter().flatten().any(is_affine_op))
     {
         return None;
     }
@@ -47,8 +49,9 @@ pub(in super::super) fn checked_xor_result(
     let mut visits = MAX_XOR_VISITS;
     let mut rows = Vec::with_capacity(relations.len());
     for (index, relation) in relations.iter().enumerate() {
-        let mut row = Row { columns: U256::ZERO, value: U256::ZERO, sources: U256::ONE << index };
-        let mut pending = vec![relation.left, relation.right];
+        let (terms, constant) = affine_terms(relation);
+        let mut row = Row { columns: U256::ZERO, value: constant, sources: U256::ONE << index };
+        let mut pending = terms.into_iter().flatten().collect::<Vec<_>>();
         while let Some(expr) = pending.pop() {
             visits = visits.checked_sub(1)?;
             match expr.kind() {
@@ -174,6 +177,41 @@ fn is_affine_op(expr: &SymExpr) -> bool {
     matches!(expr.kind(), SymExprKind::BinOp(SymBinOp::Xor, _, _) | SymExprKind::Not(_))
 }
 
+/// Recovers equalities compiled as `ISZERO(ADD(word, constant))` or `ISZERO(SUB(a, b))`.
+/// Only the equality boundary admits these rewrites: addition inside an XOR remains opaque
+/// because carries are not linear over GF(2). Every constant operation wraps at EVM word width.
+fn affine_terms<'a>(relation: &Relation<'a>) -> ([Option<&'a SymExpr>; 2], U256) {
+    let Some(mut target) = relation.right.as_const() else {
+        return ([Some(relation.left), Some(relation.right)], U256::ZERO);
+    };
+    let mut word = relation.left;
+    for _ in 0..32 {
+        match word.kind() {
+            SymExprKind::BinOp(SymBinOp::Add, left, right)
+                if let Some(value) = right.as_const() =>
+            {
+                target = target.wrapping_sub(value);
+                word = left;
+            }
+            SymExprKind::BinOp(SymBinOp::Sub, left, right) => {
+                if let Some(value) = right.as_const() {
+                    target = target.wrapping_add(value);
+                    word = left;
+                } else if let Some(value) = left.as_const() {
+                    target = value.wrapping_sub(target);
+                    word = right;
+                } else if target.is_zero() {
+                    return ([Some(left), Some(right)], U256::ZERO);
+                } else {
+                    break;
+                }
+            }
+            _ => break,
+        }
+    }
+    ([Some(word), None], target)
+}
+
 /// Checks a contradiction certificate by XORing selected source equalities directly. All opaque
 /// terms must cancel, leaving `0 = nonzero`, or `0 != 0` for a disequality certificate. This is a
 /// necessary contradiction even when atoms are related (e.g. `x` and `x & mask`); no independence
@@ -201,7 +239,9 @@ fn check_certificate(
         if !sources.bit(index) && disequality != Some(index) {
             continue;
         }
-        let mut pending = vec![relation.left, relation.right];
+        let (words, offset) = affine_terms(relation);
+        constant ^= offset;
+        let mut pending = words.into_iter().flatten().collect::<Vec<_>>();
         while let Some(expr) = pending.pop() {
             let Some(remaining) = visits.checked_sub(1) else { return false };
             visits = remaining;
