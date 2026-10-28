@@ -1,4 +1,6 @@
+use alloy_primitives::U256;
 use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
+use foundry_test_utils::util::OutputExt;
 use itertools::Itertools;
 use std::path::Path;
 
@@ -724,4 +726,38 @@ test/Child.t.sol:9 in test_child  (step 284/434, pc 198, DUP1, gas 1073566681)
 Exiting debugger.
 
 "#]]);
+}
+
+// The fuzz campaign runs without the debug recorder, and the counterexample runs again with it.
+#[forgetest]
+fn debugger_records_fuzz_counterexample(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.fuzz.runs = 1024;
+        config.fuzz.seed = Some(U256::from(1));
+    });
+    prj.add_test(
+        "Fuzz.t.sol",
+        r#"
+contract FuzzTest {
+    function testFuzz_small(uint256 x) public pure {
+        require(x < 1000, "too big");
+    }
+}
+"#,
+    );
+
+    let dump_dir = prj.root().join("soldb");
+    let output = cmd
+        .args(["test", "--debug", "--mt", "testFuzz_small", "--dump"])
+        .arg(&dump_dir)
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let calldata = output.split("calldata=").nth(1).unwrap().split(' ').next().unwrap();
+    let trace = serde_json::from_slice::<serde_json::Value>(
+        &std::fs::read(dump_dir.join("trace.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(trace["input_data"], calldata);
+    assert_eq!(trace["success"], false);
 }

@@ -203,7 +203,9 @@ fn transaction_trace(
     }
     let TraceBuilder { steps, calls, creations, breakpoints, .. } = builder;
 
-    let root = &arenas.first().ok_or_eyre("debug arena is empty")?.nodes()[0].trace;
+    // The arenas run in order, such as the deployment, the setup, and the test, so the last one
+    // is the call being debugged.
+    let root = &arenas.last().ok_or_eyre("debug arena is empty")?.nodes()[0].trace;
     let create = root.kind.is_any_create();
     let trace = TransactionTrace {
         tx_hash: None,
@@ -1144,6 +1146,9 @@ mod tests {
             transaction_trace(&mut [deployment, set_up, test], Vec::new(), &breakpoints).unwrap();
         soldb_debugger::check_root_calls(&trace).unwrap();
         assert_eq!(trace.gas_used, 60);
+        // The header describes the test call, not the deployment.
+        assert_eq!(trace.to_addr, Some(hex::encode_prefixed(Address::repeat_byte(0xc))));
+        assert_eq!(trace.contract_address, None);
         assert!(!trace.success);
         assert_eq!(trace.error.as_deref(), Some("Revert"));
         assert_eq!(trace.steps.len(), 6);
