@@ -355,8 +355,7 @@ macro_rules! try_or_return {
 
 /// Returns the result of a message that did not execute, keeping its whole execution gas.
 ///
-/// The result returns no state gas reservoir, which the caller adopts, as cheatcode results did
-/// with REVM.
+/// The result returns no state gas reservoir, which the caller adopts.
 pub fn message_result<M, E: Default>(
     message: &MessageExt<M>,
     stop: InstrStop,
@@ -384,7 +383,7 @@ pub fn revert_frame<T: EvmTypesHost>(interp: &mut Interpreter<'_, '_, T>, output
 
 /// Returns the value a call message transfers, if it transfers one.
 ///
-/// Like REVM, a static call transfers zero value, while a delegate call transfers none.
+/// A static call transfers zero value, while a delegate call transfers none.
 pub(crate) fn transfer_value<E>(message: &MessageExt<E>) -> Option<U256> {
     matches!(message.kind, MessageKind::Call | MessageKind::CallCode | MessageKind::StaticCall)
         .then_some(message.value)
@@ -1666,7 +1665,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 // know the target chain supports EIP-1559.
                 if !is_static(call) {
                     let evm = interp.host();
-                    // Like master's journal load, reading the nonce warms the broadcaster.
+                    // Reading the nonce warms the broadcaster.
                     let nonce = match evm.state_mut().account(&new_origin) {
                         Ok(mut account) => {
                             account.warm();
@@ -2237,7 +2236,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             return;
         }
 
-        // `deployCode`: keep the constructor's output, which master reports if depositing it fails.
+        // `deployCode`: keep the constructor's output, which it reports if depositing it fails.
         if let Some(depth) = self.deploy_code_depth
             && usize::from(interp.message().depth) == depth + 1
             && interp.message().kind.is_create()
@@ -2763,7 +2762,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             && curr_depth >= broadcast.depth
             && input.caller == broadcast.original_caller
         {
-            // Like master's journal load, reading the nonce warms the broadcaster.
+            // Reading the nonce warms the broadcaster.
             let nonce = match interp.host().state_mut().account(&broadcast.new_origin) {
                 Ok(mut account) => {
                     account.warm();

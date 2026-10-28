@@ -87,11 +87,8 @@ fn nested_tempo_execution_preserves_halt_reason() {
             AccountInfo::default().with_code(Bytecode::new_raw(Bytes::from(vec![opcode])));
         db.insert_contract(&mut info);
         db.insert_account_info(&target, info);
-        let lifecycle = ExecutionLifecycle::<_, ()>::new(
-            TempoEvmFactory::default(),
-            db,
-            tempo_env(TempoHardfork::T11),
-        );
+        let mut lifecycle =
+            ExecutionLifecycle::new(TempoEvmFactory::default(), db, tempo_env(TempoHardfork::T11));
         let mut evm = lifecycle.create_evm();
         seed_fee_token_balances(&mut evm, account.address(), target);
         let tx = primitive_tx(
@@ -109,8 +106,11 @@ fn nested_tempo_execution_preserves_halt_reason() {
             },
         );
 
-        let result =
-            lifecycle.nested_transaction(&mut evm, &tx).expect("nested transaction executes");
+        let executed = lifecycle
+            .prepare_nested(&mut evm, tx, None, None)
+            .execute(&mut evm, None, false)
+            .expect("nested transaction executes");
+        let result = lifecycle.store_executed(executed);
         assert!(!result.status);
         assert_eq!(result.stop, expected);
     }

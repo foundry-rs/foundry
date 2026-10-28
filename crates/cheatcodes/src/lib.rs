@@ -223,8 +223,8 @@ impl<'evm, FEN: FoundryEvmNetwork> CheatsCtxt<'_, 'evm, FEN> {
             .unwrap_or_else(|| self.evm.config_spec_id())
     }
 
-    /// Returns the running environment with [`Self::spec`], for transactions a cheatcode executes,
-    /// which REVM ran with the requested spec.
+    /// Returns the running environment with [`Self::spec`], for transactions a cheatcode executes
+    /// with the requested spec.
     pub(crate) fn evm_env(&self) -> EvmEnvFor<FEN> {
         let env = evm_env(self.evm);
         let spec = self.spec();

@@ -33,8 +33,18 @@ function isWarmSlot(uint256 key) view returns (bool) {
 contract WarmthTarget {
     uint256 public x = 1;
 
+    function inc() external {
+        x++;
+    }
+
     function hasWarmSlot(uint256 key) external view returns (bool) {
         return isWarmSlot(key);
+    }
+}
+
+contract WarmthPoker {
+    function poke(WarmthTarget target) external {
+        target.inc();
     }
 }
 
@@ -196,6 +206,14 @@ contract CheatcodeWarmthTest is Test {
 /// Warmth that isolated calls carry over from their own transactions.
 /// forge-config: default.isolate = true
 contract CheatcodeWarmthIsolatedTest is Test {
+    WarmthTarget counter;
+    WarmthPoker poker;
+
+    function setUp() public {
+        counter = new WarmthTarget();
+        poker = new WarmthPoker();
+    }
+
     function testAppliedPrankWarmsSender() public {
         vm.startPrank(address(0x1001));
         vm.cool(address(0x1001));
@@ -210,5 +228,33 @@ contract CheatcodeWarmthIsolatedTest is Test {
         vm.startStateDiffRecording();
         target.x();
         vm.assertTrue(isWarm(address(target)));
+    }
+
+    // An isolated STATICCALL cools the running transaction's accounts as for a new transaction,
+    // the test contract included.
+    function testStaticCallCoolsTestContract() public {
+        vm.assertTrue(isWarm(address(this)));
+        counter.x();
+        vm.assertFalse(isWarm(address(this)));
+    }
+
+    // An account the STATICCALL cooled stays cold for the calling frame after an isolated CALL
+    // accesses it.
+    function testStaticCallCooledAccountStaysColdAfterIsolatedCall() public {
+        counter.x();
+        poker.poke(counter);
+        vm.assertFalse(isWarm(address(counter)));
+        vm.assertTrue(isWarm(address(counter)));
+    }
+
+    // An account the STATICCALL cooled is imported warm by an isolated CREATE once a snapshot
+    // revert has dropped it from the running transaction.
+    function testStaticCallCooledAccountWarmAfterRevertAndCreate() public {
+        uint256 snapshot = vm.snapshotState();
+        WarmthTarget created = new WarmthTarget();
+        created.x();
+        vm.revertToState(snapshot);
+        assertEq(address(new WarmthTarget()), address(created));
+        vm.assertTrue(isWarm(address(created)));
     }
 }

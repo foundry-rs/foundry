@@ -103,10 +103,10 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
     }
 
     /// Builds the executor as configured.
-    #[inline]
     ///
     /// `tx` holds the transaction defaults, such as the sender and gas price, of the executor's
     /// calls.
+    #[inline]
     pub fn build(
         self,
         mut evm_env: EvmEnvFor<FEN>,

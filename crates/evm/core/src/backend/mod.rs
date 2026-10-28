@@ -1060,8 +1060,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     }
 
     /// Builds the EVM a nested transaction of the running one executes on, such as an isolated
-    /// call. See [`ExecutionLifecycle::nested_evm`]; merge a successful transaction's changes
-    /// back with [`merge_nested_changes`](crate::evm::merge_nested_changes).
+    /// call. See [`ExecutionLifecycle::nested_evm`].
     pub fn nested_evm<'a>(
         &self,
         evm: &mut FoundryEvmFor<'_, FEN>,
@@ -1274,7 +1273,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
     /// Captures the running context and every fork, and returns the snapshot ID.
     pub fn snapshot_state(&mut self, evm: &mut FoundryEvmFor<'_, FEN>) -> U256 {
-        let id = self.lifecycle.snapshot(evm, ());
+        let id = self.lifecycle.snapshot(evm);
         trace!(target: "backend", "Created new snapshot {}", id);
         id
     }
@@ -1306,9 +1305,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         {
             self.has_state_snapshot_failure = true;
         }
-        self.lifecycle
-            .revert(evm, id, action, phase)
-            .map(|((), transition, replaced)| (transition, replaced))
+        self.lifecycle.revert(evm, id, action, phase)
     }
 
     /// Deletes a snapshot, returning whether it existed.
@@ -1699,22 +1696,6 @@ fn context_account<T: evm2::EvmTypesHost>(
 fn is_contract(account: Option<AccountInfo>) -> bool {
     account
         .is_some_and(|account| account.code_hash != KECCAK256_EMPTY && !account.code_hash.is_zero())
-}
-
-/// Returns `account` as execution at `spec` loads it.
-///
-/// RPC endpoints report a missing account as empty. From Spurious Dragon on an empty account does
-/// not exist (EIP-161), so it is loaded as absent; loading it as existing would, for example,
-/// refund the EIP-7702 authorization of a fresh authority.
-pub fn existing_account(
-    spec: impl Into<evm2::SpecId>,
-    account: Option<AccountInfo>,
-) -> Option<AccountInfo> {
-    if spec.into().enables(evm2::SpecId::SPURIOUS_DRAGON) {
-        account.filter(|account| !account.is_empty())
-    } else {
-        account
-    }
 }
 
 /// Returns the account-loading policy required by a fork source.

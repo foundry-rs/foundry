@@ -148,9 +148,6 @@ pub trait FoundryEvmExt<Tx>: SendableExt + Debug + Default + 'static {
     ) {
     }
 
-    /// Clears cached per-transaction protocol fees after a synthetic transaction restores state.
-    fn clear_transaction_fee_cache(&mut self) {}
-
     /// Replaces the state of an EVM that may be executing with `ext`, such as one restored by a
     /// snapshot revert, keeping the state of the frames still executing.
     fn replace_while_executing(&mut self, ext: Self) {
