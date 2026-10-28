@@ -45,8 +45,8 @@ different editors. Bundled extension assets are cached by content under
 `~/.foundry/cache/lsp/extensions`. No extension store installation or standalone
 Solar binary is required.
 
-- [VS Code: install, configure, build and package](vscode/README.md).
-- [Zed: configure, build and install locally](zed/README.md).
+- [VS Code: install and configure](vscode/README.md).
+- [Zed: install and configure](zed/README.md).
 
 Check `forge lsp --help` for `--vscode` to confirm launcher support. If it is
 unavailable, upgrade Foundry (`foundryup`, or a newer/nightly build if necessary).
