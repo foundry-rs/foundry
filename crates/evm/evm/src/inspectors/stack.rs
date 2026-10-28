@@ -1433,7 +1433,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             // SAFETY: The nested EVM runs over the lifecycle's owned databases.
             unsafe { backend.backend().end_frame_evm(evm, child) };
             if let Some(warmth) = warmth {
-                evm.state_mut().set_prewarm_set(warmth);
+                *evm.state_mut().prewarm_set_mut() = warmth;
             } else if fork_changed && !restored {
                 // Persistent slots the call had warmed when it switched forks stay warm after it
                 // fails, without their accounts.
@@ -2211,7 +2211,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         if let Some(prewarm) =
             self.backend.as_deref().and_then(|backend| backend.backend().lifecycle().tx_prewarm())
         {
-            state.set_prewarm_set(prewarm.clone());
+            *state.prewarm_set_mut() = prewarm.clone();
         }
         // The recipient cools like any other account the transaction loaded, unlike the addresses
         // `vm.cool` keeps warm.

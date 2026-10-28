@@ -45,8 +45,9 @@ use evm2::{
     Evm, EvmFeatures, EvmTypes, EvmTypesHost, ExecutedTx, Inspector, TxResult, TxResultWithState,
     bytecode::Bytecode,
     evm::{
-        AccountChanges, AccountHandle, AccountInfo, Cache, CacheDB, DbResult, DynDatabase, EmptyDB,
-        JournalEntry, PendingState, PrewarmSet, State, StateCheckpoint, StateSnapshot,
+        AccountChanges, AccountFlags, AccountHandle, AccountInfo, Cache, CacheDB, DbResult,
+        DynDatabase, EmptyDB, JournalEntry, PendingState, PrewarmSet, State, StateCheckpoint,
+        StateSnapshot,
     },
 };
 use std::{iter, mem, sync::Arc};
@@ -672,11 +673,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
     /// warmth that fork switches and isolated static calls restore, so it stays cold until it is
     /// accessed again.
     pub fn remove_prewarm(&mut self, state: &mut State<'_>, address: &Address) {
-        if state.prewarm_set().is_warm(address) {
-            let mut prewarm = state.prewarm_set().clone();
-            prewarm.remove(address);
-            state.set_prewarm_set(prewarm);
-        }
+        state.prewarm_set_mut().remove(address);
         if let Some(prewarm) = &mut self.tx_prewarm {
             prewarm.remove(address);
         }
@@ -1176,7 +1173,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         let mut state = State::new(db.clone_backing());
         state.overlay_db_mut().cache = cache;
         *state.logs_mut() = logs;
-        state.set_prewarm_set(prewarm);
+        *state.prewarm_set_mut() = prewarm;
         *evm.state_mut() = state;
         evm.ext_mut().resume_context(ext);
 
@@ -1463,7 +1460,9 @@ pub fn restore_access_warmth(state: &mut State<'_>, checkpoint: &StateCheckpoint
         match entry {
             // Any account mutation journals an entry; only one taken while cold means it was
             // warmed since.
-            JournalEntry::AccountChange { address, previous_is_warm: false, .. } => {
+            JournalEntry::AccountChange { address, previous_flags, .. }
+                if !previous_flags.contains(AccountFlags::WARM) =>
+            {
                 accounts.insert(*address);
             }
             JournalEntry::StorageWarmed { address, key } => slots.push((*address, *key)),

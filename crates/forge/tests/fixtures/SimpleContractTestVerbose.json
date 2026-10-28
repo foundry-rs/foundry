@@ -6338,7 +6338,26 @@
                         "decoded": null
                       }
                     ],
-                    "step_deltas": [],
+                    "step_deltas": [
+                      {
+                        "step": 63,
+                        "memory": null,
+                        "store": null,
+                        "gas_remaining_after": 1073571402
+                      },
+                      {
+                        "step": 194,
+                        "memory": null,
+                        "store": null,
+                        "gas_remaining_after": 1073527076
+                      },
+                      {
+                        "step": 331,
+                        "memory": null,
+                        "store": null,
+                        "gas_remaining_after": 1073524055
+                      }
+                    ],
                     "decoded": null
                   },
                   "logs": [],
