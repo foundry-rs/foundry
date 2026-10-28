@@ -87,9 +87,11 @@ pub enum ExpectedCallScheme {
 impl From<MessageKind> for ExpectedCallScheme {
     fn from(kind: MessageKind) -> Self {
         match kind {
+            MessageKind::Call => Self::Call,
             MessageKind::CallCode => Self::CallCode,
             MessageKind::DelegateCall => Self::DelegateCall,
             MessageKind::StaticCall => Self::StaticCall,
+            // `MessageKind` is non-exhaustive, and create messages never reach the call hooks.
             _ => Self::Call,
         }
     }
@@ -158,7 +160,9 @@ impl Display for CreateScheme {
 impl From<MessageKind> for CreateScheme {
     fn from(kind: MessageKind) -> Self {
         match kind {
+            MessageKind::Create => Self::Create,
             MessageKind::Create2 => Self::Create2,
+            // `MessageKind` is non-exhaustive, and call messages never reach the create hooks.
             _ => Self::Create,
         }
     }
