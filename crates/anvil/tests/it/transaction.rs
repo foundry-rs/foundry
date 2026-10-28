@@ -148,6 +148,76 @@ async fn can_order_transactions() {
     assert_eq!(block.transactions, BlockTransactions::Hashes(vec![higher_price, lower_price]))
 }
 
+// Fee ordering must rank EIP-1559 transactions by the effective miner tip, not the fee cap.
+#[tokio::test(flavor = "multi_thread")]
+async fn can_order_transactions_by_effective_tip() {
+    let gwei = 1_000_000_000u128;
+    let (api, handle) = spawn(NodeConfig::test().with_base_fee(Some(gwei as u64))).await;
+    let provider = handle.http_provider();
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let send = async |from: Address, max_fee: u128, tip: u128| {
+        let tx = TransactionRequest::default()
+            .from(from)
+            .to(accounts[2].address())
+            .max_fee_per_gas(max_fee)
+            .max_priority_fee_per_gas(tip);
+        provider.send_transaction(WithOtherFields::new(tx)).await.unwrap()
+    };
+
+    // Sent first with the higher fee cap, but pays the miner only 1 gwei.
+    let high_cap = send(accounts[0].address(), 100 * gwei, gwei).await;
+    // Sent second with the lower fee cap, but pays the miner 2 gwei.
+    let high_tip = send(accounts[1].address(), 3 * gwei, 2 * gwei).await;
+
+    api.mine_one().await.unwrap();
+
+    let high_tip = high_tip.get_receipt().await.unwrap().transaction_hash;
+    let high_cap = high_cap.get_receipt().await.unwrap().transaction_hash;
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(block.transactions, BlockTransactions::Hashes(vec![high_tip, high_cap]));
+}
+
+// Tips must be compared at the base fee of the block being mined, not the base fee at admission.
+#[tokio::test(flavor = "multi_thread")]
+async fn can_order_transactions_by_tip_at_mining_base_fee() {
+    let gwei = 1_000_000_000u128;
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let send = async |from: Address, nonce: u64, gas_price: u128| {
+        let tx = TransactionRequest::default()
+            .from(from)
+            .to(accounts[2].address())
+            .nonce(nonce)
+            .gas_price(gas_price);
+        provider.send_transaction(WithOtherFields::new(tx)).await.unwrap()
+    };
+
+    // Queued behind a nonce gap while the base fee is 100 gwei.
+    api.anvil_set_next_block_base_fee_per_gas(U256::from(100 * gwei)).await.unwrap();
+    let queued = send(accounts[0].address(), 1, 110 * gwei).await;
+
+    api.anvil_set_next_block_base_fee_per_gas(U256::from(87_500_000_000u128)).await.unwrap();
+    let independent = send(accounts[1].address(), 0, 105 * gwei).await;
+    let predecessor = send(accounts[0].address(), 0, 200 * gwei).await;
+
+    api.mine_one().await.unwrap();
+
+    // At an 87.5 gwei base fee the queued transaction tips 22.5 gwei and the other 17.5 gwei.
+    let predecessor = predecessor.get_receipt().await.unwrap().transaction_hash;
+    let queued = queued.get_receipt().await.unwrap().transaction_hash;
+    let independent = independent.get_receipt().await.unwrap().transaction_hash;
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(
+        block.transactions,
+        BlockTransactions::Hashes(vec![predecessor, queued, independent])
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn can_respect_nonces() {
     let (api, handle) = spawn(NodeConfig::test()).await;
