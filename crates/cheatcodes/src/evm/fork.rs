@@ -449,6 +449,7 @@ fn fork_op<FEN: FoundryEvmNetwork, T: SolValue>(
     let (evm, db) = ccx.evm_db_mut();
     let result = f(db, evm)?;
     ccx.state.state_epoch += 1;
+    ccx.state.fork_epoch += 1;
     Ok(result.abi_encode())
 }
 

@@ -68,7 +68,12 @@ contract ExecuteTransactionTracingTest is Test {
 
     function broadcast(bytes memory rawTx) external {
         vm.broadcastRawTransaction(rawTx);
+        // The signed transaction's write is the slot's original value, as after a mined
+        // transaction, so writing the slot again is charged as a clean write (EIP-2200) after
+        // a cold read: over 2,900 + 2,100 gas, not a 100 gas dirty write.
+        uint256 start = gasleft();
         this.leaf();
+        assertGt(start - gasleft(), 5000);
     }
 
     function executeFailure(bytes memory rawTx, string memory expectedError) external {

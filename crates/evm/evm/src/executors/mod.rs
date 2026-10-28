@@ -646,10 +646,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         evm_env: EvmEnvFor<FEN>,
         tx: TransactionRequestFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let stipend = calculate_stipend::<FEN>(&evm_env, &tx);
-        let tx = FEN::tx_from_request(tx)?;
-        let mut result = self.call_tx(evm_env, &tx, None)?;
-        result.stipend = stipend;
+        let mut result = self.call_tx(evm_env, &FEN::tx_from_request(tx.clone())?, None)?;
+        result.set_stipend(&evm_env, tx);
         Ok(result)
     }
 
@@ -683,10 +681,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         evm_env: EvmEnvFor<FEN>,
         tx: TransactionRequestFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let stipend = calculate_stipend::<FEN>(&evm_env, &tx);
-        let tx = FEN::tx_from_request(tx)?;
-        let mut result = self.transact_tx(evm_env, &tx, None)?;
-        result.stipend = stipend;
+        let mut result = self.transact_tx(evm_env, &FEN::tx_from_request(tx.clone())?, None)?;
+        result.set_stipend(&evm_env, tx);
         Ok(result)
     }
 
@@ -1565,6 +1561,17 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
             32..=127 => Some(64),
             128..=255 => Some(128),
         }
+    }
+
+    /// Sets the stipend to the intrinsic gas of `tx` in `evm_env`, with the access list cheatcodes
+    /// applied to it, as on master.
+    fn set_stipend(&mut self, evm_env: &EvmEnvFor<FEN>, mut tx: TransactionRequestFor<FEN>) {
+        if let Some(access_list) =
+            self.cheatcodes.as_ref().and_then(|cheats| cheats.applied_access_list.clone())
+        {
+            tx.set_access_list(access_list);
+        }
+        self.stipend = calculate_stipend::<FEN>(evm_env, &tx);
     }
 
     /// Update provided history map with sancov coverage info collected during this call.

@@ -128,6 +128,12 @@ impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
         }
         let executed = executor.transact(&tx).map_err(transaction_error)?;
         let Some((id, persistent)) = inactive else {
+            if untracked {
+                // As on master, which committed the transaction to the database, accounts and
+                // slots the running transaction has not loaded start from its writes.
+                let unloaded = unloaded_changes(evm.state(), executed.account_changes());
+                evm.state_mut().commit_source(&unloaded);
+            }
             let mut persistent = Vec::new();
             merge_changes(
                 evm.state_mut(),
@@ -1177,10 +1183,6 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         let factory = self.factory.configure_for(&db, &env);
         self.apply_env(&factory, evm, env, phase);
         evm.warm_precompiles();
-        if evm.feature(EvmFeatures::EIP3651) {
-            let beneficiary = evm.block().beneficiary;
-            evm.state_mut().prewarm(&beneficiary);
-        }
         if fresh {
             factory.initialize_evm(evm, db.is_forked_mode());
         }
@@ -1349,6 +1351,10 @@ pub fn merge_untracked_nested_changes<T: EvmTypesHost>(
     state: &mut State<'_>,
     executed: &ExecutedTx<'_, '_, T>,
 ) -> DbResult<Vec<PersistentWrite>> {
+    // As on master, which committed the transaction to the database, accounts and slots the
+    // running transaction has not loaded start from its writes.
+    let unloaded = unloaded_changes(state, executed.account_changes());
+    state.commit_source(&unloaded);
     let mut persistent = Vec::new();
     merge_changes(state, executed.account_changes(), |_| true, Some(&mut persistent), None)?;
     Ok(persistent)
@@ -1567,6 +1573,40 @@ fn merge_changes<'c>(
         )?;
     }
     Ok(())
+}
+
+/// Returns the `changes` to accounts and storage slots the running transaction in `state` has not
+/// loaded, as a pending state to accept. Accounts that were created, self-destructed, wiped or
+/// given code are left out.
+fn unloaded_changes<'c>(
+    state: &State<'_>,
+    changes: impl Iterator<Item = AccountChanges<'c>>,
+) -> PendingState {
+    let loaded = state
+        .loaded_accounts()
+        .map(|(address, slots)| (*address, slots.copied().collect::<HashSet<_>>()))
+        .collect::<AddressMap<_>>();
+    let mut pending = PendingState::default();
+    for change in changes.filter(|change| change.is_changed()) {
+        if change.created
+            || change.selfdestructed
+            || change.storage.wiped
+            || change.code.is_some()
+            || change.current.is_none()
+        {
+            continue;
+        }
+        let loaded = loaded.get(&change.address);
+        // A loaded account keeps its info, which merges as a journaled write.
+        let current = if loaded.is_some() { change.original } else { change.current };
+        pending.insert_account(change.address, change.original.cloned(), current.cloned());
+        for (key, slot) in change.storage.changed_slots() {
+            if !loaded.is_some_and(|slots| slots.contains(key)) {
+                pending.insert_storage(change.address, *key, slot.original, slot.current);
+            }
+        }
+    }
+    pending
 }
 
 /// Replaces the accounts the running transaction in `state` loaded, except persistent ones, with

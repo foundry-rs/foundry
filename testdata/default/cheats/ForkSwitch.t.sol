@@ -69,7 +69,16 @@ contract ForkSwitchStorageOriginalsTest is Test {
         assertEq(secondSwitched, second, "write after one round trip");
         assertEq(thirdSwitched, third, "write after two round trips");
         assertEq(restoreSwitched, restore, "restoring write");
+        assertEq(valueCost(true), valueCost(false), "warmth after a round trip");
         assertEq(values[true], 0, "restoring write after a round trip");
+    }
+
+    function valueCost(bool switching) internal view returns (uint256) {
+        uint256 slot;
+        assembly {
+            slot := values.slot
+        }
+        return sloadCost(uint256(keccak256(abi.encode(switching, slot))));
     }
 
     function dirty(bool switching) external {

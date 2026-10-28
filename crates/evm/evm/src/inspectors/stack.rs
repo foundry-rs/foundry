@@ -7,7 +7,7 @@ use alloy_consensus::transaction::Recovered;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, keccak256,
-    map::{AddressHashMap, AddressMap, AddressSet},
+    map::{AddressHashMap, AddressMap, AddressSet, HashSet},
 };
 use evm2::{
     EvmFeatures, ExecutedTx, ExecutionError, Inspector, TxResultWithState,
@@ -16,6 +16,7 @@ use evm2::{
     interpreter::{GasTracker, Host, InstrStop, MessageKind, op},
     registry::HandlerError,
 };
+use eyre::WrapErr;
 use foundry_cheatcodes::{
     CheatcodeAnalysis, CheatcodesBackend, CheatcodesExecutor, Wallets, message_result,
 };
@@ -441,11 +442,12 @@ pub struct InspectorStackInner {
     pending_inner_root: Option<InnerRoot>,
     /// Synthetic CREATE depth corresponding to an outer top-level deployment.
     synthetic_create_depth: Option<u16>,
-    /// Active fork when the running isolated call started.
-    isolated_source_fork: Option<Option<U256>>,
-    /// Warmth of the running isolated call when it succeeded after switching forks, captured
-    /// before its transaction ended.
-    isolated_switch_warmth: Option<PrewarmSet>,
+    /// Active fork and cheatcode fork epoch when the running isolated call started.
+    isolated_source_fork: Option<(Option<U256>, Option<u64>)>,
+    /// Warmth of the running isolated call when it succeeded after switching forks, even back to
+    /// the one it started on, captured before its transaction ended: its whole warm set, and the
+    /// accounts and slots it accessed or fork switches carried, without its transaction's base.
+    isolated_switch_warmth: Option<(PrewarmSet, AddressMap<HashSet<U256>>)>,
     /// Whether the frame that just ended ran on a frame EVM with an in-flight environment change,
     /// whose hooks already ran there. See `InspectorStackRefMut::env_handoff`.
     env_handoff_ended: bool,
@@ -540,6 +542,8 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let outer_writes = mem::take(&mut cheats.persistent_writes);
         let frame_rollback = cheats.frame_rollback.take();
         let outer_destructs = self.executed_destructs.replace(AddressMap::default());
+        // The nested transaction's calls do not apply access lists to the running one.
+        let applied_access_list = cheats.applied_access_list.take();
         child.set_inspector(InspectorStackRefMut {
             cheatcodes: Some(&mut *cheats),
             inner: &mut *self,
@@ -548,6 +552,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let executed = child.transact(tx).map(ExecutedTx::detach);
         // SAFETY: The nested EVM runs over the lifecycle's owned databases.
         let mut child = unsafe { release_inspector(child) };
+        cheats.applied_access_list = applied_access_list;
         let destructed = mem::replace(&mut self.executed_destructs, outer_destructs);
         let result = match executed {
             Ok(TxResultWithState { result, pending_state, .. }) => {
@@ -613,7 +618,8 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         cheats.tx_warm_addresses = tx_warm_addresses;
         cheats.env_overrides.swap(fork_id, &mut overrides);
         drop(replay);
-        Ok(backend.backend_mut().store_executed(evm, executed?))
+        let executed = executed.wrap_err("backend: failed committing transaction")?;
+        Ok(backend.backend_mut().store_executed(evm, executed))
     }
 
     fn transact_from_tx(
@@ -1286,6 +1292,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         };
         let source_fork = backend.backend().active_fork_id();
         let epoch = self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch);
+        let fork_epoch = self.cheatcodes.as_deref().map(|cheats| cheats.fork_epoch);
         EvmFactoryFor::<FEN>::default().sync_transaction(evm);
         let mut child = backend.backend().nested_evm(evm, &tx, Some(env));
         // The nested transaction continues the running one's network extension state, such as
@@ -1334,7 +1341,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let snapshot_restores =
             self.cheatcodes.as_deref_mut().map(|cheats| mem::take(&mut cheats.snapshot_restores));
 
-        let previous_source_fork = self.inner.isolated_source_fork.replace(source_fork);
+        let previous_source_fork =
+            self.inner.isolated_source_fork.replace((source_fork, fork_epoch));
         let persistent_warmth = backend.backend_mut().take_persistent_warmth();
         child.set_inspector(InspectorStackRefMut {
             cheatcodes: self.cheatcodes.as_deref_mut(),
@@ -1394,15 +1402,30 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let replaced = restored
             || fork_changed
             || epoch != self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch);
+        // Accounts the running transaction holds cold, such as after `vm.cool` or a static call
+        // cooled them, stay cold. Accounts it no longer holds, such as after a snapshot revert,
+        // are imported warm.
+        let state = evm.state_mut();
+        let loaded = state.loaded_accounts().map(|(address, _)| *address).collect::<Vec<_>>();
+        let cold = loaded
+            .into_iter()
+            .filter(|address| !state.account(address).is_ok_and(|account| account.is_warm()))
+            .collect::<AddressSet>();
         let merged = if replaced {
             // Across another state replacement the running transaction keeps its warmth, and the
-            // nested transaction's on success. A restored snapshot brings its own, and, as on
-            // master, so does a fork switch: the nested transaction's state replaces the running
-            // one's.
+            // nested transaction's on success. As on master, a restored snapshot keeps the
+            // running transaction's base warmth, a fork switch brings the nested transaction's
+            // warmth, and a switch back to the starting fork keeps both.
             let warmth = if restored {
-                None
+                Some(evm.state().prewarm_set().clone())
             } else if fork_changed {
-                switch_warmth
+                switch_warmth.map(|(warmth, _)| warmth)
+            } else if let Some((_, accessed)) = switch_warmth {
+                let mut warmth = warm_set(evm.state_mut());
+                for (address, slots) in accessed {
+                    warmth.warm_storage(&address, slots);
+                }
+                Some(warmth)
             } else {
                 Some(warm_set(evm.state_mut()))
             };
@@ -1422,20 +1445,17 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                     }
                 }
             }
-            restored
-                || !result.status
-                || warm_accessed(evm.state_mut(), &executed.pending_state, &AddressSet::default())
-                    .is_ok()
+            // Unless the call switched forks, the running transaction's state stays in place: it
+            // keeps the warmth it had, except for accounts it holds cold.
+            let keeps_cold = restored || !fork_changed;
+            if keeps_cold {
+                for address in &cold {
+                    evm.state_mut().set_account_warm(address, false);
+                }
+            }
+            let cold = if keeps_cold { cold } else { AddressSet::default() };
+            !result.status || warm_accessed(evm.state_mut(), &executed.pending_state, &cold).is_ok()
         } else {
-            // Accounts the running transaction holds cold, such as after `vm.cool` or a static
-            // call cooled them, stay cold. Accounts it no longer holds, such as after a snapshot
-            // revert, are imported warm.
-            let state = evm.state_mut();
-            let cooled = state.loaded_accounts().map(|(address, _)| *address).collect::<Vec<_>>();
-            let cold = cooled
-                .into_iter()
-                .filter(|address| !state.account(address).is_ok_and(|account| account.is_warm()))
-                .collect();
             let merged = merge_pending_changes(evm.state_mut(), &executed.pending_state)
                 .and_then(|()| {
                     if result.status {
@@ -1533,13 +1553,19 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         interp: &mut InterpreterFor<'_, '_, FEN>,
         result: &MessageResultFor<FEN>,
     ) {
-        let switched = self.inner.isolated_source_fork.is_some_and(|source| {
-            self.backend
-                .as_deref()
-                .is_some_and(|backend| backend.backend().active_fork_id() != source)
+        let Some(backend) = self.backend.as_deref() else { return };
+        let switched = self.inner.isolated_source_fork.is_some_and(|(source, epoch)| {
+            backend.backend().active_fork_id() != source
+                || epoch != self.cheatcodes.as_deref().map(|cheats| cheats.fork_epoch)
         });
-        self.inner.isolated_switch_warmth =
-            (switched && result.is_success()).then(|| warm_set(interp.host().state_mut()));
+        self.inner.isolated_switch_warmth = (switched && result.is_success()).then(|| {
+            let state = interp.host().state_mut();
+            let mut accessed = backend.backend().lifecycle().active().carried_warmth().clone();
+            for (address, slots) in warm_accounts(state) {
+                accessed.entry(address).or_default().extend(slots);
+            }
+            (warm_set(state), accessed)
+        });
     }
 
     /// Handles the root frame of a nested transaction, returning whether `message` is one that

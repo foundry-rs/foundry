@@ -2531,6 +2531,70 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     }
 }
 
+// As on master, the reported test gas subtracts the intrinsic gas of the access list
+// `vm.accessList` applied to the test transaction, which its execution never pays, but not of one
+// only a nested transaction's calls applied.
+#[forgetest]
+fn test_access_list_stipend(prj: _, cmd: _) {
+    prj.add_test(
+        "AccessListStipend.t.sol",
+        r#"
+interface Vm {
+    struct AccessListItem {
+        address target;
+        bytes32[] storageKeys;
+    }
+
+    function accessList(AccessListItem[] calldata access) external;
+    function executeTransaction(bytes calldata raw) external returns (bytes memory);
+}
+
+contract Counter {
+    uint256 public number;
+
+    function increment() external {
+        number++;
+    }
+}
+
+contract AccessListStipendTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function test_access_list_stipend() public {
+        Counter counter = new Counter();
+        Vm.AccessListItem[] memory accessList = new Vm.AccessListItem[](1);
+        accessList[0] = Vm.AccessListItem(address(counter), new bytes32[](1));
+        vm.accessList(accessList);
+        counter.increment();
+    }
+
+    function test_nested_transaction_access_list() public {
+        Vm.AccessListItem[] memory accessList = new Vm.AccessListItem[](1);
+        accessList[0] = Vm.AccessListItem(address(this), new bytes32[](1));
+        vm.accessList(accessList);
+        // A contract creation whose initcode calls 0x1234.
+        vm.executeTransaction(hex"f8598080830186a080808b5f5f5f5f5f6112345af10082f4f5a0a179c1ebd288da19ddfa85cb1771c4ae040734caf301e41b5100b9041c775cfea0084528766ecf99513cb32ab48cfb49b61939187b049917c079700ba4c39e8743");
+    }
+}
+"#,
+    );
+
+    for (isolate, gas) in [("--no-isolate", 124392), ("--isolate", 206120)] {
+        cmd.forge_fuse()
+            .args(["test", "--mc", "AccessListStipendTest", isolate])
+            .with_no_redact()
+            .assert_success()
+            .stdout_eq(format!(
+                "...
+Ran 2 tests for test/AccessListStipend.t.sol:AccessListStipendTest
+[PASS] test_access_list_stipend() (gas: {gas})
+[PASS] test_nested_transaction_access_list() (gas: 6201)
+...
+"
+            ));
+    }
+}
+
 // A frame that `vm.setEvmVersion` moves the running transaction onto reads the shared fork
 // database with its own empty-account policy, and the caller gets its policy back on return.
 #[forgetest]
