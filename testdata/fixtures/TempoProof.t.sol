@@ -93,12 +93,7 @@ contract TempoProofTest {
     }
 
     function test_rotation_authenticates_next_key_and_storage() public view {
-        require(
-            verifier.verifyAfterHandoff(
-                initialKey, boundary, boundaryHeight, nextKey, successor, successorHeight, account, bytes32(0), 42
-            ),
-            "authenticated rotated storage"
-        );
+        require(this.verifyAfterHandoff(), "authenticated rotated storage");
     }
 
     function test_rotation_rejects_old_key() public view {
@@ -181,12 +176,13 @@ contract TempoProofTest {
     }
 
     function _rejectAfterHandoff() private view {
-        try verifier.verifyAfterHandoff(
-            initialKey, boundary, boundaryHeight, nextKey, successor, successorHeight, account, bytes32(0), 42
-        ) returns (
-            bool valid
-        ) {
+        try this.verifyAfterHandoff() returns (bool valid) {
             require(!valid, "invalid rotated evidence accepted");
         } catch {}
+    }
+
+    function verifyAfterHandoff() external view returns (bool) {
+        return verifier.verifyHandoff(initialKey, boundary, boundaryHeight, nextKey, successor.subject.epoch)
+            && verifier.verify(nextKey, successor, successorHeight, account, bytes32(0), 42);
     }
 }

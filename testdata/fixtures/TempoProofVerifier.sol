@@ -68,37 +68,10 @@ contract TempoProofVerifier {
         require(keccak256(Bytes.slice(dkg, 0, epoch.length)) == keccak256(epoch), "announced epoch");
         // Commonware 2026.9 Output: summary32, mode0, total_u32_be=1, polynomial_len=1, key96.
         uint256 offset = epoch.length + 32;
-        require(dkg.length == offset + 203, "one-participant DKG length");
-        require(
-            dkg[offset] == 0 && dkg[offset + 1] == 0 && dkg[offset + 2] == 0 && dkg[offset + 3] == 0
-                && dkg[offset + 4] == 0x01 && dkg[offset + 5] == 0x01,
-            "one-participant DKG mode"
-        );
+        require(bytes6(Bytes.slice(dkg, offset, 6)) == hex"000000000101", "one-participant DKG");
         offset += 6;
         require(keccak256(Bytes.slice(dkg, offset, 96)) == keccak256(_compressed(nextKey)), "announced key");
-        // One dealer, one player, no reveals, one next player, no full-DKG flag.
-        require(
-            dkg[offset + 96] == 0x01 && dkg[offset + 129] == 0x01 && dkg[offset + 162] == 0 && dkg[offset + 163] == 0x01
-                && dkg[offset + 196] == 0,
-            "one-participant DKG sets"
-        );
         return true;
-    }
-
-    /// @dev Consume the next epoch's storage proof only after authenticating its key with the old key.
-    function verifyAfterHandoff(
-        BLS.G2Point memory oldKey,
-        Evidence calldata boundary,
-        uint256 boundaryHeight,
-        BLS.G2Point memory nextKey,
-        Evidence calldata evidence,
-        uint256 expectedHeight,
-        address account,
-        bytes32 slot,
-        uint256 expectedValue
-    ) external view returns (bool) {
-        require(verifyHandoff(oldKey, boundary, boundaryHeight, nextKey, evidence.subject.epoch), "handoff");
-        return verify(nextKey, evidence, expectedHeight, account, slot, expectedValue);
     }
 
     function _header(BLS.G2Point memory trustedKey, Evidence calldata evidence, uint256 expectedHeight)
@@ -115,16 +88,14 @@ contract TempoProofVerifier {
         require(Threshold.verifyMinSig(evidence.seed, trustedKey, bytes("TEMPO_SEED"), round), "seed signature");
 
         RLPReader.RLPItem[] memory outer = RLPReader.readList(evidence.rawHeader);
-        require(outer.length == 4 || outer.length == 5, "native Tempo header");
+        require(outer.length == 5, "native Tempo header");
         header = RLPReader.readList(outer[3]);
         require(_integer(RLPReader.readBytes(header[8])) == expectedHeight, "block height");
-        if (outer.length == 5) {
-            RLPReader.RLPItem[] memory context = RLPReader.readList(outer[4]);
-            require(context.length == 4, "consensus context");
-            require(_integer(RLPReader.readBytes(context[0])) == evidence.subject.epoch, "context epoch");
-            require(_integer(RLPReader.readBytes(context[1])) == evidence.subject.viewNumber, "context view");
-            require(_integer(RLPReader.readBytes(context[2])) == evidence.subject.parent, "context parent");
-        }
+        RLPReader.RLPItem[] memory context = RLPReader.readList(outer[4]);
+        require(context.length == 4, "consensus context");
+        require(_integer(RLPReader.readBytes(context[0])) == evidence.subject.epoch, "context epoch");
+        require(_integer(RLPReader.readBytes(context[1])) == evidence.subject.viewNumber, "context view");
+        require(_integer(RLPReader.readBytes(context[2])) == evidence.subject.parent, "context parent");
     }
 
     function _integer(bytes memory value) private pure returns (uint256 result) {
