@@ -558,6 +558,7 @@ commonware-cryptography = { version = "=2026.9.0", default-features = false }
 commonware-math = { version = "=2026.9.0", default-features = false }
 commonware-parallel = { version = "=2026.9.0", default-features = false }
 commonware-utils = { version = "=2026.9.0", default-features = false }
+blst = "0.3.17"
 rand_chacha = { version = "=0.10.0", default-features = false }
 
 # Monad

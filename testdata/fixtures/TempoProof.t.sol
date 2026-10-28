@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import {TempoProofVerifier} from "../src/TempoProofVerifier.sol";
 import {LibBLS12381 as BLS} from "commonware/certificate/LibBLS12381.sol";
 import {LibSimplex as Simplex} from "commonware/simplex/LibSimplex.sol";
-import {Vm} from "utils/Vm.sol";
+import {Vm} from "../src/Vm.sol";
 
 contract TempoProofTest {
     Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
@@ -20,7 +20,7 @@ contract TempoProofTest {
     uint256 private successorHeight;
 
     function setUp() public {
-        string memory json = vm.readFile(vm.envOr("TEMPO_PROOF_FIXTURE", string("fixtures/proofs.json")));
+        string memory json = vm.readFile("fixtures/proofs.json");
         verifier = new TempoProofVerifier();
         initialKey = abi.decode(vm.parseJsonBytes(json, ".initialKey"), (BLS.G2Point));
         nextKey = abi.decode(vm.parseJsonBytes(json, ".nextKey"), (BLS.G2Point));

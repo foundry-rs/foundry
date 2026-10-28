@@ -247,6 +247,29 @@ Use a layered test plan:
 Keep feature propagation synchronized across workspace manifests, the root `Makefile`, and the
 release and Docker workflows. Tests that use forks must contain `fork` in their names.
 
+### Tempo certificate and storage proofs
+
+The [Forge integration test](../../crates/forge/tests/cli/tempo_proofs.rs) collects fresh certificates,
+native headers and account/storage proofs over local Anvil HTTP, then runs the
+[Solidity suite](../../testdata/fixtures/TempoProof.t.sol) in an isolated test project.
+Commonware verifies the BLS signatures and Optimism verifies the Merkle-Patricia proofs.
+The initial identity is the trust anchor; the successor key must match the old key's signed
+rotation announcement. The complete suite must pass, including both positive acceptance cases.
+The fixture covers Anvil's deterministic one-participant DKG format.
+
+On Linux or macOS, run it through the ordinary pull-request test harness:
+
+```sh
+cargo nextest run -p forge --test cli tempo_proofs
+```
+
+The harness fetches upstream sources from immutable revisions in
+[`tempo-proof-sources.lock.json`](../../testdata/fixtures/tempo-proof-sources.lock.json),
+checks their SHA-256 hashes and retains their licenses. Source and compiler installation need
+network access; proof collection uses no public RPC or credentials. The
+[native compatibility tests](../../crates/anvil/tests/fixtures/tempo-consensus-compat/README.md)
+separately cover Commonware's native codecs and the T3/T4 consensus-context boundary.
+
 ## Documentation and releases
 
 User-facing selection, configuration, and workflows belong in the
