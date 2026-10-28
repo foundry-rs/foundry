@@ -215,7 +215,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let mut backend = Self::with_fork_manager(forks, EmptyDB::default(), env);
         let id = backend.insert_prepared_fork(fork.url, resolved, env, track)?;
         let mut evm = backend.lifecycle.create_evm();
-        let _ = backend.lifecycle.select_fork(&mut evm, Some(id), ExecutionPhase::Boundary)?;
+        backend.lifecycle.select_fork(&mut evm, Some(id), ExecutionPhase::Boundary)?;
         backend.lifecycle.park(evm);
         Ok(backend)
     }
@@ -235,7 +235,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             let track = fork.evm_opts.networks.is_monad();
             let id = backend.insert_fork(fork, Some(env), track)?;
             let mut evm = backend.lifecycle.create_evm();
-            let _ = backend.lifecycle.select_fork(&mut evm, Some(id), ExecutionPhase::Boundary)?;
+            backend.lifecycle.select_fork(&mut evm, Some(id), ExecutionPhase::Boundary)?;
             backend.lifecycle.park(evm);
         }
         Ok(backend)

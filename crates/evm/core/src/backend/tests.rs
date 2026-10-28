@@ -195,7 +195,7 @@ fn select_fork_carries_running_spec_and_fee_policy() {
     let fork = memory_fork(&mut backend, db_with(&[], 0), env(evm2::SpecId::LONDON));
     backend.evm_env_mut().set_feature(EvmFeatures::FEE_CHARGE, false);
     let mut evm = backend.create_evm();
-    let _ = backend.select_fork(fork, &mut evm, ExecutionPhase::Boundary).unwrap();
+    backend.select_fork(fork, &mut evm, ExecutionPhase::Boundary).unwrap();
     assert_eq!(evm.config_spec_id(), evm2::SpecId::PRAGUE);
     assert!(!evm.version().features.contains(EvmFeatures::FEE_CHARGE));
 }
