@@ -7546,8 +7546,9 @@ contract CheckedXorTest {
     function checkInconsistentEqualities(uint256 a, uint256 b, uint256 c) external pure {
         require(a ^ b == A);
         require(b ^ c == B);
-        require(a ^ c == A ^ B ^ 1);
-        assert(false);
+        if (a ^ c == A ^ B ^ 1) {
+            assert(false);
+        }
     }
 
     function checkOpaqueCycle(uint256 a, uint256 b, uint256 c) external pure {
@@ -7657,7 +7658,7 @@ fn symbolic_xor_matches_exhaustive_models(prj: _, cmd: _) {
         expected.push(satisfiable);
         source.push_str(&format!(
             "function checkCase{case}(uint256 a, uint256 b, uint256 c) external pure {{\n\
-             require(a < 4 && b < 4 && c < 4);\n"
+             if (a < 4 && b < 4 && c < 4"
         ));
         for (mask, constant, negated) in relations {
             let terms = ["a", "b", "c"]
@@ -7669,9 +7670,9 @@ fn symbolic_xor_matches_exhaustive_models(prj: _, cmd: _) {
                 .join(" ^ ");
             let op = if negated { "!=" } else { "==" };
             // Repeated terms exercise cancellation across differently associated XOR trees.
-            source.push_str(&format!("require((({terms}) ^ a) ^ a {op} {constant});\n"));
+            source.push_str(&format!(" && ((({terms}) ^ a) ^ a {op} {constant})"));
         }
-        source.push_str("assert(false);\n}\n");
+        source.push_str(") { assert(false); }\n}\n");
     }
     source.push_str("}\n");
     prj.add_test("XorOracle.t.sol", &source);
