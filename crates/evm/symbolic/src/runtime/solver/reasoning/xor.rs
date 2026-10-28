@@ -42,7 +42,7 @@ pub(in super::super) fn checked_xor_result(
         return None;
     }
 
-    let mut atoms = HashMap::default();
+    let mut atoms = HashMap::<&SymExpr, usize>::default();
     let mut basis = [None::<Row>; MAX_XOR_ATOMS];
     let mut visits = MAX_XOR_VISITS;
     let mut rows = Vec::with_capacity(relations.len());
@@ -191,7 +191,7 @@ fn check_certificate(
     {
         return false;
     }
-    let mut terms = HashSet::default();
+    let mut terms = HashSet::<&SymExpr>::default();
     let mut constant = U256::ZERO;
     let mut visits = MAX_XOR_VISITS;
     for (index, relation) in relations.iter().enumerate() {
