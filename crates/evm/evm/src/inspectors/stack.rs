@@ -449,10 +449,10 @@ pub struct InspectorStackInner {
     pending_inner_root: Option<InnerRoot>,
     /// Synthetic CREATE depth corresponding to an outer top-level deployment.
     synthetic_create_depth: Option<u16>,
-    /// Active fork when the running isolated call started.
-    isolated_source_fork: Option<Option<U256>>,
-    /// Warmth of the running isolated call when it succeeded after switching forks, captured
-    /// before its transaction ended.
+    /// Active fork and cheatcode state epoch when the running isolated call started.
+    isolated_source_fork: Option<(Option<U256>, Option<u64>)>,
+    /// Warmth of the running isolated call when it succeeded after switching forks, even back to
+    /// the one it started on, captured before its transaction ended.
     isolated_switch_warmth: Option<PrewarmSet>,
     /// Whether the frame that just ended ran on a frame EVM with an in-flight environment change,
     /// whose hooks already ran there. See `InspectorStackRefMut::env_handoff`.
@@ -1371,7 +1371,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let snapshot_restores =
             self.cheatcodes.as_deref_mut().map(|cheats| mem::take(&mut cheats.snapshot_restores));
 
-        let previous_source_fork = self.inner.isolated_source_fork.replace(source_fork);
+        let previous_source_fork = self.inner.isolated_source_fork.replace((source_fork, epoch));
         let persistent_warmth = backend.backend_mut().take_persistent_warmth();
         child.set_inspector(InspectorStackRefMut {
             cheatcodes: self.cheatcodes.as_deref_mut(),
@@ -1432,13 +1432,18 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             || epoch != self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch);
         let merged = if replaced {
             // Across another state replacement the running transaction keeps its warmth, and the
-            // nested transaction's on success. A restored snapshot brings its own, and, as on
-            // master, so does a fork switch: the nested transaction's state replaces the running
-            // one's.
+            // nested transaction's on success. As on master, a restored snapshot keeps the
+            // running transaction's base warmth, a fork switch brings the nested transaction's
+            // warmth, and a switch back to the starting fork keeps both.
             let warmth = if restored {
-                None
+                Some(evm.state().prewarm_set().clone())
             } else if fork_changed {
                 switch_warmth
+            } else if let Some(mut warmth) = switch_warmth {
+                for (address, slots) in warm_accounts(evm.state_mut()) {
+                    warmth.warm_storage(&address, slots);
+                }
+                Some(warmth)
             } else {
                 Some(warm_set(evm.state_mut()))
             };
@@ -1457,8 +1462,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                     }
                 }
             }
-            restored
-                || !result.status
+            !result.status
                 || warm_accessed(evm.state_mut(), &executed.pending_state, &AddressSet::default())
                     .is_ok()
         } else {
@@ -1568,10 +1572,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         interp: &mut InterpreterFor<'_, '_, FEN>,
         result: &MessageResultFor<FEN>,
     ) {
-        let switched = self.inner.isolated_source_fork.is_some_and(|source| {
+        let switched = self.inner.isolated_source_fork.is_some_and(|(source, epoch)| {
             self.backend
                 .as_deref()
                 .is_some_and(|backend| backend.backend().active_fork_id() != source)
+                || epoch != self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch)
         });
         self.inner.isolated_switch_warmth =
             (switched && result.is_success()).then(|| warm_set(interp.host().state_mut()));
