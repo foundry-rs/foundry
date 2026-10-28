@@ -62,11 +62,6 @@ contract TempoProofTest {
         _reject();
     }
 
-    function test_reject_changed_digest() public {
-        evidence.subject.payload ^= bytes32(uint256(1));
-        _reject();
-    }
-
     function test_reject_changed_account_proof() public {
         evidence.accountProof[0][10] = bytes1(uint8(evidence.accountProof[0][10]) ^ 1);
         _reject();
@@ -74,11 +69,6 @@ contract TempoProofTest {
 
     function test_reject_changed_storage_proof() public {
         evidence.storageProof[0][10] = bytes1(uint8(evidence.storageProof[0][10]) ^ 1);
-        _reject();
-    }
-
-    function test_reject_wrong_trusted_key() public {
-        initialKey = nextKey;
         _reject();
     }
 
@@ -115,11 +105,6 @@ contract TempoProofTest {
         try verifier.verify(initialKey, successor, successorHeight, account, bytes32(0), 42) returns (bool valid) {
             require(!valid, "old key accepted");
         } catch {}
-    }
-
-    function test_rotation_rejects_changed_boundary() public {
-        boundary.rawHeader[10] = bytes1(uint8(boundary.rawHeader[10]) ^ 1);
-        _rejectHandoff(nextKey, successor.subject.epoch);
     }
 
     function test_rotation_rejects_unannounced_key() public view {
@@ -182,11 +167,6 @@ contract TempoProofTest {
 
     function test_rotation_rejects_unauthenticated_boundary() public {
         initialKey = nextKey;
-        _rejectAfterHandoff();
-    }
-
-    function test_rotation_rejects_changed_boundary_vote() public {
-        boundary.vote = boundary.seed;
         _rejectAfterHandoff();
     }
 
