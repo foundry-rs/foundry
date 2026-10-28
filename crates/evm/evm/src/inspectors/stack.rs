@@ -1483,8 +1483,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             }
         }
 
-        // revm skips `step_end` if an inspector halted the frame in `step`.
-        if let Some(recorder) = self.inner.debug_recorder.as_deref_mut()
+        // revm skips `step_end` if an inspector halted the frame in `step`. A recorder makes the
+        // dispatch general, so other dispatches skip the check.
+        if matches!(self.static_step_dispatch, OpcodeStepDispatch::General)
+            && let Some(recorder) = self.inner.debug_recorder.as_deref_mut()
             && interpreter.bytecode.is_end()
         {
             recorder.end_step_not_run(interpreter);

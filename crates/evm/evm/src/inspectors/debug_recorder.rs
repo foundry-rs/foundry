@@ -1,10 +1,10 @@
 //! Records the debugger's opcode steps straight into a SolDB step table.
 
-use alloy_primitives::{Bytes, U256, hex};
-use foundry_evm_traces::debug::{DebugRecording, DebugStepSink, RecordedFrame};
+use alloy_primitives::U256;
+use foundry_evm_traces::debug::{DebugRecording, DebugStepSink, RecordedFrame, StepConverter};
 use revm::{
     Inspector, JournalEntry,
-    bytecode::opcode::{self, OpCode},
+    bytecode::opcode::OpCode,
     context::{ContextTr, JournalTr},
     inspector::JournalExt,
     interpreter::{
@@ -12,8 +12,8 @@ use revm::{
         interpreter_types::{Jumps, LoopControl, ReturnData},
     },
 };
-use soldb_core::{EvmWord, StepRecord, StepTable, StorageChange};
-use std::{borrow::Borrow, collections::BTreeMap, fmt, sync::Arc};
+use soldb_core::{EvmWord, StepRecord, StepTable};
+use std::{borrow::Borrow, fmt, sync::Arc};
 
 /// The most stack words one instruction reads: `SWAP16` reads 17.
 const MAX_INPUTS: usize = 17;
@@ -37,10 +37,8 @@ pub struct DebugRecorder {
     open: Vec<OpenFrame>,
     /// The step that started and did not end yet.
     pending: Option<PendingStep>,
-    /// The last return data buffer and its hex encoding, shared by unchanged steps.
-    return_data: Option<(Bytes, Arc<str>)>,
-    /// The storage of the steps that touch no slot.
-    no_storage: Arc<BTreeMap<String, String>>,
+    /// Converts the return data and storage of the steps.
+    converter: StepConverter,
 }
 
 /// A frame that runs now.
@@ -59,9 +57,9 @@ struct PendingStep {
     op: OpCode,
     gas: u64,
     depth: u64,
-    #[cfg(debug_assertions)]
+    #[cfg(test)]
     memory: Vec<u8>,
-    return_data: Option<Arc<str>>,
+    return_data: Arc<str>,
     /// The stack height before the step.
     height: usize,
     /// The top words the step can pop or change, bottom first.
@@ -82,8 +80,7 @@ impl DebugRecorder {
             frames: vec![RecordedFrame::default()],
             open: Vec::new(),
             pending: None,
-            return_data: None,
-            no_storage: Default::default(),
+            converter: StepConverter::default(),
         }
     }
 
@@ -166,23 +163,11 @@ impl DebugRecorder {
         }
         open.memory_size = current.len();
         open.write = memory_write(op, interp.stack.data());
-        #[cfg(debug_assertions)]
+        #[cfg(test)]
         let memory = current.to_vec();
         drop(current);
 
-        let buffer = interp.return_data.buffer();
-        let return_data = if buffer.is_empty() {
-            Some(Arc::from(""))
-        } else {
-            Some(match &self.return_data {
-                Some((last, hex)) if same_bytes(last, buffer) => hex.clone(),
-                _ => {
-                    let hex = Arc::<str>::from(hex::encode(buffer));
-                    self.return_data = Some((buffer.clone(), hex.clone()));
-                    hex
-                }
-            })
-        };
+        let return_data = self.converter.return_data(interp.return_data.buffer());
 
         // An instruction changes only the words it reads, so the stack before it is what stays
         // below them after it, and these.
@@ -198,7 +183,7 @@ impl DebugRecorder {
             op,
             gas: interp.gas.remaining(),
             depth,
-            #[cfg(debug_assertions)]
+            #[cfg(test)]
             memory,
             return_data,
             height: stack.len(),
@@ -254,37 +239,11 @@ impl DebugRecorder {
         loaded: Option<U256>,
         had_value: Option<U256>,
     ) {
-        #[cfg(debug_assertions)]
+        #[cfg(test)]
         let expected_memory = step.memory;
         let PendingStep { pc, op, gas, depth, return_data, inputs, inputs_len, .. } = step;
         let inputs = &inputs[..inputs_len];
-        let top = inputs.last().copied();
-        // The slot a step touches and the value it reads or writes.
-        let touched = match op.get() {
-            opcode::SLOAD | opcode::TLOAD => top.zip(loaded),
-            opcode::SSTORE | opcode::TSTORE => match inputs {
-                [.., value, slot] => Some((*slot, *value)),
-                _ => None,
-            },
-            _ => None,
-        };
-        let storage_touched =
-            touched.filter(|_| matches!(op.get(), opcode::SLOAD | opcode::SSTORE));
-        let (storage, storage_diff) = match storage_touched {
-            Some((slot, value)) => {
-                let (slot, value) = (quantity(slot), quantity(value));
-                let change =
-                    StorageChange { before: had_value.map(quantity), after: Some(value.clone()) };
-                (
-                    Arc::new(BTreeMap::from([(slot.clone(), value)])),
-                    Some(BTreeMap::from([(slot, change)])),
-                )
-            }
-            None => (self.no_storage.clone(), None),
-        };
-        let transient_storage = touched
-            .filter(|_| matches!(op.get(), opcode::TLOAD | opcode::TSTORE))
-            .map(|(slot, value)| BTreeMap::from([(quantity(slot), quantity(value))]));
+        let storage = self.converter.storage(op.get(), inputs, loaded, had_value);
         let error = status.filter(|status| !status.is_ok()).map(|status| format!("{status:?}"));
         let table = self.table.as_mut().expect("a frame is open");
         table.append(
@@ -296,14 +255,14 @@ impl DebugRecorder {
                 depth,
                 error,
                 memory: None,
-                storage: Some(storage),
-                storage_diff,
-                transient_storage,
-                return_data,
+                storage: Some(storage.storage),
+                storage_diff: storage.storage_diff,
+                transient_storage: storage.transient_storage,
+                return_data: Some(return_data),
             },
             kept.iter().chain(inputs).map(|word| EvmWord(word.to_be_bytes())),
         );
-        #[cfg(debug_assertions)]
+        #[cfg(test)]
         assert_eq!(
             table.step(table.len() - 1).memory().as_deref(),
             Some(expected_memory.as_slice()),
@@ -378,12 +337,6 @@ impl<CTX: ContextTr<Journal: JournalExt>> Inspector<CTX> for DebugRecorder {
     }
 }
 
-/// Whether `a` and `b` hold the same bytes. Unchanged return data is the same buffer, so
-/// comparing the pointers first skips most full comparisons.
-fn same_bytes(a: &Bytes, b: &Bytes) -> bool {
-    (a.as_ptr() == b.as_ptr() && a.len() == b.len()) || a == b
-}
-
 /// The destination a memory-writing opcode takes from its pre-execution stack.
 /// Memory-reading opcodes can expand memory but leave all new bytes zero.
 fn memory_write(op: OpCode, stack: &[U256]) -> Option<std::ops::Range<usize>> {
@@ -404,15 +357,10 @@ fn memory_write(op: OpCode, stack: &[U256]) -> Option<std::ops::Range<usize>> {
     Some(offset..offset.saturating_add(length))
 }
 
-/// Formats `value` as a JSON-RPC quantity.
-fn quantity(value: U256) -> String {
-    format!("{value:#x}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{Address, TxKind};
+    use alloy_primitives::{Address, TxKind, hex};
     use revm::{
         Context, InspectEvm, MainBuilder, MainContext,
         context::TxEnv,
