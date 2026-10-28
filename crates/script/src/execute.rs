@@ -610,7 +610,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         let mut sources = self.build_data.sources;
         sources.insert_compiled_sources(
             &self.script_config.config.project_paths::<MultiCompilerLanguage>().build_infos,
-        )?;
+        );
         Ok(DebuggerBuilder::new()
             .traces(self.execution_result.traces)
             .decoder(&self.execution_artifacts.decoder)

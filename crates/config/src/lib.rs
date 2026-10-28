@@ -2156,10 +2156,21 @@ impl Config {
 
     /// Enables build infos for a debug run, which reads the compiled sources from them. Unless
     /// build infos were already enabled, they leave out the AST, which debug runs do not use.
-    pub const fn enable_debug_build_info(&mut self) {
-        if !self.build_info {
-            self.build_info = true;
-            self.build_info_without_ast = true;
+    ///
+    /// The compiler cache does not track build infos, so a cached build keeps the ones it wrote
+    /// without the compiler input. Dynamic test linking compiles rewritten sources that only the
+    /// input holds, so the build is forced then.
+    pub fn enable_debug_build_info(&mut self) {
+        if self.build_info {
+            return;
+        }
+        self.build_info = true;
+        self.build_info_without_ast = true;
+        if self.dynamic_test_linking && !self.force {
+            let dir = self.project_paths::<MultiCompilerLanguage>().build_infos;
+            self.force = fs::read_dir(dir).into_iter().flatten().flatten().any(|entry| {
+                !matches!(read_build_info_input::<de::IgnoredAny>(&entry.path()), Ok(Some(_)))
+            });
         }
     }
 

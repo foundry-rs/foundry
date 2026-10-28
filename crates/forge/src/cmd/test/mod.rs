@@ -1973,7 +1973,7 @@ impl TestArgs {
                         project_root,
                         Some(&libraries),
                     )?;
-                    sources.insert_compiled_sources(&build_info_dir)?;
+                    sources.insert_compiled_sources(&build_info_dir);
 
                     let mut builder = DebuggerBuilder::new()
                         .traces(test_result.traces)

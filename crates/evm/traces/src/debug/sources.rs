@@ -1,7 +1,7 @@
 use eyre::{Context, Result};
 use foundry_common::{
-    compact_to_contract, external_compiler::is_external_artifact, fs::read_json_file,
-    is_deploy_helper_path, strip_bytecode_placeholders,
+    compact_to_contract, external_compiler::is_external_artifact, is_deploy_helper_path,
+    strip_bytecode_placeholders,
 };
 use foundry_compilers::{
     Artifact, ProjectCompileOutput,
@@ -11,6 +11,7 @@ use foundry_compilers::{
     },
     multi::MultiCompilerLanguage,
 };
+use foundry_config::read_build_info_input;
 use foundry_evm_core::ic::PcIcMap;
 use foundry_linking::Linker;
 use rayon::prelude::*;
@@ -271,14 +272,19 @@ impl ContractSources {
     ///
     /// The text comes from the full build infos (`build_info = true`) in `build_info_dir`. A build
     /// without one keeps the files on disk.
-    pub fn insert_compiled_sources(&mut self, build_info_dir: &Path) -> Result<()> {
+    pub fn insert_compiled_sources(&mut self, build_info_dir: &Path) {
         for (build_id, sources) in &mut self.sources_by_id {
             let path = build_info_dir.join(build_id).with_extension("json");
             if !path.exists() {
                 continue;
             }
-            let Some(mut input) = read_json_file::<BuildInfoSources>(&path)?.input else {
-                continue;
+            let mut input = match read_build_info_input::<BuildInfoInput>(&path) {
+                Ok(Some(input)) => input,
+                Ok(None) => continue,
+                Err(error) => {
+                    let _ = sh_warn!("skipping build info {}: {error}", path.display());
+                    continue;
+                }
             };
             for source in sources.values_mut() {
                 if let Some(compiled) = input.sources.remove(&source.path)
@@ -289,7 +295,6 @@ impl ContractSources {
                 }
             }
         }
-        Ok(())
     }
 
     /// Merges given contract sources.
@@ -370,12 +375,7 @@ impl ContractSources {
     }
 }
 
-/// The compiler input sources of a build info. Only full build infos have them.
-#[derive(Deserialize)]
-struct BuildInfoSources {
-    input: Option<BuildInfoInput>,
-}
-
+/// The compiler input of a build info, which only full build infos have.
 #[derive(Deserialize)]
 struct BuildInfoInput {
     sources: Sources,
@@ -416,9 +416,15 @@ mod tests {
                 "test/A.t.sol": { "content": "contract T { A a = A(deploy()); }" },
             }},
         });
-        std::fs::write(dir.path().join("build.json"), build_info.to_string()).unwrap();
+        // The read stops before the output, so a truncated output does not matter.
+        let build_info = build_info.to_string();
+        let build_info =
+            format!(r#"{},"output":{{"contracts":"#, &build_info[..build_info.len() - 1]);
+        std::fs::write(dir.path().join("build.json"), build_info).unwrap();
+        // A malformed build info is skipped.
+        std::fs::write(dir.path().join("other.json"), "{").unwrap();
 
-        sources.insert_compiled_sources(dir.path()).unwrap();
+        sources.insert_compiled_sources(dir.path());
 
         let text =
             |build: &str, id: u32| sources.sources_by_id[build][&id].source.as_str().to_owned();

@@ -1,3 +1,4 @@
+use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
 use itertools::Itertools;
 use std::path::Path;
 
@@ -660,6 +661,66 @@ src/Child.sol:12 in bump  (step 354/440, pc 87, PUSH1, gas 1056769917)
    12 |         number += 1;
 warning: local variables are inferred from the legacy source map and the stack layout of solc's legacy code generator, not from compiler-reported variable locations
 uint256 number = 41 [slot 0x0]
+Exiting debugger.
+
+"#]]);
+}
+
+// A plain build writes build infos without the compiler input and the cache does not track them,
+// so a debug run recompiles to read the test as dynamic test linking rewrote it. The line after
+// the rewritten `new Child()` would otherwise map to the wrong text.
+#[forgetest]
+fn debugger_recompiles_cached_build_without_sources(prj: _, cmd: _) {
+    prj.update_config(|config| config.extra_output = vec![ContractOutputSelection::StorageLayout]);
+    prj.add_source(
+        "Child.sol",
+        r#"
+contract Child {
+    uint256 public number;
+
+    function bump() external {
+        number += 1;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Child.t.sol",
+        r#"
+import {Child} from "../src/Child.sol";
+
+contract ChildTest {
+    function test_child() public {
+        Child child = new Child();
+        child.bump();
+    }
+}
+"#,
+    );
+    cmd.arg("build").assert_success();
+
+    cmd.forge_fuse()
+        .args(["test", "--debug", "--mt", "test_child"])
+        .stdin("break test/Child.t.sol:9\ncontinue\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Child.t.sol:ChildTest
+[PASS] test_child() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+Loaded trace with 435 steps.
+Sources loaded for: ChildTest (0x7fa9385be102ac3eac297483dd6233d62b3e1496), Child (0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f)
+test/Child.t.sol:6  (step 0/434, pc 0, PUSH1, gas 1073679004)
+    6 | contract ChildTest {
+Breakpoint #1 set at test/Child.t.sol:9
+Breakpoint #1 hit at step 284, test/Child.t.sol:9
+test/Child.t.sol:9 in test_child  (step 284/434, pc 198, DUP1, gas 1073566681)
+    9 |         child.bump();
 Exiting debugger.
 
 "#]]);

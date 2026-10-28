@@ -82,7 +82,7 @@ pub(crate) async fn handle_traces(
         let output = compiler.compile(&project)?;
         let mut sources = ContractSources::from_project_output(&output, project.root(), None)?;
         if debug {
-            sources.insert_compiled_sources(&project.paths.build_infos)?;
+            sources.insert_compiled_sources(&project.paths.build_infos);
         }
         (
             Some(
