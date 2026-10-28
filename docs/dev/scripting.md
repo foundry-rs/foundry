@@ -141,7 +141,11 @@ existing attempt.
 ## Pending reconciliation and receipts
 
 Before sending new work, `BundledState::wait_for_pending` checks each hash in `pending`. Sequences
-from a multichain deployment are checked concurrently. A confirmed success removes the hash from
+from a multichain deployment are checked concurrently. Outside `--batch`, `--resume` first checks
+the sequences in order in `CompiledState::resume`; a failing sequence does not stop the others,
+each result is saved, and the errors are returned together, so this later check usually finds
+nothing pending. In multichain runs, broadcast and reconcile errors name their chain, and the
+sequence number when several sequences share it. A confirmed success removes the hash from
 `pending` and appends its receipt. A revert removes the hash, records it in `reverted` rather than
 `receipts`, which consumers treat as successful, and returns an error. A later `--resume` warns
 about each recorded revert, never resubmits it, continues with the remaining operations, and
