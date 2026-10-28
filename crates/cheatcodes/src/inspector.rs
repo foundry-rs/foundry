@@ -25,6 +25,7 @@ use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, hex,
     map::{AddressHashMap, AddressMap, HashMap, HashSet},
 };
+use alloy_rpc_types::AccessList;
 use alloy_sol_types::{SolCall, SolInterface};
 use evm2::{
     EvmTypesHost, ExecutionError, TxResultWithState,
@@ -977,6 +978,10 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Output the in-flight `deployCode` call's constructor returned, which the EVM drops if
     /// depositing it fails, and whether the constructor ran in an isolated call.
     pub deploy_code_output: Option<(Bytes, bool)>,
+
+    /// The `vm.accessList` the running transaction last applied to a call or create. As on
+    /// master, it replaces the transaction's access list when computing its stipend.
+    pub applied_access_list: Option<AccessList>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -1059,6 +1064,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             deploy_code_depth: None,
             deploy_code_create_state_gas: 0,
             deploy_code_output: None,
+            applied_access_list: None,
         }
     }
 
@@ -1427,6 +1433,19 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.origin_override = (origin != tx_origin).then_some(origin);
     }
 
+    /// Applies the configured `vm.accessList` to the running transaction, as master did on every
+    /// call and create. Access lists do not exist before Berlin, and nested transactions, such as
+    /// isolated calls, keep their own.
+    fn apply_access_list(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
+        if let Some(access_list) = &self.core.access_list
+            && !self.in_isolation_context
+            && !self.in_replay
+            && interp.host().spec_id() >= evm2::SpecId::BERLIN
+        {
+            self.applied_access_list = Some(access_list.clone());
+        }
+    }
+
     /// Handles a call, accounting for whether the executor will isolate it as a transaction.
     ///
     /// If `isolate_call` is true, the executor owns the transaction nonce increment when the call
@@ -1448,6 +1467,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         );
         if curr_depth == 0 {
             self.root_call_target = Some(call.destination);
+            self.applied_access_list = None;
         }
 
         // At the root call to test function or script `run()`/`setUp()` functions, we are
@@ -1587,6 +1607,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             let stop = if return_data.reverts { InstrStop::Revert } else { InstrStop::Return };
             return Some(message_result(call, stop, return_data.data));
         }
+
+        self.apply_access_list(interp);
 
         // Apply our broadcast
         if let Some(broadcast) = &mut self.broadcast {
@@ -2682,6 +2704,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         );
         if curr_depth == 0 {
             self.root_call_target = None;
+            self.applied_access_list = None;
         }
 
         // Check if we should intercept this create
@@ -2715,6 +2738,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 self.pranks.insert(curr_depth, used);
             }
         }
+
+        self.apply_access_list(interp);
 
         // Apply our broadcast
         if let Some(broadcast) = self.broadcast.clone()

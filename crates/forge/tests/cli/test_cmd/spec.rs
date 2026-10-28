@@ -2531,6 +2531,59 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     }
 }
 
+// As on master, the reported test gas subtracts the intrinsic gas of the access list
+// `vm.accessList` applied to the test transaction, which its execution never pays.
+#[forgetest]
+fn test_access_list_stipend(prj: _, cmd: _) {
+    prj.add_test(
+        "AccessListStipend.t.sol",
+        r#"
+interface Vm {
+    struct AccessListItem {
+        address target;
+        bytes32[] storageKeys;
+    }
+
+    function accessList(AccessListItem[] calldata access) external;
+}
+
+contract Counter {
+    uint256 public number;
+
+    function increment() external {
+        number++;
+    }
+}
+
+contract AccessListStipendTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function test_access_list_stipend() public {
+        Counter counter = new Counter();
+        Vm.AccessListItem[] memory accessList = new Vm.AccessListItem[](1);
+        accessList[0] = Vm.AccessListItem(address(counter), new bytes32[](1));
+        vm.accessList(accessList);
+        counter.increment();
+    }
+}
+"#,
+    );
+
+    for (isolate, gas) in [("--no-isolate", 124392), ("--isolate", 206120)] {
+        cmd.forge_fuse()
+            .args(["test", "--mc", "AccessListStipendTest", isolate])
+            .with_no_redact()
+            .assert_success()
+            .stdout_eq(format!(
+                "...
+Ran 1 test for test/AccessListStipend.t.sol:AccessListStipendTest
+[PASS] test_access_list_stipend() (gas: {gas})
+...
+"
+            ));
+    }
+}
+
 // A frame that `vm.setEvmVersion` moves the running transaction onto reads the shared fork
 // database with its own empty-account policy, and the caller gets its policy back on return.
 #[forgetest]
