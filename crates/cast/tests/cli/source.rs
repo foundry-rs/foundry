@@ -741,3 +741,18 @@ Error: No contract code found at 0x1111111111111111111111111111111111111111
 
 "#]]);
 }
+
+// tests that splitting the creation code requires the ABI before any RPC call is made
+#[casttest]
+fn creation_code_rpc_only_requires_abi_for_args(cmd: _) {
+    for flag in ["--only-args", "--without-args"] {
+        cmd.cast_fuse()
+            .args(["creation-code", &Address::ZERO.to_string(), "--rpc-only", flag])
+            .args(["--rpc-url", "http://127.0.0.1:1"])
+            .assert_failure()
+            .stderr_eq(str![[r#"
+Error: `--abi-path` is required with `--rpc-only` when using `--only-args` or `--without-args`
+
+"#]]);
+    }
+}

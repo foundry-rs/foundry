@@ -45,6 +45,7 @@ pub struct CreationCodeArgs {
     ///
     /// The deployment block is found by a binary search over historical state, which requires an
     /// archive node. Contracts deployed by other contracts also require `trace_block` support.
+    /// `--only-args` and `--without-args` also require `--abi-path`.
     #[arg(long)]
     rpc_only: bool,
 
@@ -57,6 +58,11 @@ pub struct CreationCodeArgs {
 
 impl CreationCodeArgs {
     pub async fn run(self) -> Result<()> {
+        if self.rpc_only && (self.only_args || self.without_args) && self.abi_path.is_none() {
+            eyre::bail!(
+                "`--abi-path` is required with `--rpc-only` when using `--only-args` or `--without-args`"
+            );
+        }
         let mut config = self.load_config()?;
         let Self { contract, disassemble, without_args, only_args, abi_path, rpc_only, .. } = self;
 
