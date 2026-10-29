@@ -1876,6 +1876,41 @@ async fn monad_fork_uses_monad_execution() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn monad_fork_pending_account_info_reads_local_overrides() {
+    let config = monad_nine_config().with_no_mining(true);
+    let (origin_api, origin_handle) = spawn(config.clone()).await;
+    let address = Address::random();
+    let original = RpcAccountInfo { balance: U256::from(11), nonce: 2, code: bytes!("6001") };
+    origin_api.anvil_set_balance(address, original.balance).await.unwrap();
+    origin_api.anvil_set_nonce(address, U256::from(original.nonce)).await.unwrap();
+    origin_api.anvil_set_code(address, original.code.clone()).await.unwrap();
+    origin_api.mine_one().await.unwrap();
+
+    let (api, handle) = spawn(
+        config
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64))
+            .with_no_storage_caching(true),
+    )
+    .await;
+    let provider = handle.http_provider();
+    let overridden = RpcAccountInfo { balance: U256::from(0x1234), nonce: 7, code: bytes!("6000") };
+    api.anvil_set_balance(address, overridden.balance).await.unwrap();
+    api.anvil_set_nonce(address, U256::from(overridden.nonce)).await.unwrap();
+    api.anvil_set_code(address, overridden.code.clone()).await.unwrap();
+
+    for (block, expected) in [
+        (BlockId::latest(), &overridden),
+        (BlockId::pending(), &overridden),
+        (BlockId::number(1), &original),
+    ] {
+        let account: RpcAccountInfo =
+            provider.client().request("eth_getAccountInfo", (address, block)).await.unwrap();
+        assert_eq!(&account, expected);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn monad_fork_block_number_rollback_to_root() {
     let config = monad_nine_config().with_no_mining(true);
     let (source_api, source) = spawn(config.clone()).await;

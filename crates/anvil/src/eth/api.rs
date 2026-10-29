@@ -2763,6 +2763,7 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<alloy_rpc_types::eth::AccountInfo> {
         node_info!("eth_getAccountInfo");
 
+        let block_number = block_number.map(|block| self.monad_pending_as_latest(block));
         let block_request = self.block_request(block_number).await?;
         if let BlockRequest::Number(number) = block_request
             && let Some(fork) = self.get_fork()
