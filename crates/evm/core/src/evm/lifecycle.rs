@@ -689,6 +689,23 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         }
     }
 
+    /// Returns whether [`Self::remove_prewarm`] would change the lifecycle, not only `state`.
+    pub fn tracks_prewarm(&self, address: &Address) -> bool {
+        self.tx_prewarm.as_ref().is_some_and(|prewarm| prewarm.is_warm(address))
+            || iter::once(&self.forks.local)
+                .chain(self.forks.forks.values().map(|entry| &entry.context))
+                .any(|context| context.warm.contains_key(address))
+    }
+
+    /// Returns whether any context keeps warmth of a persistent account for the running
+    /// transaction, which [`Self::take_persistent_warmth`] would take.
+    pub fn has_persistent_warmth(&self) -> bool {
+        let ForkRegistry { local, forks, persistent, .. } = &self.forks;
+        iter::once(local)
+            .chain(forks.values().map(|entry| &entry.context))
+            .any(|context| context.warm.keys().any(|address| persistent.contains(address)))
+    }
+
     /// Takes the warmth of persistent accounts that contexts kept for the running transaction, so
     /// that a nested transaction, such as an isolated call, resumes them cold in every context as
     /// REVM's fresh journal did. Hand it back with [`Self::restore_persistent_warmth`] when the
@@ -849,9 +866,9 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
     ) -> Evm<'a, F::Types> {
         self.materialize(evm);
         let db = self.forks.active_db();
-        let mut state = evm.state().snapshot().into_state(db.clone_backing());
-        state.commit_transaction();
-        state.clear_transaction_state();
+        // Copy the running state without its journal, so each nested transaction is independent
+        // of how much the enclosing one already did.
+        let state = evm.state().committed_copy(db.clone_backing());
         let ext = ext.unwrap_or_else(|| {
             let mut ext = evm.ext().clone();
             ext.for_next_transaction(tx);

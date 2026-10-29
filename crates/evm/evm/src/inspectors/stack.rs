@@ -1356,7 +1356,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
         let previous_source_fork =
             self.inner.isolated_source_fork.replace((source_fork, fork_epoch));
-        let persistent_warmth = backend.backend_mut().take_persistent_warmth();
+        // Taking warmth needs a mutable backend, which clones a borrowed one, so only take it
+        // when there is any.
+        let persistent_warmth = if backend.backend().lifecycle().has_persistent_warmth() {
+            backend.backend_mut().take_persistent_warmth()
+        } else {
+            Vec::new()
+        };
         child.set_inspector(InspectorStackRefMut {
             cheatcodes: self.cheatcodes.as_deref_mut(),
             inner: &mut *self.inner,
@@ -1366,7 +1372,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // SAFETY: The nested EVM runs over the lifecycle's owned databases.
         let mut child = unsafe { release_inspector(child) };
         self.inner.isolated_source_fork = previous_source_fork;
-        backend.backend_mut().restore_persistent_warmth(persistent_warmth);
+        if !persistent_warmth.is_empty() {
+            backend.backend_mut().restore_persistent_warmth(persistent_warmth);
+        }
         let switch_warmth = self.inner.isolated_switch_warmth.take();
 
         self.inner.exit_inner_context(previous_inner);
@@ -2240,7 +2248,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 .is_some_and(|cheats| cheats.tx_warm_addresses.contains(&recipient))
             && let Some(backend) = self.backend.as_deref_mut()
         {
-            backend.backend_mut().remove_prewarm(state, &recipient);
+            // Only take a mutable backend, which clones a borrowed one, if the lifecycle tracks
+            // the recipient's warmth.
+            if backend.backend().lifecycle().tracks_prewarm(&recipient) {
+                backend.backend_mut().remove_prewarm(state, &recipient);
+            } else {
+                state.prewarm_set_mut().remove(&recipient);
+            }
         }
         // Accounts with arbitrary storage keep their warm slots, and stay warm if they have any.
         let arbitrary = self
