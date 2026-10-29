@@ -38,7 +38,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.8.7"
+version = "1.8.8"
 edition = "2024"
 rust-version = "1.98"
 authors = ["Foundry Contributors"]
@@ -502,6 +502,11 @@ serde_json = { version = "1.0", features = ["arbitrary_precision", "unbounded_de
 shlex = "2"
 similar-asserts = "2.0"
 smolgen = { version = "0.1.1", features = ["build", "gitcl"] }
+soldb-core = "0.4.5"
+soldb-debugger = "0.4.5"
+soldb-ethdebug = "0.4.5"
+soldb-repl = "0.4.5"
+soldb-tui = "0.4.5"
 soldeer-commands = "=0.12.1"
 soldeer-core = { version = "=0.12.1", features = ["serde"] }
 strum = "0.28"

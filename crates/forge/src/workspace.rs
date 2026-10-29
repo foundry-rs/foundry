@@ -92,12 +92,12 @@ pub fn rebase_config_paths(config: &Config, temp_path: &Path) -> Config {
     temp_config.ignored_error_codes_from = config
         .ignored_error_codes_from
         .iter()
-        .map(|(path, codes)| (rebase_project_path(&config.root, temp_path, path), codes.clone()))
+        .map(|(path, codes)| (rebase_source_prefix(&config.root, temp_path, path), codes.clone()))
         .collect();
     temp_config.ignored_file_paths = config
         .ignored_file_paths
         .iter()
-        .map(|path| rebase_project_path(&config.root, temp_path, path))
+        .map(|path| rebase_source_prefix(&config.root, temp_path, path))
         .collect();
 
     if let Some(path) = &config.fuzz.failure_persist_dir {
@@ -142,9 +142,29 @@ pub fn rebase_config_paths(config: &Config, temp_path: &Path) -> Config {
 }
 
 fn rebase_project_path(root: &Path, temp_path: &Path, path: &Path) -> PathBuf {
+    // Preserve workspace library links, but resolve aliases copied into independent files.
+    let lexical = normalize_path(&root.join(path));
+    // Both sides of the containment check must use the resolved spelling of the workspace, such
+    // as `/private/var` for `/var` on macOS.
+    if let Ok(rel) = lexical.strip_prefix(normalize_path(root))
+        && temp_path.join(rel).exists()
+        && !normalize_existing_ancestor(&temp_path.join(rel))
+            .starts_with(normalize_existing_ancestor(temp_path))
+    {
+        return temp_path.join(rel);
+    }
     let resolved = resolve_against_root(root, path);
     let rel = relative_to_root(root, &resolved);
     if rel.is_absolute() { resolved } else { temp_path.join(rel) }
+}
+
+/// Compiler diagnostics name sources relative to the project root, so a relative prefix that
+/// selects them stays valid in the workspace and must stay relative to match.
+fn rebase_source_prefix(root: &Path, temp_path: &Path, path: &Path) -> PathBuf {
+    if path.is_relative() {
+        return path.to_path_buf();
+    }
+    rebase_project_path(root, temp_path, path)
 }
 
 fn rebase_mutable_project_path(config: &Config, temp_path: &Path, path: &Path) -> PathBuf {
@@ -215,7 +235,7 @@ fn rebase_remapping(
 /// that escape the project root.
 ///
 /// `label` and `orig` are only used for error messages.
-fn ensure_within_root(
+pub(crate) fn ensure_within_root(
     allowed_root: &Path,
     candidate: &Path,
     label: &str,
@@ -804,7 +824,7 @@ fn copy_unshared_dir(
 }
 
 /// Creates a symlink at `dst`, preserving the original type even if the target is missing.
-fn symlink_entry(target: &Path, dst: &Path, _file_type: fs::FileType) -> Result<()> {
+pub(crate) fn symlink_entry(target: &Path, dst: &Path, _file_type: fs::FileType) -> Result<()> {
     #[cfg(unix)]
     std::os::unix::fs::symlink(target, dst)?;
     #[cfg(windows)]
@@ -1006,6 +1026,30 @@ mod tests {
         assert_eq!(Path::new(&remapping.path), canonical_root.join("src"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn test_rebase_copied_alias_and_linked_library() {
+        let temp = TempDir::new().unwrap();
+        let root = normalize_existing_ancestor(&temp.path().join("project"));
+        // The workspace is reached through a link, as a temporary directory can be on macOS.
+        let real_workspace = temp.path().join("real-workspace");
+        let workspace = temp.path().join("workspace");
+        fs::create_dir(&real_workspace).unwrap();
+        symlink_dir(&real_workspace, &workspace).unwrap();
+        create_test_dir_structure(&root, &["src/Real.sol", "lib/example/Lib.sol"]);
+        symlink_file("Real.sol", root.join("src/Alias.sol")).unwrap();
+        let config = Config { root: root.clone(), ..Default::default() }.sanitized();
+        copy_project(&config, &workspace).unwrap();
+        assert_eq!(
+            rebase_project_path(&root, &workspace, Path::new("src/Alias.sol")),
+            workspace.join("src/Real.sol")
+        );
+        assert_eq!(
+            rebase_project_path(&root, &workspace, Path::new("lib/example/Lib.sol")),
+            workspace.join("lib/example/Lib.sol")
+        );
+    }
+
     #[test]
     fn test_rebase_config_paths_rebases_materialized_project_paths() {
         let temp = TempDir::new().unwrap();
@@ -1160,6 +1204,32 @@ mod tests {
             contracts.contains_key(&workspace.join("src").join("Target.sol").display().to_string())
         );
         assert!(contracts.contains_key(&external.join("External.sol").display().to_string()));
+    }
+
+    // `ignored_warnings_from = ["src/test"]` must still match the root-relative source names of
+    // the workspace, or a project with `deny = "warnings"` does not compile there.
+    #[test]
+    fn test_rebase_config_paths_keeps_relative_ignored_warning_paths() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = normalize_existing_ancestor(&temp.path().join("workspace"));
+        let config = Config {
+            root: root.clone(),
+            ignored_error_codes_from: vec![(
+                PathBuf::from("src/test"),
+                vec![foundry_config::SolidityErrorCode::UnusedLocalVariable],
+            )],
+            ignored_file_paths: vec![PathBuf::from("src/test"), root.join("src/Ignored.sol")],
+            ..Default::default()
+        };
+
+        let temp_config = rebase_config_paths(&config, &workspace);
+
+        assert_eq!(temp_config.ignored_error_codes_from[0].0, PathBuf::from("src/test"));
+        assert_eq!(
+            temp_config.ignored_file_paths,
+            vec![PathBuf::from("src/test"), workspace.join("src/Ignored.sol")]
+        );
     }
 
     #[test]

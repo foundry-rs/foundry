@@ -20,8 +20,9 @@ use foundry_common::{
     fmt::{format_token, format_token_raw},
     provider::ProviderBuilder,
 };
+use foundry_compilers::multi::MultiCompilerLanguage;
 use foundry_config::{Chain, NamedChain};
-use foundry_debugger::Debugger;
+use foundry_debugger::DebuggerBuilder;
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::decode_console_logs,
@@ -598,29 +599,23 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
     }
 
     pub fn run_debugger(self) -> Result<()> {
-        self.create_debugger().try_run_tui()?;
-        Ok(())
+        self.create_debugger()?.run(None)
     }
 
     pub fn dump_debugger(self, path: &Path) -> Result<()> {
-        self.create_debugger().dump_to_file(path)?;
-        Ok(())
+        self.create_debugger()?.run(Some(path))
     }
 
-    fn create_debugger(self) -> Debugger {
-        Debugger::builder()
-            .traces(
-                self.execution_result
-                    .traces
-                    .into_iter()
-                    .filter(|(t, _)| t.is_execution())
-                    .collect(),
-            )
+    fn create_debugger(self) -> Result<DebuggerBuilder> {
+        let mut sources = self.build_data.sources;
+        sources.insert_compiled_sources(
+            &self.script_config.config.project_paths::<MultiCompilerLanguage>().build_infos,
+        );
+        Ok(DebuggerBuilder::new()
+            .traces(self.execution_result.traces)
             .decoder(&self.execution_artifacts.decoder)
             .known_contracts(&self.build_data.known_contracts)
-            .sources(self.build_data.sources)
-            .breakpoints(self.execution_result.breakpoints)
-            .layout(self.args.debug_layout.unwrap_or_default())
-            .build()
+            .sources(sources)
+            .breakpoints(self.execution_result.breakpoints))
     }
 }
