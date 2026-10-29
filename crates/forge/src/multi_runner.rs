@@ -322,8 +322,14 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         } else {
             db.clone()
         };
-        let executor =
-            tcfg.executor(self.known_contracts.clone(), self.analysis.clone(), artifact_id, db);
+        // Built from the shared config, as before: the runner applies the contract's config before
+        // `setUp` and keeps the shared trace and live-log settings.
+        let executor = self.tcfg.executor(
+            self.known_contracts.clone(),
+            self.analysis.clone(),
+            artifact_id,
+            db,
+        );
         let runner =
             ContractRunner::new(&identifier, contract, executor, tcfg, span, self, context);
         let r = runner.run_tests(filter);
