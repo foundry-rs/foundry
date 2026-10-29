@@ -6508,7 +6508,24 @@ where
                 });
                 let state_root = proof_state.as_ref().map_or_else(
                     || db.maybe_state_root().unwrap_or_default(),
-                    |state| state_root(&state.cache.accounts),
+                    |state| {
+                        let proof_root = Arc::clone(
+                            &self
+                                .blockchain
+                                .storage
+                                .read()
+                                .tempo
+                                .as_ref()
+                                .expect("Tempo chain is initialized")
+                                .proof_root,
+                        );
+                        let (cache, previous) = &mut *proof_root.lock();
+                        // Rehash only the paths that changed since the previous seal.
+                        cache.record_diff(&state.cache.accounts, previous);
+                        let root = cache.root(&state.cache.accounts);
+                        previous.clone_from(&state.cache.accounts);
+                        root
+                    },
                 );
                 match &mut block_info.block.header {
                     FoundryHeader::Tempo(header) => header.inner.state_root = state_root,
