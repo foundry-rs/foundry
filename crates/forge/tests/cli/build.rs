@@ -1407,6 +1407,50 @@ with remappings:
 "#]]);
 }
 
+// An import of a package in `node_modules` fails when `libs` does not include `node_modules`, as
+// in the `forge init` template. The error says how to fix it, and both suggestions work.
+#[forgetest_init]
+fn node_modules_import_hint(prj: _, cmd: _) {
+    let package = prj.root().join("node_modules/@openzeppelin/contracts/token/ERC20");
+    std::fs::create_dir_all(&package).unwrap();
+    std::fs::write(package.join("ERC20.sol"), "contract ERC20 {}").unwrap();
+    prj.add_source(
+        "Token.sol",
+        r#"
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+
+contract Token is ERC20 {}
+   "#,
+    );
+    prj.update_config(|config| config.libs = vec!["lib".into()]);
+
+    cmd.args(["build"]).assert_failure().stderr_eq(str![[r#"
+...
+help: `@openzeppelin/contracts` is installed in `node_modules`, which is not in `libs`. Add `node_modules` to `libs` in foundry.toml, or add the remapping `@openzeppelin/=node_modules/@openzeppelin/`.
+
+"#]]);
+
+    prj.update_config(|config| config.libs = vec!["lib".into(), "node_modules".into()]);
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    // Without auto-detected remappings, only the remapping works.
+    prj.update_config(|config| {
+        config.libs = vec!["lib".into()];
+        config.auto_detect_remappings = false;
+        config.remappings =
+            ["forge-std/=lib/forge-std/src/", "@openzeppelin/=node_modules/@openzeppelin/"]
+                .into_iter()
+                .map(|remapping| {
+                    remapping
+                        .parse::<foundry_compilers::artifacts::remappings::Remapping>()
+                        .unwrap()
+                        .into()
+                })
+                .collect();
+    });
+    cmd.forge_fuse().args(["build"]).assert_success();
+}
+
 // <https://github.com/foundry-rs/foundry/issues/12458>
 // <https://github.com/foundry-rs/foundry/issues/12496>
 #[forgetest]

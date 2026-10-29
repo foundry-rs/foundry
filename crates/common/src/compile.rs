@@ -62,6 +62,9 @@ pub struct ProjectCompiler {
     /// The root of the project.
     project_root: PathBuf,
 
+    /// The project's library directories.
+    project_libs: Vec<PathBuf>,
+
     /// Whether to also print contract names.
     print_names: Option<bool>,
 
@@ -122,6 +125,7 @@ impl ProjectCompiler {
     pub fn new() -> Self {
         Self {
             project_root: PathBuf::new(),
+            project_libs: Vec::new(),
             print_names: None,
             print_sizes: None,
             quiet: Some(crate::shell::is_quiet()),
@@ -268,6 +272,7 @@ impl ProjectCompiler {
         DynamicTestLinkingPreprocessor: Preprocessor<C>,
     {
         self.project_root = project.root().to_path_buf();
+        self.project_libs = project.paths.libraries.clone();
 
         // TODO: Avoid using std::process::exit(0).
         // Replacing this with a return (e.g., Ok(ProjectCompileOutput::default())) would be more
@@ -380,6 +385,13 @@ impl ProjectCompiler {
         )?;
 
         if bail && output.has_compiler_errors() {
+            if let Some(hint) = node_modules_hint(
+                output.output().errors.as_slice(),
+                &self.project_root,
+                &self.project_libs,
+            ) {
+                eyre::bail!("{output}\n{hint}");
+            }
             eyre::bail!("{output}");
         }
 
@@ -1136,6 +1148,47 @@ fn push_linked_libraries_error<C: Compiler<CompilerContract = Contract>>(
     } else if let Some(errors) = errors.downcast_mut::<Vec<MultiCompilerError>>() {
         errors.push(MultiCompilerError::Solc(error));
     }
+}
+
+/// Returns a hint when solc could not find an import of a package installed in `node_modules`
+/// and `node_modules` is not in `libs`.
+fn node_modules_hint<E: CompilationError>(
+    errors: &[E],
+    root: &Path,
+    libs: &[PathBuf],
+) -> Option<String> {
+    let node_modules = root.join("node_modules");
+    if libs.iter().any(|lib| root.join(lib) == node_modules) {
+        return None;
+    }
+    errors.iter().filter(|error| error.error_code() == Some(6275)).find_map(|error| {
+        let error = error as &dyn Any;
+        let error = if let Some(error) = error.downcast_ref::<SolcError>() {
+            error
+        } else if let Some(MultiCompilerError::Solc(error)) =
+            error.downcast_ref::<MultiCompilerError>()
+        {
+            error
+        } else {
+            return None;
+        };
+        // `Source "@scope/package/path/File.sol" not found: ...`
+        let import = error.message.strip_prefix("Source \"")?.split('"').next()?;
+        let mut segments = import.split('/');
+        let first = segments.next()?;
+        let package = if first.starts_with('@') {
+            format!("{first}/{}", segments.next()?)
+        } else {
+            first.to_string()
+        };
+        node_modules.join(&package).is_dir().then(|| {
+            format!(
+                "help: `{package}` is installed in `node_modules`, which is not in `libs`. Add \
+                 `node_modules` to `libs` in foundry.toml, or add the remapping \
+                 `{first}/=node_modules/{first}/`."
+            )
+        })
+    })
 }
 
 /// Recognizes only solc code-generation failures that DTL's source rewrites can introduce.
