@@ -667,7 +667,7 @@ async fn cast_run_warns_on_skipped_system_transactions(cmd: _) {
         let [.., system_tx, target] = tx_hashes[..] else { unreachable!() };
         let warning = if warns {
             format!(
-                "Warning: the replay skips system transactions before the target, so their state changes are missing: [{system_tx}]; `--replay-system-txes` replays them\n"
+                "Warning: the replay skips system transactions before the target, so their state changes are missing: [{system_tx}]; `--replay-system-txes` attempts local replay where supported; `--debug-trace-transaction` renders the node's own trace instead\n"
             )
         } else {
             String::new()

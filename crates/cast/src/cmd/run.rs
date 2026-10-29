@@ -110,11 +110,12 @@ pub struct RunArgs {
     #[arg(long)]
     no_bal: bool,
 
-    /// Whether to replay system transactions.
+    /// Whether to attempt local replay of system transactions.
     ///
-    /// Without this flag, a block replay leaves out system transactions mined before the target
-    /// and warns about each one, except a system transaction that opens the block. A system
-    /// transaction can only be the target with this flag.
+    /// Without this flag, ordinary block replay leaves out system transactions mined before the
+    /// target and warns about each one, except a system transaction that opens the block. Replay
+    /// support depends on the selected network. Canonical Monad system transactions are replayed
+    /// regardless of this flag.
     #[arg(long, alias = "sys")]
     replay_system_txes: bool,
 
@@ -828,7 +829,7 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
                 sh_warn!(
                     "the replay skips system transactions before the target, so their state \
                      changes are missing: {skipped_system_txes:?}; `--replay-system-txes` \
-                     replays them"
+                     attempts local replay where supported; {REMOTE_TRACE_HINT}"
                 )?;
             }
         }
