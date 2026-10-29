@@ -1216,8 +1216,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Abi(AbiSubcommand::FourByteEvent { topic }) => {
             let topic = stdin::unwrap_line(topic)?;
             let local = SignaturesIdentifier::new(true)?.identify_event(topic).await;
+            // Drop cached signatures whose parsed form hashes to another topic.
             let sigs = with_local_first(
-                local.map(|event| event.signature()),
+                local.filter(|event| event.selector() == topic).map(|event| event.signature()),
                 decode_event_topic(topic).await,
             )?;
             if sigs.is_empty() {
@@ -1703,9 +1704,14 @@ fn encode_event_topic_preimage(value: &DynSolValue, out: &mut Vec<u8>) {
 }
 
 /// Returns the signature of a function selector from the local signatures cache, which
-/// `forge build` and trace decoding populate.
+/// `forge build` and trace decoding populate, only if its parsed form hashes back to
+/// `selector`.
 async fn local_function_signature(selector: Selector) -> Result<Option<String>> {
-    Ok(SignaturesIdentifier::new(true)?.identify_function(selector).await.map(|f| f.signature()))
+    Ok(SignaturesIdentifier::new(true)?
+        .identify_function(selector)
+        .await
+        .filter(|f| f.selector() == selector)
+        .map(|f| f.signature()))
 }
 
 /// Lists a signature from the local cache first, followed by the other signatures found remotely.

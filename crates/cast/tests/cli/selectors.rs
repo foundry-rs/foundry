@@ -298,7 +298,8 @@ MyUniqueEventWithinLocalProject(uint256,address)
 }
 
 // `cast 4byte`, `4byte-calldata` and `4byte-event` find signatures in the local cache that
-// `forge build` populates, like `decode-error` and `decode-event`.
+// `forge build` populates, like `decode-error` and `decode-event`. Cached library signatures that
+// do not hash back to their selector once parsed, such as `f(LocalFourByteLib.E)`, are ignored.
 #[forgetest_init]
 fn flaky_fourbyte_with_cache(prj: _, cmd: _) {
     prj.add_source(
@@ -310,6 +311,12 @@ contract LocalFourByteContract {
     function myUniqueFunctionWithinLocalProject(uint256 a) external {
         emit MyUniqueFourByteEventWithinLocalProject(a);
     }
+}
+
+library LocalFourByteLib {
+    enum E { A }
+
+    function myUniqueLibFunctionWithinLocalProject(E) external pure {}
 }
    "#,
     );
@@ -335,6 +342,10 @@ myUniqueFunctionWithinLocalProject(uint256)
         .assert_success()
         .stdout_eq(str![[r#"
 MyUniqueFourByteEventWithinLocalProject(uint256)
+
+"#]]);
+    cmd.cast_fuse().args(["4byte", "0x36e32338"]).assert_failure().stderr_eq(str![[r#"
+Error: No matching function signatures found for selector `0x36e32338`
 
 "#]]);
 }
