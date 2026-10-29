@@ -2891,16 +2891,17 @@ contract SymbolicExpectRevertUnmet is Test {
         assert(target.value() == x);
     }
 
-    function checkWrongReason(uint256 x) public {
-        vm.expectRevert(bytes("other"));
-        (bool ok,) = address(target).call(abi.encodeCall(UnmetTarget.f, (x)));
-        assert(!ok);
-    }
-
-    function checkUnwrappedReason(uint256 x) public {
-        vm.expectRevert(bytes("nope"));
+    function checkExactReason(uint256 x) public {
+        vm.expectRevert(abi.encodeWithSignature("Error(string)", "nope"));
         (bool ok,) = address(target).call(abi.encodeCall(UnmetTarget.f, (x)));
         assert(ok == (x != 12345));
+    }
+
+    function checkWrongReasonPayload() public {
+        vm.expectRevert(bytes("other"));
+        (bool ok, bytes memory data) = address(target).call(abi.encodeCall(UnmetTarget.f, (0)));
+        assert(!ok);
+        assert(data.length == 100);
     }
 
     function checkUnmetCreate() public {
@@ -2929,12 +2930,12 @@ contract SymbolicExpectRevertUnmet is Test {
 ...
 Ran 6 tests for test/SymbolicExpectRevertUnmet.t.sol:SymbolicExpectRevertUnmet
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectRevert count 0] checkCountZero(uint256) ([METRICS])
+[PASS] checkExactReason(uint256) ([METRICS])
 [PASS] checkTryCatch(uint256) ([METRICS])
 [PASS] checkUnmetCreate() ([METRICS])
 [PASS] checkUnmetKeepsState(uint256) ([METRICS])
-[PASS] checkUnwrappedReason(uint256) ([METRICS])
-[PASS] checkWrongReason(uint256) ([METRICS])
-Suite result: FAILED. 5 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkWrongReasonPayload() ([METRICS])
+Suite result: FAILED. 4 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

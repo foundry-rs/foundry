@@ -181,51 +181,35 @@ impl SymbolicExecutor {
         }
 
         if let Some(mut expected) = parent.expected_revert.clone() {
-            // Like Forge, an unmet `vm.expectRevert` turns this call into a `CheatcodeError` revert
-            // the caller can catch, and a successful call keeps its state. If the match can't be
-            // decided exactly, the path fails.
-            let concrete_match = match outcome.status {
-                CallStatus::Success if !executor.internal_expect_revert => Some(false),
-                CallStatus::Revert => {
-                    expected.concrete_match(&mut self.cx, &outcome.state.frame.return_data)
-                }
-                _ => None,
-            };
-            let matched = match concrete_match {
-                Some(false) => {
-                    parent.expected_revert = None;
-                    let mut child = outcome.state;
-                    if matches!(outcome.status, CallStatus::Success) {
-                        return Ok(JoinedCallOutcome::Success {
-                            parent,
-                            child,
-                            unmet_expected_revert: true,
-                        });
-                    }
-                    child.frame.return_data =
-                        error_string_return_data(&mut self.cx, "Error != expected error");
-                    return Ok(JoinedCallOutcome::Revert { parent, child });
-                }
-                Some(true) => true,
-                None => {
-                    !matches!(outcome.status, CallStatus::Success)
-                        && self.expected_revert_matches(
-                            &mut parent,
-                            &expected,
-                            reverter,
-                            &outcome.state.frame.return_data,
-                        )?
-                }
-            };
-            if !matched {
-                return Ok(JoinedCallOutcome::Failure(parent));
-            }
-            if expected.consume_one() {
+            // Like Forge, a call that succeeds under `vm.expectRevert` keeps its state, but the
+            // caller sees a `CheatcodeError` revert. A revert with the wrong reason fails the path.
+            if matches!(outcome.status, CallStatus::Success) && !executor.internal_expect_revert {
                 parent.expected_revert = None;
-            } else {
-                parent.expected_revert = Some(expected);
+                return Ok(JoinedCallOutcome::Success {
+                    parent,
+                    child: outcome.state,
+                    unmet_expected_revert: true,
+                });
             }
-            return Ok(JoinedCallOutcome::ExpectedRevert { parent, child: outcome.state });
+            match outcome.status {
+                CallStatus::Success => return Ok(JoinedCallOutcome::Failure(parent)),
+                CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {
+                    if !self.expected_revert_matches(
+                        &mut parent,
+                        &expected,
+                        reverter,
+                        &outcome.state.frame.return_data,
+                    )? {
+                        return Ok(JoinedCallOutcome::Failure(parent));
+                    }
+                    if expected.consume_one() {
+                        parent.expected_revert = None;
+                    } else {
+                        parent.expected_revert = Some(expected);
+                    }
+                    return Ok(JoinedCallOutcome::ExpectedRevert { parent, child: outcome.state });
+                }
+            }
         }
 
         Ok(match outcome.status {

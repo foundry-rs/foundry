@@ -187,13 +187,6 @@ impl SymbolicExecutor {
                 }
                 JoinedCallOutcome::Revert { mut parent, child } => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
-                    // Forge sees empty revert data for a rejected 0xEF runtime from CREATE but
-                    // `0xef` from CREATE2. That is not modeled, so a reason mismatch here stays a
-                    // failure.
-                    if rejected_runtime && state.expected_revert.is_some() {
-                        *state = parent;
-                        return Ok(StepOutcome::Failure);
-                    }
                     parent.world = failure_world.clone();
                     if !rejected_runtime {
                         parent.return_data = child.frame.return_data;

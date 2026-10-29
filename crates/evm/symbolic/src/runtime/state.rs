@@ -1082,32 +1082,6 @@ impl ExpectedRevert {
         }
         Some(SymBoolExpr::and(cx, conditions))
     }
-
-    /// Decides with Forge's rule whether concrete revert data satisfies this expectation.
-    ///
-    /// Returns `None` unless the decision is exact: no expected reverter, and concrete expected
-    /// and actual data. Forge matches the raw data or the message unwrapped from `Error(string)`
-    /// or `CheatcodeError(string)`.
-    pub(crate) fn concrete_match(
-        &self,
-        cx: &mut SymCx,
-        return_data: &SymReturnData,
-    ) -> Option<bool> {
-        if self.reverter.is_some()
-            || return_data.len_word.as_const()? != U256::from(return_data.len())
-        {
-            return None;
-        }
-        let expected = match &self.data {
-            ExpectedRevertData::Any => return Some(true),
-            ExpectedRevertData::Prefix(_) => return None,
-            ExpectedRevertData::Exact(expected) => {
-                expected.concrete_bytes(cx, "symbolic vm.expectRevert data").ok()?
-            }
-        };
-        let actual = return_data.read_concrete(cx, "symbolic expected revert data").ok()?;
-        Some(actual == expected || unwrap_revert_message(&actual).is_some_and(|m| m == expected))
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
