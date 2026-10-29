@@ -700,6 +700,10 @@ contract ChildTest {
 "#,
     );
     cmd.arg("build").assert_success();
+    // The rebuild keeps the persisted fuzz failures.
+    let persisted = prj.root().join("cache/fuzz/failures");
+    std::fs::create_dir_all(persisted.parent().unwrap()).unwrap();
+    std::fs::write(&persisted, "").unwrap();
 
     cmd.forge_fuse()
         .args(["test", "--debug", "--mt", "test_child"])
@@ -726,6 +730,7 @@ test/Child.t.sol:9 in test_child  (step 284/434, pc 198, DUP1, gas 1073566681)
 Exiting debugger.
 
 "#]]);
+    assert!(persisted.exists());
 }
 
 // The fuzz campaign runs without the debug recorder, and the counterexample runs again with it.

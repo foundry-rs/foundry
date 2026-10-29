@@ -2168,18 +2168,28 @@ impl Config {
     ///
     /// The compiler cache does not track build infos, so a cached build keeps the ones it wrote
     /// without the compiler input. Dynamic test linking compiles rewritten sources that only the
-    /// input holds, so the build is forced then.
+    /// input holds, so those build infos and the compiler cache are removed then, and the next
+    /// build compiles again.
     pub fn enable_debug_build_info(&mut self) {
         if self.build_info {
             return;
         }
         self.build_info = true;
         self.build_info_without_ast = true;
-        if self.dynamic_test_linking && !self.force {
-            let dir = self.project_paths::<MultiCompilerLanguage>().build_infos;
-            self.force = fs::read_dir(dir).into_iter().flatten().flatten().any(|entry| {
-                !matches!(read_build_info_input::<de::IgnoredAny>(&entry.path()), Ok(Some(_)))
-            });
+        if self.dynamic_test_linking {
+            let paths = self.project_paths::<MultiCompilerLanguage>();
+            let mut stale = false;
+            for entry in fs::read_dir(&paths.build_infos).into_iter().flatten().flatten() {
+                let path = entry.path();
+                if path.extension().is_some_and(|extension| extension == "json")
+                    && matches!(read_build_info_input::<Present>(&path), Ok(None))
+                {
+                    stale |= fs::remove_file(&path).is_ok();
+                }
+            }
+            if stale {
+                let _ = fs::remove_file(&paths.cache);
+            }
         }
     }
 

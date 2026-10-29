@@ -367,6 +367,16 @@ impl<'de, T: Deserialize<'de>> Visitor<'de> for BuildInfoInput<'_, T> {
     }
 }
 
+/// A value that is there, deserialized without reading it. [`read_build_info_input`] stops after
+/// the input, so `read_build_info_input::<Present>` only checks that a build info has one.
+pub(crate) struct Present;
+
+impl<'de> Deserialize<'de> for Present {
+    fn deserialize<D: Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self)
+    }
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::{FoundryTomlDir, foundry_toml_dir_entries, foundry_toml_dirs};
