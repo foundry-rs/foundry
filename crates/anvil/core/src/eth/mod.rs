@@ -942,6 +942,32 @@ pub enum EthRequest {
         #[serde(deserialize_with = "deserialize_number")]
         U256,
     ),
+
+    /// Returns a Tempo finalization certificate and its native block.
+    #[serde(rename = "consensus_getFinalization", with = "sequence")]
+    ConsensusGetFinalization(TempoConsensusQuery),
+
+    /// Returns the latest local Tempo consensus state.
+    #[serde(rename = "consensus_getLatest", with = "empty_params")]
+    ConsensusGetLatest(()),
+
+    /// Returns the public development consensus identity (Tempo-only).
+    #[serde(rename = "anvil_tempoConsensusIdentity", with = "empty_params")]
+    TempoConsensusIdentity(()),
+
+    /// Schedules a new development consensus identity (Tempo-only).
+    #[serde(rename = "anvil_tempoRotateConsensusIdentity", with = "empty_params")]
+    TempoRotateConsensusIdentity(()),
+}
+
+/// Native Tempo consensus selector: `"latest"` or `{"height": N}` with a numeric height.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TempoConsensusQuery {
+    /// The latest locally certified block.
+    Latest,
+    /// A specific block height.
+    Height(u64),
 }
 
 /// Represents ethereum JSON-RPC API
@@ -2358,5 +2384,32 @@ true}]}"#;
         "#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn tempo_consensus_requests() {
+        for request in [
+            r#"{"method":"consensus_getFinalization","params":["latest"]}"#,
+            r#"{"method":"consensus_getFinalization","params":[{"height":0}]}"#,
+            r#"{"method":"consensus_getFinalization","params":[{"height":18446744073709551615}]}"#,
+            r#"{"method":"consensus_getLatest","params":[]}"#,
+            r#"{"method":"anvil_tempoConsensusIdentity","params":[]}"#,
+            r#"{"method":"anvil_tempoRotateConsensusIdentity","params":[]}"#,
+        ] {
+            serde_json::from_str::<EthRequest>(request).unwrap();
+        }
+        for request in [
+            r#"{"method":"consensus_getFinalization","params":["Latest"]}"#,
+            r#"{"method":"consensus_getFinalization","params":["pending"]}"#,
+            r#"{"method":"consensus_getFinalization","params":[{"height":"0x1"}]}"#,
+            r#"{"method":"consensus_getFinalization","params":[{"height":-1}]}"#,
+            r#"{"method":"consensus_getFinalization","params":[{"height":18446744073709551616}]}"#,
+            r#"{"method":"consensus_getFinalization","params":[]}"#,
+            r#"{"method":"consensus_getFinalization","params":["latest",1]}"#,
+            r#"{"method":"consensus_getLatest","params":[1]}"#,
+            r#"{"method":"anvil_tempoRotateConsensusIdentity","params":[1]}"#,
+        ] {
+            assert!(serde_json::from_str::<EthRequest>(request).is_err(), "{request}");
+        }
     }
 }

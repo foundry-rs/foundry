@@ -635,7 +635,7 @@ mod tests {
         let provider = SourcifyVerificationProvider::default();
         let request = provider.prepare_verify_request(&args, &context).await.unwrap();
 
-        assert_eq!(request.compiler_version, "0.8.35+commit.47b9dedd");
+        assert_eq!(request.compiler_version, "0.8.38+commit.1835d247");
         assert_eq!(request.contract_identifier, "src/Counter.sol:Counter");
         assert!(request.creation_transaction_hash.is_none());
 

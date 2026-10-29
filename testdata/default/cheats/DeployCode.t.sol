@@ -153,6 +153,35 @@ contract DeployCodeTest is Test {
             assertEq(reason, "");
         }
     }
+
+    function testDeployCodeChargesCreateGas() public {
+        uint256 gasBefore = gasleft();
+        vm.deployCode("cheats/DeployCode.t.sol:TestContract");
+        assertGt(gasBefore - gasleft(), 32000);
+
+        gasBefore = gasleft();
+        try vm.deployCode("cheats/DeployCode.t.sol:RevertingConstructor") {
+            revert("expected constructor revert");
+        } catch {}
+        assertGt(gasBefore - gasleft(), 32000);
+
+        // An exceptional halt consumes the gas forwarded to the constructor.
+        gasBefore = gasleft();
+        try vm.deployCode("cheats/DeployCode.t.sol:HaltingConstructor") {
+            revert("expected constructor halt");
+        } catch {}
+        assertGt(gasBefore - gasleft(), gasBefore / 2);
+    }
+
+    function testDeployCodeOutOfGas() public {
+        try this.deployTestContract{gas: 30000}() {
+            revert("expected out of gas");
+        } catch {}
+    }
+
+    function deployTestContract() external {
+        vm.deployCode("cheats/DeployCode.t.sol:TestContract");
+    }
 }
 
 /// forge-config: default.isolate = false

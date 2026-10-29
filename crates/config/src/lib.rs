@@ -247,6 +247,12 @@ pub struct Config {
     pub cache_path: PathBuf,
     /// Whether to dynamically link tests.
     pub dynamic_test_linking: bool,
+    /// Whether compiled contracts may depend on externally linked Solidity libraries.
+    ///
+    /// Defaults to `true`. Internal libraries and dynamic test linking remain available when
+    /// disabled. Configured library addresses are withheld from solc so actual dependencies
+    /// remain visible in its link references.
+    pub allow_linked_libraries: bool,
     /// Where the gas snapshots are stored.
     pub snapshots: PathBuf,
     /// Whether to check for differences against previously stored gas snapshots.
@@ -526,6 +532,15 @@ pub struct Config {
     /// change forks already created by `setUp`.
     #[serde(default)]
     pub no_fork_bal: bool,
+    /// Prefetches a new fork block's remote cache from the keys of an older cached block.
+    ///
+    /// Defaults to `false`. When a fork starts on a block with an empty disk cache, the accounts
+    /// and storage slots in the cache of the newest older block on the same chain are fetched
+    /// again at the new block in the background. This helps forks of `latest`, which start
+    /// cold on each new head. Values come from the fork block and never replace cached values,
+    /// so results do not change; unused keys cost extra RPC requests. Requires storage caching.
+    #[serde(default)]
+    pub fork_prefetch: bool,
     /// Disables rate limiting entirely. This overrides any settings made in
     /// `compute_units_per_second`
     pub no_rpc_rate_limit: bool,
@@ -1423,13 +1438,22 @@ impl Config {
         // Strip "./" prefix for consistent path matching
         let parse_path = |path: &PathBuf| path.strip_prefix("./").unwrap_or(path).to_path_buf();
 
+        // Solar warns on every build that its code generation is experimental. Configuring Solar
+        // already chose that, so the notice is not a project warning, including under `deny`.
+        let solar_codes = self
+            .solc_version()
+            .is_some_and(|version| version.build.as_str().contains("solar"))
+            .then_some(2264);
+
         let mut builder = ProjectBuilder::<C>::default()
             .artifacts(self.configured_artifacts_handler())
             .additional_settings(self.additional_settings(&settings))
             .restrictions(self.restrictions(&paths)?)
             .settings(settings)
             .paths(paths)
-            .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
+            .ignore_error_codes(
+                self.ignored_error_codes.iter().copied().map(Into::into).chain(solar_codes),
+            )
             .ignore_error_codes_from(self.ignored_error_codes_from.iter().map(|(path, codes)| {
                 (parse_path(path), codes.iter().copied().map(Into::into).collect())
             }))
@@ -2068,7 +2092,7 @@ impl Config {
         Libraries::parse(&self.libraries)
     }
 
-    /// Returns all libraries with applied remappings. Same as `self.solc_settings()?.libraries`.
+    /// Returns all configured libraries with applied remappings.
     pub fn libraries_with_remappings(&self) -> Result<Libraries, SolcError> {
         let paths: ProjectPathsConfig = self.project_paths();
         Ok(self.parsed_libraries()?.apply(|libs| paths.apply_lib_remappings(libs)))
@@ -2089,8 +2113,15 @@ impl Config {
             model_checker_settings.targets = Some(vec![ModelCheckerTarget::Assert]);
         }
 
+        // Keep configured addresses out of solc's input when linking is forbidden. Otherwise
+        // solc consumes the link references, making actual dependencies invisible to the check.
+        let mut libraries = self.libraries_with_remappings()?;
+        if !self.allow_linked_libraries {
+            libraries.libs.clear();
+        }
+
         let mut settings = Settings {
-            libraries: self.libraries_with_remappings()?,
+            libraries,
             optimizer: self.optimizer(),
             evm_version: Some(self.evm_version),
             metadata: Some(SettingsMetadata {
@@ -3047,6 +3078,7 @@ impl Default for Config {
             libs: vec!["lib".into()],
             cache: true,
             dynamic_test_linking: true,
+            allow_linked_libraries: true,
             cache_path: "cache".into(),
             broadcast: "broadcast".into(),
             snapshots: "snapshots".into(),
@@ -3148,6 +3180,7 @@ impl Default for Config {
             etherscan: Default::default(),
             no_storage_caching: false,
             no_fork_bal: false,
+            fork_prefetch: false,
             no_rpc_rate_limit: false,
             use_literal_content: false,
             bytecode_hash: BytecodeHash::Ipfs,
@@ -3603,6 +3636,31 @@ mod tests {
             let config = Config::load().unwrap();
             assert!(!config.no_fork_bal);
             assert!(config.no_storage_caching);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_fork_prefetch_config() {
+        figment::Jail::expect_with(|jail| {
+            assert!(!Config::load().unwrap().fork_prefetch);
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [profile.default]
+                fork_prefetch = true
+
+                [profile.ci]
+                fork_prefetch = false
+                ",
+            )?;
+            assert!(Config::load().unwrap().fork_prefetch);
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            assert!(!Config::load().unwrap().fork_prefetch);
+            jail.set_env("FOUNDRY_FORK_PREFETCH", "true");
+            assert!(Config::load().unwrap().fork_prefetch);
+            jail.set_env("FOUNDRY_FORK_PREFETCH", "invalid");
+            assert!(Config::load().is_err());
             Ok(())
         });
     }
@@ -4802,6 +4860,7 @@ mod tests {
                 names = false
                 no_storage_caching = false
                 no_fork_bal = false
+                fork_prefetch = false
                 no_rpc_rate_limit = false
                 offline = false
                 optimizer = true
@@ -7626,6 +7685,31 @@ mod tests {
     }
 
     #[test]
+    fn test_inheritance_from_profile_name_hints_at_default() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    optimizer_runs = 200
+
+                    [profile.ci]
+                    extends = "default"
+                    "#,
+            )?;
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+
+            let err_msg = Config::load().unwrap_err().to_string();
+            assert!(
+                err_msg.contains("every profile already inherits from `[profile.default]`"),
+                "Error message: {err_msg}"
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_complex_inheritance_merging() {
         figment::Jail::expect_with(|jail| {
             // Create a comprehensive base config
@@ -9706,5 +9790,38 @@ mod tests {
         assert_eq!(restriction.restrictions.solc.via_ir, Some(true));
         assert_eq!(fs::read_to_string(artifact).unwrap(), "existing artifact");
         assert_eq!(fs::read_to_string(cache).unwrap(), "existing cache");
+    }
+
+    #[test]
+    fn linked_library_policy_settings() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                libraries = ["src/Lib.sol:Lib:0x0000000000000000000000000000000000000001"]
+                [profile.ci]
+                allow_linked_libraries = false
+            "#,
+            )?;
+            let config = Config::load_with_root(jail.directory()).unwrap();
+            assert!(config.allow_linked_libraries);
+            assert!(!config.solc_settings().unwrap().settings.libraries.libs.is_empty());
+
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            let config = Config::load_with_root(jail.directory()).unwrap();
+            assert!(!config.allow_linked_libraries);
+            assert!(config.dynamic_test_linking);
+            assert!(!config.libraries_with_remappings().unwrap().libs.is_empty());
+            assert!(config.solc_settings().unwrap().settings.libraries.libs.is_empty());
+            let roundtrip = Config::from_provider(&config).unwrap();
+            assert!(!roundtrip.allow_linked_libraries);
+
+            jail.set_env("FOUNDRY_ALLOW_LINKED_LIBRARIES", "true");
+            let config = Config::load_with_root(jail.directory()).unwrap();
+            assert!(config.allow_linked_libraries);
+            assert!(!config.solc_settings().unwrap().settings.libraries.libs.is_empty());
+            Ok(())
+        });
     }
 }

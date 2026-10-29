@@ -39,6 +39,14 @@ pub struct BuildOpts {
     #[serde(skip)]
     pub no_dynamic_test_linking: bool,
 
+    /// Reject contracts that depend on externally linked Solidity libraries.
+    ///
+    /// Internal libraries and dynamic test linking remain available. Overrides
+    /// `allow_linked_libraries` in configuration and environment variables.
+    #[arg(long, help_heading = "Linker options")]
+    #[serde(skip)]
+    pub disallow_linked_libraries: bool,
+
     /// Set pre-linked libraries.
     #[arg(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -179,21 +187,7 @@ impl BuildOpts {
 // Loads project's figment and merges the build cli arguments into it
 impl<'a> From<&'a BuildOpts> for Figment {
     fn from(args: &'a BuildOpts) -> Self {
-        let root = if let Some(config_path) = &args.project_paths.config_path {
-            assert!(
-                config_path.exists(),
-                "error: config-path `{}` does not exist",
-                config_path.display()
-            );
-            assert!(
-                config_path.ends_with(Config::FILE_NAME),
-                "error: the config-path must be a path to a foundry.toml file"
-            );
-            let config_path = canonicalized(config_path);
-            config_path.parent().unwrap().to_path_buf()
-        } else {
-            args.project_paths.project_root()
-        };
+        let root = args.project_paths.project_root();
         let mut figment = Config::figment_with_root(&root);
 
         // remappings should stack
@@ -323,6 +317,13 @@ impl Provider for BuildOpts {
             dict.insert("revert_strings".to_string(), revert.to_string().into());
         }
 
-        Ok(Map::from([(Config::selected_profile(), dict)]))
+        let mut data = Map::from([(Config::selected_profile(), dict)]);
+        if self.disallow_linked_libraries {
+            // Environment variables use the global profile, which wins over named profiles.
+            data.entry(Profile::Global)
+                .or_default()
+                .insert("allow_linked_libraries".to_string(), false.into());
+        }
+        Ok(data)
     }
 }

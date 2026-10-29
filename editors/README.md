@@ -59,7 +59,8 @@ cargo build --locked -p forge --bin forge
 
 The launched VS Code client uses the Forge executable that opened it, including
 for formatting and background checks. Separately installed VS Code and Zed
-extensions resolve Forge from their explicit Forge setting or the editor's PATH.
+extensions resolve Forge from their explicit Forge setting or the editor's PATH;
+the Zed extension downloads the latest stable Forge when neither has one.
 Foundry profiles, remappings, workspace discovery, and file watching remain
 owned by the existing server. LSP formatting uses the open document's unsaved
 contents and the owning project's `foundry.toml`.
@@ -106,16 +107,16 @@ The source upstream `main` was checked at
 snapshot. Checking upstream used a remote ref in Foundry, leaving the source
 checkout unchanged. No source checkout is needed to build or run these clients.
 
-Solar authorship is preserved in each extension. Its MIT/Apache-2.0 license
-files link to the repository root licenses.
+Each extension's MIT/Apache-2.0 license files link to the repository root
+licenses.
 The VS Code TextMate grammar retains its original license and attribution;
 Zed's tree-sitter grammar remains pinned in `extension.toml`.
 
 Public identities are retained: Solidity language ID, `solarLsp.*` settings and
-commands, server-returned `solar.*` commands, and Zed extension/server ID
-`solar`. The VS Code extension ID is `paradigm.forge-lsp`. In particular,
-`solar.copySelector`, `solar.showReferences` and `solar.showTypeHierarchy`
-remain registered by the VS Code client.
+commands, server-returned `solar.*` commands, and Zed language server ID
+`solar`. The VS Code extension ID is `paradigm.forge-lsp` and the Zed extension
+ID is `forge-lsp`. In particular, `solar.copySelector`, `solar.showReferences`
+and `solar.showTypeHierarchy` remain registered by the VS Code client.
 
 Executable settings require explicit migration; the old Solar path is never
 silently treated as Forge. See each client's README for exact settings and

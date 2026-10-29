@@ -86,10 +86,10 @@ use regex::Regex;
 use revm::{bytecode::opcode::OpCode, context::Transaction};
 use solar::ast::{ContractKind as SolarContractKind, ItemKind};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fmt::Write,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, mpsc::channel},
+    sync::{Arc, LazyLock, Mutex, mpsc::channel},
     time::{Duration, Instant},
 };
 use tempfile::TempDir;
@@ -1680,6 +1680,7 @@ impl TestArgs {
         trace!(target: "forge::test", ?filter, "using filter");
 
         let compiler = ProjectCompiler::new()
+            .allow_linked_libraries(config.allow_linked_libraries || self.list)
             .external_compilers(&config)
             .dynamic_test_linking(config.dynamic_test_linking)
             .quiet(shell::is_json() || self.junit);
@@ -2137,7 +2138,7 @@ impl TestArgs {
 
         match trace_output {
             TraceOutputKind::Flamegraph | TraceOutputKind::Flamechart => {
-                let mut folded_stack_trace = folded_stack_trace::build(arena, self.evm.isolate);
+                let mut folded_stack_trace = folded_stack_trace::build(arena);
                 let flame_chart = trace_output == TraceOutputKind::Flamechart;
                 if flame_chart {
                     folded_stack_trace.reverse();
@@ -2162,8 +2163,7 @@ impl TestArgs {
                 }
             }
             TraceOutputKind::EvmProfile(EvmProfileFormat::Speedscope) => {
-                let profile =
-                    speedscope::builder::build(arena, test_name, contract, self.evm.isolate);
+                let profile = speedscope::builder::build(arena, test_name, contract);
                 let profile_json = serde_json::to_vec(&profile)?;
                 let profile_path = format!("cache/evm_profile_{contract}_{test_name}.json");
                 fs::write(&profile_path, &profile_json)?;
@@ -3197,7 +3197,10 @@ impl Provider for TestArgs {
 }
 
 fn parse_opcode(s: &str) -> Result<OpCode, String> {
-    OpCode::parse(s).ok_or_else(|| format!("invalid opcode: {s}"))
+    static OPCODES: LazyLock<HashMap<&str, OpCode>> = LazyLock::new(|| {
+        (0..=u8::MAX).filter_map(OpCode::new).map(|op| (op.as_str(), op)).collect()
+    });
+    OPCODES.get(s).copied().ok_or_else(|| format!("invalid opcode: {s}"))
 }
 
 const fn apply_mutation_compiler_overrides(config: &mut Config) {
@@ -3670,6 +3673,14 @@ impl JunitOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_opcode_names_exactly() {
+        assert_eq!(parse_opcode("SSTORE"), Ok(OpCode::SSTORE));
+        assert_eq!(parse_opcode("PUSH32"), Ok(OpCode::PUSH32));
+        assert_eq!(parse_opcode("sstore"), Err("invalid opcode: sstore".to_string()));
+        assert_eq!(parse_opcode("NOPE"), Err("invalid opcode: NOPE".to_string()));
+    }
 
     /// Parses `args` with the given environment variables set, restoring the previous values.
     fn parse_with_env(vars: &[(&str, &str)], args: &[&str]) -> TestArgs {
