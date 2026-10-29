@@ -203,6 +203,7 @@ where
                 if let Some(msg) = pin.pending.pop_front() {
                     if let Err(err) = pin.connection.start_send_unpin(msg) {
                         error!(target: "rpc", ?err, "Failed to send message");
+                        return Poll::Ready(());
                     }
                 } else {
                     break;
@@ -401,6 +402,7 @@ mod tests {
     #[derive(Default)]
     struct TestConnection {
         ready: bool,
+        fail_next_send: bool,
         fail_after: Option<usize>,
         ready_polls: usize,
         sent: Vec<String>,
@@ -446,6 +448,10 @@ mod tests {
 
         fn start_send(mut self: Pin<&mut Self>, item: String) -> Result<(), Self::Error> {
             assert!(self.ready);
+            if self.fail_next_send {
+                self.fail_next_send = false;
+                return Err("sink failed");
+            }
             self.sent.push(item);
             if let Some(budget) = &mut self.send_budget {
                 *budget -= 1;
@@ -509,6 +515,18 @@ mod tests {
             assert!(Pin::new(&mut connection).poll(&mut cx).is_ready());
             assert!(connection.connection.sent.is_empty());
         }
+    }
+
+    #[test]
+    fn response_start_send_error_terminates_connection() {
+        let transport = TestConnection { ready: true, fail_next_send: true, ..Default::default() };
+        let mut connection = PubSubConnection::new(transport, TestHandler::default());
+        connection.connection.requests.push_back(Request::Batch(vec![]));
+        let mut cx = Context::from_waker(Waker::noop());
+
+        assert!(Pin::new(&mut connection).poll(&mut cx).is_ready());
+        assert!(connection.connection.sent.is_empty());
+        assert!(connection.connection.poll_ready_unpin(&mut cx).is_ready());
     }
 
     #[test]
