@@ -153,7 +153,8 @@ impl SymbolicExecutor {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
                     parent.expected_creates = pending_expected_creates.clone();
                     parent.world = failure_world.clone();
-                    parent.stack.push(created_word.clone())?;
+                    let address = address_word(DUMMY_CREATE_ADDRESS);
+                    parent.stack.push(SymExpr::constant(&mut self.cx, address))?;
                     parents.push_back(parent);
                 }
                 JoinedCallOutcome::Success { mut parent, child, unmet_expected_revert } => {

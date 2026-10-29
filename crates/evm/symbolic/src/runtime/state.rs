@@ -1,4 +1,5 @@
 use super::*;
+use alloy_sol_types::{Revert, SolError};
 use foundry_evm::revm::context_interface::cfg::gas::CALL_STIPEND;
 
 const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
@@ -1068,16 +1069,30 @@ impl ExpectedRevert {
                 }));
             }
             ExpectedRevertData::Exact(data) => {
-                if return_data.len() < data.len() {
+                // Like Forge, also accept the expected bytes as the message of canonical
+                // `Error(string)` or `CheatcodeError(string)` revert data.
+                let len = data.len();
+                let mut candidates = vec![data.clone()];
+                for selector in [Revert::SELECTOR, Vm::CheatcodeError::SELECTOR] {
+                    let mut head = selector.to_vec();
+                    head.extend(U256::from(32).to_be_bytes::<32>());
+                    head.extend(U256::from(len).to_be_bytes::<32>());
+                    let head = SymBytes::concrete(cx, head);
+                    let padding = SymBytes::concrete(cx, vec![0; len.next_multiple_of(32) - len]);
+                    candidates.push(SymBytes::concat(cx, [head, data.clone(), padding]));
+                }
+                let mut matches = Vec::new();
+                for candidate in candidates {
+                    if let Some(bytes_match) = return_data.bytes.prefix_condition(cx, &candidate) {
+                        let len = SymExpr::constant(cx, U256::from(candidate.len()));
+                        let len_match = SymBoolExpr::eq(cx, return_data.len_word.clone(), len);
+                        matches.push(SymBoolExpr::and(cx, vec![len_match, bytes_match]));
+                    }
+                }
+                if matches.is_empty() {
                     return None;
                 }
-                let len = SymExpr::constant(cx, U256::from(data.len()));
-                conditions.push(SymBoolExpr::eq(cx, return_data.len_word.clone(), len));
-                conditions.extend((0..data.len()).map(|offset| {
-                    let expected = data.byte(cx, offset);
-                    let actual = return_data.byte(cx, offset);
-                    SymBoolExpr::eq(cx, actual, expected)
-                }));
+                conditions.push(SymBoolExpr::or(cx, matches));
             }
         }
         Some(SymBoolExpr::and(cx, conditions))

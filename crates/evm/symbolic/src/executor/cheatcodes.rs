@@ -756,14 +756,23 @@ impl SymbolicExecutor {
                 for (index, param) in vm_params(selector).into_iter().enumerate() {
                     match param {
                         DynSolType::FixedBytes(4) => {
-                            let selector = read_abi_bytes4_words_arg(
+                            let bytes = read_abi_bytes4_words_arg(
                                 &mut self.cx,
                                 &state.memory,
                                 args_offset,
                                 index,
                             );
-                            data =
-                                ExpectedRevertData::Prefix(SymBytes::exprs(&mut self.cx, selector));
+                            let bytes = SymBytes::exprs(&mut self.cx, bytes);
+                            // Only `expectPartialRevert` matches the selector alone.
+                            data = if matches!(
+                                selector,
+                                expectPartialRevert_0Call::SELECTOR
+                                    | expectPartialRevert_1Call::SELECTOR
+                            ) {
+                                ExpectedRevertData::Prefix(bytes)
+                            } else {
+                                ExpectedRevertData::Exact(bytes)
+                            };
                         }
                         DynSolType::Bytes => {
                             let bytes = read_abi_symbolic_dynamic_byte_exprs_arg(
