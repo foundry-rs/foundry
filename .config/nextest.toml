@@ -36,6 +36,11 @@ slow-timeout = { period = "5m", terminate-after = 4 }
 filter = "test(/tempo_canary::/)"
 test-group = "tempo-canary"
 
+# Cold runs fetch pinned Solidity sources and install the fixture's Solc version.
+[[profile.default.overrides]]
+filter = "package(=forge) & binary(=cli) & test(/(^|::)tempo_proofs$/)"
+slow-timeout = { period = "5m", terminate-after = 2, grace-period = "0s" }
+
 # Do not re-run so that `cargo cheats` is ran locally.
 [[profile.default.overrides]]
 filter = "package(foundry-cheatcodes-spec)"
@@ -76,7 +81,9 @@ success-output = "final"
 # Requires <NETWORK>_RPC_URL plus TESTNET_DEPLOYER_PRIVATE_KEY to do anything.
 # Run with: cargo nextest run --profile deploy-verify
 [profile.deploy-verify]
-default-filter = "test(/deploy_verify_/)"
+# Blockscout tests are temporarily disabled because Blockscout's verifier does not support recent
+# Solidity versions yet: https://github.com/foundry-rs/foundry/issues/17733
+default-filter = "test(/deploy_verify_/) and not test(/_blockscout$/)"
 retries = 1
 # A deploy plus verifier round trip is minutes, not seconds.
 slow-timeout = { period = "120s", terminate-after = 5 }
