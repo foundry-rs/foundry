@@ -40,6 +40,7 @@ use anvil_core::types::{ReorgOptions, TransactionData};
 use axum::{
     Json, Router,
     http::{HeaderMap, Uri},
+    response::{IntoResponse, Redirect},
     routing::post,
 };
 use foundry_common::provider::get_http_provider;
@@ -5531,6 +5532,14 @@ async fn spawn_fork_header_recorder(
                 let secret =
                     headers.get("x-fork-secret").map(|value| value.to_str().unwrap().to_string());
                 requests.lock().unwrap().push((uri.path().to_string(), secret));
+                match uri.path() {
+                    "/redirect" => return Redirect::temporary(&endpoint).into_response(),
+                    "/redirect-permanent" => return Redirect::permanent(&endpoint).into_response(),
+                    "/redirect-same-origin" => {
+                        return Redirect::temporary("/rotated").into_response();
+                    }
+                    _ => {}
+                }
                 Json(
                     client
                         .post(endpoint)
@@ -5542,6 +5551,7 @@ async fn spawn_fork_header_recorder(
                         .await
                         .unwrap(),
                 )
+                .into_response()
             }
         });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -5566,7 +5576,11 @@ async fn test_fork_headers_are_not_sent_to_other_origins() {
         )
         .await;
 
-        for url in [format!("{configured_url}/rotated"), other_url] {
+        for url in [
+            format!("{configured_url}/rotated"),
+            format!("{configured_url}/redirect-same-origin"),
+            other_url,
+        ] {
             if use_reset {
                 api.anvil_reset(Some(Forking { json_rpc_url: Some(url), block_number: None }))
                     .await
@@ -5588,5 +5602,60 @@ async fn test_fork_headers_are_not_sent_to_other_origins() {
         let other = other.lock().unwrap();
         assert!(!other.is_empty(), "use_reset: {use_reset}");
         assert!(other.iter().all(|(_, secret)| secret.is_none()), "use_reset: {use_reset}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_headers_are_not_sent_to_redirect_origins() {
+    let (_origin_api, origin) = spawn(NodeConfig::test()).await;
+    for use_reset in [false, true] {
+        let (other_url, other) = spawn_fork_header_recorder(origin.http_endpoint()).await;
+        let (configured_url, configured) = spawn_fork_header_recorder(other_url).await;
+        let (_api, handle) = spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(configured_url.clone()))
+                .fork_request_retries(Some(0))
+                .with_fork_headers(vec!["x-fork-secret: secret".to_string()]),
+        )
+        .await;
+        let provider = handle.http_provider();
+
+        for path in ["/redirect", "/redirect-permanent"] {
+            other.lock().unwrap().clear();
+            let url = format!("{configured_url}{path}");
+            let result = if use_reset {
+                provider
+                    .raw_request::<_, Value>(
+                        "anvil_reset".into(),
+                        (Forking { json_rpc_url: Some(url), block_number: None },),
+                    )
+                    .await
+            } else {
+                provider.raw_request::<_, Value>("anvil_setRpcUrl".into(), (url,)).await
+            };
+            assert!(
+                other.lock().unwrap().iter().all(|(_, secret)| secret.is_none()),
+                "fork header leaked through redirect: use_reset={use_reset}, path={path}"
+            );
+            assert!(result.is_err(), "use_reset={use_reset}, path={path}");
+        }
+
+        // Failed replacements must preserve the original endpoint and its credentials.
+        configured.lock().unwrap().clear();
+        provider
+            .raw_request::<_, Value>(
+                "anvil_reset".into(),
+                (Forking { json_rpc_url: None, block_number: None },),
+            )
+            .await
+            .unwrap();
+        let configured = configured.lock().unwrap();
+        assert!(!configured.is_empty(), "use_reset={use_reset}");
+        assert!(
+            configured
+                .iter()
+                .all(|(path, secret)| { path == "/" && secret.as_deref() == Some("secret") })
+        );
+        assert!(other.lock().unwrap().iter().all(|(_, secret)| secret.is_none()));
     }
 }
