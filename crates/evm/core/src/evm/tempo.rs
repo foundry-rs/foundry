@@ -131,7 +131,10 @@ impl FoundryEvmFactory for TempoEvmFactory {
     type Types = TempoEvmTypes;
 
     fn version(&self, spec: TempoHardfork, chain_id: u64) -> Version {
-        *tempo_execution_config(spec, chain_id).version()
+        let mut version = *tempo_execution_config(spec, chain_id).version();
+        // Match Tempo's node: the execution config keeps Ethereum's cap, and Tempo raises it.
+        version.tx_gas_limit_cap = spec.tx_gas_limit_cap().unwrap_or(u64::MAX);
+        version
     }
 
     fn tx_registry(
