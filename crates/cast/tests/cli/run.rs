@@ -4,6 +4,7 @@ use super::*;
 use alloy_primitives::bytes;
 use alloy_signer::SignerSync;
 use anvil::eth::pool::transactions::TransactionOrder;
+use foundry_common::HYPERLIQUID_SYSTEM_ADDRESS;
 use foundry_test_utils::rpc::spawn_rpc_proxy_canned_method;
 
 // <https://github.com/foundry-rs/foundry/issues/2705>
@@ -643,8 +644,8 @@ Warning: the replay does not match the transaction's receipt: it used 61000 gas 
 "#]]);
 }
 
-// A system transaction after the block's leading one can change the target's prestate, so a replay
-// that skips it must say so. Skipping the leading one is expected and stays quiet.
+// A skipped system credit changes the target's prestate even when it opens the block, so the
+// replay must warn about it regardless of its index.
 #[casttest]
 async fn cast_run_warns_on_skipped_system_transactions(cmd: _) {
     let (api, handle) =
@@ -652,26 +653,25 @@ async fn cast_run_warns_on_skipped_system_transactions(cmd: _) {
     let endpoint = handle.http_endpoint();
     let provider = handle.http_provider();
     let from = provider.get_accounts().await.unwrap()[0];
-    let system = address!("0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001");
+    let system = HYPERLIQUID_SYSTEM_ADDRESS;
     api.anvil_impersonate_account(system).await.unwrap();
     api.anvil_set_balance(system, U256::from(10u128.pow(18))).await.unwrap();
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    for (senders, warns) in [(&[system, from][..], false), (&[from, system, from], true)] {
+    for senders in [&[system, from][..], &[from, system, from]] {
         let mut tx_hashes = Vec::new();
         for &sender in senders {
-            let tx = TransactionRequest::default().with_from(sender).with_to(Address::ZERO);
+            let mut tx = TransactionRequest::default().with_from(sender).with_to(Address::ZERO);
+            if sender == system {
+                tx = tx.with_value(U256::from(1));
+            }
             tx_hashes.push(*provider.send_transaction(tx.into()).await.unwrap().tx_hash());
         }
         api.mine_one().await.unwrap();
         let [.., system_tx, target] = tx_hashes[..] else { unreachable!() };
-        let warning = if warns {
-            format!(
-                "Warning: the replay skips system transactions before the target, so their state changes are missing: [{system_tx}]; `--replay-system-txes` attempts local replay where supported; `--debug-trace-transaction` renders the node's own trace instead\n"
-            )
-        } else {
-            String::new()
-        };
+        let warning = format!(
+            "Warning: the replay skips system transactions before the target, so their state changes are missing: [{system_tx}]; `--replay-system-txes` attempts local replay where supported; `--debug-trace-transaction` renders the node's own trace instead\n"
+        );
 
         cmd.cast_fuse()
             .args(["run", &target.to_string(), "--rpc-url", &endpoint, "--no-bal"])
