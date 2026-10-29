@@ -1438,13 +1438,22 @@ impl Config {
         // Strip "./" prefix for consistent path matching
         let parse_path = |path: &PathBuf| path.strip_prefix("./").unwrap_or(path).to_path_buf();
 
+        // Solar warns on every build that its code generation is experimental. Configuring Solar
+        // already chose that, so the notice is not a project warning, including under `deny`.
+        let solar_codes = self
+            .solc_version()
+            .is_some_and(|version| version.build.as_str().contains("solar"))
+            .then_some(2264);
+
         let mut builder = ProjectBuilder::<C>::default()
             .artifacts(self.configured_artifacts_handler())
             .additional_settings(self.additional_settings(&settings))
             .restrictions(self.restrictions(&paths)?)
             .settings(settings)
             .paths(paths)
-            .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
+            .ignore_error_codes(
+                self.ignored_error_codes.iter().copied().map(Into::into).chain(solar_codes),
+            )
             .ignore_error_codes_from(self.ignored_error_codes_from.iter().map(|(path, codes)| {
                 (parse_path(path), codes.iter().copied().map(Into::into).collect())
             }))
@@ -7668,6 +7677,31 @@ mod tests {
             assert!(
                 err_msg.contains("does not exist")
                     || err_msg.contains("Failed to resolve inherited config path"),
+                "Error message: {err_msg}"
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_inheritance_from_profile_name_hints_at_default() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    optimizer_runs = 200
+
+                    [profile.ci]
+                    extends = "default"
+                    "#,
+            )?;
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+
+            let err_msg = Config::load().unwrap_err().to_string();
+            assert!(
+                err_msg.contains("every profile already inherits from `[profile.default]`"),
                 "Error message: {err_msg}"
             );
 

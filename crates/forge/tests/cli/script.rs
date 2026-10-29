@@ -1482,8 +1482,8 @@ contract BroadcastKeys is Script {
         ),
         str![[r#"
 top level: chain, commit, libraries, pending, receipts, recovery_generation, returns, timestamp, transactions
-transaction: additionalContracts, arguments, contractAddress, contractName, function, functionAbi, hash, isFixedGasLimit, transaction, transactionType
-additional contract: address, contractName, creatorCodeAddresses, initCode, transactionType
+transaction: additionalContracts, arguments, contractAddress, contractName, exactArtifactMatch, function, functionAbi, hash, isFixedGasLimit, transaction, transactionType
+additional contract: address, contractName, creatorCodeAddresses, exactArtifactMatch, initCode, transactionType
 
 "#]]
     );
@@ -4616,6 +4616,63 @@ contract WalletScript is Script {
     }
 }
 
+// A keystore without an `address` field, as written by `cast wallet new` and `cast wallet import`,
+// is unlocked to find the script sender instead of running as the default sender.
+#[cfg(unix)]
+#[forgetest_init]
+fn keystore_without_address_sets_script_sender(prj: _, cmd: _) {
+    let script = prj.add_source(
+        "SenderScript",
+        r#"
+import {Script} from "forge-std/Script.sol";
+
+contract SenderScript is Script {
+    function run() public {
+        require(msg.sender == 0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2, "unexpected sender");
+        vm.startBroadcast();
+        vm.stopBroadcast();
+    }
+}"#,
+    );
+    let mut keystore: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../cast/tests/fixtures/keystore/UTC--2022-12-20T10-30-43.591916000Z--ec554aeafe75601aaab43bd4621a22284db566c2"
+    ))
+    .unwrap();
+    keystore.as_object_mut().unwrap().remove("address");
+    let keystore_path = prj.root().join("keystore-without-address");
+    fs::write(&keystore_path, keystore.to_string()).unwrap();
+    cmd.args(["build"]).assert_success();
+
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_forge"));
+    command
+        .current_dir(prj.root())
+        .env_remove("CI")
+        .env("NO_COLOR", "1")
+        .env("TERM", "dumb")
+        .arg("script")
+        .arg(&script)
+        .arg("--keystore")
+        .arg(&keystore_path);
+    let mut session = spawn_with_options(
+        command,
+        Options {
+            timeout_ms: Some(30_000),
+            strip_ansi_escape_codes: true,
+            encoding: Encoding::UTF8,
+        },
+    )
+    .unwrap();
+    session.exp_string("Enter keystore password:").unwrap();
+    session.send_line("keystorepassword").unwrap();
+    // `vm.startBroadcast` reuses the unlocked keystore: a second prompt would time out here.
+    session.exp_string("Script ran successfully.").unwrap();
+    let output = session.exp_eof().unwrap();
+    assert!(
+        matches!(session.process.wait().unwrap(), WaitStatus::Exited(_, 0)),
+        "unexpected script exit: {output}"
+    );
+}
+
 #[forgetest_init]
 fn can_remember_keys(prj: _, cmd: _) {
     let script = prj
@@ -6375,6 +6432,7 @@ contract SaltedScript is Script {
         "salted broadcast must be recorded as CREATE2, got: {tx}"
     );
     assert_eq!(tx["contractName"], "Token");
+    assert_eq!(tx["exactArtifactMatch"], true);
     assert_eq!(tx["arguments"][0], "SaltedTok");
 }
 

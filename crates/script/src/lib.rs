@@ -402,7 +402,17 @@ impl ScriptArgs {
             // If no sender was explicitly set via --sender, auto-detect it from available signers:
             // use the sole signer's address if there's exactly one, or fall back to the browser
             // wallet address if present.
-            let addresses = script_wallets.addresses();
+            let mut addresses = script_wallets.addresses();
+            if addresses.is_empty() && browser_wallet.is_none() {
+                // A keystore without an `address` field, such as one written by `cast wallet`,
+                // must be unlocked to find its address.
+                addresses = script_wallets.signers().map_err(|err| {
+                    eyre::eyre!("{err}").wrap_err(
+                        "failed to unlock the wallet to find the script sender; pass `--sender`, \
+                         or a keystore password file with `--password-file` or `ETH_PASSWORD`",
+                    )
+                })?;
+            }
             if addresses.len() == 1 {
                 evm_opts.sender = addresses[0];
             } else if let Some(signer) = browser_wallet.as_ref().map(|b| b.address()) {
@@ -994,13 +1004,18 @@ impl<N: Network> ScriptResult<N> {
                     }
 
                     let init_code = node.trace.data.clone();
-                    let contract_name = known_contracts
-                        .find_by_creation_code(init_code.as_ref())
-                        .map(|artifact| artifact.0.name.clone());
+                    let artifact = known_contracts.find_by_creation_code_prefix(init_code.as_ref());
+                    let contract_name = artifact
+                        .or_else(|| known_contracts.find_by_creation_code(init_code.as_ref()))
+                        .map(|(id, _)| id.name.clone());
+                    let exact_artifact_match = artifact.is_some_and(|(id, _)| {
+                        !id.source.extension().is_some_and(|ext| ext == "vy")
+                    });
                     Some(AdditionalContract {
                         call_kind: node.trace.kind,
                         address: node.trace.address,
                         contract_name,
+                        exact_artifact_match,
                         init_code,
                         creator_code_addresses,
                     })
