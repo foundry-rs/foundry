@@ -436,7 +436,8 @@ struct Session {
     imports: BTreeMap<PathBuf, BTreeSet<PathBuf>>,
 }
 
-/// The output directories that a run reserved. The ones it left empty are removed on drop.
+/// The output directories that a run reserved, and the directory that holds them if the run
+/// created it, in removal order. The ones it left empty are removed on drop.
 struct RunDirs(Vec<PathBuf>);
 
 impl Drop for RunDirs {
@@ -475,12 +476,16 @@ impl PropertiesArgs {
         workspace::ensure_safe_relative_path(&generated_tests, "generated test", &config.test)?;
         // Each run writes to directories of its own, so a run never meets the files of another.
         // Creating them reserves them against concurrent runs.
-        fs::create_dir_all(config.root.join(&generated_tests))?;
+        let generated_dir = config.root.join(&generated_tests);
+        ensure_inside(&config.root, &generated_dir, &generated_tests)?;
+        let created_generated_dir = !generated_dir.exists();
+        fs::create_dir_all(&generated_dir)
+            .wrap_err_with(|| format!("failed to create {}", generated_dir.display()))?;
         let mut run = 1;
-        let _run_dirs = loop {
+        let mut run_dirs = loop {
             let mut dirs = RunDirs(Vec::new());
             for id in 1..=self.agents {
-                let dir = config.root.join(&generated_tests).join(format!("run-{run}-agent-{id}"));
+                let dir = generated_dir.join(format!("run-{run}-agent-{id}"));
                 match fs::create_dir(&dir) {
                     Ok(()) => dirs.0.push(dir),
                     Err(error) if error.kind() == io::ErrorKind::AlreadyExists => break,
@@ -495,6 +500,9 @@ impl PropertiesArgs {
             }
             run += 1;
         };
+        if created_generated_dir {
+            run_dirs.0.push(generated_dir);
+        }
         let cache_root = config.cache_path.join("properties");
         let verifier_command = self
             .verifier_command
@@ -504,7 +512,7 @@ impl PropertiesArgs {
         // Workspaces leave out the project's generated tests, so every agent starts without
         // earlier generated tests.
         let mut sandbox = Sandbox::new(&config, vec![config.root.join(&generated_tests)])?;
-        sandbox.end_on_interrupt()?;
+        sandbox.end_on_interrupt(run_dirs.0.clone())?;
         if let Some(errors) = sandbox.build()? {
             sh_warn!("the project does not build, so every test run builds it: {errors}")?;
         }
@@ -1243,7 +1251,7 @@ impl<'a> Sandbox<'a> {
 
     /// Makes an interrupt end every session and test run and remove the workspaces before Forge
     /// exits. They run in their own process groups, so a terminal interrupt does not reach them.
-    pub(crate) fn end_on_interrupt(&self) -> Result<()> {
+    pub(crate) fn end_on_interrupt(&self, reserved: Vec<PathBuf>) -> Result<()> {
         let root = self.root.path().to_path_buf();
         ctrlc::set_handler(move || {
             // The lock stays held until Forge exits, so no thread starts another process.
@@ -1254,6 +1262,10 @@ impl<'a> Sandbox<'a> {
                 let _ = kill_process_group(*group, Signal::KILL);
             }
             let _ = fs::remove_dir_all(&root);
+            // Exiting skips the drops, so the reserved directories that stayed empty go here.
+            for dir in &reserved {
+                let _ = fs::remove_dir(dir);
+            }
             std::process::exit(130);
         })?;
         Ok(())

@@ -983,7 +983,6 @@ impl Config {
         allowed.invariant.depth_mode = self.invariant.depth_mode;
         allowed.invariant.shrink_run_limit = self.invariant.shrink_run_limit;
         allowed.invariant.max_assume_rejects = self.invariant.max_assume_rejects;
-        allowed.invariant.fail_on_revert = self.invariant.fail_on_revert;
         allowed.invariant.call_override = self.invariant.call_override;
         allowed.invariant.dictionary = self.invariant.dictionary;
         allowed.invariant.max_time_delay = self.invariant.max_time_delay;
@@ -9866,6 +9865,10 @@ mod tests {
         assert_eq!(
             change(|c| c.fuzz.fail_on_revert = !c.fuzz.fail_on_revert),
             Some("change `fuzz.fail_on_revert`".into())
+        );
+        assert_eq!(
+            change(|c| c.invariant.fail_on_revert = !c.invariant.fail_on_revert),
+            Some("change `invariant.fail_on_revert`".into())
         );
     }
 }

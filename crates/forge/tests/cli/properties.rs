@@ -275,12 +275,14 @@ added 2 generated test file(s):
   test/generated/run-2-agent-1/Property.t.sol
 
 "#]]);
-    // A run whose files all repeat earlier ones writes nothing.
+    // A run whose files all repeat earlier ones writes nothing, and removes the directory it
+    // reserved.
     cmd.forge_fuse().args(&args).args(["--agents", "1", "--target", "src/Fee.sol"]);
     cmd.assert_success().stdout_eq(str![[r#"
 no generated test file was kept
 
 "#]]);
+    assert!(!prj.root().join("test/generated/run-3-agent-1").exists());
 }
 
 // Generated tests run outside the agent's sandbox, so `vm.ffi` fails in Forge's copies of the
@@ -540,32 +542,21 @@ added 1 generated test file(s):
 "#]]);
 }
 
-// A generated file must not leave the project through a symlinked directory. The agent's files
-// are held back, and the run still writes its report.
+// A generated file must not leave the project through a symlinked directory, so the run stops
+// before it reserves its output directories.
 #[forgetest_init]
 fn properties_rejects_symlinked_generated_directory(prj: _, cmd: _) {
     prj.add_source("Fee.sol", FEE);
     let outside = tempfile::tempdir().unwrap();
     std::os::unix::fs::symlink(outside.path(), prj.root().join("test/generated")).unwrap();
-    // Internal runs keep their own `--rerun` state; the project's file stays as it is.
-    let failures = prj.root().join("cache/test-failures");
-    fs::create_dir_all(failures.parent().unwrap()).unwrap();
-    fs::write(&failures, r#"{"version":1,"failures":[]}"#).unwrap();
     let args = properties_args(&prj, FEE_SPEC);
-    cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
-1 generated test file(s) did not compile or were not allowed: see cache/properties/report.json
-no generated test file was kept
+    cmd.args(args).args(["--agents", "1"]).assert_failure().stderr_eq(str![[r#"
+Error: generated test path test/generated escapes project root [..]
 
 "#]]);
 
-    assert_data_eq!(
-        rejected(&prj),
-        str![[r#"
-["test/generated/run-1-agent-1/FeeSpec.t.sol"] "generated test path test/generated/run-1-agent-1/FeeSpec.t.sol escapes project root [..]"
-"#]]
-    );
+    assert!(!outside.path().join("run-1-agent-1").exists());
     assert!(!outside.path().join("FeeSpec.t.sol").exists());
-    assert_eq!(fs::read_to_string(&failures).unwrap(), r#"{"version":1,"failures":[]}"#);
 }
 
 // Test runs happen in a copy of the project. Inherited config, profiles, `FOUNDRY_CONFIG`, a
@@ -1171,10 +1162,14 @@ no generated test file was kept
 }
 
 // The workspace config keeps the project's other profiles. Names that are not bare TOML keys, such
-// as an empty name, a name with a dot, or a name with a space, stay quoted.
+// as an empty name, a name with a dot, or a name with a space, stay quoted. Internal runs keep
+// their own `--rerun` state; the project's file stays as it is.
 #[forgetest_init]
 fn properties_keeps_quoted_profile_names(prj: _, cmd: _) {
     prj.add_source("Fee.sol", FEE);
+    let failures = prj.root().join("cache/test-failures");
+    fs::create_dir_all(failures.parent().unwrap()).unwrap();
+    fs::write(&failures, r#"{"version":1,"failures":[]}"#).unwrap();
     let foundry_toml = prj.root().join("foundry.toml");
     let toml = fs::read_to_string(&foundry_toml).unwrap();
     fs::write(
@@ -1188,6 +1183,7 @@ added 1 generated test file(s):
   test/generated/run-1-agent-1/FeeSpec.t.sol
 
 "#]]);
+    assert_eq!(fs::read_to_string(&failures).unwrap(), r#"{"version":1,"failures":[]}"#);
 }
 
 /// Two agents write a test for each name in `names`, and a third writes a test for another bug. The
