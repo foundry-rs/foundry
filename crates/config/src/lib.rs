@@ -2167,9 +2167,10 @@ impl Config {
     /// build infos were already enabled, they leave out the AST, which debug runs do not use.
     ///
     /// The compiler cache does not track build infos, so a cached build keeps the ones it wrote
-    /// without the compiler input. Dynamic test linking compiles rewritten sources that only the
-    /// input holds, so those build infos and the cache entries of the files they built are
-    /// removed then, and the next build compiles those files again.
+    /// without the compiler input. Dynamic test linking rewrites test and script sources, which
+    /// only the input holds, so the cache entries of the tests and scripts that such a build info
+    /// built are removed then, and the next build compiles those files again. Other sources
+    /// compile as they are on disk.
     pub fn enable_debug_build_info(&mut self) -> eyre::Result<()> {
         if self.build_info {
             return Ok(());
@@ -2180,37 +2181,43 @@ impl Config {
             return Ok(());
         }
         let paths = self.project_paths::<MultiCompilerLanguage>();
-        let mut stale = HashSet::new();
-        for entry in fs::read_dir(&paths.build_infos).into_iter().flatten().flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|extension| extension == "json")
-                && matches!(read_build_info_input::<Present>(&path), Ok(None))
-                && let Some(id) = path.file_stem().and_then(|id| id.to_str())
-            {
-                fs::remove_file(&path)
-                    .wrap_err_with(|| format!("failed to remove {}", path.display()))?;
-                stale.insert(id.to_string());
-            }
-        }
-        if stale.is_empty() || !paths.cache.exists() {
+        let without_input = fs::read_dir(&paths.build_infos)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension().is_some_and(|extension| extension == "json")
+                    && matches!(read_build_info_input::<Present>(path), Ok(None))
+            })
+            .filter_map(|path| Some(path.file_stem()?.to_str()?.to_string()))
+            .collect::<HashSet<_>>();
+        if without_input.is_empty() || !paths.cache.exists() {
             return Ok(());
         }
-        let mut cache: serde_json::Value = serde_json::from_slice(&fs::read(&paths.cache)?)?;
+        let mut cache = serde_json::from_slice::<serde_json::Value>(&fs::read(&paths.cache)?)?;
+        let Some(files) = cache.get_mut("files").and_then(|files| files.as_object_mut()) else {
+            return Ok(());
+        };
         fn values(value: &serde_json::Value) -> impl Iterator<Item = &serde_json::Value> {
             value.as_object().into_iter().flat_map(|map| map.values())
         }
-        if let Some(files) = cache["files"].as_object_mut() {
+        let len = files.len();
+        files.retain(|file, entry| {
+            let file = self.root.join(file);
             // Artifacts are keyed by contract, compiler version, and profile.
-            files.retain(|_, entry| {
-                !values(&entry["artifacts"]).flat_map(values).flat_map(values).any(|artifact| {
-                    artifact["build_id"].as_str().is_some_and(|id| stale.contains(id))
-                })
-            });
+            !((file.starts_with(&self.test) || file.starts_with(&self.script))
+                && values(&entry["artifacts"]).flat_map(values).flat_map(values).any(|artifact| {
+                    artifact["build_id"].as_str().is_some_and(|id| without_input.contains(id))
+                }))
+        });
+        if files.len() == len {
+            return Ok(());
         }
-        if let Some(builds) = cache["builds"].as_array_mut() {
-            builds.retain(|id| !id.as_str().is_some_and(|id| stale.contains(id)));
-        }
-        fs::write(&paths.cache, serde_json::to_vec(&cache)?)
+        // A new file replaces the cache at once, so an interrupted write leaves no partial cache.
+        let temp = paths.cache.with_extension("json.tmp");
+        fs::write(&temp, serde_json::to_vec(&cache)?)
+            .and_then(|()| fs::rename(&temp, &paths.cache))
             .wrap_err_with(|| format!("failed to write {}", paths.cache.display()))
     }
 
