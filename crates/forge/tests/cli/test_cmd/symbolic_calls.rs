@@ -1749,12 +1749,15 @@ contract DeepSymbolicCaller {
 contract DeepExpectRevert {
     Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     bool public caughtExpected;
+    uint256 public outputLength;
 
     function descend() external {
         (bool ok,) = address(this).call(abi.encodeCall(this.descend, ()));
         if (!ok) {
             vm.expectRevert();
-            (caughtExpected,) = address(this).call(abi.encodeCall(this.descend, ()));
+            bytes memory output;
+            (caughtExpected, output) = address(this).call(abi.encodeCall(this.descend, ()));
+            outputLength = output.length;
         }
     }
 }
@@ -1788,6 +1791,8 @@ contract SymbolicCallDepth is Test {
         DeepExpectRevert target = new DeepExpectRevert();
         target.descend();
         assertTrue(target.caughtExpected());
+        // Forge answers a call that met its expected revert with 8192 zero bytes.
+        assertEq(target.outputLength(), 8192);
     }
 
     function checkSelfCallsStopAtTheCallDepthLimit(uint256) public {

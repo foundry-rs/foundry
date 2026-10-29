@@ -13,6 +13,8 @@ pub(crate) const CONCRETE_BASE_SYMBOLIC_EXPONENT_LIMIT: u64 = 256;
 
 // ABI encoding lengths
 pub(crate) const ERROR_DATA_MIN_LEN: usize = 68; // selector (4) + offset (32) + length (32)
+// Length of the zeroed output Forge returns for a call that met its `vm.expectRevert`.
+pub(crate) const EXPECTED_REVERT_CALL_OUTPUT_LEN: usize = 8192;
 
 // Precompile address layout
 pub(crate) const PRECOMPILE_ADDRESS_LEADING_ZEROS: usize = 19;

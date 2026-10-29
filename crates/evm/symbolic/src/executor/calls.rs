@@ -948,7 +948,15 @@ impl SymbolicExecutor {
                 ControlFlow::Continue(expected) => expected,
                 ControlFlow::Break(outcome) => return Ok(outcome),
             };
-            state.return_data = SymReturnData::empty(&mut self.cx);
+            // Concrete Forge answers a call that met its expected revert with zeroed output.
+            state.return_data = if expected {
+                SymReturnData::from_concrete_bytes(
+                    &mut self.cx,
+                    vec![0; EXPECTED_REVERT_CALL_OUTPUT_LEN],
+                )
+            } else {
+                SymReturnData::empty(&mut self.cx)
+            };
             state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
             state.stack.push(SymExpr::constant(&mut self.cx, U256::from(expected)))?;
             return Ok(StepOutcome::Continue);
