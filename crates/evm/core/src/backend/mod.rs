@@ -241,6 +241,16 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         Ok(backend)
     }
 
+    /// Returns a new local backend seeded at `env`, sharing this backend's fork manager, or `None`
+    /// when this backend is forked.
+    ///
+    /// Network state seeded at startup, such as Tempo's genesis, can depend on the hardfork, so a
+    /// test contract pinned to another hardfork needs its own seed.
+    pub fn respawn_local(&self, env: EvmEnvFor<FEN>) -> Option<Self> {
+        (!self.is_forked_mode())
+            .then(|| Self::with_fork_manager(self.forks.clone(), EmptyDB::default(), env))
+    }
+
     /// Creates a backend executing locally over `db`, such as an in-memory database.
     pub fn with_db(db: impl BackingDb, env: EvmEnvFor<FEN>) -> Self {
         Self::with_fork_manager(MultiFork::spawn(), db, env)

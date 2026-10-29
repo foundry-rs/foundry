@@ -6,7 +6,7 @@ use crate::{
     result::{SuiteResult, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind},
     runner::{
         ContractRunnerContext, InvariantCampaignScope, count_runnable_invariant_campaign_anchors,
-        function_matches_network_pass,
+        function_matches_network_pass, inline_config_for,
     },
     symbolic_regression::SYMBOLIC_REGRESSION_MARKER,
 };
@@ -319,7 +319,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             self.known_contracts.clone(),
             self.analysis.clone(),
             artifact_id,
-            db.clone(),
+            self.backend_for_contract(&identifier, db),
         );
         let runner = ContractRunner::new(&identifier, contract, executor, span, self, context);
         let r = runner.run_tests(filter);
@@ -327,6 +327,26 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         debug!(duration=?r.duration, "executed all tests in contract");
 
         r
+    }
+
+    /// Returns the backend for `identifier`'s suite: a clone of `db`, or, when the contract's
+    /// inline config selects another hardfork in a local run, a backend seeded at that hardfork.
+    fn backend_for_contract(&self, identifier: &str, db: &Backend<FEN>) -> Backend<FEN> {
+        if !self.tcfg.inline_config.contains_contract(identifier) {
+            return db.clone();
+        }
+        let Ok(mut config) =
+            inline_config_for(&self.tcfg.config, &self.tcfg.inline_config, identifier, None)
+        else {
+            return db.clone();
+        };
+        config.networks = config.networks.with_execution_profile(self.tcfg.evm_opts.networks);
+        let mut tcfg = self.tcfg.clone();
+        tcfg.reconfigure_with(Arc::new(config));
+        if tcfg.spec_id == self.tcfg.spec_id {
+            return db.clone();
+        }
+        db.respawn_local(tcfg.evm_env).unwrap_or_else(|| db.clone())
     }
 }
 
