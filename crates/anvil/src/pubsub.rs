@@ -56,8 +56,13 @@ where
             if let Some(notification) = ready!(self.blocks.poll_next_unpin(cx)) {
                 let logs = match notification {
                     ChainNotification::Block(block) => {
+                        // Rule out nonmatching blocks before requiring data that may be pruned.
                         if !self.filter.filter_block_range(block.header.number)
                             || !self.filter.filter_block_hash(block.hash)
+                            || block.header.logs_bloom.is_zero()
+                            || self.filter.filter.as_ref().is_some_and(|filter| {
+                                !filter.matches_bloom(block.header.logs_bloom)
+                            })
                         {
                             continue;
                         }

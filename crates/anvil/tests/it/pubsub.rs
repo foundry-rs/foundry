@@ -581,6 +581,121 @@ mod backpressure {
         );
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn lagged_logs_subscription_skips_pruned_zero_bloom_blocks() {
+        let fixture = LogsFixture::new().await;
+        let api = &fixture.api;
+        // Finish publishing setup notifications before installing the subscription.
+        api.mine_one().await.unwrap();
+        let mut logs = fixture.logs(Filter::new());
+        let recipient = fixture._handle.dev_wallets().nth(1).unwrap().address();
+        let receipt = fixture
+            .contract
+            .provider()
+            .send_transaction(
+                TransactionRequest::default()
+                    .from(fixture.sender)
+                    .to(recipient)
+                    .value(U256::from(1)),
+            )
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        assert!(receipt.inner.logs().is_empty());
+        let hash = receipt.block_hash.unwrap();
+        api.mine_one().await.unwrap();
+        let block = api.storage_info().block(hash).unwrap();
+        assert!(block.header.logs_bloom.is_zero());
+        assert!(block.body.transactions.is_empty());
+        assert_ne!(block.header.transactions_root, alloy_consensus::constants::EMPTY_ROOT_HASH);
+        assert_eq!(api.backend.mined_receipts(hash), Some(vec![]));
+
+        let mut cx = Context::from_waker(Waker::noop());
+        assert_eq!(logs.poll_next_unpin(&mut cx), Poll::Pending);
+
+        let receipt = fixture.emit("matching notification").await;
+        let notification = tokio::time::timeout(Duration::from_secs(5), logs.next())
+            .await
+            .expect("matching notification was not delivered")
+            .expect("subscription ended before its matching block");
+        assert_eq!(
+            notification,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "eth_subscription",
+                "params": {"subscription": 1, "result": receipt.inner.logs()[0]},
+            })
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn lagged_logs_subscription_skips_bloom_excluded_pruned_blocks() {
+        let fixture = LogsFixture::new().await;
+        let api = &fixture.api;
+        let sender = fixture._handle.dev_wallets().nth(1).unwrap().address();
+        let provider = fixture.contract.provider();
+        let address = EmitLogs::deploy_builder(provider.clone(), "other".to_owned())
+            .from(sender)
+            .deploy()
+            .await
+            .unwrap();
+        let contract = EmitLogs::new(address, provider.clone());
+        // Finish publishing setup notifications before installing the subscriptions.
+        api.mine_one().await.unwrap();
+        let mut subscriptions =
+            [Filter::new().address(address), Filter::new().topic1(sender.into_word())].map(
+                |filter| {
+                    let subscription = fixture.logs(filter.clone());
+                    (filter, subscription)
+                },
+            );
+
+        let receipt = fixture.emit("excluded notification").await;
+        let hash = receipt.block_hash.unwrap();
+        api.mine_one().await.unwrap();
+        let block = api.storage_info().block(hash).unwrap();
+        assert!(!block.header.logs_bloom.is_zero());
+        assert!(block.body.transactions.is_empty());
+        assert_eq!(api.backend.mined_receipts(hash), Some(vec![]));
+
+        let mut cx = Context::from_waker(Waker::noop());
+        for (filter, subscription) in &mut subscriptions {
+            assert!(!filter.matches_bloom(block.header.logs_bloom));
+            assert_eq!(
+                subscription.poll_next_unpin(&mut cx),
+                Poll::Pending,
+                "{filter:?} must skip bloom-excluded pruned blocks without ending the subscription"
+            );
+        }
+
+        let receipt = contract
+            .setValue("matching notification".to_owned())
+            .from(sender)
+            .send()
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        assert_eq!(receipt.inner.logs().len(), 1);
+        for (_, subscription) in &mut subscriptions {
+            let notification = tokio::time::timeout(Duration::from_secs(5), subscription.next())
+                .await
+                .expect("matching notification was not delivered")
+                .expect("subscription ended before its matching block");
+            assert_eq!(
+                notification,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "eth_subscription",
+                    "params": {"subscription": 1, "result": receipt.inner.logs()[0]},
+                })
+            );
+        }
+    }
+
     #[cfg(unix)]
     mod ipc {
         use super::*;
