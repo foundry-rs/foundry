@@ -9,7 +9,7 @@ use alloy_primitives::{
     map::{AddressMap, AddressSet, HashMap, HashSet},
 };
 use evm2::{EvmFeatures, EvmTypesHost, evm::Cache};
-use std::{collections::BTreeMap, fmt, sync::Arc};
+use std::{collections::BTreeMap, fmt, mem, sync::Arc};
 
 /// Identity of a fork as Foundry users see it: its RPC endpoint and pinned block.
 ///
@@ -409,7 +409,12 @@ impl<T: EvmTypesHost> ForkRegistry<T> {
                 if storage.wiped {
                     target.wipe();
                 }
-                target.slots.extend(&storage.slots);
+                // Copying the source's slot table and looking up the target's own slots is
+                // cheaper than reinserting every source slot, as the source usually holds them all.
+                let kept = mem::replace(&mut target.slots, storage.slots.clone());
+                for (key, value) in kept {
+                    target.slots.entry(key).or_insert(value);
+                }
             }
         }
     }
