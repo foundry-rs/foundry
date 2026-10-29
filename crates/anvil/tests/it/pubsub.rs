@@ -686,4 +686,93 @@ mod backpressure {
                 .is_none()
         );
     }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn lagged_logs_subscription_skips_filter_excluded_pruned_blocks() {
+        let (api, handle) =
+            spawn(NodeConfig::test().with_transaction_block_keeper(Some(1usize))).await;
+        let provider = connect_pubsub(&handle.ws_endpoint()).await;
+        let sender = handle.dev_wallets().next().unwrap().address();
+        let contract_addr = EmitLogs::deploy_builder(provider.clone(), "initial".to_owned())
+            .from(sender)
+            .deploy()
+            .await
+            .unwrap();
+        let contract = EmitLogs::new(contract_addr, provider);
+        let current_block = api.backend.best_number();
+        let matching_block = current_block + 3;
+        let make_logs = |filter| {
+            EthSubscription::<FoundryNetwork>::Logs(Box::new(LogsSubscription {
+                blocks: api.new_block_notifications(),
+                storage: api.storage_info(),
+                filter: FilteredParams::new(Some(filter)),
+                queued: Default::default(),
+                id: SubscriptionId::Number(1),
+            }))
+        };
+        let mut subscriptions = [
+            ("fromBlock", make_logs(Filter::new().from_block(matching_block))),
+            ("toBlock", make_logs(Filter::new().to_block(current_block))),
+            ("blockHash", make_logs(Filter::new().at_block_hash(B256::ZERO))),
+        ];
+        let mut mined_blocks = api.new_block_notifications();
+
+        let receipt = contract
+            .setValue("excluded notification".to_owned())
+            .from(sender)
+            .send()
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        assert_eq!(receipt.inner.logs().len(), 1);
+        let excluded_hash = receipt.block_hash.unwrap();
+        api.mine_one().await.unwrap();
+        let latest_hash = api.backend.best_hash();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let notification = mined_blocks.next().await.unwrap();
+                if notification.as_new_block().is_some_and(|block| block.hash == latest_hash) {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("mined block notification was not published");
+        assert_eq!(api.backend.mined_receipts(excluded_hash), Some(vec![]));
+
+        let mut cx = Context::from_waker(Waker::noop());
+        for (filter, subscription) in &mut subscriptions {
+            assert_eq!(
+                subscription.poll_next_unpin(&mut cx),
+                Poll::Pending,
+                "{filter} must skip excluded pruned blocks without ending the subscription"
+            );
+        }
+
+        let receipt = contract
+            .setValue("matching notification".to_owned())
+            .from(sender)
+            .send()
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        assert_eq!(receipt.block_number, Some(matching_block));
+        assert_eq!(receipt.inner.logs().len(), 1);
+        let notification = tokio::time::timeout(Duration::from_secs(5), subscriptions[0].1.next())
+            .await
+            .expect("matching notification was not delivered")
+            .expect("subscription ended before its matching block");
+        assert_eq!(
+            notification,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "eth_subscription",
+                "params": {"subscription": 1, "result": receipt.inner.logs()[0]},
+            })
+        );
+    }
 }

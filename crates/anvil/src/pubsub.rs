@@ -56,6 +56,11 @@ where
             if let Some(notification) = ready!(self.blocks.poll_next_unpin(cx)) {
                 let logs = match notification {
                     ChainNotification::Block(block) => {
+                        if !self.filter.filter_block_range(block.header.number)
+                            || !self.filter.filter_block_hash(block.hash)
+                        {
+                            continue;
+                        }
                         let hash = block.hash;
                         let (Some(block), Some(receipts)) =
                             (self.storage.block(hash), self.storage.receipts(hash))
