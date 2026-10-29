@@ -1047,7 +1047,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         let state = evm.state_mut();
         let loaded = state
             .loaded_accounts()
-            .map(|(address, slots)| (*address, slots.copied().collect::<HashSet<_>>()))
+            .map(|(address, slots)| (*address, slots.copied().collect::<Vec<_>>()))
             .collect::<Vec<_>>();
         let warm = warm_accounts(state);
         let context = self.active_mut();
@@ -1071,16 +1071,30 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         for (address, slots) in &warm {
             context.warm.entry(*address).or_default().extend(slots);
         }
-        self.materialize(evm);
+        let is_view = AcceptedView::is(evm.database());
+        let backing = self.active().db.clone_backing();
         let state = evm.state_mut();
         state.commit_transaction();
         let logs = mem::take(state.logs_mut());
         let prewarm = self.tx_prewarm.get_or_insert_with(|| state.prewarm_set().clone()).clone();
-        let cache = state.overlay_db().cache.clone();
+        // `resume` replaces the running state, so its committed overlay moves into the context's
+        // accepted state and is shared with what the transaction carries over instead of being
+        // copied. Dropping the EVM's view first leaves the context the only owner of a shared
+        // accepted state, which is then updated in place.
+        let overlay = state.overlay_db_mut();
+        let local = mem::take(&mut overlay.cache);
+        overlay.db = Box::new(backing);
         self.store_env(evm_env(evm));
         let ext = evm.ext().clone();
         let context = self.active_mut();
-        context.cache = Some(Arc::new(cache.clone()));
+        let cache = match (is_view, context.cache.take()) {
+            (true, Some(mut accepted)) => {
+                Arc::make_mut(&mut accepted).merge(local);
+                accepted
+            }
+            _ => Arc::new(local),
+        };
+        context.cache = Some(Arc::clone(&cache));
         context.switched.clear();
         context.ext = StoredExt::new(&ext);
         Suspended {
@@ -1295,7 +1309,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
 /// What a running transaction carries from a suspended context into the next one.
 struct Suspended {
     /// The suspended context's accepted state, the source of persistent and carried accounts.
-    cache: Cache,
+    cache: Arc<Cache>,
     /// Accounts and slots loaded in the suspended context.
     loaded: AddressMap<HashSet<U256>>,
     /// Accounts created in the suspended context.
