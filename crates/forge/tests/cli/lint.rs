@@ -5,6 +5,7 @@ use forge_lint::{
 use foundry_config::{
     DenyLevel, LintSeverity, LinterConfig, SolidityErrorCode, lint::LintSpecificConfig,
 };
+use foundry_test_utils::util::OutputExt;
 
 mod geiger;
 
@@ -2048,6 +2049,65 @@ contract OldContract {
 
 "#
     ]]);
+}
+
+// With sources on both sides of Solar's minimum version, `forge build` lints the supported files
+// and names each skipped file by its project path.
+#[forgetest]
+fn build_lint_names_skipped_old_solidity_files(prj: _, cmd: _) {
+    prj.add_source(
+        "Old.sol",
+        r#"
+pragma solidity ^0.7.0;
+
+contract Old {}
+"#,
+    );
+    prj.add_source(
+        "New.sol",
+        r#"
+pragma solidity ^0.8.0;
+
+contract New {}
+"#,
+    );
+    prj.update_config(|config| {
+        config.lint = LinterConfig { lint_on_build: true, ..Default::default() };
+    });
+
+    cmd.arg("build").assert_success().stderr_eq(str![[r#"
+Warning: unable to lint src/Old.sol. Solar only supports Solidity versions >=0.8.0
+
+"#]]);
+}
+
+// A file without contracts produces no artifacts, but `forge build` must still lint it.
+#[forgetest]
+fn build_lints_files_without_contracts(prj: _, cmd: _) {
+    prj.add_source(
+        "Constants.sol",
+        r#"
+pragma solidity ^0.8.0;
+
+uint256 constant limit = 10;
+"#,
+    );
+    prj.add_source(
+        "Counter.sol",
+        r#"
+pragma solidity ^0.8.0;
+
+contract Counter {}
+"#,
+    );
+    prj.update_config(|config| {
+        config.lint = LinterConfig { lint_on_build: true, severity: vec![], ..Default::default() };
+    });
+
+    let stderr = cmd.arg("build").assert_success().get_output().stderr_lossy();
+    assert!(stderr.contains("note[screaming-snake-case-const]"), "{stderr}");
+    assert!(!stderr.contains("unable to lint"), "{stderr}");
+    assert!(!stderr.contains("AST source not found"), "{stderr}");
 }
 
 const PRAGMA_INCONSISTENT_ALPHA: &str = r#"

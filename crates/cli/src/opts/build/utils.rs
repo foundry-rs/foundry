@@ -3,6 +3,7 @@ use foundry_common::fs::canonicalize_path;
 use foundry_compilers::{
     CompilerInput, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
     artifacts::{Source, Sources},
+    compilers::ParsedSource,
     multi::{MultiCompilerLanguage, MultiCompilerParser},
     solc::{SOLC_EXTENSIONS, SolcLanguage, SolcVersionedInput},
 };
@@ -225,6 +226,16 @@ pub fn get_solar_sources_from_compile_output(
             }
         }
 
+        // Files without contracts, such as files of free functions or constants, have no
+        // artifacts. Include those whose pragma allows a version Solar supports.
+        for path in source_paths {
+            let Some(parsed) = output.graph().get_parsed_source(&path) else { continue };
+            if parsed.version_req().is_none_or(admits_solar_version) {
+                let source = Source::read(&path)?;
+                sources.insert(path, source);
+            }
+        }
+
         (max_version, sources)
     };
 
@@ -236,6 +247,23 @@ pub fn get_solar_sources_from_compile_output(
     );
 
     Ok(solc)
+}
+
+/// Returns whether a version requirement admits a Solidity version supported by Solar.
+///
+/// The lowest admitted version at or above [`MIN_SOLIDITY_VERSION`] is either that minimum or a
+/// bound of one of the comparators, so only those need checking.
+fn admits_solar_version(req: &semver::VersionReq) -> bool {
+    let bounds = req.comparators.iter().flat_map(|c| {
+        let (minor, patch) = (c.minor.unwrap_or(0), c.patch.unwrap_or(0));
+        [
+            semver::Version::new(c.major, minor, patch),
+            semver::Version::new(c.major, minor, patch + 1),
+        ]
+    });
+    std::iter::once(MIN_SOLIDITY_VERSION)
+        .chain(bounds)
+        .any(|version| version >= MIN_SOLIDITY_VERSION && req.matches(&version))
 }
 
 /// Configures a [`ParsingContext`] from a [`ProjectCompileOutput`].
@@ -332,6 +360,27 @@ mod tests {
             (r"\\?\UNC\server\share\project/", r"\\?\UNC\server\share/project/"),
         ] {
             assert_eq!(solar_slash_path(Path::new(path)), expected);
+        }
+    }
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+
+    #[test]
+    fn admits_solar_version_checks_the_whole_range() {
+        for (req, admitted) in [
+            ("^0.8.20", true),
+            ("=0.8.28", true),
+            (">=0.7.0", true),
+            (">0.8.5, <0.8.7", true),
+            ("^0.7.0", false),
+            ("<0.8.0", false),
+            ("=0.7.6", false),
+        ] {
+            let parsed = semver::VersionReq::parse(req).unwrap();
+            assert_eq!(admits_solar_version(&parsed), admitted, "{req}");
         }
     }
 }
