@@ -1438,13 +1438,22 @@ impl Config {
         // Strip "./" prefix for consistent path matching
         let parse_path = |path: &PathBuf| path.strip_prefix("./").unwrap_or(path).to_path_buf();
 
+        // Solar warns on every build that its code generation is experimental. Configuring Solar
+        // already chose that, so the notice is not a project warning, including under `deny`.
+        let solar_codes = self
+            .solc_version()
+            .is_some_and(|version| version.build.as_str().contains("solar"))
+            .then_some(2264);
+
         let mut builder = ProjectBuilder::<C>::default()
             .artifacts(self.configured_artifacts_handler())
             .additional_settings(self.additional_settings(&settings))
             .restrictions(self.restrictions(&paths)?)
             .settings(settings)
             .paths(paths)
-            .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
+            .ignore_error_codes(
+                self.ignored_error_codes.iter().copied().map(Into::into).chain(solar_codes),
+            )
             .ignore_error_codes_from(self.ignored_error_codes_from.iter().map(|(path, codes)| {
                 (parse_path(path), codes.iter().copied().map(Into::into).collect())
             }))

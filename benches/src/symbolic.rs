@@ -21,6 +21,7 @@ pub enum Fixture {
     Solady,
     Angstrom,
     Farcaster,
+    FoundryXor,
     Generic,
 }
 
@@ -33,6 +34,8 @@ impl Fixture {
         } else if org.eq_ignore_ascii_case("farcasterxyz") && repo.eq_ignore_ascii_case("contracts")
         {
             Self::Farcaster
+        } else if org.eq_ignore_ascii_case("foundry-rs") && repo.eq_ignore_ascii_case("foundry") {
+            Self::FoundryXor
         } else {
             Self::Generic
         }
@@ -43,6 +46,7 @@ impl Fixture {
             "{PREFIX} {}",
             match self {
                 Self::Angstrom => "forge build --root contracts",
+                Self::FoundryXor => "forge build --root benches/fixtures/symbolic/xor",
                 _ => "forge build",
             }
         )
@@ -58,6 +62,9 @@ impl Fixture {
             ),
             Self::Farcaster => format!(
                 "{PREFIX} forge test --symbolic --json --symbolic-timeout 5 --match-path '{FARCASTER_PATH}' --match-test 'check_'"
+            ),
+            Self::FoundryXor => format!(
+                "{PREFIX} forge test --root benches/fixtures/symbolic/xor --symbolic --json"
             ),
             Self::Generic => format!("{PREFIX} forge test --symbolic --json"),
         }

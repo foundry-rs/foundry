@@ -954,6 +954,10 @@ pub enum EthRequest {
     /// Returns the public development consensus identity (Tempo-only).
     #[serde(rename = "anvil_tempoConsensusIdentity", with = "empty_params")]
     TempoConsensusIdentity(()),
+
+    /// Schedules a new development consensus identity (Tempo-only).
+    #[serde(rename = "anvil_tempoRotateConsensusIdentity", with = "empty_params")]
+    TempoRotateConsensusIdentity(()),
 }
 
 /// Native Tempo consensus selector: `"latest"` or `{"height": N}` with a numeric height.
@@ -2390,6 +2394,7 @@ true}]}"#;
             r#"{"method":"consensus_getFinalization","params":[{"height":18446744073709551615}]}"#,
             r#"{"method":"consensus_getLatest","params":[]}"#,
             r#"{"method":"anvil_tempoConsensusIdentity","params":[]}"#,
+            r#"{"method":"anvil_tempoRotateConsensusIdentity","params":[]}"#,
         ] {
             serde_json::from_str::<EthRequest>(request).unwrap();
         }
@@ -2402,6 +2407,7 @@ true}]}"#;
             r#"{"method":"consensus_getFinalization","params":[]}"#,
             r#"{"method":"consensus_getFinalization","params":["latest",1]}"#,
             r#"{"method":"consensus_getLatest","params":[1]}"#,
+            r#"{"method":"anvil_tempoRotateConsensusIdentity","params":[1]}"#,
         ] {
             assert!(serde_json::from_str::<EthRequest>(request).is_err(), "{request}");
         }

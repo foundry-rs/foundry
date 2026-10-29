@@ -19,12 +19,17 @@ use foundry_common::retry::Retry;
 use foundry_compilers::PathStyle;
 use foundry_evm::traces::CallKind;
 use foundry_test_utils::{
-    forgetest, str,
+    forgetest,
+    rpc::spawn_rpc_proxy_recording_method,
+    str,
     util::{OutputExt, SOLC_VERSION, TestCommand, TestProject},
 };
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 use tokio::net::TcpListener;
@@ -977,4 +982,430 @@ async fn create_preflight_warns_on_rate_limit(prj: _, cmd: _) {
         stderr.contains("verifier credential check inconclusive"),
         "preflight should warn on rate limit, got: {stderr}"
     );
+}
+
+// Tests that `--resume --verify` fails when contracts that exactly matched a project artifact at
+// broadcast time, top-level and nested, no longer match one, while other unmatched contracts only
+// warn.
+#[forgetest_init]
+async fn script_verify_fails_when_deployed_contract_no_longer_matches(prj: _, cmd: _) {
+    prj.add_source(
+        "Alpha.sol",
+        "contract Child { uint256 public x = 1; } contract Alpha { Child public child = new Child(); }",
+    );
+    prj.add_source("Beta.sol", "contract Beta { uint256 public y = 1; }");
+    prj.add_raw_source("Alpha.vy", "x: public(uint256)\n");
+    prj.add_script(
+        "Deploy.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Alpha} from "../src/Alpha.sol";
+import {Beta} from "../src/Beta.sol";
+bytes constant RAW = hex"600a600c600039600a6000f3602a60005260206000f3";
+contract DeployUnmatched is Script {
+    function run() external {
+        bytes memory raw = RAW;
+        bytes memory lookalike = type(Beta).creationCode;
+        lookalike[lookalike.length - 1] ^= bytes1(0x01);
+        vm.startBroadcast();
+        assembly {
+            pop(create(0, add(raw, 0x20), mload(raw)))
+            pop(create(0, add(lookalike, 0x20), mload(lookalike)))
+        }
+        vm.stopBroadcast();
+    }
+}
+contract DeployVyper is Script {
+    function run() external {
+        vm.startBroadcast();
+        vm.deployCode("src/Alpha.vy:Alpha");
+        vm.stopBroadcast();
+    }
+}
+contract DeployAlpha is Script {
+    function run() external {
+        bytes memory raw = RAW;
+        vm.startBroadcast();
+        new Alpha();
+        vm.deployCode("src/Alpha.vy:Alpha");
+        assembly { pop(create(0, add(raw, 0x20), mload(raw))) }
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+    let rpc = handle.http_endpoint();
+    let (verifier_url, _, _server) = spawn_full_mock_verifier().await;
+    let script = |target: &str| {
+        [
+            "script".to_string(),
+            format!("script/Deploy.s.sol:{target}"),
+            "--rpc-url".to_string(),
+            rpc.clone(),
+            "--private-key".to_string(),
+            pk.clone(),
+            "--broadcast".to_string(),
+        ]
+    };
+    let verify = [
+        "--verify",
+        "--verifier",
+        "custom",
+        "--verifier-url",
+        verifier_url.as_str(),
+        "--verifier-api-key",
+        "VALID_KEY",
+    ];
+
+    // Unmatched contracts that never exactly matched a project artifact only warn and count as
+    // skipped, on a fresh run and on resume: raw bytecode has no recorded name, and `Beta` with a
+    // flipped metadata byte is only named by fuzzy matching.
+    cmd.forge_fuse().args(script("DeployUnmatched")).args(verify).assert_success().stderr_eq(str![[r#"
+Warning: We haven't found any matching bytecode for the following contracts: [0x5fbdb2315678afecb367f032d93f642f64180aa3, 0xe7f1725e7734ce288f8367e1bb143e90bb3f0512].
+
+This may occur when resuming a verification, but the underlying source code or compiler version has changed.
+Run `forge clean` to make sure builds are in sync with project files, then try again. Alternatively, use `forge verify-contract` to verify contracts that are already deployed.
+##
+Start verification for (0) contracts
+Verified (0) contracts; skipped (2) contracts (see warnings above).
+
+"#]]);
+    cmd.forge_fuse()
+        .args(script("DeployUnmatched"))
+        .arg("--resume")
+        .args(verify)
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: We haven't found any matching bytecode for the following contracts: [0x5fbdb2315678afecb367f032d93f642f64180aa3, 0xe7f1725e7734ce288f8367e1bb143e90bb3f0512].
+
+This may occur when resuming a verification, but the underlying source code or compiler version has changed.
+Run `forge clean` to make sure builds are in sync with project files, then try again. Alternatively, use `forge verify-contract` to verify contracts that are already deployed.
+##
+Start verification for (0) contracts
+Verified (0) contracts; skipped (2) contracts (see warnings above).
+
+"#]]);
+
+    let broadcast: serde_json::Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/Deploy.s.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    assert_eq!(broadcast["transactions"][1]["contractName"], "Beta");
+
+    // A Vyper contract is skipped even when a Solidity contract shares its name.
+    cmd.forge_fuse().args(script("DeployVyper")).args(verify).assert_success().stderr_eq(str![[r#"
+Warning: We haven't found any matching bytecode for the following contracts: [0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0].
+
+This may occur when resuming a verification, but the underlying source code or compiler version has changed.
+Run `forge clean` to make sure builds are in sync with project files, then try again. Alternatively, use `forge verify-contract` to verify contracts that are already deployed.
+##
+Start verification for (0) contracts
+Verified (0) contracts; skipped (1) contracts (see warnings above).
+
+"#]]);
+
+    // After both `Alpha` sources change, the Solidity `Alpha` and its nested `Child` fail, while
+    // the Vyper `Alpha` and raw bytecode only warn.
+    cmd.forge_fuse().args(script("DeployAlpha")).assert_success();
+    prj.add_raw_source("Alpha.vy", "x: public(uint256)\nz: public(uint256)\n");
+    prj.add_source(
+        "Alpha.sol",
+        "contract Child { uint256 public x = 2; } contract Alpha { Child public child = new Child(); }",
+    );
+    cmd.forge_fuse()
+        .args(script("DeployAlpha"))
+        .arg("--resume")
+        .args(verify)
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Warning: We haven't found any matching bytecode for the following contracts: [0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9, 0xd8058efe0198ae9dd7d563e1b4938dcbc86a1f81, 0xdc64a140aa3e981100a9beca4e685f962f0cf6c9, 0x5fc8d32690cc91d4c39d9d3abcbd16989f875707].
+
+This may occur when resuming a verification, but the underlying source code or compiler version has changed.
+Run `forge clean` to make sure builds are in sync with project files, then try again. Alternatively, use `forge verify-contract` to verify contracts that are already deployed.
+##
+Start verification for (2) contracts
+Error: Not all (0 / 2) contracts were verified; no local artifact matches the creation code of Alpha at 0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9, Child at 0xd8058efe0198ae9dD7D563e1b4938Dcbc86A1F81!
+
+"#]]);
+}
+
+// Equal sender nonces on different chains must not make one deployment inherit the other's
+// artifact identity when deciding whether verification is required.
+#[forgetest_init]
+async fn script_verify_fork_same_address_different_artifacts(prj: _, cmd: _) {
+    prj.add_source("Alpha.sol", "contract Alpha { uint256 public x = 1; }");
+    prj.add_source("Beta.sol", "contract Beta { uint256 public y = 2; }");
+    let (_api1, handle1) = spawn(NodeConfig::test()).await;
+    let (_api2, handle2) = spawn(NodeConfig::test().with_chain_id(Some(31338u64))).await;
+    let wallet = handle1.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+    prj.add_script(
+        "Deploy.s.sol",
+        &r#"
+import "forge-std/Script.sol";
+import {Alpha} from "../src/Alpha.sol";
+import {Beta} from "../src/Beta.sol";
+contract Deploy is Script {
+    function run() external {
+        vm.createSelectFork("<RPC1>");
+        vm.startBroadcast();
+        address alpha = address(new Alpha());
+        vm.stopBroadcast();
+        vm.createSelectFork("<RPC2>");
+        vm.startBroadcast();
+        address beta = address(new Beta());
+        vm.stopBroadcast();
+        require(alpha == beta, "deployment addresses differ");
+    }
+}
+"#
+        .replace("<RPC1>", &handle1.http_endpoint())
+        .replace("<RPC2>", &handle2.http_endpoint()),
+    );
+    let script = ["script", "script/Deploy.s.sol:Deploy", "--broadcast", "--private-key", &pk];
+    cmd.forge_fuse().args(script).assert_success();
+
+    let (verifier_url, _, _server) = spawn_full_mock_verifier().await;
+    let resume = [
+        "--resume",
+        "--multi",
+        "--verify",
+        "--verifier",
+        "custom",
+        "--verifier-url",
+        verifier_url.as_str(),
+        "--verifier-api-key",
+        "VALID_KEY",
+    ];
+    // Both deployments can be verified against the original artifacts.
+    cmd.forge_fuse().args(script).args(resume).assert_success();
+    prj.add_source("Beta.sol", "contract Beta { uint256 public y = 3; }");
+    cmd.forge_fuse().args(script).args(resume).assert_failure().stderr_eq(str![[r#"
+...
+Error: chain 31338: Not all (0 / 1) contracts were verified; no local artifact matches the creation code of Beta at 0x5FbDB2315678afecb367f032d93F642f64180aa3!
+
+"#]]);
+}
+
+// The EVM permits ignored trailing bytes even without an ABI constructor. Such input must use
+// the same artifact-prefix matching rule when recording deployments and verifying them.
+#[forgetest_init]
+async fn script_verify_nested_creation_with_trailing_data(prj: _, cmd: _) {
+    prj.add_source("Child.sol", "contract Child { uint256 public x = 1; }");
+    prj.add_source(
+        "Factory.sol",
+        r#"
+contract Factory {
+    function deploy(bytes memory code) external {
+        assembly { pop(create(0, add(code, 0x20), mload(code))) }
+    }
+}
+"#,
+    );
+    prj.add_script(
+        "Deploy.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Child} from "../src/Child.sol";
+import {Factory} from "../src/Factory.sol";
+contract Deploy is Script {
+    function run() external {
+        bytes memory code = bytes.concat(type(Child).creationCode, new bytes(1024));
+        vm.startBroadcast();
+        Factory factory = new Factory();
+        factory.deploy(code);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+    let rpc = handle.http_endpoint();
+    let script = [
+        "script",
+        "script/Deploy.s.sol:Deploy",
+        "--rpc-url",
+        rpc.as_str(),
+        "--broadcast",
+        "--private-key",
+        &pk,
+    ];
+    cmd.forge_fuse().args(script).assert_success();
+    let sequence: ScriptSequence<Ethereum> = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/Deploy.s.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    assert_eq!(sequence.transactions[1].additional_contracts.len(), 1);
+
+    let (verifier_url, _, _server) = spawn_full_mock_verifier().await;
+    let resume = [
+        "--resume",
+        "--verify",
+        "--verifier",
+        "custom",
+        "--verifier-url",
+        verifier_url.as_str(),
+        "--verifier-api-key",
+        "VALID_KEY",
+    ];
+    cmd.forge_fuse().args(script).args(resume).assert_success();
+    prj.add_source("Child.sol", "contract Child { uint256 public x = 2; }");
+    cmd.forge_fuse().args(script).args(resume).assert_failure().stderr_eq(str![[r#"
+...
+Error: Not all (1 / 2) contracts were verified; no local artifact matches the creation code of Child at 0xa16E02E87b7454126E5E10d957A927A7F5B5d2be!
+
+"#]]);
+}
+
+// A chain whose verification fails does not stop the contracts of later chains from being
+// submitted, and the error names the failing chain.
+#[forgetest_init]
+async fn script_verifies_every_chain_after_a_failure(prj: _, cmd: _) {
+    prj.add_source(
+        "Contracts.sol",
+        r#"
+contract Alpha { function id() external pure returns (uint256) { return 1111; } }
+contract Beta { function id() external pure returns (uint256) { return 2222; } }
+"#,
+    );
+    let script = prj.add_script(
+        "MultiVerify.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Alpha, Beta} from "../src/Contracts.sol";
+
+contract MultiVerify is Script {
+    function run(string memory rpc1, string memory rpc2) external {
+        vm.createSelectFork(rpc1);
+        vm.startBroadcast();
+        new Alpha();
+        vm.stopBroadcast();
+
+        vm.createSelectFork(rpc2);
+        vm.startBroadcast();
+        new Beta();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api1, handle1) = spawn(NodeConfig::test().with_chain_id(Some(1111u64))).await;
+    let (_api2, handle2) = spawn(NodeConfig::test().with_chain_id(Some(2222u64))).await;
+    let (rpc1, transactions1) =
+        spawn_rpc_proxy_recording_method(handle1.http_endpoint(), "eth_sendRawTransaction").await;
+    let (rpc2, transactions2) =
+        spawn_rpc_proxy_recording_method(handle2.http_endpoint(), "eth_sendRawTransaction").await;
+
+    // Initially reject only Alpha, then both contracts, then accept Alpha with Beta already
+    // verified.
+    let attempt = Arc::new(AtomicUsize::new(0));
+    let verifier_attempt = attempt.clone();
+    let submissions = Arc::new(Mutex::new(Vec::new()));
+    let state = submissions.clone();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let verifier_url = format!("http://{}", listener.local_addr().unwrap());
+    let app = Router::new().fallback(move |uri: axum::http::Uri, body: String| {
+        let state = state.clone();
+        let attempt = verifier_attempt.load(Ordering::SeqCst);
+        async move {
+            let encoded = if body.is_empty() { uri.query().unwrap_or_default() } else { &body };
+            let form = url::form_urlencoded::parse(encoded.as_bytes())
+                .into_owned()
+                .collect::<HashMap<_, _>>();
+            match form.get("action").map(String::as_str) {
+                Some("verifysourcecode") => {
+                    let name = form["contractname"].clone();
+                    let alpha = name.ends_with(":Alpha");
+                    state.lock().unwrap().push(name);
+                    if attempt == 1 || (attempt == 0 && alpha) {
+                        r#"{"status":"0","message":"NOTOK","result":"mock failure"}"#
+                    } else if attempt == 2 && !alpha {
+                        r#"{"status":"0","message":"NOTOK","result":"Contract source code already verified"}"#
+                    } else {
+                        r#"{"status":"1","message":"OK","result":"guid"}"#
+                    }
+                }
+                Some("checkverifystatus") => {
+                    r#"{"status":"1","message":"OK","result":"Pass - Verified"}"#
+                }
+                _ => r#"{"status":"0","message":"NOTOK","result":"Contract source code not verified"}"#,
+            }
+        }
+    });
+    let _server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let args = [
+        "script",
+        script.to_str().unwrap(),
+        "--sig",
+        "run(string,string)",
+        &rpc1,
+        &rpc2,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+        "--verify",
+        "--verifier",
+        "custom",
+        "--verifier-url",
+        &verifier_url,
+        "--verifier-api-key",
+        "KEY",
+        "--retries",
+        "1",
+        "--delay",
+        "0",
+    ];
+    cmd.forge_fuse().args(args);
+    cmd.assert_failure().stderr_eq(str![[r#"
+...
+Error: chain 1111: Not all (0 / 1) contracts were verified!
+
+"#]]);
+
+    // `--retries 1` submits `Alpha` twice before chain 2222 is verified.
+    assert_eq!(
+        *submissions.lock().unwrap(),
+        ["src/Contracts.sol:Alpha", "src/Contracts.sol:Alpha", "src/Contracts.sol:Beta"]
+    );
+    assert_eq!(transactions1.lock().unwrap().len(), 1);
+    assert_eq!(transactions2.lock().unwrap().len(), 1);
+
+    // A retry that fails on both chains reports both failures, in sequence order.
+    attempt.store(1, Ordering::SeqCst);
+    submissions.lock().unwrap().clear();
+    cmd.forge_fuse().args(args).args(["--multi", "--resume"]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+...
+Error: chain 1111: Not all (0 / 1) contracts were verified!
+chain 2222: Not all (0 / 1) contracts were verified!
+
+"#]]);
+    assert_eq!(
+        *submissions.lock().unwrap(),
+        [
+            "src/Contracts.sol:Alpha",
+            "src/Contracts.sol:Alpha",
+            "src/Contracts.sol:Beta",
+            "src/Contracts.sol:Beta",
+        ]
+    );
+    assert_eq!(transactions1.lock().unwrap().len(), 1);
+    assert_eq!(transactions2.lock().unwrap().len(), 1);
+
+    // Resume retries verification on every chain, counting an already-verified response as success
+    // without rebroadcasting completed deployments.
+    attempt.store(2, Ordering::SeqCst);
+    submissions.lock().unwrap().clear();
+    cmd.forge_fuse().args(args).args(["--multi", "--resume"]);
+    cmd.assert_success();
+    assert_eq!(*submissions.lock().unwrap(), ["src/Contracts.sol:Alpha", "src/Contracts.sol:Beta"]);
+    assert_eq!(transactions1.lock().unwrap().len(), 1);
+    assert_eq!(transactions2.lock().unwrap().len(), 1);
 }

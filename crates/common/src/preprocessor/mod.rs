@@ -18,7 +18,7 @@ use solar::parse::{ast::Span, interface::SourceMap};
 use std::{
     collections::{BTreeSet, HashSet},
     ops::{ControlFlow, Range},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -210,6 +210,15 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
 
         Ok(())
     }
+
+    fn is_source_context_sensitive(
+        &self,
+        source: &Path,
+        paths: &ProjectPathsConfig<SolcLanguage>,
+    ) -> bool {
+        // Context changes can alter rewriting eligibility even for previously native deployments.
+        paths.is_test_or_script(source)
+    }
 }
 
 impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
@@ -263,6 +272,18 @@ impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
             mocks,
             preprocessor_state,
             source_units,
+        )
+    }
+
+    fn is_source_context_sensitive(
+        &self,
+        source: &Path,
+        paths: &ProjectPathsConfig<MultiCompilerLanguage>,
+    ) -> bool {
+        <Self as Preprocessor<SolcCompiler>>::is_source_context_sensitive(
+            self,
+            source,
+            paths.with_language_ref(),
         )
     }
 }
@@ -949,6 +970,39 @@ mod tests {
                 if workaround { 0 } else { 8 }
             );
             assert_eq!(source.matches("payable(address(").count(), usize::from(workaround));
+        }
+    }
+
+    #[test]
+    fn source_context_sensitivity_uses_configured_directories() {
+        let root = tempfile::tempdir().unwrap();
+        let mut paths = ProjectPathsConfig::builder().root(root.path()).build().unwrap();
+        paths.tests = paths.root.join("src/spec");
+        paths.scripts = paths.root.join("ops");
+        let multi_paths = paths.clone().with_language::<MultiCompilerLanguage>();
+        let preprocessor = DynamicTestLinkingPreprocessor::default();
+        for (source, expected) in [
+            ("src/spec/Helper.sol", true),
+            ("ops/Utility.sol", true),
+            ("test/Default.t.sol", false),
+            ("src/LooksLikeTest.t.sol", false),
+            ("lib/Spec.t.sol", false),
+        ] {
+            let source = paths.root.join(source);
+            assert_eq!(
+                <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::is_source_context_sensitive(
+                    &preprocessor, &source, &paths,
+                ),
+                expected,
+                "{}", source.display(),
+            );
+            assert_eq!(
+                <DynamicTestLinkingPreprocessor as Preprocessor<MultiCompiler>>::is_source_context_sensitive(
+                    &preprocessor, &source, &multi_paths,
+                ),
+                expected,
+                "{}", source.display(),
+            );
         }
     }
 }
