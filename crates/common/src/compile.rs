@@ -343,6 +343,13 @@ impl ProjectCompiler {
                 // reuse DTL artifacts. Return only this attempt, including any compiler errors.
                 output = compile(false)?;
             }
+            // Solar analysis failures disable DTL and fall back to native bytecode. Surface
+            // that only when solc then succeeds; otherwise solc's error is enough (#17913).
+            if !output.has_compiler_errors()
+                && let Some(warning) = preprocessor.take_deferred_disable_warning()
+            {
+                sh_warn!("{warning}")?;
+            }
             if !output.has_compiler_errors()
                 && let Some(external) = external
             {
