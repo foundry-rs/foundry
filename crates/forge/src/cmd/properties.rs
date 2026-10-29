@@ -436,8 +436,7 @@ struct Session {
     imports: BTreeMap<PathBuf, BTreeSet<PathBuf>>,
 }
 
-/// The output directories that a run reserved, and the directory that holds them if the run
-/// created it, in removal order. The ones it left empty are removed on drop.
+/// The output directories that a run reserved. The ones it left empty are removed on drop.
 struct RunDirs(Vec<PathBuf>);
 
 impl Drop for RunDirs {
@@ -478,11 +477,10 @@ impl PropertiesArgs {
         // Creating them reserves them against concurrent runs.
         let generated_dir = config.root.join(&generated_tests);
         ensure_inside(&config.root, &generated_dir, &generated_tests)?;
-        let created_generated_dir = !generated_dir.exists();
         fs::create_dir_all(&generated_dir)
             .wrap_err_with(|| format!("failed to create {}", generated_dir.display()))?;
         let mut run = 1;
-        let mut run_dirs = loop {
+        let run_dirs = loop {
             let mut dirs = RunDirs(Vec::new());
             for id in 1..=self.agents {
                 let dir = generated_dir.join(format!("run-{run}-agent-{id}"));
@@ -500,9 +498,6 @@ impl PropertiesArgs {
             }
             run += 1;
         };
-        if created_generated_dir {
-            run_dirs.0.push(generated_dir);
-        }
         let cache_root = config.cache_path.join("properties");
         let verifier_command = self
             .verifier_command
