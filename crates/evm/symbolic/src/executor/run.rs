@@ -126,10 +126,7 @@ impl SymbolicExecutor {
     /// Ordinary Solidity `require` reverts prune the current path. Assertion failures,
     /// forge-std assertion reverts, and DSTest failure signals are reported as
     /// counterexample candidates when the failing path is satisfiable.
-    pub fn run<FEN: FoundryEvmNetwork>(
-        &mut self,
-        input: SymbolicRunInput<'_, FEN>,
-    ) -> SymbolicRunResult {
+    pub fn run(&mut self, input: SymbolicRunInput<'_>) -> SymbolicRunResult {
         self.execute_run(input, None)
     }
 
@@ -138,9 +135,9 @@ impl SymbolicExecutor {
     /// Unlike [`Self::run`], this retains replay candidates independently of the proof result, so a
     /// later unsupported path or resource limit does not discard an input found on an earlier
     /// completed path. The caller must concretely replay every candidate before using it.
-    pub fn search_branch_target<FEN: FoundryEvmNetwork>(
+    pub fn search_branch_target(
         &mut self,
-        input: SymbolicRunInput<'_, FEN>,
+        input: SymbolicRunInput<'_>,
     ) -> SymbolicBranchTargetSearchResult {
         let mut candidates = Vec::new();
         if input.branch_target.is_none() {
@@ -164,9 +161,9 @@ impl SymbolicExecutor {
         SymbolicBranchTargetSearchResult { candidates, execution }
     }
 
-    fn execute_run<FEN: FoundryEvmNetwork>(
+    fn execute_run(
         &mut self,
-        input: SymbolicRunInput<'_, FEN>,
+        input: SymbolicRunInput<'_>,
         mut branch_candidates: Option<&mut Vec<SymbolicConcreteInput>>,
     ) -> SymbolicRunResult {
         self.reset_run_state(false);
@@ -294,9 +291,9 @@ impl SymbolicExecutor {
     ///
     /// The configured invariant depth limits the number of target calls explored before the
     /// invariant is checked. A depth of zero checks only the invariant against setup state.
-    pub fn run_invariant<FEN: FoundryEvmNetwork>(
+    pub fn run_invariant(
         &mut self,
-        input: SymbolicInvariantRunInput<'_, FEN>,
+        input: SymbolicInvariantRunInput<'_>,
     ) -> SymbolicInvariantRunResult {
         self.reset_run_state(true);
         self.solver.clear_context_caches();
@@ -324,9 +321,9 @@ impl SymbolicExecutor {
     /// This is a best-effort candidate search from a concrete state. Returned candidates are
     /// unconfirmed until the caller replays them concretely, and an empty result does not prove
     /// any invariant.
-    pub fn search_invariant_candidates<FEN: FoundryEvmNetwork>(
+    pub fn search_invariant_candidates(
         &mut self,
-        input: SymbolicInvariantCandidateInput<'_, FEN>,
+        input: SymbolicInvariantCandidateInput<'_>,
     ) -> SymbolicInvariantCandidateSearchResult {
         self.reset_run_state(true);
         self.solver.clear_context_caches();
@@ -356,15 +353,15 @@ impl SymbolicExecutor {
         SymbolicInvariantCandidateSearchResult { candidates, limitation }
     }
 
-    pub(super) fn run_inner<FEN: FoundryEvmNetwork>(
+    pub(super) fn run_inner(
         &mut self,
-        input: &SymbolicRunInput<'_, FEN>,
+        input: &SymbolicRunInput<'_>,
         mut branch_candidates: Option<&mut Vec<SymbolicConcreteInput>>,
         completed_paths: &mut usize,
     ) -> Result<SymbolicRunResult, SymbolicError> {
         let account = input
             .executor
-            .backend()
+            .backend
             .basic_ref(input.target)
             .map_err(|err| SymbolicError::Backend(err.to_string()))?
             .ok_or(SymbolicError::MissingAccount(input.target))?;
@@ -387,7 +384,7 @@ impl SymbolicExecutor {
             );
             root.set_corpus_seed_models(corpus_seed_models);
             root.set_branch_target(input.branch_target);
-            root.apply_executor_env(&mut self.cx, input.executor);
+            root.apply_executor_env(&mut self.cx, &input.executor);
             root.world.set_storage_layout(self.config.storage_layout);
             root.world.clear_transaction_scoped_state();
             roots.push(root);
@@ -456,7 +453,7 @@ impl SymbolicExecutor {
                     Some(op) => {
                         let _step_span = trace_span!("symbolic_step", pc = state.pc, op).entered();
                         self.step(
-                            input.executor,
+                            &input.executor,
                             &code,
                             code.jump_table(),
                             &mut state,
@@ -593,9 +590,9 @@ impl SymbolicExecutor {
         Ok(SymbolicConcreteInput { args, calldata: calldata_bytes })
     }
 
-    pub(super) fn run_invariant_inner<FEN: FoundryEvmNetwork>(
+    pub(super) fn run_invariant_inner(
         &mut self,
-        input: SymbolicInvariantRunInput<'_, FEN>,
+        input: SymbolicInvariantRunInput<'_>,
     ) -> Result<SymbolicInvariantRunResult, SymbolicError> {
         if input.targets.is_empty() {
             return Err(SymbolicError::Unsupported("symbolic invariant has no targets"));
@@ -617,14 +614,14 @@ impl SymbolicExecutor {
             input.sender,
             input.ffi_enabled,
         );
-        initial_state.apply_executor_env(&mut self.cx, input.executor);
+        initial_state.apply_executor_env(&mut self.cx, &input.executor);
         initial_state.world.set_storage_layout(self.config.storage_layout);
         let initial = SequencePath { state: initial_state, steps: Vec::new() };
 
         if symbolic_invariant_should_check(0, input.depth, input.check_interval) {
             for outcome in self.execute_invariant_check(
-                input.executor,
-                initial.state.clone(),
+                &input.executor,
+                &initial.state,
                 input.invariant_address,
                 input.sender,
                 input.invariant,
@@ -672,7 +669,7 @@ impl SymbolicExecutor {
                             let calldata = step.calldata.call_data(&mut self.cx);
                             let constraints = step.calldata.constraints().to_vec();
                             let mut call = self.prepare_sequence_call(
-                                input.executor,
+                                &input.executor,
                                 sequence.state.clone(),
                                 target.address,
                                 sender,
@@ -682,7 +679,7 @@ impl SymbolicExecutor {
                             )?;
 
                             while let Some(outcome) = self.execute_sequence_call_next(
-                                input.executor,
+                                &input.executor,
                                 &mut call,
                                 &mut completed_paths,
                             )? {
@@ -732,8 +729,8 @@ impl SymbolicExecutor {
                                     input.check_interval,
                                 ) {
                                     for mut invariant_outcome in self.execute_invariant_check(
-                                        input.executor,
-                                        post_state.clone(),
+                                        &input.executor,
+                                        &post_state,
                                         input.invariant_address,
                                         input.sender,
                                         input.invariant,

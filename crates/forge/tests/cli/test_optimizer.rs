@@ -6,6 +6,7 @@ use foundry_compilers::artifacts::{
     ConfigurableContractArtifact, EvmVersion, remappings::Remapping,
 };
 use foundry_config::{CompilationRestrictions, SettingsOverrides};
+use std::fs;
 
 #[cfg(unix)]
 use foundry_compilers::{
@@ -13,7 +14,7 @@ use foundry_compilers::{
     solc::Solc,
 };
 #[cfg(unix)]
-use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
+use std::{os::unix::fs::PermissionsExt, path::PathBuf};
 
 #[forgetest]
 fn preprocess_abi_coder_v2_solc_07(prj: _, cmd: _) {
@@ -5557,4 +5558,158 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
         );
         assert!(prj.artifacts().join(helper).exists(), "{owner} was not preprocessed");
     }
+}
+
+// <https://github.com/foundry-rs/foundry/issues/17836>
+#[forgetest]
+fn preprocess_expanding_build_reuses_source_artifacts(prj: _, cmd: _) {
+    for i in 1..=5 {
+        prj.add_source(
+            &format!("C{i}.sol"),
+            &format!("contract C{i} {{ uint256 public x = {i}; }}"),
+        );
+    }
+    prj.add_script(
+        "Deploy.s.sol",
+        r#"
+import {C1} from "../src/C1.sol";
+contract Deploy {
+    function run() external { require(new C1().x() == 1, "wrong deployment"); }
+}
+"#,
+    );
+    cmd.args(["build", "--skip", "script"]).with_no_redact().assert_success().stdout_eq(str![[
+        r#"
+Compiling 5 files with [..]
+Solc [..] finished in [..]
+Compiler run successful!
+
+"#
+    ]]);
+    let path = prj.artifacts().join("C1.sol/C1.json");
+    let source = read_json_file::<ConfigurableContractArtifact>(&path).unwrap();
+    cmd.forge_fuse().arg("build").assert_success().stdout_eq(str![[r#"
+Compiling 1 files with [..]
+Solc [..] finished in [..]
+Compiler run successful!
+
+"#]]);
+    assert_eq!(source, read_json_file::<ConfigurableContractArtifact>(&path).unwrap());
+    cmd.forge_fuse().arg("build").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+"#]]);
+    cmd.forge_fuse().args(["script", "script/Deploy.s.sol:Deploy"]).assert_success();
+}
+
+#[forgetest]
+fn preprocess_context_growth_invalidates_source_importers(prj: _, cmd: _) {
+    let implementation =
+        "contract Impl { function value() external pure returns (uint256) { return 111; } }";
+    prj.add_source("Impl.sol", implementation);
+    prj.add_test(
+        "Factory.t.sol",
+        r#"
+import {Impl} from "../src/Impl.sol";
+contract Factory {
+    function create() public returns (Impl) { return new Impl(); }
+}
+"#,
+    );
+    prj.add_source(
+        "Consumer.sol",
+        r#"
+import {Factory} from "../test/Factory.t.sol";
+contract Consumer is Factory {}
+"#,
+    );
+    cmd.args(["build"]).assert_success();
+    let artifact_path = prj.artifacts().join("Consumer.sol/Consumer.json");
+    let before = read_json_file::<ConfigurableContractArtifact>(&artifact_path).unwrap();
+
+    // Introduce an ambiguous artifact path while the factory and its importer are out of scope.
+    prj.create_file("vendor/pkg/src/Impl.sol", implementation);
+    prj.add_script(
+        "Other.s.sol",
+        r#"
+import {Impl} from "../vendor/pkg/src/Impl.sol";
+contract Other { function run() public { new Impl(); } }
+"#,
+    );
+    cmd.forge_fuse().args(["build", "script/Other.s.sol"]).assert_success();
+    cmd.forge_fuse().args(["build", "src/Consumer.sol"]).assert_success();
+    let after = read_json_file::<ConfigurableContractArtifact>(&artifact_path).unwrap();
+    let bytecode = after.deployed_bytecode.unwrap().bytecode.unwrap().object;
+    assert_ne!(before.deployed_bytecode.unwrap().bytecode.unwrap().object, bytecode);
+    cmd.forge_fuse().args(["build", "--force"]).assert_success();
+    let clean = read_json_file::<ConfigurableContractArtifact>(&artifact_path).unwrap();
+    assert_eq!(bytecode, clean.deployed_bytecode.unwrap().bytecode.unwrap().object);
+
+    // The rebuilt factory must retain native dependencies after an implementation-only edit.
+    prj.add_test(
+        "Check.t.sol",
+        r#"
+import {Consumer} from "../src/Consumer.sol";
+contract CheckTest {
+    function test_value() public { require(new Consumer().create().value() == 111, "implementation changed"); }
+}
+"#,
+    );
+    cmd.forge_fuse().arg("test").assert_success();
+    prj.add_source("Impl.sol", &implementation.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: implementation changed] test_value() ([GAS])
+...
+"#]]);
+}
+
+#[forgetest]
+fn preprocess_context_growth_avoids_new_helper_path_collision(prj: _, cmd: _) {
+    prj.add_source(
+        "Target.sol",
+        "contract Target { uint256 public value; constructor(uint256 n) { value = n; } }",
+    );
+    prj.add_test(
+        "Target.t.sol",
+        r#"
+import {Target} from "../src/Target.sol";
+contract TargetTest {
+    function test_value() public { require(new Target(42).value() == 42, "wrong constructor"); }
+}
+"#,
+    );
+    cmd.args(["build", "test/Target.t.sol"]).assert_success();
+    let artifact_path = prj.artifacts().join("Target.t.sol/TargetTest.json");
+    let before = read_json_file::<ConfigurableContractArtifact>(&artifact_path).unwrap();
+    let original_bytecode = before.deployed_bytecode.unwrap().bytecode.unwrap().object;
+
+    let helper = format!("DeployHelper{:x}.sol", keccak256("src/Target.sol:Target"));
+    prj.create_file(
+        format!("foundry-pp/{helper}"),
+        "pragma solidity ^0.8.0; contract Collision {}",
+    );
+    prj.add_script(
+        "Discover.s.sol",
+        &format!(
+            "import '../foundry-pp/{helper}'; contract Discover {{ function run() public {{}} }}"
+        ),
+    );
+    cmd.forge_fuse().args(["build", "script/Discover.s.sol"]).assert_success();
+    cmd.forge_fuse().args(["build", "test/Target.t.sol"]).assert_success();
+    let after = read_json_file::<ConfigurableContractArtifact>(&artifact_path).unwrap();
+    let bytecode = after.deployed_bytecode.unwrap().bytecode.unwrap().object;
+    assert_ne!(original_bytecode, bytecode);
+    cmd.forge_fuse().arg("test").assert_success();
+    cmd.forge_fuse().args(["build", "--force"]).assert_success();
+    let clean = read_json_file::<ConfigurableContractArtifact>(&artifact_path).unwrap();
+    assert_eq!(bytecode, clean.deployed_bytecode.unwrap().bytecode.unwrap().object);
+
+    // Removing the collision must invalidate the cached helper imports as well.
+    fs::remove_file(prj.root().join(format!("foundry-pp/{helper}"))).unwrap();
+    fs::remove_file(prj.root().join("script/Discover.s.sol")).unwrap();
+    cmd.forge_fuse().args(["build", "test/Target.t.sol"]).assert_success();
+    let restored = read_json_file::<ConfigurableContractArtifact>(&artifact_path).unwrap();
+    assert_eq!(original_bytecode, restored.deployed_bytecode.unwrap().bytecode.unwrap().object);
+    cmd.forge_fuse().arg("test").assert_success();
 }

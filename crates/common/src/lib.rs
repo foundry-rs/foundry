@@ -28,6 +28,7 @@ pub mod external_storage;
 pub mod fs;
 pub mod iter;
 pub mod mapping_slots;
+pub mod namespaced_storage;
 mod preprocessor;
 pub mod provider;
 pub mod retry;

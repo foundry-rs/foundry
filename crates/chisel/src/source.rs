@@ -179,7 +179,7 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
         // `trailing_assembly_last_stmt_span` verifies via the AST that the HIR node
         // corresponds to an assembly block and supplies the concrete Yul span to use.
         let mut source_span =
-            if matches!(last_stmt.kind, HirStmtKind::AssemblyBlock(_) | HirStmtKind::Err(_))
+            if matches!(last_stmt.kind, HirStmtKind::AssemblyBlock(..) | HirStmtKind::Err(_))
                 && let Some(span) = self.trailing_assembly_last_stmt_span()
             {
                 span

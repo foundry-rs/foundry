@@ -1,10 +1,9 @@
 use super::*;
-use foundry_evm::revm::precompile::u64_to_address;
 
 impl SymbolicExecutor {
     pub(super) fn call(
         &mut self,
-        executor: &Executor<impl FoundryEvmNetwork>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         completed_paths: &mut usize,
@@ -396,6 +395,26 @@ impl SymbolicExecutor {
         Ok(Some(state.call_mocks[idx].next_outcome(&mut self.cx)))
     }
 
+    /// Returns whether a `vm.mockCall` answers this call.
+    fn has_call_mock(
+        &mut self,
+        state: &PathState,
+        callee: Address,
+        value: &SymExpr,
+        calldata: &SymBytes,
+    ) -> Result<bool, SymbolicError> {
+        if state.call_mocks.is_empty() {
+            return Ok(false);
+        }
+        let value = state.constrained_word(&mut self.cx, value);
+        for mock in &state.call_mocks {
+            if self.call_mock_match_constraints(state, mock, callee, value, calldata)?.is_some() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     pub(super) fn branch_symbolic_match_condition_if_needed(
         &mut self,
         state: &mut PathState,
@@ -675,9 +694,9 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    pub(super) fn call_concrete_target<FEN: FoundryEvmNetwork>(
+    pub(super) fn call_concrete_target(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         completed_paths: &mut usize,
@@ -850,9 +869,16 @@ impl SymbolicExecutor {
         }
         let call_context =
             (!matches!(kind, CallKind::DelegateCall)).then(|| state.prank_for_next_call());
+        // An isolated CALL is its own transaction, so it bumps the caller's nonce even when the
+        // call fails. Concrete Forge answers a mocked call before isolating it.
+        let isolated =
+            matches!(kind, CallKind::Call) && state.starts_isolated_transaction(executor);
         let transfer_to = if matches!(kind, CallKind::Call) { to } else { state.address };
         if matches!(kind, CallKind::Call | CallKind::CallCode) {
             let call_caller = call_context.as_ref().expect("value calls have a call context").0;
+            if isolated && !self.has_call_mock(state, code_address, &value, &call_input)? {
+                state.world.increment_nonce(executor, call_caller)?;
+            }
             if !self.prepare_value_transfer(
                 executor,
                 state,
@@ -888,8 +914,8 @@ impl SymbolicExecutor {
         let (call_caller, call_caller_word, pranked_origin) =
             call_context.unwrap_or_else(|| state.prank_for_next_call());
 
-        let spec_id: SpecId = executor.spec_id().into();
-        if precompile_number_for_spec(code_address, spec_id).is_some() {
+        let spec_id = executor.spec_id;
+        if is_precompile_for_spec(code_address, spec_id) {
             let input_len = in_size.size_word(&mut self.cx);
             let input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset);
             if precompile_number_for_spec(code_address, spec_id) == Some(10) {
@@ -1005,6 +1031,9 @@ impl SymbolicExecutor {
 
         let original_world = state.world.clone();
         let mut child = state.child(frame);
+        if isolated {
+            child.world.clear_transient_storage();
+        }
         if let Some((origin, origin_word)) = pranked_origin {
             child.origin = origin;
             child.origin_word = origin_word;
@@ -1017,7 +1046,7 @@ impl SymbolicExecutor {
 
         let mut parents = VecDeque::with_capacity(outcomes.len());
         for outcome in outcomes {
-            match self.join_call_outcome(state, outcome, to)? {
+            match self.join_call_outcome(executor, state, outcome, to)? {
                 JoinedCallOutcome::Rejected => {}
                 JoinedCallOutcome::Failure(parent) => {
                     *state = parent;
@@ -1038,13 +1067,25 @@ impl SymbolicExecutor {
                     parent.stack.push(SymExpr::one(&mut self.cx))?;
                     parents.push_back(parent);
                 }
-                JoinedCallOutcome::Success { mut parent, child } => {
+                JoinedCallOutcome::Success { mut parent, child, unmet_expected_revert } => {
                     parent.world = child.world;
+                    if isolated {
+                        parent.world.restore_transient_storage(&original_world);
+                    }
                     parent.expected_emit = child.expected_emit;
                     parent.expected_creates = child.expected_creates;
-                    parent.return_data = child.frame.return_data;
+                    parent.return_data = if unmet_expected_revert {
+                        error_string_return_data(
+                            &mut self.cx,
+                            "next call did not revert as expected",
+                        )
+                    } else {
+                        child.frame.return_data
+                    };
                     parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
-                    parent.stack.push(SymExpr::one(&mut self.cx))?;
+                    let success =
+                        SymExpr::constant(&mut self.cx, U256::from(!unmet_expected_revert));
+                    parent.stack.push(success)?;
                     parents.push_back(parent);
                 }
                 JoinedCallOutcome::Revert { mut parent, child } => {
@@ -1062,9 +1103,9 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    fn execute_kzg_precompile_call<FEN: FoundryEvmNetwork>(
+    fn execute_kzg_precompile_call(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         kind: CallKind,
@@ -1179,9 +1220,9 @@ impl SymbolicExecutor {
 
     #[expect(clippy::too_many_arguments)]
     /// Applies a precompile call result to the current symbolic state.
-    fn apply_precompile_outcome<FEN: FoundryEvmNetwork>(
+    fn apply_precompile_outcome(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         kind: CallKind,
         to: Address,
@@ -1207,9 +1248,9 @@ impl SymbolicExecutor {
         Ok(())
     }
 
-    fn apply_call_value_transfer<FEN: FoundryEvmNetwork>(
+    fn apply_call_value_transfer(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         kind: CallKind,
         to: Address,
@@ -1225,9 +1266,9 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    pub(super) fn prepare_value_transfer<FEN: FoundryEvmNetwork>(
+    pub(super) fn prepare_value_transfer(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         from: Address,
@@ -1296,9 +1337,9 @@ impl SymbolicExecutor {
         }
     }
 
-    pub(super) fn prepare_create_value_transfer<FEN: FoundryEvmNetwork>(
+    pub(super) fn prepare_create_value_transfer(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         value: SymExpr,
@@ -1353,9 +1394,9 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    pub(super) fn call_symbolic_target<FEN: FoundryEvmNetwork>(
+    pub(super) fn call_symbolic_target(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         completed_paths: &mut usize,
@@ -1369,7 +1410,7 @@ impl SymbolicExecutor {
         out_size: BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
         let mut candidates = state.world.symbolic_call_targets(&mut self.cx, executor)?;
-        candidates.extend((1..=10).map(u64_to_address));
+        candidates.extend(active_precompiles(executor.spec_id).addresses().copied());
         candidates.sort();
         candidates.dedup();
         if candidates.is_empty() {
@@ -1404,6 +1445,9 @@ impl SymbolicExecutor {
                 return Err(SymbolicError::Unsupported("symbolic prank delegatecall"));
             }
             let (call_caller, _, _) = branch.prank_for_next_call();
+            if matches!(kind, CallKind::Call) && branch.starts_isolated_transaction(executor) {
+                branch.world.increment_nonce(executor, call_caller)?;
+            }
             if matches!(kind, CallKind::Call | CallKind::CallCode) {
                 let transfer_to = if matches!(kind, CallKind::Call) {
                     branch.world.symbolic_address_slot(target)
@@ -1472,7 +1516,10 @@ impl SymbolicExecutor {
                         parents.extend(branch_worklist);
                     }
                     StepOutcome::AssumeRejected => {}
-                    outcome => return Ok(outcome),
+                    outcome => {
+                        *state = branch;
+                        return Ok(outcome);
+                    }
                 }
             }
         }
