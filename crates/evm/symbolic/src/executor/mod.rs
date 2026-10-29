@@ -24,9 +24,20 @@ enum CallStatus {
 
 enum JoinedCallOutcome {
     Rejected,
-    ExpectedRevert { parent: PathState, child: PathState },
-    Success { parent: PathState, child: PathState },
-    Revert { parent: PathState, child: PathState },
+    ExpectedRevert {
+        parent: PathState,
+        child: PathState,
+    },
+    /// A successful call; `unmet_expected_revert` means the caller must see it as a revert.
+    Success {
+        parent: PathState,
+        child: PathState,
+        unmet_expected_revert: bool,
+    },
+    Revert {
+        parent: PathState,
+        child: PathState,
+    },
     ExceptionalHalt(PathState),
     Failure(PathState),
 }
@@ -143,6 +154,7 @@ impl SymbolicExecutor {
 
     fn join_call_outcome(
         &mut self,
+        executor: &ExecutorView<'_>,
         state: &PathState,
         mut outcome: CallOutcome,
         reverter: Address,
@@ -169,29 +181,59 @@ impl SymbolicExecutor {
         }
 
         if let Some(mut expected) = parent.expected_revert.clone() {
-            match outcome.status {
-                CallStatus::Success => return Ok(JoinedCallOutcome::Failure(parent)),
-                CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {
-                    if !self.expected_revert_matches(
-                        &mut parent,
-                        &expected,
-                        reverter,
-                        &outcome.state.frame.return_data,
-                    )? {
-                        return Ok(JoinedCallOutcome::Failure(parent));
-                    }
-                    if expected.consume_one() {
-                        parent.expected_revert = None;
-                    } else {
-                        parent.expected_revert = Some(expected);
-                    }
-                    return Ok(JoinedCallOutcome::ExpectedRevert { parent, child: outcome.state });
+            // Like Forge, an unmet `vm.expectRevert` turns this call into a `CheatcodeError` revert
+            // the caller can catch, and a successful call keeps its state. If the match can't be
+            // decided exactly, the path fails.
+            let concrete_match = match outcome.status {
+                CallStatus::Success if !executor.internal_expect_revert => Some(false),
+                CallStatus::Revert => {
+                    expected.concrete_match(&mut self.cx, &outcome.state.frame.return_data)
                 }
+                _ => None,
+            };
+            let matched = match concrete_match {
+                Some(false) => {
+                    parent.expected_revert = None;
+                    let mut child = outcome.state;
+                    if matches!(outcome.status, CallStatus::Success) {
+                        return Ok(JoinedCallOutcome::Success {
+                            parent,
+                            child,
+                            unmet_expected_revert: true,
+                        });
+                    }
+                    child.frame.return_data =
+                        error_string_return_data(&mut self.cx, "Error != expected error");
+                    return Ok(JoinedCallOutcome::Revert { parent, child });
+                }
+                Some(true) => true,
+                None => {
+                    !matches!(outcome.status, CallStatus::Success)
+                        && self.expected_revert_matches(
+                            &mut parent,
+                            &expected,
+                            reverter,
+                            &outcome.state.frame.return_data,
+                        )?
+                }
+            };
+            if !matched {
+                return Ok(JoinedCallOutcome::Failure(parent));
             }
+            if expected.consume_one() {
+                parent.expected_revert = None;
+            } else {
+                parent.expected_revert = Some(expected);
+            }
+            return Ok(JoinedCallOutcome::ExpectedRevert { parent, child: outcome.state });
         }
 
         Ok(match outcome.status {
-            CallStatus::Success => JoinedCallOutcome::Success { parent, child: outcome.state },
+            CallStatus::Success => JoinedCallOutcome::Success {
+                parent,
+                child: outcome.state,
+                unmet_expected_revert: false,
+            },
             CallStatus::Revert => JoinedCallOutcome::Revert { parent, child: outcome.state },
             CallStatus::ExceptionalHalt => JoinedCallOutcome::ExceptionalHalt(parent),
             CallStatus::Failure => JoinedCallOutcome::Failure(parent),

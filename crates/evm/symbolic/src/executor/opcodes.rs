@@ -1491,11 +1491,14 @@ impl SymbolicExecutor {
         offset: SymExpr,
         size: usize,
     ) -> StepOutcome {
+        // In `check*`/`prove*` tests, a `CheatcodeError` that reaches the top frame, such as an
+        // unmet `vm.expectRevert`, is a failure. Invariant handlers treat it as a revert.
         if state.call_depth == 0
             && let Some(offset) = offset.as_const()
             && let Ok(offset) = usize::try_from(offset)
             && let Ok(data) = state.memory.read_concrete(&mut self.cx, offset, size)
-            && is_assertion_revert(&data)
+            && (is_assertion_revert(&data)
+                || (state.root_calldata.is_some() && is_cheatcode_error_revert(&data)))
         {
             StepOutcome::Failure
         } else {

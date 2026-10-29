@@ -1,6 +1,6 @@
 use super::*;
 use alloy_sol_types::{
-    Panic, PanicKind, Revert, SolError,
+    Panic, PanicKind, Revert, SolError, SolValue,
     abi::{AbiDecoderConfig, decode_with_config, token::PackedSeqToken},
 };
 use foundry_evm::core::decode::ASSERTION_FAILED_PREFIX;
@@ -132,6 +132,18 @@ pub(crate) fn shift_left(cx: &mut SymCx, value: SymExpr, bits: usize) -> SymExpr
 pub(crate) fn is_assertion_revert(data: &[u8]) -> bool {
     Panic::abi_decode(data).is_ok_and(|panic| panic.kind() == Some(PanicKind::Assert))
         || is_revert_assertion_failure(data)
+}
+
+pub(crate) fn is_cheatcode_error_revert(data: &[u8]) -> bool {
+    data.starts_with(&Vm::CheatcodeError::SELECTOR)
+}
+
+/// Returns the message wrapped in `Error(string)` or `CheatcodeError(string)` revert data.
+pub(crate) fn unwrap_revert_message(data: &[u8]) -> Option<Vec<u8>> {
+    let message = data
+        .strip_prefix(&Revert::SELECTOR)
+        .or_else(|| data.strip_prefix(&Vm::CheatcodeError::SELECTOR))?;
+    Vec::<u8>::abi_decode(message).ok()
 }
 
 pub(crate) fn is_revert_assertion_failure(data: &[u8]) -> bool {
