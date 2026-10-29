@@ -17,18 +17,20 @@ foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-evm-traces.workspace = true
 foundry-evm-core.workspace = true
-foundry-tui.workspace = true
 
 alloy-primitives.workspace = true
-alloy-dyn-abi.workspace = true
 
-clap = { version = "4", features = ["derive"] }
-crossterm.workspace = true
 eyre.workspace = true
-ratatui = { workspace = true, features = ["crossterm"] }
 revm.workspace = true
-tracing.workspace = true
-serde.workspace = true
+serde_json.workspace = true
+soldb-core.workspace = true
+soldb-debugger.workspace = true
+soldb-ethdebug.workspace = true
+soldb-repl.workspace = true
+soldb-tui.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [features]
 default = ["optimism"]
