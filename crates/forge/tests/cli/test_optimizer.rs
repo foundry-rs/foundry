@@ -4679,14 +4679,9 @@ fn preprocess_constructor_validation(prj: _, cmd: _) {
             .stderr
             .clone();
         prj.update_config(|config| config.dynamic_test_linking = true);
-        let expected = if target == "library Target {}" {
-            let mut expected = b"Warning: dynamic test linking disabled for 1 files: error[1130]: invalid use of a library name\n".to_vec();
-            expected.extend_from_slice(&native);
-            expected
-        } else {
-            native
-        };
-        cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(expected);
+        // DTL-disable warnings are deferred until a successful compile (#17913), so a
+        // failing build matches native stderr even when Solar disables DTL first.
+        cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(native);
     }
 }
 
@@ -5040,9 +5035,8 @@ fn preprocess_inline_verbatim_diagnostics(prj: _, cmd: _) {
             .stderr
             .clone();
         prj.update_config(|config| config.dynamic_test_linking = true);
-        let mut expected = b"Warning: dynamic test linking disabled for 1 files: error: unsupported verbatim builtin\n".to_vec();
-        expected.extend(native);
-        cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(expected);
+        // Failing builds omit the deferred DTL-disable warning (#17913).
+        cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(native);
     }
 }
 

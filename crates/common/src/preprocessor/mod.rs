@@ -20,7 +20,7 @@ use std::{
     ops::{ControlFlow, Range},
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -43,12 +43,21 @@ use deps::{ConstructorContext, PreprocessorDependencies, remove_bytecode_depende
 pub struct DynamicTestLinkingPreprocessor {
     /// Set when preprocessing changes any compiler input. Shared by clones.
     rewrote_sources: Arc<AtomicBool>,
+    /// Set when DTL is disabled for some files; printed after a successful compile.
+    /// Skipping the print when solc fails avoids duplicating solc's own diagnostics
+    /// (see https://github.com/foundry-rs/foundry/issues/17913).
+    pending_disable_warning: Arc<Mutex<Option<String>>>,
 }
 
 impl DynamicTestLinkingPreprocessor {
     /// Returns whether preprocessing changed any compiler input.
     pub fn rewrote_sources(&self) -> bool {
         self.rewrote_sources.load(Ordering::Relaxed)
+    }
+
+    /// Take a pending "dynamic test linking disabled" warning, if any.
+    pub fn take_disable_warning(&self) -> Option<String> {
+        self.pending_disable_warning.lock().ok().and_then(|mut g| g.take())
     }
 }
 
@@ -202,7 +211,13 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
                     .as_deref()
                     .and_then(solar_error_summary)
                     .unwrap_or_else(|| "Solar analysis failed".to_string());
-                let _ = sh_warn!("dynamic test linking disabled for {affected} files: {reason}");
+                // Defer printing until after solc succeeds so a source error is not
+                // reported twice (Solar wording here, then solc with a location).
+                if let Ok(mut slot) = self.pending_disable_warning.lock() {
+                    *slot = Some(format!(
+                        "dynamic test linking disabled for {affected} files: {reason}"
+                    ));
+                }
             }
         } else if input.input.sources != original_sources {
             self.rewrote_sources.store(true, Ordering::Relaxed);
