@@ -182,9 +182,11 @@ impl RevertDecoder {
                 let mut s = format!("custom error {}", hex::encode_prefixed(selector));
                 if !data.is_empty() {
                     s.push_str(": ");
+                    // ABI-encoded arguments are mostly zero bytes: valid UTF-8, but control
+                    // characters. Print hex unless the data is printable text.
                     match std::str::from_utf8(data) {
-                        Ok(data) => s.push_str(data),
-                        Err(_) => s.push_str(&hex::encode(data)),
+                        Ok(data) if is_printable(data) => s.push_str(data),
+                        _ => s.push_str(&hex::encode(data)),
                     }
                 }
                 s
@@ -216,12 +218,17 @@ fn decode_as_non_empty_string(err: &[u8]) -> Option<String> {
     // ASCII string.
     if err.is_ascii() {
         let msg = std::str::from_utf8(err).unwrap().to_string();
-        if !msg.is_empty() {
+        if !msg.is_empty() && is_printable(&msg) {
             return Some(msg);
         }
     }
 
     None
+}
+
+/// Returns `true` if `s` has no control characters, so it can be shown as text.
+fn is_printable(s: &str) -> bool {
+    !s.chars().any(char::is_control)
 }
 
 fn trimmed_hex(s: &[u8]) -> String {
@@ -292,6 +299,40 @@ mod tests {
 
         assert_eq!(reason, "FOUNDRY::SKIP");
         assert!(SkipReason::decode_self(&reason).is_none());
+    }
+
+    #[test]
+    fn unknown_custom_error_with_abi_arguments_is_hex() {
+        // `TooSmall(uint256,uint256)` with arguments 5 and 10, not known to the decoder.
+        let data = &hex!(
+            "0xe94fe3af"
+            "0000000000000000000000000000000000000000000000000000000000000005"
+            "000000000000000000000000000000000000000000000000000000000000000a"
+        );
+        assert_eq!(
+            RevertDecoder::new().decode(data, None),
+            "custom error 0xe94fe3af: \
+             0000000000000000000000000000000000000000000000000000000000000005\
+             000000000000000000000000000000000000000000000000000000000000000a"
+        );
+
+        // Same with a selector made of ASCII bytes, which used to be shown as raw text.
+        let data = &hex!(
+            "0x12345678"
+            "0000000000000000000000000000000000000000000000000000000000000005"
+        );
+        assert_eq!(
+            RevertDecoder::new().decode(data, None),
+            "custom error 0x12345678: \
+             0000000000000000000000000000000000000000000000000000000000000005"
+        );
+
+        // Printable text after a selector is still shown as text.
+        let data = b"\xde\xad\xbe\xefnot enough balance";
+        assert_eq!(
+            RevertDecoder::new().decode(data, None),
+            "custom error 0xdeadbeef: not enough balance"
+        );
     }
 
     #[test]
