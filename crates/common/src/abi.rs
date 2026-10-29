@@ -8,6 +8,23 @@ use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::{Client, contract::ContractMetadata, errors::EtherscanError};
 use std::pin::Pin;
 
+
+/// Build the encode length-mismatch error, and tip when a trailing flag was eaten as an arg.
+pub fn encode_length_mismatch_msg<S: AsRef<str>>(expected: usize, args: &[S]) -> String {
+    let mut msg = format!(
+        "encode length mismatch: expected {} types, got {}",
+        expected,
+        args.len()
+    );
+    if let Some(flag) = args.iter().rev().find(|a| a.as_ref().starts_with("--")) {
+        msg.push_str(&format!(
+            "; `{}` was read as an argument; put flags before the signature",
+            flag.as_ref()
+        ));
+    }
+    msg
+}
+
 pub fn encode_args<I, S>(inputs: &[Param], args: I) -> Result<Vec<DynSolValue>>
 where
     I: IntoIterator<Item = S>,
@@ -16,7 +33,7 @@ where
     let args: Vec<S> = args.into_iter().collect();
 
     if inputs.len() != args.len() {
-        eyre::bail!("encode length mismatch: expected {} types, got {}", inputs.len(), args.len());
+        eyre::bail!("{}", encode_length_mismatch_msg(inputs.len(), &args));
     }
 
     std::iter::zip(inputs, args)
@@ -54,11 +71,7 @@ where
     let args: Vec<S> = args.into_iter().collect();
 
     if func.inputs.len() != args.len() {
-        eyre::bail!(
-            "encode length mismatch: expected {} types, got {}",
-            func.inputs.len(),
-            args.len(),
-        );
+        eyre::bail!("{}", encode_length_mismatch_msg(func.inputs.len(), &args));
     }
 
     let params: Vec<Vec<u8>> = std::iter::zip(&func.inputs, args)
@@ -457,5 +470,13 @@ mod tests {
         let res = encode_args(&params, &args);
         assert!(res.is_err());
         assert!(format!("{}", res.unwrap_err()).contains("encode length mismatch"));
+
+        // Trailing CLI flag eaten as an argument
+        let args = vec!["1", "--packed"];
+        let res = encode_args(&params[..1], &args);
+        let err = format!("{}", res.unwrap_err());
+        assert!(err.contains("encode length mismatch"));
+        assert!(err.contains("`--packed` was read as an argument"));
+        assert!(err.contains("put flags before the signature"));
     }
 }

@@ -36,7 +36,7 @@ use foundry_cli::{
 use foundry_common::{
     abi::{
         abi_decode_calldata, abi_decode_event_data, encode_function_args,
-        encode_function_args_packed, get_error, get_event, get_func,
+        encode_function_args_packed, encode_length_mismatch_msg, get_error, get_event, get_func,
     },
     fmt::{UIfmt, UIfmtSignatureExt, format_uint_exp, get_pretty_block_attr, get_pretty_tx_attr},
     fs,
@@ -385,11 +385,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Abi(AbiSubcommand::AbiEncodeEvent { sig, args }) => {
             let event = get_event(&sig)?;
             if event.inputs.len() != args.len() {
-                eyre::bail!(
-                    "encode length mismatch: expected {} types, got {}",
-                    event.inputs.len(),
-                    args.len(),
-                );
+                eyre::bail!("{}", encode_length_mismatch_msg(event.inputs.len(), &args));
             }
 
             let types = event
