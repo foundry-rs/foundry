@@ -6,15 +6,16 @@ use foundry_common::{
 use foundry_compilers::{
     Artifact, ProjectCompileOutput,
     artifacts::{
-        Bytecode, ContractBytecodeSome, Libraries, Source,
+        Bytecode, ContractBytecodeSome, Libraries, Source, Sources,
         sourcemap::{SourceElement, SourceMap},
     },
     multi::MultiCompilerLanguage,
 };
+use foundry_config::read_build_info_input;
 use foundry_evm_core::ic::PcIcMap;
 use foundry_linking::Linker;
 use rayon::prelude::*;
-use solar::{ast, interface::SpannedOption};
+use serde::Deserialize;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt::Write,
@@ -31,38 +32,6 @@ pub struct SourceData {
     /// Maps contract name to (start, end) of the contract definition in the source code.
     /// This is useful for determining which contract contains given function definition.
     pub contract_definitions: Vec<(String, Range<usize>)>,
-    /// Solidity function scopes and variable declarations available to the debugger.
-    pub debug_scopes: Vec<DebugSourceScope>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DebugSourceScope {
-    pub contract_name: String,
-    pub function_name: String,
-    pub range: Range<usize>,
-    pub body_range: Range<usize>,
-    pub parameters_src: String,
-    pub returns_src: Option<String>,
-    pub parameters: Vec<DebugVariable>,
-    pub returns: Vec<DebugVariable>,
-    pub locals: Vec<DebugVariable>,
-}
-
-impl DebugSourceScope {
-    pub fn visible_locals(&self, offset: usize) -> impl Iterator<Item = &DebugVariable> {
-        self.locals.iter().filter(move |local| {
-            local.declaration.end <= offset
-                && offset >= local.scope.start
-                && offset <= local.scope.end
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DebugVariable {
-    pub name: Option<String>,
-    pub declaration: Range<usize>,
-    pub scope: Range<usize>,
 }
 
 impl SourceData {
@@ -74,7 +43,6 @@ impl SourceData {
         root: &Path,
     ) -> Self {
         let mut contract_definitions = Vec::new();
-        let mut debug_scopes = Vec::new();
 
         match language {
             MultiCompilerLanguage::Vyper(_) => {
@@ -92,14 +60,7 @@ impl SourceData {
                             let Some(contract_range) = span_to_range(source_map, item.span) else {
                                 continue;
                             };
-                            contract_definitions
-                                .push((contract.name.to_string(), contract_range.clone()));
-                            collect_contract_debug_scopes(
-                                source_map,
-                                contract,
-                                contract_range,
-                                &mut debug_scopes,
-                            );
+                            contract_definitions.push((contract.name.to_string(), contract_range));
                         }
                     }
                     Some(())
@@ -110,7 +71,7 @@ impl SourceData {
             }
         }
 
-        Self { source, language, path, contract_definitions, debug_scopes }
+        Self { source, language, path, contract_definitions }
     }
 
     /// Finds name of contract that contains given loc.
@@ -120,198 +81,6 @@ impl SourceData {
             .find(|(_, r)| start >= r.start && end <= r.end)
             .map(|(name, _)| name.as_str())
     }
-
-    /// Finds the innermost Solidity function scope containing the given byte range.
-    pub fn find_debug_scope(&self, start: usize, end: usize) -> Option<&DebugSourceScope> {
-        self.debug_scopes
-            .iter()
-            .filter(|scope| start >= scope.range.start && end <= scope.range.end)
-            .min_by_key(|scope| scope.range.end.saturating_sub(scope.range.start))
-    }
-}
-
-fn collect_contract_debug_scopes(
-    source_map: &solar::interface::source_map::SourceMap,
-    contract: &ast::ItemContract<'_>,
-    contract_range: Range<usize>,
-    out: &mut Vec<DebugSourceScope>,
-) {
-    let mut scopes = Vec::new();
-    for item in contract.body.iter() {
-        let ast::ItemKind::Function(func) = &item.kind else { continue };
-        if !func.is_implemented() {
-            continue;
-        }
-
-        let Some(function_range) = span_to_range(source_map, item.span) else { continue };
-        let body_range =
-            span_to_range(source_map, func.body_span).unwrap_or_else(|| function_range.clone());
-        let function_name = function_name(func);
-        let parameters_src =
-            source_map.span_to_snippet(func.header.parameters.span).unwrap_or_default();
-        let returns_src = func
-            .header
-            .returns
-            .as_ref()
-            .and_then(|returns| source_map.span_to_snippet(returns.span).ok());
-
-        let mut locals = Vec::new();
-        if let Some(body) = &func.body {
-            collect_block_locals(source_map, body, body_range.clone(), &mut locals);
-        }
-
-        scopes.push(DebugSourceScope {
-            contract_name: contract.name.to_string(),
-            function_name,
-            range: function_range.clone(),
-            body_range,
-            parameters_src,
-            returns_src,
-            parameters: variables_from_list(
-                source_map,
-                &func.header.parameters,
-                function_range.clone(),
-            ),
-            returns: func
-                .header
-                .returns
-                .as_ref()
-                .map(|returns| variables_from_list(source_map, returns, function_range.clone()))
-                .unwrap_or_default(),
-            locals,
-        });
-    }
-
-    // Keep inherited/inline source-map lookups deterministic when multiple ranges contain a PC.
-    scopes.sort_by_key(|scope| {
-        (
-            scope.range.start,
-            scope.range.end.saturating_sub(scope.range.start),
-            scope.contract_name.clone(),
-            scope.function_name.clone(),
-        )
-    });
-
-    // Do not let a malformed nested item extend past the contract it was collected from.
-    scopes.retain(|scope| {
-        scope.range.start >= contract_range.start && scope.range.end <= contract_range.end
-    });
-    out.extend(scopes);
-}
-
-fn function_name(func: &ast::ItemFunction<'_>) -> String {
-    match func.kind {
-        ast::FunctionKind::Constructor => "constructor".to_string(),
-        ast::FunctionKind::Fallback => "fallback".to_string(),
-        ast::FunctionKind::Receive => "receive".to_string(),
-        ast::FunctionKind::Modifier => {
-            func.header.name.as_ref().map(|n| n.as_str()).unwrap_or("modifier").to_string()
-        }
-        ast::FunctionKind::Function => {
-            func.header.name.as_ref().map(|n| n.as_str()).unwrap_or("function").to_string()
-        }
-    }
-}
-
-fn variables_from_list(
-    source_map: &solar::interface::source_map::SourceMap,
-    vars: &[ast::VariableDefinition<'_>],
-    scope: Range<usize>,
-) -> Vec<DebugVariable> {
-    vars.iter().filter_map(|var| variable_from_definition(source_map, var, scope.clone())).collect()
-}
-
-fn collect_block_locals(
-    source_map: &solar::interface::source_map::SourceMap,
-    block: &ast::Block<'_>,
-    fallback_scope: Range<usize>,
-    out: &mut Vec<DebugVariable>,
-) {
-    let scope = span_to_range(source_map, block.span).unwrap_or(fallback_scope);
-    for stmt in block.stmts.iter() {
-        collect_stmt_locals(source_map, stmt, scope.clone(), out);
-    }
-}
-
-fn collect_stmt_locals(
-    source_map: &solar::interface::source_map::SourceMap,
-    stmt: &ast::Stmt<'_>,
-    scope: Range<usize>,
-    out: &mut Vec<DebugVariable>,
-) {
-    match &stmt.kind {
-        ast::StmtKind::DeclSingle(var) => {
-            if let Some(var) = variable_from_definition(source_map, var, scope) {
-                out.push(var);
-            }
-        }
-        ast::StmtKind::DeclMulti(vars, _) => {
-            for var in vars.iter() {
-                let SpannedOption::Some(var) = var else { continue };
-                if let Some(var) = variable_from_definition(source_map, var, scope.clone()) {
-                    out.push(var);
-                }
-            }
-        }
-        ast::StmtKind::Block(block) | ast::StmtKind::UncheckedBlock(block) => {
-            collect_block_locals(source_map, block, scope, out);
-        }
-        ast::StmtKind::If(_, then_stmt, else_stmt) => {
-            let then_scope =
-                span_to_range(source_map, then_stmt.span).unwrap_or_else(|| scope.clone());
-            collect_stmt_locals(source_map, then_stmt, then_scope, out);
-            if let Some(else_stmt) = else_stmt {
-                let else_scope =
-                    span_to_range(source_map, else_stmt.span).unwrap_or_else(|| scope.clone());
-                collect_stmt_locals(source_map, else_stmt, else_scope, out);
-            }
-        }
-        ast::StmtKind::For { init, body, .. } => {
-            let for_scope = span_to_range(source_map, stmt.span).unwrap_or_else(|| scope.clone());
-            if let Some(init) = init {
-                collect_stmt_locals(source_map, init, for_scope.clone(), out);
-            }
-            collect_stmt_locals(source_map, body, for_scope, out);
-        }
-        ast::StmtKind::While(_, body) | ast::StmtKind::DoWhile(body, _) => {
-            let stmt_scope = span_to_range(source_map, stmt.span).unwrap_or(scope);
-            collect_stmt_locals(source_map, body, stmt_scope, out);
-        }
-        ast::StmtKind::Try(try_stmt) => {
-            for clause in try_stmt.clauses.iter() {
-                let clause_scope =
-                    span_to_range(source_map, clause.span).unwrap_or_else(|| scope.clone());
-                for arg in clause.args.iter() {
-                    if let Some(arg) =
-                        variable_from_definition(source_map, arg, clause_scope.clone())
-                    {
-                        out.push(arg);
-                    }
-                }
-                collect_block_locals(source_map, &clause.block, clause_scope, out);
-            }
-        }
-        ast::StmtKind::Assembly(_)
-        | ast::StmtKind::Break
-        | ast::StmtKind::Continue
-        | ast::StmtKind::Emit(..)
-        | ast::StmtKind::Expr(_)
-        | ast::StmtKind::Return(_)
-        | ast::StmtKind::Revert(..)
-        | ast::StmtKind::Placeholder => {}
-    }
-}
-
-fn variable_from_definition(
-    source_map: &solar::interface::source_map::SourceMap,
-    var: &ast::VariableDefinition<'_>,
-    scope: Range<usize>,
-) -> Option<DebugVariable> {
-    Some(DebugVariable {
-        name: var.name.map(|name| name.to_string()),
-        declaration: span_to_range(source_map, var.span)?,
-        scope,
-    })
 }
 
 fn span_to_range(
@@ -329,10 +98,17 @@ pub struct ArtifactData {
     pub pc_ic_map_runtime: Option<PcIcMap>,
     pub build_id: String,
     pub file_id: u32,
+    /// Whether the contract was compiled through the via-IR pipeline, if the metadata says.
+    pub via_ir: Option<bool>,
 }
 
 impl ArtifactData {
-    fn new(bytecode: ContractBytecodeSome, build_id: String, file_id: u32) -> Result<Self> {
+    fn new(
+        bytecode: ContractBytecodeSome,
+        build_id: String,
+        file_id: u32,
+        via_ir: Option<bool>,
+    ) -> Result<Self> {
         let parse = |b: &Bytecode, name: &str| {
             // Only parse source map if it's not empty.
             let source_map = if b.source_map.as_ref().is_none_or(|s| s.is_empty()) {
@@ -359,7 +135,15 @@ impl ArtifactData {
             .map(|b| parse(&b, "runtime"))
             .unwrap_or_else(|| Ok((None, None)))?;
 
-        Ok(Self { source_map, source_map_runtime, pc_ic_map, pc_ic_map_runtime, build_id, file_id })
+        Ok(Self {
+            source_map,
+            source_map_runtime,
+            pc_ic_map,
+            pc_ic_map_runtime,
+            build_id,
+            file_id,
+            via_ir,
+        })
     }
 }
 
@@ -403,6 +187,11 @@ impl ContractSources {
             .map(|(id, artifact)| {
                 let mut new_artifact = None;
                 if let Some(file_id) = artifact.id {
+                    // Solc records `viaIR` in the metadata settings only when it is enabled.
+                    let via_ir = artifact
+                        .metadata
+                        .as_ref()
+                        .map(|metadata| metadata.settings.via_ir.unwrap_or_default());
                     let artifact = if let Some((linker, libraries)) = link_data.as_ref() {
                         linker.link(id, libraries)?
                     } else {
@@ -412,7 +201,7 @@ impl ContractSources {
 
                     new_artifact = Some((
                         id.name.clone(),
-                        ArtifactData::new(bytecode, id.build_id.clone(), file_id)?,
+                        ArtifactData::new(bytecode, id.build_id.clone(), file_id, via_ir)?,
                     ));
                 } else {
                     warn!(id = id.identifier(), "source not found");
@@ -476,6 +265,36 @@ impl ContractSources {
         }
 
         Ok(())
+    }
+
+    /// Replaces each source that the compiler saw with different text than the file on disk, such
+    /// as a test rewritten by dynamic test linking, with that text. Source maps point into it.
+    ///
+    /// The text comes from the full build infos (`build_info = true`) in `build_info_dir`. A build
+    /// without one keeps the files on disk.
+    pub fn insert_compiled_sources(&mut self, build_info_dir: &Path) {
+        for (build_id, sources) in &mut self.sources_by_id {
+            let path = build_info_dir.join(build_id).with_extension("json");
+            if !path.exists() {
+                continue;
+            }
+            let mut input = match read_build_info_input::<BuildInfoInput>(&path) {
+                Ok(Some(input)) => input,
+                Ok(None) => continue,
+                Err(error) => {
+                    let _ = sh_warn!("skipping build info {}: {error}", path.display());
+                    continue;
+                }
+            };
+            for source in sources.values_mut() {
+                if let Some(compiled) = input.sources.remove(&source.path)
+                    && compiled.content != source.source
+                {
+                    *source =
+                        Arc::new(SourceData { source: compiled.content, ..(**source).clone() });
+                }
+            }
+        }
     }
 
     /// Merges given contract sources.
@@ -556,46 +375,62 @@ impl ContractSources {
     }
 }
 
+/// The compiler input of a build info, which only full build infos have.
+#[derive(Deserialize)]
+struct BuildInfoInput {
+    sources: Sources,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn variable(name: &str, declaration: Range<usize>, scope: Range<usize>) -> DebugVariable {
-        DebugVariable { name: Some(name.to_string()), declaration, scope }
-    }
-
-    fn scope(locals: Vec<DebugVariable>) -> DebugSourceScope {
-        DebugSourceScope {
-            contract_name: "DebugMe".to_string(),
-            function_name: "foo".to_string(),
-            range: 0..100,
-            body_range: 10..90,
-            parameters_src: String::new(),
-            returns_src: None,
-            parameters: Vec::new(),
-            returns: Vec::new(),
-            locals,
-        }
-    }
-
     #[test]
-    fn visible_locals_require_declaration_and_scope() {
-        let scope = scope(vec![
-            variable("before", 10..15, 10..90),
-            variable("after", 70..75, 10..90),
-            variable("nested", 20..25, 20..40),
-        ]);
-
-        let names = |offset| {
-            scope
-                .visible_locals(offset)
-                .map(|variable| variable.name.as_deref().unwrap())
-                .collect::<Vec<_>>()
+    fn compiled_sources_replace_rewritten_files() {
+        let source = |path: &str, text: &str| {
+            Arc::new(SourceData {
+                source: Arc::new(text.to_string()),
+                language: Default::default(),
+                path: PathBuf::from(path),
+                contract_definitions: Vec::new(),
+            })
         };
+        let mut sources = ContractSources::default();
+        sources.sources_by_id.insert(
+            "build".to_string(),
+            HashMap::from([
+                (0, source("src/A.sol", "contract A {}")),
+                (1, source("test/A.t.sol", "contract T { A a = new A(); }")),
+            ]),
+        );
+        // Only `build` has a full build info, and it records a rewritten test file.
+        sources.sources_by_id.insert(
+            "other".to_string(),
+            HashMap::from([(0, source("src/A.sol", "contract A {}"))]),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let build_info = serde_json::json!({
+            "id": "build",
+            "input": { "sources": {
+                "src/A.sol": { "content": "contract A {}" },
+                "test/A.t.sol": { "content": "contract T { A a = A(deploy()); }" },
+            }},
+        });
+        // The read stops before the output, so a truncated output does not matter.
+        let build_info = build_info.to_string();
+        let build_info =
+            format!(r#"{},"output":{{"contracts":"#, &build_info[..build_info.len() - 1]);
+        std::fs::write(dir.path().join("build.json"), build_info).unwrap();
+        // A malformed build info is skipped.
+        std::fs::write(dir.path().join("other.json"), "{").unwrap();
 
-        assert_eq!(names(14), Vec::<&str>::new());
-        assert_eq!(names(30), ["before", "nested"]);
-        assert_eq!(names(50), ["before"]);
-        assert_eq!(names(80), ["before", "after"]);
+        sources.insert_compiled_sources(dir.path());
+
+        let text =
+            |build: &str, id: u32| sources.sources_by_id[build][&id].source.as_str().to_owned();
+        assert_eq!(text("build", 0), "contract A {}");
+        assert_eq!(text("build", 1), "contract T { A a = A(deploy()); }");
+        assert_eq!(sources.sources_by_id["build"][&1].path, PathBuf::from("test/A.t.sol"));
+        assert_eq!(text("other", 0), "contract A {}");
     }
 }

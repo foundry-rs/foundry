@@ -3867,6 +3867,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             live_invariants.iter().position(|(invariant, _)| *invariant == func).unwrap_or(0);
 
         let mut executor = self.clone_executor();
+        // Every campaign call would append its steps to the shared step table. The replays that
+        // the debugger shows run on clones of the test executor, which keeps its recorder.
+        executor.inspector_mut().debug_recorder = None;
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
         // metrics (useful for benchmarking the fuzzer).
         executor.inspector_mut().collect_edge_coverage_with_config(&invariant_config.corpus);
