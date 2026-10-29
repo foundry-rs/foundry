@@ -1897,6 +1897,8 @@ impl<N: Network> Backend<N> {
             enforced_tx_gas_limit_cap: self.enforced_tx_gas_limit_cap(evm_env),
             max_blob_gas_per_block: blob_params.max_blob_gas_per_block(),
             is_cancun,
+            // Monad bills the full tx gas limit (refunds are zero); receipts must match.
+            charge_full_tx_gas_limit: self.is_monad(),
         }
     }
 

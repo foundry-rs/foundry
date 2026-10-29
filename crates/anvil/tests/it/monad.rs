@@ -84,6 +84,46 @@ const EIP7825_TX_GAS_LIMIT_CAP: u64 = 0x1000000;
 const MONAD_TX_GAS_LIMIT_CAP: u64 = 30_000_000;
 
 #[tokio::test(flavor = "multi_thread")]
+async fn monad_receipt_bills_full_tx_gas_limit() {
+    // Monad charges the full gas limit (refunds are zero). Receipts, cumulative
+    // gas, and the block header must report that billed amount — not the EVM
+    // execution gas — so fee checks against the receipt match the balance debit.
+    let config = NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into()));
+    let (_api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+
+    let accounts = provider.get_accounts().await.unwrap();
+    let from = accounts[0];
+    let to = accounts[1];
+    let gas_limit = 100_000u64;
+
+    let before = provider.get_balance(from).await.unwrap();
+    let tx = TransactionRequest::default()
+        .with_from(from)
+        .with_to(to)
+        .with_value(U256::from(12345))
+        .with_gas_limit(gas_limit);
+    let receipt = provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+    let after = provider.get_balance(from).await.unwrap();
+
+    assert!(receipt.status());
+    assert_eq!(receipt.gas_used(), gas_limit, "receipt must bill the full gas limit");
+    let block = provider
+        .get_block_by_number(receipt.block_number().unwrap().into())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(block.header.gas_used, gas_limit, "block gas must bill the full gas limit");
+
+    let fee_debit = before - after - U256::from(12345);
+    assert_eq!(
+        fee_debit,
+        U256::from(gas_limit) * U256::from(receipt.effective_gas_price()),
+        "balance debit must match receipt gas × effective price"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn monad_nine_exposes_reserve_balance_precompile_for_calls() {
     let config = NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into()));
     let (_api, handle) = spawn(config).await;

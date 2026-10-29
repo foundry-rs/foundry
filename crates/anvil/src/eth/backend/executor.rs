@@ -274,6 +274,8 @@ pub struct AnvilBlockExecutor<E> {
     deposit_hardfork: Option<FoundryHardfork>,
     /// State changes captured for deferred publication.
     state_changes: Option<Vec<EvmState>>,
+    /// When set, the next `commit_transaction` bills this gas instead of `tx_gas_used()`.
+    next_billed_gas: Option<u64>,
 }
 
 impl<E: fmt::Debug> fmt::Debug for AnvilBlockExecutor<E> {
@@ -316,6 +318,7 @@ impl<E> AnvilBlockExecutor<E> {
             #[cfg(any(feature = "base", feature = "optimism"))]
             deposit_hardfork: None,
             state_changes: None,
+            next_billed_gas: None,
         }
     }
 
@@ -411,6 +414,13 @@ where
     }
 }
 
+
+impl<E> NextBilledGas for AnvilBlockExecutor<E> {
+    fn set_next_billed_gas(&mut self, gas: u64) {
+        self.next_billed_gas = Some(gas);
+    }
+}
+
 impl<E> BlockExecutor for AnvilBlockExecutor<E>
 where
     E: Evm<
@@ -478,7 +488,7 @@ where
             depositor_nonce,
         } = output;
 
-        let gas_used = result.tx_gas_used();
+        let gas_used = self.next_billed_gas.take().unwrap_or_else(|| result.tx_gas_used());
         self.gas_used += gas_used;
 
         if self.spec_id >= SpecId::CANCUN {
@@ -586,6 +596,15 @@ pub struct PoolTxGasConfig {
     pub enforced_tx_gas_limit_cap: Option<u64>,
     pub max_blob_gas_per_block: u64,
     pub is_cancun: bool,
+    /// When set, receipt / block gas accounting bills the transaction gas limit
+    /// (Monad charges the full limit; refunds are zero).
+    pub charge_full_tx_gas_limit: bool,
+}
+
+
+/// Executors that can override the gas billed on the next `commit_transaction`.
+pub trait NextBilledGas {
+    fn set_next_billed_gas(&mut self, gas: u64);
 }
 
 /// Executes a pool candidate through the block executor's ordinary transaction entry point.
@@ -626,7 +645,7 @@ where
                 Inspector = AnvilInspector,
                 Precompiles = PrecompilesMap,
             >,
-        >,
+        > + NextBilledGas,
     B::Receipt: TxReceipt,
     <B::Result as TxResult>::HaltReason: Clone + IntoInstructionResult,
     <B::Evm as Evm>::Tx: FromTxWithEncoded<B::Transaction> + FoundryTransaction,
@@ -749,8 +768,14 @@ where
         trace!(target: "backend", "[{:?}] executing", pool_tx.hash());
         match execute_transaction(executor, tx_env, recovered, pool_tx.is_replay) {
             Ok(result) => {
+                let gas_limit = pending.transaction.gas_limit();
+                let gas_used = if gas_config.charge_full_tx_gas_limit {
+                    executor.set_next_billed_gas(gas_limit);
+                    gas_limit
+                } else {
+                    result.result().result.tx_gas_used()
+                };
                 let exec_result = result.result().result.clone();
-                let gas_used = result.result().result.tx_gas_used();
 
                 executor.commit_transaction(result);
 
