@@ -329,7 +329,8 @@ impl FromStr for Numeric {
 }
 
 /// Reads the compiler `input` of the build info at `path`, or `None` if the build info leaves it
-/// out, as build infos do unless `build_info` is set.
+/// out, as build infos do unless `build_info` is set. A JSON object with neither an `id` nor an
+/// `input` is not a build info and fails.
 ///
 /// The read stops after the input, which build infos write before the much larger output.
 pub fn read_build_info_input<T: DeserializeOwned>(path: &Path) -> eyre::Result<Option<T>> {
@@ -355,15 +356,17 @@ impl<'de, T: Deserialize<'de>> Visitor<'de> for BuildInfoInput<'_, T> {
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
+        let mut id = false;
         while let Some(key) = map.next_key::<String>()? {
             if key == "input" {
                 *self.0 = Some(map.next_value()?);
                 // An error is the only way to stop the deserializer before the end of the map.
                 return Err(A::Error::custom("stopped after the input"));
             }
+            id |= key == "id";
             map.next_value::<IgnoredAny>()?;
         }
-        Ok(())
+        if id { Ok(()) } else { Err(A::Error::custom("not a build info")) }
     }
 }
 

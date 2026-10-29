@@ -416,7 +416,11 @@ impl ScriptArgs {
             }
             // Full build infos keep the sources the compiler saw, which dynamic test linking
             // rewrites in scripts.
-            config.enable_debug_build_info();
+            if let Err(error) = config.enable_debug_build_info() {
+                let _ = sh_warn!(
+                    "the debugger may show source files that differ from the compiled ones: {error:#}"
+                );
+            }
         }
 
         let script_config = ScriptConfig::new(

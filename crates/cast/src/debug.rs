@@ -77,7 +77,11 @@ pub(crate) async fn handle_traces(
             }
             // Full build infos keep the sources the compiler saw, which dynamic test linking
             // rewrites in tests and scripts.
-            config.enable_debug_build_info();
+            if let Err(error) = config.enable_debug_build_info() {
+                let _ = sh_warn!(
+                    "the debugger may show source files that differ from the compiled ones: {error:#}"
+                );
+            }
         }
         let project = config.project()?;
         let compiler = ProjectCompiler::new();

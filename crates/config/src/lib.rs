@@ -45,7 +45,7 @@ use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{
     borrow::Cow,
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     fs, io,
     path::{Component, Path, PathBuf},
     str::FromStr,
@@ -2168,29 +2168,50 @@ impl Config {
     ///
     /// The compiler cache does not track build infos, so a cached build keeps the ones it wrote
     /// without the compiler input. Dynamic test linking compiles rewritten sources that only the
-    /// input holds, so those build infos and the compiler cache are removed then, and the next
-    /// build compiles again.
-    pub fn enable_debug_build_info(&mut self) {
+    /// input holds, so those build infos and the cache entries of the files they built are
+    /// removed then, and the next build compiles those files again.
+    pub fn enable_debug_build_info(&mut self) -> eyre::Result<()> {
         if self.build_info {
-            return;
+            return Ok(());
         }
         self.build_info = true;
         self.build_info_without_ast = true;
-        if self.dynamic_test_linking {
-            let paths = self.project_paths::<MultiCompilerLanguage>();
-            let mut stale = false;
-            for entry in fs::read_dir(&paths.build_infos).into_iter().flatten().flatten() {
-                let path = entry.path();
-                if path.extension().is_some_and(|extension| extension == "json")
-                    && matches!(read_build_info_input::<Present>(&path), Ok(None))
-                {
-                    stale |= fs::remove_file(&path).is_ok();
-                }
-            }
-            if stale {
-                let _ = fs::remove_file(&paths.cache);
+        if !self.dynamic_test_linking {
+            return Ok(());
+        }
+        let paths = self.project_paths::<MultiCompilerLanguage>();
+        let mut stale = HashSet::new();
+        for entry in fs::read_dir(&paths.build_infos).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|extension| extension == "json")
+                && matches!(read_build_info_input::<Present>(&path), Ok(None))
+                && let Some(id) = path.file_stem().and_then(|id| id.to_str())
+            {
+                fs::remove_file(&path)
+                    .wrap_err_with(|| format!("failed to remove {}", path.display()))?;
+                stale.insert(id.to_string());
             }
         }
+        if stale.is_empty() || !paths.cache.exists() {
+            return Ok(());
+        }
+        let mut cache: serde_json::Value = serde_json::from_slice(&fs::read(&paths.cache)?)?;
+        fn values(value: &serde_json::Value) -> impl Iterator<Item = &serde_json::Value> {
+            value.as_object().into_iter().flat_map(|map| map.values())
+        }
+        if let Some(files) = cache["files"].as_object_mut() {
+            // Artifacts are keyed by contract, compiler version, and profile.
+            files.retain(|_, entry| {
+                !values(&entry["artifacts"]).flat_map(values).flat_map(values).any(|artifact| {
+                    artifact["build_id"].as_str().is_some_and(|id| stale.contains(id))
+                })
+            });
+        }
+        if let Some(builds) = cache["builds"].as_array_mut() {
+            builds.retain(|id| !id.as_str().is_some_and(|id| stale.contains(id)));
+        }
+        fs::write(&paths.cache, serde_json::to_vec(&cache)?)
+            .wrap_err_with(|| format!("failed to write {}", paths.cache.display()))
     }
 
     /// Returns the configured [VyperSettings] that includes:
@@ -6216,12 +6237,12 @@ mod tests {
         };
 
         let mut config = Config::default();
-        config.enable_debug_build_info();
+        config.enable_debug_build_info().unwrap();
         assert!(config.build_info);
         assert!(!requests_ast(&config));
 
         let mut config = Config { build_info: true, ..Config::default() };
-        config.enable_debug_build_info();
+        config.enable_debug_build_info().unwrap();
         assert!(requests_ast(&config));
     }
 
