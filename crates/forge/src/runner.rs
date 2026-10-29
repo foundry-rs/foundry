@@ -749,7 +749,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             let prev_tracer = self.executor.inspector_mut().tracer.take();
             self.tcfg.configure_executor(&mut self.executor);
             // Don't set tracer here.
-            self.executor.inspector_mut().tracer = prev_tracer;
+            self.executor.inspector_mut().set_tracer(prev_tracer);
         }
         Ok(())
     }
@@ -963,7 +963,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         debug!("finished setting up in {:?}", setup_time.elapsed());
 
         if let Some(prev_tracer) = prev_tracer {
-            self.executor.inspector_mut().tracer = prev_tracer;
+            self.executor.inspector_mut().set_tracer(prev_tracer);
         }
 
         if setup.reason.is_some() {
