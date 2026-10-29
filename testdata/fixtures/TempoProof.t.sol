@@ -214,27 +214,28 @@ contract TempoProofTest {
 
     function test_fork_reject_upstream_key() public {
         forkKey = upstreamKey;
-        _rejectFork();
+        _rejectFork(42);
     }
 
     function test_fork_reject_mixed_account_proof() public {
         forkEvidence.accountProof = forkUpdated.accountProof;
-        _rejectFork();
+        forkEvidence.storageProof = forkUpdated.storageProof;
+        _rejectFork(43);
     }
 
     function test_fork_reject_mixed_storage_proof() public {
         forkEvidence.storageProof = forkUpdated.storageProof;
-        _rejectFork();
+        _rejectFork(43);
     }
 
     function test_fork_reject_changed_header() public {
         forkEvidence.rawHeader = forkUpdated.rawHeader;
-        _rejectFork();
+        _rejectFork(42);
     }
 
     function test_fork_reject_wrong_height() public {
         ++forkHeight;
-        _rejectFork();
+        _rejectFork(42);
     }
 
     function test_fork_reject_wrong_slot() public view {
@@ -252,8 +253,10 @@ contract TempoProofTest {
         );
     }
 
-    function _rejectFork() private view {
-        try verifier.verify(forkKey, forkEvidence, forkHeight, forkAccount, bytes32(0), 42) returns (bool valid) {
+    function _rejectFork(uint256 expectedValue) private view {
+        try verifier.verify(forkKey, forkEvidence, forkHeight, forkAccount, bytes32(0), expectedValue) returns (
+            bool valid
+        ) {
             require(!valid, "invalid fork evidence accepted");
         } catch {}
     }
