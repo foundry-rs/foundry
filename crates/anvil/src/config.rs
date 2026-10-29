@@ -235,18 +235,6 @@ const BANNER: &str = r"
      \__,_| |_| |_|   \_/   |_| |_|
 ";
 
-fn fork_source_id(urls: &[String], headers: &[String]) -> B256 {
-    let mut encoded = Vec::new();
-    for parts in [urls, headers] {
-        encoded.extend_from_slice(&(parts.len() as u64).to_be_bytes());
-        for part in parts {
-            encoded.extend_from_slice(&(part.len() as u64).to_be_bytes());
-            encoded.extend_from_slice(part.as_bytes());
-        }
-    }
-    keccak256(encoded)
-}
-
 /// Configurations of the EVM node
 #[derive(Clone, Debug)]
 pub struct NodeConfig {
@@ -1774,6 +1762,27 @@ impl NodeConfig {
         }
     }
 
+    /// Identifies the source of a fork cache by its URLs and the credentials sent to them, so
+    /// caches filled with different credentials are not shared.
+    fn fork_source_id(&self, eth_rpc_url: &str) -> B256 {
+        let trusted = self.is_trusted_fork_url(eth_rpc_url);
+        let headers = if trusted { self.fork_headers.as_slice() } else { &[] };
+        let mut encoded = Vec::new();
+        for parts in [self.fork_urls.as_slice(), headers] {
+            encoded.extend_from_slice(&(parts.len() as u64).to_be_bytes());
+            for part in parts {
+                encoded.extend_from_slice(&(part.len() as u64).to_be_bytes());
+                encoded.extend_from_slice(part.as_bytes());
+            }
+        }
+        // Untrusted URLs do not receive `MPP_API_KEY` either. Only they are marked, so trusted
+        // sources keep their existing cache identity.
+        if !trusted {
+            encoded.push(0);
+        }
+        keccak256(encoded)
+    }
+
     async fn fork_endpoint_identity(
         &self,
         provider: &RetryProvider,
@@ -2347,7 +2356,7 @@ latest block number: {latest_block}"
             eyre::bail!("primary fork endpoint changed while its context was being validated");
         }
 
-        let source_id = fork_source_id(&self.fork_urls, &self.fork_headers);
+        let source_id = self.fork_source_id(&eth_rpc_url);
         let account_fetch_policy = account_fetch_policy_for_source(source_chain_id, target_profile);
         let meta = BlockchainDbMeta::new(cache_block_env, eth_rpc_url.clone())
             .with_fork_identity(block_hash, source_id)
@@ -2860,13 +2869,29 @@ mod tests {
 
     #[test]
     fn fork_source_identity_includes_all_urls_and_headers() {
-        let urls = ["http://primary".to_string(), "http://fallback".to_string()];
-        let headers = ["Authorization: secret".to_string()];
-        let identity = fork_source_id(&urls, &headers);
+        let urls = vec!["http://primary".to_string(), "http://fallback".to_string()];
+        let headers = vec!["Authorization: secret".to_string()];
+        let config = |urls: Vec<String>, headers: Vec<String>| {
+            NodeConfig::default().with_fork_urls(urls).with_fork_headers(headers)
+        };
+        let identity = config(urls.clone(), headers.clone()).fork_source_id(&urls[0]);
 
-        assert_ne!(identity, fork_source_id(&urls[..1], &headers));
-        assert_ne!(identity, fork_source_id(&urls, &[]));
-        assert_ne!(identity, fork_source_id(&[urls[1].clone(), urls[0].clone()], &headers));
+        assert_ne!(identity, config(urls[..1].to_vec(), headers.clone()).fork_source_id(&urls[0]));
+        assert_ne!(identity, config(urls.clone(), vec![]).fork_source_id(&urls[0]));
+        assert_ne!(
+            identity,
+            config(vec![urls[1].clone(), urls[0].clone()], headers.clone())
+                .fork_source_id(&urls[1])
+        );
+
+        // A URL switched to over RPC receives no credentials, so it must not share the cache of
+        // the same URL configured at startup, with or without headers.
+        let other = "http://other".to_string();
+        let mut switched = config(urls, headers.clone());
+        switched.fork_urls = vec![other.clone()];
+        let switched = switched.fork_source_id(&other);
+        assert_ne!(switched, config(vec![other.clone()], headers).fork_source_id(&other));
+        assert_ne!(switched, config(vec![other.clone()], vec![]).fork_source_id(&other));
     }
 
     #[test]
