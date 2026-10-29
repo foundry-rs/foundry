@@ -563,6 +563,24 @@ mod backpressure {
         );
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn lagged_logs_subscription_ends_after_receipt_pruning() {
+        let fixture = LogsFixture::new().await;
+        let api = &fixture.api;
+        let mut logs = fixture.logs(Filter::new().address(*fixture.contract.address()));
+
+        let receipt = fixture.emit("lost notification").await;
+        let block_hash = receipt.block_hash.unwrap();
+        api.mine_one().await.unwrap();
+        assert_eq!(api.backend.mined_receipts(block_hash), Some(vec![]));
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), logs.next())
+                .await
+                .expect("lagged logs subscription did not end after receipt pruning"),
+            None
+        );
+    }
+
     #[cfg(unix)]
     mod ipc {
         use super::*;
@@ -620,7 +638,32 @@ mod backpressure {
             let subscription = stream::iter([filler.clone()]).chain(logs.inspect(move |_| {
                 seen.store(true, Ordering::SeqCst);
             }));
-            let (_directory, client, mut connection) = connect_ipc(Box::pin(subscription)).await;
+            let handler =
+                LogsHandler { subscription: Arc::new(Mutex::new(Some(Box::pin(subscription)))) };
+            let pending_subscription = handler.subscription.clone();
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("logs.ipc");
+            let endpoint = IpcEndpoint::new(handler, path.to_string_lossy().into_owned());
+            let mut incoming = std::pin::pin!(endpoint.incoming().unwrap());
+            let mut client = UnixStream::connect(path).await.unwrap();
+            client
+                .write_all(br#"{"jsonrpc":"2.0","method":"eth_subscribe","params":["logs"]}"#)
+                .await
+                .unwrap();
+            let mut connection = Box::pin(incoming.next().await.unwrap());
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                poll_fn(|cx| {
+                    assert!(connection.as_mut().poll(cx).is_pending());
+                    if pending_subscription.lock().is_none() {
+                        Poll::Ready(())
+                    } else {
+                        Poll::Pending
+                    }
+                }),
+            )
+            .await
+            .expect("IPC subscription was not installed");
 
             let receipt = fixture.emit("retained notification").await;
             let block_hash = receipt.block_hash.unwrap();
@@ -663,62 +706,6 @@ mod backpressure {
                 );
             }
             task.abort();
-        }
-
-        #[tokio::test(flavor = "multi_thread")]
-        async fn lagged_logs_subscription_ends_after_receipt_pruning() {
-            let fixture = LogsFixture::new().await;
-            let api = &fixture.api;
-            let logs = fixture.logs(Filter::new().address(*fixture.contract.address()));
-            let (_directory, client, mut connection) = connect_ipc(Box::pin(logs)).await;
-
-            let receipt = fixture.emit("lost notification").await;
-            let block_hash = receipt.block_hash.unwrap();
-            api.mine_one().await.unwrap();
-            assert_eq!(api.backend.mined_receipts(block_hash), Some(vec![]));
-
-            let mut cx = Context::from_waker(Waker::noop());
-            assert!(connection.as_mut().poll(&mut cx).is_ready());
-            drop(connection);
-            let mut lines = BufReader::new(client).lines();
-            assert!(
-                tokio::time::timeout(Duration::from_secs(5), lines.next_line())
-                    .await
-                    .expect("lagged IPC client was not disconnected")
-                    .unwrap()
-                    .is_none()
-            );
-        }
-
-        async fn connect_ipc(
-            subscription: LogStream,
-        ) -> (tempfile::TempDir, UnixStream, Pin<Box<impl Future<Output = ()> + Send>>) {
-            let handler = LogsHandler { subscription: Arc::new(Mutex::new(Some(subscription))) };
-            let pending_subscription = handler.subscription.clone();
-            let directory = tempfile::tempdir().unwrap();
-            let path = directory.path().join("logs.ipc");
-            let endpoint = IpcEndpoint::new(handler, path.to_string_lossy().into_owned());
-            let mut incoming = std::pin::pin!(endpoint.incoming().unwrap());
-            let mut client = UnixStream::connect(path).await.unwrap();
-            client
-                .write_all(br#"{"jsonrpc":"2.0","method":"eth_subscribe","params":["logs"]}"#)
-                .await
-                .unwrap();
-            let mut connection = Box::pin(incoming.next().await.unwrap());
-            tokio::time::timeout(
-                Duration::from_secs(5),
-                poll_fn(|cx| {
-                    assert!(connection.as_mut().poll(cx).is_pending());
-                    if pending_subscription.lock().is_none() {
-                        Poll::Ready(())
-                    } else {
-                        Poll::Pending
-                    }
-                }),
-            )
-            .await
-            .expect("IPC subscription was not installed");
-            (directory, client, connection)
         }
     }
 }

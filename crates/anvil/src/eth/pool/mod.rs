@@ -647,6 +647,7 @@ impl<T> AddedTransaction<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::U256;
     use futures::StreamExt;
     use std::task::{Context, Poll, Waker};
 
@@ -655,24 +656,32 @@ mod tests {
         let pool = Pool::<()>::default();
         let mut ordinary = pool.add_ready_listener();
         let mut subscription = pool.add_ready_subscription_listener();
-        let hash = TxHash::ZERO;
+        let hashes = (0..4_096).map(|index| TxHash::from(U256::from(index))).collect::<Vec<_>>();
 
-        for _ in 0..2050 {
+        // Overflow both listeners without draining either.
+        for &hash in &hashes {
             pool.notify_listener(hash);
         }
 
         let mut cx = Context::from_waker(Waker::noop());
-        let mut received = 0;
-        while let Poll::Ready(Some(_)) = subscription.poll_next_unpin(&mut cx) {
-            received += 1;
+        let mut expected = Vec::new();
+        while let Poll::Ready(Some(hash)) = ordinary.poll_next_unpin(&mut cx) {
+            expected.push(hash);
         }
-        assert_eq!(received, 2049);
-        assert!(matches!(subscription.poll_next_unpin(&mut cx), Poll::Ready(None)));
+        assert!(!expected.is_empty());
+        assert!(expected.len() < hashes.len());
+        assert_eq!(expected, hashes[..expected.len()]);
+        assert_eq!(ordinary.poll_next_unpin(&mut cx), Poll::Pending);
 
-        while let Poll::Ready(Some(_)) = ordinary.poll_next_unpin(&mut cx) {}
+        let mut received = Vec::new();
+        while let Poll::Ready(Some(hash)) = subscription.poll_next_unpin(&mut cx) {
+            received.push(hash);
+        }
+        assert_eq!(received, expected);
+        assert_eq!(subscription.poll_next_unpin(&mut cx), Poll::Ready(None));
+
+        let hash = TxHash::from(U256::MAX);
         pool.notify_listener(hash);
-        assert!(
-            matches!(ordinary.poll_next_unpin(&mut cx), Poll::Ready(Some(value)) if value == hash)
-        );
+        assert_eq!(ordinary.poll_next_unpin(&mut cx), Poll::Ready(Some(hash)));
     }
 }
