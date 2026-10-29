@@ -45,7 +45,7 @@ use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{
     borrow::Cow,
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     fs, io,
     path::{Component, Path, PathBuf},
     str::FromStr,
@@ -575,6 +575,9 @@ pub struct Config {
     pub build_info: bool,
     /// The path to the `build-info` directory that contains the build info json files.
     pub build_info_path: Option<PathBuf>,
+    /// Whether build infos leave out the AST, set by [`Config::enable_debug_build_info`].
+    #[serde(skip)]
+    pub build_info_without_ast: bool,
     /// Configuration for `forge fmt`
     pub fmt: FormatterConfig,
     /// Configuration for `forge lint`
@@ -2150,7 +2153,7 @@ impl Config {
         .with_extra_output(self.configured_artifacts_handler().output_selection());
 
         // We're keeping AST in `--build-info` for backwards compatibility with HardHat.
-        if self.ast || self.build_info {
+        if self.ast || (self.build_info && !self.build_info_without_ast) {
             settings = settings.with_ast();
         }
 
@@ -2158,6 +2161,64 @@ impl Config {
             CliSettings { extra_args: self.extra_args.clone(), ..Default::default() };
 
         Ok(SolcSettings { settings, cli_settings })
+    }
+
+    /// Enables build infos for a debug run, which reads the compiled sources from them. Unless
+    /// build infos were already enabled, they leave out the AST, which debug runs do not use.
+    ///
+    /// The compiler cache does not track build infos, so a cached build keeps the ones it wrote
+    /// without the compiler input. Dynamic test linking rewrites test and script sources, which
+    /// only the input holds, so the cache entries of the tests and scripts that such a build info
+    /// built are removed then, and the next build compiles those files again. Other sources
+    /// compile as they are on disk.
+    pub fn enable_debug_build_info(&mut self) -> eyre::Result<()> {
+        if self.build_info {
+            return Ok(());
+        }
+        self.build_info = true;
+        self.build_info_without_ast = true;
+        if !self.dynamic_test_linking {
+            return Ok(());
+        }
+        let paths = self.project_paths::<MultiCompilerLanguage>();
+        let without_input = fs::read_dir(&paths.build_infos)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension().is_some_and(|extension| extension == "json")
+                    && matches!(read_build_info_input::<Present>(path), Ok(None))
+            })
+            .filter_map(|path| Some(path.file_stem()?.to_str()?.to_string()))
+            .collect::<HashSet<_>>();
+        if without_input.is_empty() || !paths.cache.exists() {
+            return Ok(());
+        }
+        let mut cache = serde_json::from_slice::<serde_json::Value>(&fs::read(&paths.cache)?)?;
+        let Some(files) = cache.get_mut("files").and_then(|files| files.as_object_mut()) else {
+            return Ok(());
+        };
+        fn values(value: &serde_json::Value) -> impl Iterator<Item = &serde_json::Value> {
+            value.as_object().into_iter().flat_map(|map| map.values())
+        }
+        let len = files.len();
+        files.retain(|file, entry| {
+            let file = self.root.join(file);
+            // Artifacts are keyed by contract, compiler version, and profile.
+            !((file.starts_with(&self.test) || file.starts_with(&self.script))
+                && values(&entry["artifacts"]).flat_map(values).flat_map(values).any(|artifact| {
+                    artifact["build_id"].as_str().is_some_and(|id| without_input.contains(id))
+                }))
+        });
+        if files.len() == len {
+            return Ok(());
+        }
+        // A new file replaces the cache at once, so an interrupted write leaves no partial cache.
+        let temp = paths.cache.with_extension("json.tmp");
+        fs::write(&temp, serde_json::to_vec(&cache)?)
+            .and_then(|()| fs::rename(&temp, &paths.cache))
+            .wrap_err_with(|| format!("failed to write {}", paths.cache.display()))
     }
 
     /// Returns the configured [VyperSettings] that includes:
@@ -3189,6 +3250,7 @@ impl Default for Config {
             sparse_mode: false,
             build_info: false,
             build_info_path: None,
+            build_info_without_ast: false,
             fmt: Default::default(),
             lint: Default::default(),
             doc: Default::default(),
@@ -6171,6 +6233,24 @@ mod tests {
         let settings = config.solc_settings().unwrap();
         assert_eq!(settings.settings.via_ssa_cfg, Some(false));
         assert_eq!(settings.cli_settings.extra_args, vec!["--via-ssa-cfg".to_string()]);
+    }
+
+    #[test]
+    fn debug_build_info_leaves_out_the_ast_unless_build_info_is_on() {
+        let requests_ast = |config: &Config| {
+            config.solc_settings().unwrap().settings.output_selection.as_ref()["*"]
+                .get("")
+                .is_some_and(|outputs| outputs.contains(&"ast".to_string()))
+        };
+
+        let mut config = Config::default();
+        config.enable_debug_build_info().unwrap();
+        assert!(config.build_info);
+        assert!(!requests_ast(&config));
+
+        let mut config = Config { build_info: true, ..Config::default() };
+        config.enable_debug_build_info().unwrap();
+        assert!(requests_ast(&config));
     }
 
     #[test]

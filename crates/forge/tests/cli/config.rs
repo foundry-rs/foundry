@@ -490,6 +490,7 @@ fn can_extract_config_values(prj: _, cmd: _) {
         rpc_endpoints: Default::default(),
         build_info: false,
         build_info_path: None,
+        build_info_without_ast: false,
         fmt: Default::default(),
         lint: Default::default(),
         doc: Default::default(),

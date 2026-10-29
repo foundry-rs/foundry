@@ -4,9 +4,13 @@ use crate::Config;
 use alloy_primitives::U256;
 use figment::value::Value;
 use foundry_compilers::artifacts::remappings::{Remapping, RemappingError};
-use serde::{Deserialize, Deserializer, Serializer, de::Error};
+use serde::{
+    Deserialize, Deserializer, Serializer,
+    de::{DeserializeOwned, Error, IgnoredAny, MapAccess, Visitor},
+};
 use std::{
-    io,
+    fmt, fs,
+    io::{self, BufReader},
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -321,6 +325,58 @@ impl FromStr for Numeric {
         } else {
             U256::from_str(s).map(Numeric::U256).map_err(|err| err.to_string())
         }
+    }
+}
+
+/// Reads the compiler `input` of the build info at `path`, or `None` if the build info leaves it
+/// out, as build infos do unless `build_info` is set. A JSON object with neither an `id` nor an
+/// `input` is not a build info and fails.
+///
+/// The read stops after the input, which build infos write before the much larger output.
+pub fn read_build_info_input<T: DeserializeOwned>(path: &Path) -> eyre::Result<Option<T>> {
+    let mut input = None;
+    let reader = BufReader::new(fs::File::open(path)?);
+    let read =
+        serde_json::Deserializer::from_reader(reader).deserialize_map(BuildInfoInput(&mut input));
+    match (input, read) {
+        (Some(input), _) => Ok(Some(input)),
+        (None, Ok(())) => Ok(None),
+        (None, Err(error)) => Err(error.into()),
+    }
+}
+
+/// Reads the `input` of a build info into `input`.
+struct BuildInfoInput<'a, T>(&'a mut Option<T>);
+
+impl<'de, T: Deserialize<'de>> Visitor<'de> for BuildInfoInput<'_, T> {
+    type Value = ();
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a build info")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
+        let mut id = false;
+        while let Some(key) = map.next_key::<String>()? {
+            if key == "input" {
+                *self.0 = Some(map.next_value()?);
+                // An error is the only way to stop the deserializer before the end of the map.
+                return Err(A::Error::custom("stopped after the input"));
+            }
+            id |= key == "id";
+            map.next_value::<IgnoredAny>()?;
+        }
+        if id { Ok(()) } else { Err(A::Error::custom("not a build info")) }
+    }
+}
+
+/// A value that is there, deserialized without reading it. [`read_build_info_input`] stops after
+/// the input, so `read_build_info_input::<Present>` only checks that a build info has one.
+pub(crate) struct Present;
+
+impl<'de> Deserialize<'de> for Present {
+    fn deserialize<D: Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self)
     }
 }
 
