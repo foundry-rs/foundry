@@ -5582,7 +5582,7 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.24.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=39c03a49ade2f74a6e97e2af308283a42d78d302#39c03a49ade2f74a6e97e2af308283a42d78d302"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74#e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -5832,7 +5832,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=39c03a49ade2f74a6e97e2af308283a42d78d302#39c03a49ade2f74a6e97e2af308283a42d78d302"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74#e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5864,7 +5864,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=39c03a49ade2f74a6e97e2af308283a42d78d302#39c03a49ade2f74a6e97e2af308283a42d78d302"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74#e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -5873,7 +5873,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=39c03a49ade2f74a6e97e2af308283a42d78d302#39c03a49ade2f74a6e97e2af308283a42d78d302"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74#e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5893,7 +5893,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=39c03a49ade2f74a6e97e2af308283a42d78d302#39c03a49ade2f74a6e97e2af308283a42d78d302"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74#e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5906,7 +5906,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=39c03a49ade2f74a6e97e2af308283a42d78d302#39c03a49ade2f74a6e97e2af308283a42d78d302"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74#e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74"
 dependencies = [
  "alloy-primitives",
  "dunce",
@@ -6257,7 +6257,7 @@ dependencies = [
 [[package]]
 name = "foundry-fork-db"
 version = "0.27.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=39c03a49ade2f74a6e97e2af308283a42d78d302#39c03a49ade2f74a6e97e2af308283a42d78d302"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74#e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -6377,7 +6377,7 @@ dependencies = [
 [[package]]
 name = "foundry-wallets"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=39c03a49ade2f74a6e97e2af308283a42d78d302#39c03a49ade2f74a6e97e2af308283a42d78d302"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74#e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -6408,7 +6408,6 @@ dependencies = [
  "tempfile",
  "tempo-alloy",
  "thiserror 2.0.20",
- "time",
  "tokio",
  "tower",
  "tower-http 0.7.1",
@@ -8538,7 +8537,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b685c8311c9171d1bd2895222965d25616b2de2cb5819dd3504ed9250df9fecd"
 dependencies = [
  "ahash",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.1",
  "parking_lot",
  "stable_deref_trait",
 ]
@@ -12696,7 +12695,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
