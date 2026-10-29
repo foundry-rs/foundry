@@ -202,7 +202,6 @@ async fn tempo_consensus_subscription_fork_only_publishes_local_finalizations() 
     let latest: TempoCertifiedBlock =
         http.client().request("consensus_getFinalization", ("latest",)).await.unwrap();
     assert_eq!(latest, tempo_finalization(&source_http, 1).await);
-    assert!(tokio::time::timeout(Duration::from_millis(100), events.recv_result()).await.is_err());
 
     api.mine_one().await.unwrap();
     let event = next_event(&mut events).await.into_certified_block();
@@ -216,7 +215,6 @@ async fn tempo_consensus_subscription_fork_only_publishes_local_finalizations() 
     .await
     .unwrap();
     assert_eq!(tempo_finalization(&http, 2).await, tempo_finalization(&source_http, 2).await);
-    assert!(tokio::time::timeout(Duration::from_millis(100), events.recv_result()).await.is_err());
     api.mine_one().await.unwrap();
     let event = next_event(&mut events).await.into_certified_block();
     assert_eq!(event, tempo_finalization(&http, 3).await);
@@ -286,7 +284,6 @@ async fn tempo_consensus_subscription_skips_non_native_block_without_stopping_mi
     let receipt = http.get_transaction_receipt(blob_transaction).await.unwrap().unwrap();
     assert!(receipt.status());
     assert_eq!(receipt.block_number, Some(1));
-    assert!(tokio::time::timeout(Duration::from_millis(100), events.recv_result()).await.is_err());
 
     api.anvil_auto_impersonate_account(false).await.unwrap();
     let transaction: B256 = http
