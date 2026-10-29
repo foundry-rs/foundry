@@ -55,9 +55,14 @@ pub struct Pool<T> {
     /// processes all pending transactions
     inner: RwLock<PoolInner<T>>,
     /// listeners for new ready transactions
-    transaction_listener: Mutex<Vec<Sender<TxHash>>>,
+    transaction_listener: Mutex<Vec<ReadyListener>>,
     /// source of the base fee that ready transactions are ranked at.
     fees: Option<FeeManager>,
+}
+
+struct ReadyListener {
+    sender: Sender<TxHash>,
+    close_on_full: bool,
 }
 
 /// An independent snapshot of a transaction pool.
@@ -143,9 +148,18 @@ impl<T> Pool<T> {
     /// Adds a new transaction listener to the pool that gets notified about every new ready
     /// transaction
     pub fn add_ready_listener(&self) -> Receiver<TxHash> {
+        self.add_ready_listener_with_policy(false)
+    }
+
+    /// Adds a subscription listener that closes instead of dropping notifications on overflow.
+    pub(crate) fn add_ready_subscription_listener(&self) -> Receiver<TxHash> {
+        self.add_ready_listener_with_policy(true)
+    }
+
+    fn add_ready_listener_with_policy(&self, close_on_full: bool) -> Receiver<TxHash> {
         const TX_LISTENER_BUFFER_SIZE: usize = 2048;
         let (tx, rx) = channel(TX_LISTENER_BUFFER_SIZE);
-        self.transaction_listener.lock().push(tx);
+        self.transaction_listener.lock().push(ReadyListener { sender: tx, close_on_full });
         rx
     }
 
@@ -230,7 +244,7 @@ impl<T> Pool<T> {
         // this is basically a retain but with mut reference
         for n in (0..listener.len()).rev() {
             let mut listener_tx = listener.swap_remove(n);
-            let retain = match listener_tx.try_send(hash) {
+            let retain = match listener_tx.sender.try_send(hash) {
                 Ok(()) => true,
                 Err(e) => {
                     if e.is_full() {
@@ -239,7 +253,7 @@ impl<T> Pool<T> {
                             "[{:?}] Failed to send tx notification because channel is full",
                             hash,
                         );
-                        true
+                        !listener_tx.close_on_full
                     } else {
                         false
                     }
@@ -627,5 +641,38 @@ impl<T> AddedTransaction<T> {
             Self::Ready(tx) => &tx.hash,
             Self::Pending { hash } => hash,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::StreamExt;
+    use std::task::{Context, Poll, Waker};
+
+    #[test]
+    fn subscription_listener_closes_on_overflow_without_closing_ordinary_listener() {
+        let pool = Pool::<()>::default();
+        let mut ordinary = pool.add_ready_listener();
+        let mut subscription = pool.add_ready_subscription_listener();
+        let hash = TxHash::ZERO;
+
+        for _ in 0..2050 {
+            pool.notify_listener(hash);
+        }
+
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut received = 0;
+        while let Poll::Ready(Some(_)) = subscription.poll_next_unpin(&mut cx) {
+            received += 1;
+        }
+        assert_eq!(received, 2049);
+        assert!(matches!(subscription.poll_next_unpin(&mut cx), Poll::Ready(None)));
+
+        while let Poll::Ready(Some(_)) = ordinary.poll_next_unpin(&mut cx) {}
+        pool.notify_listener(hash);
+        assert!(
+            matches!(ordinary.poll_next_unpin(&mut cx), Poll::Ready(Some(value)) if value == hash)
+        );
     }
 }

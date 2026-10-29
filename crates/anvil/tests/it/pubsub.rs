@@ -448,3 +448,242 @@ async fn test_sub_new_heads_fast() {
     let numbers = (1..=num).collect::<Vec<_>>();
     assert_eq!(block_numbers, numbers);
 }
+
+#[cfg(unix)]
+mod backpressure {
+    use super::*;
+    use alloy_rpc_types::FilteredParams;
+    use anvil::pubsub::{EthSubscription, LogsSubscription};
+    use anvil_core::eth::subscription::SubscriptionId;
+    use anvil_rpc::response::ResponseResult;
+    use anvil_server::{PubSubContext, PubSubRpcHandler, ipc::IpcEndpoint};
+    use foundry_primitives::FoundryNetwork;
+    use futures::{Stream, future::poll_fn, stream};
+    use parking_lot::Mutex;
+    use std::{
+        pin::Pin,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        task::{Context, Poll, Waker},
+    };
+    use tokio::{
+        io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+        net::UnixStream,
+    };
+
+    type LogStream = Pin<Box<dyn Stream<Item = serde_json::Value> + Send + Sync>>;
+
+    #[derive(Clone)]
+    struct LogsHandler {
+        subscription: Arc<Mutex<Option<LogStream>>>,
+    }
+
+    impl PubSubRpcHandler for LogsHandler {
+        type Request = serde_json::Value;
+        type SubscriptionId = u64;
+        type Subscription = LogStream;
+
+        async fn on_request(
+            &self,
+            _request: Self::Request,
+            cx: PubSubContext<Self>,
+        ) -> ResponseResult {
+            cx.add_subscription(1, self.subscription.lock().take().unwrap());
+            ResponseResult::success(1)
+        }
+
+        fn close_on_subscription_end(&self, _subscription: &Self::Subscription) -> bool {
+            true
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn logs_survive_pruning_while_ipc_is_backpressured() {
+        let (api, handle) =
+            spawn(NodeConfig::test().with_transaction_block_keeper(Some(1usize))).await;
+        let provider = connect_pubsub(&handle.ws_endpoint()).await;
+        let sender = handle.dev_wallets().next().unwrap().address();
+        let contract_addr = EmitLogs::deploy_builder(provider.clone(), "initial".to_owned())
+            .from(sender)
+            .deploy()
+            .await
+            .unwrap();
+        let contract = EmitLogs::new(contract_addr, provider);
+
+        let mut mined_blocks = api.new_block_notifications();
+        let logs = EthSubscription::<FoundryNetwork>::Logs(Box::new(LogsSubscription {
+            blocks: api.new_block_notifications(),
+            storage: api.storage_info(),
+            filter: FilteredParams::new(Some(Filter::new().address(contract_addr))),
+            queued: Default::default(),
+            id: SubscriptionId::Number(1),
+        }));
+        // Fill the unread socket before producing the log that will be pruned.
+        let filler = serde_json::json!({"padding": "x".repeat(2 * 1024 * 1024)});
+        let materialized = Arc::new(AtomicUsize::new(0));
+        let seen = materialized.clone();
+        let subscription = stream::iter([filler.clone()]).chain(logs.inspect(move |_| {
+            seen.fetch_add(1, Ordering::SeqCst);
+        }));
+        let handler =
+            LogsHandler { subscription: Arc::new(Mutex::new(Some(Box::pin(subscription)))) };
+        let pending_subscription = handler.subscription.clone();
+        let directory = tempfile::tempdir().unwrap();
+        let endpoint = IpcEndpoint::new(
+            handler,
+            directory.path().join("logs.ipc").to_string_lossy().into_owned(),
+        );
+        let mut incoming = std::pin::pin!(endpoint.incoming().unwrap());
+        let mut client = UnixStream::connect(directory.path().join("logs.ipc")).await.unwrap();
+        client
+            .write_all(br#"{"jsonrpc":"2.0","method":"eth_subscribe","params":["logs"]}"#)
+            .await
+            .unwrap();
+        let connection = incoming.next().await.unwrap();
+        let mut connection = Box::pin(connection);
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            poll_fn(|cx| {
+                assert!(connection.as_mut().poll(cx).is_pending());
+                if pending_subscription.lock().is_none() { Poll::Ready(()) } else { Poll::Pending }
+            }),
+        )
+        .await
+        .expect("IPC subscription was not installed");
+
+        let receipt = contract
+            .setValue("retained notification".to_owned())
+            .from(sender)
+            .send()
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        assert_eq!(receipt.inner.logs().len(), 1);
+        let block_hash = receipt.block_hash.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let notification = mined_blocks.next().await.unwrap();
+                if notification.as_new_block().is_some_and(|block| block.hash == block_hash) {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("mined block notification was not published");
+        assert_eq!(api.backend.mined_receipts(block_hash).as_ref().map(Vec::len), Some(1));
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            poll_fn(|cx| {
+                assert!(connection.as_mut().poll(cx).is_pending());
+                if materialized.load(Ordering::SeqCst) > 0 {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            }),
+        )
+        .await
+        .expect("log was not materialized before receipt pruning");
+
+        api.mine_one().await.unwrap();
+        assert_eq!(api.backend.mined_receipts(block_hash), Some(vec![]));
+
+        let task = tokio::spawn(connection);
+        let mut lines = BufReader::new(client).lines();
+        let first = tokio::time::timeout(Duration::from_secs(5), lines.next_line())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&first).unwrap(), filler);
+        let notification = tokio::time::timeout(Duration::from_secs(5), lines.next_line())
+            .await
+            .expect("log notification was lost while its receipts were pruned")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&notification).unwrap(),
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "eth_subscription",
+                "params": {"subscription": 1, "result": receipt.inner.logs()[0]},
+            })
+        );
+        task.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn lagged_logs_subscription_ends_after_receipt_pruning() {
+        let (api, handle) =
+            spawn(NodeConfig::test().with_transaction_block_keeper(Some(1usize))).await;
+        let provider = connect_pubsub(&handle.ws_endpoint()).await;
+        let sender = handle.dev_wallets().next().unwrap().address();
+        let contract_addr = EmitLogs::deploy_builder(provider.clone(), "initial".to_owned())
+            .from(sender)
+            .deploy()
+            .await
+            .unwrap();
+        let contract = EmitLogs::new(contract_addr, provider);
+        let logs = EthSubscription::<FoundryNetwork>::Logs(Box::new(LogsSubscription {
+            blocks: api.new_block_notifications(),
+            storage: api.storage_info(),
+            filter: FilteredParams::new(Some(Filter::new().address(contract_addr))),
+            queued: Default::default(),
+            id: SubscriptionId::Number(1),
+        }));
+        let handler = LogsHandler { subscription: Arc::new(Mutex::new(Some(Box::pin(logs)))) };
+        let pending_subscription = handler.subscription.clone();
+        let directory = tempfile::tempdir().unwrap();
+        let endpoint = IpcEndpoint::new(
+            handler,
+            directory.path().join("lagged.ipc").to_string_lossy().into_owned(),
+        );
+        let mut incoming = std::pin::pin!(endpoint.incoming().unwrap());
+        let mut client = UnixStream::connect(directory.path().join("lagged.ipc")).await.unwrap();
+        client
+            .write_all(br#"{"jsonrpc":"2.0","method":"eth_subscribe","params":["logs"]}"#)
+            .await
+            .unwrap();
+        let connection = incoming.next().await.unwrap();
+        let mut connection = Box::pin(connection);
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            poll_fn(|cx| {
+                assert!(connection.as_mut().poll(cx).is_pending());
+                if pending_subscription.lock().is_none() { Poll::Ready(()) } else { Poll::Pending }
+            }),
+        )
+        .await
+        .expect("IPC subscription was not installed");
+
+        let receipt = contract
+            .setValue("lost notification".to_owned())
+            .from(sender)
+            .send()
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        let block_hash = receipt.block_hash.unwrap();
+        assert_eq!(receipt.inner.logs().len(), 1);
+        api.mine_one().await.unwrap();
+        assert_eq!(api.backend.mined_receipts(block_hash), Some(vec![]));
+
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(connection.as_mut().poll(&mut cx).is_ready());
+        drop(connection);
+        let mut lines = BufReader::new(client).lines();
+        assert!(
+            tokio::time::timeout(Duration::from_secs(5), lines.next_line())
+                .await
+                .expect("lagged IPC client was not disconnected")
+                .unwrap()
+                .is_none()
+        );
+    }
+}
