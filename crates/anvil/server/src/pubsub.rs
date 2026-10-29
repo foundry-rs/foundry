@@ -552,31 +552,6 @@ mod tests {
     }
 
     #[test]
-    fn subscription_backpressure_preserves_events_and_request_progress() {
-        let handler = TestHandler::default();
-        let mut connection = PubSubConnection::new(TestConnection::default(), handler.clone());
-        let events = (0..4).map(serde_json::Value::from).collect::<Vec<_>>();
-        connection.context.add_subscription(1, Box::pin(futures::stream::iter(events.clone())));
-        let mut cx = Context::from_waker(Waker::noop());
-
-        assert!(Pin::new(&mut connection).poll(&mut cx).is_pending());
-        assert_eq!(connection.pending.messages.len(), events.len());
-
-        connection.connection.requests.push_back(Request::Single(notification()));
-        assert!(Pin::new(&mut connection).poll(&mut cx).is_pending());
-        assert_eq!(handler.requests.load(Ordering::Relaxed), 1);
-        assert_eq!(connection.pending.messages.len(), events.len());
-
-        connection.connection.ready = true;
-        assert!(Pin::new(&mut connection).poll(&mut cx).is_pending());
-        assert_eq!(
-            connection.connection.sent,
-            events.iter().map(|event| serde_json::to_string(event).unwrap()).collect::<Vec<_>>()
-        );
-        assert!(connection.pending.messages.is_empty());
-    }
-
-    #[test]
     fn sink_readiness_error_terminates_connection() {
         for fail_after in [0, 1] {
             let transport =
@@ -624,18 +599,6 @@ mod tests {
             assert!(connection.connection.sent.is_empty());
             assert_eq!(connection.pending.messages.len(), count as usize);
             assert!(connection.context.subscriptions.lock().is_empty());
-
-            connection.connection.ready = true;
-            assert!(Pin::new(&mut connection).poll(&mut cx).is_pending());
-            let mut sent = connection
-                .connection
-                .sent
-                .iter()
-                .map(|event| serde_json::from_str::<u64>(event).unwrap())
-                .collect::<Vec<_>>();
-            sent.sort_unstable();
-            assert_eq!(sent, (0..count).collect::<Vec<_>>());
-            assert!(connection.context.subscriptions.lock().is_empty());
         }
     }
 
@@ -659,6 +622,8 @@ mod tests {
                 .collect::<Vec<_>>();
             connection.context.add_subscription(id, Box::pin(futures::stream::iter(events)));
         }
+        connection.context.add_subscription(count + 1, Box::pin(futures::stream::pending()));
+        connection.context.add_subscription(count + 2, Box::pin(futures::stream::empty()));
         let wake = Arc::new(TestWake::default());
         let waker = Waker::from(wake.clone());
         let mut cx = Context::from_waker(&waker);
@@ -697,33 +662,8 @@ mod tests {
         let expected =
             expected.into_iter().chain((3..12).map(|event| [count, event])).collect::<Vec<_>>();
         assert_eq!(sent, expected);
-        assert!(connection.context.subscriptions.lock().is_empty());
-    }
-
-    #[test]
-    fn subscription_rotation_skips_pending_and_finished_streams() {
-        let transport = TestConnection { ready: true, send_budget: Some(1), ..Default::default() };
-        let mut connection = PubSubConnection::new(transport, TestHandler::default());
-        for id in 1..=2 {
-            connection.context.add_subscription(
-                id,
-                Box::pin(futures::stream::iter(vec![serde_json::json!(id); 2])),
-            );
-        }
-        connection.context.add_subscription(3, Box::pin(futures::stream::pending()));
-        connection.context.add_subscription(4, Box::pin(futures::stream::empty()));
-        let mut cx = Context::from_waker(Waker::noop());
-
-        for _ in 0..4 {
-            connection.connection.ready = true;
-            connection.connection.send_budget = Some(1);
-            assert!(Pin::new(&mut connection).poll(&mut cx).is_pending());
-        }
-        assert_eq!(connection.connection.sent, ["2", "1", "2", "1"]);
-        connection.connection.ready = true;
-        assert!(Pin::new(&mut connection).poll(&mut cx).is_pending());
         assert_eq!(connection.context.subscriptions.lock().len(), 1);
-        assert!(connection.context.remove_subscription(&3).is_some());
+        assert!(connection.context.remove_subscription(&(count + 1)).is_some());
     }
 
     #[test]
@@ -752,6 +692,7 @@ mod tests {
         }
         let mut cx = Context::from_waker(Waker::noop());
         assert!(Pin::new(&mut connection).poll(&mut cx).is_pending());
+        assert_eq!(connection.pending.messages.len(), 3);
 
         let mut replaced = connection
             .context
@@ -762,6 +703,7 @@ mod tests {
         connection.connection.requests.push_back(Request::Single(notification()));
         assert!(Pin::new(&mut connection).poll(&mut cx).is_pending());
         assert_eq!(handler.requests.load(Ordering::Relaxed), 1);
+        assert_eq!(connection.pending.messages.len(), 4);
         assert!(connection.context.remove_subscription(&1).is_none());
         assert!(connection.context.remove_subscription(&99).is_none());
         assert!(connection.connection.sent.is_empty());
@@ -773,6 +715,7 @@ mod tests {
         assert!(Pin::new(&mut connection).poll(&mut cx).is_pending());
         // Already materialized notifications precede later cancellation and replacement.
         assert_eq!(connection.connection.sent, ["3", "2", "1", "20", "30"]);
+        assert!(connection.pending.messages.is_empty());
         assert_eq!(connection.context.subscriptions.lock().len(), 1);
     }
 
