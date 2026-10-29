@@ -1513,6 +1513,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // Cheatcodes return the gas they did not spend, as `message_result` does.
         let mut gas = GasTracker::new(call.gas_limit);
         if target == CHEATCODE_ADDRESS {
+            // `vm.breakpoint` records the calling instruction, which frames running without
+            // inspector steps do not track.
+            self.pc = interp.pc();
             let (stop, output) =
                 match self.apply_cheatcode(interp, call, backend, &mut gas, executor) {
                     Ok(retdata) => (InstrStop::Return, retdata.into()),

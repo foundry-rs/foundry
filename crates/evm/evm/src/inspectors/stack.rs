@@ -10,7 +10,8 @@ use alloy_primitives::{
     map::{AddressHashMap, AddressMap, AddressSet, HashSet},
 };
 use evm2::{
-    EvmFeatures, ExecutedTx, ExecutionError, Inspector, TxResultWithState,
+    EvmFeatures, ExecutedTx, ExecutionError, Inspector, InspectorConfig, OpcodeSet,
+    TxResultWithState,
     ethereum::intrinsic_and_floor_gas,
     evm::{DbResult, PendingState, PrewarmSet, State},
     interpreter::{GasTracker, Host, InstrStop, MessageKind, op},
@@ -1696,8 +1697,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
 
         if let Some((cheats, backend, _)) = self.cheats_and_backend() {
-            // `vm.breakpoint` records this pc, so keep it current even when the step hook is off.
-            cheats.pc = interp.pc();
             if cheats.has_opcode_overrides() {
                 cheats.step_opcode_overrides(interp.opcode());
             }
@@ -1860,6 +1859,35 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'_, FEN> {
+    #[inline]
+    fn inspector_config(&self) -> InspectorConfig {
+        let inner = &*self.inner;
+        #[cfg(test)]
+        if inner.early_exit_test_gate.is_some() {
+            return InspectorConfig::new();
+        }
+        let every_opcode = inner.execution_cancellation.is_some()
+            || inner.static_step_dispatch != OpcodeStepDispatch::None
+            || inner.has_static_step_end_inspectors
+            || inner.fuzzer.as_ref().is_some_and(|fuzzer| fuzzer.mapping_slots.is_some())
+            || self.cheatcodes.as_deref().is_some_and(|cheats| {
+                // A log that fails `expectEmit` reverts its frame in that `LOG`'s `step_end`.
+                !cheats.expected_emits.is_empty()
+                    || cheats.is_storage_hook_active()
+                    || cheats.has_step_hooks()
+                    || cheats.has_step_end_hooks()
+            });
+        let steps = if every_opcode {
+            OpcodeSet::ALL
+        } else if self.cheatcodes.as_deref().is_some_and(Cheatcodes::has_opcode_overrides) {
+            // Origin and gas price overrides only rewrite what these instructions push.
+            [op::ORIGIN, op::GASPRICE].into_iter().collect()
+        } else {
+            OpcodeSet::EMPTY
+        };
+        InspectorConfig::new().with_steps(steps)
+    }
+
     fn initialize_interp(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
         let depth = interp.message().depth;
         if let Some(cheats) = self.cheatcodes.as_deref_mut()
