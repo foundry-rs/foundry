@@ -939,9 +939,24 @@ impl Config {
     /// allowlist, so a new setting, such as a path that Forge writes to, stays fixed.
     fn restricted_inline_change(&self, inline: &Self) -> Option<String> {
         let (fuzz, invariant) = (&inline.fuzz, &inline.invariant);
+        // The fuzzer takes no limit on rejects for zero.
+        let rejects = |rejects: u32| if rejects == 0 { u32::MAX } else { rejects };
+        let caps_raised = |base: &FuzzDictionaryConfig, inline: &FuzzDictionaryConfig| {
+            inline.max_fuzz_dictionary_addresses > base.max_fuzz_dictionary_addresses
+                || inline.max_fuzz_dictionary_values > base.max_fuzz_dictionary_values
+                || inline.max_fuzz_dictionary_literals > base.max_fuzz_dictionary_literals
+        };
         let raised = [
             ("fuzz.runs", fuzz.runs > self.fuzz.runs),
-            ("fuzz.max_test_rejects", fuzz.max_test_rejects > self.fuzz.max_test_rejects),
+            (
+                "fuzz.max_test_rejects",
+                rejects(fuzz.max_test_rejects) > rejects(self.fuzz.max_test_rejects),
+            ),
+            ("fuzz.dictionary", caps_raised(&self.fuzz.dictionary, &fuzz.dictionary)),
+            (
+                "invariant.dictionary",
+                caps_raised(&self.invariant.dictionary, &invariant.dictionary),
+            ),
             ("invariant.runs", invariant.runs > self.invariant.runs),
             ("invariant.depth", invariant.depth > self.invariant.depth),
             ("invariant.min_depth", invariant.min_depth > self.invariant.min_depth),
@@ -960,7 +975,6 @@ impl Config {
         let mut allowed = inline.clone();
         allowed.fuzz.runs = self.fuzz.runs;
         allowed.fuzz.max_test_rejects = self.fuzz.max_test_rejects;
-        allowed.fuzz.fail_on_revert = self.fuzz.fail_on_revert;
         allowed.fuzz.dictionary = self.fuzz.dictionary;
         allowed.fuzz.show_logs = self.fuzz.show_logs;
         allowed.invariant.runs = self.invariant.runs;
@@ -9823,5 +9837,35 @@ mod tests {
         assert_eq!(restriction.restrictions.solc.via_ir, Some(true));
         assert_eq!(fs::read_to_string(artifact).unwrap(), "existing artifact");
         assert_eq!(fs::read_to_string(cache).unwrap(), "existing cache");
+    }
+
+    #[test]
+    fn restricted_inline_config_only_lowers_limits() {
+        let base = Config::default();
+        let change = |edit: fn(&mut Config)| {
+            let mut inline = base.clone();
+            edit(&mut inline);
+            base.restricted_inline_change(&inline)
+        };
+        assert_eq!(change(|c| c.fuzz.max_test_rejects = 1), None);
+        // Zero takes no limit on rejects.
+        assert_eq!(
+            change(|c| c.fuzz.max_test_rejects = 0),
+            Some("raise `fuzz.max_test_rejects`".into())
+        );
+        assert_eq!(change(|c| c.fuzz.dictionary.dictionary_weight = 0), None);
+        assert_eq!(change(|c| c.fuzz.dictionary.max_fuzz_dictionary_values = 1), None);
+        assert_eq!(
+            change(|c| c.fuzz.dictionary.max_fuzz_dictionary_values = usize::MAX),
+            Some("raise `fuzz.dictionary`".into())
+        );
+        assert_eq!(
+            change(|c| c.invariant.dictionary.max_fuzz_dictionary_literals = usize::MAX),
+            Some("raise `invariant.dictionary`".into())
+        );
+        assert_eq!(
+            change(|c| c.fuzz.fail_on_revert = !c.fuzz.fail_on_revert),
+            Some("change `fuzz.fail_on_revert`".into())
+        );
     }
 }

@@ -1497,14 +1497,17 @@ SOL
 cat > "$out/Property.t.sol" <<SOL
 pragma solidity ^0.8.20;
 import {Fee} from "../../../src/Fee.sol";
-import {Helper} from "generated/agent-$agent/Helper.sol";
+import {Helper} from "generated/$(basename "$out")/Helper.sol";
 contract Property${agent}Test { function testFee() public pure { require(Fee.fee(199) == Helper.fee(199)); } }
 SOL
 "#,
     );
     cmd.args(args).args(["--agents", "2"]).assert_success().stdout_eq(str![[r#"
-2 generated test file(s) did not compile or were not allowed: see cache/properties/report.json
-no generated test file was kept
+added 4 generated test file(s):
+  test/generated/run-1-agent-1/Helper.sol
+  test/generated/run-1-agent-1/Property.t.sol
+  test/generated/run-1-agent-2/Helper.sol
+  test/generated/run-1-agent-2/Property.t.sol
 
 "#]]);
 

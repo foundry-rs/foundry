@@ -33,7 +33,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     ffi::OsString,
     fs,
-    io::Write,
+    io::{self, Write},
     ops::Add,
     path::{Path, PathBuf},
     process::{Command, ExitStatus, Output, Stdio},
@@ -436,6 +436,17 @@ struct Session {
     imports: BTreeMap<PathBuf, BTreeSet<PathBuf>>,
 }
 
+/// The output directories that a run reserved. The ones it left empty are removed on drop.
+struct RunDirs(Vec<PathBuf>);
+
+impl Drop for RunDirs {
+    fn drop(&mut self) {
+        for dir in &self.0 {
+            let _ = fs::remove_dir(dir);
+        }
+    }
+}
+
 impl PropertiesArgs {
     pub fn run(mut self) -> Result<()> {
         ensure!(self.seed.len() >= 2, "at least two --seed values are required");
@@ -463,14 +474,27 @@ impl PropertiesArgs {
             workspace::relative_to_root(&config.root, &config.test).join("generated");
         workspace::ensure_safe_relative_path(&generated_tests, "generated test", &config.test)?;
         // Each run writes to directories of its own, so a run never meets the files of another.
-        let run = (1..)
-            .find(|run| {
-                (1..=self.agents).all(|id| {
-                    let out = generated_tests.join(format!("run-{run}-agent-{id}"));
-                    fs::symlink_metadata(config.root.join(out)).is_err()
-                })
-            })
-            .expect("some run number is free");
+        // Creating them reserves them against concurrent runs.
+        fs::create_dir_all(config.root.join(&generated_tests))?;
+        let mut run = 1;
+        let _run_dirs = loop {
+            let mut dirs = RunDirs(Vec::new());
+            for id in 1..=self.agents {
+                let dir = config.root.join(&generated_tests).join(format!("run-{run}-agent-{id}"));
+                match fs::create_dir(&dir) {
+                    Ok(()) => dirs.0.push(dir),
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => break,
+                    Err(error) => {
+                        return Err(error)
+                            .wrap_err_with(|| format!("failed to create {}", dir.display()));
+                    }
+                }
+            }
+            if dirs.0.len() == self.agents {
+                break dirs;
+            }
+            run += 1;
+        };
         let cache_root = config.cache_path.join("properties");
         let verifier_command = self
             .verifier_command
