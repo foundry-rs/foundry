@@ -5558,9 +5558,10 @@ async fn test_fork_headers_are_not_sent_to_other_origins() {
     for use_reset in [false, true] {
         let (configured_url, configured) = spawn_fork_header_recorder(origin.http_endpoint()).await;
         let (other_url, other) = spawn_fork_header_recorder(origin.http_endpoint()).await;
+        // Configure the scheme-less form so origins are compared after provider normalization.
         let (api, _handle) = spawn(
             NodeConfig::test()
-                .with_eth_rpc_url(Some(configured_url.clone()))
+                .with_eth_rpc_url(configured_url.strip_prefix("http://").map(str::to_string))
                 .with_fork_headers(vec!["x-fork-secret: secret".to_string()]),
         )
         .await;

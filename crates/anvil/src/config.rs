@@ -77,7 +77,6 @@ use tempo_hardfork::{
 };
 use tempo_precompiles::TIP_FEE_MANAGER_ADDRESS;
 use tokio::sync::RwLock as TokioRwLock;
-use url::Url;
 use yansi::Paint;
 
 #[cfg(feature = "base")]
@@ -1748,12 +1747,12 @@ impl NodeConfig {
     /// Clears `fork_headers` unless `url` shares an origin with a configured fork URL, so
     /// credentials configured for one endpoint are not sent to a URL chosen over RPC.
     pub(crate) fn retain_fork_headers_for(&mut self, url: &str) {
+        // Compare the endpoints the provider actually connects to.
+        let origin =
+            |url: &str| ProviderBuilder::<AnyNetwork>::new(url).url().map(|url| url.origin());
+        let target = origin(url);
         let same_origin = |fork_url: &String| {
-            fork_url == url
-                || matches!(
-                    (Url::parse(fork_url), Url::parse(url)),
-                    (Ok(a), Ok(b)) if a.origin() == b.origin()
-                )
+            fork_url == url || matches!((origin(fork_url), &target), (Some(a), Some(b)) if a == *b)
         };
         if self.fork_headers.is_empty() || self.fork_urls.iter().any(same_origin) {
             return;

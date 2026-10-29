@@ -347,6 +347,11 @@ impl<N: Network> ProviderBuilder<N> {
         self
     }
 
+    /// Returns the normalized endpoint URL, or `None` if the URL is invalid.
+    pub fn url(&self) -> Option<&Url> {
+        self.url.as_ref().ok()
+    }
+
     /// Constructs the `RetryProvider` taking all configs into account.
     pub fn build(self) -> Result<RetryProvider<N>> {
         Ok(RootProvider::new(self.build_client()?))
