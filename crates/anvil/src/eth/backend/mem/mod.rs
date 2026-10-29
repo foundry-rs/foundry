@@ -5170,6 +5170,7 @@ impl<N: Network> Backend<N> {
         let mut staged_config = self.node_config.read().await.clone();
         if rpc_url_was_provided {
             staged_config.fork_chain_id = None;
+            staged_config.retain_fork_headers_for(target_rpc_url);
         }
         let configured_endpoint_is_anvil = staged_config.fork_endpoint_is_anvil
             && staged_config.fork_urls.contains(target_rpc_url);

@@ -77,6 +77,7 @@ use tempo_hardfork::{
 };
 use tempo_precompiles::TIP_FEE_MANAGER_ADDRESS;
 use tokio::sync::RwLock as TokioRwLock;
+use url::Url;
 use yansi::Paint;
 
 #[cfg(feature = "base")]
@@ -1742,6 +1743,28 @@ impl NodeConfig {
             .headers(self.fork_headers.clone())
             .build()
             .wrap_err("failed to establish provider to fork url")
+    }
+
+    /// Clears `fork_headers` unless `url` shares an origin with a configured fork URL, so
+    /// credentials configured for one endpoint are not sent to a URL chosen over RPC.
+    pub(crate) fn retain_fork_headers_for(&mut self, url: &str) {
+        let same_origin = |fork_url: &String| {
+            fork_url == url
+                || matches!(
+                    (Url::parse(fork_url), Url::parse(url)),
+                    (Ok(a), Ok(b)) if a.origin() == b.origin()
+                )
+        };
+        if self.fork_headers.is_empty() || self.fork_urls.iter().any(same_origin) {
+            return;
+        }
+        if !self.silent {
+            let _ = foundry_common::sh_warn!(
+                "not sending fork headers to {}: its origin differs from the configured fork URL",
+                redact_url(url)
+            );
+        }
+        self.fork_headers = Vec::new();
     }
 
     async fn fork_endpoint_identity(

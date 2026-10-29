@@ -37,7 +37,11 @@ use anvil::{
     spawn, try_spawn,
 };
 use anvil_core::types::{ReorgOptions, TransactionData};
-use axum::{Json, Router, routing::post};
+use axum::{
+    Json, Router,
+    http::{HeaderMap, Uri},
+    routing::post,
+};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
@@ -62,7 +66,7 @@ use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
@@ -5508,5 +5512,80 @@ async fn test_fork_rollback_to_root_restores_fee_and_gas_overrides() {
         let receipt =
             provider.get_transaction_receipt(*pending.tx_hash()).await.expect(case).expect(case);
         assert!(receipt.status(), "{case}");
+    }
+}
+
+/// Forwards requests to `endpoint` and records each request path with its `x-fork-secret` header.
+async fn spawn_fork_header_recorder(
+    endpoint: String,
+) -> (String, Arc<Mutex<Vec<(String, Option<String>)>>>) {
+    let client = reqwest::Client::new();
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let recorded = requests.clone();
+    let router =
+        Router::new().fallback(move |uri: Uri, headers: HeaderMap, Json(request): Json<Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            let requests = requests.clone();
+            async move {
+                let secret =
+                    headers.get("x-fork-secret").map(|value| value.to_str().unwrap().to_string());
+                requests.lock().unwrap().push((uri.path().to_string(), secret));
+                Json(
+                    client
+                        .post(endpoint)
+                        .json(&request)
+                        .send()
+                        .await
+                        .unwrap()
+                        .json::<Value>()
+                        .await
+                        .unwrap(),
+                )
+            }
+        });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (format!("http://{address}"), recorded)
+}
+
+// Fork headers are credentials for the configured endpoint, so URLs chosen over RPC only receive
+// them when they share its origin.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_headers_are_not_sent_to_other_origins() {
+    let (_origin_api, origin) = spawn(NodeConfig::test()).await;
+    for use_reset in [false, true] {
+        let (configured_url, configured) = spawn_fork_header_recorder(origin.http_endpoint()).await;
+        let (other_url, other) = spawn_fork_header_recorder(origin.http_endpoint()).await;
+        let (api, _handle) = spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(configured_url.clone()))
+                .with_fork_headers(vec!["x-fork-secret: secret".to_string()]),
+        )
+        .await;
+
+        for url in [format!("{configured_url}/rotated"), other_url] {
+            if use_reset {
+                api.anvil_reset(Some(Forking { json_rpc_url: Some(url), block_number: None }))
+                    .await
+                    .unwrap();
+            } else {
+                api.anvil_set_rpc_url(url).await.unwrap();
+            }
+        }
+        // A URL-less reset reuses the current URL with the headers retained for it.
+        api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: None })).await.unwrap();
+
+        let configured = configured.lock().unwrap();
+        assert!(configured.iter().any(|(path, _)| path == "/"), "use_reset: {use_reset}");
+        assert!(configured.iter().any(|(path, _)| path == "/rotated"), "use_reset: {use_reset}");
+        assert!(
+            configured.iter().all(|(_, secret)| secret.as_deref() == Some("secret")),
+            "use_reset: {use_reset}"
+        );
+        let other = other.lock().unwrap();
+        assert!(!other.is_empty(), "use_reset: {use_reset}");
+        assert!(other.iter().all(|(_, secret)| secret.is_none()), "use_reset: {use_reset}");
     }
 }
