@@ -2662,6 +2662,37 @@ impl<N: Network> Backend<N> {
         }
     }
 
+    /// Returns the number of the block a trace method executes against.
+    ///
+    /// Unlike [`Self::ensure_block_number`], this reports every block that is not part of this
+    /// chain as [`BlockchainError::BlockNotFound`]: a number past the head or below the genesis
+    /// number, and a hash of a block that is neither stored locally nor the fork block or an
+    /// upstream block below it.
+    pub async fn ensure_trace_block_number(
+        &self,
+        block_id: BlockId,
+    ) -> Result<u64, BlockchainError> {
+        let number = match self.ensure_block_number(Some(block_id)).await {
+            Err(BlockchainError::BlockOutOfRange(_, _)) => {
+                return Err(BlockchainError::BlockNotFound);
+            }
+            result => result?,
+        };
+        let known = match block_id {
+            BlockId::Hash(hash) => {
+                self.get_block_by_hash(hash.block_hash).is_some()
+                    || self.get_fork().is_some_and(|fork| {
+                        fork.predates_fork(number) || hash.block_hash == fork.block_hash()
+                    })
+            }
+            BlockId::Number(_) => {
+                self.get_block(number).is_some()
+                    || self.get_fork().is_some_and(|fork| fork.predates_fork_inclusive(number))
+            }
+        };
+        if known { Ok(number) } else { Err(BlockchainError::BlockNotFound) }
+    }
+
     /// Returns the timestamp represented by a block request.
     #[cfg(feature = "base")]
     pub async fn block_request_timestamp(
@@ -4228,13 +4259,12 @@ impl<N: Network> Backend<N> {
         .await
     }
 
-    /// Replays all transactions in a block and returns the requested traces for each transaction,
-    /// or `None` if the block is unknown.
+    /// Replays all transactions in a block and returns the requested traces for each transaction.
     pub async fn trace_replay_block_transactions(
         &self,
         block: BlockNumber,
         trace_types: HashSet<TraceType>,
-    ) -> Result<Option<Vec<TraceResultsWithTransactionHash>>, BlockchainError> {
+    ) -> Result<Vec<TraceResultsWithTransactionHash>, BlockchainError> {
         ensure_mined_trace_block(block)?;
         let block_number = self.convert_block_number(Some(block));
 
@@ -4242,19 +4272,17 @@ impl<N: Network> Backend<N> {
         if let Some(results) =
             self.mined_parity_trace_replay_block_transactions(block_number, &trace_types)?
         {
-            return Ok(Some(results));
+            return Ok(results);
         }
 
         // Fallback to fork if block predates fork
         if let Some(fork) = self.get_fork()
             && fork.predates_fork_inclusive(block_number)
         {
-            return Ok(Some(
-                fork.trace_replay_block_transactions(block_number, trace_types).await?,
-            ));
+            return Ok(fork.trace_replay_block_transactions(block_number, trace_types).await?);
         }
 
-        Ok(None)
+        Err(BlockchainError::BlockNotFound)
     }
 
     /// Replays a mined transaction and returns the requested traces, or `None` if the transaction
@@ -6509,7 +6537,24 @@ where
                 });
                 let state_root = proof_state.as_ref().map_or_else(
                     || db.maybe_state_root().unwrap_or_default(),
-                    |state| state_root(&state.cache.accounts),
+                    |state| {
+                        let proof_root = Arc::clone(
+                            &self
+                                .blockchain
+                                .storage
+                                .read()
+                                .tempo
+                                .as_ref()
+                                .expect("Tempo chain is initialized")
+                                .proof_root,
+                        );
+                        let (cache, previous) = &mut *proof_root.lock();
+                        // Rehash only the paths that changed since the previous seal.
+                        cache.record_diff(&state.cache.accounts, previous);
+                        let root = cache.root(&state.cache.accounts);
+                        previous.clone_from(&state.cache.accounts);
+                        root
+                    },
                 );
                 match &mut block_info.block.header {
                     FoundryHeader::Tempo(header) => header.inner.state_root = state_root,

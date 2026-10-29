@@ -33,6 +33,7 @@ mod precompiles;
 mod script;
 mod selectors;
 mod soldeer;
+mod storage_layout;
 mod svm;
 mod test_cmd;
 mod verify;

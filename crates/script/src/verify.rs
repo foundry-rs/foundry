@@ -201,71 +201,62 @@ impl VerifyBundle {
         evm_version: EvmVersion,
     ) -> Option<VerifyArgs> {
         let init_code = data.get(create2_offset..)?;
-        for (artifact, contract) in self.known_contracts.iter() {
-            let Some(bytecode) = contract.bytecode() else { continue };
-            // If it's a CREATE2, the tx.data comes with a 32-byte salt in the beginning
-            // of the transaction
-            if init_code.starts_with(bytecode) {
-                let constructor_args = init_code[bytecode.len()..].to_vec();
+        let (artifact, contract) = self.known_contracts.find_by_creation_code_prefix(init_code)?;
+        let bytecode = contract.bytecode()?;
+        let constructor_args = init_code[bytecode.len()..].to_vec();
 
-                if artifact.source.extension().is_some_and(|e| e.to_str() == Some("vy")) {
-                    warn!("Skipping verification of Vyper contract: {}", artifact.name);
-                    return None;
-                }
-
-                // Strip artifact profile from contract name when creating contract info.
-                let contract = ContractInfo {
-                    path: Some(artifact.source.to_string_lossy().to_string()),
-                    name: artifact
-                        .name
-                        .strip_suffix(&format!(".{}", artifact.profile))
-                        .unwrap_or_else(|| &artifact.name)
-                        .to_string(),
-                };
-
-                // We strip the build metadata information, since it can lead to
-                // etherscan not identifying it correctly. eg:
-                // `v0.8.10+commit.fc410830.Linux.gcc` != `v0.8.10+commit.fc410830`
-                let version = Version::new(
-                    artifact.version.major,
-                    artifact.version.minor,
-                    artifact.version.patch,
-                );
-
-                let verify = VerifyArgs {
-                    address: contract_address,
-                    contract: Some(contract),
-                    compiler_version: Some(version.to_string()),
-                    constructor_args: Some(hex::encode(constructor_args)),
-                    constructor_args_path: None,
-                    no_auto_detect: false,
-                    use_solc: None,
-                    num_of_optimizations: self.num_of_optimizations,
-                    etherscan: self.etherscan.clone(),
-                    rpc: Default::default(),
-                    flatten: false,
-                    force: false,
-                    skip_is_verified_check: true,
-                    watch: true,
-                    print_submission_result_to_stdout: false,
-                    retry: self.retry,
-                    libraries: libraries.to_vec(),
-                    root: None,
-                    verifier: self.verifier.clone(),
-                    via_ir: self.via_ir,
-                    license_type: None,
-                    evm_version: Some(evm_version),
-                    show_standard_json_input: false,
-                    guess_constructor_args: false,
-                    compilation_profile: Some(artifact.profile.clone()),
-                    language: None,
-                    creation_transaction_hash: None,
-                };
-
-                return Some(verify);
-            }
+        if artifact.source.extension().is_some_and(|e| e.to_str() == Some("vy")) {
+            warn!("Skipping verification of Vyper contract: {}", artifact.name);
+            return None;
         }
-        None
+
+        // Strip artifact profile from contract name when creating contract info.
+        let contract = ContractInfo {
+            path: Some(artifact.source.to_string_lossy().to_string()),
+            name: artifact
+                .name
+                .strip_suffix(&format!(".{}", artifact.profile))
+                .unwrap_or_else(|| &artifact.name)
+                .to_string(),
+        };
+
+        // We strip the build metadata information, since it can lead to
+        // etherscan not identifying it correctly. eg:
+        // `v0.8.10+commit.fc410830.Linux.gcc` != `v0.8.10+commit.fc410830`
+        let version =
+            Version::new(artifact.version.major, artifact.version.minor, artifact.version.patch);
+
+        let verify = VerifyArgs {
+            address: contract_address,
+            contract: Some(contract),
+            compiler_version: Some(version.to_string()),
+            constructor_args: Some(hex::encode(constructor_args)),
+            constructor_args_path: None,
+            no_auto_detect: false,
+            use_solc: None,
+            num_of_optimizations: self.num_of_optimizations,
+            etherscan: self.etherscan.clone(),
+            rpc: Default::default(),
+            flatten: false,
+            force: false,
+            skip_is_verified_check: true,
+            watch: true,
+            print_submission_result_to_stdout: false,
+            retry: self.retry,
+            libraries: libraries.to_vec(),
+            root: None,
+            verifier: self.verifier.clone(),
+            via_ir: self.via_ir,
+            license_type: None,
+            evm_version: Some(evm_version),
+            show_standard_json_input: false,
+            guess_constructor_args: false,
+            compilation_profile: Some(artifact.profile.clone()),
+            language: None,
+            creation_transaction_hash: None,
+        };
+
+        Some(verify)
     }
 }
 
@@ -447,6 +438,19 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
 
         let mut verification_jobs = Vec::with_capacity(sequence.receipts.len());
         let mut unverifiable_contracts = vec![];
+        let mut unmatched_contracts = vec![];
+        let mut skipped = 0;
+        // A contract whose creation code exactly matched a project artifact at broadcast time must
+        // still verify; a mismatch means the sources changed since. Callers pass its name only in
+        // that case. Other unmatched contracts are skipped with a warning.
+        let mut add_unverifiable = |address: Address, exact_name: Option<&str>| {
+            unverifiable_contracts.push(address);
+            if let Some(name) = exact_name {
+                unmatched_contracts.push(format!("{name} at {address}"));
+            } else {
+                skipped += 1;
+            }
+        };
         let mut resolver = None;
         let mut external_jobs = 0;
         let mut skipped_external = 0;
@@ -501,13 +505,22 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
                     config.evm_version,
                 ) {
                     Some(verify) => verification_jobs.push(VerificationJob::Local(verify)),
-                    None => unverifiable_contracts.push(address),
+                    None => add_unverifiable(
+                        address,
+                        tx.contract_name.as_deref().filter(|_| tx.exact_artifact_match),
+                    ),
                 };
             }
 
             // Verify potential contracts created during the transaction execution
-            for AdditionalContract { address, init_code, creator_code_addresses, .. } in
-                &tx.additional_contracts
+            for AdditionalContract {
+                address,
+                contract_name,
+                exact_artifact_match,
+                init_code,
+                creator_code_addresses,
+                ..
+            } in &tx.additional_contracts
             {
                 match verify.get_verify_args(
                     *address,
@@ -517,7 +530,10 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
                     config.evm_version,
                 ) {
                     Some(args) => verification_jobs.push(VerificationJob::Local(args)),
-                    None if !verify.verify_external => unverifiable_contracts.push(*address),
+                    None if !verify.verify_external => add_unverifiable(
+                        *address,
+                        contract_name.as_deref().filter(|_| *exact_artifact_match),
+                    ),
                     None if config.offline => {
                         skipped_external += 1;
                         if !warned_offline {
@@ -570,8 +586,7 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
 
         check_unverified(sequence, unverifiable_contracts, verify);
 
-        let num_verifications = verification_jobs.len();
-        let num_requested = num_verifications + skipped_external;
+        let num_requested = verification_jobs.len() + skipped_external + unmatched_contracts.len();
         let mut num_of_successful_verifications = 0;
         sh_status!("##\nStart verification for ({num_requested}) contracts")?;
         for verification in verification_jobs {
@@ -587,11 +602,18 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
 
         ensure_verification_complete(
             num_of_successful_verifications,
-            num_verifications,
+            num_requested,
             skipped_external,
+            &unmatched_contracts,
         )?;
 
-        sh_status!("All ({num_requested}) contracts were verified!")?;
+        if skipped == 0 {
+            sh_status!("All ({num_requested}) contracts were verified!")?;
+        } else {
+            sh_status!(
+                "Verified ({num_requested}) contracts; skipped ({skipped}) contracts (see warnings above)."
+            )?;
+        }
     }
 
     Ok(())
@@ -599,19 +621,23 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
 
 fn ensure_verification_complete(
     successful: usize,
-    submitted: usize,
+    requested: usize,
     skipped_external: usize,
+    unmatched_contracts: &[String],
 ) -> Result<()> {
-    let requested = submitted + skipped_external;
     if successful < requested {
-        let skipped = if skipped_external == 0 {
-            String::new()
-        } else {
-            format!("; {skipped_external} external verification(s) were skipped")
-        };
-        return Err(eyre!(
-            "Not all ({successful} / {requested}) contracts were verified{skipped}!"
-        ));
+        let mut message = format!("Not all ({successful} / {requested}) contracts were verified");
+        if !unmatched_contracts.is_empty() {
+            message += &format!(
+                "; no local artifact matches the creation code of {}",
+                unmatched_contracts.join(", ")
+            );
+        }
+        if skipped_external > 0 {
+            message += &format!("; {skipped_external} external verification(s) were skipped");
+        }
+        message.push('!');
+        return Err(eyre!(message));
     }
     Ok(())
 }
@@ -858,11 +884,20 @@ mod tests {
     }
 
     #[test]
-    fn skipped_external_verifications_make_the_summary_fail() {
-        let err = ensure_verification_complete(0, 0, 1).unwrap_err().to_string();
-        assert!(err.contains("0 / 1"));
-        assert!(err.contains("1 external verification(s) were skipped"));
-        ensure_verification_complete(1, 1, 0).unwrap();
+    fn incomplete_verifications_make_the_summary_fail() {
+        let err = ensure_verification_complete(0, 1, 1, &[]).unwrap_err().to_string();
+        assert_eq!(
+            err,
+            "Not all (0 / 1) contracts were verified; 1 external verification(s) were skipped!"
+        );
+        ensure_verification_complete(1, 1, 0, &[]).unwrap();
+
+        let unmatched = ["Alpha at 0x01".to_string(), "Beta at 0x02".to_string()];
+        let err = ensure_verification_complete(1, 4, 1, &unmatched).unwrap_err().to_string();
+        assert_eq!(
+            err,
+            "Not all (1 / 4) contracts were verified; no local artifact matches the creation code of Alpha at 0x01, Beta at 0x02; 1 external verification(s) were skipped!"
+        );
     }
 
     #[test]

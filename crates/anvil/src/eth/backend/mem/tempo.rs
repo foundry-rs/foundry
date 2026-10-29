@@ -31,6 +31,7 @@
 
 use super::{
     Backend,
+    state::StateRootCache,
     storage::{BlockchainStorage, InMemoryBlockStates},
 };
 use crate::eth::{
@@ -51,7 +52,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::EIP1186AccountProofResponse as AccountProof;
 use anvil_core::eth::block::{Block, canonical_block};
 use anvil_rpc::error::{ErrorCode, RpcError};
-use parking_lot::{RwLock, RwLockUpgradableReadGuard};
+use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::database::DbAccount;
 use std::{fmt, num::NonZeroU64, sync::Arc};
 use tempo_hardfork::TempoHardfork;
@@ -67,6 +68,8 @@ pub(crate) struct TempoChain {
     snapshots: HashMap<U256, TempoSnapshot>,
     /// Immutable local tries sealed by locally mined fork blocks, with bounded retention.
     pub(super) proof_states: Arc<RwLock<InMemoryBlockStates>>,
+    /// Incremental trie of the latest sealed account set, updated by diffing the next seal.
+    pub(super) proof_root: Arc<Mutex<(StateRootCache, AddressMap<DbAccount>)>>,
 }
 
 /// Consensus and the sealed head trie retained by an explicit EVM snapshot.
@@ -86,6 +89,7 @@ impl TempoChain {
             latest_block: None,
             snapshots: Default::default(),
             proof_states: Default::default(),
+            proof_root: Default::default(),
         }
     }
 
@@ -94,6 +98,7 @@ impl TempoChain {
         self.consensus = TempoConsensus::at_height(self.seed, self.epoch_length, height);
         self.latest_block = None;
         self.proof_states.write().clear();
+        *self.proof_root.lock() = Default::default();
         self.snapshots.clear();
     }
 

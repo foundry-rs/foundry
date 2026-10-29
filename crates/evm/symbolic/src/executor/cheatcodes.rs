@@ -331,9 +331,10 @@ impl SymbolicExecutor {
 
         let mut parents = VecDeque::with_capacity(outcomes.len());
         for outcome in outcomes {
-            match self.join_call_outcome(state, outcome, created)? {
+            match self.join_call_outcome(executor, state, outcome, created)? {
                 JoinedCallOutcome::Rejected => {}
-                JoinedCallOutcome::Failure(parent) => {
+                JoinedCallOutcome::Failure(parent)
+                | JoinedCallOutcome::Success { parent, unmet_expected_revert: true, .. } => {
                     *state = parent;
                     return Ok(StepOutcome::Failure);
                 }
@@ -358,7 +359,7 @@ impl SymbolicExecutor {
                     )?;
                     parents.push_back(parent);
                 }
-                JoinedCallOutcome::Success { mut parent, child } => {
+                JoinedCallOutcome::Success { mut parent, child, .. } => {
                     parent.world = child.world;
                     if isolated {
                         parent.world.restore_transient_storage(&failure_world);
@@ -793,6 +794,10 @@ impl SymbolicExecutor {
                             )?;
                         }
                     }
+                }
+                // Forge reads a zero count as "expect no revert", which is not modeled.
+                if count == 0 {
+                    return Err(SymbolicError::Unsupported("symbolic vm.expectRevert count 0"));
                 }
                 Ok(self.set_expected_revert(state, data, reverter, count))
             }

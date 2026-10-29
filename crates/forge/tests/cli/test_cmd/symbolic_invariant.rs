@@ -2483,3 +2483,72 @@ contract AfterInvariantExpectsPredicateState is AfterInvariantStateBase {
 "#]],
         );
 }
+
+// An unmet `vm.expectRevert` bubbled out of a handler is a handler revert, not a failure, as in
+// concrete invariant campaigns without `fail_on_revert`.
+#[forgetest_init]
+fn symbolic_invariant_handler_unmet_expect_revert_is_revert(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_invariant_handler_unmet_expect_revert_is_revert");
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+        config.symbolic.invariant_depth = 1;
+    });
+
+    prj.add_test(
+        "SymbolicHandlerUnmetExpectRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract UnmetCounter {
+    uint256 public value;
+
+    function set(uint256 x) external {
+        value = x;
+    }
+}
+
+contract UnmetHandler is Test {
+    UnmetCounter public counter = new UnmetCounter();
+
+    function poke(uint256 x) external {
+        vm.expectRevert();
+        counter.set(x);
+    }
+}
+
+contract SymbolicHandlerUnmetExpectRevert is Test {
+    UnmetHandler handler;
+
+    function setUp() public {
+        handler = new UnmetHandler();
+        targetContract(address(handler));
+        targetSender(address(0x1234));
+    }
+
+    function invariant_holds() public pure {}
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--json", "--match-test", "invariant_holds"])
+        .assert_json_stdout_with_status(
+            true,
+            str![[r#"
+{
+  "test/SymbolicHandlerUnmetExpectRevert.t.sol:SymbolicHandlerUnmetExpectRevert": {
+    "test_results": {
+      "invariant_holds()": {
+        "status": "Success",
+        "symbolic": {
+          "status": "pass",
+          "...": "{...}"
+        },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]],
+        );
+}
