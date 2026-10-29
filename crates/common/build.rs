@@ -7,7 +7,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=build.rs");
 
     let build = smolgen::Build::builder().build_date(true).build_timestamp(true).build();
-    let git = smolgen::Gitcl::builder().describe(false, true, None).sha(false).build();
+    // Debug builds skip git HEAD tracking, which would otherwise rerun this script, and rebuild
+    // the crate and everything above it, on every commit and checkout. They keep the git values
+    // and the build timestamp from the last run of this script. Release profiles keep tracking
+    // HEAD, so their commit SHA follows the checkout.
+    let track_head = env_var("PROFILE") != "debug";
+    let git = smolgen::Gitcl::builder()
+        .describe(false, true, None)
+        .sha(false)
+        .rerun_on_head_change(track_head)
+        .build();
 
     smolgen::Emitter::new().add_instructions(&build)?.add_instructions(&git)?.emit_and_set()?;
 

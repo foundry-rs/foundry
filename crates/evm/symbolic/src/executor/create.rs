@@ -104,9 +104,15 @@ impl SymbolicExecutor {
         );
         frame.address_word = created_word.clone();
         frame.caller_word = state.address_word.clone();
+        // Isolation runs a CREATE, but not a CREATE2, as its own transaction.
+        let isolated =
+            matches!(kind, CreateKind::Create) && state.starts_isolated_transaction(executor);
         let mut child = state.child(frame);
         let pending_expected_creates = std::mem::take(&mut child.expected_creates);
         child.world = failure_world.clone();
+        if isolated {
+            child.world.clear_transient_storage();
+        }
         child.world.mark_current_transaction_created(created);
         child.world.set_nonce(created, 1);
         child.world.transfer(&mut self.cx, executor, state.address, created, value);
@@ -130,7 +136,7 @@ impl SymbolicExecutor {
                     rejected_runtime = true;
                 }
             }
-            match self.join_call_outcome(state, outcome, created)? {
+            match self.join_call_outcome(executor, state, outcome, created)? {
                 JoinedCallOutcome::Rejected => {}
                 JoinedCallOutcome::Failure(mut parent) => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
@@ -150,18 +156,33 @@ impl SymbolicExecutor {
                     parent.stack.push(created_word.clone())?;
                     parents.push_back(parent);
                 }
-                JoinedCallOutcome::Success { mut parent, child } => {
+                JoinedCallOutcome::Success { mut parent, child, unmet_expected_revert } => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
                     let runtime = &child.frame.return_data;
                     parent.world = child.world;
+                    if isolated {
+                        parent.world.restore_transient_storage(&failure_world);
+                    }
                     parent.expected_emit = child.expected_emit;
                     parent.expected_creates = pending_expected_creates.clone();
-                    self.observe_expected_create(&mut parent, state.address, kind, runtime)?;
+                    // Under an unmet `vm.expectRevert`, the caller sees a failed CREATE, but the
+                    // code stays deployed and `expectCreate` does not count it.
+                    if !unmet_expected_revert {
+                        self.observe_expected_create(&mut parent, state.address, kind, runtime)?;
+                    }
                     if !parent.world.is_destroyed(created) {
                         parent.world.install_code(created, runtime.to_code(&mut self.cx)?);
                         parent.world.set_nonce(created, 1);
                     }
-                    parent.stack.push(created_word.clone())?;
+                    if unmet_expected_revert {
+                        parent.return_data = error_string_return_data(
+                            &mut self.cx,
+                            "next call did not revert as expected",
+                        );
+                        parent.stack.push(SymExpr::zero(&mut self.cx))?;
+                    } else {
+                        parent.stack.push(created_word.clone())?;
+                    }
                     parents.push_back(parent);
                 }
                 JoinedCallOutcome::Revert { mut parent, child } => {

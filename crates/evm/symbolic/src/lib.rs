@@ -25,7 +25,7 @@ use foundry_evm::{
         bytecode::{Bytecode, JumpTable, eip7702::EIP7702_BYTECODE_LEN, opcode},
         context::{Block, Cfg, Transaction},
         database::DatabaseRef,
-        precompile::{blake2, bn254, hash, identity, kzg_point_evaluation, modexp, secp256k1},
+        precompile::{PrecompileSpecId, Precompiles, kzg_point_evaluation},
         primitives::hardfork::SpecId,
     },
 };

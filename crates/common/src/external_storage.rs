@@ -15,7 +15,7 @@
 //! Unverified responses are memoized only for this run so later runs can discover newly verified
 //! contracts.
 
-use crate::fs;
+use crate::{fs, namespaced_storage};
 use alloy_chains::Chain;
 use alloy_primitives::{Address, map::AddressMap};
 use foundry_block_explorers::contract::Metadata;
@@ -283,12 +283,22 @@ fn compile_storage_layout(
     };
 
     let name = metadata.contract_name.clone();
+    // ERC-7201 namespaces aren't part of solc's layout. A contract that keeps all of its state in
+    // namespaces, like OpenZeppelin's upgradeable contracts, would otherwise have nothing to
+    // decode.
+    let mut namespaces =
+        namespaced_storage::parse_standard_json(&input.sources, &input.settings.remappings);
     let mut matches = output
         .contracts
-        .values()
-        .filter_map(|contracts| contracts.get(&name))
-        .filter(|contract| !contract.storage_layout.storage.is_empty());
-    let layout = matches.next().map(|contract| contract.storage_layout.clone());
+        .iter()
+        .filter_map(|(path, contracts)| Some((path, contracts.get(&name)?)))
+        .map(|(path, contract)| {
+            let layout = contract.storage_layout.clone();
+            let Some(compiler) = &mut namespaces else { return layout };
+            extend_external_storage_layout(compiler, path.as_str().as_ref(), &name, layout, address)
+        })
+        .filter(|layout| !layout.storage.is_empty());
+    let layout = matches.next();
     if matches.next().is_some() {
         warn!(target: "external-storage", %address, %name, "multiple artifacts match contract name");
         return None;
@@ -300,6 +310,36 @@ fn compile_storage_layout(
     };
 
     Some((name, Arc::new(layout)))
+}
+
+/// Appends the ERC-7201 namespaces of contract `name` in source `path` to its solc layout.
+///
+/// Namespaces only add decoding coverage, so on failure the solc layout is returned unchanged.
+fn extend_external_storage_layout(
+    compiler: &mut solar::sema::Compiler,
+    path: &Path,
+    name: &str,
+    layout: StorageLayout,
+    address: Address,
+) -> StorageLayout {
+    let mut extended = layout.clone();
+    let result = compiler.enter_mut(|compiler| {
+        namespaced_storage::lower(compiler)?;
+        let gcx = compiler.gcx();
+        // Standard JSON source names are already source unit names.
+        let root = Path::new("");
+        let Some(contract) = namespaced_storage::find_contract(gcx, root, path, name) else {
+            return Ok(());
+        };
+        namespaced_storage::extend_storage_layout(&mut extended, gcx, root, contract)
+    });
+    match result {
+        Ok(()) => extended,
+        Err(err) => {
+            warn!(target: "external-storage", %address, %name, %err, "skipping ERC-7201 namespaces");
+            layout
+        }
+    }
 }
 
 /// Runs solc in an empty directory and terminates it if the remaining lookup budget expires.
@@ -374,7 +414,7 @@ struct CachedStorageLayout {
 }
 
 /// Current [`CachedStorageLayout`] format.
-const CACHE_VERSION: u32 = 2;
+const CACHE_VERSION: u32 = 3;
 
 /// Path of the cache entry for `address`.
 fn cache_path(cache_dir: &Path, address: Address) -> PathBuf {

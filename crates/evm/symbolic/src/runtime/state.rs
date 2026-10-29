@@ -18,6 +18,9 @@ pub(crate) struct PathState {
     pub(crate) constraints: Vec<SymBoolExpr>,
     pub(crate) next_symbol: usize,
     pub(crate) recorded_logs: Option<Vec<SymbolicLog>>,
+    /// Bumped by `recordLogs` and `getRecordedLogs*` so open frame checkpoints know the buffer
+    /// was reset.
+    pub(crate) recorded_logs_generation: u64,
     pub(crate) access_record: Option<AccessRecord>,
     pub(crate) root_calldata: Option<SymbolicCalldata>,
     /// Predicate context follows child calls but is not committed back to handler state.
@@ -90,6 +93,7 @@ impl PathState {
             constraints: Vec::new(),
             next_symbol: 0,
             recorded_logs: None,
+            recorded_logs_generation: 0,
             access_record: None,
             root_calldata: None,
             invariant_predicate: false,
@@ -143,6 +147,12 @@ impl PathState {
         child.expected_revert = None;
         child.assume_no_revert_next_call = None;
         child
+    }
+
+    /// Returns whether a CALL or CREATE issued by this frame runs as its own transaction, as
+    /// Forge's call isolation does for calls made by the test, handler, or invariant frame.
+    pub(crate) const fn starts_isolated_transaction(&self, executor: &ExecutorView<'_>) -> bool {
+        executor.isolate && self.call_depth == 0
     }
 
     pub(crate) fn storage_hook_child(&self, frame: CallFrame) -> Self {
@@ -301,6 +311,7 @@ impl PathState {
         self.mapping_hook_keccak_preimages =
             std::mem::take(&mut child.mapping_hook_keccak_preimages);
         self.recorded_logs = child.recorded_logs.take();
+        self.recorded_logs_generation = child.recorded_logs_generation;
         self.access_record = child.access_record.take();
         // Inspector state survives child reverts and exceptional halts.
         self.block = child.block.clone();
@@ -309,10 +320,23 @@ impl PathState {
         self.function_mocks = std::mem::take(&mut child.function_mocks);
     }
 
+    /// Drops logs recorded by a failed call that started with `len` logs in `generation`.
+    ///
+    /// If the buffer was replaced during the call, every log it holds was recorded by the call.
+    pub(crate) fn discard_failed_call_logs(&mut self, len: usize, generation: u64) {
+        if let Some(logs) = &mut self.recorded_logs {
+            logs.truncate(if generation == self.recorded_logs_generation { len } else { 0 });
+        }
+    }
+
     pub(crate) fn take_reverted_top_level_effects(&mut self, mut reverted: Self) {
+        let recorded_logs_len = self.recorded_logs.as_ref().map_or(0, Vec::len);
+        let recorded_logs_generation = self.recorded_logs_generation;
         self.take_noncommitting_check_state(&mut reverted);
         self.block = reverted.block;
         self.recorded_logs = reverted.recorded_logs;
+        self.recorded_logs_generation = reverted.recorded_logs_generation;
+        self.discard_failed_call_logs(recorded_logs_len, recorded_logs_generation);
         self.access_record = reverted.access_record;
         self.expected_revert = reverted.expected_revert;
         self.assume_no_revert_next_call = reverted.assume_no_revert_next_call;
@@ -1657,6 +1681,20 @@ impl SymbolicWorld {
         state.current_transaction_created_accounts.clear();
     }
 
+    /// Clears transient storage for a call that runs as its own transaction.
+    pub(crate) fn clear_transient_storage(&mut self) {
+        if !self.transient_storage.is_empty() {
+            Arc::make_mut(&mut self.state).transient_storage.clear();
+        }
+    }
+
+    /// Restores `outer`'s transient storage after a call that ran as its own transaction.
+    pub(crate) fn restore_transient_storage(&mut self, outer: &Self) {
+        if !self.transient_storage.is_empty() || !outer.transient_storage.is_empty() {
+            Arc::make_mut(&mut self.state).transient_storage = outer.transient_storage.clone();
+        }
+    }
+
     pub(crate) fn mark_current_transaction_created(&mut self, address: Address) {
         let state = Arc::make_mut(&mut self.state);
         state.created_accounts.insert(address);
@@ -1955,13 +1993,13 @@ impl SymbolicWorld {
         let expr = address_expr;
         let representative = expr.representative_symbolic_address();
         let mut result = self.balance_word_for_address(cx, executor, representative);
-        for (address, balance) in &self.balances {
-            if self.destroyed_accounts.contains(address) {
-                continue;
-            }
-            let address = SymExpr::constant(cx, address_word(*address));
+        // Cheatcode accounts can hold balances even though they are not code candidates.
+        let cheatcode_addresses = [CHEATCODE_ADDRESS, SYMBOLIC_VM_COMPAT_ADDRESS];
+        for address in self.known_addresses(executor).into_iter().chain(cheatcode_addresses) {
+            let balance = self.balance_word_for_address(cx, executor, address);
+            let address = SymExpr::constant(cx, address_word(address));
             let condition = SymBoolExpr::eq(cx, expr.clone(), address);
-            result = SymExpr::ite(cx, condition, balance.clone(), result);
+            result = SymExpr::ite(cx, condition, balance, result);
         }
 
         Ok(result)
@@ -2171,10 +2209,6 @@ impl SymbolicWorld {
         if address == CHEATCODE_ADDRESS || address == SYMBOLIC_VM_COMPAT_ADDRESS {
             return Ok(SymCode::concrete(cx, vec![0]));
         }
-        let spec_id = executor.spec_id;
-        if precompile_number_for_spec(address, spec_id).is_some() {
-            return Ok(SymCode::empty(cx));
-        }
         if self.destroyed_accounts.contains(&address) {
             return Ok(SymCode::empty(cx));
         }
@@ -2230,13 +2264,11 @@ impl SymbolicWorld {
         let representative = expr.representative_symbolic_address();
         let len = self.extcode(cx, executor, representative)?.len();
         let mut result = SymExpr::constant(cx, U256::from(len));
-        for (address, code) in &self.code_cache {
-            if self.destroyed_accounts.contains(address) {
-                continue;
-            }
-            let address = SymExpr::constant(cx, address_word(*address));
+        for address in self.known_addresses(executor) {
+            let len = self.extcode(cx, executor, address)?.len();
+            let address = SymExpr::constant(cx, address_word(address));
             let condition = SymBoolExpr::eq(cx, expr.clone(), address);
-            let len = SymExpr::constant(cx, U256::from(code.len()));
+            let len = SymExpr::constant(cx, U256::from(len));
             result = SymExpr::ite(cx, condition, len, result);
         }
 
@@ -2256,15 +2288,9 @@ impl SymbolicWorld {
         let expr = address_expr;
         let representative = expr.representative_symbolic_address();
         let mut result = self.extcode_hash_for_address(cx, executor, representative)?;
-        let cached_codes = self.code_cache.iter().collect::<Vec<_>>();
-        for (address, code) in cached_codes.into_iter().rev() {
-            let hash = if self.destroyed_accounts.contains(address) {
-                SymExpr::zero(cx)
-            } else {
-                let bytes = code.read_byte_exprs(cx, 0, code.len());
-                keccak_word(cx, bytes)
-            };
-            let address = SymExpr::constant(cx, address_word(*address));
+        for address in self.known_addresses(executor) {
+            let hash = self.extcode_hash_for_address(cx, executor, address)?;
+            let address = SymExpr::constant(cx, address_word(address));
             let condition = SymBoolExpr::eq(cx, expr.clone(), address);
             result = SymExpr::ite(cx, condition, hash, result);
         }
@@ -2291,14 +2317,13 @@ impl SymbolicWorld {
             offset.clone(),
             size,
         );
-        let cached_codes = self.code_cache.iter().collect::<Vec<_>>();
-        for (address, code) in cached_codes.into_iter().rev() {
-            let bytes = if self.destroyed_accounts.contains(address) {
-                vec![SymExpr::zero(cx); size]
-            } else {
-                code.read_byte_exprs_offset(cx, offset.clone(), size)
-            };
-            let address = SymExpr::constant(cx, address_word(*address));
+        for address in self.known_addresses(executor) {
+            let bytes = self.extcode(cx, executor, address)?.read_byte_exprs_offset(
+                cx,
+                offset.clone(),
+                size,
+            );
+            let address = SymExpr::constant(cx, address_word(address));
             let condition = SymBoolExpr::eq(cx, expr.clone(), address);
             for (idx, byte) in bytes.into_iter().enumerate() {
                 result[idx] = SymExpr::ite(cx, condition.clone(), byte, result[idx].clone());
@@ -2313,20 +2338,9 @@ impl SymbolicWorld {
         cx: &mut SymCx,
         executor: &ExecutorView<'_>,
     ) -> Result<Vec<Address>, SymbolicError> {
-        let mut addresses = HashSet::<Address>::default();
-        addresses.extend(self.code_cache.keys().copied());
-        addresses.extend(self.existing_accounts.iter().copied());
-        addresses.extend(executor.account_addresses.iter().copied());
-        let mut addresses = addresses.into_iter().collect::<Vec<_>>();
-        addresses.sort_unstable();
-
         let mut targets = Vec::new();
-        let spec_id = executor.spec_id;
-        for address in addresses {
-            if address == CHEATCODE_ADDRESS
-                || address == SYMBOLIC_VM_COMPAT_ADDRESS
-                || precompile_number_for_spec(address, spec_id).is_some()
-            {
+        for address in self.known_addresses(executor) {
+            if is_precompile_for_spec(address, executor.spec_id) {
                 continue;
             }
             if !self.extcode(cx, executor, address)?.is_empty() {
@@ -2334,6 +2348,27 @@ impl SymbolicWorld {
             }
         }
         Ok(targets)
+    }
+
+    /// Returns the concrete accounts a symbolic address may alias, in address order.
+    ///
+    /// Includes accounts that exist only in the backend, such as contracts deployed in `setUp`,
+    /// which the world caches only once touched. Cheatcode addresses are excluded.
+    fn known_addresses(&self, executor: &ExecutorView<'_>) -> Vec<Address> {
+        let mut addresses = self
+            .code_cache
+            .keys()
+            .chain(self.balances.keys())
+            .chain(&self.existing_accounts)
+            .chain(&executor.account_addresses)
+            .copied()
+            .filter(|address| {
+                *address != CHEATCODE_ADDRESS && *address != SYMBOLIC_VM_COMPAT_ADDRESS
+            })
+            .collect::<Vec<_>>();
+        addresses.sort_unstable();
+        addresses.dedup();
+        addresses
     }
 }
 
