@@ -226,9 +226,10 @@ fn decode_as_non_empty_string(err: &[u8]) -> Option<String> {
     None
 }
 
-/// Returns `true` if `s` has no control characters, so it can be shown as text.
+/// Returns `true` if `s` has no control characters other than newlines and tabs, so it can be
+/// shown as text.
 fn is_printable(s: &str) -> bool {
-    !s.chars().any(char::is_control)
+    !s.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
 }
 
 fn trimmed_hex(s: &[u8]) -> String {
