@@ -6,7 +6,7 @@ use crate::{
     result::{SuiteResult, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind},
     runner::{
         ContractRunnerContext, InvariantCampaignScope, count_runnable_invariant_campaign_anchors,
-        function_matches_network_pass,
+        function_matches_network_pass, inline_config_for,
     },
     symbolic_regression::SYMBOLIC_REGRESSION_MARKER,
 };
@@ -41,7 +41,7 @@ use foundry_evm_networks::NetworkVariant;
 use foundry_linking::{DetailedLinkOutput, LinkOutput, Linker, LinkerError, Resolver};
 use rayon::prelude::*;
 use std::{
-    borrow::Borrow,
+    borrow::{Borrow, Cow},
     collections::{BTreeMap, BTreeSet},
     ops::{Deref, DerefMut},
     path::PathBuf,
@@ -315,18 +315,50 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
 
         debug!("start executing all tests in contract");
 
+        // Resolve the contract's inline config once, for both its backend and its runner.
+        let tcfg = self.contract_tcfg(&identifier);
+        let db = if tcfg.spec_id != self.tcfg.spec_id && !db.is_forked_mode() {
+            db.clone_empty_with_env(tcfg.evm_env)
+        } else {
+            db.clone()
+        };
+        // Built from the shared config, as before: the runner applies the contract's config before
+        // `setUp` and keeps the shared trace and live-log settings.
         let executor = self.tcfg.executor(
             self.known_contracts.clone(),
             self.analysis.clone(),
             artifact_id,
-            db.clone(),
+            db,
         );
-        let runner = ContractRunner::new(&identifier, contract, executor, span, self, context);
+        let runner =
+            ContractRunner::new(&identifier, contract, executor, tcfg, span, self, context);
         let r = runner.run_tests(filter);
 
         debug!(duration=?r.duration, "executed all tests in contract");
 
         r
+    }
+
+    /// Returns the test configuration for `identifier`'s suite, with its contract-level inline
+    /// config applied. Borrows the shared configuration when the contract has none, or when it
+    /// fails to resolve, so that the runner reports the error during setup.
+    ///
+    /// Only contract-level config selects the backend's hardfork: a function-level hardfork pin
+    /// runs over network state seeded at its contract's hardfork, since `setUp` runs once per
+    /// contract.
+    fn contract_tcfg(&self, identifier: &str) -> Cow<'_, TestRunnerConfig<FEN>> {
+        if !self.tcfg.inline_config.contains_contract(identifier) {
+            return Cow::Borrowed(&self.tcfg);
+        }
+        let Ok(mut config) =
+            inline_config_for(&self.tcfg.config, &self.tcfg.inline_config, identifier, None)
+        else {
+            return Cow::Borrowed(&self.tcfg);
+        };
+        config.networks = config.networks.with_execution_profile(self.tcfg.evm_opts.networks);
+        let mut tcfg = self.tcfg.clone();
+        tcfg.reconfigure_with(Arc::new(config));
+        Cow::Owned(tcfg)
     }
 }
 

@@ -277,11 +277,16 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
     /// Creates an empty local backend sharing this backend's fork manager and environment.
     pub fn clone_empty(&self) -> Self {
-        let mut backend = Self::with_fork_manager(
-            self.forks.clone(),
-            EmptyDB::default(),
-            self.lifecycle.active().env,
-        );
+        self.clone_empty_with_env(self.lifecycle.active().env)
+    }
+
+    /// Creates an empty local backend sharing this backend's fork manager, with network state
+    /// seeded at `env`.
+    ///
+    /// Network state can depend on the hardfork, such as Tempo's genesis, so a test contract pinned
+    /// to another hardfork needs its own seed.
+    pub fn clone_empty_with_env(&self, env: EvmEnvFor<FEN>) -> Self {
+        let mut backend = Self::with_fork_manager(self.forks.clone(), EmptyDB::default(), env);
         backend.set_networks(self.networks);
         backend
     }

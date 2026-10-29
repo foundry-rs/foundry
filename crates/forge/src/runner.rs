@@ -497,6 +497,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         name: &'a str,
         contract: &'a TestContract,
         executor: Executor<FEN>,
+        tcfg: Cow<'a, TestRunnerConfig<FEN>>,
         span: Span,
         mcr: &'a MultiContractRunner<FEN>,
         context: ContractRunnerContext<'a>,
@@ -508,7 +509,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             progress: context.progress,
             tokio_handle: context.tokio_handle,
             span,
-            tcfg: Cow::Borrowed(&mcr.tcfg),
+            tcfg,
             mcr,
             num_invariant_campaign_anchors: context.num_invariant_campaign_anchors,
         }
@@ -740,8 +741,11 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
     /// Configures this runner with the inline configuration for the contract.
     fn apply_contract_inline_config(&mut self) -> Result<()> {
         if self.inline_config.contains_contract(self.name) {
-            let new_config = Arc::new(self.inline_config(None)?);
-            self.tcfg.to_mut().reconfigure_with(new_config);
+            // The multi-contract runner already resolved it, unless it failed to.
+            if matches!(self.tcfg, Cow::Borrowed(_)) {
+                let new_config = Arc::new(self.inline_config(None)?);
+                self.tcfg.to_mut().reconfigure_with(new_config);
+            }
             let prev_tracer = self.executor.inspector_mut().tracer.take();
             self.tcfg.configure_executor(&mut self.executor);
             // Don't set tracer here.
