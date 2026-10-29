@@ -701,9 +701,9 @@ impl<N: Network> EthApi<N> {
     pub async fn anvil_set_rpc_url(&self, url: String) -> Result<()> {
         node_info!("anvil_setRpcUrl");
         let _reset = self.reset_lock.lock().await;
-        let mut validation_config = self.backend.node_config.read().await.clone();
-        validation_config.retain_fork_headers_for(&url);
         let staged_fork = if let Some(fork) = self.backend.get_fork() {
+            let mut validation_config = self.backend.node_config.read().await.clone();
+            validation_config.warn_if_fork_headers_withheld(&url);
             let (expected_identity, block_number, block_hash) = {
                 let config = fork.config.read();
                 (config.endpoint_identity, config.block_number, config.block_hash)
@@ -737,9 +737,7 @@ impl<N: Network> EthApi<N> {
             config.endpoint_identity = endpoint_identity;
             node_config.fork_endpoint_is_anvil = endpoint_identity.is_authoritative();
         }
-        // Keep node_config in sync so a subsequent URL-less fork reset uses the updated endpoint
-        // and only the headers retained for it.
-        node_config.fork_headers = validation_config.fork_headers;
+        // Keep node_config in sync so a subsequent URL-less fork reset uses the updated endpoint.
         node_config.fork_urls = vec![url];
         node_config.fork_chain_id = None;
         Ok(())

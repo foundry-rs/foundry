@@ -111,6 +111,8 @@ pub struct RuntimeTransport {
     accept_invalid_certs: bool,
     /// Whether to disable automatic proxy detection.
     no_proxy: bool,
+    /// Whether to skip the `MPP_API_KEY` fallback for the `x-api-key` header.
+    no_mpp_api_key: bool,
 }
 
 /// A builder for [RuntimeTransport].
@@ -122,6 +124,7 @@ pub struct RuntimeTransportBuilder {
     timeout: std::time::Duration,
     accept_invalid_certs: bool,
     no_proxy: bool,
+    no_mpp_api_key: bool,
 }
 
 impl RuntimeTransportBuilder {
@@ -134,6 +137,7 @@ impl RuntimeTransportBuilder {
             timeout: REQUEST_TIMEOUT,
             accept_invalid_certs: false,
             no_proxy: false,
+            no_mpp_api_key: false,
         }
     }
 
@@ -170,6 +174,12 @@ impl RuntimeTransportBuilder {
         self
     }
 
+    /// Set whether to skip the `MPP_API_KEY` fallback for the `x-api-key` header.
+    pub const fn no_mpp_api_key(mut self, no_mpp_api_key: bool) -> Self {
+        self.no_mpp_api_key = no_mpp_api_key;
+        self
+    }
+
     /// Builds the [RuntimeTransport] and returns it in a disconnected state.
     /// The runtime transport will then connect when the first request happens.
     pub fn build(self) -> RuntimeTransport {
@@ -181,6 +191,7 @@ impl RuntimeTransportBuilder {
             timeout: self.timeout,
             accept_invalid_certs: self.accept_invalid_certs,
             no_proxy: self.no_proxy,
+            no_mpp_api_key: self.no_mpp_api_key,
         }
     }
 }
@@ -239,7 +250,8 @@ impl RuntimeTransport {
 
         // If MPP_API_KEY is set, attach it as x-api-key for gated MPP proxies.
         // Does not override an explicit x-api-key header from the user.
-        if !headers.contains_key(HeaderName::from_static("x-api-key"))
+        if !self.no_mpp_api_key
+            && !headers.contains_key(HeaderName::from_static("x-api-key"))
             && let Ok(api_key) = std::env::var("MPP_API_KEY")
         {
             let api_key = api_key.trim();

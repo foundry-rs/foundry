@@ -299,6 +299,9 @@ pub struct NodeConfig {
     pub fork_choice: Option<ForkChoice>,
     /// headers to use with fork RPC endpoints
     pub fork_headers: Vec<String>,
+    /// Fork URLs configured at startup. Unlike `fork_urls`, these do not change when the fork is
+    /// switched over RPC, so only their origins receive `fork_headers` and `MPP_API_KEY`.
+    pub trusted_fork_urls: Vec<String>,
     /// specifies chain id for cache to skip fetching from remote in offline-start mode
     pub fork_chain_id: Option<U256>,
     /// Skip `anvil_nodeInfo` / `anvil_metadata` probes against the fork URL.
@@ -715,6 +718,7 @@ impl Default for NodeConfig {
             genesis: None,
             fork_request_timeout: REQUEST_TIMEOUT,
             fork_headers: vec![],
+            trusted_fork_urls: vec![],
             fork_request_retries: 5,
             fork_retry_backoff: Duration::from_millis(1_000),
             fork_chain_id: None,
@@ -1157,6 +1161,7 @@ impl NodeConfig {
             if self.fork_urls != fork_urls {
                 self.fork_endpoint_is_anvil = false;
             }
+            self.trusted_fork_urls = fork_urls.clone();
             self.fork_urls = fork_urls;
         }
         self
@@ -1168,6 +1173,7 @@ impl NodeConfig {
         if self.fork_urls != fork_urls {
             self.fork_endpoint_is_anvil = false;
         }
+        self.trusted_fork_urls = fork_urls.clone();
         self.fork_urls = fork_urls;
         self
     }
@@ -1734,36 +1740,38 @@ impl NodeConfig {
     }
 
     fn fork_provider(&self, eth_rpc_url: &str) -> Result<RetryProvider> {
+        let trusted = self.is_trusted_fork_url(eth_rpc_url);
         ProviderBuilder::new(eth_rpc_url)
             .timeout(self.fork_request_timeout)
             .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
             .compute_units_per_second(self.compute_units_per_second)
             .max_retry(self.fork_request_retries)
-            .headers(self.fork_headers.clone())
+            .headers(if trusted { self.fork_headers.clone() } else { Vec::new() })
+            .no_mpp_api_key(!trusted)
             .build()
             .wrap_err("failed to establish provider to fork url")
     }
 
-    /// Clears `fork_headers` unless `url` shares an origin with a configured fork URL, so
-    /// credentials configured for one endpoint are not sent to a URL chosen over RPC.
-    pub(crate) fn retain_fork_headers_for(&mut self, url: &str) {
+    /// Returns whether `url` shares an origin with a configured fork URL. Fork headers and
+    /// `MPP_API_KEY` are only sent to such URLs, so a URL chosen over RPC cannot receive them.
+    fn is_trusted_fork_url(&self, url: &str) -> bool {
         // Compare the endpoints the provider actually connects to.
         let origin =
             |url: &str| ProviderBuilder::<AnyNetwork>::new(url).url().map(|url| url.origin());
         let target = origin(url);
-        let same_origin = |fork_url: &String| {
+        self.trusted_fork_urls.iter().any(|fork_url| {
             fork_url == url || matches!((origin(fork_url), &target), (Some(a), Some(b)) if a == *b)
-        };
-        if self.fork_headers.is_empty() || self.fork_urls.iter().any(same_origin) {
-            return;
-        }
-        if !self.silent {
+        })
+    }
+
+    /// Warns when `fork_headers` will not be sent to `url` because it is not a trusted fork URL.
+    pub(crate) fn warn_if_fork_headers_withheld(&self, url: &str) {
+        if !self.silent && !self.fork_headers.is_empty() && !self.is_trusted_fork_url(url) {
             let _ = foundry_common::sh_warn!(
                 "not sending fork headers to {}: its origin differs from the configured fork URL",
                 redact_url(url)
             );
         }
-        self.fork_headers = Vec::new();
     }
 
     async fn fork_endpoint_identity(
