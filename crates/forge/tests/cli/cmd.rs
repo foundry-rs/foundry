@@ -7,7 +7,7 @@ use foundry_compilers::{
     solc::Solc,
 };
 use foundry_config::{
-    BasicConfig, Config, DenyLevel, FuzzConfig, InvariantConfig, SolidityErrorCode,
+    BasicConfig, Config, DenyLevel, FuzzConfig, InvariantConfig, SolcReq, SolidityErrorCode,
     parse_with_profile,
 };
 use foundry_test_utils::{
@@ -26,7 +26,7 @@ use std::{
 #[cfg(unix)]
 use foundry_test_utils::util::TestCommand;
 #[cfg(unix)]
-use std::path::PathBuf;
+use std::{os::unix::fs::PermissionsExt, path::PathBuf};
 
 // tests `--help` is printed to std out
 #[forgetest]
@@ -1897,6 +1897,34 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 Compiler run successful!
 
 "#]]);
+}
+
+// Solar warns on every build that its code generation is experimental (2264); denying warnings
+// must not turn that notice into a failure.
+#[cfg(unix)]
+#[forgetest]
+fn deny_warnings_allows_solar_experimental_codegen(prj: _, cmd: _) {
+    prj.add_source("A.sol", "contract A {}");
+    let solar = prj.root().join("solar");
+    fs::write(
+        &solar,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+    echo "Version: 0.8.38+commit.3a70399.solar.0.2.0"
+    exit 0
+fi
+cat >/dev/null
+printf '%s\n' '{"errors":[{"component":"general","errorCode":"2264","formattedMessage":"Warning: code generation is experimental","message":"code generation is experimental","severity":"warning","type":"Warning"}],"sources":{"src/A.sol":{"id":0}},"contracts":{}}'
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&solar, fs::Permissions::from_mode(0o755)).unwrap();
+    prj.update_config(|config| {
+        config.solc = Some(SolcReq::Local(solar));
+        config.deny = DenyLevel::Warnings;
+    });
+
+    cmd.args(["build"]).assert_success();
 }
 
 // test that `forge build` ignores error codes only from matching path prefixes

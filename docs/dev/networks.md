@@ -247,6 +247,15 @@ Use a layered test plan:
 Keep feature propagation synchronized across workspace manifests, the root `Makefile`, and the
 release and Docker workflows. Tests that use forks must contain `fork` in their names.
 
+### Tempo certificate and storage proofs
+
+On Unix, the [Forge test](../../crates/forge/tests/cli/tempo_proofs.rs) verifies fresh Anvil certificates,
+key rotation and account/storage proofs in Solidity; uncached runs download pinned sources and Solc.
+
+```sh
+cargo nextest run -p forge --test cli tempo_proofs
+```
+
 ## Documentation and releases
 
 User-facing selection, configuration, and workflows belong in the
