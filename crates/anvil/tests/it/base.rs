@@ -132,6 +132,24 @@ fn eip8130_envelope_with_nonce_and_fee(
     valid_before: u64,
     max_fee_per_gas: u128,
 ) -> FoundryTxEnvelope {
+    eip8130_envelope_with_nonce_and_fees(
+        signer,
+        nonce_key,
+        nonce_sequence,
+        valid_before,
+        max_fee_per_gas,
+        0,
+    )
+}
+
+fn eip8130_envelope_with_nonce_and_fees(
+    signer: &PrivateKeySigner,
+    nonce_key: U256,
+    nonce_sequence: u64,
+    valid_before: u64,
+    max_fee_per_gas: u128,
+    max_priority_fee_per_gas: u128,
+) -> FoundryTxEnvelope {
     let tx = TxEip8130 {
         chain_id: 8453,
         sender: None,
@@ -139,7 +157,7 @@ fn eip8130_envelope_with_nonce_and_fee(
         nonce_sequence,
         valid_after: 0,
         valid_before,
-        max_priority_fee_per_gas: 0,
+        max_priority_fee_per_gas,
         max_fee_per_gas,
         gas_limit: 200_000,
         account_changes: Vec::new(),
@@ -989,15 +1007,29 @@ async fn base_eip8130_txpool_orders_channel_heads_by_fee() {
 
     let low = provider
         .send_raw_transaction(
-            &eip8130_envelope_with_nonce_and_fee(&signer, U256::ONE, 0, 0, 1_000_000_000)
-                .encoded_2718(),
+            &eip8130_envelope_with_nonce_and_fees(
+                &signer,
+                U256::ONE,
+                0,
+                0,
+                1_000_000_000,
+                1_000_000_000,
+            )
+            .encoded_2718(),
         )
         .await
         .unwrap();
     let high = provider
         .send_raw_transaction(
-            &eip8130_envelope_with_nonce_and_fee(&signer, U256::from(2), 0, 0, 2_000_000_000)
-                .encoded_2718(),
+            &eip8130_envelope_with_nonce_and_fees(
+                &signer,
+                U256::from(2),
+                0,
+                0,
+                2_000_000_000,
+                2_000_000_000,
+            )
+            .encoded_2718(),
         )
         .await
         .unwrap();

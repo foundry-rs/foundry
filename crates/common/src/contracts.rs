@@ -229,6 +229,14 @@ impl ContractsByArtifact {
         self.find_by_code(code, 0.1, true, ContractData::bytecode)
     }
 
+    /// Finds the first artifact whose nonempty creation bytecode is a prefix of `code`.
+    /// Unlike [`matches_contract_creation`], this does not validate the trailing constructor data.
+    pub fn find_by_creation_code_prefix(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
+        self.iter().find(|(_, contract)| {
+            contract.bytecode().is_some_and(|bytecode| code.starts_with(bytecode))
+        })
+    }
+
     /// Finds a contract which has a similar deployed bytecode as `code`.
     pub fn find_by_deployed_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
         self.find_by_code(code, 0.15, false, ContractData::deployed_bytecode)

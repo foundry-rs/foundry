@@ -1160,7 +1160,8 @@ interface Vm {
 
     // -------- Record Logs --------
 
-    /// Record all the transaction logs.
+    /// Record all the transaction logs. Logs emitted by calls or contract creations that revert or
+    /// halt are discarded, including reverts expected with `expectRevert`.
     #[cheatcode(group = Evm, safety = Safe)]
     function recordLogs() external;
 
