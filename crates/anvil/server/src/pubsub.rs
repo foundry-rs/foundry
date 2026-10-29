@@ -229,7 +229,9 @@ where
                 return Poll::Ready(());
             }
 
-            loop {
+            // Pause reading while requests await processing or the client, so a client that does
+            // not read is throttled by transport backpressure instead of growing the backlog.
+            while pin.processing.len() + pin.pending.responses < MAX_PENDING_REQUESTS {
                 match pin.connection.poll_next_unpin(cx) {
                     Poll::Ready(Some(req)) => match req {
                         Ok(Some(req)) => {
@@ -265,17 +267,23 @@ where
             let mut progress = false;
             for n in (0..pin.processing.len()).rev() {
                 let mut req = pin.processing.swap_remove(n);
-                #[allow(clippy::collapsible_match)]
                 match req.poll_unpin(cx) {
-                    Poll::Ready(Some(resp)) => {
-                        if let Ok(text) = serde_json::to_string(&resp) {
-                            if !pin.pending.send(&mut pin.connection, cx, text, &mut writable) {
-                                return Poll::Ready(());
-                            }
-                            progress = true;
+                    Poll::Ready(resp) => {
+                        // A finished request may reopen request reading, so always loop again.
+                        progress = true;
+                        if let Some(resp) = resp
+                            && let Ok(text) = serde_json::to_string(&resp)
+                            && !pin.pending.send(
+                                &mut pin.connection,
+                                cx,
+                                text,
+                                false,
+                                &mut writable,
+                            )
+                        {
+                            return Poll::Ready(());
                         }
                     }
-                    Poll::Ready(None) => {}
                     Poll::Pending => pin.processing.push(req),
                 }
             }
@@ -289,7 +297,13 @@ where
                     match sub.poll_next_unpin(cx) {
                         Poll::Ready(Some(res)) => {
                             if let Ok(text) = serde_json::to_string(&res) {
-                                if !pin.pending.send(&mut pin.connection, cx, text, &mut writable) {
+                                if !pin.pending.send(
+                                    &mut pin.connection,
+                                    cx,
+                                    text,
+                                    true,
+                                    &mut writable,
+                                ) {
                                     return Poll::Ready(());
                                 }
                                 progress = true;
@@ -321,27 +335,39 @@ where
     }
 }
 
-/// Bounded serialized backlog shared by responses and subscription notifications.
+/// Serialized backlog shared by responses and subscription notifications.
+///
+/// Only notifications count toward the backlog limits, since they arrive without client requests.
+/// Responses are bounded by pausing request reads instead.
 #[derive(Default)]
 struct PendingMessages {
-    messages: VecDeque<String>,
+    /// Queued messages and whether each is a notification.
+    messages: VecDeque<(String, bool)>,
+    /// Number of queued responses.
+    responses: usize,
+    /// Serialized bytes of queued notifications.
     bytes: usize,
 }
 
 impl PendingMessages {
     fn pop_front(&mut self) -> Option<String> {
-        let message = self.messages.pop_front()?;
-        self.bytes -= message.len();
+        let (message, notification) = self.messages.pop_front()?;
+        if notification {
+            self.bytes -= message.len();
+        } else {
+            self.responses -= 1;
+        }
         Some(message)
     }
 
-    /// Sends directly while writable, otherwise queues within the connection's backlog limits.
-    /// Returns false when the connection must terminate.
+    /// Sends directly while writable, otherwise queues the message, enforcing the backlog limits
+    /// for notifications. Returns false when the connection must terminate.
     fn send<Connection>(
         &mut self,
         connection: &mut Connection,
         cx: &mut Context<'_>,
         message: String,
+        notification: bool,
         writable: &mut bool,
     ) -> bool
     where
@@ -366,27 +392,33 @@ impl PendingMessages {
             }
         }
 
-        if self.messages.len() >= MAX_PENDING_MESSAGES
+        if !notification {
+            self.responses += 1;
+        } else if self.messages.len() - self.responses >= MAX_PENDING_MESSAGES
             || message.len() > MAX_PENDING_BYTES - self.bytes
         {
-            warn!(target: "rpc", "Closing connection because its outgoing backlog is full");
+            warn!(target: "rpc", "Closing connection because its notification backlog is full");
             return false;
+        } else {
+            self.bytes += message.len();
         }
-        self.bytes += message.len();
-        self.messages.push_back(message);
+        self.messages.push_back((message, notification));
         true
     }
 }
 
-// Bound both serialized payloads and per-message allocation overhead for slow clients.
+// Bound both serialized notification payloads and per-message allocation overhead for slow
+// subscribers.
 const MAX_PENDING_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PENDING_MESSAGES: usize = 4096;
+// Bound requests that are in flight or whose responses await a slow client.
+const MAX_PENDING_REQUESTS: usize = 256;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use anvil_rpc::{
-        request::{RequestParams, RpcCall, RpcNotification, Version},
+        request::{RequestParams, RpcCall, RpcMethodCall, RpcNotification, Version},
         response::RpcResponse,
     };
     use futures::channel::mpsc;
@@ -401,6 +433,7 @@ mod tests {
         requests: Arc<AtomicUsize>,
         remove_on_request: Option<u64>,
         close_on_end: bool,
+        response: serde_json::Value,
     }
 
     impl PubSubRpcHandler for TestHandler {
@@ -417,7 +450,7 @@ mod tests {
             if let Some(id) = self.remove_on_request {
                 cx.remove_subscription(&id);
             }
-            ResponseResult::success(serde_json::Value::Null)
+            ResponseResult::success(self.response.clone())
         }
 
         fn close_on_subscription_end(&self, _subscription: &Self::Subscription) -> bool {
@@ -431,6 +464,15 @@ mod tests {
             method: "eth_subscribe".to_owned(),
             params: RequestParams::None,
         })
+    }
+
+    fn method_call(id: i64) -> Request {
+        Request::Single(RpcCall::MethodCall(RpcMethodCall {
+            jsonrpc: Version::V2,
+            method: "eth_chainId".to_owned(),
+            params: RequestParams::None,
+            id: Id::Number(id),
+        }))
     }
 
     fn run_ready<F: Future>(future: F) -> F::Output {
@@ -747,22 +789,70 @@ mod tests {
     }
 
     #[test]
-    fn responses_and_subscriptions_share_backlog_limit() {
+    fn queued_responses_bypass_notification_limits() {
+        // Two responses that together exceed the notification byte budget.
+        let response = serde_json::Value::String("x".repeat(MAX_PENDING_BYTES / 2));
+        let handler = TestHandler { response, ..Default::default() };
+        let mut connection = PubSubConnection::new(TestConnection::default(), handler);
         let (tx, rx) = mpsc::unbounded();
-        let mut connection = connection();
         connection.context.add_subscription(1, Box::pin(rx));
+        connection.connection.requests.extend([method_call(1), method_call(2)]);
+        assert!(poll_once(&mut connection).is_pending());
+        assert_eq!(connection.pending.responses, 2);
 
-        for _ in 0..MAX_PENDING_MESSAGES - 1 {
-            tx.unbounded_send(serde_json::Value::Null).unwrap();
+        // Queued responses leave both notification budgets available: fill them exactly.
+        let notification =
+            serde_json::Value::String("x".repeat(MAX_PENDING_BYTES / MAX_PENDING_MESSAGES - 2));
+        for _ in 0..MAX_PENDING_MESSAGES {
+            tx.unbounded_send(notification.clone()).unwrap();
             assert!(poll_once(&mut connection).is_pending());
         }
-        connection.connection.requests.push_back(Request::Batch(vec![]));
-        assert!(poll_once(&mut connection).is_pending());
-        assert_eq!(connection.pending.messages.len(), MAX_PENDING_MESSAGES);
+        assert_eq!(connection.pending.messages.len(), MAX_PENDING_MESSAGES + 2);
+        assert_eq!(connection.pending.bytes, MAX_PENDING_BYTES);
 
-        tx.unbounded_send(serde_json::Value::Null).unwrap();
-        assert!(poll_once(&mut connection).is_ready());
-        assert!(connection.connection.sent.is_empty());
+        connection.connection.ready = true;
+        assert!(poll_once(&mut connection).is_pending());
+        let sent = &connection.connection.sent;
+        assert_eq!(sent.len(), MAX_PENDING_MESSAGES + 2);
+        let mut ids = sent[..2]
+            .iter()
+            .map(|response| {
+                serde_json::from_str::<serde_json::Value>(response).unwrap()["id"].clone()
+            })
+            .collect::<Vec<_>>();
+        ids.sort_unstable_by_key(|id| id.as_i64());
+        assert_eq!(ids, [1, 2]);
+        let notification = notification.to_string();
+        assert!(sent[2..].iter().all(|sent| *sent == notification));
+        assert!(connection.pending.messages.is_empty());
+        assert_eq!((connection.pending.responses, connection.pending.bytes), (0, 0));
+    }
+
+    #[test]
+    fn queued_responses_pause_request_reads() {
+        let handler = TestHandler::default();
+        let mut connection = PubSubConnection::new(TestConnection::default(), handler.clone());
+        connection.connection.requests.extend((0..=MAX_PENDING_REQUESTS as i64).map(method_call));
+
+        assert!(poll_once(&mut connection).is_pending());
+        assert_eq!(handler.requests.load(Ordering::Relaxed), MAX_PENDING_REQUESTS);
+        assert_eq!(connection.connection.requests.len(), 1);
+
+        connection.connection.ready = true;
+        assert!(poll_once(&mut connection).is_pending());
+        assert_eq!(handler.requests.load(Ordering::Relaxed), MAX_PENDING_REQUESTS + 1);
+        assert_eq!(connection.connection.sent.len(), MAX_PENDING_REQUESTS + 1);
+    }
+
+    #[test]
+    fn completed_requests_without_responses_resume_reads() {
+        let handler = TestHandler::default();
+        let mut connection = PubSubConnection::new(TestConnection::default(), handler.clone());
+        let notifications = (0..=MAX_PENDING_REQUESTS).map(|_| Request::Single(notification()));
+        connection.connection.requests.extend(notifications);
+
+        assert!(poll_once(&mut connection).is_pending());
+        assert_eq!(handler.requests.load(Ordering::Relaxed), MAX_PENDING_REQUESTS + 1);
     }
 
     #[test]
