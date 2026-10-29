@@ -70,6 +70,7 @@ pub fn run_command(args: Forge) -> Result<()> {
             let outcome = global.block_on(cmd.run())?;
             outcome.ensure_ok(silent)
         }
+        ForgeSubcommand::Properties(cmd) => cmd.run(),
         ForgeSubcommand::Script(cmd) => block_on_command(global, || cmd.run_script()),
         ForgeSubcommand::Coverage(cmd) => {
             if cmd.is_watch() {
@@ -135,6 +136,7 @@ pub fn run_command(args: Forge) -> Result<()> {
         ForgeSubcommand::Inspect(cmd) => cmd.run(),
         ForgeSubcommand::Tree(cmd) => cmd.run(),
         ForgeSubcommand::Geiger(cmd) => global.block_on(cmd.run()),
+        ForgeSubcommand::Exploit(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Doc(cmd) => {
             if cmd.is_watch() {
                 block_on_watch(global, watch::watch_doc(cmd))

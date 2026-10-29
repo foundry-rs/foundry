@@ -670,6 +670,14 @@ pub struct Config {
     /// Whether to enable script execution protection.
     pub script_execution_protection: bool,
 
+    /// Whether inline config can only lower the runs, depth, and rejects of fuzz and invariant
+    /// tests and change a few settings that steer them, and must leave every other setting as it
+    /// is. Commands that run generated tests set it, so a test can neither widen its own access,
+    /// write outside the project, nor run unbounded.
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub restrict_inline_config: bool,
+
     /// PRIVATE: This structure may grow, As such, constructing this structure should
     /// _always_ be done using a public constructor or update syntax:
     ///
@@ -924,9 +932,94 @@ impl Config {
         config.invariant.corpus_random_sequence_weight_configured =
             invariant_corpus_random_sequence_weight_configured;
         config.invariant.workers_configured = invariant_workers_configured;
+        config.restrict_inline_config = self.restrict_inline_config;
         config.normalize_hardfork_settings()?;
+        if self.restrict_inline_config
+            && let Some(change) = self.restricted_inline_change(&config)
+        {
+            return Err(Error::from(format!("inline config cannot {change} in generated tests")));
+        }
 
         Ok(config)
+    }
+
+    /// Returns what a restricted inline config changed that it must not: a raised bound on the work
+    /// of a test, or any setting outside a few that only steer the fuzzer and invariant runs. An
+    /// allowlist, so a new setting, such as a path that Forge writes to, stays fixed.
+    fn restricted_inline_change(&self, inline: &Self) -> Option<String> {
+        let (fuzz, invariant) = (&inline.fuzz, &inline.invariant);
+        // The fuzzer takes no limit on rejects for zero.
+        let rejects = |rejects: u32| if rejects == 0 { u32::MAX } else { rejects };
+        let caps_raised = |base: &FuzzDictionaryConfig, inline: &FuzzDictionaryConfig| {
+            inline.max_fuzz_dictionary_addresses > base.max_fuzz_dictionary_addresses
+                || inline.max_fuzz_dictionary_values > base.max_fuzz_dictionary_values
+                || inline.max_fuzz_dictionary_literals > base.max_fuzz_dictionary_literals
+        };
+        let raised = [
+            ("fuzz.runs", fuzz.runs > self.fuzz.runs),
+            (
+                "fuzz.max_test_rejects",
+                rejects(fuzz.max_test_rejects) > rejects(self.fuzz.max_test_rejects),
+            ),
+            ("fuzz.dictionary", caps_raised(&self.fuzz.dictionary, &fuzz.dictionary)),
+            (
+                "invariant.dictionary",
+                caps_raised(&self.invariant.dictionary, &invariant.dictionary),
+            ),
+            ("invariant.runs", invariant.runs > self.invariant.runs),
+            ("invariant.depth", invariant.depth > self.invariant.depth),
+            ("invariant.min_depth", invariant.min_depth > self.invariant.min_depth),
+            (
+                "invariant.shrink_run_limit",
+                invariant.shrink_run_limit > self.invariant.shrink_run_limit,
+            ),
+            (
+                "invariant.max_assume_rejects",
+                invariant.max_assume_rejects > self.invariant.max_assume_rejects,
+            ),
+        ];
+        if let Some((key, _)) = raised.into_iter().find(|(_, raised)| *raised) {
+            return Some(format!("raise `{key}`"));
+        }
+        let mut allowed = inline.clone();
+        allowed.fuzz.runs = self.fuzz.runs;
+        allowed.fuzz.max_test_rejects = self.fuzz.max_test_rejects;
+        allowed.fuzz.dictionary = self.fuzz.dictionary;
+        allowed.fuzz.show_logs = self.fuzz.show_logs;
+        allowed.invariant.runs = self.invariant.runs;
+        allowed.invariant.depth = self.invariant.depth;
+        allowed.invariant.min_depth = self.invariant.min_depth;
+        allowed.invariant.depth_mode = self.invariant.depth_mode;
+        allowed.invariant.shrink_run_limit = self.invariant.shrink_run_limit;
+        allowed.invariant.max_assume_rejects = self.invariant.max_assume_rejects;
+        allowed.invariant.call_override = self.invariant.call_override;
+        allowed.invariant.dictionary = self.invariant.dictionary;
+        allowed.invariant.max_time_delay = self.invariant.max_time_delay;
+        allowed.invariant.max_block_delay = self.invariant.max_block_delay;
+        allowed.invariant.check_interval = self.invariant.check_interval;
+        allowed.invariant.show_metrics = self.invariant.show_metrics;
+        allowed.invariant.show_solidity = self.invariant.show_solidity;
+        allowed.allow_internal_expect_revert = self.allow_internal_expect_revert;
+        fn changed_key(base: &serde_json::Value, other: &serde_json::Value) -> Option<String> {
+            match (base, other) {
+                (serde_json::Value::Object(base), serde_json::Value::Object(other)) => {
+                    base.keys().chain(other.keys()).find_map(|key| {
+                        let null = serde_json::Value::Null;
+                        let (a, b) =
+                            (base.get(key).unwrap_or(&null), other.get(key).unwrap_or(&null));
+                        changed_key(a, b).map(|rest| {
+                            if rest.is_empty() { key.clone() } else { format!("{key}.{rest}") }
+                        })
+                    })
+                }
+                _ => (base != other).then(String::new),
+            }
+        }
+        let (Ok(base), Ok(allowed)) = (serde_json::to_value(self), serde_json::to_value(&allowed))
+        else {
+            return Some("change settings that do not serialize".to_string());
+        };
+        Some(format!("change `{}`", changed_key(&base, &allowed)?))
     }
 
     #[doc(hidden)]
@@ -3270,6 +3363,7 @@ impl Default for Config {
             networks: Default::default(),
             transaction_timeout: 120,
             additional_compiler_profiles: Default::default(),
+            restrict_inline_config: false,
             compilation_restrictions: Default::default(),
             script_execution_protection: true,
             _non_exhaustive: (),
@@ -9870,6 +9964,40 @@ mod tests {
         assert_eq!(restriction.restrictions.solc.via_ir, Some(true));
         assert_eq!(fs::read_to_string(artifact).unwrap(), "existing artifact");
         assert_eq!(fs::read_to_string(cache).unwrap(), "existing cache");
+    }
+
+    #[test]
+    fn restricted_inline_config_only_lowers_limits() {
+        let base = Config::default();
+        let change = |edit: fn(&mut Config)| {
+            let mut inline = base.clone();
+            edit(&mut inline);
+            base.restricted_inline_change(&inline)
+        };
+        assert_eq!(change(|c| c.fuzz.max_test_rejects = 1), None);
+        // Zero takes no limit on rejects.
+        assert_eq!(
+            change(|c| c.fuzz.max_test_rejects = 0),
+            Some("raise `fuzz.max_test_rejects`".into())
+        );
+        assert_eq!(change(|c| c.fuzz.dictionary.dictionary_weight = 0), None);
+        assert_eq!(change(|c| c.fuzz.dictionary.max_fuzz_dictionary_values = 1), None);
+        assert_eq!(
+            change(|c| c.fuzz.dictionary.max_fuzz_dictionary_values = usize::MAX),
+            Some("raise `fuzz.dictionary`".into())
+        );
+        assert_eq!(
+            change(|c| c.invariant.dictionary.max_fuzz_dictionary_literals = usize::MAX),
+            Some("raise `invariant.dictionary`".into())
+        );
+        assert_eq!(
+            change(|c| c.fuzz.fail_on_revert = !c.fuzz.fail_on_revert),
+            Some("change `fuzz.fail_on_revert`".into())
+        );
+        assert_eq!(
+            change(|c| c.invariant.fail_on_revert = !c.invariant.fail_on_revert),
+            Some("change `invariant.fail_on_revert`".into())
+        );
     }
 
     #[test]

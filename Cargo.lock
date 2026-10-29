@@ -5743,6 +5743,7 @@ dependencies = [
  "inferno",
  "itertools 0.15.0",
  "mockall",
+ "mpp",
  "opener",
  "parking_lot",
  "path-slash",

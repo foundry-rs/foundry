@@ -518,6 +518,7 @@ fn can_extract_config_values(prj: _, cmd: _) {
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
         script_execution_protection: true,
+        restrict_inline_config: false,
         _non_exhaustive: (),
     };
     prj.write_config(input.clone());
