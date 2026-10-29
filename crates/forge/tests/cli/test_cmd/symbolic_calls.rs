@@ -1556,6 +1556,18 @@ contract SymbolicInvalidOpcode is Test {
         assertEq(marker, value);
     }
 
+    function checkCallToFullStackSucceeds() public {
+        // Init code that returns a runtime that fills the stack and stops.
+        bytes memory init = hex"61040180600a5f395ff3FULL_STACK";
+        address child;
+        assembly ("memory-safe") {
+            child := create(0, add(init, 0x20), mload(init))
+        }
+        assertEq(child.code.length, 1025);
+        (bool ok,) = child.call("");
+        assert(ok);
+    }
+
     function checkCallToStackUnderflowFails(uint256 value) public {
         address child = address(0xC0DE);
         // ADD with an empty stack.
@@ -1593,19 +1605,21 @@ contract SymbolicInvalidOpcode is Test {
     }
 }
 "#
-        .replace("PUSH0S", &"5f".repeat(1025)),
+        .replace("PUSH0S", &"5f".repeat(1025))
+        .replace("FULL_STACK", &format!("{}00", "5f".repeat(1024))),
     );
 
-    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "check.*Fails"]))
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "check.*(Fails|Succeeds)"]))
         .success()
         .stdout_eq(str![[r#"
 ...
-Ran 4 tests for test/SymbolicInvalidOpcode.t.sol:SymbolicInvalidOpcode
+Ran 5 tests for test/SymbolicInvalidOpcode.t.sol:SymbolicInvalidOpcode
+[PASS] checkCallToFullStackSucceeds() ([METRICS])
 [PASS] checkCallToStackOverflowFails(uint256) ([METRICS])
 [PASS] checkCallToStackUnderflowFails(uint256) ([METRICS])
 [PASS] checkCallToUndefinedOpcodeFails(uint256) ([METRICS])
 [PASS] checkCreateWithStackUnderflowFails(uint256) ([METRICS])
-Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
@@ -1665,7 +1679,27 @@ contract DeepSymbolicCaller {
     }
 }
 
+// The deepest frame expects its repeated self-call to fail at the depth limit.
+contract DeepExpectRevert {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    bool public caughtExpected;
+
+    function descend() external {
+        (bool ok,) = address(this).call(abi.encodeCall(this.descend, ()));
+        if (!ok) {
+            vm.expectRevert();
+            (caughtExpected,) = address(this).call(abi.encodeCall(this.descend, ()));
+        }
+    }
+}
+
 contract SymbolicCallDepth is Test {
+    function checkExpectedRevertAtTheCallDepthLimitSucceeds(uint256) public {
+        DeepExpectRevert target = new DeepExpectRevert();
+        target.descend();
+        assertTrue(target.caughtExpected());
+    }
+
     function checkSelfCallsStopAtTheCallDepthLimit(uint256) public {
         SelfCaller target = new SelfCaller();
         (bool ok,) = address(target).call("");
@@ -1707,11 +1741,12 @@ contract SymbolicCallDepth is Test {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 3 tests for test/SymbolicCallDepth.t.sol:SymbolicCallDepth
+Ran 4 tests for test/SymbolicCallDepth.t.sol:SymbolicCallDepth
 [PASS] checkCreateAtTheCallDepthLimitFails(uint256) ([METRICS])
+[PASS] checkExpectedRevertAtTheCallDepthLimitSucceeds(uint256) ([METRICS])
 [PASS] checkSelfCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
 [PASS] checkSymbolicTargetAtTheCallDepthLimitFails(address) ([METRICS])
-Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
