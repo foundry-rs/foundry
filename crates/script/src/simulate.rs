@@ -158,6 +158,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                 if to.is_some() {
                     builder.set_call(
                         &address_to_abi,
+                        &self.build_data.known_contracts,
                         decoder,
                         self.script_config.evm_opts.create2_deployer,
                     )?;
@@ -165,7 +166,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                     builder.set_create(
                         false,
                         tx.contract_address.unwrap_or_else(|| sender.create(nonce)),
-                        &address_to_abi,
+                        &self.build_data.known_contracts,
                     )?;
                 }
 
