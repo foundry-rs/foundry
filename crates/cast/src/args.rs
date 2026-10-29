@@ -481,7 +481,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 else {
                     eyre::bail!("No matching event signature found for selector `{selector}`");
                 };
-                let _ = sh_println!("{}", event.signature());
+                if !shell::is_json() {
+                    let _ = sh_println!("{}", event.signature());
+                }
                 let data = data.get(64..).unwrap_or_default();
                 get_event(&event.signature())?
                     .decode_log_parts(core::iter::once(selector), &hex::decode(data)?)?
@@ -500,7 +502,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 else {
                     eyre::bail!("No matching error signature found for selector `{selector}`");
                 };
-                let _ = sh_println!("{}", error.signature());
+                if !shell::is_json() {
+                    let _ = sh_println!("{}", error.signature());
+                }
                 error
             };
             print_tokens(&error.decode_error(&hex::decode(data)?)?.body)?;

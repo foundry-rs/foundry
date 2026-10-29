@@ -531,3 +531,20 @@ fn calldata_bool(cmd: _) {
         .assert_success()
         .stdout_eq("0x6fae94120000000000000000000000000000000000000000000000000000000000000000\n");
 }
+
+#[casttest]
+fn decode_error_with_sig_json_is_only_json(cmd: _) {
+    cmd.args([
+        "decode-error",
+        "--sig",
+        "TooSmall(uint256,uint256)",
+        "0xe94fe3af0000000000000000000000000000000000000000000000000000000000000005000000000000000000000000000000000000000000000000000000000000000a",
+        "--json",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+{"schema_version":1,"success":true,"data":["5","10"],"errors":[],"warnings":[]}
+
+"#]]);
+}
+
