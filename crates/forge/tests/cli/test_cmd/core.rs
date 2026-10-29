@@ -96,6 +96,13 @@ contract Asserter {
         vm.assertTrue(false);
         revert();
     }
+
+    // Sends 17 wei from 0x5316812db67073C4d4af8BB3000C5B86c2877e94 on chain 1.
+    function broadcast() external {
+        vm.broadcastRawTransaction(
+            hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856"
+        );
+    }
 }
 
 /// forge-config: default.assertions_revert = false
@@ -112,6 +119,14 @@ contract NonRevertingAssertionsTest is Test {
 
     function testRevertedCallFailureIsDropped() public {
         try asserter.failThenRevert() {} catch {}
+    }
+
+    // A call that runs a nested transaction replaces the running state with its own.
+    function testNestedTransactionKeepsFailure() public {
+        vm.chainId(1);
+        vm.deal(0x5316812db67073C4d4af8BB3000C5B86c2877e94, 1 ether);
+        vm.assertTrue(false);
+        asserter.broadcast();
     }
 }
 
@@ -139,19 +154,21 @@ Ran 1 test for test/LegacyAssertions.t.sol:NoAssertionsRevertTest
 [FAIL: assertion failed: 1 != 2] testMultipleAssertFailures() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
-Ran 3 tests for test/LegacyAssertions.t.sol:NonRevertingAssertionsNonIsolatedTest
+Ran 4 tests for test/LegacyAssertions.t.sol:NonRevertingAssertionsNonIsolatedTest
 [FAIL] testBodyFailure() ([GAS])
 [FAIL] testCallFailure() ([GAS])
+[FAIL] testNestedTransactionKeepsFailure() ([GAS])
 [PASS] testRevertedCallFailureIsDropped() ([GAS])
-Suite result: FAILED. 1 passed; 2 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 1 passed; 3 failed; 0 skipped; [ELAPSED]
 
-Ran 3 tests for test/LegacyAssertions.t.sol:NonRevertingAssertionsTest
+Ran 4 tests for test/LegacyAssertions.t.sol:NonRevertingAssertionsTest
 [FAIL] testBodyFailure() ([GAS])
 [FAIL] testCallFailure() ([GAS])
+[FAIL] testNestedTransactionKeepsFailure() ([GAS])
 [PASS] testRevertedCallFailureIsDropped() ([GAS])
-Suite result: FAILED. 1 passed; 2 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 1 passed; 3 failed; 0 skipped; [ELAPSED]
 
-Ran 5 test suites [ELAPSED]: 4 tests passed, 9 failed, 0 skipped (13 total tests)
+Ran 5 test suites [ELAPSED]: 4 tests passed, 11 failed, 0 skipped (15 total tests)
 
 Failing tests:
 Encountered 2 failing tests in test/LegacyAssertions.t.sol:LegacyAssertionsNonIsolatedTest
@@ -165,17 +182,19 @@ Encountered 2 failing tests in test/LegacyAssertions.t.sol:LegacyAssertionsTest
 Encountered 1 failing test in test/LegacyAssertions.t.sol:NoAssertionsRevertTest
 [FAIL: assertion failed: 1 != 2] testMultipleAssertFailures() ([GAS])
 
-Encountered 2 failing tests in test/LegacyAssertions.t.sol:NonRevertingAssertionsNonIsolatedTest
+Encountered 3 failing tests in test/LegacyAssertions.t.sol:NonRevertingAssertionsNonIsolatedTest
 [FAIL] testBodyFailure() ([GAS])
 [FAIL] testCallFailure() ([GAS])
+[FAIL] testNestedTransactionKeepsFailure() ([GAS])
 
-Encountered 2 failing tests in test/LegacyAssertions.t.sol:NonRevertingAssertionsTest
+Encountered 3 failing tests in test/LegacyAssertions.t.sol:NonRevertingAssertionsTest
 [FAIL] testBodyFailure() ([GAS])
 [FAIL] testCallFailure() ([GAS])
+[FAIL] testNestedTransactionKeepsFailure() ([GAS])
 
-Encountered a total of 9 failing tests, 4 tests succeeded
+Encountered a total of 11 failing tests, 4 tests succeeded
 
-Tip: Run `forge test --rerun` to retry only the 9 failed tests
+Tip: Run `forge test --rerun` to retry only the 11 failed tests
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);

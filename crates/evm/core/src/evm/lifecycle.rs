@@ -864,17 +864,11 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         env: Option<EvmEnv<F::Types>>,
         ext: Option<<F::Types as EvmTypesHost>::EvmExt>,
     ) -> Evm<'a, F::Types> {
+        self.materialize(evm);
         let db = self.forks.active_db();
-        // Copy only what the running transaction read and wrote: without its journal, so each
-        // nested transaction is independent of how much the enclosing one already did, and over
-        // the same shared view of the accepted state when the running EVM still reads through it.
-        let state = if AcceptedView::is(evm.database()) {
-            let cache =
-                Arc::clone(self.active().cache.as_ref().expect("accepted view has a cache"));
-            evm.state().committed_copy(AcceptedView { cache, backing: db.clone_backing() })
-        } else {
-            evm.state().committed_copy(db.clone_backing())
-        };
+        // Copy the running state without its journal, so each nested transaction is independent
+        // of how much the enclosing one already did.
+        let state = evm.state().committed_copy(db.clone_backing());
         let ext = ext.unwrap_or_else(|| {
             let mut ext = evm.ext().clone();
             ext.for_next_transaction(tx);
