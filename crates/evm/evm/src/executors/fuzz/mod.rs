@@ -14,7 +14,7 @@ use alloy_primitives::{
     map::{AddressHashMap, HashMap},
 };
 use eyre::Result;
-use foundry_common::sh_println;
+use foundry_common::{sh_println, sh_warn};
 use foundry_config::FuzzConfig;
 use foundry_evm_core::{
     Breakpoints,
@@ -339,12 +339,26 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         tx.warp = None;
         tx.roll = None;
         self.resolve_stateless_tx_with_executor(&self.executor_f, &mut tx)?;
-        let call = self.executor_f.call_raw(
+        let mut call = self.executor_f.call_raw(
             tx.sender,
             tx.call_details.target,
             tx.call_details.calldata,
             tx.call_details.value.unwrap_or_default(),
         )?;
+        // State outside the EVM, such as files or environment variables, can change the outcome.
+        let success = should_ignore_revert(
+            self.config.fail_on_revert,
+            address,
+            call.reverter,
+            self.executor_f.inspector().extra_cheatcode_addresses(),
+        ) || self.executor_f.is_raw_call_mut_success(address, &mut call);
+        if success != result.success {
+            let _ = sh_warn!(
+                "the debugged fuzz case {} when run again, unlike in the campaign, so the debugger \
+                 may show a different path",
+                if success { "passed" } else { "failed" }
+            );
+        }
         result.traces = call.traces;
         result.debug_bytecodes = call.debug_bytecodes;
         result.breakpoints = call.cheatcodes.map(|cheats| cheats.breakpoints.clone());
