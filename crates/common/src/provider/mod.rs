@@ -165,6 +165,9 @@ impl<N: Network> ProviderBuilder<N> {
                 _ => Err(err),
             })
             .wrap_err_with(|| format!("invalid provider URL: {:?}", redact_url(url_str)));
+        // An empty URL resolves to the current directory as an IPC path.
+        let url =
+            if url_str.trim().is_empty() { Err(eyre::eyre!("the RPC URL is empty")) } else { url };
 
         // Use the final URL string to guess if it's a local URL.
         let is_local = url.as_ref().is_ok_and(|url| guess_local_url(url.as_str()));
@@ -605,6 +608,14 @@ mod tests {
         assert!(error.contains("<redacted>"));
         assert!(!error.contains("private-api-key"));
         assert!(!error.contains("secret"));
+    }
+
+    #[test]
+    fn empty_provider_url_is_rejected() {
+        for url in ["", " "] {
+            let builder = ProviderBuilder::<AnyNetwork>::new(url);
+            assert_eq!(builder.url.unwrap_err().to_string(), "the RPC URL is empty");
+        }
     }
 
     #[test]

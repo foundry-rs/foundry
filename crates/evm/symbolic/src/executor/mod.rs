@@ -24,9 +24,20 @@ enum CallStatus {
 
 enum JoinedCallOutcome {
     Rejected,
-    ExpectedRevert { parent: PathState, child: PathState },
-    Success { parent: PathState, child: PathState },
-    Revert { parent: PathState, child: PathState },
+    ExpectedRevert {
+        parent: PathState,
+        child: PathState,
+    },
+    /// A successful call; `unmet_expected_revert` means the caller must see it as a revert.
+    Success {
+        parent: PathState,
+        child: PathState,
+        unmet_expected_revert: bool,
+    },
+    Revert {
+        parent: PathState,
+        child: PathState,
+    },
     ExceptionalHalt(PathState),
     Failure(PathState),
 }
@@ -143,12 +154,19 @@ impl SymbolicExecutor {
 
     fn join_call_outcome(
         &mut self,
+        executor: &ExecutorView<'_>,
         state: &PathState,
         mut outcome: CallOutcome,
         reverter: Address,
     ) -> Result<JoinedCallOutcome, SymbolicError> {
         let mut parent = state.clone();
         parent.take_call_outcome_state(&mut outcome.state);
+        if !matches!(outcome.status, CallStatus::Success) {
+            parent.discard_failed_call_logs(
+                state.recorded_logs.as_ref().map_or(0, Vec::len),
+                state.recorded_logs_generation,
+            );
+        }
 
         if let Some(assumption) = parent.assume_no_revert_next_call.take()
             && matches!(outcome.status, CallStatus::Revert)
@@ -163,6 +181,16 @@ impl SymbolicExecutor {
         }
 
         if let Some(mut expected) = parent.expected_revert.clone() {
+            // Like Forge, a call that succeeds under `vm.expectRevert` keeps its state, but the
+            // caller sees a `CheatcodeError` revert. A revert with the wrong reason fails the path.
+            if matches!(outcome.status, CallStatus::Success) && !executor.internal_expect_revert {
+                parent.expected_revert = None;
+                return Ok(JoinedCallOutcome::Success {
+                    parent,
+                    child: outcome.state,
+                    unmet_expected_revert: true,
+                });
+            }
             match outcome.status {
                 CallStatus::Success => return Ok(JoinedCallOutcome::Failure(parent)),
                 CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {
@@ -185,7 +213,11 @@ impl SymbolicExecutor {
         }
 
         Ok(match outcome.status {
-            CallStatus::Success => JoinedCallOutcome::Success { parent, child: outcome.state },
+            CallStatus::Success => JoinedCallOutcome::Success {
+                parent,
+                child: outcome.state,
+                unmet_expected_revert: false,
+            },
             CallStatus::Revert => JoinedCallOutcome::Revert { parent, child: outcome.state },
             CallStatus::ExceptionalHalt => JoinedCallOutcome::ExceptionalHalt(parent),
             CallStatus::Failure => JoinedCallOutcome::Failure(parent),
@@ -206,9 +238,9 @@ impl SymbolicExecutor {
         StepOutcome::Continue
     }
 
-    fn execute_call_path_batch<FEN: FoundryEvmNetwork>(
+    fn execute_call_path_batch(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         code: &SymCode,
         worklist: &mut VecDeque<PathState>,
         deferred_worklist: &mut VecDeque<PathState>,

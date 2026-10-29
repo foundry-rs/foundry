@@ -1,14 +1,15 @@
-# Foundry Zed extension
+# Foundry Solidity
 
 Solidity support for [Zed](https://zed.dev), using `forge lsp --stdio` and the
-language server's `forge fmt` integration. Install a version of
-[Foundry](https://getfoundry.sh) that supports `forge lsp --stdio`.
-The extension never searches for, launches, or downloads a standalone Solar.
+language server's `forge fmt` integration. It uses the `forge` on your `PATH`,
+which must come from a [Foundry](https://getfoundry.sh) release that supports
+`forge lsp --stdio`, and downloads the latest stable Forge when there is none.
+The extension never searches for or launches a standalone Solar.
 
-The extension ID and language server ID remain `solar`; the language remains
-`Solidity`. Existing language preferences and initialization options keep their
-names. The language server implementation remains in Foundry's `solar_lsp`
-dependency.
+The extension ID is `forge-lsp`, matching the VS Code extension. The language
+server ID remains `solar` and the language remains `Solidity`. Existing language
+preferences and initialization options keep their names. The language server
+implementation remains in Foundry's `solar_lsp` dependency.
 
 ## Configuration
 
@@ -16,10 +17,20 @@ By default, the extension resolves `forge` from the worktree's shell `PATH`.
 Zed launches `forge lsp --stdio` in the worktree directory, allowing version-manager
 shims to select the project's Forge installation. The extension does not run a
 separate capability probe because Zed's process API cannot set its working
-directory. Missing Forge on `PATH` produces installation guidance; missing custom
-executables and incompatible builds are reported by Zed's language server
-status/log during startup. To check an installation, run
+directory. Missing custom executables and incompatible builds are reported by
+Zed's language server status/log during startup. To check an installation, run
 `forge lsp --stdio --help` from the worktree directory.
+
+If `forge` is not on `PATH` and `forgePath` is unset, the extension downloads
+`forge` from the latest stable Foundry GitHub release into its own directory. It
+checks for a newer release once per Zed session, keeps only `forge` from the
+archive, removes older downloads, and reuses the last complete download when the
+check or download fails. Prebuilt Forge exists for macOS and Linux on x86-64 and
+ARM64, and for Windows on x86-64. On Linux the extension uses the static musl
+build, which does not depend on the system glibc. On other platforms, or when
+the download fails with nothing to fall back on, the extension shows
+installation guidance. Installing Foundry yourself keeps the language server and
+formatter on the same Forge version as your builds.
 
 To select a specific Forge installation, set its absolute path in your Zed user
 or project settings:
@@ -108,8 +119,8 @@ tar -czf target/editor-dev/zed-solar-local.tar.gz -C editors/zed \
   GRAMMAR-LICENSE README.md -C ../.. LICENSE-MIT LICENSE-APACHE
 ```
 
-This archive is for local inspection/distribution; store release and registration
-are separate maintainer tasks. The archive reads the license texts directly from
+This archive is for local inspection/distribution; see [Publishing](#publishing)
+for registry releases. The archive reads the license texts directly from
 the repository root, including in checkouts with `core.symlinks=false`.
 
 1. Launch Zed with a new `--user-data-dir`; its settings live in `config/` under
@@ -144,12 +155,33 @@ The bundled tree-sitter queries and pinned grammar reference are required
 resources; keep them alongside `extension.toml`. No source repository checkout
 or separately installed `solar` is needed.
 
+## Publishing
+
+Zed builds and hosts extensions listed in the
+[`zed-industries/extensions`](https://github.com/zed-industries/extensions)
+registry. To release, bump `version` in `extension.toml` and `Cargo.toml` and
+merge that to `master`. Then open a registry PR that points the
+`extensions/forge-lsp` submodule at the merged commit and sets the same version
+in `extensions.toml`:
+
+```toml
+[forge-lsp]
+submodule = "extensions/forge-lsp"
+path = "editors/zed"
+version = "0.1.0"
+```
+
+The submodule URL must be `https://github.com/foundry-rs/foundry.git`. The first
+release adds the submodule with `git submodule add`; later releases only move
+it. Run `pnpm sort-extensions` before opening the PR. Registry CI builds the
+extension from source with the `zed-extension` CLI and checks that the extension
+IDs match and that `LICENSE-MIT` or `LICENSE-APACHE` holds a known license text.
+
 ## Provenance and license
 
 Migrated from `paradigmxyz/solar`'s `editors/zed` at source revision
-`bba703a34e0fabc8587ae7eb794e017e31c5e7ca`. Original authorship is retained in
-`extension.toml`; the MIT and Apache-2.0 license files link to the repository
-root. The grammar remains
+`bba703a34e0fabc8587ae7eb794e017e31c5e7ca`. The MIT and Apache-2.0 license
+files link to the repository root. The grammar remains
 pinned to `JoranHonig/tree-sitter-solidity` commit
 `048fe686cb1fde267243739b8bdbec8fc3a55272`. Its MIT copyright notice is retained
 in [GRAMMAR-LICENSE](GRAMMAR-LICENSE), including in local archives.

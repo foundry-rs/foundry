@@ -7,7 +7,7 @@ use ::anvil::{
     spawn,
 };
 use alloy_primitives::{B256, Bytes, U256, keccak256};
-use alloy_provider::Provider;
+use alloy_provider::{IpcConnect, Provider, builder};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use anvil_core::eth::EthRequest;
@@ -238,7 +238,12 @@ async fn assert_pubsub_logs_preserve_failed_reset(ipc: bool) {
     let _subscriber = tracing::dispatcher::set_default(&subscriber);
     tokio::time::timeout(Duration::from_secs(10), async {
         let endpoint = if ipc { handle.ipc_path().unwrap() } else { handle.ws_endpoint() };
-        let provider = utils::connect_pubsub(&endpoint).await;
+        // Select IPC explicitly: detecting a Windows pipe opens a throwaway connection.
+        let provider = if ipc {
+            builder().connect_ipc(IpcConnect::new(endpoint)).await.unwrap()
+        } else {
+            utils::connect_pubsub(&endpoint).await
+        };
         let err = provider
             .raw_request::<_, ()>("hardhat_reset".into(), json!([[INVALID_FORK_URL, 42]]))
             .await

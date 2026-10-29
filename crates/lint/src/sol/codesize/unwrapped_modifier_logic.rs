@@ -77,7 +77,7 @@ fn requires_wrapping(gcx: Gcx<'_>, stmts: &[Stmt<'_>]) -> bool {
         match &stmt.kind {
             StmtKind::Placeholder => {}
             StmtKind::Expr(expr) if is_plain_call(gcx, expr) => calls += 1,
-            StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => return false,
+            StmtKind::AssemblyBlock(..) | StmtKind::Switch(_) | StmtKind::Err(_) => return false,
             _ => other = true,
         }
     }

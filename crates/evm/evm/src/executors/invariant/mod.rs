@@ -922,6 +922,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 &sequence,
                 invariant_contract.address,
                 invariant_contract.anchor_calldata(),
+                self.config.fail_on_revert,
+                &campaign_seed.targeted_contracts.keys().copied().collect::<Vec<_>>(),
             );
             if !matches!(replayed, Ok(Some(value)) if value == best_value) {
                 // Keep the sequence in the mutation corpus, but do not report its stale value.

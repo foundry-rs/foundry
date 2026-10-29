@@ -5,7 +5,7 @@ use crate::eth::{
             MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates,
             SerializableTransaction, StateDb,
         },
-        mem::cache::DiskStateCache,
+        mem::{cache::DiskStateCache, tempo::TempoChain},
     },
     pool::transactions::PoolTransaction,
 };
@@ -27,11 +27,8 @@ use anvil_core::eth::{
     block::{Block, create_block},
     transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
-use foundry_evm::{
-    backend::MemDb,
-    traces::{
-        CallKind, CallTraceNode, ParityTraceBuilder, TraceMemberOrder, TracingInspectorConfig,
-    },
+use foundry_evm::traces::{
+    CallKind, CallTraceNode, ParityTraceBuilder, TraceMemberOrder, TracingInspectorConfig,
 };
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use parking_lot::RwLock;
@@ -59,6 +56,8 @@ pub struct InMemoryBlockStates {
     in_memory_limit: usize,
     /// minimum amount of states we keep in memory
     min_in_memory_limit: usize,
+    /// Whether the memory limit includes an additional slot for the current state.
+    current_state_slot: bool,
     /// maximum amount of states we keep on disk
     ///
     /// Limiting the states will prevent disk blow up, especially in interval mining mode
@@ -80,6 +79,7 @@ impl InMemoryBlockStates {
             on_disk_states: Default::default(),
             in_memory_limit,
             min_in_memory_limit: in_memory_limit.min(MIN_HISTORY_LIMIT),
+            current_state_slot: false,
             max_on_disk_limit: on_disk_limit,
             oldest_on_disk: Default::default(),
             present: Default::default(),
@@ -110,7 +110,7 @@ impl InMemoryBlockStates {
         // very fast
         // this will gradually be decreased once the max limit was reached
         if block_time <= 2 && !self.is_memory_only() {
-            self.in_memory_limit = DEFAULT_HISTORY_LIMIT * 3;
+            self.in_memory_limit = DEFAULT_HISTORY_LIMIT * 3 + self.current_state_slot as usize;
             self.enforce_limits();
         }
     }
@@ -212,9 +212,10 @@ impl InMemoryBlockStates {
     /// Sets the maximum number of stats we keep in memory
     pub const fn set_cache_limit(&mut self, limit: usize) {
         let limit = if limit == 0 { 1 } else { limit };
-        self.in_memory_limit = limit;
+        self.in_memory_limit = limit.saturating_add(self.current_state_slot as usize);
         self.min_in_memory_limit =
-            if limit < MIN_HISTORY_LIMIT { limit } else { MIN_HISTORY_LIMIT };
+            (if limit < MIN_HISTORY_LIMIT { limit } else { MIN_HISTORY_LIMIT })
+                .saturating_add(self.current_state_slot as usize);
     }
 
     /// Clears all entries
@@ -266,13 +267,14 @@ impl InMemoryBlockStates {
         SerializableHistoricalStates::new(states)
     }
 
-    /// Load states from serialized data
-    pub fn load_states(&mut self, states: SerializableHistoricalStates) {
-        for (hash, state_snapshot) in states {
-            let mut state_db = StateDb::new(MemDb::default());
-            state_db.init_from_state_snapshot(state_snapshot);
-            self.insert(hash, state_db);
+    /// Retains the current state in addition to the configured historical states.
+    pub(crate) const fn with_current_state(mut self) -> Self {
+        if !self.current_state_slot {
+            self.in_memory_limit = self.in_memory_limit.saturating_add(1);
+            self.min_in_memory_limit = self.min_in_memory_limit.saturating_add(1);
+            self.current_state_slot = true;
         }
+        self
     }
 }
 
@@ -281,6 +283,7 @@ impl fmt::Debug for InMemoryBlockStates {
         f.debug_struct("InMemoryBlockStates")
             .field("in_memory_limit", &self.in_memory_limit)
             .field("min_in_memory_limit", &self.min_in_memory_limit)
+            .field("current_state_slot", &self.current_state_slot)
             .field("max_on_disk_limit", &self.max_on_disk_limit)
             .field("oldest_on_disk", &self.oldest_on_disk)
             .field("present", &self.present)
@@ -317,6 +320,8 @@ pub struct BlockchainStorage<N: Network> {
     pub transactions: B256HashMap<MinedTransaction<N>>,
     /// The total difficulty of the chain until this block
     pub total_difficulty: U256,
+    /// Tempo certificates and identity lifecycle, published with this canonical chain.
+    pub(crate) tempo: Option<TempoChain>,
     /// Monad senders and authorities retained even when old transaction bodies are pruned.
     #[cfg(feature = "monad")]
     pub monad_block_participants: B256HashMap<foundry_evm::core::evm::MonadBlockParticipants>,
@@ -356,6 +361,7 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number: best_number,
             transactions: Default::default(),
             total_difficulty: Default::default(),
+            tempo: None,
             #[cfg(feature = "monad")]
             monad_block_participants: Default::default(),
             #[cfg(feature = "monad")]
@@ -377,6 +383,7 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number: 0,
             transactions: Default::default(),
             total_difficulty,
+            tempo: None,
             #[cfg(feature = "monad")]
             monad_block_participants: Default::default(),
             #[cfg(feature = "monad")]
@@ -422,6 +429,7 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number: Default::default(),
             transactions: Default::default(),
             total_difficulty: Default::default(),
+            tempo: None,
             #[cfg(feature = "monad")]
             monad_block_participants: Default::default(),
             #[cfg(feature = "monad")]
@@ -728,6 +736,7 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_primitives::{Address, hex};
     use alloy_rlp::Decodable;
+    use foundry_evm::backend::MemDb;
     use foundry_primitives::FoundryNetwork;
     use revm::{database::DatabaseRef, interpreter::InstructionResult, state::AccountInfo};
     use tempo_primitives::TempoHeader;
@@ -1194,5 +1203,34 @@ mod tests {
         );
         sanity_storage.load_blocks(vec![block_73.into()], None);
         assert_eq!(sanity_storage.genesis_hash, dummy_genesis_hash);
+    }
+
+    #[test]
+    fn current_state_retention_preserves_history_limits() {
+        for disk_limit in [0, MAX_ON_DISK_HISTORY_LIMIT] {
+            let mut states = InMemoryBlockStates::new(2, disk_limit).with_current_state();
+            for number in 0..4 {
+                states.insert(B256::from(U256::from(number)), StateDb::new(MemDb::default()));
+            }
+            assert_eq!(states.states.len(), 3);
+            assert!(states.get_state(&B256::ZERO).is_none());
+            for number in 1..4 {
+                assert!(states.get_state(&B256::from(U256::from(number))).is_some());
+            }
+
+            states.set_cache_limit(1);
+            assert_eq!(states.in_memory_limit, 2);
+            assert_eq!(states.min_in_memory_limit, 2);
+            states.clear();
+            for number in 0..3 {
+                states.insert(B256::from(U256::from(number)), StateDb::new(MemDb::default()));
+            }
+            assert_eq!(states.states.len(), 2);
+            states.update_interval_mine_block_time(Duration::from_secs(1));
+            assert_eq!(
+                states.in_memory_limit,
+                if disk_limit == 0 { 2 } else { DEFAULT_HISTORY_LIMIT * 3 + 1 },
+            );
+        }
     }
 }

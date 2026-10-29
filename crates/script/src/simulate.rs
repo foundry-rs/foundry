@@ -1,8 +1,9 @@
 use super::{
     multi_sequence::MultiChainSequence,
     providers::{ProviderInfo, ProvidersManager},
+    recovery::RecoveryStore,
     runner::ScriptRunner,
-    sequence::ScriptSequenceKind,
+    sequence::{ScriptSequenceKind, SequenceData},
     transaction::ScriptTransactionBuilder,
 };
 use crate::{
@@ -158,6 +159,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                 if to.is_some() {
                     builder.set_call(
                         &address_to_abi,
+                        &self.build_data.known_contracts,
                         decoder,
                         self.script_config.evm_opts.create2_deployer,
                     )?;
@@ -165,7 +167,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                     builder.set_create(
                         false,
                         tx.contract_address.unwrap_or_else(|| sender.create(nonce)),
-                        &address_to_abi,
+                        &self.build_data.known_contracts,
                     )?;
                 }
 
@@ -743,23 +745,22 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             }
         }
 
-        let sequence = if sequences.len() == 1 {
-            ScriptSequenceKind::new_single(
-                sequences.pop().expect("empty sequences"),
-                self.args.batch,
-            )?
+        let data = if sequences.len() == 1 {
+            SequenceData::Single(Box::new(sequences.pop().expect("empty sequences")))
         } else {
-            ScriptSequenceKind::new_multi(
-                MultiChainSequence::new(
-                    sequences,
-                    &self.args.sig,
-                    &self.build_data.build_data.target,
-                    &self.script_config.config,
-                    !self.args.broadcast,
-                )?,
-                self.args.batch,
-            )?
+            SequenceData::Multi(MultiChainSequence::new(
+                sequences,
+                &self.args.sig,
+                &self.build_data.build_data.target,
+                &self.script_config.config,
+                !self.args.broadcast,
+            )?)
         };
+        if self.args.start_fresh {
+            RecoveryStore::<FEN::Network>::archive_unfinished(&data)?;
+        }
+        let sequence =
+            ScriptSequenceKind::create(data, self.args.batch, self.script_config.tempo.sponsor)?;
 
         Ok(BundledState {
             args: self.args,
@@ -768,6 +769,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             browser_wallet: self.browser_wallet,
             build_data: self.build_data,
             sequence,
+            resume_script_error: None,
         })
     }
 

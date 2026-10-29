@@ -37,6 +37,15 @@ tempo-precompiles.workspace = true
 tempo-evm.workspace = true
 tempo-revm.workspace = true
 
+# Tempo consensus certificate primitives.
+commonware-codec.workspace = true
+commonware-cryptography = { workspace = true, features = ["bls12381", "std"] }
+commonware-math.workspace = true
+commonware-parallel.workspace = true
+commonware-utils.workspace = true
+rand_chacha.workspace = true
+tempo-dkg-onchain-artifacts.workspace = true
+
 # Base
 base-common-chains = { workspace = true, optional = true, features = ["std"] }
 base-common-consensus = { workspace = true, optional = true, features = ["evm", "k256", "serde", "std"] }
@@ -86,7 +95,7 @@ alloy-provider = { workspace = true, features = [
 alloy-transport.workspace = true
 alloy-chains.workspace = true
 alloy-genesis.workspace = true
-alloy-trie.workspace = true
+alloy-trie = { workspace = true, features = ["std"] }
 op-alloy-consensus = { workspace = true, features = ["serde"], optional = true }
 op-alloy-rpc-types = { workspace = true, optional = true }
 
@@ -144,7 +153,6 @@ alloy-pubsub.workspace = true
 rand.workspace = true
 reqwest.workspace = true
 foundry-test-utils.workspace = true
-tokio = { workspace = true, features = ["full", "test-util"] }
 
 tempo-alloy.workspace = true
 
