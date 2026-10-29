@@ -1287,9 +1287,18 @@ contract UnpolledReceipts is Script {
 "#,
     );
     let path = prj.root().join("broadcast/UnpolledReceipts.s.sol/31337/run-latest.json");
+    let recovery_path =
+        prj.root().join("cache/UnpolledReceipts.s.sol/31337/run-latest.json.recovery.json");
     prj.update_config(|config| config.transaction_timeout = 1);
 
     for revert in [false, true] {
+        // Each iteration broadcasts to a new chain, so the unfinished previous broadcast is
+        // dropped rather than resumed.
+        for path in [&path, &recovery_path] {
+            if path.exists() {
+                fs::remove_file(path).unwrap();
+            }
+        }
         let (api, handle) = spawn(NodeConfig::test()).await;
         // Runtime that reverts once storage slot 0 is set.
         api.anvil_set_code(gate, bytes!("60005415600b57600080fd5b00")).await.unwrap();
@@ -1656,6 +1665,26 @@ contract InterruptedResume is Script {
     #[cfg(unix)]
     assert_eq!(output.status.signal(), Some(9), "forge was not terminated by SIGKILL");
     assert!(recovery_path.exists(), "authoritative recovery snapshot was not checkpointed");
+
+    // A new broadcast refuses to replace the unfinished one, and sends nothing.
+    let snapshot = std::fs::read(&recovery_path).unwrap();
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "InterruptedResume",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+        "--slow",
+    ]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: the previous broadcast `[..]/broadcast/InterruptedResume.s.sol/31337/run-latest.json` has unfinished operations; finish it with `--resume`, or pass `--start-fresh` to archive it and broadcast anew
+
+"#]]);
+    assert_eq!(std::fs::read(&recovery_path).unwrap(), snapshot);
+    assert_eq!(submissions.lock().unwrap().len(), 1);
+
     std::fs::remove_file(&path).unwrap();
     std::fs::remove_file(&sensitive_path).unwrap();
 
@@ -1686,6 +1715,86 @@ contract InterruptedResume is Script {
     let second_address =
         sequence["transactions"][1]["contractAddress"].as_str().unwrap().parse().unwrap();
     assert!(!provider.get_code_at(second_address).await.unwrap().is_empty());
+}
+
+// `--start-fresh` archives an unfinished broadcast before broadcasting anew, while a completed
+// broadcast is replaced without it.
+#[forgetest_init]
+async fn start_fresh_archives_unfinished_broadcast(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "StartFresh.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract StartFreshTarget {}
+
+contract StartFresh is Script {
+    function run() external {
+        vm.startBroadcast();
+        new StartFreshTarget();
+        new StartFreshTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (rpc, reject_after_first) = spawn_rpc_proxy_rejecting_method_after_when_enabled(
+        handle.http_endpoint(),
+        "eth_sendRawTransaction",
+        1,
+    )
+    .await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let cache = prj.root().join("cache/StartFresh.s.sol/31337");
+    let recovery_path = cache.join("run-latest.json.recovery.json");
+    let archives = || {
+        fs::read_dir(&cache)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path != &recovery_path
+                    && path.to_string_lossy().contains(".recovery.")
+                    && path.extension().is_some_and(|ext| ext == "json")
+            })
+            .collect::<Vec<_>>()
+    };
+    let args = [
+        "--tc",
+        "StartFresh",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+    ];
+
+    // Only the first operation is sent.
+    cmd.arg("script").arg(&script).args(args);
+    cmd.assert_failure();
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+    let unfinished = fs::read(&recovery_path).unwrap();
+
+    reject_after_first.store(false, Ordering::SeqCst);
+    cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--start-fresh");
+    cmd.assert_success().stderr_eq(str![[r#"
+Archived `[..]/cache/StartFresh.s.sol/31337/run-latest.json.recovery.json` to `[..]/cache/StartFresh.s.sol/31337/run-latest.json.recovery.[..].json`
+Archived `[..]/broadcast/StartFresh.s.sol/31337/run-latest.json` to `[..]/broadcast/StartFresh.s.sol/31337/run-latest.[..].json`
+Archived `[..]/cache/StartFresh.s.sol/31337/run-latest.json` to `[..]/cache/StartFresh.s.sol/31337/run-latest.[..].json`
+
+"#]]);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 3);
+    let [archive] = archives().try_into().unwrap();
+    assert_eq!(fs::read(archive).unwrap(), unfinished);
+    let unfinished: Value = serde_json::from_slice(&unfinished).unwrap();
+    let fresh: Value = foundry_common::fs::read_json_file(&recovery_path).unwrap();
+    assert_ne!(fresh["generation"], unfinished["generation"]);
+
+    cmd.forge_fuse().arg("script").arg(&script).args(args);
+    cmd.assert_success().stderr_eq(str![""]);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 5);
+    assert_eq!(archives().len(), 1);
 }
 
 #[forgetest_init]
@@ -1790,6 +1899,60 @@ contract RebindResume is Script {
         .map(|entry| entry["rpc"].as_str().unwrap())
         .collect::<Vec<_>>();
     assert_eq!(saved, [rpc_a.as_str(); 4]);
+}
+
+#[forgetest_init]
+async fn resume_without_rpc_url_uses_saved_endpoint(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "SavedResume.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract SavedResumeTarget {}
+
+contract SavedResume is Script {
+    function run() external {
+        vm.startBroadcast();
+        new SavedResumeTarget();
+        new SavedResumeTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (rpc_a, submissions_a) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let (rpc_b, submissions_b) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = handle.dev_accounts().next().unwrap();
+
+    // Simulate through A, then make B the configured RPC for the same chain.
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "SavedResume",
+        "--rpc-url",
+        &rpc_a,
+        "--private-key",
+        private_key,
+    ]);
+    cmd.assert_success();
+    prj.update_config(|config| config.eth_rpc_url = Some(rpc_b));
+
+    // Without `--rpc-url`, the configured RPC selects the chain but the saved endpoint submits.
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "SavedResume",
+        "--private-key",
+        private_key,
+        "--resume",
+    ]);
+    cmd.assert_success();
+
+    assert_eq!(submissions_a.lock().unwrap().len(), 2);
+    assert!(submissions_b.lock().unwrap().is_empty());
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 2);
 }
 
 #[forgetest_init]
@@ -1996,6 +2159,61 @@ async fn can_resume_script(prj: _, cmd: _) {
         .run(ScriptOutcome::OkBroadcast)
         .assert_nonce_increment(&[(0, 2), (1, 1)])
         .await;
+}
+
+// Resume reports a failed signer-collecting run from `setUp` or `run`, and only fails if signers
+// are still missing.
+#[forgetest_init]
+async fn resume_reports_failed_signer_rerun(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let script = prj.add_script(
+        "ResumeRerun.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract ResumeRerunTarget {}
+
+contract ResumeRerun is Script {
+    uint256 key;
+
+    function setUp() public {
+        key = vm.envUint("RESUME_RERUN_PK");
+    }
+
+    function run() external {
+        vm.startBroadcast(key);
+        new ResumeRerunTarget();
+        vm.stopBroadcast();
+        require(vm.envOr("RESUME_RERUN_GO", false), "resume gate closed");
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc]);
+    cmd.env("RESUME_RERUN_PK", private_key);
+    cmd.env("RESUME_RERUN_GO", "true");
+    cmd.assert_success();
+
+    // `setUp` fails before the signer is reached.
+    cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--resume"]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: No associated wallet for addresses: [0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266]. Unlocked wallets: []
+Resume re-ran the script to collect signers, but it failed: vm.envUint: environment variable "RESUME_RERUN_PK" not found
+
+"#]]);
+
+    // `run` fails after the signer is collected, so resume still broadcasts.
+    cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--resume"]);
+    cmd.env("RESUME_RERUN_PK", private_key);
+    cmd.assert_success().stderr_eq(str![[r#"
+Warning: Resume re-ran the script to collect signers, but it failed: resume gate closed
+
+"#]]);
+    let sender = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 1);
 }
 
 #[forgetest]
@@ -4791,6 +5009,34 @@ SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet
 
 [SAVED_SENSITIVE_VALUES]
 
+
+"#]]);
+}
+
+#[forgetest_init]
+async fn dryrun_with_default_sender_warns(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    prj.add_source(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract Called {}
+
+contract DryRunTest is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Called();
+    }
+}
+   "#,
+    );
+
+    cmd.args(["script", "DryRunTest", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: Simulated with Foundry's default sender, so addresses and nonces may not match your deployer. Set your own --sender.
 
 "#]]);
 }
@@ -8345,6 +8591,7 @@ async fn script_check_contract_sizes_warns_at_default_limit(prj: _, cmd: _) {
         .assert_success()
         .stderr_eq(str![[r#"
 Error: `LargeRuntime` is above the contract size limit ([..] > 24576).
+Warning: Simulated with Foundry's default sender, so addresses and nonces may not match your deployer. Set your own --sender.
 
 "#]]);
 }
@@ -8438,7 +8685,10 @@ async fn script_check_contract_sizes_honors_config_limit(prj: _, cmd: _) {
     }
     cmd.args(["script", "DeployLarge", "--rpc-url", &handle.http_endpoint()])
         .assert_success()
-        .stderr_eq(str![[r#""#]]);
+        .stderr_eq(str![[r#"
+Warning: Simulated with Foundry's default sender, so addresses and nonces may not match your deployer. Set your own --sender.
+
+"#]]);
 }
 
 // Regression test for https://github.com/foundry-rs/foundry/issues/15207: the broadcast simulation
@@ -9263,4 +9513,30 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
         B256::from(observed),
         b256!("0x0185c370ea4989f6959ae08350fe8f02bc3d6f43a8001b641fa89d4200649a2c")
     );
+}
+
+// Script gas limits must be simulated under a chain hardfork that is ahead of `evm_version`, since
+// Amsterdam (EIP-8037) charges far more gas per deployed code byte than Osaka.
+#[forgetest_init]
+async fn script_broadcast_simulates_chain_hardfork_ahead_of_evm_version(prj: _, cmd: _) {
+    write_large_runtime_deploy_script(&prj, 10_000);
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()))).await;
+
+    cmd.args([
+        "script",
+        "DeployLarge",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--private-key",
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+        "--non-interactive",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+...
+"#]]);
 }

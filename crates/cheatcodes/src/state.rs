@@ -59,6 +59,9 @@ pub struct CheatcodesCore {
     pub mapping_slots: Option<AddressHashMap<MappingSlots>>,
     /// Recorded logs
     pub recorded_logs: Option<Vec<crate::Vm::Log>>,
+    /// Bumped by `recordLogs` and `getRecordedLogs*` so open frame checkpoints know the buffer
+    /// was reset.
+    pub recorded_logs_generation: u64,
     /// Current EIP-2930 access lists.
     pub access_list: Option<AccessList>,
     /// Whether the next contract creation should be intercepted to return its initcode.
@@ -91,6 +94,7 @@ impl CheatcodesCore {
             expected_calls: Default::default(),
             mapping_slots: Default::default(),
             recorded_logs: Default::default(),
+            recorded_logs_generation: Default::default(),
             access_list: Default::default(),
             intercept_next_create_call: Default::default(),
             arbitrary_storage: Default::default(),

@@ -29,6 +29,7 @@
 use crate::{
     eth::{
         error::PoolError,
+        fees::FeeManager,
         pool::transactions::{
             PendingPoolTransaction, PendingTransactions, PoolTransaction, ReadyTransactions,
             TransactionsIterator, TxMarker,
@@ -55,6 +56,8 @@ pub struct Pool<T> {
     inner: RwLock<PoolInner<T>>,
     /// listeners for new ready transactions
     transaction_listener: Mutex<Vec<Sender<TxHash>>>,
+    /// source of the base fee that ready transactions are ranked at.
+    fees: Option<FeeManager>,
 }
 
 /// An independent snapshot of a transaction pool.
@@ -65,13 +68,27 @@ pub(crate) struct PoolSnapshot<T> {
 
 impl<T> Default for Pool<T> {
     fn default() -> Self {
-        Self { inner: RwLock::new(PoolInner::default()), transaction_listener: Default::default() }
+        Self {
+            inner: RwLock::new(PoolInner::default()),
+            transaction_listener: Default::default(),
+            fees: None,
+        }
     }
 }
 
 // == impl Pool ==
 
 impl<T> Pool<T> {
+    /// Creates a pool that ranks ready transactions at the base fee of the given fee manager.
+    pub fn new(fees: FeeManager) -> Self {
+        Self { fees: Some(fees), ..Default::default() }
+    }
+
+    /// Returns the base fee of the next block.
+    fn base_fee(&self) -> u64 {
+        self.fees.as_ref().map_or(0, FeeManager::base_fee)
+    }
+
     /// Returns an independent snapshot of the pool.
     pub(crate) fn snapshot(&self) -> PoolSnapshot<T> {
         let pool = self.inner.read();
@@ -88,7 +105,7 @@ impl<T> Pool<T> {
         let ready = {
             let mut pool = self.inner.write();
             *pool = snapshot.inner;
-            pool.ready_transactions().map(|tx| tx.hash()).collect::<Vec<_>>()
+            pool.ready_transactions(self.base_fee()).map(|tx| tx.hash()).collect::<Vec<_>>()
         };
         for hash in ready {
             self.notify_listener(hash);
@@ -97,7 +114,7 @@ impl<T> Pool<T> {
 
     /// Returns an iterator that yields all transactions that are currently ready
     pub fn ready_transactions(&self) -> TransactionsIterator<T> {
-        self.inner.read().ready_transactions()
+        self.inner.read().ready_transactions(self.base_fee())
     }
 
     /// Returns all transactions that are not ready to be included in a block yet
@@ -109,7 +126,10 @@ impl<T> Pool<T> {
     #[cfg(feature = "base")]
     pub fn all_transactions(&self) -> Vec<Arc<PoolTransaction<T>>> {
         let pool = self.inner.read();
-        pool.pending_transactions.transactions().chain(pool.ready_transactions()).collect()
+        pool.pending_transactions
+            .transactions()
+            .chain(pool.ready_transactions(self.base_fee()))
+            .collect()
     }
 
     /// Returns the number of tx that are ready and queued for further execution
@@ -317,7 +337,7 @@ impl<T: Typed2718> Pool<T> {
             let pool = self.inner.read();
             pool.pending_transactions
                 .transactions()
-                .chain(pool.ready_transactions())
+                .chain(pool.ready_transactions(self.base_fee()))
                 .filter_map(|tx| {
                     (tx.pending_transaction.transaction.ty() == tx_type).then_some(tx.hash())
                 })
@@ -346,8 +366,8 @@ impl<T> Default for PoolInner<T> {
 
 impl<T> PoolInner<T> {
     /// Returns an iterator over transactions that are ready.
-    fn ready_transactions(&self) -> TransactionsIterator<T> {
-        self.ready_transactions.get_transactions()
+    fn ready_transactions(&self, base_fee: u64) -> TransactionsIterator<T> {
+        self.ready_transactions.get_transactions(base_fee)
     }
 
     /// Clears
@@ -368,7 +388,8 @@ impl<T> PoolInner<T> {
 
         let ready_txs = self
             .ready_transactions
-            .get_transactions()
+            // Only membership matters here, so the ranking base fee is irrelevant.
+            .get_transactions(0)
             .filter(move |tx| tx.pending_transaction.sender().eq(&sender));
 
         pending_txs.chain(ready_txs)

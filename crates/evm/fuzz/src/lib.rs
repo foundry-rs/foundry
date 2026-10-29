@@ -134,6 +134,9 @@ pub struct BaseCounterExample {
     /// Fuzz metadata needed to reproduce this counterexample.
     #[serde(flatten)]
     pub fuzz: FuzzRunMetadata,
+    /// Active fork block after setup when this counterexample was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork_block_number: Option<u64>,
 }
 
 impl BaseCounterExample {
@@ -172,6 +175,7 @@ impl BaseCounterExample {
                     traces,
                     show_solidity,
                     fuzz: FuzzRunMetadata::default(),
+                    fork_block_number: None,
                 };
             }
         }
@@ -191,6 +195,7 @@ impl BaseCounterExample {
             traces,
             show_solidity: false,
             fuzz: FuzzRunMetadata::default(),
+            fork_block_number: None,
         }
     }
 
@@ -215,6 +220,7 @@ impl BaseCounterExample {
             traces,
             show_solidity: false,
             fuzz: FuzzRunMetadata::default(),
+            fork_block_number: None,
         }
     }
 
@@ -239,6 +245,7 @@ impl BaseCounterExample {
             traces,
             show_solidity: false,
             fuzz: FuzzRunMetadata::default(),
+            fork_block_number: None,
         }
     }
 

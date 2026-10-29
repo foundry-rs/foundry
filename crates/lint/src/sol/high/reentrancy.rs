@@ -590,7 +590,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                 }
                 falls_through
             }
-            StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) => {
+            StmtKind::AssemblyBlock(..) | StmtKind::Switch(_) => {
                 state.invalidated_balance_guards.extend(&self.active_balance_guards);
                 state.internal_function_targets.clear();
                 state.self_address_local_paths.clear();
