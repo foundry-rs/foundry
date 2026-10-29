@@ -292,9 +292,25 @@ impl SlotInfo {
                     // offset 0, size 16 -> read bytes 16-32 (rightmost)
                     // offset 16, size 16 -> read bytes 0-16 (leftmost)
                     let byte_start = 32 - offset - size;
-                    prev_bytes[32 - size..]
+                    if matches!(member.slot_type.dyn_sol_type, DynSolType::Int(_)) {
+                        // ABI signed integers must be sign-extended to a full word.
+                        if previous_value.0[byte_start] & 0x80 != 0 {
+                            prev_bytes.fill(0xff);
+                        }
+                        if new_value.0[byte_start] & 0x80 != 0 {
+                            new_bytes.fill(0xff);
+                        }
+                    }
+                    // ABI fixed bytes are left-aligned, unlike integers and addresses.
+                    let abi_start =
+                        if matches!(member.slot_type.dyn_sol_type, DynSolType::FixedBytes(_)) {
+                            0
+                        } else {
+                            32 - size
+                        };
+                    prev_bytes[abi_start..abi_start + size]
                         .copy_from_slice(&previous_value.0[byte_start..byte_start + size]);
-                    new_bytes[32 - size..]
+                    new_bytes[abi_start..abi_start + size]
                         .copy_from_slice(&new_value.0[byte_start..byte_start + size]);
                 }
 
@@ -1147,6 +1163,75 @@ mod tests {
                     "0x0000000000000000000000000000000000001234".to_string()
                 ),
                 ("data.paused", "false".to_string(), "true".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn decodes_packed_signed_variables() {
+        let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
+            "storage": [
+                { "astId": 1, "contract": "C", "label": "a", "offset": 0, "slot": "0", "type": "t_int8" },
+                { "astId": 2, "contract": "C", "label": "b", "offset": 1, "slot": "0", "type": "t_int8" }
+            ],
+            "types": {
+                "t_int8": { "encoding": "inplace", "label": "int8", "numberOfBytes": "1" }
+            }
+        }))
+        .unwrap();
+        let identifier = SlotIdentifier::new(Arc::new(layout));
+        let mut info = identifier.identify(&B256::ZERO, None).unwrap();
+
+        info.decode_values(B256::from(U256::from(0x7fff)), B256::from(U256::from(0x80fe)));
+        assert_eq!(
+            decoded(&info),
+            [
+                ("a", "-1".to_string(), "-2".to_string()),
+                ("b", "127".to_string(), "-128".to_string())
+            ]
+        );
+
+        info.decode_values(B256::from(U256::from(0x80fe)), B256::from(U256::from(0xff7f)));
+        assert_eq!(
+            decoded(&info),
+            [
+                ("a", "-2".to_string(), "127".to_string()),
+                ("b", "-128".to_string(), "-1".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn decodes_packed_fixed_bytes() {
+        let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
+            "storage": [
+                { "astId": 1, "contract": "C", "label": "counter", "offset": 0, "slot": "0", "type": "t_uint8" },
+                { "astId": 2, "contract": "C", "label": "tag", "offset": 1, "slot": "0", "type": "t_bytes1" },
+                { "astId": 3, "contract": "C", "label": "hash", "offset": 2, "slot": "0", "type": "t_bytes16" }
+            ],
+            "types": {
+                "t_uint8": { "encoding": "inplace", "label": "uint8", "numberOfBytes": "1" },
+                "t_bytes1": { "encoding": "inplace", "label": "bytes1", "numberOfBytes": "1" },
+                "t_bytes16": { "encoding": "inplace", "label": "bytes16", "numberOfBytes": "16" }
+            }
+        }))
+        .unwrap();
+        let identifier = SlotIdentifier::new(Arc::new(layout));
+        let mut info = identifier.identify(&B256::ZERO, None).unwrap();
+        let previous =
+            U256::from(0x0123456789abcdef0123456789abcdef_u128) << 16 | U256::from(0xab07);
+        let new = U256::from(0xfedcba9876543210fedcba9876543210_u128) << 16 | U256::from(0xcd0b);
+        info.decode_values(B256::from(previous), B256::from(new));
+        assert_eq!(
+            decoded(&info),
+            [
+                ("counter", "7".to_string(), "11".to_string()),
+                ("tag", "0xab".to_string(), "0xcd".to_string()),
+                (
+                    "hash",
+                    "0x0123456789abcdef0123456789abcdef".to_string(),
+                    "0xfedcba9876543210fedcba9876543210".to_string()
+                )
             ]
         );
     }
