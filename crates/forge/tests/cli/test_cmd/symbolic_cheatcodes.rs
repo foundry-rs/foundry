@@ -2915,6 +2915,62 @@ contract SymbolicExpectRevertUnmet is Test {
         vm.expectRevert(uint64(0));
         target.set(x);
     }
+
+    function checkUnmetSymbolicOffset(uint256 x) public {
+        if (x == 0) return;
+        vm.expectRevert();
+        (bool ok,) = address(target).call(abi.encodeCall(UnmetTarget.set, (x)));
+        assembly {
+            let p := add(0x100, and(x, 31))
+            returndatacopy(p, 0, returndatasize())
+            revert(p, returndatasize())
+        }
+    }
+
+    function checkUnmetSymbolicSuffix(uint256 x) public {
+        if (x == 0) return;
+        vm.expectRevert();
+        (bool ok,) = address(target).call(abi.encodeCall(UnmetTarget.set, (x)));
+        assembly {
+            let n := returndatasize()
+            returndatacopy(0x100, 0, n)
+            mstore(add(0x100, n), x)
+            revert(0x100, add(n, 32))
+        }
+    }
+
+    function checkUnmetSymbolicSize(uint256 x) public {
+        if (x == 0) return;
+        vm.expectRevert();
+        (bool ok,) = address(target).call(abi.encodeCall(UnmetTarget.set, (x)));
+        assembly {
+            let n := returndatasize()
+            returndatacopy(0x100, 0, n)
+            revert(0x100, add(n, and(x, 31)))
+        }
+    }
+
+    function checkUnmetSymbolicSelector(bytes4 selector) public {
+        if (selector == bytes4(0)) return;
+        vm.expectRevert();
+        (bool ok,) = address(target).call(abi.encodeCall(UnmetTarget.set, (1)));
+        assembly {
+            returndatacopy(0x100, 0, returndatasize())
+            mstore(0x100, selector)
+            revert(0x100, returndatasize())
+        }
+    }
+
+    function checkUnmetNonCheatcodeSelector(bytes4 selector) public {
+        vm.assume(selector != bytes4(keccak256("CheatcodeError(string)")));
+        if (selector == bytes4(0)) return;
+        vm.expectRevert();
+        (bool ok,) = address(target).call(abi.encodeCall(UnmetTarget.set, (1)));
+        assembly {
+            mstore(0x100, selector)
+            revert(0x100, 4)
+        }
+    }
 }
 "#,
     );
@@ -2928,14 +2984,19 @@ contract SymbolicExpectRevertUnmet is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 6 tests for test/SymbolicExpectRevertUnmet.t.sol:SymbolicExpectRevertUnmet
+Ran 11 tests for test/SymbolicExpectRevertUnmet.t.sol:SymbolicExpectRevertUnmet
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectRevert count 0] checkCountZero(uint256) ([METRICS])
 [PASS] checkExactReason(uint256) ([METRICS])
 [PASS] checkTryCatch(uint256) ([METRICS])
 [PASS] checkUnmetCreate() ([METRICS])
 [PASS] checkUnmetKeepsState(uint256) ([METRICS])
+[PASS] checkUnmetNonCheatcodeSelector(bytes4) ([METRICS])
+[FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnmetSymbolicOffset(uint256) ([METRICS])
+[FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnmetSymbolicSelector(bytes4) ([METRICS])
+[FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnmetSymbolicSize(uint256) ([METRICS])
+[FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnmetSymbolicSuffix(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkWrongReasonPayload() ([METRICS])
-Suite result: FAILED. 4 passed; 2 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 5 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
