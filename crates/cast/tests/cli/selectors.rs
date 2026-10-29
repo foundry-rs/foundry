@@ -297,6 +297,48 @@ MyUniqueEventWithinLocalProject(uint256,address)
 "#]]);
 }
 
+// `cast 4byte`, `4byte-calldata` and `4byte-event` find signatures in the local cache that
+// `forge build` populates, like `decode-error` and `decode-event`.
+#[forgetest_init]
+fn flaky_fourbyte_with_cache(prj: _, cmd: _) {
+    prj.add_source(
+        "LocalFourByteContract",
+        r#"
+contract LocalFourByteContract {
+    event MyUniqueFourByteEventWithinLocalProject(uint256 a);
+
+    function myUniqueFunctionWithinLocalProject(uint256 a) external {
+        emit MyUniqueFourByteEventWithinLocalProject(a);
+    }
+}
+   "#,
+    );
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    cmd.cast_fuse().args(["4byte", "0x27e1683f"]).assert_success().stdout_eq(str![[r#"
+myUniqueFunctionWithinLocalProject(uint256)
+
+"#]]);
+    cmd.cast_fuse()
+        .args([
+            "4byte-calldata",
+            "0x27e1683f0000000000000000000000000000000000000000000000000000000000000065",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+1) "myUniqueFunctionWithinLocalProject(uint256)"
+101
+
+"#]]);
+    cmd.cast_fuse()
+        .args(["4byte-event", "0xeaf21cfaa6a9673327f6acfc4816bd0e1be30cfbb4bcf3bd6ac5a786aeba96a5"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+MyUniqueFourByteEventWithinLocalProject(uint256)
+
+"#]]);
+}
+
 #[forgetest]
 fn flaky_cache_selectors_from_extra_abis(prj: _, cmd: _) {
     // Create folder with ABI JSON files containing a unique error
