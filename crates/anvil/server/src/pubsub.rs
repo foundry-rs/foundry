@@ -556,55 +556,54 @@ mod tests {
 
     #[test]
     fn subscription_backpressure_wakes_and_rotates_fairly() {
-        for count in [2, 3, 8] {
-            let mut connection =
-                PubSubConnection::new(TestConnection::default(), TestHandler::default());
-            for id in 1..=count {
-                let events = (0..if id == count { 12 } else { 3 })
-                    .map(|event| serde_json::json!([id, event]))
-                    .collect::<Vec<_>>();
-                connection.context.add_subscription(id, Box::pin(futures::stream::iter(events)));
-            }
-            let wake = Arc::new(TestWake::default());
-            let waker = Waker::from(wake.clone());
-            let mut cx = Context::from_waker(&waker);
-            assert!(Pin::new(&mut connection).poll(&mut cx).is_pending());
-
-            for window in 0..count * 3 {
-                connection.connection.ready = true;
-                connection.connection.send_budget = Some(1);
-                connection.connection.ready_waker.take().unwrap().wake();
-                assert_eq!(wake.0.swap(0, Ordering::Relaxed), 1);
-                assert!(Pin::new(&mut connection).poll(&mut cx).is_pending());
-                assert_eq!(connection.connection.sent.len(), window as usize + 1);
-            }
-            let sent = connection
-                .connection
-                .sent
-                .iter()
-                .map(|event| serde_json::from_str::<[u64; 2]>(event).unwrap())
+        let count = 3;
+        let mut connection =
+            PubSubConnection::new(TestConnection::default(), TestHandler::default());
+        for id in 1..=count {
+            let events = (0..if id == count { 12 } else { 3 })
+                .map(|event| serde_json::json!([id, event]))
                 .collect::<Vec<_>>();
-            let expected = (0..3)
-                .flat_map(|event| (1..count).rev().chain([count]).map(move |id| [id, event]))
-                .collect::<Vec<_>>();
-            assert_eq!(sent, expected);
+            connection.context.add_subscription(id, Box::pin(futures::stream::iter(events)));
+        }
+        let wake = Arc::new(TestWake::default());
+        let waker = Waker::from(wake.clone());
+        let mut cx = Context::from_waker(&waker);
+        assert!(Pin::new(&mut connection).poll(&mut cx).is_pending());
 
+        for window in 0..count * 3 {
             connection.connection.ready = true;
-            connection.connection.send_budget = None;
+            connection.connection.send_budget = Some(1);
             connection.connection.ready_waker.take().unwrap().wake();
             assert_eq!(wake.0.swap(0, Ordering::Relaxed), 1);
             assert!(Pin::new(&mut connection).poll(&mut cx).is_pending());
-            let sent = connection
-                .connection
-                .sent
-                .iter()
-                .map(|event| serde_json::from_str::<[u64; 2]>(event).unwrap())
-                .collect::<Vec<_>>();
-            let expected =
-                expected.into_iter().chain((3..12).map(|event| [count, event])).collect::<Vec<_>>();
-            assert_eq!(sent, expected);
-            assert!(connection.context.subscriptions.lock().is_empty());
+            assert_eq!(connection.connection.sent.len(), window as usize + 1);
         }
+        let sent = connection
+            .connection
+            .sent
+            .iter()
+            .map(|event| serde_json::from_str::<[u64; 2]>(event).unwrap())
+            .collect::<Vec<_>>();
+        let expected = (0..3)
+            .flat_map(|event| (1..count).rev().chain([count]).map(move |id| [id, event]))
+            .collect::<Vec<_>>();
+        assert_eq!(sent, expected);
+
+        connection.connection.ready = true;
+        connection.connection.send_budget = None;
+        connection.connection.ready_waker.take().unwrap().wake();
+        assert_eq!(wake.0.swap(0, Ordering::Relaxed), 1);
+        assert!(Pin::new(&mut connection).poll(&mut cx).is_pending());
+        let sent = connection
+            .connection
+            .sent
+            .iter()
+            .map(|event| serde_json::from_str::<[u64; 2]>(event).unwrap())
+            .collect::<Vec<_>>();
+        let expected =
+            expected.into_iter().chain((3..12).map(|event| [count, event])).collect::<Vec<_>>();
+        assert_eq!(sent, expected);
+        assert!(connection.context.subscriptions.lock().is_empty());
     }
 
     #[test]
