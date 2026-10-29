@@ -867,6 +867,19 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         self.refresh_static_opcode_dispatch();
     }
 
+    /// Replaces the tracer, such as with one taken before changing the trace requirements.
+    /// Revert diagnostics only annotate trace nodes, so they follow the tracer.
+    #[inline]
+    pub fn set_tracer(&mut self, tracer: Option<Box<TracingInspector>>) {
+        if tracer.is_none() {
+            self.revert_diag = None;
+        } else if self.revert_diag.is_none() {
+            self.revert_diag = Some(Default::default());
+        }
+        self.tracer = tracer;
+        self.refresh_static_opcode_dispatch();
+    }
+
     /// Set whether to enable script execution inspector.
     #[inline]
     pub fn script(&mut self, script_address: Address) {
