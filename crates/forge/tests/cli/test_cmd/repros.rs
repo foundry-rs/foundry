@@ -1393,6 +1393,59 @@ Ran 1 test suite [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 "#]]);
 }
 
+// A configured gas price must not leave `vm.breakpoint` with a stale pc.
+#[forgetest_init]
+fn breakpoint_pc_with_configured_gas_price(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.gas_price = Some(10_000_000_000);
+    });
+    prj.add_test(
+        "BreakpointPc.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract BreakpointPcTest is Test {
+    function test_breakpoint() public {
+        vm.breakpoint("a");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--json"]).assert_json_stdout(str![[r#"
+{
+  "test/BreakpointPc.t.sol:BreakpointPcTest": {
+    "duration": "{...}",
+    "test_results": {
+      "test_breakpoint()": {
+        "status": "Success",
+        "reason": null,
+        "counterexample": null,
+        "logs": [],
+        "decoded_logs": [],
+        "kind": {
+          "Unit": {
+            "gas": 3272
+          }
+        },
+        "traces": [],
+        "labeled_addresses": {},
+        "duration": "{...}",
+        "breakpoints": {
+          "a": [
+            "0x7fa9385be102ac3eac297483dd6233d62b3e1496",
+            2409
+          ]
+        },
+        "gas_snapshots": {}
+      }
+    },
+    "warnings": []
+  }
+}
+"#]]);
+}
+
 // https://github.com/foundry-rs/foundry/issues/16197
 #[forgetest_init]
 fn issue_16197(prj: _, cmd: _) {

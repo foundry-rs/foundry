@@ -1659,6 +1659,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
 
         if let Some((cheats, backend, _)) = self.cheats_and_backend() {
+            // `vm.breakpoint` records this pc, so keep it current even when the step hook is off.
+            cheats.pc = interp.pc();
             if cheats.has_opcode_overrides() {
                 cheats.step_opcode_overrides(interp.opcode());
             }
