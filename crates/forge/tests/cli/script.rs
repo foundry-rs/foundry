@@ -1482,8 +1482,8 @@ contract BroadcastKeys is Script {
         ),
         str![[r#"
 top level: chain, commit, libraries, pending, receipts, recovery_generation, returns, timestamp, transactions
-transaction: additionalContracts, arguments, contractAddress, contractName, function, functionAbi, hash, isFixedGasLimit, transaction, transactionType
-additional contract: address, contractName, creatorCodeAddresses, initCode, transactionType
+transaction: additionalContracts, arguments, contractAddress, contractName, exactArtifactMatch, function, functionAbi, hash, isFixedGasLimit, transaction, transactionType
+additional contract: address, contractName, creatorCodeAddresses, exactArtifactMatch, initCode, transactionType
 
 "#]]
     );
@@ -6375,6 +6375,7 @@ contract SaltedScript is Script {
         "salted broadcast must be recorded as CREATE2, got: {tx}"
     );
     assert_eq!(tx["contractName"], "Token");
+    assert_eq!(tx["exactArtifactMatch"], true);
     assert_eq!(tx["arguments"][0], "SaltedTok");
 }
 
