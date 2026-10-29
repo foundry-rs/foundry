@@ -52,26 +52,6 @@ async fn next_event(subscription: &mut Subscription<FinalizedEvent>) -> Finalize
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn tempo_consensus_subscription_returns_certified_block() {
-    let (api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
-    let http = handle.http_provider();
-    let identity = tempo_consensus_identity(&http).await;
-    let provider = connect_pubsub(&handle.ws_endpoint()).await;
-    let mut subscription = subscribe(&provider).await;
-    let before = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
-
-    api.mine_one().await.unwrap();
-    let event = next_event(&mut subscription).await;
-    let after = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
-
-    assert_eq!(event.kind, FinalizedEventType::Finalized);
-    assert!((before..=after).contains(&u128::from(event.seen)));
-    let certified = event.into_certified_block();
-    assert_eq!(certified, tempo_finalization(&http, 1).await);
-    assert_tempo_certificate(&identity, &certified);
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn tempo_consensus_subscription_broadcasts_complete_blocks_in_order() {
     let (api, handle) = spawn(
         NodeConfig::test_tempo().with_no_mining(true).with_transaction_block_keeper(Some(0usize)),
@@ -97,6 +77,7 @@ async fn tempo_consensus_subscription_broadcasts_complete_blocks_in_order() {
         .await
         .unwrap();
 
+    let before = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
     let mut expected = Vec::new();
     for _ in 2..=4 {
         api.mine_one().await.unwrap();
@@ -112,7 +93,9 @@ async fn tempo_consensus_subscription_broadcasts_complete_blocks_in_order() {
     for expected in expected {
         let first_event = next_event(&mut first_events).await;
         let second_event = next_event(&mut second_events).await;
+        let after = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
         assert_eq!(first_event, second_event);
+        assert!((before..=after).contains(&u128::from(first_event.seen)));
         let certified = first_event.into_certified_block();
         assert_eq!(certified, expected);
         assert_tempo_certificate(&identity, &certified);
