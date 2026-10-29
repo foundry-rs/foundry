@@ -1759,7 +1759,31 @@ contract DeepExpectRevert {
     }
 }
 
+// The deepest frame expects its CREATE to fail at the depth limit.
+contract DeepExpectRevertCreator {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address public created = address(1);
+
+    function descend() external {
+        (bool ok,) = address(this).call(abi.encodeCall(this.descend, ()));
+        if (!ok) {
+            vm.expectRevert();
+            address child;
+            assembly {
+                child := create(0, 0, 0)
+            }
+            created = child;
+        }
+    }
+}
+
 contract SymbolicCallDepth is Test {
+    function checkExpectedRevertOnCreateBeyondDepthLimit(uint256) public {
+        DeepExpectRevertCreator target = new DeepExpectRevertCreator();
+        target.descend();
+        assertTrue(target.created() != address(0));
+    }
+
     function checkExpectedRevertAtTheCallDepthLimitSucceeds(uint256) public {
         DeepExpectRevert target = new DeepExpectRevert();
         target.descend();
@@ -1813,6 +1837,25 @@ Ran 4 tests for test/SymbolicCallDepth.t.sol:SymbolicCallDepth
 [PASS] checkSelfCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
 [PASS] checkSymbolicTargetAtTheCallDepthLimitFails(address) ([METRICS])
 Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // Concrete Forge fails a default `vm.expectRevert` on a CREATE rejected at the depth limit,
+    // which the symbolic engine does not model, so the result is incomplete instead of a proof.
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkExpectedRevertOnCreateBeyondDepthLimit",
+        "--symbolic-max-paths",
+        "16384",
+        "--symbolic-max-depth",
+        "1000000",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: revert cheatcode on a CREATE beyond the call depth limit] checkExpectedRevertOnCreateBeyondDepthLimit(uint256) ([METRICS])
 ...
 "#]]);
 }

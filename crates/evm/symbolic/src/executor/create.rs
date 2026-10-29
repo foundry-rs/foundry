@@ -45,6 +45,20 @@ impl SymbolicExecutor {
 
         size.expand_memory(&mut self.cx, &mut state.memory, offset.clone());
 
+        // A create beyond the call depth limit fails before it increments the creator's
+        // nonce or transfers value. Concrete Forge settles a pending revert cheatcode against
+        // such a create differently from a joined create outcome, depending on its config.
+        if state.call_depth >= CALL_STACK_LIMIT as usize {
+            if state.expected_revert.is_some() || state.assume_no_revert_next_call.is_some() {
+                return Err(SymbolicError::Unsupported(
+                    "revert cheatcode on a CREATE beyond the call depth limit",
+                ));
+            }
+            state.return_data = SymReturnData::empty(&mut self.cx);
+            state.stack.push(SymExpr::zero(&mut self.cx))?;
+            return Ok(StepOutcome::Continue);
+        }
+
         let initcode = match &size {
             BoundedCopySize::Concrete(size) => {
                 if let Some(offset) = state.constrained_usize(&mut self.cx, &offset) {
@@ -76,19 +90,6 @@ impl SymbolicExecutor {
                 &initcode,
             )?,
         };
-
-        // A create beyond the call depth limit fails before it increments the creator's
-        // nonce or transfers value.
-        if state.call_depth >= CALL_STACK_LIMIT as usize {
-            let expected = match self.settle_rejected_call(state, created)? {
-                ControlFlow::Continue(expected) => expected,
-                ControlFlow::Break(outcome) => return Ok(outcome),
-            };
-            state.return_data = SymReturnData::empty(&mut self.cx);
-            let result = if expected { created_word } else { SymExpr::zero(&mut self.cx) };
-            state.stack.push(result)?;
-            return Ok(StepOutcome::Continue);
-        }
 
         if !self.prepare_create_value_transfer(executor, state, worklist, value.clone())? {
             return Ok(StepOutcome::Continue);

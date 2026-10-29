@@ -552,9 +552,9 @@ impl SymbolicExecutor {
         Ok(true)
     }
 
-    /// Settles pending `vm.assumeNoRevert` and `vm.expectRevert` cheatcodes against a call or
-    /// create that fails before it runs any code, as the concrete inspector does for one beyond
-    /// the call depth limit.
+    /// Settles pending `vm.assumeNoRevert` and `vm.expectRevert` cheatcodes against a call that
+    /// fails before it runs any code, as the concrete inspector does for one beyond the call
+    /// depth limit.
     ///
     /// Breaks with the outcome of a path the failure ends, and otherwise continues with whether
     /// it was the expected revert, which the call then reports as success.
