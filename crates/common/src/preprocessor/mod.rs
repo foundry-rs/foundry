@@ -43,10 +43,10 @@ use deps::{ConstructorContext, PreprocessorDependencies, remove_bytecode_depende
 pub struct DynamicTestLinkingPreprocessor {
     /// Set when preprocessing changes any compiler input. Shared by clones.
     rewrote_sources: Arc<AtomicBool>,
-    /// Set when DTL is disabled for some files; printed after a successful compile.
+    /// One warning per compiler job that disabled DTL; printed after a successful compile.
     /// Skipping the print when solc fails avoids duplicating solc's own diagnostics
     /// (see https://github.com/foundry-rs/foundry/issues/17913).
-    pending_disable_warning: Arc<Mutex<Option<String>>>,
+    pending_disable_warnings: Arc<Mutex<Vec<String>>>,
 }
 
 impl DynamicTestLinkingPreprocessor {
@@ -55,9 +55,12 @@ impl DynamicTestLinkingPreprocessor {
         self.rewrote_sources.load(Ordering::Relaxed)
     }
 
-    /// Take a pending "dynamic test linking disabled" warning, if any.
-    pub fn take_disable_warning(&self) -> Option<String> {
-        self.pending_disable_warning.lock().ok().and_then(|mut g| g.take())
+    /// Takes the pending "dynamic test linking disabled" warnings.
+    pub fn take_disable_warnings(&self) -> Vec<String> {
+        self.pending_disable_warnings
+            .lock()
+            .map(|mut g| std::mem::take(&mut *g))
+            .unwrap_or_default()
     }
 }
 
@@ -213,8 +216,8 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
                     .unwrap_or_else(|| "Solar analysis failed".to_string());
                 // Defer printing until after solc succeeds so a source error is not
                 // reported twice (Solar wording here, then solc with a location).
-                if let Ok(mut slot) = self.pending_disable_warning.lock() {
-                    *slot = Some(format!(
+                if let Ok(mut warnings) = self.pending_disable_warnings.lock() {
+                    warnings.push(format!(
                         "dynamic test linking disabled for {affected} files: {reason}"
                     ));
                 }

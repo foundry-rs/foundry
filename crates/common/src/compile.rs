@@ -343,11 +343,12 @@ impl ProjectCompiler {
                 // reuse DTL artifacts. Return only this attempt, including any compiler errors.
                 output = compile(false)?;
             }
-            if output.has_compiler_errors() {
-                // Drop deferred DTL-disable warnings; solc's error already explains the failure.
-                let _ = preprocessor.take_disable_warning();
-            } else if let Some(msg) = preprocessor.take_disable_warning() {
-                sh_warn!("{msg}")?;
+            // Drop deferred DTL-disable warnings on failure; solc's error already explains it.
+            let disable_warnings = preprocessor.take_disable_warnings();
+            if !output.has_compiler_errors() {
+                for warning in disable_warnings {
+                    sh_warn!("{warning}")?;
+                }
             }
             if !output.has_compiler_errors()
                 && let Some(external) = external
