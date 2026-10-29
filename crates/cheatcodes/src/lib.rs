@@ -177,8 +177,13 @@ impl<'evm, FEN: FoundryEvmNetwork> CheatsCtxt<'_, 'evm, FEN> {
         if self.is_precompile(address) { Err(precompile_error(address)) } else { Ok(()) }
     }
 
+    /// Returns whether `address` is one of the EVM's registered precompiles.
+    ///
+    /// Checks the provider's registered addresses rather than `PrecompileProvider::contains`:
+    /// networks such as Tempo also dispatch storage-backed system contracts as precompiles, and
+    /// cheatcodes like `vm.store` must keep working on their state.
     pub(crate) fn is_precompile(&self, address: &Address) -> bool {
-        self.evm.precompiles().contains(address)
+        self.evm.precompiles().addresses().contains(address)
     }
 
     /// Returns the backend.
