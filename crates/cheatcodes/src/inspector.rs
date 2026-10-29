@@ -293,6 +293,7 @@ impl<FEN: FoundryEvmNetwork> evm2::Inspector<TypesFor<FEN>> for CheatcodesInspec
     }
 
     fn step(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
+        self.cheats.step_opcode_overrides(interp.opcode());
         self.cheats.step_hook(interp, self.backend);
     }
 
@@ -2036,13 +2037,25 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             || self.core.mapping_slots.is_some()
             || self.gas_metering.recording
             || self.has_active_env_overrides()
-            || self.origin_override.is_some()
-            || self.gas_price.is_some()
             || self.has_storage_hooks()
     }
 
+    /// Whether `ORIGIN` or `GASPRICE` reads an overridden value; only those instructions need
+    /// [`Self::step_opcode_overrides`].
     #[inline(always)]
-    pub fn has_step_end_hooks(&self) -> bool {
+    pub const fn has_opcode_overrides(&self) -> bool {
+        self.origin_override.is_some() || self.gas_price.is_some()
+    }
+
+    /// Marks an `ORIGIN` or `GASPRICE` instruction whose pushed value `step_end` overrides.
+    #[inline(always)]
+    pub const fn step_opcode_overrides(&mut self, opcode: u8) {
+        self.pending_origin_override = opcode == op::ORIGIN && self.origin_override.is_some();
+        self.pending_gas_price = opcode == op::GASPRICE && self.gas_price.is_some();
+    }
+
+    #[inline(always)]
+    pub const fn has_step_end_hooks(&self) -> bool {
         self.gas_metering.paused
             || self.gas_metering.touched
             || self.core.arbitrary_storage.is_some()
@@ -2072,11 +2085,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             && !self.has_storage_hooks()
             && !self.gas_metering.recording
             && !self.has_active_env_overrides()
-            && self.origin_override.is_none()
     }
 
     #[inline(always)]
-    fn has_active_env_overrides(&self) -> bool {
+    const fn has_active_env_overrides(&self) -> bool {
         self.env_overrides.is_any_set()
     }
 
@@ -2100,6 +2112,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     }
 
     /// Called before each instruction executes.
+    ///
+    /// Kept out of line: it runs only while a cheatcode needs per-instruction work, and inlining
+    /// it into the inspector's per-instruction hook enlarges that hook's frame for every opcode.
+    #[inline(never)]
     pub fn step_hook(
         &mut self,
         interp: &mut InterpreterFor<'_, '_, FEN>,
@@ -2192,10 +2208,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             self.meter_gas_record(interp, depth);
         }
 
-        // `prank`/`broadcast` with an origin: the `ORIGIN` opcode reads the overridden origin.
-        self.pending_origin_override = opcode == op::ORIGIN && self.origin_override.is_some();
-        self.pending_gas_price = opcode == op::GASPRICE && self.gas_price.is_some();
-
         // Capture the opcode for `step_end` to use, since by the time
         // `step_end` runs the PC has already advanced past it. Also peek the
         // BLOBHASH index now (still on top of stack before execution) so we
@@ -2231,6 +2243,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     }
 
     /// Called after each instruction executes.
+    ///
+    /// Kept out of line for the same reason as [`Self::step_hook`].
+    #[inline(never)]
     pub fn step_end_hook(
         &mut self,
         interp: &mut InterpreterFor<'_, '_, FEN>,

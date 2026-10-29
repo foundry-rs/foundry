@@ -1658,15 +1658,18 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             }
         }
 
-        if let Some((cheats, backend, _)) = self.cheats_and_backend()
-            && cheats.has_step_hooks()
-        {
-            let opcode = interp.opcode();
-            if !cheats.has_recording_accesses_only_step_hook()
-                || matches!(opcode, op::SLOAD | op::SSTORE)
-            {
-                crate::utils::cold_path();
-                cheats.step_hook(interp, backend);
+        if let Some((cheats, backend, _)) = self.cheats_and_backend() {
+            if cheats.has_opcode_overrides() {
+                cheats.step_opcode_overrides(interp.opcode());
+            }
+            if cheats.has_step_hooks() {
+                let opcode = interp.opcode();
+                if !cheats.has_recording_accesses_only_step_hook()
+                    || matches!(opcode, op::SLOAD | op::SSTORE)
+                {
+                    crate::utils::cold_path();
+                    cheats.step_hook(interp, backend);
+                }
             }
         }
     }

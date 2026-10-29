@@ -82,6 +82,9 @@ impl EnvOverrides {
 pub struct EnvOverrideState {
     by_fork: EnvOverridesByFork,
     snapshots: HashMap<U256, EnvOverridesByFork>,
+    /// Whether any fork has an override set, refreshed whenever `by_fork` changes, since the
+    /// per-instruction hooks read it.
+    any_set: bool,
 }
 
 impl EnvOverrideState {
@@ -93,8 +96,12 @@ impl EnvOverrideState {
 
     /// Returns whether any fork, not only the active one, has an override set.
     #[inline]
-    pub fn is_any_set(&self) -> bool {
-        self.by_fork.values().any(EnvOverrides::is_any_set)
+    pub const fn is_any_set(&self) -> bool {
+        self.any_set
+    }
+
+    fn refresh_any_set(&mut self) {
+        self.any_set = self.by_fork.values().any(EnvOverrides::is_any_set);
     }
 
     /// Returns the overrides entry for `fork_id`, even if no override is set.
@@ -116,6 +123,7 @@ impl EnvOverrideState {
         f: impl FnOnce(&mut EnvOverrides),
     ) {
         f(self.by_fork.entry(fork_id).or_default());
+        self.refresh_any_set();
     }
 
     /// Clears the base fee restored for isolation on `fork_id`, without inserting an entry.
@@ -123,6 +131,7 @@ impl EnvOverrideState {
         if let Some(overrides) = self.by_fork.get_mut(&fork_id) {
             overrides.implicit_basefee = None;
         }
+        self.refresh_any_set();
     }
 
     /// Saves all overrides under `snapshot_id`.
@@ -141,6 +150,7 @@ impl EnvOverrideState {
         };
         if let Some(snapshot) = snapshot {
             self.by_fork = snapshot;
+            self.refresh_any_set();
         }
     }
 
@@ -164,11 +174,13 @@ impl EnvOverrideState {
         let overrides = self.by_fork.entry(fork_id).or_default();
         mem::swap(&mut overrides.gas_price, gas_price);
         mem::swap(&mut overrides.blob_hashes, blob_hashes);
+        self.refresh_any_set();
     }
 
     /// Swaps a fork's current overrides without changing other forks or snapshot copies.
     pub fn swap(&mut self, fork_id: Option<LocalForkId>, overrides: &mut EnvOverrides) {
         mem::swap(self.by_fork.entry(fork_id).or_default(), overrides);
+        self.refresh_any_set();
     }
 }
 

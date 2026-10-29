@@ -1368,6 +1368,11 @@ contract TxGasPricePreOverrideSnapshotTest is Test {
         vm.revertToStateAndDelete(id);
         assertEq(tx.gasprice, pre_override, "should restore pre override gas price after revertAndDelete");
     }
+
+    function test_configured_gas_price_visible_while_recording() public {
+        vm.record();
+        assertEq(tx.gasprice, 10 gwei, "configured gas price should be visible while recording");
+    }
 }
 "#,
     );
@@ -1377,12 +1382,13 @@ contract TxGasPricePreOverrideSnapshotTest is Test {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
-Ran 2 tests for test/TxGasPricePreOverride.t.sol:TxGasPricePreOverrideSnapshotTest
+Ran 3 tests for test/TxGasPricePreOverride.t.sol:TxGasPricePreOverrideSnapshotTest
+[PASS] test_configured_gas_price_visible_while_recording() ([GAS])
 [PASS] test_pre_override_gas_price_restored_after_revert() ([GAS])
 [PASS] test_pre_override_gas_price_restored_after_revertAndDelete() ([GAS])
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+Ran 1 test suite [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 
 "#]]);
 }
