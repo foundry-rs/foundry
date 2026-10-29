@@ -1014,6 +1014,7 @@ mod tests {
                 out: None,
                 nonce: 0,
                 gas_used: 0,
+                console_logs: Vec::new(),
             },
             receipt: FoundryReceiptEnvelope::Legacy(Default::default()),
             block_hash: B256::ZERO,

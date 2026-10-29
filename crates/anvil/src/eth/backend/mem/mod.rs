@@ -42,7 +42,7 @@ use crate::{
         preserve_simulation_request_fields,
     },
     mem::{
-        inspector::{AnvilInspector, InspectorTxConfig},
+        inspector::{AnvilInspector, InspectorTxConfig, print_console_logs},
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
     },
 };
@@ -733,6 +733,30 @@ struct TypedCallOverrides {
     access_list: Option<AccessList>,
     disable_fee_charge: bool,
     console_logs: ConsoleLogs,
+}
+
+/// What is logged for a transaction of a newly mined block.
+struct MinedTransactionSummary {
+    hash: B256,
+    contract_address: Option<Address>,
+    gas_used: u64,
+    error: Option<String>,
+    console_logs: Vec<String>,
+}
+
+impl MinedTransactionSummary {
+    fn log(&self) {
+        node_info!("    Transaction: {:?}", self.hash);
+        if let Some(contract) = &self.contract_address {
+            node_info!("    Contract created: {contract}");
+        }
+        node_info!("    Gas used: {}", self.gas_used);
+        if let Some(error) = &self.error {
+            node_info!("    Error: reverted with: {error}");
+        }
+        print_console_logs(&self.console_logs);
+        node_info!("");
+    }
 }
 
 /// When a call prints the `console.log` output it collected.
@@ -6705,23 +6729,22 @@ where
                 );
             }
 
-            node_info!("");
-            // insert all transactions
-            for (info, receipt) in transactions.into_iter().zip(receipts) {
-                // log some tx info
-                node_info!("    Transaction: {:?}", info.transaction_hash);
-                if let Some(contract) = &info.contract_address {
-                    node_info!("    Contract created: {contract}");
-                }
-                node_info!("    Gas used: {}", info.gas_used);
-                if !info.exit.is_ok() {
-                    let r = RevertDecoder::new().decode(
+            // insert all transactions, keeping what to log until the locks are released
+            let mut summaries = Vec::with_capacity(transactions.len());
+            for (mut info, receipt) in transactions.into_iter().zip(receipts) {
+                let error = (!info.exit.is_ok()).then(|| {
+                    RevertDecoder::new().decode(
                         info.out.as_ref().map(|b| &b[..]).unwrap_or_default(),
                         Some(info.exit),
-                    );
-                    node_info!("    Error: reverted with: {r}");
-                }
-                node_info!("");
+                    )
+                });
+                summaries.push(MinedTransactionSummary {
+                    hash: info.transaction_hash,
+                    contract_address: info.contract_address,
+                    gas_used: info.gas_used,
+                    error,
+                    console_logs: std::mem::take(&mut info.console_logs),
+                });
 
                 let mined_tx = MinedTransaction { info, receipt, block_hash, block_number };
                 storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
@@ -6752,6 +6775,10 @@ where
 
             let timestamp = utc_from_secs(header.timestamp);
 
+            node_info!("");
+            for summary in &summaries {
+                summary.log();
+            }
             node_info!("    Block Number: {}", block_number);
             node_info!("    Block Hash: {:?}", block_hash);
             if timestamp.year() > 9999 {

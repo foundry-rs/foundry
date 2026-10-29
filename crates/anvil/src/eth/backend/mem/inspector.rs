@@ -131,19 +131,24 @@ pub struct InspectorTxConfig {
 }
 
 impl AnvilInspector {
-    /// Finish a transaction: print traces/logs, drain the tracer, and reset for the next tx.
+    /// Finish a transaction: print traces, drain the tracer, and reset for the next tx.
     ///
-    /// Returns the collected call trace nodes from the finished transaction.
+    /// Returns the collected call trace nodes and the decoded console logs of the finished
+    /// transaction. The caller prints the console logs, so that a transaction executed again,
+    /// e.g. for the pending block, does not print them again.
     pub fn finish_transaction(
         &mut self,
         config: &InspectorTxConfig,
         precompiles: &PrecompilesMap,
-    ) -> Vec<CallTraceNode> {
+    ) -> (Vec<CallTraceNode>, Vec<String>) {
         // Print before draining so the tracer is still populated.
         if config.print_traces {
             self.print_traces(config.call_trace_decoder.clone());
         }
-        self.print_logs();
+        let console_logs = match &self.log_collector {
+            Some(LogCollector::Capture { logs }) => decode_console_logs(logs),
+            _ => Vec::new(),
+        };
 
         let mut traces =
             self.tracer.take().map(|t| t.into_traces().into_nodes()).unwrap_or_default();
@@ -158,7 +163,7 @@ impl AnvilInspector {
 
         self.reset_transaction(config);
 
-        traces
+        (traces, console_logs)
     }
 
     /// Discards a transaction's traces/logs and resets the inspector without printing them.
@@ -403,7 +408,17 @@ where
 
 /// Prints all the logs
 pub fn print_logs(logs: &[Log]) {
-    for log in decode_console_logs(logs) {
-        tracing::info!(target: crate::logging::EVM_CONSOLE_LOG_TARGET, "{}", log);
+    print_console_logs(&decode_console_logs(logs));
+}
+
+/// Prints decoded `console.log` output under a `console.log:` heading, indented like the other
+/// details of a request or transaction.
+pub fn print_console_logs(logs: &[String]) {
+    if logs.is_empty() {
+        return;
+    }
+    tracing::info!(target: crate::logging::EVM_CONSOLE_LOG_TARGET, "    console.log:");
+    for log in logs {
+        tracing::info!(target: crate::logging::EVM_CONSOLE_LOG_TARGET, "        {log}");
     }
 }

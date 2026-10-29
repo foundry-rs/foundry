@@ -209,6 +209,10 @@ pub struct TransactionInfo {
     pub out: Option<Bytes>,
     pub nonce: u64,
     pub gas_used: u64,
+    /// Decoded `console.log` output, printed with the summary of the block that includes the
+    /// transaction, then cleared. Not persisted.
+    #[serde(skip)]
+    pub console_logs: Vec<String>,
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@
 use crate::{
     config::ForkTransactionReplay,
     eth::backend::executor::AnvilBlockExecutor,
-    mem::inspector::{AnvilInspector, InspectorTxConfig},
+    mem::inspector::{AnvilInspector, InspectorTxConfig, print_console_logs},
 };
 use alloy_consensus::{
     BlockHeader, Transaction, Typed2718,
@@ -261,7 +261,9 @@ where
         executor.commit_transaction(result);
 
         let (_, inspector, precompiles) = executor.evm_mut().components_mut();
-        let traces = inspector.finish_transaction(inspector_config, precompiles);
+        let (traces, console_logs) = inspector.finish_transaction(inspector_config, precompiles);
+        // Replayed transactions get no mined-block summary, so print their logs here.
+        print_console_logs(&console_logs);
         let (exit_reason, out) = match execution_result {
             ExecutionResult::Success { reason, output, .. } => (reason.into(), Some(output)),
             ExecutionResult::Revert { output, .. } => {
@@ -281,6 +283,7 @@ where
             out: out.map(Output::into_data),
             nonce,
             gas_used,
+            console_logs: Vec::new(),
         });
         stored_transactions.push(MaybeImpersonatedTransaction::new(transaction.clone()));
     }

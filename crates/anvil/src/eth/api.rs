@@ -5988,26 +5988,35 @@ mod tests {
         assert_eq!(api.base_fee().unwrap(), Some(U256::from(crate::eth::fees::INITIAL_BASE_FEE)));
     }
 
+    const STOP: &[u8] = &[0x00];
+    const REVERT: &[u8] = &[0x60, 0x00, 0x80, 0xfd];
+
+    /// Code that calls `console.log(uint256)` with 1, then runs `end`.
+    fn console_log_code(end: &[u8]) -> Bytes {
+        let mut code =
+            alloy_primitives::hex!("63f82c50f160e01b60005260016004526000600060246000").to_vec();
+        code.push(0x73);
+        code.extend_from_slice(HARDHAT_CONSOLE_ADDRESS.as_slice());
+        code.extend_from_slice(&[0x5a, 0xfa, 0x50]);
+        code.extend_from_slice(end);
+        code.into()
+    }
+
     // Gas estimation runs the call at the highest gas limit, then once per step of a binary
     // search. Console logs are printed only when the estimation fails, and then once.
     #[tokio::test]
     async fn estimate_gas_prints_console_logs_only_on_failure() {
         let (api, handle) = spawn(NodeConfig::test()).await;
         let from = handle.dev_accounts().next().unwrap();
-        // Calls `console.log(uint256)` with 1, then stops or reverts.
-        let mut log =
-            alloy_primitives::hex!("63f82c50f160e01b60005260016004526000600060246000").to_vec();
-        log.push(0x73);
-        log.extend_from_slice(HARDHAT_CONSOLE_ADDRESS.as_slice());
-        log.extend_from_slice(&[0x5a, 0xfa, 0x50]);
         let succeeds = Address::repeat_byte(0x42);
         let reverts = Address::repeat_byte(0x43);
-        api.anvil_set_code(succeeds, [log.as_slice(), &[0x00]].concat().into()).await.unwrap();
-        api.anvil_set_code(reverts, [log.as_slice(), &[0x60, 0x00, 0x80, 0xfd]].concat().into())
-            .await
-            .unwrap();
+        api.anvil_set_code(succeeds, console_log_code(STOP)).await.unwrap();
+        api.anvil_set_code(reverts, console_log_code(REVERT)).await.unwrap();
 
-        for (to, expected) in [(succeeds, ""), (reverts, " INFO node::console: 1\n")] {
+        for (to, expected) in [
+            (succeeds, ""),
+            (reverts, " INFO node::console:     console.log:\n INFO node::console:         1\n"),
+        ] {
             let request = api
                 .parse_transaction_request(WithOtherFields::new(
                     TransactionRequest::default().from(from).to(to),
@@ -6031,6 +6040,48 @@ mod tests {
             assert_eq!(result.is_ok(), to == succeeds);
             assert_eq!(std::fs::read_to_string(file.path()).unwrap(), expected);
         }
+    }
+
+    // A mined transaction prints its console logs once, with the other details of the
+    // transaction. Executing it for the pending block does not print them.
+    #[tokio::test]
+    async fn mined_transaction_prints_console_logs_with_its_details() {
+        let (api, handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+        let from = handle.dev_accounts().next().unwrap();
+        let contract = Address::repeat_byte(0x42);
+        api.anvil_set_code(contract, console_log_code(STOP)).await.unwrap();
+        let request = TransactionRequest::default().from(from).to(contract).gas_limit(100_000);
+        api.send_transaction(WithOtherFields::new(request)).await.unwrap();
+
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter("off,node::user=info,node::console=info")
+            .without_time()
+            .with_ansi(false)
+            .with_target(false)
+            .with_level(false)
+            .with_writer(Arc::new(file.reopen().unwrap()))
+            .finish();
+        let _subscriber = tracing::subscriber::set_default(subscriber);
+        api.pending_block().await.unwrap();
+        api.mine_one().await.unwrap();
+
+        foundry_test_utils::assert_data_eq!(
+            std::fs::read_to_string(file.path()).unwrap(),
+            foundry_test_utils::str![[r#"
+
+    Transaction: [..]
+    Gas used: [..]
+    console.log:
+        1
+
+    Block Number: 1
+    Block Hash: [..]
+    Block Time: [..]
+
+
+"#]]
+        );
     }
 
     // Regression test for <https://github.com/foundry-rs/foundry/issues/13680>.
