@@ -212,11 +212,20 @@ pub(super) async fn collect_fork(
     let historical = record(&provider, 3, Some(account)).await;
     assert_eq!(historical, original);
     assert_eq!(provider.get_proof(remote, vec![B256::ZERO]).number(3).await.unwrap(), absent);
+
+    // A local write brings the upstream account into a later sealed partial trie.
+    let receipt = send(&provider, sender, write(remote, 8)).await;
+    assert_eq!(receipt.block_number(), Some(5));
+    let imported = record(&provider, 5, Some(remote)).await;
+    assert_eq!(record(&provider, 3, Some(account)).await, original);
+    assert_eq!(provider.get_proof(remote, vec![B256::ZERO]).number(3).await.unwrap(), absent);
     json!({
         "key": key_coordinates(&identity.identity),
         "upstreamKey": key_coordinates(&upstream.identity),
         "account": account,
         "initial": historical,
         "updated": updated,
+        "remote": remote,
+        "imported": imported,
     })
 }

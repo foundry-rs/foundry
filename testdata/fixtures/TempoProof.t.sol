@@ -22,9 +22,12 @@ contract TempoProofTest {
     BLS.G2Point private upstreamKey;
     TempoProofVerifier.Evidence private forkEvidence;
     TempoProofVerifier.Evidence private forkUpdated;
+    TempoProofVerifier.Evidence private forkImported;
     address private forkAccount;
+    address private forkRemote;
     uint256 private forkHeight;
     uint256 private forkUpdatedHeight;
+    uint256 private forkImportedHeight;
 
     function setUp() public {
         string memory json = vm.readFile("fixtures/proofs.json");
@@ -41,10 +44,13 @@ contract TempoProofTest {
         forkKey = abi.decode(vm.parseJsonBytes(json, ".fork.key"), (BLS.G2Point));
         upstreamKey = abi.decode(vm.parseJsonBytes(json, ".fork.upstreamKey"), (BLS.G2Point));
         forkAccount = vm.parseJsonAddress(json, ".fork.account");
+        forkRemote = vm.parseJsonAddress(json, ".fork.remote");
         forkHeight = vm.parseJsonUint(json, ".fork.initial.height");
         forkUpdatedHeight = vm.parseJsonUint(json, ".fork.updated.height");
+        forkImportedHeight = vm.parseJsonUint(json, ".fork.imported.height");
         forkEvidence = _readEvidence(json, ".fork.initial.evidence");
         forkUpdated = _readEvidence(json, ".fork.updated.evidence");
+        forkImported = _readEvidence(json, ".fork.imported.evidence");
     }
 
     function _readEvidence(string memory json, string memory path)
@@ -209,6 +215,12 @@ contract TempoProofTest {
     function test_fork_updated_certified_storage_proof() public view {
         require(
             verifier.verify(forkKey, forkUpdated, forkUpdatedHeight, forkAccount, bytes32(0), 43), "updated fork value"
+        );
+    }
+
+    function test_fork_imported_account_certified_storage_proof() public view {
+        require(
+            verifier.verify(forkKey, forkImported, forkImportedHeight, forkRemote, bytes32(0), 8), "imported fork value"
         );
     }
 
