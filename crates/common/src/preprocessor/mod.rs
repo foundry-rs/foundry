@@ -45,7 +45,7 @@ pub struct DynamicTestLinkingPreprocessor {
     rewrote_sources: Arc<AtomicBool>,
     /// One warning per compiler job that disabled DTL; printed after a successful compile.
     /// Skipping the print when solc fails avoids duplicating solc's own diagnostics
-    /// (see https://github.com/foundry-rs/foundry/issues/17913).
+    /// (see <https://github.com/foundry-rs/foundry/issues/17913>).
     pending_disable_warnings: Arc<Mutex<Vec<String>>>,
 }
 
