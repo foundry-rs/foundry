@@ -70,8 +70,9 @@ where
                         let (Some(block), Some(receipts)) =
                             (self.storage.block(hash), self.storage.receipts(hash))
                         else {
-                            tracing::warn!(target: "rpc::ws", ?hash, "Closing logs subscription because block data is unavailable");
-                            return Poll::Ready(None);
+                            // The block was unwound or replaced and is no longer canonical;
+                            // reverts and rollbacks publish its retained logs as `RemovedLogs`.
+                            continue;
                         };
                         if block.body.transactions.len() != receipts.len()
                             || (block.body.transactions.is_empty()

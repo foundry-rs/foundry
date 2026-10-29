@@ -582,6 +582,33 @@ mod backpressure {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn lagged_logs_subscription_skips_reverted_blocks() {
+        let fixture = LogsFixture::new().await;
+        let api = &fixture.api;
+        let mut logs = fixture.logs(Filter::new().address(*fixture.contract.address()));
+        let snapshot = api.evm_snapshot().await.unwrap();
+
+        let receipt = fixture.emit("reverted notification").await;
+        assert!(api.evm_revert(snapshot).await.unwrap());
+        assert!(api.storage_info().block(receipt.block_hash.unwrap()).is_none());
+
+        let mut log = receipt.inner.logs()[0].clone();
+        log.removed = true;
+        let notification = tokio::time::timeout(Duration::from_secs(5), logs.next())
+            .await
+            .expect("removed log was not delivered")
+            .expect("subscription ended at the reverted block");
+        assert_eq!(
+            notification,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "eth_subscription",
+                "params": {"subscription": 1, "result": log},
+            })
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn lagged_logs_subscription_skips_pruned_zero_bloom_blocks() {
         let fixture = LogsFixture::new().await;
         let api = &fixture.api;
