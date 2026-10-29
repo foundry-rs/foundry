@@ -111,6 +111,10 @@ pub struct RunArgs {
     no_bal: bool,
 
     /// Whether to replay system transactions.
+    ///
+    /// Without this flag, a block replay leaves out system transactions mined before the target
+    /// and warns about each one, except a system transaction that opens the block. A system
+    /// transaction can only be the target with this flag.
     #[arg(long, alias = "sys")]
     replay_system_txes: bool,
 
@@ -801,7 +805,8 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
         } else {
             let block_number = self.evm_env.block_env.number();
             let replay_system_txes = self.args.replay_system_txes;
-            self.for_each_prefix_transaction(target_index, |_, tx| {
+            let mut skipped_system_txes = Vec::new();
+            self.for_each_prefix_transaction(target_index, |index, tx| {
                 if !is_system_transaction(tx) || replay_system_txes {
                     let tx_env = self.transaction_env(tx).wrap_err_with(|| {
                         format!(
@@ -812,9 +817,20 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
                         )
                     })?;
                     replay.push((tx.tx_hash(), tx_env));
+                } else if index > 0 {
+                    // The leading system transaction is per-block chain bookkeeping, such as OP's
+                    // L1 attributes deposit or ArbOS' block start, and skipping it is expected.
+                    skipped_system_txes.push(tx.tx_hash());
                 }
                 Ok(())
             })?;
+            if !skipped_system_txes.is_empty() {
+                sh_warn!(
+                    "the replay skips system transactions before the target, so their state \
+                     changes are missing: {skipped_system_txes:?}; `--replay-system-txes` \
+                     replays them"
+                )?;
+            }
         }
         let result = self.executor.transact_with_ordinary_block_replay(
             self.evm_env.clone(),
