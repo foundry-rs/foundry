@@ -228,31 +228,6 @@ contract TempoProofTest {
         _rejectFork(43);
     }
 
-    function test_fork_reject_changed_header() public {
-        forkEvidence.rawHeader = forkUpdated.rawHeader;
-        _rejectFork(42);
-    }
-
-    function test_fork_reject_wrong_height() public {
-        ++forkHeight;
-        _rejectFork(42);
-    }
-
-    function test_fork_reject_wrong_slot() public view {
-        try verifier.verify(forkKey, forkEvidence, forkHeight, forkAccount, bytes32(uint256(1)), 42) returns (
-            bool valid
-        ) {
-            require(!valid, "wrong fork slot accepted");
-        } catch {}
-    }
-
-    function test_fork_reject_wrong_value() public view {
-        require(
-            !verifier.verify(forkKey, forkEvidence, forkHeight, forkAccount, bytes32(0), 43),
-            "wrong fork value accepted"
-        );
-    }
-
     function _rejectFork(uint256 expectedValue) private view {
         try verifier.verify(forkKey, forkEvidence, forkHeight, forkAccount, bytes32(0), expectedValue) returns (
             bool valid

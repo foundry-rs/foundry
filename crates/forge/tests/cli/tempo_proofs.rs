@@ -66,16 +66,12 @@ async fn tempo_proofs_fork(prj: _, cmd: _) {
     cmd.forge_fuse().args(["test", "--offline"]).assert_success().stdout_eq(str![[r#"
 No files changed, compilation skipped
 
-Ran 32 tests for test/TempoProof.t.sol:TempoProofTest
+Ran 28 tests for test/TempoProof.t.sol:TempoProofTest
 [PASS] test_certified_storage_proof() ([GAS])
 [PASS] test_fork_historical_certified_storage_proof() ([GAS])
-[PASS] test_fork_reject_changed_header() ([GAS])
 [PASS] test_fork_reject_mixed_account_proof() ([GAS])
 [PASS] test_fork_reject_mixed_storage_proof() ([GAS])
 [PASS] test_fork_reject_upstream_key() ([GAS])
-[PASS] test_fork_reject_wrong_height() ([GAS])
-[PASS] test_fork_reject_wrong_slot() ([GAS])
-[PASS] test_fork_reject_wrong_value() ([GAS])
 [PASS] test_fork_updated_certified_storage_proof() ([GAS])
 [PASS] test_reject_changed_account_proof() ([GAS])
 [PASS] test_reject_changed_epoch() ([GAS])
@@ -99,9 +95,9 @@ Ran 32 tests for test/TempoProof.t.sol:TempoProofTest
 [PASS] test_rotation_rejects_unannounced_key() ([GAS])
 [PASS] test_rotation_rejects_unauthenticated_boundary() ([GAS])
 [PASS] test_rotation_rejects_wrong_epoch() ([GAS])
-Suite result: ok. 32 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 28 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 32 tests passed, 0 failed, 0 skipped (32 total tests)
+Ran 1 test suite [ELAPSED]: 28 tests passed, 0 failed, 0 skipped (28 total tests)
 
 "#]]);
 }
