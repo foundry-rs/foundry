@@ -35,3 +35,6 @@ cargo test --locked -p anvil-tempo-consensus-compat
 
 Commonware's `sha256::Digest` only supplies the native fixed-width payload codec;
 the actual header hash is Keccak-256 over the RLP-encoded `TempoHeader`.
+
+See [Solidity proof verification](../../../../../docs/dev/networks.md#tempo-certificate-and-storage-proofs)
+for the complementary EVM checks.
