@@ -5,6 +5,7 @@ members = [
     "crates/anvil/core/",
     "crates/anvil/rpc/",
     "crates/anvil/server/",
+    "crates/anvil/tests/fixtures/tempo-consensus-compat/",
     "crates/cast/",
     "crates/cheatcodes/",
     "crates/cheatcodes/spec/",
@@ -500,7 +501,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision", "unbounded_depth"] }
 shlex = "2"
 similar-asserts = "2.0"
-smolgen = { version = "0.1", features = ["build", "gitcl"] }
+smolgen = { version = "0.1.1", features = ["build", "gitcl"] }
 soldeer-commands = "=0.12.1"
 soldeer-core = { version = "=0.12.1", features = ["serde"] }
 strum = "0.28"
@@ -557,6 +558,7 @@ commonware-cryptography = { version = "=2026.9.0", default-features = false }
 commonware-math = { version = "=2026.9.0", default-features = false }
 commonware-parallel = { version = "=2026.9.0", default-features = false }
 commonware-utils = { version = "=2026.9.0", default-features = false }
+blst = "0.3.17"
 rand_chacha = { version = "=0.10.0", default-features = false }
 
 # Monad
@@ -593,16 +595,16 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "ca46f5e9692dfbdb7029ce82dce03596d9559bf6" }
-solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "ca46f5e9692dfbdb7029ce82dce03596d9559bf6" }
-solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "ca46f5e9692dfbdb7029ce82dce03596d9559bf6" }
-solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "ca46f5e9692dfbdb7029ce82dce03596d9559bf6" }
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "4935059a6a9bc1b4b91649c39573d6b6ce7522d4" }
+solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "4935059a6a9bc1b4b91649c39573d6b6ce7522d4" }
+solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "4935059a6a9bc1b4b91649c39573d6b6ce7522d4" }
+solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "4935059a6a9bc1b4b91649c39573d6b6ce7522d4" }
 
 ## foundry-core
-foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "74d7919167900eb5867d12ba83be0360c67273b4" }
-foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "74d7919167900eb5867d12ba83be0360c67273b4" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "74d7919167900eb5867d12ba83be0360c67273b4" }
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "74d7919167900eb5867d12ba83be0360c67273b4" }
+foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74" }
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74" }
 
 ## alloy-core
 alloy-dyn-abi = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }

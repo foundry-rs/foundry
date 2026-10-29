@@ -132,6 +132,9 @@ base-common-consensus = { workspace = true, features = ["serde", "std"] }
 
 [target.'cfg(unix)'.dev-dependencies]
 rexpect.workspace = true
+alloy-provider = { workspace = true, features = ["anvil-api"] }
+blst.workspace = true
+commonware-codec.workspace = true
 
 [features]
 default = ["jemalloc", "asm-keccak", "optimism"]

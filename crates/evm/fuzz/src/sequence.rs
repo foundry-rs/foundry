@@ -439,9 +439,41 @@ impl ComparisonHint {
     ///
     /// Cmp mutations only rewrite the calldata stored with the hints, so other hints can never
     /// produce a mutation.
+    ///
+    /// This gives the same result as filtering with [`Self::applies_to`], but scans `calldata`
+    /// once per operand width instead of once per hint and width.
     pub fn applicable(calldata: &[u8], hints: impl IntoIterator<Item = Self>) -> Vec<Self> {
         let mut seen = HashSet::<Self>::default();
-        hints.into_iter().filter(|hint| seen.insert(*hint) && hint.applies_to(calldata)).collect()
+        let hints = hints.into_iter().filter(|hint| seen.insert(*hint)).collect::<Vec<_>>();
+        if hints.is_empty() {
+            return hints;
+        }
+        let operands = hints
+            .iter()
+            .map(|hint| (hint.lhs.to_be_bytes::<32>(), hint.rhs.to_be_bytes::<32>()))
+            .collect::<Vec<_>>();
+        let found = CMP_WIDTHS.map(|width| {
+            find_operands(
+                calldata,
+                operands.iter().flat_map(|(lhs, rhs)| {
+                    let lhs = &lhs[32 - width..];
+                    let rhs = &rhs[32 - width..];
+                    (lhs != rhs).then_some([lhs, rhs]).into_iter().flatten()
+                }),
+            )
+        });
+        hints
+            .into_iter()
+            .zip(&operands)
+            .filter(|(_, (lhs, rhs))| {
+                CMP_WIDTHS.iter().zip(&found).any(|(&width, found)| {
+                    let lhs = &lhs[32 - width..];
+                    let rhs = &rhs[32 - width..];
+                    lhs != rhs && (found.contains(lhs) || found.contains(rhs))
+                })
+            })
+            .map(|(hint, _)| hint)
+            .collect()
     }
 
     /// Returns whether a cmp mutation can replace one of this comparison's operands in
@@ -642,6 +674,30 @@ fn is_replaceable_operand(calldata: &[u8], pattern: &[u8]) -> bool {
 fn contains_operand(calldata: &[u8], pattern: &[u8]) -> bool {
     is_replaceable_operand(calldata, pattern)
         && calldata[SELECTOR_LEN..].windows(pattern.len()).any(|window| window == pattern)
+}
+
+/// Returns the `patterns` that [`contains_operand`] finds in `calldata`.
+///
+/// All `patterns` must have the same width. The calldata is scanned once for all of them.
+fn find_operands<'a>(
+    calldata: &[u8],
+    patterns: impl IntoIterator<Item = &'a [u8]>,
+) -> HashSet<&'a [u8]> {
+    let mut missing = patterns
+        .into_iter()
+        .filter(|pattern| is_replaceable_operand(calldata, pattern))
+        .collect::<HashSet<_>>();
+    let mut found = HashSet::default();
+    let Some(width) = missing.iter().next().map(|pattern| pattern.len()) else { return found };
+    for window in calldata[SELECTOR_LEN..].windows(width) {
+        if let Some(pattern) = missing.take(window) {
+            found.insert(pattern);
+            if missing.is_empty() {
+                break;
+            }
+        }
+    }
+    found
 }
 
 fn replace_operand(
@@ -1211,5 +1267,47 @@ mod tests {
             .unwrap();
             assert_eq!(mutated, applicable.contains(&hint));
         }
+    }
+
+    #[test]
+    fn applicable_hints_match_per_hint_filter() {
+        fn word(rng: &mut impl Rng, bytes: &[u8]) -> U256 {
+            let mut word = [0u8; 32];
+            let start = 32 - rng.random_range(0..=bytes.len().min(32));
+            word[start..].copy_from_slice(&bytes[..32 - start]);
+            U256::from_be_bytes(word)
+        }
+
+        let mut runner = TestRunner::deterministic();
+        let rng = runner.rng();
+        let (mut kept, mut dropped) = (0, 0);
+        for _ in 0..1000 {
+            // A small byte alphabet makes partial and repeated operand matches common.
+            let len = rng.random_range(0..100);
+            let calldata = (0..len).map(|_| rng.random_range(0..3u8)).collect::<Vec<_>>();
+            let hints = (0..rng.random_range(0..16))
+                .map(|_| {
+                    let random = (0..32).map(|_| rng.random_range(0..3u8)).collect::<Vec<_>>();
+                    let start = rng.random_range(0..=calldata.len());
+                    let lhs = word(rng, &random);
+                    let rhs = word(rng, &calldata[start..]);
+                    if rng.random() {
+                        ComparisonHint { lhs, rhs }
+                    } else {
+                        ComparisonHint { lhs: rhs, rhs: lhs }
+                    }
+                })
+                .collect::<Vec<_>>();
+            let mut seen = HashSet::<ComparisonHint>::default();
+            let expected = hints
+                .iter()
+                .copied()
+                .filter(|hint| seen.insert(*hint) && hint.applies_to(&calldata))
+                .collect::<Vec<_>>();
+            kept += expected.len();
+            dropped += seen.len() - expected.len();
+            assert_eq!(ComparisonHint::applicable(&calldata, hints), expected);
+        }
+        assert!(kept > 1000 && dropped > 500, "kept {kept}, dropped {dropped}");
     }
 }

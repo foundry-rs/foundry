@@ -128,6 +128,19 @@ foundry-bench --output-dir ./results --output-file LATEST_RESULTS.md
 
 `forge_symbolic_test` keeps the existing focused commands for Solady, Angstrom, and Farcaster
 and uses the generic symbolic command for other repositories.
+For `foundry-rs/foundry`, it runs the checked XOR workload under
+`benches/fixtures/symbolic/xor`. Pin the workload to the same commit containing
+that fixture for both baseline and candidate runs, even when the baseline binary
+predates the specialist:
+
+```bash
+BASE_REF=origin/master \
+BENCHMARKS=forge_symbolic_test \
+REPOS="foundry-rs/foundry:<fixture-commit>" \
+benches/scripts/pr-bench.sh
+```
+
+This is a synthetic XOR workload, not a claim about general Solidity performance.
 Use `--symbolic-sidecar-output <FILE>` with exactly one `--versions` value to capture the
 versioned per-run results. Like `--json-output`, the sidecar path is relative to `--output-dir`.
 

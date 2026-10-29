@@ -294,6 +294,7 @@ struct StorageHookInspectorState {
     recording_accesses: bool,
     mapping_slots: Option<AddressHashMap<MappingSlots>>,
     recorded_logs: Option<Vec<Vm::Log>>,
+    recorded_logs_generation: u64,
     mocked_calls: HashMap<Address, BTreeMap<MockCallDataContext, VecDeque<MockCallReturnData>>>,
     mocked_functions: HashMap<Address, HashMap<Bytes, Address>>,
     expected_revert: Option<ExpectedRevert>,
@@ -562,6 +563,10 @@ struct CreatedAccountsFrame {
     kind: CreatedAccountsFrameKind,
     depth: usize,
     checkpoint: usize,
+    /// Recorded log count when the frame started.
+    recorded_logs: usize,
+    /// Recorded log buffer generation when the frame started.
+    recorded_logs_generation: u64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -666,7 +671,7 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Revertible changes to creation bindings made by EVM create frames.
     created_account_changes: Vec<CreatedAccountChange>,
 
-    /// Creation-list checkpoints for frames observed by this inspector.
+    /// Creation-list and recorded-log checkpoints for frames observed by this inspector.
     created_accounts_frames: Vec<CreatedAccountsFrame>,
 
     /// Creation lists captured by state snapshots.
@@ -1042,6 +1047,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             kind,
             depth,
             checkpoint: self.created_account_changes.len(),
+            recorded_logs: self.core.recorded_logs.as_ref().map_or(0, Vec::len),
+            recorded_logs_generation: self.core.recorded_logs_generation,
         });
     }
 
@@ -1062,6 +1069,17 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         let checkpoint = frame.checkpoint;
         self.created_accounts_frames.pop();
         if !success {
+            // Logs of a failed frame are reverted. If the buffer was replaced inside the frame,
+            // every log it holds was recorded by the frame.
+            if let Some(logs) = &mut self.core.recorded_logs {
+                logs.truncate(
+                    if frame.recorded_logs_generation == self.core.recorded_logs_generation {
+                        frame.recorded_logs
+                    } else {
+                        0
+                    },
+                );
+            }
             while self.created_account_changes.len() > checkpoint {
                 let change = self.created_account_changes.pop().expect("length checked");
                 if change.committed {
@@ -1473,6 +1491,23 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             if (curr_depth == broadcast.depth || broadcast.deploy_from_code)
                 && call.transfer_from() == broadcast.original_caller
             {
+                // Delegatecalls and callcodes run in the caller's context and cannot be
+                // represented as a transaction from the broadcaster.
+                if matches!(call.scheme, CallScheme::DelegateCall | CallScheme::CallCode) {
+                    let msg = "`delegatecall`s and `callcode`s cannot be broadcast; use a regular `call` instead";
+                    return Some(CallOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Revert,
+                            output: Error::encode(msg),
+                            gas,
+                        },
+                        memory_offset: call.return_memory_offset.clone(),
+                        was_precompile_called: false,
+                        precompile_call_logs: vec![],
+                        charged_new_account_state_gas: call.charged_new_account_state_gas,
+                    });
+                }
+
                 // Reset deploy from code flag for upcoming calls.
                 broadcast.deploy_from_code = false;
 
@@ -3047,6 +3082,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             recording_accesses: std::mem::replace(&mut self.recording_accesses, false),
             mapping_slots: self.core.mapping_slots.take(),
             recorded_logs: self.core.recorded_logs.take(),
+            recorded_logs_generation: self.core.recorded_logs_generation,
             mocked_calls: std::mem::take(&mut self.core.mocked_calls),
             mocked_functions: std::mem::take(&mut self.core.mocked_functions),
             expected_revert: self.expected_revert.take(),
@@ -3062,6 +3098,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.recording_accesses = state.recording_accesses;
         self.core.mapping_slots = state.mapping_slots;
         self.core.recorded_logs = state.recorded_logs;
+        self.core.recorded_logs_generation = state.recorded_logs_generation;
         self.core.mocked_calls = state.mocked_calls;
         self.core.mocked_functions = state.mocked_functions;
         self.expected_revert = state.expected_revert;

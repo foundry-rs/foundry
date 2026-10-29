@@ -45,6 +45,7 @@ libraries = []
 cache = true
 cache_path = "cache"
 dynamic_test_linking = true
+allow_linked_libraries = true
 snapshots = "snapshots"
 gas_snapshot_check = false
 gas_snapshot_emit = true
@@ -332,6 +333,7 @@ fn can_extract_config_values(prj: _, cmd: _) {
         libs: vec!["lib-test".into()],
         cache: true,
         dynamic_test_linking: true,
+        allow_linked_libraries: true,
         cache_path: "test-cache".into(),
         snapshots: "snapshots".into(),
         gas_snapshot_check: false,
@@ -2219,6 +2221,7 @@ fn test_default_config(prj: _, cmd: _) {
   "cache": true,
   "cache_path": "cache",
   "dynamic_test_linking": true,
+  "allow_linked_libraries": true,
   "snapshots": "snapshots",
   "gas_snapshot_check": false,
   "gas_snapshot_emit": true,
