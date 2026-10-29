@@ -497,7 +497,11 @@ impl FuzzDictionary {
         targets: &TargetedContracts,
         mapping_slots: Option<&AddressMap<MappingSlots>>,
     ) {
-        for (address, account) in state_changeset {
+        // Dictionary indices participate in seeded input generation. Hash iteration order must
+        // not change the meaning of those indices between otherwise identical executions.
+        let mut accounts = state_changeset.iter().collect::<Vec<_>>();
+        accounts.sort_unstable_by_key(|(address, _)| **address);
+        for (address, account) in accounts {
             if is_history_storage_address(address) {
                 continue;
             }
@@ -522,7 +526,9 @@ impl FuzzDictionary {
                     mapping_slots.is_some_and(|m| m.contains_key(address))
                 );
                 let mapping_slots = mapping_slots.and_then(|m| m.get(address));
-                for (slot, value) in &account.storage {
+                let mut storage = account.storage.iter().collect::<Vec<_>>();
+                storage.sort_unstable_by_key(|(slot, _)| **slot);
+                for (slot, value) in storage {
                     let slot_info = slot_identifier_key.and_then(|key| {
                         let slot = B256::from(*slot);
                         let value_word = B256::from(value.present_value());
@@ -839,10 +845,45 @@ mod tests {
     use super::*;
     use alloy_json_abi::{Event, JsonAbi};
     use foundry_evm_core::eip2935::HISTORY_STORAGE_ADDRESS;
-    use revm::bytecode::Bytecode;
+    use revm::{
+        bytecode::Bytecode,
+        state::{Account, EvmStorageSlot},
+    };
 
     fn account_with_code(raw: &'static [u8]) -> AccountInfo {
         AccountInfo::default().with_code(Bytecode::new_raw(Bytes::from_static(raw)))
+    }
+
+    #[test]
+    fn runtime_dictionary_uses_account_and_storage_order() {
+        let mut expected = FuzzDictionary::default();
+        for i in 1..=8u8 {
+            expected.insert_value(Address::repeat_byte(i).into_word());
+            for slot in 1..=8u64 {
+                expected.insert_storage_value(
+                    &U256::from(slot),
+                    &U256::from(i as u64 * 100 + slot),
+                    None,
+                );
+            }
+        }
+
+        for _ in 0..8 {
+            let mut changes = StateChangeset::default();
+            for i in (1..=8u8).rev() {
+                let mut account = Account::default();
+                for slot in (1..=8u64).rev() {
+                    account.storage.insert(
+                        U256::from(slot),
+                        EvmStorageSlot::new(U256::from(i as u64 * 100 + slot), Default::default()),
+                    );
+                }
+                changes.insert(Address::repeat_byte(i), account);
+            }
+            let mut actual = FuzzDictionary::default();
+            actual.insert_new_state_values(&changes, &TargetedContracts::default(), None);
+            assert_eq!(actual.state_values.as_slice(), expected.state_values.as_slice());
+        }
     }
 
     #[test]
