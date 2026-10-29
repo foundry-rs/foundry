@@ -44,9 +44,15 @@ pub trait PubSubRpcHandler: Clone + Send + Sync + Unpin + 'static {
         _error: &RpcError,
     ) {
     }
+
+    /// Whether an ended subscription requires closing the client connection.
+    fn close_on_subscription_end(&self, _subscription: &Self::Subscription) -> bool {
+        false
+    }
 }
 
-type Subscriptions<SubscriptionId, Subscription> = Arc<Mutex<Vec<(SubscriptionId, Subscription)>>>;
+type Subscriptions<SubscriptionId, Subscription> =
+    Arc<Mutex<VecDeque<(SubscriptionId, Subscription)>>>;
 
 /// Contains additional context and tracks subscriptions
 pub struct PubSubContext<Handler: PubSubRpcHandler> {
@@ -67,10 +73,10 @@ impl<Handler: PubSubRpcHandler> PubSubContext<Handler> {
         let mut removed = None;
         if let Some(idx) = subscriptions.iter().position(|(i, _)| id == *i) {
             trace!(target: "rpc", ?id,  "removed subscription");
-            removed = Some(subscriptions.swap_remove(idx).1);
+            removed = Some(subscriptions.swap_remove_back(idx).unwrap().1);
         }
         trace!(target: "rpc", ?id,  "added subscription");
-        subscriptions.push((id, subscription));
+        subscriptions.push_back((id, subscription));
         removed
     }
 
@@ -82,7 +88,7 @@ impl<Handler: PubSubRpcHandler> PubSubContext<Handler> {
         let mut subscriptions = self.subscriptions.lock();
         if let Some(idx) = subscriptions.iter().position(|(i, _)| id == i) {
             trace!(target: "rpc", ?id,  "removed subscription");
-            return Some(subscriptions.swap_remove(idx).1);
+            return Some(subscriptions.swap_remove_back(idx).unwrap().1);
         }
         None
     }
@@ -96,7 +102,7 @@ impl<Handler: PubSubRpcHandler> Clone for PubSubContext<Handler> {
 
 impl<Handler: PubSubRpcHandler> Default for PubSubContext<Handler> {
     fn default() -> Self {
-        Self { subscriptions: Arc::new(Mutex::new(Vec::new())) }
+        Self { subscriptions: Arc::new(Mutex::new(VecDeque::new())) }
     }
 }
 
@@ -143,7 +149,7 @@ pub struct PubSubConnection<Handler: PubSubRpcHandler, Connection> {
     /// currently in progress requests
     processing: Vec<Pin<Box<dyn Future<Output = Option<Response>> + Send>>>,
     /// pending messages to send
-    pending: VecDeque<String>,
+    pending: PendingMessages,
 }
 
 impl<Handler: PubSubRpcHandler, Connection> PubSubConnection<Handler, Connection> {
@@ -187,13 +193,28 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let pin = self.get_mut();
+        // Cooperate with other connections even when subscription streams stay ready.
+        let mut remaining = 256;
         loop {
             // drive the websocket
-            while matches!(pin.connection.poll_ready_unpin(cx), Poll::Ready(Ok(()))) {
+            let mut writable = true;
+            loop {
+                match pin.connection.poll_ready_unpin(cx) {
+                    Poll::Ready(Ok(())) => {}
+                    Poll::Ready(Err(err)) => {
+                        trace!(target: "rpc", ?err, "connection err");
+                        return Poll::Ready(());
+                    }
+                    Poll::Pending => {
+                        writable = false;
+                        break;
+                    }
+                }
                 // only start sending if socket is ready
                 if let Some(msg) = pin.pending.pop_front() {
                     if let Err(err) = pin.connection.start_send_unpin(msg) {
                         error!(target: "rpc", ?err, "Failed to send message");
+                        return Poll::Ready(());
                     }
                 } else {
                     break;
@@ -248,7 +269,9 @@ where
                 match req.poll_unpin(cx) {
                     Poll::Ready(Some(resp)) => {
                         if let Ok(text) = serde_json::to_string(&resp) {
-                            pin.pending.push_back(text);
+                            if !pin.pending.send(&mut pin.connection, cx, text, &mut writable) {
+                                return Poll::Ready(());
+                            }
                             progress = true;
                         }
                     }
@@ -258,25 +281,36 @@ where
             }
 
             {
-                // process subscription events
+                // Materialize events before upstream queues overflow or their backing data expires.
                 let mut subscriptions = pin.context.subscriptions.lock();
-                'outer: for n in (0..subscriptions.len()).rev() {
-                    let (id, mut sub) = subscriptions.swap_remove(n);
-                    'inner: loop {
-                        #[allow(clippy::collapsible_match)]
-                        match sub.poll_next_unpin(cx) {
-                            Poll::Ready(Some(res)) => {
-                                if let Ok(text) = serde_json::to_string(&res) {
-                                    pin.pending.push_back(text);
-                                    progress = true;
+                for _ in 0..subscriptions.len() {
+                    let (id, mut sub) = subscriptions.pop_back().unwrap();
+                    #[allow(clippy::collapsible_match)]
+                    match sub.poll_next_unpin(cx) {
+                        Poll::Ready(Some(res)) => {
+                            if let Ok(text) = serde_json::to_string(&res) {
+                                if !pin.pending.send(&mut pin.connection, cx, text, &mut writable) {
+                                    return Poll::Ready(());
                                 }
+                                progress = true;
                             }
-                            Poll::Ready(None) => continue 'outer,
-                            Poll::Pending => break 'inner,
+                            remaining -= 1;
                         }
+                        Poll::Ready(None) => {
+                            if pin.handler.close_on_subscription_end(&sub) {
+                                warn!(target: "rpc", ?id, "Closing connection after subscription ended");
+                                return Poll::Ready(());
+                            }
+                            continue;
+                        }
+                        Poll::Pending => {}
                     }
 
-                    subscriptions.push((id, sub));
+                    subscriptions.push_front((id, sub));
+                    if remaining == 0 {
+                        cx.waker().wake_by_ref();
+                        return Poll::Pending;
+                    }
                 }
             }
 
@@ -287,6 +321,67 @@ where
     }
 }
 
+/// Bounded serialized backlog shared by responses and subscription notifications.
+#[derive(Default)]
+struct PendingMessages {
+    messages: VecDeque<String>,
+    bytes: usize,
+}
+
+impl PendingMessages {
+    fn pop_front(&mut self) -> Option<String> {
+        let message = self.messages.pop_front()?;
+        self.bytes -= message.len();
+        Some(message)
+    }
+
+    /// Sends directly while writable, otherwise queues within the connection's backlog limits.
+    /// Returns false when the connection must terminate.
+    fn send<Connection>(
+        &mut self,
+        connection: &mut Connection,
+        cx: &mut Context<'_>,
+        message: String,
+        writable: &mut bool,
+    ) -> bool
+    where
+        Connection: Sink<String> + Unpin,
+        Connection::Error: fmt::Debug,
+    {
+        if *writable {
+            debug_assert!(self.messages.is_empty());
+            match connection.poll_ready_unpin(cx) {
+                Poll::Ready(Ok(())) => {
+                    if let Err(err) = connection.start_send_unpin(message) {
+                        error!(target: "rpc", ?err, "Failed to send message");
+                        return false;
+                    }
+                    return true;
+                }
+                Poll::Ready(Err(err)) => {
+                    trace!(target: "rpc", ?err, "connection err");
+                    return false;
+                }
+                Poll::Pending => *writable = false,
+            }
+        }
+
+        if self.messages.len() >= MAX_PENDING_MESSAGES
+            || message.len() > MAX_PENDING_BYTES - self.bytes
+        {
+            warn!(target: "rpc", "Closing connection because its outgoing backlog is full");
+            return false;
+        }
+        self.bytes += message.len();
+        self.messages.push_back(message);
+        true
+    }
+}
+
+// Bound both serialized payloads and per-message allocation overhead for slow clients.
+const MAX_PENDING_BYTES: usize = 16 * 1024 * 1024;
+const MAX_PENDING_MESSAGES: usize = 4096;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,29 +389,39 @@ mod tests {
         request::{RequestParams, RpcCall, RpcNotification, Version},
         response::RpcResponse,
     };
+    use futures::channel::mpsc;
     use std::{
         pin::pin,
         sync::atomic::{AtomicUsize, Ordering},
-        task::Waker,
+        task::{Wake, Waker},
     };
 
     #[derive(Clone, Default)]
     struct TestHandler {
         requests: Arc<AtomicUsize>,
+        remove_on_request: Option<u64>,
+        close_on_end: bool,
     }
 
     impl PubSubRpcHandler for TestHandler {
         type Request = serde_json::Value;
         type SubscriptionId = u64;
-        type Subscription = futures::stream::Empty<serde_json::Value>;
+        type Subscription = Pin<Box<dyn Stream<Item = serde_json::Value> + Send + Sync>>;
 
         async fn on_request(
             &self,
             _request: Self::Request,
-            _cx: PubSubContext<Self>,
+            cx: PubSubContext<Self>,
         ) -> ResponseResult {
             self.requests.fetch_add(1, Ordering::Relaxed);
+            if let Some(id) = self.remove_on_request {
+                cx.remove_subscription(&id);
+            }
             ResponseResult::success(serde_json::Value::Null)
+        }
+
+        fn close_on_subscription_end(&self, _subscription: &Self::Subscription) -> bool {
+            self.close_on_end
         }
     }
 
@@ -368,5 +473,394 @@ mod tests {
         let response = run_ready(connection.processing.pop().unwrap());
         assert_eq!(response, None);
         assert_eq!(handler.requests.load(Ordering::Relaxed), 1);
+    }
+
+    #[derive(Default)]
+    struct TestConnection {
+        ready: bool,
+        fail_next_send: bool,
+        fail_after: Option<usize>,
+        ready_polls: usize,
+        sent: Vec<String>,
+        requests: VecDeque<Request>,
+        send_budget: Option<usize>,
+        ready_waker: Option<Waker>,
+        disconnected: bool,
+    }
+
+    impl Stream for TestConnection {
+        type Item = Result<Option<Request>, RequestError>;
+
+        fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            if self.disconnected {
+                return Poll::Ready(None);
+            }
+            match self.requests.pop_front() {
+                Some(request) => Poll::Ready(Some(Ok(Some(request)))),
+                None => Poll::Pending,
+            }
+        }
+    }
+
+    impl Sink<String> for TestConnection {
+        type Error = &'static str;
+
+        fn poll_ready(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+        ) -> Poll<Result<(), Self::Error>> {
+            let polls = self.ready_polls;
+            self.ready_polls += 1;
+            if self.fail_after.is_some_and(|after| polls >= after) {
+                return Poll::Ready(Err("sink failed"));
+            }
+            if self.ready {
+                Poll::Ready(Ok(()))
+            } else {
+                self.ready_waker = Some(cx.waker().clone());
+                Poll::Pending
+            }
+        }
+
+        fn start_send(mut self: Pin<&mut Self>, item: String) -> Result<(), Self::Error> {
+            assert!(self.ready);
+            if self.fail_next_send {
+                self.fail_next_send = false;
+                return Err("sink failed");
+            }
+            self.sent.push(item);
+            if let Some(budget) = &mut self.send_budget {
+                *budget -= 1;
+                self.ready = *budget != 0;
+            }
+            Ok(())
+        }
+
+        fn poll_flush(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+        ) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_close(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+        ) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[test]
+    fn sink_readiness_error_terminates_connection() {
+        for fail_after in [0, 1] {
+            let transport =
+                TestConnection { ready: true, fail_after: Some(fail_after), ..Default::default() };
+            let mut connection = PubSubConnection::new(transport, TestHandler::default());
+            connection.context.add_subscription(
+                1,
+                Box::pin(futures::stream::iter(vec![serde_json::Value::Null])),
+            );
+
+            assert!(poll_once(&mut connection).is_ready());
+            assert!(connection.connection.sent.is_empty());
+        }
+    }
+
+    #[test]
+    fn response_start_send_error_terminates_connection() {
+        let transport = TestConnection { ready: true, fail_next_send: true, ..Default::default() };
+        let mut connection = PubSubConnection::new(transport, TestHandler::default());
+        connection.connection.requests.push_back(Request::Batch(vec![]));
+
+        assert!(poll_once(&mut connection).is_ready());
+        assert!(!connection.connection.fail_next_send);
+    }
+
+    #[test]
+    fn subscription_backpressure_limits_readiness_scan_and_allows_disconnect() {
+        for count in [1, 64] {
+            let mut connection = connection();
+            for id in 0..count {
+                connection.context.add_subscription(
+                    id,
+                    Box::pin(futures::stream::iter(vec![serde_json::Value::from(id)])),
+                );
+            }
+
+            assert!(poll_once(&mut connection).is_pending());
+            // One readiness check per round, regardless of the number of subscriptions.
+            assert_eq!(connection.connection.ready_polls, 2);
+            assert!(connection.connection.sent.is_empty());
+            assert_eq!(connection.pending.messages.len(), count as usize);
+            assert!(connection.context.subscriptions.lock().is_empty());
+
+            connection.connection.disconnected = true;
+            assert!(poll_once(&mut connection).is_ready());
+            assert!(connection.connection.sent.is_empty());
+        }
+    }
+
+    #[derive(Default)]
+    struct TestWake(AtomicUsize);
+
+    impl Wake for TestWake {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn subscription_backpressure_wakes_and_rotates_fairly() {
+        let count = 3;
+        let mut connection = connection();
+        for id in 1..=count {
+            let events = (0..if id == count { 12 } else { 3 })
+                .map(|event| serde_json::json!([id, event]))
+                .collect::<Vec<_>>();
+            connection.context.add_subscription(id, Box::pin(futures::stream::iter(events)));
+        }
+        connection.context.add_subscription(count + 1, Box::pin(futures::stream::pending()));
+        connection.context.add_subscription(count + 2, Box::pin(futures::stream::empty()));
+        let wake = Arc::new(TestWake::default());
+        let waker = Waker::from(wake.clone());
+        let mut cx = Context::from_waker(&waker);
+        assert!(Pin::new(&mut connection).poll(&mut cx).is_pending());
+
+        for window in 0..count * 3 {
+            connection.connection.ready = true;
+            connection.connection.send_budget = Some(1);
+            connection.connection.ready_waker.take().unwrap().wake();
+            assert_eq!(wake.0.swap(0, Ordering::Relaxed), 1);
+            assert!(Pin::new(&mut connection).poll(&mut cx).is_pending());
+            assert_eq!(connection.connection.sent.len(), window as usize + 1);
+        }
+        let mut sent = sent_events(&connection.connection);
+        for (event, window) in sent.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+            window.sort_unstable();
+            assert_eq!(*window, [[1, event as u64], [2, event as u64], [3, event as u64]]);
+        }
+
+        connection.connection.ready = true;
+        connection.connection.send_budget = None;
+        connection.connection.ready_waker.take().unwrap().wake();
+        assert_eq!(wake.0.swap(0, Ordering::Relaxed), 1);
+        assert!(Pin::new(&mut connection).poll(&mut cx).is_pending());
+        let sent = sent_events(&connection.connection);
+        assert_eq!(sent.len(), 18);
+        for id in 1..=count {
+            let events = sent.iter().filter(|event| event[0] == id).map(|event| event[1]);
+            assert_eq!(
+                events.collect::<Vec<_>>(),
+                (0..if id == count { 12 } else { 3 }).collect::<Vec<_>>()
+            );
+        }
+        assert_eq!(sent[9..], (3..12).map(|event| [count, event]).collect::<Vec<_>>());
+        assert_eq!(connection.context.subscriptions.lock().len(), 1);
+        assert!(connection.context.remove_subscription(&(count + 1)).is_some());
+    }
+
+    #[test]
+    fn subscription_end_closes_only_when_requested() {
+        for close_on_end in [false, true] {
+            let handler = TestHandler { close_on_end, ..Default::default() };
+            let mut connection = PubSubConnection::new(TestConnection::default(), handler);
+            connection.context.add_subscription(1, Box::pin(futures::stream::empty()));
+
+            assert_eq!(poll_once(&mut connection).is_ready(), close_on_end);
+            assert!(connection.connection.sent.is_empty());
+        }
+    }
+
+    #[test]
+    fn subscription_backpressure_allows_unsubscribe_and_replacement() {
+        let handler = TestHandler { remove_on_request: Some(1), ..Default::default() };
+        let mut connection = PubSubConnection::new(TestConnection::default(), handler.clone());
+        let mut senders = Vec::new();
+        for id in 1..=3 {
+            let (tx, rx) = mpsc::unbounded();
+            tx.unbounded_send(serde_json::json!(id)).unwrap();
+            senders.push(tx);
+            connection.context.add_subscription(id, Box::pin(rx));
+        }
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(poll_once(&mut connection).is_pending());
+        assert_eq!(connection.pending.messages.len(), 3);
+
+        let mut replaced = connection
+            .context
+            .add_subscription(2, Box::pin(futures::stream::iter(vec![serde_json::json!(20)])))
+            .unwrap();
+        assert!(replaced.poll_next_unpin(&mut cx).is_pending());
+        drop(replaced);
+        connection.connection.requests.push_back(Request::Single(notification()));
+        assert!(poll_once(&mut connection).is_pending());
+        assert_eq!(handler.requests.load(Ordering::Relaxed), 1);
+        assert_eq!(connection.pending.messages.len(), 4);
+        assert!(connection.context.remove_subscription(&1).is_none());
+        assert!(connection.connection.sent.is_empty());
+        assert!(senders[0].unbounded_send(serde_json::json!(10)).is_err());
+        assert!(senders[1].unbounded_send(serde_json::json!(20)).is_err());
+        senders[2].unbounded_send(serde_json::json!(30)).unwrap();
+
+        connection.connection.ready = true;
+        assert!(poll_once(&mut connection).is_pending());
+        // Already materialized notifications precede later cancellation and replacement.
+        assert_eq!(connection.connection.sent.len(), 5);
+        let (initial, later) = connection.connection.sent.split_at_mut(3);
+        initial.sort_unstable();
+        assert_eq!(initial, ["1", "2", "3"]);
+        assert_eq!(later, ["20", "30"]);
+        assert!(connection.pending.messages.is_empty());
+        assert_eq!(connection.context.subscriptions.lock().len(), 1);
+    }
+
+    #[test]
+    fn subscription_backpressure_drains_bounded_upstream() {
+        let (mut tx, rx) = mpsc::channel(2048);
+        let mut connection = connection();
+        connection.context.add_subscription(1, Box::pin(rx.map(serde_json::Value::from)));
+
+        for event in 0..3000 {
+            tx.try_send(event).expect("the blocked connection must keep draining its upstream");
+            assert!(poll_once(&mut connection).is_pending());
+        }
+
+        connection.connection.ready = true;
+        assert!(poll_once(&mut connection).is_pending());
+        assert_eq!(
+            connection.connection.sent,
+            (0..3000).map(|event| event.to_string()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn subscription_backlog_overflow_terminates_connection() {
+        let mut connection = connection();
+        connection
+            .context
+            .add_subscription(1, Box::pin(futures::stream::repeat(serde_json::Value::Null)));
+
+        assert!((0..=MAX_PENDING_MESSAGES).any(|_| poll_once(&mut connection).is_ready()));
+        assert_eq!(connection.pending.messages.len(), MAX_PENDING_MESSAGES);
+        assert!(connection.connection.sent.is_empty());
+    }
+
+    #[test]
+    fn responses_and_subscriptions_share_backlog_limit() {
+        let (tx, rx) = mpsc::unbounded();
+        let mut connection = connection();
+        connection.context.add_subscription(1, Box::pin(rx));
+
+        for _ in 0..MAX_PENDING_MESSAGES - 1 {
+            tx.unbounded_send(serde_json::Value::Null).unwrap();
+            assert!(poll_once(&mut connection).is_pending());
+        }
+        connection.connection.requests.push_back(Request::Batch(vec![]));
+        assert!(poll_once(&mut connection).is_pending());
+        assert_eq!(connection.pending.messages.len(), MAX_PENDING_MESSAGES);
+
+        tx.unbounded_send(serde_json::Value::Null).unwrap();
+        assert!(poll_once(&mut connection).is_ready());
+        assert!(connection.connection.sent.is_empty());
+    }
+
+    #[test]
+    fn backlog_byte_limit_reclaims_drained_messages() {
+        let (tx, rx) = mpsc::unbounded();
+        let mut connection = connection();
+        connection.context.add_subscription(1, Box::pin(rx));
+        // Include the JSON string's two quotes in the byte budget.
+        let message = serde_json::Value::String("x".repeat(MAX_PENDING_BYTES / 2 - 2));
+        for _ in 0..2 {
+            tx.unbounded_send(message.clone()).unwrap();
+            assert!(poll_once(&mut connection).is_pending());
+        }
+        assert_eq!(connection.pending.bytes, MAX_PENDING_BYTES);
+
+        connection.connection.ready = true;
+        connection.connection.send_budget = Some(1);
+        assert!(poll_once(&mut connection).is_pending());
+        assert_eq!(connection.connection.sent.len(), 1);
+        assert_eq!(connection.pending.bytes, MAX_PENDING_BYTES / 2);
+
+        tx.unbounded_send(message).unwrap();
+        assert!(poll_once(&mut connection).is_pending());
+        assert_eq!(connection.pending.bytes, MAX_PENDING_BYTES);
+
+        tx.unbounded_send(serde_json::Value::Null).unwrap();
+        assert!(poll_once(&mut connection).is_ready());
+        assert_eq!(connection.pending.messages.len(), 2);
+        assert_eq!(connection.pending.bytes, MAX_PENDING_BYTES);
+    }
+
+    #[test]
+    fn oversized_message_requires_writable_connection() {
+        for ready in [true, false] {
+            let transport = TestConnection { ready, ..Default::default() };
+            let mut connection = PubSubConnection::new(transport, TestHandler::default());
+            connection.context.add_subscription(
+                1,
+                Box::pin(futures::stream::iter([serde_json::Value::String(
+                    "x".repeat(MAX_PENDING_BYTES),
+                )])),
+            );
+
+            assert_eq!(poll_once(&mut connection).is_pending(), ready);
+            if ready {
+                assert_eq!(connection.connection.sent[0].len(), MAX_PENDING_BYTES + 2);
+            } else {
+                assert!(connection.connection.sent.is_empty());
+            }
+            assert_eq!(connection.pending.bytes, 0);
+            assert!(connection.pending.messages.is_empty());
+        }
+    }
+
+    #[test]
+    fn writable_subscription_burst_yields_and_rotates_without_buffering() {
+        let transport = TestConnection { ready: true, ..Default::default() };
+        let mut connection = PubSubConnection::new(transport, TestHandler::default());
+        connection
+            .context
+            .add_subscription(1, Box::pin(futures::stream::iter([serde_json::json!(2)])));
+        connection.context.add_subscription(
+            2,
+            Box::pin(futures::stream::iter(vec![serde_json::json!(1); MAX_PENDING_MESSAGES + 1])),
+        );
+        let wake = Arc::new(TestWake::default());
+        let waker = Waker::from(wake.clone());
+        let mut cx = Context::from_waker(&waker);
+
+        assert!(Pin::new(&mut connection).poll(&mut cx).is_pending());
+        assert_eq!(wake.0.swap(0, Ordering::Relaxed), 1);
+        let mut first = connection.connection.sent[..2].to_vec();
+        first.sort_unstable();
+        assert_eq!(first, ["1", "2"]);
+        assert!(connection.connection.sent.len() < MAX_PENDING_MESSAGES);
+
+        for _ in 0..MAX_PENDING_MESSAGES {
+            assert!(Pin::new(&mut connection).poll(&mut cx).is_pending());
+            if connection.context.subscriptions.lock().is_empty() {
+                break;
+            }
+        }
+        assert!(connection.context.subscriptions.lock().is_empty());
+        assert_eq!(connection.connection.sent.len(), MAX_PENDING_MESSAGES + 2);
+        assert_eq!(connection.connection.sent[2..], vec!["1"; MAX_PENDING_MESSAGES]);
+        assert!(connection.pending.messages.is_empty());
+        assert_eq!(connection.pending.bytes, 0);
+    }
+
+    fn connection() -> PubSubConnection<TestHandler, TestConnection> {
+        PubSubConnection::new(TestConnection::default(), TestHandler::default())
+    }
+
+    fn poll_once(connection: &mut PubSubConnection<TestHandler, TestConnection>) -> Poll<()> {
+        Pin::new(connection).poll(&mut Context::from_waker(Waker::noop()))
+    }
+
+    fn sent_events(connection: &TestConnection) -> Vec<[u64; 2]> {
+        connection.sent.iter().map(|event| serde_json::from_str(event).unwrap()).collect()
     }
 }

@@ -807,6 +807,11 @@ impl<N: Network> EthApi<N> {
         self.pool.add_ready_listener()
     }
 
+    /// Returns a ready-transaction stream that ends if its bounded listener overflows.
+    pub(crate) fn new_ready_transaction_subscription(&self) -> Receiver<TxHash> {
+        self.pool.add_ready_subscription_listener()
+    }
+
     /// Returns true if forked
     pub fn is_fork(&self) -> bool {
         self.backend.is_fork()
@@ -5023,7 +5028,7 @@ impl EthApi<FoundryNetwork> {
     /// Returns a listener for pending transactions, yielding full transactions
     pub fn full_pending_transactions(&self) -> UnboundedReceiver<AnyRpcTransaction> {
         let (tx, rx) = unbounded_channel();
-        let mut hashes = self.new_ready_transactions();
+        let mut hashes = self.new_ready_transaction_subscription();
 
         let this = self.clone();
 
