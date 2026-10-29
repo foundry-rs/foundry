@@ -1,6 +1,8 @@
 use alloy_primitives::{Bytes, map::AddressHashMap};
 use foundry_cli::utils::{TraceResult, print_traces};
-use foundry_common::{ContractsByArtifactBuilder, compile::ProjectCompiler, shell};
+use foundry_common::{
+    ContractsByArtifactBuilder, compile::ProjectCompiler, namespaced_storage, shell,
+};
 use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
 use foundry_config::{Config, FoundryHardfork, TracingConfig};
 use foundry_debugger::Debugger;
@@ -74,15 +76,15 @@ pub(crate) async fn handle_traces(
         }
         let project = config.project()?;
         let compiler = ProjectCompiler::new();
-        let output = compiler.compile(&project)?;
+        let mut output = compiler.compile(&project)?;
+        let storage_layouts =
+            namespaced_storage::project_storage_layouts(&mut output, project.root());
         (
             Some(
                 ContractsByArtifactBuilder::new(
                     output.artifact_ids().map(|(id, artifact)| (id, artifact.into())),
                 )
-                .with_storage_layouts(output.artifact_ids().filter_map(|(id, artifact)| {
-                    artifact.storage_layout.as_ref().map(|layout| (id, layout.clone()))
-                }))
+                .with_storage_layouts(storage_layouts)
                 .build(),
             ),
             ContractSources::from_project_output(&output, project.root(), None)?,
