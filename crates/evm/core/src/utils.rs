@@ -61,21 +61,6 @@ pub fn apply_chain_specific_tx_replay_env_changes_for_chain<T: EvmTypesHost>(
     }
 }
 
-/// Depending on the configured chain id and block number this should apply any specific changes
-///
-/// - checks for prevrandao mixhash after merge
-/// - applies chain specifics: on Arbitrum `block.number` is the L1 block
-///
-/// Should be called with proper chain id (retrieved from provider if not provided).
-pub fn apply_chain_and_block_specific_env_changes<N: Network, T: EvmTypesHost>(
-    evm_env: &mut EvmEnv<T>,
-    block: &N::BlockResponse,
-    configs: NetworkConfigs,
-) {
-    let chain_id = evm_env.chain_id();
-    apply_chain_and_block_specific_env_changes_for_chain::<N, T>(evm_env, block, chain_id, configs);
-}
-
 /// Applies block normalization for the provided source chain.
 ///
 /// This keeps fork-specific header handling independent from an execution `CHAINID` override.

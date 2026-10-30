@@ -120,15 +120,7 @@ pub fn carry_execution_policy(
 /// Network-specific block environment fields.
 ///
 /// Common block fields are public on [`BlockEnv`]; only extension fields need accessors.
-pub trait FoundryBlockExt: Copy + Debug + Default + Send + Sync + 'static {
-    /// Returns the milliseconds portion of the block timestamp.
-    fn timestamp_millis_part(&self) -> u64 {
-        0
-    }
-
-    /// Sets the milliseconds portion of the block timestamp.
-    fn set_timestamp_millis_part(&mut self, _millis: u64) {}
-}
+pub trait FoundryBlockExt: Copy + Debug + Default + Send + Sync + 'static {}
 
 impl FoundryBlockExt for () {}
 

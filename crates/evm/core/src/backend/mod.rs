@@ -155,8 +155,6 @@ pub struct Backend<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     lifecycle: ExecutionLifecycle<EvmFactoryFor<FEN>>,
     /// Accounts allowed to execute cheatcodes.
     cheatcode_access: AddressSet,
-    /// Caller of the test.
-    caller: Option<Address>,
     /// Whether a reverted state snapshot recorded a test failure.
     has_state_snapshot_failure: bool,
     /// Block number the active fork reports instead of its own.
@@ -259,7 +257,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             forks,
             lifecycle,
             cheatcode_access: AddressSet::default(),
-            caller: None,
             has_state_snapshot_failure: false,
             fork_block_number_override: None,
             bal: None,
@@ -579,14 +576,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// Sets the caller address and grants it cheatcode access.
     pub fn set_caller(&mut self, account: Address) -> &mut Self {
         trace!(?account, "setting caller account");
-        self.caller = Some(account);
         self.cheatcode_access.insert(account);
         self
-    }
-
-    /// Returns the caller address.
-    pub const fn caller_address(&self) -> Option<Address> {
-        self.caller
     }
 
     /// Returns whether a reverted state snapshot recorded a test failure.
@@ -599,12 +590,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// Sets the state snapshot failure flag.
     pub const fn set_state_snapshot_failure(&mut self, has_state_snapshot_failure: bool) {
         self.has_state_snapshot_failure = has_state_snapshot_failure;
-    }
-
-    /// Returns whether `address` is a precompile of the active context.
-    pub fn is_existing_precompile(&self, address: &Address) -> bool {
-        let context = self.lifecycle.active();
-        self.lifecycle.factory().precompiles(&context.env, &context.ext.get()).contains(address)
     }
 
     // ---- Persistent accounts and cheatcode access ----
@@ -633,23 +618,10 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         }
     }
 
-    /// Stops all `accounts` from persisting.
-    pub fn remove_persistent_accounts(&mut self, accounts: impl IntoIterator<Item = Address>) {
-        for account in accounts {
-            self.remove_persistent_account(&account);
-        }
-    }
-
     /// Grants `account` cheatcode access. Returns whether it did not have access yet.
     pub fn allow_cheatcode_access(&mut self, account: Address) -> bool {
         trace!(?account, "allow cheatcode access");
         self.cheatcode_access.insert(account)
-    }
-
-    /// Revokes cheatcode access from `account`. Returns whether it had access.
-    pub fn revoke_cheatcode_access(&mut self, account: &Address) -> bool {
-        trace!(?account, "revoke cheatcode access");
-        self.cheatcode_access.remove(account)
     }
 
     /// Returns whether `account` has cheatcode access.

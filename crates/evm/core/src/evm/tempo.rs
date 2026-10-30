@@ -33,15 +33,7 @@ use tempo_precompiles::{
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TempoEvmNetwork;
 
-impl FoundryBlockExt for TempoBlockExt {
-    fn timestamp_millis_part(&self) -> u64 {
-        self.timestamp_millis_part
-    }
-
-    fn set_timestamp_millis_part(&mut self, millis: u64) {
-        self.timestamp_millis_part = millis;
-    }
-}
+impl FoundryBlockExt for TempoBlockExt {}
 
 /// Tempo envelope of Foundry's RPC types.
 type TempoNetworkTxEnvelope = TxEnvelopeFor<TempoEvmNetwork>;

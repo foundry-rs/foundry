@@ -1725,13 +1725,6 @@ impl<N: Network> Backend<N> {
         Err(BlockchainError::DepositTransactionUnsupported)
     }
 
-    /// Returns an error if Base EIP-8130 transactions are not active.
-    #[cfg(feature = "base")]
-    pub fn ensure_base_eip8130_active(&self) -> Result<(), BlockchainError> {
-        let timestamp = self.evm_env.read().block_env.timestamp.saturating_to();
-        self.ensure_base_eip8130_active_at(timestamp)
-    }
-
     /// Returns an error if Base EIP-8130 RPC features are not active at `timestamp`.
     #[cfg(feature = "base")]
     pub fn ensure_base_eip8130_active_at(&self, timestamp: u64) -> Result<(), BlockchainError> {
@@ -6491,42 +6484,6 @@ where
         );
 
         Ok(f(Box::new(cache_db), block_info))
-    }
-
-    /// Returns the ERC20/TIP20 token balance for an account.
-    ///
-    /// Calls `balanceOf(address)` on the token contract. Returns `U256::ZERO` if
-    /// the call fails (e.g. the token contract doesn't exist).
-    pub async fn get_fee_token_balance(
-        &self,
-        token: Address,
-        account: Address,
-    ) -> Result<U256, BlockchainError> {
-        // balanceOf(address) selector: 0x70a08231
-        let mut calldata = vec![0x70, 0xa0, 0x82, 0x31];
-        // ABI-encode the address (left-padded to 32 bytes)
-        calldata.extend_from_slice(&[0u8; 12]);
-        calldata.extend_from_slice(account.as_slice());
-
-        let request = WithOtherFields::new(TransactionRequest {
-            from: Some(Address::ZERO),
-            to: Some(TxKind::Call(token)),
-            input: calldata.into(),
-            ..Default::default()
-        });
-
-        let fee_details = FeeDetails::zero();
-        let outcome = self.call(request, fee_details, None, Default::default()).await?;
-
-        // Check if call succeeded
-        if !outcome.exit.is_success() {
-            // Return zero balance if call failed (token might not exist)
-            return Ok(U256::ZERO);
-        }
-
-        // Decode U256 from output
-        let data = outcome.output;
-        if data.len() >= 32 { Ok(U256::from_be_slice(&data[..32])) } else { Ok(U256::ZERO) }
     }
 
     /// Returns the account used to sponsor Tempo fee-payer requests handled by this node.

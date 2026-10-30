@@ -13,12 +13,13 @@ use crate::{
             FuzzBranchFrontier, FuzzFrontierRecorder, StatefulFuzzBranchFrontierArtifact,
             merge_frontiers, write_frontier_artifact,
         },
+        worker_seed,
     },
     inspectors::Fuzzer,
 };
 use alloy_json_abi::Function;
 use alloy_primitives::{
-    Address, Bytes, FixedBytes, I256, KECCAK256_EMPTY, Selector, U256, keccak256,
+    Address, Bytes, FixedBytes, I256, KECCAK256_EMPTY, Selector, U256,
     map::{AddressMap, AddressSet, HashMap},
 };
 use alloy_sol_types::{SolCall, sol};
@@ -378,15 +379,6 @@ fn focused_targeted_contracts(
     Some(focused)
 }
 
-fn invariant_worker_seed(seed: U256, worker_id: u32) -> U256 {
-    if worker_id == 0 {
-        seed
-    } else {
-        let seed_data = [&seed.to_be_bytes::<32>()[..], &worker_id.to_be_bytes()[..]].concat();
-        keccak256(seed_data).into()
-    }
-}
-
 fn should_continue_invariant_worker(
     campaign_state: &InvariantCampaignState,
     runs: u32,
@@ -405,7 +397,7 @@ fn invariant_worker_runner(
     seed: Option<U256>,
 ) -> TestRunner {
     if let Some(seed) = seed {
-        let worker_seed = invariant_worker_seed(seed, worker_id);
+        let worker_seed = worker_seed(seed, worker_id);
         trace!(target: "forge::test", ?worker_seed, "deterministic seed for invariant worker {worker_id}");
         let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &worker_seed.to_be_bytes::<32>());
         TestRunner::new_with_rng(runner.config().clone(), rng)
@@ -2496,16 +2488,6 @@ mod tests {
         assert_eq!(kind, CampaignCallKind::AssumptionRejected);
         assert_eq!(state.0.evm_env().block, initial_block);
         assert_eq!(state.0.inspector().cheatcodes.as_ref().unwrap().block, initial_cheatcode_block);
-    }
-
-    #[test]
-    fn invariant_worker_seed_preserves_master_seed_and_derives_workers() {
-        let seed = U256::from(0x1234);
-
-        assert_eq!(invariant_worker_seed(seed, 0), seed);
-        assert_ne!(invariant_worker_seed(seed, 1), seed);
-        assert_ne!(invariant_worker_seed(seed, 1), invariant_worker_seed(seed, 2));
-        assert_ne!(invariant_worker_seed(seed, 1), invariant_worker_seed(U256::from(0x5678), 1));
     }
 
     #[test]

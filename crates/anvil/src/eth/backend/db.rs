@@ -10,7 +10,7 @@ use alloy_eips::{eip4895::Withdrawals, eip7691::BLOB_GASPRICE_UPDATE_FRACTION_PE
 use alloy_network::Network;
 use alloy_primitives::{
     Address, B256, Bytes, U256, keccak256,
-    map::{AddressMap, B256Map, HashMap, U256Map},
+    map::{AddressMap, B256Map, U256Map},
 };
 use alloy_rpc_types::{BlockId, BlockOverrides, state::AccountOverride};
 use anvil_core::eth::{
@@ -38,6 +38,7 @@ use std::{
 pub use super::env::{BlobExcessGasAndPrice, BlockEnv, SpecId};
 pub use alloy_primitives::KECCAK256_EMPTY as KECCAK_EMPTY;
 pub use evm2::{AccountInfo, bytecode::Bytecode};
+pub use foundry_evm_core::{backend::RevertStateSnapshotAction, state_snapshot::StateSnapshots};
 pub use foundry_fork_db::{DatabaseError, DatabaseResult};
 
 /// The fork cache, keyed by Anvil's block environment.
@@ -72,87 +73,6 @@ pub(crate) fn cache_block_hash(block_hashes: &mut U256Map<B256>, number: U256, h
         block_hashes.insert(number, hash);
     }
     head
-}
-
-/// What to do when reverting a state snapshot.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum RevertStateSnapshotAction {
-    /// Remove the state snapshot after reverting.
-    #[default]
-    RevertRemove,
-    /// Keep the state snapshot after reverting.
-    RevertKeep,
-}
-
-impl RevertStateSnapshotAction {
-    /// Returns `true` if the action is to keep the state snapshot.
-    pub const fn is_keep(&self) -> bool {
-        matches!(self, Self::RevertKeep)
-    }
-}
-
-/// Numbered state snapshots.
-#[derive(Clone, Debug)]
-pub struct StateSnapshots<T> {
-    id: U256,
-    state_snapshots: HashMap<U256, T>,
-}
-
-impl<T> Default for StateSnapshots<T> {
-    fn default() -> Self {
-        Self { id: U256::ZERO, state_snapshots: HashMap::default() }
-    }
-}
-
-impl<T> StateSnapshots<T> {
-    const fn next_id(&mut self) -> U256 {
-        let id = self.id;
-        self.id = id.saturating_add(U256::ONE);
-        id
-    }
-
-    /// Returns the state snapshot with the given id `id`
-    pub fn get(&self, id: U256) -> Option<&T> {
-        self.state_snapshots.get(&id)
-    }
-
-    /// Returns `true` if there are no state snapshots.
-    pub fn is_empty(&self) -> bool {
-        self.state_snapshots.is_empty()
-    }
-
-    /// Removes the state snapshot with the given `id`, and every state snapshot taken after it.
-    pub fn remove(&mut self, id: U256) -> Option<T> {
-        let snapshot_state = self.state_snapshots.remove(&id);
-        let mut to_revert = id + U256::ONE;
-        while to_revert < self.id {
-            self.state_snapshots.remove(&to_revert);
-            to_revert += U256::ONE;
-        }
-        snapshot_state
-    }
-
-    /// Removes all state snapshots.
-    pub fn clear(&mut self) {
-        self.state_snapshots.clear();
-    }
-
-    /// Removes only the state snapshot with the given `id`.
-    pub fn remove_at(&mut self, id: U256) -> Option<T> {
-        self.state_snapshots.remove(&id)
-    }
-
-    /// Inserts the new state snapshot and returns the id.
-    pub fn insert(&mut self, state_snapshot: T) -> U256 {
-        let id = self.next_id();
-        self.state_snapshots.insert(id, state_snapshot);
-        id
-    }
-
-    /// Inserts the new state snapshot at the given `id`, without advancing the next `id`.
-    pub fn insert_at(&mut self, state_snapshot: T, id: U256) {
-        self.state_snapshots.insert(id, state_snapshot);
-    }
 }
 
 /// Lifecycle of a cached account.

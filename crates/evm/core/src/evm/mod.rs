@@ -59,9 +59,6 @@ pub use lifecycle::*;
 mod snapshot;
 pub use snapshot::*;
 
-mod inspector;
-pub use inspector::FoundryInspectorExt;
-
 mod tx;
 pub use tx::*;
 
@@ -354,9 +351,6 @@ pub type InterpreterFor<'frame, 'host, FEN> =
     evm2::interpreter::Interpreter<'frame, 'host, TypesFor<FEN>>;
 pub type MessageFor<FEN> = evm2::interpreter::Message<TypesFor<FEN>>;
 pub type MessageResultFor<FEN> = evm2::interpreter::MessageResult<TypesFor<FEN>>;
-pub type TxEnvFor<FEN> = evm2::env::TxEnv<TypesFor<FEN>>;
 pub type NetworkFor<FEN> = <FEN as FoundryEvmNetwork>::Network;
 pub type TxEnvelopeFor<FEN> = <NetworkFor<FEN> as Network>::TxEnvelope;
 pub type TransactionRequestFor<FEN> = <NetworkFor<FEN> as Network>::TransactionRequest;
-pub type TransactionResponseFor<FEN> = <NetworkFor<FEN> as Network>::TransactionResponse;
-pub type BlockResponseFor<FEN> = <NetworkFor<FEN> as Network>::BlockResponse;

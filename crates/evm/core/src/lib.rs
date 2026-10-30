@@ -44,5 +44,3 @@ pub mod precompiles;
 pub mod state_snapshot;
 pub mod tempo;
 pub mod utils;
-
-pub use evm::FoundryInspectorExt;

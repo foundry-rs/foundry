@@ -189,12 +189,6 @@ impl CfgEnv {
         self.spec = spec;
     }
 
-    /// Returns this configuration with `spec`.
-    pub const fn with_spec(mut self, spec: SpecId) -> Self {
-        self.spec = spec;
-        self
-    }
-
     /// Returns whether EIP-2780's reduced intrinsic transaction gas applies.
     pub fn enable_amsterdam_eip2780(&self) -> bool {
         self.spec >= SpecId::AMSTERDAM

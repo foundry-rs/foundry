@@ -24,7 +24,6 @@ use foundry_cheatcodes::{
 use foundry_common::{compile::Analysis, sh_warn};
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
-    FoundryInspectorExt,
     backend::transaction_error,
     constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER_CODEHASH},
     evm::{
@@ -2276,24 +2275,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
                 host,
             )
         });
-    }
-}
-
-impl<FEN: FoundryEvmNetwork> FoundryInspectorExt<TypesFor<FEN>> for InspectorStackRefMut<'_, FEN> {
-    fn should_use_create2_factory(&mut self, depth: usize, message: &MessageFor<FEN>) -> bool {
-        self.cheatcodes
-            .as_deref_mut()
-            .is_some_and(|cheats| cheats.should_use_create2_factory(depth, message))
-    }
-
-    fn console_log(&mut self, msg: &str) {
-        if let Some(collector) = &mut self.inner.log_collector {
-            collector.console_log(msg);
-        }
-    }
-
-    fn create2_deployer(&self) -> Address {
-        self.inner.create2_deployer
     }
 }
 

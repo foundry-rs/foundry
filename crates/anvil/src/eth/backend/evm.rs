@@ -28,7 +28,7 @@ use evm2::{
     Evm, EvmFeatures, EvmTypesHost, Inspector, PrecompileError,
     env::BlockEnv as NetBlockEnv,
     evm::{PendingState, TxResult, TxResultExt, precompile::PrecompileProvider},
-    interpreter::{GasTracker, Interpreter, Message, MessageResult},
+    interpreter::{GasTracker, Message},
     precompiles::{MovePrecompileError, PrecompileId, PrecompileResult},
 };
 use foundry_evm_core::evm::celo_transfer;
@@ -636,7 +636,7 @@ pub fn execute<N: AnvilEvmNetwork, I: Inspector<TypesFor<N>>>(
         return Err(BlockchainError::ExcessBlobGasNotSet);
     }
     let mut evm = build_evm::<N>(db, env, opts)?;
-    evm.set_inspector(InspectorRef(inspector));
+    evm.set_inspector(inspector);
     transact::<N>(&mut evm, prepared, context, opts.cheats.as_ref())
 }
 
@@ -691,72 +691,6 @@ impl<I: Inspector<TypesFor<MonadEvmNetwork>>> MonadInspector for I {}
 pub trait MonadInspector {}
 #[cfg(not(feature = "monad"))]
 impl<I> MonadInspector for I {}
-
-/// Lends an inspector to an EVM.
-#[derive(Debug)]
-pub struct InspectorRef<'r, I>(pub &'r mut I);
-
-impl<T: evm2::EvmTypes, I: Inspector<T>> Inspector<T> for InspectorRef<'_, I> {
-    fn initialize_interp(&mut self, interp: &mut Interpreter<'_, '_, T>) {
-        self.0.initialize_interp(interp);
-    }
-
-    fn step(&mut self, interp: &mut Interpreter<'_, '_, T>) {
-        self.0.step(interp);
-    }
-
-    fn step_end(&mut self, interp: &mut Interpreter<'_, '_, T>) {
-        self.0.step_end(interp);
-    }
-
-    fn log(&mut self, log: &alloy_primitives::Log, host: &mut T::Host<'_>) {
-        self.0.log(log, host);
-    }
-
-    fn call(
-        &mut self,
-        interp: &mut Interpreter<'_, '_, T>,
-        message: &mut Message<T>,
-    ) -> Option<MessageResult<T>> {
-        self.0.call(interp, message)
-    }
-
-    fn call_end(
-        &mut self,
-        interp: &mut Interpreter<'_, '_, T>,
-        message: &Message<T>,
-        result: &mut MessageResult<T>,
-    ) {
-        self.0.call_end(interp, message, result);
-    }
-
-    fn create(
-        &mut self,
-        interp: &mut Interpreter<'_, '_, T>,
-        message: &mut Message<T>,
-    ) -> Option<MessageResult<T>> {
-        self.0.create(interp, message)
-    }
-
-    fn create_end(
-        &mut self,
-        interp: &mut Interpreter<'_, '_, T>,
-        message: &Message<T>,
-        result: &mut MessageResult<T>,
-    ) {
-        self.0.create_end(interp, message, result);
-    }
-
-    fn selfdestruct(
-        &mut self,
-        contract: &Address,
-        target: &Address,
-        value: &U256,
-        host: &mut T::Host<'_>,
-    ) {
-        self.0.selfdestruct(contract, target, value, host);
-    }
-}
 
 /// Converts a family result into a network-neutral one.
 pub fn exec_result<N: AnvilEvmNetwork>(result: TxResult<TypesFor<N>>) -> ExecResult {

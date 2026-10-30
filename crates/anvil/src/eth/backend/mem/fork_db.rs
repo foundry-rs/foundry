@@ -130,10 +130,6 @@ impl<N: Network> ForkedDatabase<N> {
         &self.cache_db
     }
 
-    pub const fn database_mut(&mut self) -> &mut CacheDB<RemoteDb<N>> {
-        &mut self.cache_db
-    }
-
     /// Reset the fork to a fresh forked state, and optionally update the fork config
     pub fn reset(
         &mut self,

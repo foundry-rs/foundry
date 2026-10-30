@@ -131,17 +131,6 @@ pub struct GasRecord {
     pub depth: usize,
 }
 
-/// Records `deal` cheatcodes
-#[derive(Clone, Debug)]
-pub struct DealRecord {
-    /// Target of the deal.
-    pub address: Address,
-    /// The balance of the address before deal was applied
-    pub old_balance: U256,
-    /// Balance after deal was applied
-    pub new_balance: U256,
-}
-
 /// Storage slot diff info.
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -830,8 +819,6 @@ impl Cheatcode for dealCall {
         // The balance survives reverts of the enclosing calls.
         let write = PersistentWrite::Balance(address, new_balance.wrapping_sub(old_balance));
         ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
-        let record = DealRecord { address, old_balance, new_balance };
-        ccx.state.eth_deals.push(record);
         EvmFactoryFor::<FEN>::default().refresh_transaction(ccx.evm);
         Ok(Default::default())
     }
