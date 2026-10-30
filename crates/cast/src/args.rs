@@ -1704,14 +1704,16 @@ fn encode_event_topic_preimage(value: &DynSolValue, out: &mut Vec<u8>) {
 }
 
 /// Returns the signature of a function selector from the local signatures cache, which
-/// `forge build` and trace decoding populate, only if its parsed form hashes back to
-/// `selector`.
+/// `forge build` and trace decoding populate.
+///
+/// The stored text is returned as is: parsing it would turn library signatures such as
+/// `f(L.E)` into `f(uint8)`, which hashes to another selector.
 async fn local_function_signature(selector: Selector) -> Result<Option<String>> {
     Ok(SignaturesIdentifier::new(true)?
-        .identify_function(selector)
+        .identify(&[SelectorKind::Function(selector)])
         .await
-        .filter(|f| f.selector() == selector)
-        .map(|f| f.signature()))
+        .pop()
+        .flatten())
 }
 
 /// Lists a signature from the local cache first, followed by the other signatures found remotely.
