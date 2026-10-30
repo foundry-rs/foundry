@@ -1,13 +1,11 @@
 //! Monad staking cheatcodes.
 
 use crate::{CheatsCtxt, Result};
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Log, U256};
 use alloy_sol_types::SolInterface;
+use evm2::precompiles::PrecompileHalt;
 use foundry_evm_core::{constants::MONAD_CHEATCODE_ADDRESS, evm::FoundryEvmNetwork};
-use monad_revm::{
-    api::block::{
-        syscall_on_epoch_change_calldata, syscall_reward_calldata, syscall_snapshot_calldata,
-    },
+use monad_evm2::{
     staking::{
         StorageReader,
         constants::SYSTEM_ADDRESS,
@@ -17,11 +15,9 @@ use monad_revm::{
             handle_syscall_snapshot,
         },
     },
-};
-use revm::{
-    context::{ContextTr, JournalTr},
-    precompile::PrecompileHalt,
-    primitives::Log,
+    system::{
+        syscall_on_epoch_change_calldata, syscall_reward_calldata, syscall_snapshot_calldata,
+    },
 };
 
 alloy_sol_types::sol! {
@@ -94,11 +90,11 @@ fn sstore_staking<FEN: FoundryEvmNetwork>(
     key: U256,
     value: U256,
 ) -> Result<()> {
-    ccx.ecx.journal_mut().load_account(STAKING_ADDRESS)?;
-    ccx.ecx
-        .journal_mut()
-        .sstore(STAKING_ADDRESS, key, value)
-        .map_err(|e| fmt_err!("staking sstore failed: {:?}", e))?;
+    ccx.evm
+        .state_mut()
+        .storage_slot(&STAKING_ADDRESS, key)
+        .map_err(|e| fmt_err!("staking sstore failed: {e}"))?
+        .set(value);
     Ok(())
 }
 
@@ -109,22 +105,22 @@ struct CheatsCtxtStorage<'a, 'b, 'db, FEN: FoundryEvmNetwork> {
 impl<FEN: FoundryEvmNetwork> StorageReader for CheatsCtxtStorage<'_, '_, '_, FEN> {
     fn sload(&mut self, key: U256) -> core::result::Result<U256, PrecompileHalt> {
         self.ccx
-            .ecx
-            .journal_mut()
-            .sload(STAKING_ADDRESS, key)
-            .map(|r| r.data)
-            .map_err(|e| PrecompileHalt::Other(format!("sload failed: {e:?}").into()))
+            .evm
+            .state_mut()
+            .storage_slot(&STAKING_ADDRESS, key)
+            .map(|slot| slot.current())
+            .map_err(|e| PrecompileHalt::Other(format!("sload failed: {e}").into()))
     }
 }
 
 impl<FEN: FoundryEvmNetwork> StakingStorage for CheatsCtxtStorage<'_, '_, '_, FEN> {
     fn sstore(&mut self, key: U256, value: U256) -> core::result::Result<(), PrecompileHalt> {
         self.ccx
-            .ecx
-            .journal_mut()
-            .sstore(STAKING_ADDRESS, key, value)
-            .map(|_| ())
-            .map_err(|e| PrecompileHalt::Other(format!("sstore failed: {e:?}").into()))
+            .evm
+            .state_mut()
+            .storage_slot(&STAKING_ADDRESS, key)
+            .map(|mut slot| slot.set(value))
+            .map_err(|e| PrecompileHalt::Other(format!("sstore failed: {e}").into()))
     }
 
     fn transfer(
@@ -137,15 +133,15 @@ impl<FEN: FoundryEvmNetwork> StakingStorage for CheatsCtxtStorage<'_, '_, '_, FE
             return Ok(());
         }
 
-        match self.ccx.ecx.journal_mut().transfer(from, to, amount) {
-            Ok(None) => Ok(()),
-            Ok(Some(e)) => Err(PrecompileHalt::Other(format!("transfer failed: {e:?}").into())),
-            Err(e) => Err(PrecompileHalt::Other(format!("transfer error: {e:?}").into())),
+        match self.ccx.evm.state_mut().transfer(&from, &to, &amount) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(PrecompileHalt::Other("transfer failed: insufficient balance".into())),
+            Err(e) => Err(PrecompileHalt::Other(format!("transfer error: {e}").into())),
         }
     }
 
     fn emit_log(&mut self, log: Log) -> core::result::Result<(), PrecompileHalt> {
-        self.ccx.ecx.journal_mut().log(log);
+        self.ccx.evm.log(log);
         Ok(())
     }
 }
@@ -201,10 +197,11 @@ fn apply_block_reward<FEN: FoundryEvmNetwork>(
 
     storage
         .ccx
-        .ecx
-        .journal_mut()
-        .balance_incr(STAKING_ADDRESS, reward)
-        .map_err(|e| fmt_err!("blockReward balance increment failed: {e:?}"))?;
+        .evm
+        .state_mut()
+        .account(&STAKING_ADDRESS)
+        .map_err(|e| fmt_err!("blockReward balance increment failed: {e}"))?
+        .add_balance(reward);
 
     Ok(Default::default())
 }

@@ -15,7 +15,7 @@ use clap::Parser;
 use core::fmt;
 use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
-use foundry_evm::hardfork::FoundryHardfork;
+use foundry_evm_hardforks::FoundryHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryReceiptEnvelope;
 use futures::FutureExt;
@@ -1001,15 +1001,15 @@ fn duration_from_secs_f64(s: &str) -> Result<Duration, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_evm::hardfork::EthereumHardfork;
+    use foundry_evm_hardforks::EthereumHardfork;
     use std::{env, net::Ipv4Addr};
     use tempo_hardfork::TempoHardfork;
 
     #[cfg(feature = "base")]
-    use foundry_evm::hardforks::BaseUpgrade;
+    use foundry_evm_hardforks::BaseUpgrade;
 
     #[cfg(feature = "optimism")]
-    use foundry_evm::hardfork::OpHardfork;
+    use foundry_evm_hardforks::OpHardfork;
 
     #[tokio::test]
     async fn final_dump_cancels_suspended_periodic_dump() {
@@ -1482,7 +1482,7 @@ mod tests {
         let args: NodeArgs =
             NodeArgs::parse_from(["anvil", "--network", "monad", "--hardfork", "MonadNine"]);
         let config = args.into_node_config().unwrap();
-        assert_eq!(config.hardfork, Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
+        assert_eq!(config.hardfork, Some(foundry_evm_hardforks::MonadHardfork::MonadNine.into()));
         assert!(config.networks.is_monad());
     }
 
@@ -1492,7 +1492,7 @@ mod tests {
         let args: NodeArgs = NodeArgs::parse_from(["anvil", "--network", "monad"]);
         let config = args.into_node_config().unwrap();
         assert_eq!(config.hardfork, None);
-        assert_eq!(config.get_hardfork(), foundry_evm::hardfork::MonadHardfork::default().into());
+        assert_eq!(config.get_hardfork(), foundry_evm_hardforks::MonadHardfork::default().into());
         assert!(config.networks.is_monad());
     }
 

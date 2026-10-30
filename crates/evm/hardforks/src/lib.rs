@@ -5,8 +5,8 @@
 
 use alloy_chains::Chain;
 use alloy_rpc_types::BlockNumberOrTag;
+use evm2::SpecId;
 use foundry_compilers::artifacts::EvmVersion;
-use revm::primitives::hardfork::SpecId;
 use serde::{Deserialize, Serialize};
 use std::{
     str::FromStr,
@@ -16,18 +16,18 @@ use std::{
 #[cfg(all(feature = "optimism", not(feature = "base")))]
 use alloy_chains::NamedChain;
 #[cfg(feature = "optimism")]
-use op_revm::OpSpecId;
+use op_evm2::OpSpecId;
 
 pub use alloy_hardforks::EthereumHardfork;
 pub use tempo_hardfork::TempoHardfork;
 
 #[cfg(feature = "base")]
-pub use base_common_evm::BaseSpecId;
-#[cfg(feature = "base")]
 pub use base_common_genesis::BaseUpgrade;
+#[cfg(feature = "base")]
+pub use base_evm2::BaseSpecId;
 
 #[cfg(feature = "monad")]
-pub use monad_revm::MonadHardfork;
+pub use monad_evm2::MonadHardfork;
 
 #[cfg(feature = "optimism")]
 pub use alloy_op_hardforks::OpHardfork;
@@ -470,7 +470,25 @@ impl FromEvmVersion for SpecId {
 impl ExecutionSpec for SpecId {
     // Returns the user-facing name for the active execution spec.
     fn evm_version_name(&self) -> String {
-        self.to_string()
+        let name = match self {
+            Self::FRONTIER => "Frontier",
+            Self::HOMESTEAD => "Homestead",
+            Self::TANGERINE => "Tangerine",
+            Self::SPURIOUS_DRAGON => "Spurious",
+            Self::BYZANTIUM => "Byzantium",
+            Self::PETERSBURG => "Petersburg",
+            Self::ISTANBUL => "Istanbul",
+            Self::BERLIN => "Berlin",
+            Self::LONDON => "London",
+            Self::MERGE => "Merge",
+            Self::SHANGHAI => "Shanghai",
+            Self::CANCUN => "Cancun",
+            Self::PRAGUE => "Prague",
+            Self::OSAKA => "Osaka",
+            Self::AMSTERDAM => "Amsterdam",
+            spec => return format!("{spec:?}"),
+        };
+        name.to_string()
     }
 
     // Parses an unnamespaced Ethereum hardfork name.
@@ -870,11 +888,11 @@ mod tests {
     fn test_tempo_hardfork_from_chain_and_timestamp() {
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(4217, u64::MAX),
-            Some(FoundryHardfork::Tempo(TempoHardfork::T12))
+            Some(FoundryHardfork::Tempo(TempoHardfork::T13))
         );
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(42431, u64::MAX),
-            Some(FoundryHardfork::Tempo(TempoHardfork::T12))
+            Some(FoundryHardfork::Tempo(TempoHardfork::T13))
         );
 
         assert_eq!(
@@ -951,56 +969,56 @@ mod tests {
 
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(
-                monad_revm::MONAD_MAINNET_CHAIN_ID,
+                monad_evm2::MONAD_MAINNET_CHAIN_ID,
                 1_763_648_999,
             ),
             Some(FoundryHardfork::Monad(MonadHardfork::MonadEight))
         );
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(
-                monad_revm::MONAD_MAINNET_CHAIN_ID,
+                monad_evm2::MONAD_MAINNET_CHAIN_ID,
                 1_773_930_600,
             ),
             Some(FoundryHardfork::Monad(MonadHardfork::MonadNine))
         );
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(
-                monad_revm::MONAD_MAINNET_CHAIN_ID,
+                monad_evm2::MONAD_MAINNET_CHAIN_ID,
                 mainnet_ten - 1,
             ),
             Some(FoundryHardfork::Monad(MonadHardfork::MonadNine))
         );
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(
-                monad_revm::MONAD_MAINNET_CHAIN_ID,
+                monad_evm2::MONAD_MAINNET_CHAIN_ID,
                 mainnet_ten,
             ),
             Some(FoundryHardfork::Monad(MonadHardfork::MonadTen))
         );
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(
-                monad_revm::MONAD_TESTNET_CHAIN_ID,
+                monad_evm2::MONAD_TESTNET_CHAIN_ID,
                 1_773_152_999,
             ),
             Some(FoundryHardfork::Monad(MonadHardfork::MonadEight))
         );
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(
-                monad_revm::MONAD_TESTNET_CHAIN_ID,
+                monad_evm2::MONAD_TESTNET_CHAIN_ID,
                 1_773_153_000,
             ),
             Some(FoundryHardfork::Monad(MonadHardfork::MonadNine))
         );
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(
-                monad_revm::MONAD_TESTNET_CHAIN_ID,
+                monad_evm2::MONAD_TESTNET_CHAIN_ID,
                 testnet_ten - 1,
             ),
             Some(FoundryHardfork::Monad(MonadHardfork::MonadNine))
         );
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(
-                monad_revm::MONAD_TESTNET_CHAIN_ID,
+                monad_evm2::MONAD_TESTNET_CHAIN_ID,
                 testnet_ten,
             ),
             Some(FoundryHardfork::Monad(MonadHardfork::MonadTen))
@@ -1035,6 +1053,25 @@ mod tests {
             );
             assert_eq!(evm_spec_id_from_str::<MonadHardfork>("tempo:T3"), None);
         }
+    }
+
+    #[test]
+    fn test_evm_version_names() {
+        for (input, spec, name) in [
+            ("spuriousDragon", SpecId::SPURIOUS_DRAGON, "Spurious"),
+            ("paris", SpecId::MERGE, "Merge"),
+            ("cancun", SpecId::CANCUN, "Cancun"),
+            ("ethereum:prague", SpecId::PRAGUE, "Prague"),
+            ("Amsterdam", SpecId::AMSTERDAM, "Amsterdam"),
+        ] {
+            assert_eq!(evm_spec_id_from_str::<SpecId>(input), Some(spec), "{input}");
+            assert_eq!(spec.evm_version_name(), name, "{input}");
+        }
+        assert_eq!(TempoHardfork::T3.evm_version_name(), "T3");
+        assert_eq!(
+            TempoHardfork::T3.reported_hardfork(),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T3))
+        );
     }
 
     #[test]
@@ -1177,6 +1214,18 @@ mod tests {
             assert_eq!(eth_spec_id_from_optimism_hardfork(OpHardfork::Karst), SpecId::OSAKA);
             assert_eq!(eth_spec_id_from_optimism_hardfork(OpHardfork::Lagoon), SpecId::OSAKA);
             assert_eq!(evm_spec_id::<OpSpecId>(EvmVersion::Osaka), OpSpecId::KARST);
+        }
+
+        #[test]
+        fn test_optimism_evm_version_names() {
+            for (input, spec, name) in [
+                ("prague", OpSpecId::ISTHMUS, "Isthmus"),
+                ("isthmus", OpSpecId::ISTHMUS, "Isthmus"),
+                ("optimism:jovian", OpSpecId::JOVIAN, "Jovian"),
+            ] {
+                assert_eq!(evm_spec_id_from_str::<OpSpecId>(input), Some(spec), "{input}");
+                assert_eq!(spec.evm_version_name(), name, "{input}");
+            }
         }
 
         #[test]

@@ -5,6 +5,7 @@
 //! soldb's own tools read.
 
 use alloy_primitives::{Address, B256, Bytes, hex, keccak256, map::HashSet};
+use evm2::interpreter::{InstrStop, opcode::OpCode};
 use eyre::{OptionExt, Result};
 use foundry_common::{
     ContractsByArtifact, Shell,
@@ -22,7 +23,6 @@ use foundry_evm_traces::{
         quantity,
     },
 };
-use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
 use serde_json::{Map, Value, json};
 use soldb_core::{
     ContractCreation, EvmWord, ExecutionCall, StepRecord, StepTable, TraceArtifacts,
@@ -873,8 +873,8 @@ fn instruction_context(
 }
 
 /// The error a failed step or call ended with.
-fn status_error(status: Option<InstructionResult>) -> Option<String> {
-    status.filter(|status| !status.is_ok()).map(|status| format!("{status:?}"))
+fn status_error(status: Option<InstrStop>) -> Option<String> {
+    status.filter(|status| !status.is_success()).map(|status| format!("{status:?}"))
 }
 
 #[cfg(test)]
@@ -902,7 +902,8 @@ mod tests {
             state_gas_reservoir: None,
             state_gas_spent: 0,
             storage_change: None,
-            status: (op == OpCode::STOP).then_some(InstructionResult::Stop),
+            storage_slot: None,
+            status: (op == OpCode::STOP).then_some(InstrStop::Stop),
             immediate_bytes: None,
             decoded: None,
         }
@@ -1116,7 +1117,7 @@ mod tests {
         set_up.nodes_mut()[0].trace.success = true;
         let (_, mut test, _) = executed_c();
         test.nodes_mut()[0].trace.gas_used = 30;
-        test.nodes_mut()[0].trace.status = Some(InstructionResult::Revert);
+        test.nodes_mut()[0].trace.status = Some(InstrStop::Revert);
         let breakpoints = Breakpoints::from_iter([('a', (Address::repeat_byte(0xc), 2))]);
         let (trace, hits) =
             transaction_trace(&mut [deployment, set_up, test], Vec::new(), &breakpoints).unwrap();

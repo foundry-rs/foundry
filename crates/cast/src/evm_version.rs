@@ -10,12 +10,12 @@ use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
-use foundry_compilers::artifacts::EvmVersion;
-use revm::bytecode::opcode::{
+use evm2::interpreter::op::{
     AND, CALL, CLZ, CODECOPY, CREATE, DUP6, EQ, GAS, INVALID, ISZERO, JUMPDEST, JUMPI, MCOPY,
     MSTORE, MUL, OR, POP, PUSH0, PUSH1, PUSH2, PUSH3, RETURN, RETURNDATASIZE, SLOTNUM, STATICCALL,
     STOP, SWAP1,
 };
+use foundry_compilers::artifacts::EvmVersion;
 
 /// Probed features in activation order, each paired with the EVM version that introduced it and
 /// runtime code that halts exceptionally unless the feature is active.
@@ -143,14 +143,21 @@ fn deploy_code(runtime: &[u8]) -> Vec<u8> {
 mod tests {
 
     use super::*;
-    use alloy_primitives::TxKind;
-    use revm::{
-        Context, ExecuteEvm, MainBuilder, MainContext, context::TxEnv, database::InMemoryDB,
-        primitives::hardfork::SpecId,
+    use alloy_primitives::Address;
+    use evm2::{SpecId, bytecode::Bytecode};
+    use foundry_evm::{
+        EvmEnv,
+        backend::Backend,
+        core::evm::{EthEvmNetwork, EvmFactoryFor, FoundryEvmFactory},
+        executors::ExecutorBuilder,
     };
+    use foundry_evm_networks::NetworkConfigs;
 
     #[test]
     fn detects_executed_spec() {
+        // The probe is creation code, but it only reads its own code, so running it as the
+        // runtime code of an account returns the same mask as the `eth_call` creation does.
+        let probe = Address::repeat_byte(0x42);
         for (spec, expected) in [
             (SpecId::LONDON, EvmVersion::Paris),
             (SpecId::MERGE, EvmVersion::Paris),
@@ -160,21 +167,28 @@ mod tests {
             (SpecId::OSAKA, EvmVersion::Osaka),
             (SpecId::AMSTERDAM, EvmVersion::Amsterdam),
         ] {
-            let result = Context::mainnet()
-                .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(spec))
-                .with_db(InMemoryDB::default())
-                .build_mainnet()
-                .transact(
-                    TxEnv::builder()
-                        .kind(TxKind::Create)
-                        .data(probe_code())
-                        .gas_limit(PROBE_CALL_GAS)
-                        .build()
-                        .unwrap(),
-                )
+            let env = EvmEnv::new(
+                spec,
+                EvmFactoryFor::<EthEvmNetwork>::default().version(spec, 1),
+                Default::default(),
+            );
+            let mut executor =
+                ExecutorBuilder::<EthEvmNetwork>::new().gas_limit(PROBE_CALL_GAS).build(
+                    env,
+                    Default::default(),
+                    Backend::spawn(None, env).unwrap(),
+                    NetworkConfigs::default(),
+                );
+            executor.set_code(probe, Bytecode::new_raw(probe_code())).unwrap();
+            let result = executor
+                .call_raw(Address::repeat_byte(0x11), probe, Bytes::new(), U256::ZERO)
                 .unwrap();
-            let output = result.result.into_output().unwrap();
-            assert_eq!(evm_version_from_mask(U256::from_be_slice(&output)), expected, "{spec:?}");
+            assert!(!result.reverted, "{spec:?}");
+            assert_eq!(
+                evm_version_from_mask(U256::from_be_slice(&result.result)),
+                expected,
+                "{spec:?}"
+            );
         }
     }
 

@@ -55,7 +55,6 @@ use foundry_evm::{
         constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
         evm::{FoundryEvmNetwork, TempoEvmNetwork},
     },
-    hardfork::TempoHardfork,
     traces::CallKind,
 };
 use foundry_wallets::{
@@ -66,6 +65,7 @@ use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use itertools::Itertools;
 use tempo_alloy::{
     TempoNetwork,
+    chainspec::hardfork::TempoHardfork,
     rpc::{TempoTransactionReceipt, TempoTransactionRequest},
 };
 use tempo_primitives::transaction::{Call, TEMPO_EXPIRING_NONCE_KEY, TempoTxEnvelope};
@@ -2029,9 +2029,12 @@ mod tests {
             fork_block_number: Some(block_number),
             ..Default::default()
         };
-        let backend =
-            Backend::<EthEvmNetwork>::spawn(evm_opts.get_fork(&Config::default(), 31337, None))
-                .unwrap();
+        let (env, _, _) = evm_opts.env_with_fork_context::<EthEvmNetwork>().await.unwrap();
+        let backend = Backend::<EthEvmNetwork>::spawn(
+            evm_opts.get_fork(&Config::default(), 31337, None),
+            env,
+        )
+        .unwrap();
         assert_eq!(backend.transaction_count(sender).await.unwrap(), 1);
 
         provider

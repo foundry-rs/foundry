@@ -1,9 +1,10 @@
 //! Support for validating transactions at certain stages
 
-use crate::eth::error::{BlockchainError, InvalidTransactionError};
-use alloy_evm::EvmEnv;
+use crate::eth::{
+    backend::{db::AccountInfo, env::EvmEnv},
+    error::{BlockchainError, InvalidTransactionError},
+};
 use anvil_core::eth::transaction::PendingTransaction;
-use revm::state::AccountInfo;
 
 /// A trait for validating transactions
 #[async_trait::async_trait]

@@ -1,10 +1,7 @@
 use crate::{Cheatcode, CheatcodesCore, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Address, Bytes, U256, map::HashMap};
+use evm2::bytecode::Bytecode;
 use foundry_evm_core::evm::FoundryEvmNetwork;
-use revm::{
-    bytecode::Bytecode,
-    context::{ContextTr, JournalTr},
-};
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, VecDeque},
@@ -247,13 +244,10 @@ fn make_acc_non_empty<FEN: FoundryEvmNetwork>(
     callee: &Address,
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
 ) -> Result {
-    let empty_bytecode = {
-        let acc = ccx.ecx.journal_mut().load_account(*callee)?;
-        acc.info.code.as_ref().is_none_or(Bytecode::is_empty)
-    };
-    if empty_bytecode {
-        let code = Bytecode::new_raw(Bytes::from_static(&[0u8]));
-        ccx.ecx.journal_mut().set_code(*callee, code);
+    let mut account = ccx.evm.state_mut().account(callee)?;
+    account.warm();
+    if account.load_code()?.is_empty() {
+        account.set_code_slow(Bytecode::new_raw(Bytes::from_static(&[0u8])));
     }
 
     Ok(Default::default())

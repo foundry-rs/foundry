@@ -362,7 +362,7 @@ impl SymbolicExecutor {
         let account = input
             .executor
             .backend
-            .basic_ref(input.target)
+            .basic(input.target)
             .map_err(|err| SymbolicError::Backend(err.to_string()))?
             .ok_or(SymbolicError::MissingAccount(input.target))?;
         let bytecode = account.code.ok_or(SymbolicError::MissingCode(input.target))?;

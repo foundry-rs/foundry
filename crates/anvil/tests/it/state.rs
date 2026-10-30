@@ -1,6 +1,7 @@
 //! general eth api tests
 
 use crate::abi::Greeter;
+use alloy_eips::eip7691::BLOB_GASPRICE_UPDATE_FRACTION_PECTRA as BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE;
 use alloy_network::{ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U256, Uint, address, b256, bytes, utils::Unit};
 use alloy_provider::Provider;
@@ -9,13 +10,13 @@ use alloy_rpc_types::{
     state::{AccountOverride, EvmOverrides, StateOverride},
 };
 use alloy_serde::WithOtherFields;
-use anvil::{NodeConfig, eth::backend::db::SerializableState, spawn};
-use foundry_evm::hardfork::EthereumHardfork;
-use foundry_test_utils::rpc::next_http_archive_rpc_url;
-use revm::{
-    context_interface::block::BlobExcessGasAndPrice,
-    primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+use anvil::{
+    NodeConfig,
+    eth::backend::{db::SerializableState, env::BlobExcessGasAndPrice},
+    spawn,
 };
+use foundry_evm_hardforks::EthereumHardfork;
+use foundry_test_utils::rpc::next_http_archive_rpc_url;
 use serde_json::{Value, json};
 use std::{str::FromStr, time::Duration};
 
@@ -1340,7 +1341,7 @@ async fn test_backward_compatibility_optional_fields_deserialization_v1_2() {
     );
     assert_eq!(
         block_env.blob_excess_gas_and_price,
-        Some(BlobExcessGasAndPrice::new(0, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE))
+        Some(BlobExcessGasAndPrice::new(0, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE as u64))
     );
 
     assert_eq!(state.best_block_number, Some(1));

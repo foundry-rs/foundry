@@ -6,6 +6,7 @@ use alloy_provider::Provider;
 use anvil::{EthereumHardfork, NodeConfig, spawn};
 use foundry_common::LIBRARY_DEPLOYER;
 use foundry_config::{CompilationRestrictions, SettingsOverrides, filter::GlobMatcher};
+use foundry_evm_networks::NetworkConfigs;
 use foundry_test_utils::{
     TestCommand,
     rpc::{self, next_etherscan_api_key, rpc_endpoints},
@@ -512,6 +513,7 @@ contract DecodeDelegatecallStorageTest is Test {
         Implementation implementation = new Implementation();
         Proxy proxy = new Proxy(address(implementation));
 
+        vm.chainId(42);
         vm.startStateDiffRecording();
         Implementation(address(proxy)).setValue(42);
         string memory diff = vm.getStateDiffJson();
@@ -1836,6 +1838,55 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
+// `vm.transact` executes a Celo CIP-64 transaction as its EIP-1559 body with native fees.
+#[forgetest]
+async fn fork_transact_celo_cip64(prj: _, cmd: _) {
+    let config = NodeConfig::test().with_chain_id(Some(42_220u64));
+    let (api, handle) = spawn(config.with_networks(NetworkConfigs::with_celo())).await;
+    let sender = handle.dev_wallets().next().unwrap().address();
+    let request = serde_json::json!({
+        "from": sender,
+        "to": "0x0000000000000000000000000000000000001234",
+        "value": "0x1",
+        "feeCurrency": "0x2222222222222222222222222222222222222222",
+    });
+    let hash = api.send_transaction(serde_json::from_value(request).unwrap()).await.unwrap();
+    let tx = handle.http_provider().get_transaction_by_hash(hash).await.unwrap().unwrap();
+    assert_eq!(serde_json::to_value(tx).unwrap()["type"], "0x7b");
+
+    prj.add_test(
+        "Cip64Transact.t.sol",
+        &r#"
+interface Vm {
+    function createSelectFork(string calldata url, bytes32 txHash) external returns (uint256);
+    function getNonce(address account) external view returns (uint64);
+    function transact(bytes32 txHash) external;
+}
+
+contract Cip64TransactTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testTransact() external {
+        vm.createSelectFork("<rpc>", <hash>);
+        require(address(0x1234).balance == 0, "recipient before");
+        vm.transact(<hash>);
+        require(address(0x1234).balance == 1, "recipient after");
+        require(vm.getNonce(<sender>) == 1, "sender nonce");
+    }
+}
+"#
+        .replace("<rpc>", &handle.http_endpoint())
+        .replace("<hash>", &hash.to_string())
+        .replace("<sender>", &sender.to_checksum(None)),
+    );
+
+    cmd.args(["test", "--match-test", "testTransact"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS] testTransact() ([GAS])
+...
+"#]]);
+}
+
 // A cheatcode fork whose alias auth differs from the `--fork-url` credentials must not reuse the
 // endpoint identity discovered for the same URL, since the credentials may reach another backend.
 #[forgetest]
@@ -2154,6 +2205,44 @@ contract TransientTest is Test {
     );
 
     cmd.args(["test", "-vvvv", "--isolate", "--evm-version", "cancun"]).assert_success();
+}
+
+// An isolated call restarts the call-depth limit at its nested transaction.
+#[forgetest_init]
+fn can_test_call_depth_limit_with_isolation(prj: _, cmd: _) {
+    prj.add_test(
+        "CallDepth.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Descender {
+    function descend(uint256 remaining) external returns (uint256) {
+        if (remaining == 0) return 0;
+        (bool ok, bytes memory out) = address(this).call(abi.encodeCall(this.descend, (remaining - 1)));
+        return ok ? abi.decode(out, (uint256)) + 1 : 0;
+    }
+}
+
+contract CallDepthTest is Test {
+    /// forge-config: default.isolate = true
+    function testIsolatedCallDepth() public {
+        assertEq(new Descender().descend(1025), 1024);
+    }
+
+    /// forge-config: default.isolate = false
+    function testCallDepth() public {
+        assertEq(new Descender().descend(1025), 1023);
+    }
+}
+   "#,
+    );
+    // Leave enough gas after the 63/64 rule at every depth.
+    prj.update_config(|config| {
+        config.gas_limit = (1u64 << 60).into();
+        config.block_gas_limit = Some((1u64 << 60).into());
+    });
+
+    cmd.args(["test", "--evm-version", "cancun"]).assert_success();
 }
 
 #[forgetest_init]
@@ -7873,5 +7962,42 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
+"#]]);
+}
+
+// Rolling the active fork keeps the state of a non-default test sender, which is not persistent
+// by default, as the caller of the test.
+#[forgetest_init]
+fn fork_roll_keeps_sender_state(prj: _, cmd: _) {
+    let endpoint = rpc::next_http_archive_rpc_url();
+    prj.add_test(
+        "ForkRollSender.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForkRollSenderTest is Test {
+    function test_rollKeepsSenderBalance() public {
+        vm.createSelectFork("<url>", 21_000_000);
+        vm.deal(msg.sender, 123 ether);
+        vm.rollFork(21_000_001);
+        assertEq(msg.sender.balance, 123 ether);
+    }
+}
+   "#
+        .replace("<url>", &endpoint),
+    );
+
+    cmd.args([
+        "test",
+        "--mt",
+        "test_rollKeepsSenderBalance",
+        "--sender",
+        "0x000000000000000000000000000000000000Ab0B",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+[PASS] test_rollKeepsSenderBalance() ([GAS])
+...
 "#]]);
 }

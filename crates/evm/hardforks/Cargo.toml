@@ -18,17 +18,19 @@ alloy-chains.workspace = true
 alloy-hardforks = { workspace = true, features = ["serde"] }
 alloy-op-hardforks = { workspace = true, features = ["serde"], optional = true }
 alloy-rpc-types.workspace = true
-monad-revm = { workspace = true, optional = true }
 base-common-genesis = { workspace = true, optional = true }
-base-common-evm = { workspace = true, optional = true }
-op-revm = { workspace = true, optional = true }
-revm.workspace = true
-serde = { workspace = true, features = ["derive"] }
-tempo-hardfork.workspace = true
 foundry-compilers.workspace = true
+serde = { workspace = true, features = ["derive"] }
+
+# evm2
+evm2.workspace = true
+tempo-hardfork.workspace = true
+op-evm2 = { workspace = true, optional = true }
+base-evm2 = { workspace = true, optional = true }
+monad-evm2 = { workspace = true, optional = true }
 
 [features]
 default = ["optimism"]
-monad = ["dep:monad-revm"]
-base = ["dep:base-common-genesis", "dep:base-common-evm"]
-optimism = ["dep:alloy-op-hardforks", "dep:op-revm"]
+monad = ["dep:monad-evm2"]
+base = ["dep:base-common-genesis", "dep:base-evm2"]
+optimism = ["dep:alloy-op-hardforks", "dep:op-evm2"]

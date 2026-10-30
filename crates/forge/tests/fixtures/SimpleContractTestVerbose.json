@@ -105,6 +105,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -123,6 +124,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -141,6 +143,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -159,6 +162,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -177,6 +181,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -195,6 +200,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -213,6 +219,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -231,6 +238,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -249,6 +257,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -267,6 +276,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -285,6 +295,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -303,6 +314,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -321,6 +333,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -339,6 +352,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -357,6 +371,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -375,6 +390,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -393,6 +409,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -411,6 +428,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -429,6 +447,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -447,6 +466,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -465,6 +485,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -483,6 +504,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -501,6 +523,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -519,6 +542,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -537,6 +561,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -555,6 +580,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -573,6 +599,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -591,6 +618,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -609,6 +637,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -627,6 +656,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -645,6 +675,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -663,6 +694,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -681,6 +713,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -699,6 +732,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -717,6 +751,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -735,6 +770,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -753,6 +789,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -771,6 +808,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -789,6 +827,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -807,6 +846,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -825,6 +865,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -843,6 +884,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -861,6 +903,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -879,6 +922,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -897,6 +941,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -915,6 +960,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -933,6 +979,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -951,6 +998,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -969,6 +1017,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -987,6 +1036,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1005,6 +1055,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1023,6 +1074,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1041,6 +1093,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1059,6 +1112,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1077,6 +1131,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1095,6 +1150,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1113,6 +1169,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1131,6 +1188,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1149,6 +1207,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1167,6 +1226,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1185,6 +1245,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1203,6 +1264,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1221,6 +1283,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1235,10 +1298,11 @@
                         "gas_remaining": "{...}",
                         "gas_refund_counter": 0,
                         "gas_used": "{...}",
-                        "gas_cost": 1056944078,
+                        "gas_cost": 32022,
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1257,6 +1321,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1275,6 +1340,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1293,6 +1359,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1311,6 +1378,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1329,6 +1397,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1347,6 +1416,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1365,6 +1435,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1383,6 +1454,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1401,6 +1473,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1419,6 +1492,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1437,6 +1511,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1455,6 +1530,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1473,6 +1549,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1491,6 +1568,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1509,6 +1587,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1527,6 +1606,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1545,6 +1625,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1563,6 +1644,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1581,6 +1663,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1599,6 +1682,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1617,6 +1701,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1635,6 +1720,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1653,6 +1739,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1671,6 +1758,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1689,6 +1777,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1707,6 +1796,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1725,6 +1815,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1743,6 +1834,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1761,6 +1853,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1779,6 +1872,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1797,6 +1891,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1815,6 +1910,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1833,6 +1929,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1851,6 +1948,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1869,6 +1967,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1887,6 +1986,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1905,6 +2005,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1923,6 +2024,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1941,6 +2043,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1959,6 +2062,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1977,6 +2081,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -1995,6 +2100,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2013,6 +2119,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2031,6 +2138,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2049,6 +2157,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2067,6 +2176,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2085,6 +2195,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2103,6 +2214,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2121,6 +2233,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2139,6 +2252,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2157,6 +2271,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2175,6 +2290,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2193,6 +2309,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2211,6 +2328,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2229,6 +2347,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2247,6 +2366,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2265,6 +2385,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2283,6 +2404,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2301,6 +2423,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2319,6 +2442,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2337,6 +2461,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2355,6 +2480,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2373,6 +2499,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2391,6 +2518,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2409,6 +2537,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2427,6 +2556,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2445,6 +2575,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2463,6 +2594,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2481,6 +2613,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2499,6 +2632,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2517,6 +2651,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2535,6 +2670,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2553,6 +2689,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2571,6 +2708,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2589,6 +2727,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2607,6 +2746,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2625,6 +2765,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2643,6 +2784,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2661,6 +2803,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2679,6 +2822,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2697,6 +2841,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2715,6 +2860,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2733,6 +2879,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2751,6 +2898,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2769,6 +2917,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2787,6 +2936,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2805,6 +2955,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2823,6 +2974,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2841,6 +2993,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2859,6 +3012,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2877,6 +3031,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2895,6 +3050,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2913,6 +3069,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2931,6 +3088,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2949,6 +3107,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2967,6 +3126,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -2985,6 +3145,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3003,6 +3164,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3021,6 +3183,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3039,6 +3202,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3057,6 +3221,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3075,6 +3240,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3093,6 +3259,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3111,6 +3278,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3129,6 +3297,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3147,6 +3316,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3165,6 +3335,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3183,6 +3354,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3201,6 +3373,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3219,6 +3392,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3237,6 +3411,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3255,6 +3430,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3273,6 +3449,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3291,6 +3468,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3309,6 +3487,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3327,6 +3506,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3345,6 +3525,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3363,6 +3544,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3381,6 +3563,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3399,6 +3582,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3417,6 +3601,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3435,6 +3620,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3453,6 +3639,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3471,6 +3658,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3489,6 +3677,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3507,6 +3696,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3525,6 +3715,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3543,6 +3734,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3561,6 +3753,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3579,6 +3772,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3597,6 +3791,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3615,6 +3810,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3633,6 +3829,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3651,6 +3848,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3669,6 +3867,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3687,6 +3886,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3705,6 +3905,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3723,6 +3924,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3741,6 +3943,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3759,6 +3962,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3777,6 +3981,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3795,6 +4000,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3813,6 +4019,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3831,6 +4038,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3849,6 +4057,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3867,6 +4076,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3885,6 +4095,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3903,6 +4114,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3921,6 +4133,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3939,6 +4152,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3957,6 +4171,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3975,6 +4190,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -3993,6 +4209,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4011,6 +4228,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4029,6 +4247,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4047,6 +4266,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4065,6 +4285,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4083,6 +4304,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4101,6 +4323,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4119,6 +4342,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4137,6 +4361,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4155,6 +4380,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4173,6 +4399,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4191,6 +4418,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4209,6 +4437,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4227,6 +4456,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4245,6 +4475,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4263,6 +4494,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4281,6 +4513,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4299,6 +4532,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4317,6 +4551,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4335,6 +4570,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4353,6 +4589,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4371,6 +4608,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4389,6 +4627,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4407,6 +4646,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4425,6 +4665,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4443,6 +4684,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4461,6 +4703,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4479,6 +4722,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4497,6 +4741,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4515,6 +4760,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4533,6 +4779,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4551,6 +4798,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4569,6 +4817,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4587,6 +4836,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4605,6 +4855,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4623,6 +4874,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4641,6 +4893,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4659,6 +4912,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4677,6 +4931,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4695,6 +4950,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4713,6 +4969,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4731,6 +4988,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4749,6 +5007,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4767,6 +5026,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4785,6 +5045,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4803,6 +5064,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4821,6 +5083,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4839,6 +5102,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4857,6 +5121,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4875,6 +5140,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4893,6 +5159,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4911,6 +5178,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4929,6 +5197,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4947,6 +5216,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4965,6 +5235,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -4983,6 +5254,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5001,6 +5273,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5019,6 +5292,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5037,6 +5311,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5055,6 +5330,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5073,6 +5349,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5091,6 +5368,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5109,6 +5387,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5127,6 +5406,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5145,6 +5425,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5163,6 +5444,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5181,6 +5463,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5199,6 +5482,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5217,6 +5501,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5235,6 +5520,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5253,6 +5539,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5271,6 +5558,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5289,6 +5577,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5307,6 +5596,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5325,6 +5615,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5343,6 +5634,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5361,6 +5653,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5379,6 +5672,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5397,6 +5691,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5415,6 +5710,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5433,6 +5729,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5451,6 +5748,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5469,6 +5767,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5487,6 +5786,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5505,6 +5805,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5523,6 +5824,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5541,6 +5843,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5559,6 +5862,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5577,6 +5881,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5595,6 +5900,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5613,6 +5919,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5631,6 +5938,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5649,6 +5957,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5667,6 +5976,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5685,6 +5995,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5703,6 +6014,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5721,6 +6033,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5739,6 +6052,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5757,6 +6071,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5775,6 +6090,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5793,6 +6109,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5811,6 +6128,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5829,6 +6147,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5847,6 +6166,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5865,6 +6185,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5883,6 +6204,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5901,6 +6223,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5919,6 +6242,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5937,6 +6261,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5955,6 +6280,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5973,6 +6299,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -5991,6 +6318,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -6009,6 +6337,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -6027,6 +6356,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -6045,6 +6375,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -6063,6 +6394,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -6081,6 +6413,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -6099,6 +6432,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -6117,6 +6451,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -6135,6 +6470,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -6153,6 +6489,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -6171,6 +6508,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -6189,6 +6527,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -6207,6 +6546,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -6225,6 +6565,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -6243,6 +6584,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -6261,6 +6603,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -6279,6 +6622,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -6297,6 +6641,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -6315,6 +6660,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -6333,12 +6679,32 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": "Stop",
                         "immediate_bytes": null,
                         "decoded": null
                       }
                     ],
-                    "step_deltas": [],
+                    "step_deltas": [
+                      {
+                        "step": 63,
+                        "memory": null,
+                        "store": null,
+                        "gas_remaining_after": 1073571402
+                      },
+                      {
+                        "step": 194,
+                        "memory": null,
+                        "store": null,
+                        "gas_remaining_after": 1073527076
+                      },
+                      {
+                        "step": 331,
+                        "memory": null,
+                        "store": null,
+                        "gas_remaining_after": 1073524055
+                      }
+                    ],
                     "decoded": null
                   },
                   "logs": [],
@@ -7432,6 +7798,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7450,6 +7817,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7468,6 +7836,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7486,6 +7855,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7504,6 +7874,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7522,6 +7893,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7540,6 +7912,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7558,6 +7931,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7576,6 +7950,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7594,6 +7969,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7612,6 +7988,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7630,6 +8007,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7648,6 +8026,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7666,6 +8045,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7684,6 +8064,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7702,6 +8083,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7720,6 +8102,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": "Return",
                         "immediate_bytes": null,
                         "decoded": null
@@ -7820,6 +8203,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7838,6 +8222,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7856,6 +8241,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7874,6 +8260,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7892,6 +8279,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7910,6 +8298,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7928,6 +8317,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7946,6 +8336,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7964,6 +8355,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -7982,6 +8374,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8000,6 +8393,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8018,6 +8412,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8036,6 +8431,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8054,6 +8450,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8072,6 +8469,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8090,6 +8488,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8108,6 +8507,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8126,6 +8526,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8144,6 +8545,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8162,6 +8564,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8180,6 +8583,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8198,6 +8602,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8216,6 +8621,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8234,6 +8640,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8252,6 +8659,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8270,6 +8678,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8288,6 +8697,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8306,6 +8716,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8324,6 +8735,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8342,6 +8754,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8360,6 +8773,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8378,6 +8792,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8396,6 +8811,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8414,6 +8830,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8432,6 +8849,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8450,6 +8868,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8468,6 +8887,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8486,6 +8906,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8504,6 +8925,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8522,6 +8944,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8540,6 +8963,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8558,6 +8982,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8576,6 +9001,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8594,6 +9020,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8612,6 +9039,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8630,6 +9058,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8648,6 +9077,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8666,6 +9096,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8684,6 +9115,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8702,6 +9134,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8720,6 +9153,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8738,6 +9172,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8756,6 +9191,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8774,6 +9210,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8792,6 +9229,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8810,6 +9248,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8828,6 +9267,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8846,6 +9286,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8864,6 +9305,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8882,6 +9324,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8900,6 +9343,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8918,6 +9362,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8936,6 +9381,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8954,6 +9400,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8972,6 +9419,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -8990,6 +9438,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9008,6 +9457,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9026,6 +9476,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9044,6 +9495,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9062,6 +9514,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9080,6 +9533,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9098,6 +9552,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9116,6 +9571,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9134,6 +9590,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9152,6 +9609,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9170,6 +9628,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9188,6 +9647,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9206,6 +9666,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9224,6 +9685,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9242,6 +9704,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9260,6 +9723,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9278,6 +9742,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9296,6 +9761,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9314,6 +9780,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9332,6 +9799,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9350,6 +9818,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9368,6 +9837,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9386,6 +9856,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9404,6 +9875,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9422,6 +9894,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9440,6 +9913,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9458,6 +9932,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9476,6 +9951,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9494,6 +9970,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9512,6 +9989,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9530,6 +10008,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9548,6 +10027,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9566,6 +10046,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9584,6 +10065,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9602,6 +10084,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9620,6 +10103,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9638,6 +10122,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9656,6 +10141,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9674,6 +10160,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9692,6 +10179,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9710,6 +10198,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9728,6 +10217,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9746,6 +10236,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9764,6 +10255,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9782,6 +10274,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9800,6 +10293,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9818,6 +10312,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9836,6 +10331,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9854,6 +10350,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9872,6 +10369,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9890,6 +10388,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9908,6 +10407,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9931,6 +10431,10 @@
                           "had_value": "0x0",
                           "reason": "SSTORE"
                         },
+                        "storage_slot": [
+                          "0x0",
+                          "0x64"
+                        ],
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9949,6 +10453,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9967,6 +10472,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -9985,6 +10491,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -10003,6 +10510,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
@@ -10021,6 +10529,7 @@
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
+                        "storage_slot": null,
                         "status": "Stop",
                         "immediate_bytes": null,
                         "decoded": null

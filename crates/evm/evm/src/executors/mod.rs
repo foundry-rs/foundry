@@ -6,22 +6,26 @@ use crate::inspectors::{
     Cheatcodes, CmpOperands, EdgeCoverage, EdgeIndexMap, InspectorData, InspectorStack,
     cheatcodes::BroadcastableTransactions,
 };
+use alloy_consensus::transaction::Recovered;
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
-use alloy_eips::eip4788::{BEACON_ROOTS_ADDRESS, SYSTEM_ADDRESS};
-use alloy_evm::Evm;
+use alloy_eips::{Typed2718, eip4788::BEACON_ROOTS_ADDRESS, eip7702::SignedAuthorization};
 use alloy_json_abi::Function;
+use alloy_network::TransactionBuilder;
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, keccak256,
     map::{AddressHashMap, HashMap},
 };
 use alloy_sol_types::{SolCall, sol};
-use eyre::WrapErr;
+use evm2::{
+    Evm, TxResultWithState,
+    bytecode::Bytecode,
+    evm::{AccountInfo, PendingState, SystemTx},
+    interpreter::InstrStop,
+};
+use foundry_cheatcodes::CheatcodesBackend;
+use foundry_common::FoundryTransactionBuilder;
 use foundry_evm_core::{
-    EvmEnv, FoundryBlock, FoundryChain, FoundryTransaction,
-    backend::{
-        Backend, BackendError, BackendResult, CowBackend, DatabaseError, DatabaseExt,
-        GLOBAL_FAIL_SLOT,
-    },
+    backend::{Backend, BackendResult, CowBackend, GLOBAL_FAIL_SLOT, handler_error},
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
         DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
@@ -32,27 +36,15 @@ use foundry_evm_core::{
         history_window_start,
     },
     evm::{
-        ChainFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFactory, FoundryEvmNetwork,
-        IntoInstructionResult, SpecFor, TxEnvFor,
+        ChainFor, EthEvmNetwork, EvmEnv, EvmEnvFor, EvmFactoryFor, FoundryEvmExt,
+        FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, SpecFor, TransactionRequestFor, TxFor,
+        TxResultFor, evm_env, release_inspector,
     },
-    utils::StateChangeset,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::ObservedCall;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
-use revm::{
-    bytecode::Bytecode,
-    context::{Block, Cfg, ContextTr, Transaction},
-    context_interface::{
-        cfg::gas_params::Eip2780TxInfo,
-        result::{ExecutionResult, Output, ResultAndState},
-        transaction::SignedAuthorization,
-    },
-    database::{Database, DatabaseCommit, DatabaseRef},
-    interpreter::{InstructionResult, gas::InitialAndFloorGas},
-    primitives::hardfork::SpecId,
-};
 use sancov::SancovGuard;
 use std::{
     borrow::Cow,
@@ -64,17 +56,7 @@ use std::{
 };
 
 #[cfg(feature = "monad")]
-use alloy_monad_evm::MonadEvmFactory;
-#[cfg(feature = "monad")]
-use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
-#[cfg(feature = "monad")]
-use foundry_evm_core::evm::{
-    MonadEvmNetwork, refresh_chain_journal, try_transact_monad_system_replay,
-};
-#[cfg(feature = "monad")]
-use monad_revm::{MonadChainContext, MonadHardfork};
-#[cfg(feature = "monad")]
-use revm::context::TxEnv;
+use foundry_evm_core::evm::{BlockContext, MonadEvmNetwork};
 
 mod builder;
 pub use builder::ExecutorBuilder;
@@ -106,6 +88,9 @@ pub use trace::{TracingExecutor, TracingFork};
 
 const DURATION_BETWEEN_METRICS_REPORT: Duration = Duration::from_secs(5);
 
+/// EIP-8130 transaction type.
+const EIP8130_TX_TYPE: u8 = 0x79;
+
 sol! {
     interface ITest {
         function setUp() external;
@@ -118,7 +103,7 @@ sol! {
 
 /// EVM executor.
 ///
-/// The executor can be configured with various `revm::Inspector`s, like `Cheatcodes`.
+/// The executor can be configured with various evm2 inspectors, like `Cheatcodes`.
 ///
 /// There are multiple ways of interacting the EVM:
 /// - `call`: executes a transaction, but does not persist any state changes; similar to `eth_call`,
@@ -127,173 +112,26 @@ sol! {
 /// - `deploy`: a special case of `transact`, specialized for persisting the state of a contract
 ///   deployment
 /// - `setup`: a special case of `transact`, used to set up the environment for a test
+///
+/// Every execution builds an EVM from the backend, installs the inspector stack, which holds the
+/// backend for the run, and then parks the EVM into the backend to commit or drops it to discard.
 #[derive(Clone, Debug)]
 pub struct Executor<FEN: FoundryEvmNetwork> {
-    /// The underlying `revm::Database` that contains the EVM storage.
+    /// The backend holding the accepted state.
     ///
     /// Wrapped in `Arc` for efficient cloning during parallel fuzzing. Use [`Arc::make_mut`]
     /// for copy-on-write semantics when mutation is needed.
-    // Note: We do not store an EVM here, since we are really
-    // only interested in the database. REVM's `EVM` is a thin
-    // wrapper around spawning a new EVM on every call anyway,
-    // so the performance difference should be negligible.
     backend: Arc<Backend<FEN>>,
-    /// The EVM environment (block and cfg).
+    /// The EVM environment (spec, runtime version and block).
     evm_env: EvmEnvFor<FEN>,
-    /// The transaction environment.
-    tx_env: TxEnvFor<FEN>,
-    /// The Revm inspector stack.
+    /// The transaction defaults of the executor's calls, such as the sender and gas price.
+    tx: TransactionRequestFor<FEN>,
+    /// The inspector stack.
     inspector: InspectorStack<FEN>,
     /// The gas limit for calls and deployments.
     gas_limit: u64,
     /// Whether `failed()` should be called on the test contract to determine if the test failed.
     legacy_assertions: bool,
-}
-
-#[cfg(feature = "monad")]
-impl Executor<MonadEvmNetwork> {
-    /// Tries to execute and commit a canonical system transaction during replay.
-    #[instrument(name = "transact_system_replay", level = "debug", skip_all)]
-    pub fn try_transact_system_replay_with_env_and_context(
-        &mut self,
-        mut evm_env: EvmEnv<MonadHardfork>,
-        mut tx_env: TxEnv,
-        chain_context: MonadChainContext,
-    ) -> eyre::Result<Option<RawCallResult<MonadEvmNetwork>>> {
-        let mut stack = self.inspector().clone();
-        let mut backend = CowBackend::new_borrowed(self.backend());
-        let Some(result) = backend.try_inspect_system_replay_with_context(
-            &mut evm_env,
-            &mut tx_env,
-            chain_context,
-            &mut stack,
-        )?
-        else {
-            return Ok(None);
-        };
-        let has_state_snapshot_failure = backend.has_state_snapshot_failure();
-        let fork_block_number = backend.active_fork_block_number();
-        let mut result = convert_executed_result(
-            evm_env,
-            tx_env,
-            stack,
-            result,
-            &backend,
-            has_state_snapshot_failure,
-            fork_block_number,
-        )?;
-        self.commit(&mut result);
-        Ok(Some(result))
-    }
-
-    /// Replays Monad transactions and executes the target against one EVM instance.
-    #[instrument(name = "transact_monad_block_replay", level = "debug", skip_all)]
-    pub fn transact_with_monad_block_replay(
-        &mut self,
-        evm_env: EvmEnv<MonadHardfork>,
-        target_tx_env: TxEnv,
-        target_chain_context: MonadChainContext,
-        replay: Vec<(B256, TxEnv, MonadChainContext)>,
-        replay_system_txes: bool,
-    ) -> eyre::Result<Option<(RawCallResult<MonadEvmNetwork>, bool)>> {
-        let block_number = evm_env.block_env.number();
-        let mut stack = self.inspector().clone();
-        let sancov_edges = stack.inner.sancov_edges;
-        let sancov_trace_cmp = stack.inner.sancov_trace_cmp;
-        let sancov_active = sancov_edges || sancov_trace_cmp;
-        let backend = self.backend_mut();
-
-        let (result, evm_env, tx_env, used_system_replay) = {
-            let caller = target_tx_env.caller();
-            backend.set_caller(caller).set_spec_id(evm_env.cfg_env.spec);
-            let target_contract = match target_tx_env.kind() {
-                TxKind::Call(to) => to,
-                TxKind::Create => caller.create(target_tx_env.nonce()),
-            };
-            backend.set_test_contract(target_contract);
-            let mut evm = MonadEvmFactory::default()
-                .create_foundry_evm_with_inspector(backend, evm_env, &mut stack);
-            *evm.chain_mut() = target_chain_context.clone();
-            evm.disable_inspector();
-            for (tx_hash, tx_env, chain_context) in replay {
-                evm.ctx_mut().chain = chain_context;
-                refresh_chain_journal(evm.ctx_mut());
-                evm.ctx_mut().cfg.disable_balance_check = true;
-                let is_system = is_known_system_sender(tx_env.caller())
-                    || tx_env.tx_type() == SYSTEM_TRANSACTION_TYPE;
-                let result = if is_system {
-                    try_transact_monad_system_replay(&mut evm, &tx_env).wrap_err_with(|| {
-                        format!(
-                            "Failed to replay system transaction: {tx_hash:?} in block {block_number}"
-                        )
-                    })?
-                } else {
-                    None
-                };
-                if let Some(result) = result {
-                    evm.db_mut().commit(result.state);
-                } else if !is_system || replay_system_txes {
-                    let created = match tx_env.kind() {
-                        TxKind::Create => Some(tx_env.caller().create(tx_env.nonce())),
-                        TxKind::Call(_) => None,
-                    };
-                    let result = evm.transact(tx_env).wrap_err_with(|| {
-                        format!(
-                            "Failed to execute transaction: {tx_hash:?} in block {block_number}"
-                        )
-                    })?;
-                    if result.result.is_success()
-                        && let Some(address) = created
-                    {
-                        evm.db_mut().add_persistent_account(address);
-                    }
-                    evm.db_mut().commit(result.state);
-                }
-            }
-
-            evm.enable_inspector();
-            evm.ctx_mut().chain = target_chain_context;
-            refresh_chain_journal(evm.ctx_mut());
-            let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
-            let target_is_system = is_known_system_sender(target_tx_env.caller())
-                || target_tx_env.tx_type() == SYSTEM_TRANSACTION_TYPE;
-            let system_result = if target_is_system {
-                try_transact_monad_system_replay(&mut evm, &target_tx_env)?
-            } else {
-                None
-            };
-            let (result, used_system_replay) = if let Some(result) = system_result {
-                (result, true)
-            } else if target_is_system && !replay_system_txes {
-                return Ok(None);
-            } else {
-                (evm.transact(target_tx_env.clone()).wrap_err("EVM error")?, false)
-            };
-            let tx_env = if used_system_replay { target_tx_env } else { evm.tx().clone() };
-            let evm_env = evm.finish().1;
-            (result, evm_env, tx_env, used_system_replay)
-        };
-
-        let has_state_snapshot_failure = backend.has_state_snapshot_failure();
-        let fork_block_number = backend.active_fork_block_number();
-        let mut result = convert_executed_result(
-            evm_env,
-            tx_env,
-            stack,
-            result,
-            &*backend,
-            has_state_snapshot_failure,
-            fork_block_number,
-        )?;
-        if sancov_edges {
-            SancovGuard::append_edges_into(&mut result);
-        }
-        if sancov_trace_cmp {
-            SancovGuard::drain_cmp_into(&mut result);
-        }
-        self.commit(&mut result);
-        Ok(Some((result, used_system_replay)))
-    }
 }
 
 impl<FEN: FoundryEvmNetwork> Executor<FEN> {
@@ -302,76 +140,58 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     pub fn new(
         mut backend: Backend<FEN>,
         evm_env: EvmEnvFor<FEN>,
-        tx_env: TxEnvFor<FEN>,
-        mut inspector: InspectorStack<FEN>,
+        tx: TransactionRequestFor<FEN>,
+        inspector: InspectorStack<FEN>,
         networks: NetworkConfigs,
         gas_limit: u64,
         legacy_assertions: bool,
     ) -> Self {
-        inspector.networks(networks);
         backend.set_networks(networks);
         let extra_cheatcode_addresses = inspector.extra_cheatcode_addresses();
         backend.extend_persistent_accounts(extra_cheatcode_addresses.iter().copied());
 
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // do not fail.
+        // The code hash value does not matter, as long as it's not zero or `KECCAK_EMPTY`.
+        let stub = Bytecode::new_raw(Bytes::from_static(&[0]));
         backend.insert_account_info(
             CHEATCODE_ADDRESS,
-            revm::state::AccountInfo {
-                code: Some(Bytecode::new_raw(Bytes::from_static(&[0]))),
-                // Also set the code hash manually so that it's not computed later.
-                // The code hash value does not matter, as long as it's not zero or `KECCAK_EMPTY`.
-                code_hash: CHEATCODE_CONTRACT_HASH,
-                ..Default::default()
-            },
+            AccountInfo::new(U256::ZERO, 0, CHEATCODE_CONTRACT_HASH, Some(stub.clone())),
         );
-
         for &address in extra_cheatcode_addresses {
             backend.insert_account_info(
                 address,
-                revm::state::AccountInfo {
-                    code: Some(Bytecode::new_raw(Bytes::from_static(&[0]))),
-                    code_hash: keccak256(address),
-                    ..Default::default()
-                },
+                AccountInfo::new(U256::ZERO, 0, keccak256(address), Some(stub.clone())),
             );
         }
 
-        if !backend.is_in_forking_mode() && evm_env.cfg_env.spec.into() >= SpecId::PRAGUE {
-            let mut account =
-                backend.basic_ref(HISTORY_STORAGE_ADDRESS).unwrap_or_default().unwrap_or_default();
-            account.code_hash = keccak256(&HISTORY_STORAGE_CODE);
-            account.code = Some(Bytecode::new_raw(HISTORY_STORAGE_CODE.clone()));
-            backend.insert_account_info(HISTORY_STORAGE_ADDRESS, account);
+        // Foundry enables `EIP7702` on every spec, so the EIP-2935 predeploy keys off the spec.
+        if !backend.is_forked_mode() && evm_env.spec.into() >= evm2::SpecId::PRAGUE {
+            let account = backend.basic(HISTORY_STORAGE_ADDRESS).ok().flatten().unwrap_or_default();
+            backend.insert_account_info(
+                HISTORY_STORAGE_ADDRESS,
+                account.with_code(Bytecode::new_raw(HISTORY_STORAGE_CODE.clone())),
+            );
 
-            let current_block = evm_env.block_env.number();
+            let current_block = evm_env.block.number;
             let mut block_number = history_window_start(current_block);
             while block_number < current_block {
-                let block_hash =
-                    backend.block_hash(block_number.saturating_to()).unwrap_or_default();
+                let block_hash = backend.block_hash(block_number).unwrap_or_default();
                 let slot = history_storage_slot(block_number);
                 let value = history_storage_value(block_hash);
-                let _ = backend.insert_account_storage(HISTORY_STORAGE_ADDRESS, slot, value);
+                backend.insert_account_storage(HISTORY_STORAGE_ADDRESS, slot, value);
                 block_number += U256::ONE;
             }
         }
 
-        Self {
-            backend: Arc::new(backend),
-            evm_env,
-            tx_env,
-            inspector,
-            gas_limit,
-            legacy_assertions,
-        }
+        Self { backend: Arc::new(backend), evm_env, tx, inspector, gas_limit, legacy_assertions }
     }
 
     fn clone_with_backend(&self, backend: Backend<FEN>) -> Self {
-        let evm_env = self.evm_env.clone();
         Self {
             backend: Arc::new(backend),
-            evm_env,
-            tx_env: self.tx_env.clone(),
+            evm_env: self.evm_env,
+            tx: self.tx.clone(),
             inspector: self.inspector().clone(),
             gas_limit: self.gas_limit,
             legacy_assertions: self.legacy_assertions,
@@ -391,31 +211,24 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         Arc::make_mut(&mut self.backend)
     }
 
-    fn chain_context_for_synthetic_transaction(
-        &self,
-        tx: &TxEnvFor<FEN>,
-    ) -> eyre::Result<ChainFor<FEN>> {
-        self.backend().chain_context_for_synthetic_transaction(tx)
-    }
-
-    /// Returns a reference to the EVM environment (block and cfg).
+    /// Returns a reference to the EVM environment.
     pub const fn evm_env(&self) -> &EvmEnvFor<FEN> {
         &self.evm_env
     }
 
-    /// Returns a mutable reference to the EVM environment (block and cfg).
+    /// Returns a mutable reference to the EVM environment.
     pub const fn evm_env_mut(&mut self) -> &mut EvmEnvFor<FEN> {
         &mut self.evm_env
     }
 
-    /// Returns a reference to the transaction environment.
-    pub const fn tx_env(&self) -> &TxEnvFor<FEN> {
-        &self.tx_env
+    /// Returns the transaction defaults of the executor's calls.
+    pub const fn tx(&self) -> &TransactionRequestFor<FEN> {
+        &self.tx
     }
 
-    /// Returns a mutable reference to the transaction environment.
-    pub const fn tx_env_mut(&mut self) -> &mut TxEnvFor<FEN> {
-        &mut self.tx_env
+    /// Returns the transaction defaults of the executor's calls mutably.
+    pub const fn tx_mut(&mut self) -> &mut TransactionRequestFor<FEN> {
+        &mut self.tx
     }
 
     /// Returns a reference to the EVM inspector.
@@ -430,12 +243,12 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
 
     /// Returns the EVM spec.
     pub const fn spec_id(&self) -> SpecFor<FEN> {
-        self.evm_env.cfg_env.spec
+        self.evm_env.spec
     }
 
     /// Sets the EVM spec and updates spec-dependent gas parameters.
     pub fn set_spec_id(&mut self, spec_id: SpecFor<FEN>) {
-        self.evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec_id);
+        self.evm_env = EvmFactoryFor::<FEN>::default().env_with_spec(self.evm_env, spec_id);
     }
 
     /// Returns the gas limit for calls and deployments.
@@ -466,10 +279,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
     pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
         trace!("deploying local create2 deployer");
-        let create2_deployer_account = self
-            .backend()
-            .basic_ref(DEFAULT_CREATE2_DEPLOYER)?
-            .ok_or_else(|| BackendError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
+        // evm2's local database reports unknown accounts as absent.
+        let create2_deployer_account = self.account(DEFAULT_CREATE2_DEPLOYER)?;
 
         // If the deployer is not currently deployed, deploy the default one.
         if create2_deployer_account.code.is_none_or(|code| code.is_empty()) {
@@ -491,43 +302,46 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         Ok(())
     }
 
+    /// Returns the accepted account at `address`, or an empty account.
+    fn account(&self, address: Address) -> BackendResult<AccountInfo> {
+        Ok(self.backend().basic(address)?.unwrap_or_default())
+    }
+
     /// Set the balance of an account.
     pub fn set_balance(&mut self, address: Address, amount: U256) -> BackendResult<()> {
         trace!(?address, ?amount, "setting account balance");
-        let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
-        account.balance = amount;
+        let account = self.account(address)?.with_balance(amount);
         self.backend_mut().insert_account_info(address, account);
         Ok(())
     }
 
     /// Gets the balance of an account
     pub fn get_balance(&self, address: Address) -> BackendResult<U256> {
-        Ok(self.backend().basic_ref(address)?.map(|acc| acc.balance).unwrap_or_default())
+        Ok(self.account(address)?.balance)
     }
 
-    /// Sets the nonce of an account without modifying the transaction environment.
+    /// Sets the nonce of an account without modifying the transaction defaults.
     pub fn set_account_nonce(&mut self, address: Address, nonce: u64) -> BackendResult<()> {
-        let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
-        account.nonce = nonce;
+        let account = self.account(address)?.with_nonce(nonce);
         self.backend_mut().insert_account_info(address, account);
         Ok(())
     }
 
-    /// Sets the nonce of an account and the transaction environment.
+    /// Sets the nonce of an account and the transaction defaults.
     pub fn set_nonce(&mut self, address: Address, nonce: u64) -> BackendResult<()> {
         self.set_account_nonce(address, nonce)?;
-        self.tx_env_mut().set_nonce(nonce);
+        self.tx_mut().set_nonce(nonce);
         Ok(())
     }
 
     /// Returns the nonce of an account.
     pub fn get_nonce(&self, address: Address) -> BackendResult<u64> {
-        Ok(self.backend().basic_ref(address)?.map(|acc| acc.nonce).unwrap_or_default())
+        Ok(self.account(address)?.nonce)
     }
 
     /// Set the code of an account.
     pub fn set_code(&mut self, address: Address, code: Bytecode) -> BackendResult<()> {
-        let account = self.backend().basic_ref(address)?.unwrap_or_default().with_code(code);
+        let account = self.account(address)?.with_code(code);
         self.backend_mut().insert_account_info(address, account);
         Ok(())
     }
@@ -538,7 +352,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         address: Address,
         storage: HashMap<U256, U256>,
     ) -> BackendResult<()> {
-        self.backend_mut().replace_account_storage(address, storage)?;
+        self.backend_mut().replace_account_storage(address, storage);
         Ok(())
     }
 
@@ -549,7 +363,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         slot: U256,
         value: U256,
     ) -> BackendResult<()> {
-        self.backend_mut().insert_account_storage(address, slot, value)?;
+        self.backend_mut().insert_account_storage(address, slot, value);
         Ok(())
     }
 
@@ -565,16 +379,14 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         let backend = self.backend_mut();
         for (address, account_state) in prestate {
             let code = account_state.code.map(Bytecode::new_raw).unwrap_or_default();
-            let info = revm::state::AccountInfo::default()
+            let info = AccountInfo::default()
                 .with_balance(account_state.balance.unwrap_or_default())
                 .with_nonce(account_state.nonce.unwrap_or_default())
                 .with_code(code);
             backend.insert_account_info(address, info);
 
             for (slot, value) in account_state.storage {
-                let slot = slot.into();
-                let value = value.into();
-                backend.insert_account_storage(address, slot, value)?;
+                backend.insert_account_storage(address, slot.into(), value.into());
             }
         }
         Ok(())
@@ -582,7 +394,10 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
 
     /// Returns `true` if the account has no code.
     pub fn is_empty_code(&self, address: Address) -> BackendResult<bool> {
-        Ok(self.backend().basic_ref(address)?.is_none_or(|acc| acc.is_empty_code_hash()))
+        Ok(self
+            .backend()
+            .basic(address)?
+            .is_none_or(|acc| acc.code_hash == alloy_primitives::KECCAK256_EMPTY))
     }
 
     #[inline]
@@ -618,55 +433,51 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         value: U256,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
-        let (evm_env, tx_env) = self.prepare_call_env(from, TxKind::Create, code, value);
-        self.deploy_with_env(evm_env, tx_env, rd)
+        let (evm_env, tx) = self.prepare_call_env(from, TxKind::Create, code, value);
+        self.deploy_with_env(evm_env, tx, rd)
     }
 
-    /// Deploys a contract using the given `env` and commits the new state to the underlying
-    /// database.
+    /// Deploys a contract using the given environment and transaction and commits the new state to
+    /// the underlying database.
     ///
     /// # Panics
     ///
-    /// Panics if `tx_env.kind` is not `TxKind::Create(_)`.
+    /// Panics if `tx` is not a create transaction.
     #[instrument(name = "deploy", level = "debug", skip_all)]
     pub fn deploy_with_env(
         &mut self,
         evm_env: EvmEnvFor<FEN>,
-        tx_env: TxEnvFor<FEN>,
+        tx: TransactionRequestFor<FEN>,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
-        let chain_context = self.chain_context_for_synthetic_transaction(&tx_env)?;
-        self.deploy_with_env_and_context(evm_env, tx_env, chain_context, rd)
+        assert!(
+            tx.kind().is_some_and(|kind| kind.is_create()),
+            "Expected create transaction, got {:?}",
+            tx.kind()
+        );
+        trace!(sender=?tx.from(), "deploying contract");
+
+        let result = self.transact_with_env(evm_env, tx)?;
+        self.persist_deployment(result, rd)
     }
 
-    /// Deploys a contract with explicit network-specific context and commits its state changes.
+    /// Turns the committed result of a creation into a deployment, marking the created contract
+    /// persistent so that its state survives fork switches.
     ///
     /// # Panics
     ///
-    /// Panics if `tx_env.kind` is not `TxKind::Create(_)`.
-    #[instrument(name = "deploy", level = "debug", skip_all)]
-    pub fn deploy_with_env_and_context(
+    /// Panics if a successful creation returned no address.
+    pub fn persist_deployment(
         &mut self,
-        evm_env: EvmEnvFor<FEN>,
-        tx_env: TxEnvFor<FEN>,
-        chain_context: ChainFor<FEN>,
+        result: RawCallResult<FEN>,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
-        assert!(tx_env.kind().is_create(), "Expected create transaction, got {:?}", tx_env.kind());
-        trace!(sender=%tx_env.caller(), "deploying contract");
-
-        let mut result = self.transact_with_env_and_context(evm_env, tx_env, chain_context)?;
-        result = result.into_result(rd)?;
-        let Some(Output::Create(_, Some(address))) = result.out else {
+        let result = result.into_result(rd)?;
+        let Some(address) = result.created_address else {
             panic!("Deployment succeeded, but no address was returned: {result:#?}");
         };
-
-        // also mark this library as persistent, this will ensure that the state of the library is
-        // persistent across fork swaps in forking mode
         self.backend_mut().add_persistent_account(address);
-
         trace!(%address, "deployed contract");
-
         Ok(DeployResult { raw: result, address })
     }
 
@@ -692,9 +503,12 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         res = res.into_result(rd)?;
 
         // record any changes made to the block's environment during setup
-        self.evm_env_mut().block_env = res.evm_env.block_env.clone();
-        // and also the chainid, which can be set manually
-        self.evm_env_mut().cfg_env.chain_id = res.evm_env.cfg_env.chain_id;
+        self.evm_env_mut().block = res.evm_env.block;
+        // and also the spec and chain ID, which can be set manually
+        if res.evm_env.spec != self.spec_id() {
+            self.set_spec_id(res.evm_env.spec);
+        }
+        self.evm_env_mut().set_chain_id(res.evm_env.chain_id());
 
         let success = self.is_raw_call_success(to, Cow::Borrowed(&res.state_changeset), &res);
         if !success {
@@ -757,8 +571,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         calldata: Bytes,
         value: U256,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let (evm_env, tx_env) = self.prepare_call_env(from, TxKind::Call(to), calldata, value);
-        self.call_with_env(evm_env, tx_env)
+        let (evm_env, tx) = self.prepare_call_env(from, TxKind::Call(to), calldata, value);
+        self.call_with_env(evm_env, tx)
     }
 
     /// Performs a raw call to an account on the current state of the VM with an EIP-7702
@@ -771,10 +585,9 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         value: U256,
         authorization_list: Vec<SignedAuthorization>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let (evm_env, mut tx_env) = self.prepare_call_env(from, to.into(), calldata, value);
-        tx_env.set_signed_authorization(authorization_list);
-        tx_env.set_tx_type(4);
-        self.call_with_env(evm_env, tx_env)
+        let (evm_env, mut tx) = self.prepare_call_env(from, to.into(), calldata, value);
+        with_authorization_list(&mut tx, authorization_list);
+        self.call_with_env(evm_env, tx)
     }
 
     /// Performs a raw call to an account on the current state of the VM.
@@ -785,8 +598,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         calldata: Bytes,
         value: U256,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let (evm_env, tx_env) = self.prepare_call_env(from, TxKind::Call(to), calldata, value);
-        self.transact_with_env(evm_env, tx_env)
+        let (evm_env, tx) = self.prepare_call_env(from, TxKind::Call(to), calldata, value);
+        self.transact_with_env(evm_env, tx)
     }
 
     /// Performs a raw call to an account on the current state of the VM with an EIP-7702
@@ -799,240 +612,210 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         value: U256,
         authorization_list: Vec<SignedAuthorization>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let (evm_env, mut tx_env) = self.prepare_call_env(from, TxKind::Call(to), calldata, value);
-        tx_env.set_signed_authorization(authorization_list);
-        tx_env.set_tx_type(4);
-        self.transact_with_env(evm_env, tx_env)
+        let (evm_env, mut tx) = self.prepare_call_env(from, TxKind::Call(to), calldata, value);
+        with_authorization_list(&mut tx, authorization_list);
+        self.transact_with_env(evm_env, tx)
     }
 
     /// Applies the EIP-4788 beacon roots system call (Cancun+).
     /// <https://eips.ethereum.org/EIPS/eip-4788>
-    pub fn apply_beacon_root(
-        &mut self,
-        parent_beacon_block_root: alloy_primitives::B256,
-    ) -> eyre::Result<()> {
-        let calldata = Bytes::from(parent_beacon_block_root);
-        let mut evm_env = self.evm_env.clone();
-        let inspector = self.inspector().clone();
-        let mut state = {
-            let mut backend = CowBackend::new_borrowed(self.backend());
-            let mut evm = FEN::EvmFactory::default().create_foundry_evm_with_inspector(
-                &mut backend,
-                evm_env.clone(),
-                inspector,
-            );
-            *evm.chain_mut() = ChainFor::<FEN>::for_transaction(&TxEnvFor::<FEN>::default());
-            let result =
-                evm.transact_system_call(SYSTEM_ADDRESS, BEACON_ROOTS_ADDRESS, calldata)?;
-            evm_env = evm.finish().1;
-            result.state
-        };
-        state.retain(|address, _| *address == BEACON_ROOTS_ADDRESS);
+    pub fn apply_beacon_root(&mut self, parent_beacon_block_root: B256) -> eyre::Result<()> {
+        let mut evm = self.backend().create_evm();
+        install_env::<FEN>(self.backend(), &mut evm, self.evm_env);
+        let pending = evm
+            .system_call(SystemTx::new(BEACON_ROOTS_ADDRESS, parent_beacon_block_root.into()))?
+            .detach()
+            .pending_state;
+        drop(evm);
 
-        self.backend_mut().commit(state);
-        self.inspector_mut().set_block(evm_env.block_env);
-
+        // Only the beacon roots contract keeps the changes, not the system caller.
+        let mut state = PendingState::default();
+        for change in pending.account_changes().filter(|c| c.address == BEACON_ROOTS_ADDRESS) {
+            state.insert_account(change.address, change.original.cloned(), change.current.cloned());
+            for (key, slot) in change.storage.changed_slots() {
+                state.insert_storage(change.address, *key, slot.original, slot.current);
+            }
+        }
+        self.backend_mut().commit_pending(&state);
         Ok(())
     }
 
-    /// Execute the transaction configured in `tx_env`.
+    /// Executes the transaction `tx` with `evm_env`.
     ///
     /// The state after the call is **not** persisted.
     #[instrument(name = "call", level = "debug", skip_all)]
     pub fn call_with_env(
         &self,
         evm_env: EvmEnvFor<FEN>,
-        tx_env: TxEnvFor<FEN>,
+        tx: TransactionRequestFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let chain_context = self.chain_context_for_synthetic_transaction(&tx_env)?;
-        self.call_with_env_and_context(evm_env, tx_env, chain_context)
+        let init = tx.from().zip(tx.kind());
+        let tx_env = FEN::tx_from_request(tx.clone())?;
+        let mut result = self.call_tx_with_init(evm_env, &tx_env, None, init)?;
+        result.set_stipend(&evm_env, tx);
+        Ok(result)
     }
 
-    /// Executes the transaction with explicit network-specific context without committing state.
+    /// Executes the converted transaction `tx` with `evm_env`, and `ext` or extension state
+    /// prepared for `tx`, without persisting its state.
+    ///
+    /// The result's `stipend` is zero, since `tx` is opaque; see [`calculate_stipend`].
     #[instrument(name = "call", level = "debug", skip_all)]
-    pub fn call_with_env_and_context(
+    pub fn call_tx(
         &self,
-        mut evm_env: EvmEnvFor<FEN>,
-        mut tx_env: TxEnvFor<FEN>,
-        chain_context: ChainFor<FEN>,
+        evm_env: EvmEnvFor<FEN>,
+        tx: &Recovered<TxFor<FEN>>,
+        ext: Option<ChainFor<FEN>>,
+    ) -> eyre::Result<RawCallResult<FEN>> {
+        self.call_tx_with_init(evm_env, tx, ext, None)
+    }
+
+    /// Like [`Self::call_tx`], recording `init`'s caller and test contract, as on master, if the
+    /// call modifies the backend.
+    fn call_tx_with_init(
+        &self,
+        evm_env: EvmEnvFor<FEN>,
+        tx: &Recovered<TxFor<FEN>>,
+        ext: Option<ChainFor<FEN>>,
+        init: Option<(Address, TxKind)>,
     ) -> eyre::Result<RawCallResult<FEN>> {
         let mut stack = self.inspector().clone();
-        let sancov_edges = stack.inner.sancov_edges;
-        let sancov_trace_cmp = stack.inner.sancov_trace_cmp;
-        let sancov_active = sancov_edges || sancov_trace_cmp;
         let mut backend = CowBackend::new_borrowed(self.backend());
-        let result = {
-            let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
-            backend.inspect_with_context(&mut evm_env, &mut tx_env, chain_context, &mut stack)?
-        };
-        let has_state_snapshot_failure = backend.has_state_snapshot_failure();
-        let fork_block_number = backend.active_fork_block_number();
-        let mut result = convert_executed_result(
-            evm_env,
-            tx_env,
-            stack,
-            result,
-            &backend,
-            has_state_snapshot_failure,
-            fork_block_number,
-        )?;
-        if sancov_edges {
-            SancovGuard::append_edges_into(&mut result);
+        if let Some((caller, kind)) = init {
+            backend.initialize(caller, kind);
         }
-        if sancov_trace_cmp {
-            SancovGuard::drain_cmp_into(&mut result);
+        let (execution, evm) = execute(&mut backend, evm_env, tx, ext, &mut stack)?;
+        // Retain lifecycle changes; defer pending writes until commit.
+        backend.park_detached(evm);
+        let mut result = convert_executed_result(execution, stack, &backend)?;
+        if let Cow::Owned(backend) = backend.backend {
+            result.post_execution_backend = Some(Box::new(backend));
         }
         Ok(result)
     }
 
-    /// Execute the transaction configured in `tx_env`.
+    /// Executes the transaction `tx` with `evm_env` and persists its state.
     #[instrument(name = "transact", level = "debug", skip_all)]
     pub fn transact_with_env(
         &mut self,
         evm_env: EvmEnvFor<FEN>,
-        tx_env: TxEnvFor<FEN>,
+        tx: TransactionRequestFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let chain_context = self.chain_context_for_synthetic_transaction(&tx_env)?;
-        self.transact_with_env_and_context(evm_env, tx_env, chain_context)
-    }
-
-    /// Executes and commits the transaction with explicit network-specific context.
-    #[instrument(name = "transact", level = "debug", skip_all)]
-    pub fn transact_with_env_and_context(
-        &mut self,
-        mut evm_env: EvmEnvFor<FEN>,
-        mut tx_env: TxEnvFor<FEN>,
-        chain_context: ChainFor<FEN>,
-    ) -> eyre::Result<RawCallResult<FEN>> {
-        let mut stack = self.inspector().clone();
-        let sancov_edges = stack.inner.sancov_edges;
-        let sancov_trace_cmp = stack.inner.sancov_trace_cmp;
-        let sancov_active = sancov_edges || sancov_trace_cmp;
-        let backend = self.backend_mut();
-        let result = {
-            let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
-            backend.inspect_with_context(&mut evm_env, &mut tx_env, chain_context, &mut stack)?
-        };
-        let has_state_snapshot_failure = backend.has_state_snapshot_failure();
-        let fork_block_number = backend.active_fork_block_number();
-        let mut result = convert_executed_result(
-            evm_env,
-            tx_env,
-            stack,
-            result,
-            &*backend,
-            has_state_snapshot_failure,
-            fork_block_number,
-        )?;
-        if sancov_edges {
-            SancovGuard::append_edges_into(&mut result);
+        // As on master, every transaction records its caller and test contract.
+        if let (Some(caller), Some(kind)) = (tx.from(), tx.kind()) {
+            self.backend_mut().initialize(caller, kind);
         }
-        if sancov_trace_cmp {
-            SancovGuard::drain_cmp_into(&mut result);
-        }
-        self.commit(&mut result);
+        let mut result = self.transact_tx(evm_env, &FEN::tx_from_request(tx.clone())?, None)?;
+        result.set_stipend(&evm_env, tx);
         Ok(result)
     }
 
-    /// Replays ordinary transactions and executes the target against one EVM instance.
+    /// Executes the converted transaction `tx` with `evm_env`, and `ext` or extension state
+    /// prepared for `tx`, and persists its state.
+    #[instrument(name = "transact", level = "debug", skip_all)]
+    pub fn transact_tx(
+        &mut self,
+        evm_env: EvmEnvFor<FEN>,
+        tx: &Recovered<TxFor<FEN>>,
+        ext: Option<ChainFor<FEN>>,
+    ) -> eyre::Result<RawCallResult<FEN>> {
+        let mut stack = self.inspector().clone();
+        let backend = self.backend_mut();
+        let (execution, mut evm) = execute(backend, evm_env, tx, ext, &mut stack)?;
+        evm.commit_source(&execution.state);
+        backend.park(evm);
+        let mut result = convert_executed_result(execution, stack, &*backend)?;
+        // The execution already committed its state into the backend.
+        self.persist_inspector_state(&mut result);
+        Ok(result)
+    }
+
+    /// Replays the transactions preceding `target` in its block, then executes `target` with the
+    /// inspectors and persists the state of all of them.
+    ///
+    /// The caller selects which prefix transactions replay. `target_kind` is the target's kind,
+    /// which decides the test contract.
     #[instrument(name = "transact_block_replay", level = "debug", skip_all)]
-    pub fn transact_with_ordinary_block_replay(
+    pub fn transact_with_block_replay(
         &mut self,
         mut evm_env: EvmEnvFor<FEN>,
-        target_tx_env: TxEnvFor<FEN>,
-        replay: Vec<(B256, TxEnvFor<FEN>)>,
+        target: &Recovered<TxFor<FEN>>,
+        target_kind: TxKind,
+        replay: &[(B256, Recovered<TxFor<FEN>>)],
     ) -> eyre::Result<RawCallResult<FEN>> {
+        self.replay_block_prefix(&mut evm_env, target, target_kind, replay, |evm, tx| {
+            evm.ext_mut().for_next_transaction(tx);
+        })?;
+        self.transact_tx(evm_env, target, None)
+    }
+
+    /// Commits the transactions preceding `target` in its block, each with the network extension
+    /// state `prepare` sets up for it, and initializes the target's caller and test contract.
+    fn replay_block_prefix(
+        &mut self,
+        evm_env: &mut EvmEnvFor<FEN>,
+        target: &Recovered<TxFor<FEN>>,
+        target_kind: TxKind,
+        replay: &[(B256, Recovered<TxFor<FEN>>)],
+        mut prepare: impl FnMut(&mut FoundryEvmFor<'_, FEN>, &Recovered<TxFor<FEN>>),
+    ) -> eyre::Result<()> {
         // EIP-8130 requires phase-aware execution and has no ordinary call/create kind.
-        // Check the entire prefix before executing anything or accessing ordinary tx fields.
+        // Check the entire prefix before executing anything.
         eyre::ensure!(
-            target_tx_env.tx_type() != 0x79,
+            target.ty() != EIP8130_TX_TYPE,
             "EIP-8130 target transactions are not supported by tooling replay"
         );
-        for (hash, tx) in &replay {
+        for (hash, tx) in replay {
             eyre::ensure!(
-                tx.tx_type() != 0x79,
+                tx.ty() != EIP8130_TX_TYPE,
                 "EIP-8130 prefix transaction {hash} is not supported by tooling replay"
             );
         }
-        let block_number = evm_env.block_env.number();
-        let mut stack = self.inspector().clone();
-        let sancov_edges = stack.inner.sancov_edges;
-        let sancov_trace_cmp = stack.inner.sancov_trace_cmp;
-        let sancov_active = sancov_edges || sancov_trace_cmp;
-        let backend = self.backend_mut();
-
-        let (result, evm_env, tx_env) = {
-            let caller = target_tx_env.caller();
-            backend.set_caller(caller).set_spec_id(evm_env.cfg_env.spec);
-            let target_contract = match target_tx_env.kind() {
-                TxKind::Call(to) => to,
-                // The prefix has not run yet, so use the canonical target nonce rather than the
-                // current database nonce.
-                TxKind::Create => caller.create(target_tx_env.nonce()),
-            };
-            backend.set_test_contract(target_contract);
-            let target_chain_context = ChainFor::<FEN>::for_transaction(&target_tx_env);
-            if !replay.is_empty() {
-                evm_env.cfg_env.disable_balance_check = true;
-            }
-            let mut evm = FEN::EvmFactory::default()
-                .create_foundry_evm_with_inspector(backend, evm_env, &mut stack);
-            *evm.chain_mut() = target_chain_context;
-            evm.disable_inspector();
-            for (tx_hash, tx_env) in replay {
-                let created = match tx_env.kind() {
-                    TxKind::Create => Some(tx_env.caller().create(tx_env.nonce())),
-                    TxKind::Call(_) => None,
-                };
-                let result = evm.transact(tx_env).wrap_err_with(|| {
-                    format!("Failed to execute transaction: {tx_hash:?} in block {block_number}")
-                })?;
-                if result.result.is_success()
-                    && let Some(address) = created
-                {
-                    evm.db_mut().add_persistent_account(address);
-                }
-                evm.db_mut().commit(result.state);
-            }
-
-            evm.enable_inspector();
-            let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
-            let result = evm.transact(target_tx_env).wrap_err("EVM error")?;
-            let tx_env = evm.tx().clone();
-            let evm_env = evm.finish().1;
-            (result, evm_env, tx_env)
-        };
-
-        let has_state_snapshot_failure = backend.has_state_snapshot_failure();
-        let fork_block_number = backend.active_fork_block_number();
-        let mut result = convert_executed_result(
-            evm_env,
-            tx_env,
-            stack,
-            result,
-            &*backend,
-            has_state_snapshot_failure,
-            fork_block_number,
-        )?;
-        if sancov_edges {
-            SancovGuard::append_edges_into(&mut result);
+        let block_number = evm_env.block.number;
+        let caller = target.signer();
+        self.backend_mut().set_caller(caller).set_spec_id(evm_env.spec);
+        if !replay.is_empty() {
+            evm_env.set_feature(evm2::EvmFeatures::BALANCE_CHECK, false);
         }
-        if sancov_trace_cmp {
-            SancovGuard::drain_cmp_into(&mut result);
+
+        for (tx_hash, tx) in replay {
+            let backend = self.backend_mut();
+            let mut evm = backend.create_evm();
+            install_env::<FEN>(backend, &mut evm, *evm_env);
+            prepare(&mut evm, tx);
+            let result = evm.transact(tx).map(|executed| executed.commit()).map_err(|err| {
+                eyre::eyre!(
+                    "Failed to execute transaction: {tx_hash:?} in block {block_number}: {err:?}"
+                )
+            })?;
+            backend.park(evm);
+            if result.status
+                && let Some(address) = result.created_address
+            {
+                backend.add_persistent_account(address);
+            }
         }
-        self.commit(&mut result);
-        Ok(result)
+
+        // The prefix has run, so the caller's nonce is the target's canonical nonce.
+        self.backend_mut().initialize(caller, target_kind);
+        Ok(())
     }
 
-    /// Commit the changeset to the database and adjust `self.inspector_config` values according to
-    /// the executed call result.
-    ///
-    /// This should not be exposed to the user, as it should be called only by `transact*`.
+    /// Commits a call's state and inspector. Detached backends replace the executor's backend,
+    /// so commit before unrelated backend mutations.
     #[instrument(name = "commit", level = "debug", skip_all)]
     fn commit(&mut self, result: &mut RawCallResult<FEN>) {
-        // Persist changes to db.
-        self.backend_mut().commit(result.state_changeset.clone());
+        if let Some(mut backend) = result.post_execution_backend.take() {
+            // Snapshot failures are call-local.
+            backend.set_state_snapshot_failure(self.backend().has_state_snapshot_failure());
+            self.backend = Arc::new(*backend);
+        }
+        self.backend_mut().commit_pending(&result.state_changeset);
+        self.persist_inspector_state(result);
+    }
 
+    /// Persists the cheatcode state and block of an executed call into the inspector stack.
+    fn persist_inspector_state(&mut self, result: &mut RawCallResult<FEN>) {
         // Persist cheatcode state.
         self.inspector_mut().cheatcodes = result.cheatcodes.take();
         if let Some(cheats) = self.inspector_mut().cheatcodes.as_mut() {
@@ -1047,8 +830,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         }
 
         // Persist the changed environment.
-        self.inspector_mut().set_block(result.evm_env.block_env.clone());
-        self.inspector_mut().set_gas_price(result.tx_env.gas_price());
+        self.inspector_mut().set_block(result.evm_env.block);
     }
 
     /// Returns `true` if a test can be considered successful.
@@ -1073,14 +855,20 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     pub fn is_raw_call_success(
         &self,
         address: Address,
-        state_changeset: Cow<'_, StateChangeset>,
+        state_changeset: Cow<'_, PendingState>,
         call_result: &RawCallResult<FEN>,
     ) -> bool {
         if call_result.has_state_snapshot_failure {
             // a failure occurred in a reverted snapshot, which is considered a failed test
             return false;
         }
-        self.is_success(address, call_result.reverted, state_changeset)
+        self.is_success_raw(
+            address,
+            call_result.reverted,
+            state_changeset,
+            false,
+            call_result.post_execution_backend.as_deref().unwrap_or_else(|| self.backend()),
+        )
     }
 
     /// Like [`Self::is_raw_call_mut_success`] but uses [`Self::is_success_handler_gate`] under
@@ -1095,7 +883,13 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             return false;
         }
         let state_changeset = std::mem::take(&mut call_result.state_changeset);
-        self.is_success_handler_gate(address, call_result.reverted, Cow::Owned(state_changeset))
+        self.is_success_raw(
+            address,
+            call_result.reverted,
+            Cow::Owned(state_changeset),
+            true,
+            call_result.post_execution_backend.as_deref().unwrap_or_else(|| self.backend()),
+        )
     }
 
     /// Returns `true` if a test can be considered successful.
@@ -1123,9 +917,9 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         &self,
         address: Address,
         reverted: bool,
-        state_changeset: Cow<'_, StateChangeset>,
+        state_changeset: Cow<'_, PendingState>,
     ) -> bool {
-        self.is_success_raw(address, reverted, state_changeset, false)
+        self.is_success_raw(address, reverted, state_changeset, false, self.backend())
     }
 
     /// Like [`Self::is_success`] but ignores the *committed* `GLOBAL_FAIL_SLOT` and only treats
@@ -1137,9 +931,9 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         &self,
         address: Address,
         reverted: bool,
-        state_changeset: Cow<'_, StateChangeset>,
+        state_changeset: Cow<'_, PendingState>,
     ) -> bool {
-        self.is_success_raw(address, reverted, state_changeset, true)
+        self.is_success_raw(address, reverted, state_changeset, true, self.backend())
     }
 
     #[instrument(name = "is_success", level = "debug", skip_all)]
@@ -1147,8 +941,9 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         &self,
         address: Address,
         reverted: bool,
-        state_changeset: Cow<'_, StateChangeset>,
+        state_changeset: Cow<'_, PendingState>,
         pending_global_failure_only: bool,
+        source: &Backend<FEN>,
     ) -> bool {
         // The call reverted.
         if reverted {
@@ -1156,7 +951,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         }
 
         // A failure occurred in a reverted snapshot, which is considered a failed test.
-        if self.backend().has_state_snapshot_failure() {
+        if source.has_state_snapshot_failure() {
             return false;
         }
 
@@ -1164,11 +959,11 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         // out-of-band can pass `pending_global_failure_only = true` to ignore the committed
         // slot (which would otherwise stay `1` for the rest of the run after a non-reverting
         // `vm.assert*` under `assertions_revert = false`).
-        let global_failed = if pending_global_failure_only {
-            Self::has_pending_global_failure(&state_changeset)
-        } else {
-            self.has_global_failure(&state_changeset)
-        };
+        let global_failed = Self::has_pending_global_failure(&state_changeset)
+            || (!pending_global_failure_only
+                && source
+                    .storage(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
+                    .is_ok_and(|slot| !slot.is_zero()));
         if global_failed {
             return false;
         }
@@ -1180,12 +975,12 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         // Finally, resort to calling `DSTest::failed`.
         {
             // Construct a new bare-bones backend to evaluate success.
-            let mut backend = self.backend().clone_empty();
+            let mut backend = source.clone_empty();
 
             // We only clone the test contract and cheatcode accounts,
             // that's all we need to evaluate success.
             for address in [address, CHEATCODE_ADDRESS] {
-                let Ok(acc) = self.backend().basic_ref(address) else { return false };
+                let Ok(acc) = source.basic(address) else { return false };
                 backend.insert_account_info(address, acc.unwrap_or_default());
             }
 
@@ -1193,7 +988,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             // `false -> true` for the contract's `failed` variable and the `globalFailure` flag
             // in the state of the cheatcode address,
             // which are both read when we call `"failed()(bool)"` in the next step.
-            backend.commit(state_changeset.into_owned());
+            backend.commit_pending(&state_changeset);
 
             // Check if a DSTest assertion failed
             let executor = self.clone_with_backend(backend);
@@ -1213,70 +1008,64 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
 
     /// Returns whether the in-flight state changeset for the current call sets the global
     /// assertion failure flag.
-    pub fn has_pending_global_failure(state_changeset: &StateChangeset) -> bool {
-        if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS)
-            && let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT)
-            && !failed_slot.present_value().is_zero()
-        {
-            return true;
-        }
-
-        false
+    pub fn has_pending_global_failure(state_changeset: &PendingState) -> bool {
+        state_changeset.account_changes().any(|change| {
+            change.address == CHEATCODE_ADDRESS
+                && change
+                    .storage
+                    .slots
+                    .get(&GLOBAL_FAIL_SLOT)
+                    .is_some_and(|slot| !slot.value.current.is_zero())
+        })
     }
 
     /// Returns whether the global assertion failure flag is set either in the in-flight state
     /// changeset or in the committed backend state.
-    pub fn has_global_failure(&self, state_changeset: &StateChangeset) -> bool {
+    pub fn has_global_failure(&self, state_changeset: &PendingState) -> bool {
         if Self::has_pending_global_failure(state_changeset) {
             return true;
         }
 
         self.backend()
-            .storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
+            .storage(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
             .is_ok_and(|failed_slot| !failed_slot.is_zero())
     }
 
-    /// Creates the environment to use when executing a transaction in a test context
+    /// Creates the environment and transaction to use when executing a call in a test context.
     ///
-    /// If using a backend with cheatcodes, `tx.gas_price` and `block.number` will be overwritten by
-    /// the cheatcode state in between calls.
+    /// The transaction executes with no fees and the executor's gas limit, from `caller`'s current
+    /// nonce. If using a backend with cheatcodes, the gas price and block are overwritten by the
+    /// cheatcode state in between calls.
     pub fn prepare_call_env(
         &self,
         caller: Address,
         kind: TxKind,
         data: Bytes,
         value: U256,
-    ) -> (EvmEnvFor<FEN>, TxEnvFor<FEN>) {
-        let mut cfg_env = self.evm_env.cfg_env.clone();
-        cfg_env.spec = self.spec_id();
-
+    ) -> (EvmEnvFor<FEN>, TransactionRequestFor<FEN>) {
         // We always set the gas price to 0 so we can execute the transaction regardless of
-        // network conditions - the actual gas price is kept in `self.block` and is applied
-        // by the cheatcode handler if it is enabled
-        let mut block_env = self.evm_env.block_env.clone();
-        block_env.set_basefee(0);
-        block_env.set_gas_limit(self.gas_limit);
+        // network conditions - the actual gas price is kept in the cheatcode state and is applied
+        // by the cheatcode handler if it is enabled.
+        let mut evm_env = self.evm_env;
+        evm_env.block.basefee = U256::ZERO;
+        evm_env.block.gas_limit = U256::from(self.gas_limit);
 
-        let mut tx_env = self.tx_env.clone();
-        tx_env.set_caller(caller);
-        tx_env.set_kind(kind);
-        tx_env.set_data(data);
-        tx_env.set_value(value);
-        // As above, we set the gas price to 0.
-        tx_env.set_gas_price(0);
-        tx_env.set_gas_priority_fee(None);
-        tx_env.set_gas_limit(self.gas_limit);
-        tx_env.set_chain_id(Some(self.evm_env.cfg_env.chain_id));
-        // The EIP-8037 create charge checks the address for the transaction nonce, and the nonce
-        // check is disabled, so a create uses the caller's current nonce.
-        if kind.is_create()
-            && cfg_env.is_amsterdam_eip2780_enabled()
-            && let Ok(nonce) = self.get_nonce(caller)
-        {
-            tx_env.set_nonce(nonce);
+        let mut tx = self.tx.clone();
+        tx.set_from(caller);
+        tx.set_kind(kind);
+        tx.set_input(data);
+        tx.set_value(value);
+        tx.set_gas_limit(self.gas_limit);
+        tx.set_chain_id(evm_env.chain_id());
+        tx.set_nonce(self.get_nonce(caller).unwrap_or_default());
+        if tx.max_fee_per_gas().is_some() {
+            tx.set_max_fee_per_gas(0);
+            tx.set_max_priority_fee_per_gas(0);
+        } else {
+            tx.set_gas_price(0);
         }
 
-        (EvmEnv { cfg_env, block_env }, tx_env)
+        (evm_env, tx)
     }
 
     pub fn call_sol_default<C: SolCall>(&self, to: Address, args: &C) -> C::Return
@@ -1288,6 +1077,179 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             .inspect_err(|e| warn!(target: "forge::test", "failed calling {:?}: {e}", C::SIGNATURE))
             .unwrap_or_default()
     }
+}
+
+/// Attaches an EIP-7702 authorization list to `tx`, which then executes as a fee-less EIP-7702
+/// transaction.
+fn with_authorization_list<B: FoundryTransactionBuilder<N> + TransactionBuilder, N>(
+    tx: &mut B,
+    authorization_list: Vec<SignedAuthorization>,
+) where
+    N: alloy_network::Network<TransactionRequest = B>,
+{
+    tx.set_authorization_list(authorization_list);
+    tx.set_max_fee_per_gas(0);
+    tx.set_max_priority_fee_per_gas(0);
+}
+
+/// Installs `env` on `evm`, freshly created over `backend`, which starts with the backend's
+/// environment.
+fn install_env<FEN: FoundryEvmNetwork>(
+    backend: &Backend<FEN>,
+    evm: &mut FoundryEvmFor<'_, FEN>,
+    env: EvmEnvFor<FEN>,
+) {
+    if same_execution_config::<FEN>(&evm_env(evm), &env) {
+        evm.set_block(env.block);
+        backend.lifecycle().sync_database_policy(evm);
+        return;
+    }
+    // The backend's factory carries network configuration, such as Base's activation admin.
+    let lifecycle = backend.lifecycle();
+    let factory = lifecycle.factory().configure_for(&lifecycle.forks().active_db(), &env);
+    let precompiles = factory.precompiles(&env, evm.ext());
+    let EvmEnv { spec, version, block } = env;
+    evm.set_block_and_execution_config(
+        block,
+        factory.execution_config(spec, version),
+        spec,
+        factory.tx_registry(spec),
+        precompiles,
+    );
+    backend.lifecycle().sync_database_policy(evm);
+}
+
+/// Returns whether `current` and `next` build the same execution config: the same spec and every
+/// field of their runtime [`Version`](evm2::Version), so only the block differs.
+fn same_execution_config<FEN: FoundryEvmNetwork>(
+    current: &EvmEnvFor<FEN>,
+    next: &EvmEnvFor<FEN>,
+) -> bool {
+    // `Version` has no `PartialEq`; destructure it so a new field fails to compile here.
+    let evm2::Version {
+        gas_params,
+        features,
+        chain_id,
+        tx_gas_limit_cap,
+        memory_limit,
+        max_code_size,
+        max_initcode_size,
+        max_blobs_per_tx,
+        initial_call_depth,
+        _non_exhaustive: (),
+    } = next.version;
+    let version = &current.version;
+    current.spec == next.spec
+        && version.gas_params == gas_params
+        && version.features == features
+        && version.chain_id == chain_id
+        && version.tx_gas_limit_cap == tx_gas_limit_cap
+        && version.memory_limit == memory_limit
+        && version.max_code_size == max_code_size
+        && version.max_initcode_size == max_initcode_size
+        && version.max_blobs_per_tx == max_blobs_per_tx
+        && version.initial_call_depth == initial_call_depth
+}
+
+#[cfg(feature = "monad")]
+impl Executor<MonadEvmNetwork> {
+    /// Like [`Executor::transact_with_block_replay`], positioning the prefix and target in the
+    /// Monad block `context`. The block is trusted history: its canonical protocol transactions
+    /// replay as protocol system calls, and a non-canonical envelope from the protocol sender is
+    /// rejected.
+    #[instrument(name = "transact_monad_block_replay", level = "debug", skip_all)]
+    pub fn transact_with_monad_block_replay(
+        &mut self,
+        mut env: EvmEnvFor<MonadEvmNetwork>,
+        target: &Recovered<TxFor<MonadEvmNetwork>>,
+        target_kind: TxKind,
+        replay: &[(B256, Recovered<TxFor<MonadEvmNetwork>>)],
+        mut context: BlockContext<MonadEvmNetwork>,
+    ) -> eyre::Result<RawCallResult<MonadEvmNetwork>> {
+        let factory = EvmFactoryFor::<MonadEvmNetwork>::default();
+        self.replay_block_prefix(&mut env, target, target_kind, replay, |evm, tx| {
+            let mut ext = factory.evm_ext(&evm_env(evm));
+            context.prepare_next(&mut ext, tx);
+            ext.set_protocol_replay(ChainFor::<MonadEvmNetwork>::is_protocol_transaction(tx));
+            *evm.ext_mut() = ext;
+            context.record_transaction(tx.clone());
+        })?;
+        let mut ext = factory.evm_ext(&env);
+        context.prepare_next(&mut ext, target);
+        ext.set_protocol_replay(true);
+        self.transact_tx(env, target, Some(ext))
+    }
+}
+
+/// A transaction executed by the [`Executor`].
+struct Execution<FEN: FoundryEvmNetwork> {
+    /// The transaction result.
+    result: TxResultFor<FEN>,
+    /// The transaction's state changes.
+    state: PendingState,
+    /// The environment after the transaction.
+    env: EvmEnvFor<FEN>,
+    /// Whether the inspectors halted the execution due to cancellation.
+    cancelled: bool,
+}
+
+/// Executes `tx` and returns its result and EVM for the caller to commit, park or discard.
+fn execute<FEN: FoundryEvmNetwork>(
+    backend: &mut dyn CheatcodesBackend<FEN>,
+    env: EvmEnvFor<FEN>,
+    tx: &Recovered<TxFor<FEN>>,
+    ext: Option<ChainFor<FEN>>,
+    stack: &mut InspectorStack<FEN>,
+) -> eyre::Result<(Execution<FEN>, FoundryEvmFor<'static, FEN>)> {
+    let sancov_edges = stack.inner.sancov_edges;
+    let sancov_trace_cmp = stack.inner.sancov_trace_cmp;
+    let mut evm = backend.backend().create_evm();
+    install_env::<FEN>(backend.backend(), &mut evm, env);
+    match ext {
+        Some(ext) => *evm.ext_mut() = ext,
+        None => evm.ext_mut().for_next_transaction(tx),
+    }
+    let executed = {
+        let _guard = (sancov_edges || sancov_trace_cmp)
+            .then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
+        evm.set_inspector(stack.as_inspector(&mut *backend));
+        evm.transact(tx).map(|executed| executed.detach())
+    };
+    // SAFETY: The EVM was created by the backend's lifecycle over its owned databases.
+    let evm: Evm<'_, _> = unsafe { release_inspector(evm) };
+    let TxResultWithState { result, pending_state, .. } = executed.map_err(handler_error)?;
+
+    // A spec or chain ID change deferred by a cheatcode applies from the next transaction.
+    let mut env = evm_env(&evm);
+    if let Some(pending) = backend.backend().lifecycle().pending_env() {
+        env = EvmEnv::new(pending.spec, pending.version, env.block);
+    }
+    if let Some(spec) = stack.cheatcodes.as_deref().and_then(|cheats| cheats.execution_evm_version)
+        && spec != env.spec
+    {
+        env = EvmFactoryFor::<FEN>::default().env_with_spec(env, spec);
+    }
+    Ok((
+        Execution { result, state: pending_state, env, cancelled: stack.execution_cancelled() },
+        evm,
+    ))
+}
+
+/// Returns the default environment of `FEN`.
+fn default_env<FEN: FoundryEvmNetwork>() -> EvmEnvFor<FEN> {
+    let spec = SpecFor::<FEN>::default();
+    let chain_id = foundry_common::DEV_CHAIN_ID;
+    EvmEnv::new(spec, EvmFactoryFor::<FEN>::default().version(spec, chain_id), Default::default())
+}
+
+/// Builds an executor over an empty local backend with the default environment of `FEN`.
+#[cfg(test)]
+pub(crate) fn test_executor<FEN: FoundryEvmNetwork>(
+    builder: ExecutorBuilder<FEN>,
+    networks: NetworkConfigs,
+) -> Executor<FEN> {
+    let env = default_env::<FEN>();
+    builder.build(env, Default::default(), Backend::spawn(None, env).unwrap(), networks)
 }
 
 /// Represents the context after an execution error occurred.
@@ -1383,7 +1345,7 @@ impl<FEN: FoundryEvmNetwork> From<DeployResult<FEN>> for RawCallResult<FEN> {
 #[derive(Debug)]
 pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// The status of the call
-    pub exit_reason: Option<InstructionResult>,
+    pub exit_reason: Option<InstrStop>,
     /// Whether the call was halted by the execution cancellation inspector.
     pub execution_cancelled: bool,
     /// Whether the call reverted or not
@@ -1424,16 +1386,15 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub sancov_cmp_values: Option<Vec<foundry_evm_sancov::CmpSample>>,
     /// Scripted transactions generated from this call
     pub transactions: Option<BroadcastableTransactions<FEN::Network>>,
-    /// The changeset of the state.
-    pub state_changeset: StateChangeset,
-    /// The `EvmEnv` after the call
+    /// The state changes of the call: every account and storage slot it loaded, with their
+    /// original and present values.
+    pub state_changeset: PendingState,
+    /// The environment after the call
     pub evm_env: EvmEnvFor<FEN>,
-    /// The `TxEnv` after the call
-    pub tx_env: TxEnvFor<FEN>,
     /// The cheatcode states after execution
     pub cheatcodes: Option<Box<Cheatcodes<FEN>>>,
-    /// The raw output of the execution
-    pub out: Option<Output>,
+    /// The address of the contract a successful create deployed.
+    pub created_address: Option<Address>,
     /// The active fork's block number after execution, if any.
     pub fork_block_number: Option<u64>,
     /// The chisel state
@@ -1444,6 +1405,8 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Moved out of the cheatcode state on conversion since `commit` moves that state back into
     /// the executor before results are classified.
     pub skip_payloads: Vec<Bytes>,
+    /// Owned post-call backend, excluding `state_changeset`. Adopted only on commit.
+    pub(crate) post_execution_backend: Option<Box<Backend<FEN>>>,
 }
 
 impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
@@ -1468,15 +1431,15 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
             sancov_coverage: None,
             sancov_cmp_values: None,
             transactions: None,
-            state_changeset: HashMap::default(),
-            evm_env: EvmEnv::default(),
-            tx_env: TxEnvFor::<FEN>::default(),
+            state_changeset: PendingState::default(),
+            evm_env: default_env::<FEN>(),
             cheatcodes: Default::default(),
-            out: None,
+            created_address: None,
             fork_block_number: None,
             chisel_state: None,
             reverter: None,
             skip_payloads: Vec::new(),
+            post_execution_backend: None,
         }
     }
 }
@@ -1519,7 +1482,7 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
     /// Returns an `EvmError` if the call failed, otherwise returns `self`.
     pub fn into_result(self, rd: Option<&RevertDecoder>) -> Result<Self, EvmError<FEN>> {
         if let Some(reason) = self.exit_reason
-            && reason.is_ok()
+            && reason.is_success()
         {
             Ok(self)
         } else {
@@ -1624,6 +1587,17 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
         }
     }
 
+    /// Sets the stipend to the intrinsic gas of `tx` in `evm_env`, with the access list cheatcodes
+    /// applied to it, as on master.
+    fn set_stipend(&mut self, evm_env: &EvmEnvFor<FEN>, mut tx: TransactionRequestFor<FEN>) {
+        if let Some(access_list) =
+            self.cheatcodes.as_ref().and_then(|cheats| cheats.applied_access_list.clone())
+        {
+            tx.set_access_list(access_list);
+        }
+        self.stipend = calculate_stipend::<FEN>(evm_env, &tx);
+    }
+
     /// Update provided history map with sancov coverage info collected during this call.
     /// Uses AFL-style hitcount binning.
     pub fn merge_sancov_coverage(&mut self, history_map: &mut Vec<u8>) -> (bool, bool) {
@@ -1689,50 +1663,40 @@ impl<T, FEN: FoundryEvmNetwork> std::ops::DerefMut for CallResult<T, FEN> {
     }
 }
 
-pub(crate) fn calculate_stipend(tx_env: &impl Transaction, cfg: &impl Cfg) -> u64 {
-    calculate_initial_gas(tx_env, cfg).initial_total_gas()
+/// Returns the intrinsic gas `tx` pays before execution in `evm_env`.
+pub fn calculate_stipend<FEN: FoundryEvmNetwork>(
+    evm_env: &EvmEnvFor<FEN>,
+    tx: &TransactionRequestFor<FEN>,
+) -> u64 {
+    let access_list = tx.access_list();
+    evm2::ethereum::intrinsic_and_floor_gas(
+        &evm_env.version,
+        tx.from().unwrap_or_default(),
+        tx.kind().unwrap_or(TxKind::Create),
+        tx.input().unwrap_or_default(),
+        access_list.map_or(0, |list| list.len() as u64),
+        access_list.map_or(0, |list| list.iter().map(|item| item.storage_keys.len() as u64).sum()),
+        tx.value().unwrap_or_default(),
+    )
+    .0
 }
 
-/// Returns the intrinsic gas and EIP-7623 calldata floor of a transaction.
-pub(crate) fn calculate_initial_gas(
-    tx_env: &impl Transaction,
-    cfg: &impl Cfg,
-) -> InitialAndFloorGas {
-    let eip2780 = cfg.is_amsterdam_eip2780_enabled().then(|| Eip2780TxInfo {
-        value: tx_env.value(),
-        is_self_transfer: matches!(tx_env.kind(), TxKind::Call(to) if to == tx_env.caller()),
-    });
-    revm::interpreter::gas::calculate_initial_tx_gas_for_tx(tx_env, cfg.spec().into(), eip2780)
-}
-
-/// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`.
-fn convert_executed_result<FEN: FoundryEvmNetwork, H: IntoInstructionResult>(
-    evm_env: EvmEnvFor<FEN>,
-    tx_env: TxEnvFor<FEN>,
+/// Converts the data aggregated in the `inspector` and `execution` to a `RawCallResult`.
+fn convert_executed_result<FEN: FoundryEvmNetwork>(
+    execution: Execution<FEN>,
     mut inspector: InspectorStack<FEN>,
-    ResultAndState { result, state: state_changeset }: ResultAndState<H>,
-    db: &dyn DatabaseRef<Error = DatabaseError>,
-    has_state_snapshot_failure: bool,
-    fork_block_number: Option<u64>,
+    backend: &Backend<FEN>,
 ) -> eyre::Result<RawCallResult<FEN>> {
-    let execution_cancelled = inspector.execution_cancelled();
-    let (exit_reason, gas_refunded, gas_used, out, exec_logs) = match result {
-        ExecutionResult::Success { reason, gas, output, logs } => {
-            (reason.into(), gas.final_refunded(), gas.tx_gas_used(), Some(output), logs)
-        }
-        ExecutionResult::Revert { gas, output, logs } => {
-            (InstructionResult::Revert, 0_u64, gas.tx_gas_used(), Some(Output::Call(output)), logs)
-        }
-        ExecutionResult::Halt { reason, gas, logs } => {
-            (reason.into_instruction_result(), 0_u64, gas.tx_gas_used(), None, logs)
-        }
-    };
-    let stipend = calculate_stipend(&tx_env, evm_env.cfg_env());
+    let Execution { result: tx_result, state: state_changeset, env: evm_env, cancelled } =
+        execution;
+    let exit_reason = tx_result.stop;
+    let gas_refunded = if tx_result.status { tx_result.refunded } else { 0 };
+    let gas_used = tx_result.tx_gas_used();
+    let created_address = tx_result.created_address.filter(|_| tx_result.status);
+    let result = if created_address.is_some() { Bytes::new() } else { tx_result.output };
 
-    let result = match &out {
-        Some(Output::Call(data)) => data.clone(),
-        _ => Bytes::new(),
-    };
+    let sancov_edges = inspector.inner.sancov_edges;
+    let sancov_trace_cmp = inspector.inner.sancov_trace_cmp;
     let observed_calls = inspector
         .inner
         .fuzzer
@@ -1754,11 +1718,11 @@ fn convert_executed_result<FEN: FoundryEvmNetwork, H: IntoInstructionResult>(
     let fork_block_number = cheatcodes
         .as_ref()
         .and_then(|cheats| cheats.fork_block_number_override)
-        .or(fork_block_number);
-    let debug_bytecodes = collect_debug_bytecodes(traces.as_ref(), db);
+        .or_else(|| backend.active_fork_block_number());
+    let debug_bytecodes = collect_debug_bytecodes(traces.as_ref(), backend, &state_changeset);
 
     if logs.is_empty() {
-        logs = exec_logs;
+        logs = tx_result.logs;
     }
 
     let transactions = cheatcodes
@@ -1768,15 +1732,15 @@ fn convert_executed_result<FEN: FoundryEvmNetwork, H: IntoInstructionResult>(
     let skip_payloads =
         cheatcodes.as_mut().map(|c| std::mem::take(&mut c.skip_payloads)).unwrap_or_default();
 
-    Ok(RawCallResult {
+    let mut raw = RawCallResult {
         exit_reason: Some(exit_reason),
-        execution_cancelled,
-        reverted: !exit_reason.is_ok(),
-        has_state_snapshot_failure,
+        execution_cancelled: cancelled,
+        reverted: !exit_reason.is_success(),
+        has_state_snapshot_failure: backend.has_state_snapshot_failure(),
         result,
         gas_used,
         gas_refunded,
-        stipend,
+        stipend: 0,
         logs,
         labels,
         traces,
@@ -1790,19 +1754,28 @@ fn convert_executed_result<FEN: FoundryEvmNetwork, H: IntoInstructionResult>(
         transactions,
         state_changeset,
         evm_env,
-        tx_env,
         cheatcodes,
-        out,
+        created_address,
         fork_block_number,
         chisel_state,
         reverter,
         skip_payloads,
-    })
+        post_execution_backend: None,
+    };
+    if sancov_edges {
+        SancovGuard::append_edges_into(&mut raw);
+    }
+    if sancov_trace_cmp {
+        SancovGuard::drain_cmp_into(&mut raw);
+    }
+    Ok(raw)
 }
 
-fn collect_debug_bytecodes(
+/// Returns the runtime bytecode of every traced account, as of after the call.
+fn collect_debug_bytecodes<FEN: FoundryEvmNetwork>(
     traces: Option<&SparsedTraceArena>,
-    db: &dyn DatabaseRef<Error = DatabaseError>,
+    backend: &Backend<FEN>,
+    state: &PendingState,
 ) -> AddressHashMap<Bytes> {
     let mut bytecodes = HashMap::default();
     let Some(traces) = traces else { return bytecodes };
@@ -1813,11 +1786,18 @@ fn collect_debug_bytecodes(
             continue;
         }
 
-        let Ok(Some(account)) = db.basic_ref(address) else { continue };
-        let code: Option<Bytecode> =
-            account.code.or_else(|| db.code_by_hash_ref(account.code_hash).ok());
-        let code: Bytes = code.map(|code| code.original_bytes()).unwrap_or_default();
-
+        let account = match state.account_info(&address) {
+            Some(account) => account.clone(),
+            None => {
+                let Ok(Some(account)) = backend.basic(address) else { continue };
+                account
+            }
+        };
+        let code = match account.code {
+            Some(code) if !code.is_empty() => Some(code),
+            _ => backend.code_by_hash(account.code_hash).ok(),
+        };
+        let code = code.map(|code| code.original_bytes()).unwrap_or_default();
         if !code.is_empty() {
             bytecodes.insert(address, code);
         }
@@ -1970,28 +1950,48 @@ pub(crate) fn worker_seed(seed: U256, worker_id: u32) -> U256 {
 mod tests {
     use super::*;
     use crate::inspectors::{EdgeCovHit, EdgeKey};
+    use alloy_eips::eip4788::SYSTEM_ADDRESS;
+    use alloy_primitives::{address, bytes};
+    use alloy_rpc_types::TransactionRequest;
+    use evm2::SpecId;
     use foundry_cheatcodes::{
         CheatsConfig,
-        Vm::{blobhashesCall, mockCallRevert_1Call, revertToStateCall, snapshotStateCall},
+        Vm::{
+            broadcastRawTransactionCall, loadCall, mockCallRevert_1Call, revertToStateCall,
+            snapshotStateCall, storeCall,
+        },
     };
     use foundry_config::Config;
     use foundry_evm_core::{constants::MAGIC_SKIP, evm::TempoEvmNetwork, opts::EvmOpts};
-    use foundry_evm_hardforks::TempoHardfork;
     use foundry_evm_traces::InternalTraceMode;
-    use revm::context::CfgEnv;
     use std::{sync::mpsc, thread};
-    use tempo_revm::{TempoBlockEnv, TempoTxEnv};
-
-    #[cfg(not(feature = "monad"))]
-    use revm::context::TxEnv;
-
-    #[cfg(feature = "base")]
-    use foundry_evm_core::evm::BaseEvmNetwork;
-    #[cfg(feature = "base")]
-    use foundry_evm_hardforks::BaseSpecId;
 
     #[cfg(feature = "monad")]
     use foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS;
+
+    fn eth_executor(builder: ExecutorBuilder<EthEvmNetwork>) -> Executor<EthEvmNetwork> {
+        test_executor(builder, NetworkConfigs::default())
+    }
+
+    fn cheats_config() -> Arc<CheatsConfig> {
+        Arc::new(CheatsConfig::new(&Config::default(), EvmOpts::default(), None, None, false))
+    }
+
+    /// Returns a fee-less legacy transaction from [`CALLER`].
+    fn replay_tx(
+        nonce: u64,
+        kind: TxKind,
+        input: &'static [u8],
+    ) -> Recovered<TxFor<EthEvmNetwork>> {
+        let mut request = TransactionRequest::default()
+            .from(CALLER)
+            .nonce(nonce)
+            .gas_limit(100_000)
+            .gas_price(0)
+            .input(Bytes::from_static(input).into());
+        request.set_kind(kind);
+        EthEvmNetwork::tx_from_request(request).unwrap()
+    }
 
     fn dense_call(edge: EdgeKey) -> RawCallResult {
         RawCallResult {
@@ -2029,42 +2029,25 @@ mod tests {
     #[cfg(feature = "monad")]
     #[test]
     fn executor_tooling_follows_concrete_builder() {
-        let ethereum = ExecutorBuilder::<EthEvmNetwork>::new().build(
-            EvmEnv::default(),
-            TxEnv::default(),
-            Backend::spawn(None).unwrap(),
-            NetworkConfigs::with_monad(),
-        );
+        let ethereum =
+            test_executor(ExecutorBuilder::<EthEvmNetwork>::new(), NetworkConfigs::with_monad());
         assert!(ethereum.backend().networks().is_monad());
         assert!(!ethereum.backend().is_persistent(&MONAD_CHEATCODE_ADDRESS));
 
-        let monad = ExecutorBuilder::<MonadEvmNetwork>::new().build(
-            EvmEnv::<MonadHardfork>::default(),
-            TxEnv::default(),
-            Backend::spawn(None).unwrap(),
-            NetworkConfigs::with_monad(),
-        );
-        assert!(monad.inspector().networks.is_monad());
+        let monad =
+            test_executor(ExecutorBuilder::<MonadEvmNetwork>::new(), NetworkConfigs::with_monad());
         assert!(monad.backend().networks().is_monad());
         assert!(monad.backend().is_persistent(&MONAD_CHEATCODE_ADDRESS));
     }
 
     #[test]
     fn tempo_labels_follow_concrete_builder() {
-        let ethereum = ExecutorBuilder::<EthEvmNetwork>::new().build(
-            EvmEnv::default(),
-            TxEnv::default(),
-            Backend::spawn(None).unwrap(),
-            NetworkConfigs::with_tempo(),
-        );
+        let ethereum =
+            test_executor(ExecutorBuilder::<EthEvmNetwork>::new(), NetworkConfigs::with_tempo());
         assert!(ethereum.inspector().tempo_labels.is_none());
 
-        let tempo = ExecutorBuilder::<TempoEvmNetwork>::new().build(
-            EvmEnv::<TempoHardfork, TempoBlockEnv>::default(),
-            TempoTxEnv::default(),
-            Backend::spawn(None).unwrap(),
-            NetworkConfigs::default(),
-        );
+        let tempo =
+            test_executor(ExecutorBuilder::<TempoEvmNetwork>::new(), NetworkConfigs::default());
         assert!(tempo.inspector().tempo_labels.is_some());
     }
 
@@ -2140,282 +2123,6 @@ mod tests {
         assert!(matches!(err, EvmError::Execution(_)));
     }
 
-    #[cfg(feature = "base")]
-    #[test]
-    fn base_block_replay_rejects_eip8130_before_execution() {
-        for target_is_eip8130 in [true, false] {
-            let mut executor = ExecutorBuilder::<BaseEvmNetwork>::new().build(
-                EvmEnv::<BaseSpecId>::default(),
-                TxEnvFor::<BaseEvmNetwork>::default(),
-                Backend::spawn(None).unwrap(),
-                NetworkConfigs::with_base(),
-            );
-            let unsupported = TxEnvFor::<BaseEvmNetwork> {
-                eip8130: Some(
-                    serde_json::from_value(serde_json::json!({
-                        "signed": {
-                            "tx": {
-                                "chainId": 8453, "sender": null, "nonceKey": "0x0",
-                                "nonceSequence": 0, "validAfter": 0, "validBefore": 0,
-                                "maxPriorityFeePerGas": "0x0", "maxFeePerGas": "0x0",
-                                "gasLimit": 100000, "accountChanges": [], "calls": [],
-                                "metadata": "0x", "payer": null
-                            },
-                            "senderAuth": "0x", "payerAuth": "0x"
-                        },
-                        "mode": "Verified", "simulation_sender_actor_id": null
-                    }))
-                    .unwrap(),
-                ),
-                ..Default::default()
-            };
-            let ordinary = TxEnvFor::<BaseEvmNetwork>::default();
-            let hash = B256::repeat_byte(1);
-            let (target, prefix, expected) = if target_is_eip8130 {
-                (
-                    unsupported,
-                    vec![(hash, ordinary)],
-                    "EIP-8130 target transactions are not supported by tooling replay".to_string(),
-                )
-            } else {
-                (
-                    ordinary.clone(),
-                    vec![(B256::ZERO, ordinary), (hash, unsupported)],
-                    format!(
-                        "EIP-8130 prefix transaction {hash} is not supported by tooling replay"
-                    ),
-                )
-            };
-            let error = executor
-                .transact_with_ordinary_block_replay(
-                    EvmEnv::<BaseSpecId>::default(),
-                    target,
-                    prefix,
-                )
-                .unwrap_err();
-            assert_eq!(error.to_string(), expected);
-            assert_eq!(executor.get_nonce(Address::ZERO).unwrap(), 0);
-        }
-    }
-
-    #[test]
-    fn block_replay_commits_prefix_and_traces_only_target() {
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default().gas_limit(1 << 20).build(
-            EvmEnv::default(),
-            TxEnv::default(),
-            backend,
-            NetworkConfigs::default(),
-        );
-        executor.set_balance(CALLER, U256::MAX).unwrap();
-        executor.set_trace_requirements(TraceRequirements::none().with_calls(true));
-
-        let address = Address::repeat_byte(0x11);
-        // Increment slot zero and return its new value.
-        executor
-            .set_code(
-                address,
-                Bytecode::new_raw(Bytes::from_static(&[
-                    0x60, 0x00, 0x54, 0x60, 0x01, 0x01, 0x80, 0x60, 0x00, 0x55, 0x60, 0x00, 0x52,
-                    0x60, 0x20, 0x60, 0x00, 0xf3,
-                ])),
-            )
-            .unwrap();
-        let prefix = TxEnv {
-            caller: CALLER,
-            gas_limit: 100_000,
-            kind: TxKind::Call(address),
-            ..Default::default()
-        };
-        let reverted_create = TxEnv {
-            nonce: 1,
-            kind: TxKind::Create,
-            data: Bytes::from_static(&[0x5f, 0x5f, 0xfd]),
-            ..prefix.clone()
-        };
-        let target = TxEnv { nonce: 2, ..prefix.clone() };
-
-        let result = executor
-            .transact_with_ordinary_block_replay(
-                EvmEnv::default(),
-                target,
-                vec![(B256::repeat_byte(1), prefix), (B256::repeat_byte(2), reverted_create)],
-            )
-            .unwrap();
-
-        assert_eq!(result.result, Bytes::from(B256::with_last_byte(2).0));
-        assert_eq!(result.tx_env.nonce, 2);
-        assert_eq!(executor.get_nonce(CALLER).unwrap(), 3);
-        assert_eq!(executor.backend().storage_ref(address, U256::ZERO).unwrap(), U256::from(2));
-        assert_eq!(result.traces.unwrap().arena.nodes().len(), 1);
-    }
-
-    #[test]
-    fn block_replay_initializes_create_target_from_canonical_nonce() {
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default().gas_limit(1 << 20).build(
-            EvmEnv::default(),
-            TxEnv::default(),
-            backend,
-            NetworkConfigs::default(),
-        );
-        executor.set_balance(CALLER, U256::MAX).unwrap();
-
-        let prefix = TxEnv {
-            caller: CALLER,
-            gas_limit: 100_000,
-            kind: TxKind::Call(Address::repeat_byte(0x11)),
-            ..Default::default()
-        };
-        let target = TxEnv {
-            nonce: 1,
-            kind: TxKind::Create,
-            data: Bytes::from_static(&[0x00]),
-            ..prefix.clone()
-        };
-        let expected = CALLER.create(1);
-
-        let result = executor
-            .transact_with_ordinary_block_replay(
-                EvmEnv::default(),
-                target,
-                vec![(B256::repeat_byte(1), prefix)],
-            )
-            .unwrap();
-
-        assert!(
-            matches!(result.out, Some(Output::Create(_, Some(address))) if address == expected)
-        );
-        assert!(executor.backend().is_persistent(&expected));
-        assert!(executor.backend().has_cheatcode_access(&expected));
-    }
-
-    #[test]
-    fn block_replay_preserves_successful_prefix_deployment() {
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default().gas_limit(1 << 20).build(
-            EvmEnv::default(),
-            TxEnv::default(),
-            backend,
-            NetworkConfigs::default(),
-        );
-        executor.set_balance(CALLER, U256::MAX).unwrap();
-
-        let deployed = CALLER.create(0);
-        let prefix = TxEnv {
-            caller: CALLER,
-            gas_limit: 100_000,
-            kind: TxKind::Create,
-            data: Bytes::from_static(&[0x00]),
-            ..Default::default()
-        };
-        let target = TxEnv { nonce: 1, kind: TxKind::Call(deployed), ..prefix.clone() };
-
-        executor
-            .transact_with_ordinary_block_replay(
-                EvmEnv::default(),
-                target,
-                vec![(B256::repeat_byte(1), prefix)],
-            )
-            .unwrap();
-
-        assert!(executor.backend().is_persistent(&deployed));
-    }
-
-    #[cfg(feature = "monad")]
-    #[test]
-    fn block_replay_executes_monad_system_prefix() {
-        use foundry_evm_core::evm::MonadEvmNetwork;
-
-        let backend = Backend::<MonadEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::<MonadEvmNetwork>::default().gas_limit(1 << 20).build(
-            EvmEnv::<MonadHardfork>::default(),
-            TxEnv::default(),
-            backend,
-            NetworkConfigs::with_monad(),
-        );
-        executor.set_balance(CALLER, U256::MAX).unwrap();
-
-        let system_address = alloy_primitives::address!("6f49a8f621353f12378d0046e7d7e4b9b249dc9e");
-        let staking_address =
-            alloy_primitives::address!("0000000000000000000000000000000000001000");
-        let selector = keccak256("syscallSnapshot()");
-        let system = TxEnv {
-            caller: system_address,
-            gas_limit: 0,
-            kind: TxKind::Call(staking_address),
-            data: Bytes::copy_from_slice(&selector[..4]),
-            chain_id: None,
-            ..Default::default()
-        };
-        let target = TxEnv {
-            caller: CALLER,
-            gas_limit: 100_000,
-            kind: TxKind::Call(Address::repeat_byte(0x11)),
-            ..Default::default()
-        };
-        let system_chain = MonadChainContext::for_transaction(&system);
-        let target_chain = MonadChainContext::for_transaction(&target);
-
-        let (result, used_system_replay) = executor
-            .transact_with_monad_block_replay(
-                EvmEnv::<MonadHardfork>::default(),
-                target,
-                target_chain,
-                vec![(B256::repeat_byte(1), system, system_chain)],
-                false,
-            )
-            .unwrap()
-            .unwrap();
-
-        assert!(!used_system_replay);
-        assert!(!result.reverted);
-        assert_eq!(executor.get_nonce(system_address).unwrap(), 1);
-    }
-
-    #[cfg(feature = "monad")]
-    #[test]
-    fn block_replay_executes_monad_system_target() {
-        use foundry_evm_core::evm::MonadEvmNetwork;
-
-        let backend = Backend::<MonadEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::<MonadEvmNetwork>::default().gas_limit(1 << 20).build(
-            EvmEnv::<MonadHardfork>::default(),
-            TxEnv::default(),
-            backend,
-            NetworkConfigs::with_monad(),
-        );
-
-        let system_address = alloy_primitives::address!("6f49a8f621353f12378d0046e7d7e4b9b249dc9e");
-        let staking_address =
-            alloy_primitives::address!("0000000000000000000000000000000000001000");
-        let selector = keccak256("syscallSnapshot()");
-        let target = TxEnv {
-            caller: system_address,
-            gas_limit: 0,
-            kind: TxKind::Call(staking_address),
-            data: Bytes::copy_from_slice(&selector[..4]),
-            chain_id: None,
-            ..Default::default()
-        };
-        let target_chain = MonadChainContext::for_transaction(&target);
-
-        let (result, used_system_replay) = executor
-            .transact_with_monad_block_replay(
-                EvmEnv::<MonadHardfork>::default(),
-                target,
-                target_chain,
-                Vec::new(),
-                false,
-            )
-            .unwrap()
-            .unwrap();
-
-        assert!(used_system_replay);
-        assert!(!result.reverted);
-        assert_eq!(executor.get_nonce(system_address).unwrap(), 1);
-    }
-
     #[test]
     fn mismatched_skip_payload_is_execution_error() {
         let raw = RawCallResult::<EthEvmNetwork> {
@@ -2430,65 +2137,214 @@ mod tests {
     }
 
     #[test]
-    fn set_spec_id_updates_spec_dependent_cfg_state() {
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default().build(
-            EvmEnv::default(),
-            TxEnv::default(),
-            backend,
-            NetworkConfigs::default(),
-        );
+    fn block_replay_commits_prefix_and_traces_only_target() {
+        let mut executor = eth_executor(ExecutorBuilder::default().gas_limit(1 << 20));
+        executor.set_balance(CALLER, U256::MAX).unwrap();
+        executor.set_trace_requirements(TraceRequirements::none().with_calls(true));
 
-        executor.evm_env_mut().cfg_env.set_spec_and_mainnet_gas_params(SpecId::HOMESTEAD);
-        assert_eq!(
-            executor.evm_env().cfg_env.gas_params(),
-            &revm::context_interface::cfg::GasParams::new_spec(SpecId::HOMESTEAD),
+        let address = Address::repeat_byte(0x11);
+        // Increment slot zero and return its new value.
+        executor
+            .set_code(
+                address,
+                Bytecode::new_raw(Bytes::from_static(&[
+                    0x60, 0x00, 0x54, 0x60, 0x01, 0x01, 0x80, 0x60, 0x00, 0x55, 0x60, 0x00, 0x52,
+                    0x60, 0x20, 0x60, 0x00, 0xf3,
+                ])),
+            )
+            .unwrap();
+        let prefix = replay_tx(0, TxKind::Call(address), &[]);
+        let reverted_create = replay_tx(1, TxKind::Create, &[0x5f, 0x5f, 0xfd]);
+        let target = replay_tx(2, TxKind::Call(address), &[]);
+
+        let env = *executor.evm_env();
+        let result = executor
+            .transact_with_block_replay(
+                env,
+                &target,
+                TxKind::Call(address),
+                &[(B256::repeat_byte(1), prefix), (B256::repeat_byte(2), reverted_create)],
+            )
+            .unwrap();
+
+        assert_eq!(result.result, Bytes::from(B256::with_last_byte(2).0));
+        assert_eq!(executor.get_nonce(CALLER).unwrap(), 3);
+        assert_eq!(executor.backend().storage(address, U256::ZERO).unwrap(), U256::from(2));
+        assert_eq!(result.traces.unwrap().arena.nodes().len(), 1);
+    }
+
+    #[test]
+    fn block_replay_initializes_create_target_from_canonical_nonce() {
+        let mut executor = eth_executor(ExecutorBuilder::default().gas_limit(1 << 20));
+        executor.set_balance(CALLER, U256::MAX).unwrap();
+
+        let prefix = replay_tx(0, TxKind::Call(Address::repeat_byte(0x11)), &[]);
+        let target = replay_tx(1, TxKind::Create, &[0x00]);
+        let expected = CALLER.create(1);
+
+        let env = *executor.evm_env();
+        let result = executor
+            .transact_with_block_replay(
+                env,
+                &target,
+                TxKind::Create,
+                &[(B256::repeat_byte(1), prefix)],
+            )
+            .unwrap();
+
+        assert_eq!(result.created_address, Some(expected));
+        assert!(executor.backend().is_persistent(&expected));
+        assert!(executor.backend().has_cheatcode_access(&expected));
+    }
+
+    #[test]
+    fn block_replay_preserves_successful_prefix_deployment() {
+        let mut executor = eth_executor(ExecutorBuilder::default().gas_limit(1 << 20));
+        executor.set_balance(CALLER, U256::MAX).unwrap();
+
+        let deployed = CALLER.create(0);
+        let prefix = replay_tx(0, TxKind::Create, &[0x00]);
+        let target = replay_tx(1, TxKind::Call(deployed), &[]);
+
+        let env = *executor.evm_env();
+        executor
+            .transact_with_block_replay(
+                env,
+                &target,
+                TxKind::Call(deployed),
+                &[(B256::repeat_byte(1), prefix)],
+            )
+            .unwrap();
+
+        assert!(executor.backend().is_persistent(&deployed));
+    }
+
+    #[cfg(feature = "monad")]
+    #[test]
+    fn monad_block_replay_executes_canonical_protocol_transactions() {
+        const STAKING: Address =
+            alloy_primitives::address!("0x0000000000000000000000000000000000001000");
+        let system = foundry_common::MONAD_SYSTEM_ADDRESS;
+        let system_tx = |nonce, gas_limit, input: Vec<u8>| {
+            Recovered::new_unchecked(
+                evm2::ethereum::TxEnvelope::Legacy(alloy_consensus::TxLegacy {
+                    nonce,
+                    gas_limit,
+                    to: TxKind::Call(STAKING),
+                    input: input.into(),
+                    ..Default::default()
+                }),
+                system,
+            )
+        };
+        let snapshot = system_tx(0, 0, keccak256("syscallSnapshot()")[..4].to_vec());
+        let gas_paying = system_tx(1, 100_000, keccak256("syscallSnapshot()")[..4].to_vec());
+        let epoch_change = system_tx(
+            2,
+            0,
+            [&keccak256("syscallOnEpochChange(uint64)")[..4], &B256::with_last_byte(1)[..]]
+                .concat(),
         );
-        assert!(!executor.evm_env().cfg_env.is_amsterdam_eip8037_enabled());
+        let mut executor = test_executor(
+            ExecutorBuilder::<MonadEvmNetwork>::new().gas_limit(1 << 20),
+            NetworkConfigs::with_monad(),
+        );
+        // Historical staking state is funded; EIP-161 prunes a touched empty account's storage.
+        executor.set_balance(STAKING, U256::ONE).unwrap();
+        let env = *executor.evm_env();
+        let context = || BlockContext::new(Vec::new(), Vec::new(), Vec::new());
+
+        // The canonical prefix syscall replays as a protocol call, the gas-paying system envelope
+        // the caller selected runs as an ordinary transaction, and the canonical target replays
+        // at the prefix's nonce.
+        let result = executor
+            .transact_with_monad_block_replay(
+                env,
+                &epoch_change,
+                TxKind::Call(STAKING),
+                &[(B256::repeat_byte(1), snapshot), (B256::repeat_byte(2), gas_paying.clone())],
+                context(),
+            )
+            .unwrap();
+        assert!(!result.reverted);
+        assert_eq!(result.gas_used, 0);
+        assert_eq!(executor.get_nonce(system).unwrap(), 3);
+        assert_eq!(executor.get_balance(system).unwrap(), U256::ZERO);
+        assert_eq!(executor.get_balance(STAKING).unwrap(), U256::ONE);
+        let epoch = U256::from(1) << 192;
+        assert_eq!(executor.backend().storage(STAKING, U256::from(1)).unwrap(), epoch);
+        assert_eq!(executor.backend().storage(STAKING, U256::from(2)).unwrap(), U256::ZERO);
+
+        // Reusing the accepted backend must not retain permission to replay protocol envelopes.
+        let mut evm = executor.backend().create_evm();
+        let next_snapshot = system_tx(3, 0, keccak256("syscallSnapshot()")[..4].to_vec());
+        assert!(matches!(
+            evm.transact(&next_snapshot),
+            Err(evm2::registry::HandlerError::IntrinsicGasTooLow { .. })
+        ));
+
+        // A non-canonical target from the system sender is rejected without effects.
+        let error = executor
+            .transact_with_monad_block_replay(
+                env,
+                &gas_paying,
+                TxKind::Call(STAKING),
+                &[],
+                context(),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.root_cause().to_string(),
+            "invalid Monad protocol system transaction: gas limit must be zero, got 100000"
+        );
+        assert_eq!(executor.get_nonce(system).unwrap(), 3);
+    }
+
+    #[test]
+    fn set_spec_id_updates_spec_dependent_cfg_state() {
+        let mut executor = eth_executor(ExecutorBuilder::default().spec_id(SpecId::HOMESTEAD));
+        assert_eq!(
+            executor.evm_env().version.gas_params,
+            evm2::Version::new(SpecId::HOMESTEAD).gas_params
+        );
+        assert!(!executor.evm_env().version.feature(evm2::EvmFeatures::EIP8037));
 
         executor.set_spec_id(SpecId::AMSTERDAM);
 
         assert_eq!(executor.spec_id(), SpecId::AMSTERDAM);
         assert_eq!(
-            executor.evm_env().cfg_env.gas_params(),
-            &revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM),
+            executor.evm_env().version.gas_params,
+            evm2::Version::new(SpecId::AMSTERDAM).gas_params
         );
-        assert!(executor.evm_env().cfg_env.is_amsterdam_eip8037_enabled());
+        assert!(executor.evm_env().version.feature(evm2::EvmFeatures::EIP8037));
     }
 
     #[test]
     fn calculate_stipend_uses_eip2780_transaction_context() {
         let caller = Address::repeat_byte(0x11);
         let recipient = Address::repeat_byte(0x22);
-        let mut tx = TxEnv { caller, kind: TxKind::Call(recipient), ..Default::default() };
-        let cfg = CfgEnv::new_with_spec(SpecId::AMSTERDAM);
+        let mut env = EvmFactoryFor::<EthEvmNetwork>::default()
+            .env_with_spec(default_env::<EthEvmNetwork>(), SpecId::AMSTERDAM);
+        let tx = TransactionRequest::default().from(caller).to(recipient);
 
-        assert_eq!(
-            calculate_stipend(&tx, &cfg),
-            revm::primitives::eip2780::TX_BASE_COST
-                + revm::primitives::eip8038::COLD_ACCOUNT_ACCESS
-        );
-        let cfg = cfg.with_enable_amsterdam_eip2780(false);
-        assert_eq!(
-            calculate_stipend(&tx, &cfg),
-            revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM).tx_base_stipend()
-        );
+        // EIP-2780 base cost plus the EIP-8038 cold recipient access.
+        assert_eq!(calculate_stipend::<EthEvmNetwork>(&env, &tx), 15_000);
+        // A self-transfer pays no recipient access.
+        let self_transfer = tx.clone().to(caller);
+        assert_eq!(calculate_stipend::<EthEvmNetwork>(&env, &self_transfer), 12_000);
 
-        tx.kind = TxKind::Call(caller);
-        let cfg = cfg.with_enable_amsterdam_eip2780(true);
-        assert_eq!(calculate_stipend(&tx, &cfg), revm::primitives::eip2780::TX_BASE_COST);
+        env = EvmFactoryFor::<EthEvmNetwork>::default().env_with_spec(env, SpecId::OSAKA);
+        assert_eq!(calculate_stipend::<EthEvmNetwork>(&env, &tx), 21_000);
     }
 
     #[test]
     fn amsterdam_intercepted_create_refunds_state_gas() {
-        let cheats_config =
-            Arc::new(CheatsConfig::new(&Config::default(), EvmOpts::default(), None, None, false));
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default()
-            .inspectors(|stack| stack.cheatcodes(cheats_config))
-            .spec_id(SpecId::AMSTERDAM)
-            .gas_limit(1_000_000)
-            .build(EvmEnv::default(), TxEnv::default(), backend, NetworkConfigs::default());
+        let mut executor = eth_executor(
+            ExecutorBuilder::default()
+                .inspectors(|stack| stack.cheatcodes(cheats_config()))
+                .spec_id(SpecId::AMSTERDAM)
+                .gas_limit(1_000_000),
+        );
 
         let target = Address::repeat_byte(0x11);
         // PUSH0; PUSH0; PUSH0; CREATE; POP; STOP.
@@ -2504,28 +2360,25 @@ mod tests {
         let result = executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
 
         assert!(!result.reverted);
+        // EIP-8037 account creation costs 183600 state gas.
         assert!(
-            result.gas_used
-                < revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM)
-                    .create_state_gas(),
+            result.gas_used < 183_600,
             "failed CREATE retained its conditional state-gas charge"
         );
     }
 
     #[test]
     fn amsterdam_mocked_call_revert_refunds_state_gas() {
-        let cheats_config =
-            Arc::new(CheatsConfig::new(&Config::default(), EvmOpts::default(), None, None, false));
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default()
-            .inspectors(|stack| stack.cheatcodes(cheats_config))
-            .spec_id(SpecId::AMSTERDAM)
-            .gas_limit(1_000_000)
-            .build(EvmEnv::default(), TxEnv::default(), backend, NetworkConfigs::default());
+        let mut executor = eth_executor(
+            ExecutorBuilder::default()
+                .inspectors(|stack| stack.cheatcodes(cheats_config()))
+                .spec_id(SpecId::AMSTERDAM)
+                .gas_limit(1_000_000),
+        );
 
         let target = Address::repeat_byte(0x11);
         let mocked = Address::repeat_byte(0x22);
-        executor
+        let mock = executor
             .transact_raw(
                 CALLER,
                 CHEATCODE_ADDRESS,
@@ -2540,6 +2393,7 @@ mod tests {
                 U256::ZERO,
             )
             .unwrap();
+        assert!(!mock.reverted);
         executor.set_code(mocked, Bytecode::default()).unwrap();
         executor.set_balance(target, U256::ONE).unwrap();
 
@@ -2552,23 +2406,18 @@ mod tests {
         let result = executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
 
         assert!(!result.reverted);
+        // EIP-8037 account creation costs 183600 state gas.
         assert!(
-            result.gas_used
-                < revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM)
-                    .new_account_state_gas(),
+            result.gas_used < 183_600,
             "reverted mocked CALL retained its conditional state-gas charge"
         );
     }
 
     #[test]
     fn amsterdam_deploy_charges_create_state_gas_at_caller_nonce() {
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default()
-            .spec_id(SpecId::AMSTERDAM)
-            .gas_limit(1_000_000)
-            .build(EvmEnv::default(), TxEnv::default(), backend, NetworkConfigs::default());
-        // As in `EvmOpts`.
-        executor.evm_env_mut().cfg_env.disable_nonce_check = true;
+        let mut executor = eth_executor(
+            ExecutorBuilder::default().spec_id(SpecId::AMSTERDAM).gas_limit(1_000_000),
+        );
         let sender = Address::repeat_byte(0x33);
         executor.set_account_nonce(sender, 5).unwrap();
         // A non-empty address for nonce 0 must not hide the charge for the address for nonce 5.
@@ -2583,14 +2432,7 @@ mod tests {
 
     #[test]
     fn set_trace_requirements_replaces_trace_mode_between_transactions() {
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default().gas_limit(1 << 20).build(
-            EvmEnv::default(),
-            TxEnv::default(),
-            backend,
-            NetworkConfigs::default(),
-        );
-        executor.evm_env_mut().cfg_env.disable_nonce_check = true;
+        let mut executor = eth_executor(ExecutorBuilder::default().gas_limit(1 << 20));
         let target = Address::repeat_byte(0x11);
         // PUSH1 4; JUMP; STOP; JUMPDEST; PUSH1 1; PUSH1 0; SSTORE; STOP.
         executor
@@ -2627,13 +2469,7 @@ mod tests {
     #[test]
     fn early_exit_interrupts_active_evm_execution() {
         const GAS_LIMIT: u64 = 1 << 24;
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default().gas_limit(GAS_LIMIT).build(
-            EvmEnv::default(),
-            TxEnv::default(),
-            backend,
-            NetworkConfigs::default(),
-        );
+        let mut executor = eth_executor(ExecutorBuilder::default().gas_limit(GAS_LIMIT));
         let early_exit = EarlyExit::new(false);
         executor.inspector_mut().set_early_exit(early_exit.clone());
 
@@ -2660,20 +2496,14 @@ mod tests {
         let result = result.expect("active EVM execution did not observe early exit").unwrap();
         assert!(result.execution_cancelled);
         assert!(!result.reverted);
-        assert_eq!(result.exit_reason, Some(InstructionResult::Stop));
+        assert_eq!(result.exit_reason, Some(InstrStop::Stop));
         assert!(result.gas_used > 21_000, "interrupt fired before EVM execution started");
         assert!(result.gas_used < GAS_LIMIT, "execution ran out of gas instead of exiting");
     }
 
     #[test]
     fn completed_execution_is_not_retroactively_cancelled() {
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default().gas_limit(1 << 24).build(
-            EvmEnv::default(),
-            TxEnv::default(),
-            backend,
-            NetworkConfigs::default(),
-        );
+        let mut executor = eth_executor(ExecutorBuilder::default().gas_limit(1 << 24));
         let early_exit = EarlyExit::new(false);
         executor.inspector_mut().set_early_exit(early_exit.clone());
 
@@ -2689,13 +2519,7 @@ mod tests {
     #[test]
     fn campaign_deadline_interrupts_active_evm_execution() {
         const GAS_LIMIT: u64 = 1 << 24;
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default().gas_limit(GAS_LIMIT).build(
-            EvmEnv::default(),
-            TxEnv::default(),
-            backend,
-            NetworkConfigs::default(),
-        );
+        let mut executor = eth_executor(ExecutorBuilder::default().gas_limit(GAS_LIMIT));
         let cancellation = EvmExecutionCancellation::campaign(
             EarlyExit::new(false),
             Arc::new(AtomicBool::new(false)),
@@ -2711,157 +2535,87 @@ mod tests {
         let result = executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
         assert!(result.execution_cancelled);
         assert!(!result.reverted);
-        assert_eq!(result.exit_reason, Some(InstructionResult::Stop));
+        assert_eq!(result.exit_reason, Some(InstrStop::Stop));
         assert!(result.gas_used < GAS_LIMIT, "execution ran out of gas instead of timing out");
     }
 
     #[test]
-    fn beacon_root_system_call_does_not_persist_system_address() {
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default().spec_id(SpecId::CANCUN).build(
-            EvmEnv::default(),
-            TxEnv::default(),
-            backend,
-            NetworkConfigs::default(),
-        );
-        let before = executor.backend().basic_ref(SYSTEM_ADDRESS).unwrap();
+    fn gas_price_opcode_reads_configured_gas_price() {
+        let mut env = default_env::<EthEvmNetwork>();
+        env.set_chain_id(1);
+        let mut executor = ExecutorBuilder::<EthEvmNetwork>::default()
+            .inspectors(|stack| stack.cheatcodes(cheats_config()))
+            .gas_limit(1 << 20)
+            .build(
+                env,
+                TransactionRequest::default().gas_price(7),
+                Backend::spawn(None, env).unwrap(),
+                NetworkConfigs::default(),
+            );
+        let target = Address::repeat_byte(0x11);
+        // GASPRICE; PUSH0; MSTORE; PUSH1 32; PUSH0; RETURN.
+        executor
+            .set_code(
+                target,
+                Bytecode::new_raw(Bytes::from_static(&[0x3a, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3])),
+            )
+            .unwrap();
 
-        executor.apply_beacon_root(B256::repeat_byte(0x11)).unwrap();
+        // Executions are fee-less, but the opcode reads the configured price.
+        let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.result, Bytes::from(B256::with_last_byte(7).0));
+
+        let sender = address!("5316812db67073c4d4af8bb3000c5b86c2877e94");
+        let replay_target = address!("6fd0a0cff9a87adf51695b40b4fa267855a8f4c6");
+        executor.set_balance(sender, U256::from(10u64.pow(18))).unwrap();
+        // GASPRICE; PUSH0; SSTORE; STOP.
+        executor.set_code(replay_target, Bytecode::new_raw(bytes!("3a5f5500"))).unwrap();
+        // The signed transaction pays 100 wei per gas, independently of the configured price.
+        let input = broadcastRawTransactionCall {
+            data: bytes!("f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856"),
+        }
+        .abi_encode()
+        .into();
+        let result = executor.transact_raw(CALLER, CHEATCODE_ADDRESS, input, U256::ZERO).unwrap();
+        assert!(!result.reverted, "{result:?}");
+        assert_eq!(executor.backend().storage(replay_target, U256::ZERO).unwrap(), U256::from(100));
+
+        // The replay does not consume the outer transaction's configured price.
+        let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.result, Bytes::from(B256::with_last_byte(7).0));
+    }
+
+    #[test]
+    fn beacon_root_system_call_does_not_persist_system_address() {
+        let mut executor = eth_executor(ExecutorBuilder::default().spec_id(SpecId::CANCUN));
+        let before = executor.backend().basic(SYSTEM_ADDRESS).unwrap();
+        let root = B256::repeat_byte(0x11);
+
+        executor.apply_beacon_root(root).unwrap();
 
         assert_eq!(
-            executor.backend().basic_ref(SYSTEM_ADDRESS).unwrap(),
+            executor.backend().basic(SYSTEM_ADDRESS).unwrap(),
             before,
             "EIP-4788 system calls must not persist the system caller account",
         );
     }
 
-    /// Regression test for `pre_override_blob_hashes` restoration.
-    ///
-    /// Exercises the `None` arm of `sync_tx_after_env_override_restore` with
-    /// *non-empty* native blob hashes, the case that cannot be reached from
-    /// Solidity because no cheatcode sets `tx.blob_hashes` without also setting
-    /// `env_overrides.blob_hashes`.
-    ///
-    /// Steps:
-    /// 1. Seed `tx.blob_hashes = original` directly (no cheatcode -> override stays `None`).
-    /// 2. `vm.snapshotState()` -> `inner_snapshot_state` captures `pre_override_blob_hashes =
-    ///    Some(original)`.
-    /// 3. `vm.blobhashes(new)` -> sets override (`Some`) AND real tx hashes.
-    /// 4. `vm.revertToState(id)` -> restores override to `None`,
-    ///    `sync_tx_after_env_override_restore` must restore `tx.blob_hashes = original`.
     #[test]
-    fn pre_override_blob_hashes_restored_on_revert_to_state() {
-        let cheats_config =
-            Arc::new(CheatsConfig::new(&Config::default(), EvmOpts::default(), None, None, false));
-
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default()
-            .inspectors(|stack| stack.cheatcodes(cheats_config))
-            .spec_id(SpecId::CANCUN)
-            .build(EvmEnv::default(), TxEnv::default(), backend, NetworkConfigs::default());
-
-        let original: Vec<B256> = vec![B256::repeat_byte(0x11), B256::repeat_byte(0x22)];
-        executor.tx_env_mut().set_blob_hashes(original.clone());
-
-        let snap_result = executor
-            .transact_raw(
-                CALLER,
-                CHEATCODE_ADDRESS,
-                snapshotStateCall {}.abi_encode().into(),
-                U256::ZERO,
-            )
-            .expect("snapshotState failed");
-        assert!(!snap_result.reverted, "snapshotState reverted unexpectedly");
-        let snapshot_id = U256::from_be_slice(&snap_result.result[..32]);
-
-        let new_hashes = vec![B256::repeat_byte(0x33)];
-        let blob_result = executor
-            .transact_raw(
-                CALLER,
-                CHEATCODE_ADDRESS,
-                blobhashesCall { hashes: new_hashes }.abi_encode().into(),
-                U256::ZERO,
-            )
-            .expect("blobhashes failed");
-        assert!(!blob_result.reverted, "blobhashes reverted unexpectedly");
-
-        let revert_result = executor
-            .transact_raw(
-                CALLER,
-                CHEATCODE_ADDRESS,
-                revertToStateCall { snapshotId: snapshot_id }.abi_encode().into(),
-                U256::ZERO,
-            )
-            .expect("revertToState failed");
-        assert!(!revert_result.reverted, "revertToState reverted unexpectedly");
-
-        assert_eq!(
-            revert_result.tx_env.blob_hashes, original,
-            "pre_override_blob_hashes must be restored to original non-empty hashes, not []",
+    fn storage_stored_on_absent_account_survives_commit() {
+        let mut executor = eth_executor(
+            ExecutorBuilder::default()
+                .inspectors(|stack| stack.cheatcodes(cheats_config()))
+                .gas_limit(1_000_000),
         );
-        assert!(
-            executor.inspector().cheatcodes.as_ref().unwrap().env_overrides.is_empty(),
-            "inactive env overrides must be removed after restoring their metadata",
-        );
-    }
-    #[cfg(feature = "monad")]
-    #[test]
-    fn concrete_system_replay_preserves_envelope_and_rejects_without_commit() {
-        let mut executor = ExecutorBuilder::<MonadEvmNetwork>::new().gas_limit(1 << 20).build(
-            EvmEnv::<MonadHardfork>::default(),
-            TxEnv::default(),
-            Backend::spawn(None).unwrap(),
-            NetworkConfigs::with_monad(),
-        );
-        let caller = alloy_primitives::address!("6f49a8f621353f12378d0046e7d7e4b9b249dc9e");
-        let selector = keccak256("syscallSnapshot()");
-        let system = TxEnv {
-            caller,
-            gas_limit: 0,
-            kind: TxKind::Call(alloy_primitives::address!(
-                "0000000000000000000000000000000000001000"
-            )),
-            data: Bytes::copy_from_slice(&selector[..4]),
-            chain_id: None,
-            ..Default::default()
-        };
-        let result = executor
-            .try_transact_system_replay_with_env_and_context(
-                EvmEnv::<MonadHardfork>::default(),
-                system.clone(),
-                MonadChainContext::for_transaction(&system),
-            )
-            .unwrap()
-            .unwrap();
-        assert!(!result.reverted);
-        assert_eq!(result.tx_env, system);
-        assert_eq!(executor.get_nonce(caller).unwrap(), 1);
+        let target = Address::with_last_byte(0x31);
+        let value = B256::with_last_byte(1);
+        let store = storeCall { target, slot: B256::ZERO, value }.abi_encode();
+        let stored = executor.transact_raw(CALLER, CHEATCODE_ADDRESS, store.into(), U256::ZERO);
+        assert!(!stored.unwrap().reverted);
 
-        // Replaying the same canonical nonce must fail without committing another increment.
-        assert!(
-            executor
-                .try_transact_system_replay_with_env_and_context(
-                    EvmEnv::<MonadHardfork>::default(),
-                    system.clone(),
-                    MonadChainContext::for_transaction(&system),
-                )
-                .is_err()
-        );
-        assert_eq!(executor.get_nonce(caller).unwrap(), 1);
-
-        let ordinary = TxEnv { caller: CALLER, ..Default::default() };
-        let nonce = executor.get_nonce(CALLER).unwrap();
-        assert!(
-            executor
-                .try_transact_system_replay_with_env_and_context(
-                    EvmEnv::<MonadHardfork>::default(),
-                    ordinary.clone(),
-                    MonadChainContext::for_transaction(&ordinary),
-                )
-                .unwrap()
-                .is_none()
-        );
-        assert_eq!(executor.get_nonce(CALLER).unwrap(), nonce);
+        let load = loadCall { target, slot: B256::ZERO }.abi_encode();
+        let loaded = executor.call_raw(CALLER, CHEATCODE_ADDRESS, load.into(), U256::ZERO).unwrap();
+        assert_eq!(loaded.result, Bytes::from(value.0));
     }
 
     #[test]
@@ -2872,5 +2626,81 @@ mod tests {
         assert_ne!(worker_seed(seed, 1), seed);
         assert_ne!(worker_seed(seed, 1), worker_seed(seed, 2));
         assert_ne!(worker_seed(seed, 1), worker_seed(U256::from(0x5678), 1));
+    }
+
+    #[test]
+    fn call_commit_preserves_lifecycle_state() {
+        let mut executor = eth_executor(
+            ExecutorBuilder::default()
+                .inspectors(|stack| stack.cheatcodes(cheats_config()))
+                .gas_limit(1_000_000),
+        );
+        let target = Address::with_last_byte(0x31);
+        executor.set_balance(target, U256::ONE).unwrap();
+        // The cheatcode inspector cancels root-call nonce increments.
+        executor.set_account_nonce(CALLER, 5).unwrap();
+        let snapshot = snapshotStateCall {}.abi_encode();
+        let restore = revertToStateCall { snapshotId: U256::ZERO }.abi_encode();
+
+        // Discarded calls must not retain snapshots.
+        executor.call_raw(CALLER, CHEATCODE_ADDRESS, snapshot.clone().into(), U256::ZERO).unwrap();
+        let missing = executor
+            .call_raw(CALLER, CHEATCODE_ADDRESS, restore.clone().into(), U256::ZERO)
+            .unwrap();
+        assert_eq!(U256::from_be_slice(&missing.result), U256::ZERO);
+
+        let mut captured =
+            executor.call_raw(CALLER, CHEATCODE_ADDRESS, snapshot.into(), U256::ZERO).unwrap();
+        executor.commit(&mut captured);
+        let store = storeCall { target, slot: B256::ZERO, value: B256::with_last_byte(7) };
+        let mut written = executor
+            .call_raw(CALLER, CHEATCODE_ADDRESS, store.abi_encode().into(), U256::ZERO)
+            .unwrap();
+        executor.commit(&mut written);
+        assert_eq!(executor.backend().storage(target, U256::ZERO).unwrap(), U256::from(7));
+
+        let mut restored =
+            executor.call_raw(CALLER, CHEATCODE_ADDRESS, restore.into(), U256::ZERO).unwrap();
+        assert_eq!(U256::from_be_slice(&restored.result), U256::ONE);
+        // Restored state stays detached until commit.
+        assert_eq!(executor.backend().storage(target, U256::ZERO).unwrap(), U256::from(7));
+        executor.commit(&mut restored);
+        assert_eq!(executor.backend().storage(target, U256::ZERO).unwrap(), U256::ZERO);
+        assert_eq!(executor.get_nonce(CALLER).unwrap(), 5);
+    }
+
+    #[test]
+    fn call_success_checks_restored_assertion_state() {
+        for legacy in [false, true] {
+            let mut executor = eth_executor(
+                ExecutorBuilder::default()
+                    .inspectors(|stack| stack.cheatcodes(cheats_config()))
+                    .legacy_assertions(legacy)
+                    .gas_limit(1_000_000),
+            );
+            let target = Address::with_last_byte(0x31);
+            // DSTest-style failed(): return storage slot zero.
+            let code = Bytes::from_static(&[0x5f, 0x54, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3]);
+            executor.set_code(target, Bytecode::new_raw(code)).unwrap();
+            let (account, slot) =
+                if legacy { (target, U256::ZERO) } else { (CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT) };
+            executor.backend_mut().insert_account_storage(account, slot, U256::ONE);
+            let snapshot = snapshotStateCall {}.abi_encode();
+            let captured = executor
+                .transact_raw(CALLER, CHEATCODE_ADDRESS, snapshot.into(), U256::ZERO)
+                .unwrap();
+            let restore = revertToStateCall { snapshotId: U256::from_be_slice(&captured.result) }
+                .abi_encode();
+            executor.backend_mut().insert_account_storage(account, slot, U256::ZERO);
+
+            let mut restored =
+                executor.call_raw(CALLER, CHEATCODE_ADDRESS, restore.into(), U256::ZERO).unwrap();
+            assert!(!restored.reverted);
+            // Legacy failed() ignores committed flags; the global check includes them.
+            let pending = Cow::Borrowed(&restored.state_changeset);
+            assert_eq!(executor.is_raw_call_success(target, pending, &restored), legacy);
+            executor.commit(&mut restored);
+            assert_eq!(executor.is_raw_call_mut_success(target, &mut restored), legacy);
+        }
     }
 }

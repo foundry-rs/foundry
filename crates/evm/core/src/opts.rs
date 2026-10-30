@@ -1,12 +1,17 @@
 use crate::{
-    EvmEnv, FoundryBlock, FoundryTransaction,
     constants::DEFAULT_CREATE2_DEPLOYER,
+    evm::{
+        EvmEnv, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork, SpecFor,
+        TransactionRequestFor, TypesFor,
+    },
     fork::{CreateFork, Fork},
     utils::{apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header},
 };
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumHash;
-use alloy_network::{AnyNetwork, BlockResponse, Network, primitives::HeaderResponse};
+use alloy_network::{
+    AnyNetwork, BlockResponse, Network, TransactionBuilder, primitives::HeaderResponse,
+};
 use alloy_primitives::{Address, B256, BlockNumber, ChainId, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
@@ -14,6 +19,7 @@ use alloy_rpc_types::{
     BlockNumberOrTag,
     anvil::{Metadata, NodeInfo},
 };
+use evm2::{EvmFeatures, Version, env::BlockEnv};
 use eyre::{OptionExt, WrapErr};
 use foundry_common::{
     ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING,
@@ -22,7 +28,6 @@ use foundry_common::{
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{Chain, Config, ExecutionSpec, FoundryHardfork, GasLimit, evm_spec_id};
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
-use revm::{context::CfgEnv, primitives::hardfork::SpecId};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use url::Url;
@@ -931,16 +936,16 @@ impl EvmOpts {
 
     /// Returns standalone execution environments and the remote source context, if any.
     ///
+    /// The environment carries the network's default spec; resolve the execution spec with
+    /// [`resolve_execution_spec`]. The request holds the transaction defaults: sender, gas price,
+    /// gas limit and, when forking, the chain ID.
+    ///
     /// Execution workflows with a backend use its selected block through `Backend::env`.
-    pub async fn env_with_fork_context<
-        SPEC: Into<SpecId> + Default + Copy,
-        BLOCK: FoundryBlock + Default,
-        TX: FoundryTransaction + Default,
-    >(
+    pub async fn env_with_fork_context<FEN: FoundryEvmNetwork>(
         &self,
-    ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, TX, Option<ForkContext>)> {
+    ) -> eyre::Result<(EvmEnvFor<FEN>, TransactionRequestFor<FEN>, Option<ForkContext>)> {
         let Some(fork_url) = &self.fork_url else {
-            return Ok((self.local_evm_env(), self.local_tx_env(), None));
+            return Ok((self.local_evm_env::<FEN>(), self.local_tx_request::<FEN>(), None));
         };
         let provider = self.fork_provider_with_url::<AnyNetwork>(fork_url)?;
         let target = self.fork_block_number.map_or(BlockNumberOrTag::Latest, Into::into);
@@ -964,12 +969,12 @@ impl EvmOpts {
             self.ensure_expected_fork_endpoint(&identity)?;
             if context.matches_identity(&identity) {
                 let chain_id = self.chain_id_override().unwrap_or(context.execution_chain_id);
-                let env = self.fork_env_from_block::<SPEC, BLOCK, AnyNetwork>(
+                let env = self.fork_env_from_block::<FEN, AnyNetwork>(
                     chain_id,
                     context.source_chain_id,
                     &block,
                 );
-                let tx = self.fork_tx_env(gas_price, chain_id);
+                let tx = self.fork_tx_request::<FEN>(gas_price, chain_id);
                 return Ok((env, tx, Some(context)));
             }
         }
@@ -980,25 +985,21 @@ impl EvmOpts {
         );
     }
 
-    /// Returns the EVM and transaction environments at an already resolved fork.
-    pub(crate) async fn env_at_fork<
-        SPEC: Into<SpecId> + Default + Copy,
-        BLOCK: FoundryBlock + Default,
-        TX: FoundryTransaction + Default,
-    >(
+    /// Returns the EVM environment and transaction defaults at an already resolved fork.
+    pub(crate) async fn env_at_fork<FEN: FoundryEvmNetwork>(
         &self,
         fork: Option<&Fork>,
-    ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, TX)> {
+    ) -> eyre::Result<(EvmEnvFor<FEN>, TransactionRequestFor<FEN>)> {
         let Some(_) = &self.fork_url else {
             eyre::ensure!(fork.is_none(), "resolved fork provided without a configured fork");
-            return Ok((self.local_evm_env(), self.local_tx_env()));
+            return Ok((self.local_evm_env::<FEN>(), self.local_tx_request::<FEN>()));
         };
         let fork = fork.ok_or_else(|| eyre::eyre!("fork must be resolved"))?;
         let provider = self.provider_for_fork::<AnyNetwork>(fork)?;
         self.check_fork_endpoint(&provider, fork).await?;
         let context = fork.context();
         let chain_id = self.chain_id_override().unwrap_or(context.execution_chain_id);
-        let env = self.fork_env_from_block::<SPEC, BLOCK, AnyNetwork>(
+        let env = self.fork_env_from_block::<FEN, AnyNetwork>(
             chain_id,
             context.source_chain_id,
             &fork.block,
@@ -1009,7 +1010,7 @@ impl EvmOpts {
             })
             .await?;
         self.check_fork_endpoint(&provider, fork).await?;
-        Ok((env, self.fork_tx_env(gas_price, chain_id)))
+        Ok((env, self.fork_tx_request::<FEN>(gas_price, chain_id)))
     }
 
     fn fork_env_error_context(&self) -> String {
@@ -1104,88 +1105,89 @@ impl EvmOpts {
         Ok((block, actual, context))
     }
 
-    pub(crate) fn fork_env_from_block<
-        SPEC: Into<SpecId> + Default + Copy,
-        BLOCK: FoundryBlock + Default,
-        N: Network,
-    >(
+    /// Returns the environment of a fork at `block`, with the network's default spec.
+    pub(crate) fn fork_env_from_block<FEN: FoundryEvmNetwork, N: Network>(
         &self,
         chain_id: ChainId,
         source_chain_id: ChainId,
         block: &N::BlockResponse,
-    ) -> EvmEnv<SPEC, BLOCK> {
-        let mut evm_env = EvmEnv {
-            cfg_env: self.cfg_env(chain_id),
-            block_env: block_env_from_header(block.header()),
-        };
-
-        apply_chain_and_block_specific_env_changes_for_chain::<N, _, _>(
+    ) -> EvmEnvFor<FEN> {
+        let spec = SpecFor::<FEN>::default();
+        let mut evm_env = EvmEnv::new(
+            spec,
+            self.version(EvmFactoryFor::<FEN>::default().version(spec, chain_id)),
+            block_env_from_header::<TypesFor<FEN>>(block.header()),
+        );
+        apply_chain_and_block_specific_env_changes_for_chain::<N, _>(
             &mut evm_env,
             block,
             source_chain_id,
             self.networks,
         );
-
         evm_env
     }
 
-    /// Returns the [`EvmEnv`] configured with only local settings.
-    fn local_evm_env<SPEC: Into<SpecId> + Default + Clone, BLOCK: FoundryBlock + Default>(
-        &self,
-    ) -> EvmEnv<SPEC, BLOCK> {
-        let cfg_env = self.cfg_env(self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID));
-        let mut block_env = BLOCK::default();
-        block_env.set_number(self.env.block_number);
-        block_env.set_beneficiary(self.env.block_coinbase);
-        block_env.set_timestamp(self.env.block_timestamp);
-        block_env.set_difficulty(U256::from(self.env.block_difficulty));
-        block_env.set_prevrandao(Some(self.env.block_prevrandao));
-        block_env.set_basefee(self.env.block_base_fee_per_gas);
-        block_env.set_gas_limit(self.gas_limit());
-        EvmEnv::new(cfg_env, block_env)
+    /// Returns the environment configured with only local settings, with the network's default
+    /// spec.
+    pub fn local_evm_env<FEN: FoundryEvmNetwork>(&self) -> EvmEnvFor<FEN> {
+        let spec = SpecFor::<FEN>::default();
+        let chain_id = self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID);
+        let block = BlockEnv::<TypesFor<FEN>> {
+            number: self.env.block_number,
+            beneficiary: self.env.block_coinbase,
+            timestamp: self.env.block_timestamp,
+            difficulty: U256::from(self.env.block_difficulty),
+            prevrandao: self.env.block_prevrandao.into(),
+            basefee: U256::from(self.env.block_base_fee_per_gas),
+            gas_limit: U256::from(self.gas_limit()),
+            ..Default::default()
+        };
+        EvmEnv::new(
+            spec,
+            self.version(EvmFactoryFor::<FEN>::default().version(spec, chain_id)),
+            block,
+        )
     }
 
-    /// Returns the `TxEnv` with gas price and chain ID from a stable fork snapshot.
-    fn fork_tx_env<TX: FoundryTransaction + Default>(
+    /// Returns the transaction defaults with gas price and chain ID from a stable fork snapshot.
+    fn fork_tx_request<FEN: FoundryEvmNetwork>(
         &self,
         gas_price: u128,
         chain_id: ChainId,
-    ) -> TX {
-        let mut tx_env = TX::default();
-        tx_env.set_caller(self.sender);
-        tx_env.set_chain_id(Some(chain_id));
-        tx_env.set_gas_price(gas_price);
-        tx_env.set_gas_limit(self.gas_limit());
-        tx_env
+    ) -> TransactionRequestFor<FEN> {
+        let mut tx = TransactionRequestFor::<FEN>::default();
+        tx.set_from(self.sender);
+        tx.set_chain_id(chain_id);
+        tx.set_gas_price(gas_price);
+        tx.set_gas_limit(self.gas_limit());
+        tx
     }
 
-    /// Returns the `TxEnv` configured from local settings only.
-    fn local_tx_env<TX: FoundryTransaction + Default>(&self) -> TX {
-        let mut tx_env = TX::default();
-        tx_env.set_caller(self.sender);
-        tx_env.set_gas_price(self.env.gas_price.unwrap_or_default().into());
-        tx_env.set_gas_limit(self.gas_limit());
-        tx_env
+    /// Returns the transaction defaults configured from local settings only.
+    pub fn local_tx_request<FEN: FoundryEvmNetwork>(&self) -> TransactionRequestFor<FEN> {
+        let mut tx = TransactionRequestFor::<FEN>::default();
+        tx.set_from(self.sender);
+        tx.set_gas_price(self.env.gas_price.unwrap_or_default().into());
+        tx.set_gas_limit(self.gas_limit());
+        tx
     }
 
-    /// Builds a [`CfgEnv`] from the options, using the provided [`ChainId`].
-    fn cfg_env<SPEC: Into<SpecId> + Default + Clone>(&self, chain_id: ChainId) -> CfgEnv<SPEC> {
-        let mut cfg = CfgEnv::default();
-        cfg.chain_id = chain_id;
-        cfg.memory_limit = self.memory_limit;
-        cfg.limit_contract_code_size = self.env.code_size_limit.or(Some(usize::MAX));
+    /// Applies Foundry's execution policy to a network's default runtime `version`.
+    pub fn version(&self, mut version: Version) -> Version {
+        version.memory_limit = self.memory_limit;
+        version.max_code_size = self.env.code_size_limit.unwrap_or(usize::MAX);
+        version.max_initcode_size = version.max_code_size.saturating_mul(2);
         // EIP-3607 rejects transactions from senders with deployed code.
         // If EIP-3607 is enabled it can cause issues during fuzz/invariant tests if the caller
         // is a contract. So we disable the check by default.
-        cfg.disable_eip3607 = true;
-        cfg.disable_block_gas_limit = self.disable_block_gas_limit;
-        cfg.disable_nonce_check = true;
+        version.features.remove(EvmFeatures::EIP3607 | EvmFeatures::NONCE_CHECK);
+        version.features.set(EvmFeatures::BLOCK_GAS_LIMIT_CHECK, !self.disable_block_gas_limit);
         // By default do not enforce transaction gas limits imposed by Osaka (EIP-7825).
         // Users can opt-in to enable these limits by setting `enable_tx_gas_limit` to true.
         if !self.enable_tx_gas_limit {
-            cfg.tx_gas_limit_cap = Some(u64::MAX);
+            version.tx_gas_limit_cap = u64::MAX;
         }
-        cfg
+        version
     }
 
     /// Helper function that returns the [CreateFork] to use, if any.
@@ -1365,34 +1367,33 @@ impl ExecutionSpecContext {
 /// namespaced local networks follow their source identity, and historical execution always
 /// follows the source block's identity.
 ///
+/// Changing the spec keeps Foundry's execution policy (see
+/// [`FoundryEvmFactory::env_with_spec`]).
+///
 /// Returns the exact namespaced hardfork, when applicable, so execution and trace decoding can use
 /// the same hardfork.
-pub fn resolve_execution_spec<SPEC, BLOCK>(
+pub fn resolve_execution_spec<F: FoundryEvmFactory>(
     evm_version: EvmVersion,
     configured_hardfork: Option<FoundryHardfork>,
-    evm_env: &mut EvmEnv<SPEC, BLOCK>,
+    evm_env: &mut EvmEnv<F::Types>,
     context: ExecutionSpecContext,
-    explicit_spec: Option<SPEC>,
-) -> Option<FoundryHardfork>
-where
-    SPEC: ExecutionSpec + Into<SpecId> + Copy,
-    BLOCK: FoundryBlock,
-{
-    let configured_spec = evm_spec_id::<SPEC>(evm_version);
+    explicit_spec: Option<crate::evm::SpecOf<F>>,
+) -> Option<FoundryHardfork> {
+    let configured_spec = evm_spec_id::<crate::evm::SpecOf<F>>(evm_version);
     let (spec, hardfork) = if let Some(spec) = explicit_spec {
         (spec, spec.reported_hardfork())
     } else if let Some((hardfork, spec)) = configured_hardfork
-        .filter(|&hardfork| SPEC::from_foundry_hardfork(hardfork).is_some())
-        .or_else(|| {
-            context.hardfork(evm_env.block_env.timestamp().saturating_to(), configured_spec)
+        .filter(|&hardfork| crate::evm::SpecOf::<F>::from_foundry_hardfork(hardfork).is_some())
+        .or_else(|| context.hardfork(evm_env.block.timestamp.saturating_to(), configured_spec))
+        .and_then(|hardfork| {
+            crate::evm::SpecOf::<F>::from_foundry_hardfork(hardfork).map(|spec| (hardfork, spec))
         })
-        .and_then(|hardfork| SPEC::from_foundry_hardfork(hardfork).map(|spec| (hardfork, spec)))
     {
         (spec, Some(hardfork))
     } else {
         (configured_spec, configured_spec.reported_hardfork())
     };
-    evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec);
+    *evm_env = F::default().env_with_spec(*evm_env, spec);
     hardfork
 }
 
@@ -1466,8 +1467,8 @@ async fn option_try_or_else<T, E>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::evm::EthEvmNetwork;
     use alloy_chains::NamedChain;
-    use alloy_network::TransactionBuilder;
     use alloy_primitives::bytes;
     use alloy_rpc_types::TransactionRequest;
     use alloy_serde::WithOtherFields;
@@ -1476,13 +1477,14 @@ mod tests {
         spawn_rpc_proxy_internal_error_after, spawn_rpc_proxy_method_not_found_before,
         spawn_rpc_proxy_recording_method, spawn_rpc_proxy_rejecting_method_after,
     };
-    use revm::context::{BlockEnv, TxEnv};
 
     #[cfg(feature = "base")]
     use foundry_evm_hardforks::BaseUpgrade;
 
+    #[cfg(feature = "monad")]
+    use crate::evm::MonadEvmNetwork;
     #[cfg(feature = "optimism")]
-    use op_revm::OpSpecId;
+    use crate::evm::OpEvmNetwork;
 
     fn resolved_context(block_number: BlockNumber) -> ForkContext {
         ForkContext {
@@ -1794,13 +1796,27 @@ mod tests {
         assert!(evm_opts.fork_block_number_is_inferred);
     }
 
+    /// Returns a local environment of `FEN` on `chain_id` at `timestamp`.
+    fn env_at<FEN: FoundryEvmNetwork>(chain_id: u64, timestamp: u64) -> EvmEnvFor<FEN> {
+        let mut env = EvmOpts::default().local_evm_env::<FEN>();
+        env.set_chain_id(chain_id);
+        env.block.timestamp = U256::from(timestamp);
+        env
+    }
+
+    /// Returns the spec of `FEN` for `hardfork`.
+    fn spec_of<FEN: FoundryEvmNetwork>(hardfork: FoundryHardfork) -> SpecFor<FEN> {
+        SpecFor::<FEN>::from_foundry_hardfork(hardfork).unwrap()
+    }
+
     #[cfg(feature = "monad")]
-    fn monad_env(timestamp: u64) -> EvmEnv<foundry_evm_hardforks::MonadHardfork, BlockEnv> {
-        let mut block = BlockEnv::default();
-        block.set_timestamp(U256::from(timestamp));
-        let mut cfg = CfgEnv::new_with_spec(foundry_evm_hardforks::MonadHardfork::default());
-        cfg.chain_id = NamedChain::Monad as u64;
-        EvmEnv::new(cfg, block)
+    fn monad_env(timestamp: u64) -> EvmEnvFor<MonadEvmNetwork> {
+        env_at::<MonadEvmNetwork>(NamedChain::Monad as u64, timestamp)
+    }
+
+    #[cfg(feature = "monad")]
+    fn monad_spec(hardfork: foundry_evm_hardforks::MonadHardfork) -> SpecFor<MonadEvmNetwork> {
+        spec_of::<MonadEvmNetwork>(FoundryHardfork::Monad(hardfork))
     }
 
     #[test]
@@ -1812,7 +1828,7 @@ mod tests {
 
         let mut before = monad_env(activation - 1);
         assert_eq!(
-            resolve_execution_spec(
+            resolve_execution_spec::<EvmFactoryFor<MonadEvmNetwork>>(
                 config.evm_version,
                 config.hardfork,
                 &mut before,
@@ -1821,11 +1837,11 @@ mod tests {
             ),
             Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadNine))
         );
-        assert_eq!(before.cfg_env.spec, foundry_evm_hardforks::MonadHardfork::MonadNine);
+        assert_eq!(before.spec, monad_spec(foundry_evm_hardforks::MonadHardfork::MonadNine));
 
         let mut after = monad_env(activation);
         assert_eq!(
-            resolve_execution_spec(
+            resolve_execution_spec::<EvmFactoryFor<MonadEvmNetwork>>(
                 config.evm_version,
                 config.hardfork,
                 &mut after,
@@ -1834,7 +1850,7 @@ mod tests {
             ),
             Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadTen))
         );
-        assert_eq!(after.cfg_env.spec, foundry_evm_hardforks::MonadHardfork::MonadTen);
+        assert_eq!(after.spec, monad_spec(foundry_evm_hardforks::MonadHardfork::MonadTen));
     }
 
     #[test]
@@ -1848,7 +1864,7 @@ mod tests {
             FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadEight);
 
         assert_eq!(
-            resolve_execution_spec(
+            resolve_execution_spec::<EvmFactoryFor<MonadEvmNetwork>>(
                 config.evm_version,
                 config.hardfork,
                 &mut env,
@@ -1857,7 +1873,7 @@ mod tests {
             ),
             Some(endpoint_hardfork)
         );
-        assert_eq!(env.cfg_env.spec, foundry_evm_hardforks::MonadHardfork::MonadEight);
+        assert_eq!(env.spec, monad_spec(foundry_evm_hardforks::MonadHardfork::MonadEight));
     }
 
     #[test]
@@ -1869,7 +1885,7 @@ mod tests {
         let mut env = monad_env(activation - 1);
 
         assert_eq!(
-            resolve_execution_spec(
+            resolve_execution_spec::<EvmFactoryFor<MonadEvmNetwork>>(
                 config.evm_version,
                 config.hardfork,
                 &mut env,
@@ -1878,18 +1894,17 @@ mod tests {
             ),
             Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadTen))
         );
-        assert_eq!(env.cfg_env.spec, foundry_evm_hardforks::MonadHardfork::MonadTen);
+        assert_eq!(env.spec, monad_spec(foundry_evm_hardforks::MonadHardfork::MonadTen));
     }
 
     #[test]
     fn resolve_execution_spec_preserves_ethereum_config_for_local_forks() {
         let config = Config::default();
-        let mut block = BlockEnv::default();
-        block.set_timestamp(U256::from(1_500_000_000u64));
-        let mut env = EvmEnv::new(CfgEnv::new_with_spec(SpecId::LONDON), block);
+        let mut env = env_at::<EthEvmNetwork>(NamedChain::Mainnet as u64, 1_500_000_000);
+        env.spec = evm2::SpecId::LONDON;
 
         assert_eq!(
-            resolve_execution_spec(
+            resolve_execution_spec::<EvmFactoryFor<EthEvmNetwork>>(
                 config.evm_version,
                 config.hardfork,
                 &mut env,
@@ -1898,12 +1913,12 @@ mod tests {
             ),
             None
         );
-        assert_eq!(env.cfg_env.spec, config.evm_spec_id::<SpecId>());
+        assert_eq!(env.spec, config.evm_spec_id::<evm2::SpecId>());
 
         let endpoint_hardfork =
             FoundryHardfork::Ethereum(foundry_evm_hardforks::EthereumHardfork::Frontier);
         assert_eq!(
-            resolve_execution_spec(
+            resolve_execution_spec::<EvmFactoryFor<EthEvmNetwork>>(
                 config.evm_version,
                 config.hardfork,
                 &mut env,
@@ -1912,7 +1927,7 @@ mod tests {
             ),
             None
         );
-        assert_eq!(env.cfg_env.spec, config.evm_spec_id::<SpecId>());
+        assert_eq!(env.spec, config.evm_spec_id::<evm2::SpecId>());
     }
 
     #[test]
@@ -1920,23 +1935,27 @@ mod tests {
         let amsterdam = EthereumHardfork::Amsterdam.sepolia_activation_timestamp().unwrap();
         let sepolia = NamedChain::Sepolia as u64;
         let resolve = |timestamp: u64, context| {
-            let mut block = BlockEnv::default();
-            block.set_timestamp(U256::from(timestamp));
-            let mut env = EvmEnv::new(CfgEnv::new_with_spec(SpecId::LONDON), block);
-            let resolved =
-                resolve_execution_spec(EvmVersion::Prague, None, &mut env, context, None);
-            (resolved, env.cfg_env.spec)
+            let mut env = env_at::<EthEvmNetwork>(sepolia, timestamp);
+            env.spec = evm2::SpecId::LONDON;
+            let resolved = resolve_execution_spec::<EvmFactoryFor<EthEvmNetwork>>(
+                EvmVersion::Prague,
+                None,
+                &mut env,
+                context,
+                None,
+            );
+            (resolved, env.spec)
         };
         let ethereum = |hardfork| Some(FoundryHardfork::Ethereum(hardfork));
 
         // The source schedule applies once the chain is ahead of `evm_version`.
         assert_eq!(
             resolve(amsterdam, ExecutionSpecContext::local_or_script(Some(sepolia), None)),
-            (ethereum(EthereumHardfork::Amsterdam), SpecId::AMSTERDAM)
+            (ethereum(EthereumHardfork::Amsterdam), evm2::SpecId::AMSTERDAM)
         );
         assert_eq!(
             resolve(amsterdam - 1, ExecutionSpecContext::local_or_script(Some(sepolia), None)).1,
-            SpecId::OSAKA
+            evm2::SpecId::OSAKA
         );
         // Anvil reports its hardfork for chains without a known schedule.
         assert_eq!(
@@ -1947,7 +1966,7 @@ mod tests {
                     ethereum(EthereumHardfork::Amsterdam)
                 )
             ),
-            (ethereum(EthereumHardfork::Amsterdam), SpecId::AMSTERDAM)
+            (ethereum(EthereumHardfork::Amsterdam), evm2::SpecId::AMSTERDAM)
         );
         // An endpoint that is not ahead keeps `evm_version` instead of the source schedule.
         assert_eq!(
@@ -1958,7 +1977,7 @@ mod tests {
                     ethereum(EthereumHardfork::Prague)
                 )
             ),
-            (None, SpecId::PRAGUE)
+            (None, evm2::SpecId::PRAGUE)
         );
     }
 
@@ -1969,12 +1988,11 @@ mod tests {
         let expected =
             FoundryHardfork::from_chain_and_timestamp(NamedChain::Mainnet as u64, timestamp)
                 .unwrap();
-        let mut block = BlockEnv::default();
-        block.set_timestamp(U256::from(timestamp));
-        let mut env = EvmEnv::new(CfgEnv::new_with_spec(SpecId::LONDON), block);
+        let mut env = env_at::<EthEvmNetwork>(NamedChain::Mainnet as u64, timestamp);
+        env.spec = evm2::SpecId::LONDON;
 
         assert_eq!(
-            resolve_execution_spec(
+            resolve_execution_spec::<EvmFactoryFor<EthEvmNetwork>>(
                 config.evm_version,
                 config.hardfork,
                 &mut env,
@@ -1983,7 +2001,7 @@ mod tests {
             ),
             Some(expected)
         );
-        assert_eq!(env.cfg_env.spec, SpecId::from(expected));
+        assert_eq!(env.spec, spec_of::<EthEvmNetwork>(expected));
     }
 
     #[test]
@@ -1994,12 +2012,10 @@ mod tests {
         let chain_id = NamedChain::Optimism as u64;
         let timestamp = u64::MAX;
         let expected = FoundryHardfork::from_chain_and_timestamp(chain_id, timestamp).unwrap();
-        let mut block = BlockEnv::default();
-        block.set_timestamp(U256::from(timestamp));
-        let mut env = EvmEnv::new(CfgEnv::new_with_spec(OpSpecId::default()), block);
+        let mut env = env_at::<OpEvmNetwork>(chain_id, timestamp);
 
         assert_eq!(
-            resolve_execution_spec(
+            resolve_execution_spec::<EvmFactoryFor<OpEvmNetwork>>(
                 config.evm_version,
                 config.hardfork,
                 &mut env,
@@ -2008,19 +2024,17 @@ mod tests {
             ),
             Some(expected)
         );
-        assert_eq!(env.cfg_env.spec, OpSpecId::from_foundry_hardfork(expected).unwrap());
+        assert_eq!(env.spec, spec_of::<OpEvmNetwork>(expected));
     }
 
     #[test]
     #[cfg(all(feature = "optimism", not(feature = "base")))]
     fn resolve_execution_spec_preserves_config_for_base_op_fallback() {
         let config = Config { evm_version: EvmVersion::Osaka, ..Default::default() };
-        let mut block = BlockEnv::default();
-        block.set_timestamp(U256::from(u64::MAX));
-        let mut env = EvmEnv::new(CfgEnv::new_with_spec(OpSpecId::default()), block);
+        let mut env = env_at::<OpEvmNetwork>(NamedChain::Base as u64, u64::MAX);
 
         assert_eq!(
-            resolve_execution_spec(
+            resolve_execution_spec::<EvmFactoryFor<OpEvmNetwork>>(
                 config.evm_version,
                 config.hardfork,
                 &mut env,
@@ -2029,7 +2043,7 @@ mod tests {
             ),
             None
         );
-        assert_eq!(env.cfg_env.spec, OpSpecId::KARST);
+        assert_eq!(env.spec, op_evm2::OpSpecId::KARST);
     }
 
     #[test]
@@ -2044,7 +2058,7 @@ mod tests {
         let mut env = monad_env(activation - 1);
 
         assert_eq!(
-            resolve_execution_spec(
+            resolve_execution_spec::<EvmFactoryFor<MonadEvmNetwork>>(
                 configured.evm_version,
                 configured.hardfork,
                 &mut env,
@@ -2053,87 +2067,20 @@ mod tests {
             ),
             configured.hardfork
         );
-        assert_eq!(env.cfg_env.spec, foundry_evm_hardforks::MonadHardfork::MonadNine);
+        assert_eq!(env.spec, monad_spec(foundry_evm_hardforks::MonadHardfork::MonadNine));
 
         configured.hardfork = None;
         assert_eq!(
-            resolve_execution_spec(
+            resolve_execution_spec::<EvmFactoryFor<MonadEvmNetwork>>(
                 configured.evm_version,
                 configured.hardfork,
                 &mut env,
                 ExecutionSpecContext::fork(NamedChain::Monad as u64, None),
-                Some(foundry_evm_hardforks::MonadHardfork::MonadEight),
+                Some(monad_spec(foundry_evm_hardforks::MonadHardfork::MonadEight)),
             ),
             Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadEight))
         );
-        assert_eq!(env.cfg_env.spec, foundry_evm_hardforks::MonadHardfork::MonadEight);
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    #[cfg(feature = "monad")]
-    async fn fork_context_preserves_source_chain_with_execution_override() {
-        let activation =
-            foundry_evm_hardforks::MonadHardfork::MonadNine.mainnet_activation_timestamp().unwrap();
-        let (_api, handle) = anvil::spawn(
-            anvil::NodeConfig::test()
-                .with_networks(NetworkConfigs::with_ethereum())
-                .with_chain_id(Some(NamedChain::Monad as u64))
-                .with_genesis_timestamp(Some(activation - 1)),
-        )
-        .await;
-        let mut inferred = EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() };
-        inferred.infer_network_from_fork().await.unwrap();
-        assert_eq!(inferred.networks, NetworkConfigs::default());
-
-        let mut evm_opts = EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() };
-        evm_opts.env.chain_id = Some(NamedChain::Mainnet as u64);
-        evm_opts.networks = NetworkConfigs::with_monad();
-
-        let (mut evm_env, tx_env, fork) = evm_opts
-            .env_with_fork_context::<foundry_evm_hardforks::MonadHardfork, BlockEnv, TxEnv>()
-            .await
-            .unwrap();
-        let fork_context = fork.unwrap();
-
-        assert_eq!(fork_context.source_chain_id, NamedChain::Monad as u64);
-        assert_eq!(fork_context.network, NetworkVariant::Ethereum);
-        assert!(matches!(fork_context.hardfork, Some(FoundryHardfork::Ethereum(_))));
-        assert_eq!(evm_env.cfg_env.chain_id, NamedChain::Mainnet as u64);
-        assert_eq!(tx_env.chain_id, Some(NamedChain::Mainnet as u64));
-        assert_eq!(
-            resolve_execution_spec(
-                Config::default().evm_version,
-                Config::default().hardfork,
-                &mut evm_env,
-                ExecutionSpecContext::fork(fork_context.source_chain_id, fork_context.hardfork,),
-                None,
-            ),
-            Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadEight))
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn infer_network_default_and_custom_anvil_selects_ethereum() {
-        for chain_id in [NamedChain::Mainnet as u64, NamedChain::AnvilHardhat as u64, 98_765_432] {
-            let (_api, handle) =
-                anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(chain_id))).await;
-
-            let config = Config::figment();
-            let mut evm_opts = config.extract::<EvmOpts>().unwrap();
-            evm_opts.fork_url = Some(handle.http_endpoint());
-            assert_eq!(evm_opts.networks, NetworkConfigs::default());
-
-            evm_opts.infer_network_from_fork().await.unwrap();
-
-            assert_eq!(evm_opts.env.chain_id, Some(chain_id));
-            assert!(!evm_opts.networks.is_tempo());
-            #[cfg(feature = "optimism")]
-            assert!(!evm_opts.networks.is_optimism());
-            #[cfg(feature = "base")]
-            assert!(!evm_opts.networks.is_base());
-            assert!(!evm_opts.networks.is_celo());
-            assert_eq!(evm_opts.networks, NetworkConfigs::default());
-        }
+        assert_eq!(env.spec, monad_spec(foundry_evm_hardforks::MonadHardfork::MonadEight));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2197,32 +2144,6 @@ mod tests {
         }
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn fork_network_detects_ethereum_anvil() {
-        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
-        let evm_opts = EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() };
-
-        let identity = evm_opts.discover_fork_endpoint().await.unwrap();
-        assert_eq!(
-            (identity.execution_chain_id, identity.network),
-            (NamedChain::AnvilHardhat as u64, NetworkVariant::Ethereum)
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn fork_network_uses_anvil_metadata_for_unknown_chain() {
-        let chain_id = 98_765_432;
-        let (_api, handle) =
-            anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(chain_id))).await;
-        let evm_opts = EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() };
-
-        let identity = evm_opts.discover_fork_endpoint().await.unwrap();
-        assert_eq!(
-            (identity.execution_chain_id, identity.network),
-            (chain_id, NetworkVariant::Ethereum)
-        );
-    }
-
     #[tokio::test]
     #[cfg(feature = "base")]
     async fn base_endpoint_identity_uses_generic_chain_profile() {
@@ -2246,113 +2167,6 @@ mod tests {
         assert!(identity.network_profile.is_base());
         assert_eq!(identity.reported_hardfork, None);
         assert_eq!(identity.hardfork, None);
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn fork_non_anvil_node_info_rpc_error_is_optional() {
-        let (_api, handle) =
-            anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64)))
-                .await;
-        let fork_url =
-            spawn_rpc_proxy_internal_error_after(handle.http_endpoint(), "anvil_nodeInfo", 0).await;
-        let mut evm_opts = EvmOpts { fork_url: Some(fork_url), ..Default::default() };
-
-        evm_opts.infer_network_from_fork().await.unwrap();
-
-        assert_eq!(evm_opts.networks, NetworkConfigs::default());
-        assert_eq!(evm_opts.env.chain_id, Some(NamedChain::Mainnet as u64));
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn fork_node_info_failure_is_strict_after_anvil_is_identified() {
-        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
-        let fork_url =
-            spawn_rpc_proxy_rejecting_method_after(handle.http_endpoint(), "anvil_nodeInfo", 1)
-                .await;
-        let evm_opts = EvmOpts { fork_url: Some(fork_url), ..Default::default() };
-
-        let error = evm_opts.discover_fork_endpoint().await.unwrap_err();
-
-        assert!(
-            error.to_string().contains("failed to determine network family from endpoint"),
-            "{error}"
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn fork_node_info_probe_becomes_strict_after_initial_failure() {
-        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
-        let fork_url =
-            spawn_rpc_proxy_method_not_found_before(handle.http_endpoint(), "anvil_nodeInfo", 1)
-                .await;
-        let evm_opts = EvmOpts { fork_url: Some(fork_url), ..Default::default() };
-
-        let fork = evm_opts.prepare_fork().await.unwrap().unwrap();
-
-        assert!(fork.context().hardfork.is_some());
-        assert!(fork.context().instance_id.is_some());
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn fork_cached_anvil_identity_keeps_node_info_probe_strict() {
-        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
-        let fork_url =
-            spawn_rpc_proxy_rejecting_method_after(handle.http_endpoint(), "anvil_nodeInfo", 2)
-                .await;
-        let mut evm_opts = EvmOpts { fork_url: Some(fork_url), ..Default::default() };
-        evm_opts.infer_network_from_fork().await.unwrap();
-        assert!(evm_opts.fork_endpoint.as_ref().unwrap().reported_hardfork.is_some());
-
-        let error = evm_opts.discover_fork_endpoint().await.unwrap_err();
-
-        assert!(
-            error.to_string().contains("failed to determine network family from endpoint"),
-            "{error}"
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn fork_non_anvil_discovery_is_reused_by_resolution() {
-        let (_api, handle) =
-            anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64)))
-                .await;
-        let endpoint = spawn_rpc_proxy_method_not_found_before(
-            handle.http_endpoint(),
-            "anvil_nodeInfo",
-            usize::MAX,
-        )
-        .await;
-        let (endpoint, chain_ids) = spawn_rpc_proxy_recording_method(endpoint, "eth_chainId").await;
-        let (endpoint, node_infos) =
-            spawn_rpc_proxy_recording_method(endpoint, "anvil_nodeInfo").await;
-        let (endpoint, blocks) =
-            spawn_rpc_proxy_recording_method(endpoint, "eth_getBlockByNumber").await;
-        let (endpoint, hashes) =
-            spawn_rpc_proxy_recording_method(endpoint, "eth_getBlockByHash").await;
-        let probes = || (chain_ids.lock().unwrap().len(), node_infos.lock().unwrap().len());
-        let mut evm_opts = EvmOpts { fork_url: Some(endpoint), ..Default::default() };
-
-        evm_opts.infer_network_from_fork().await.unwrap();
-        assert_eq!(probes(), (1, 1));
-        assert_eq!(evm_opts.fork_endpoint.as_ref().unwrap().reported_hardfork, None);
-
-        evm_opts.infer_network_from_fork().await.unwrap();
-        let backend = crate::backend::Backend::<crate::evm::EthEvmNetwork>::spawn(
-            evm_opts.get_fork(&Config::default(), NamedChain::Mainnet as u64, None),
-        )
-        .unwrap();
-        backend.env(&evm_opts).await.unwrap();
-        backend.env(&evm_opts).await.unwrap();
-        backend.can_use_create2_deployer(evm_opts.create2_deployer).await.unwrap();
-        backend.transaction_count(evm_opts.sender).await.unwrap();
-        assert_eq!(probes(), (1, 1));
-        assert_eq!(blocks.lock().unwrap().len(), 1);
-        assert!(hashes.lock().unwrap().is_empty());
-        assert_eq!(evm_opts.fork_block_number, None);
-
-        // Explicit discovery always inspects the endpoint.
-        evm_opts.discover_fork_endpoint().await.unwrap();
-        assert_eq!(probes(), (2, 2));
     }
 
     #[tokio::test]
@@ -2389,21 +2203,6 @@ mod tests {
             NetworkVariant::from_known_chain_id(NamedChain::Monad as u64).unwrap_err(),
             "network family `monad` is not enabled in this build"
         );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn infer_network_tempo_anvil_via_node_info() {
-        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test_tempo()).await;
-
-        let config = Config::figment();
-        let mut evm_opts = config.extract::<EvmOpts>().unwrap();
-        evm_opts.fork_url = Some(handle.http_endpoint());
-        // Networks not set -> should query anvil_nodeInfo to discover tempo.
-        assert_eq!(evm_opts.networks, NetworkConfigs::default());
-
-        evm_opts.infer_network_from_fork().await.unwrap();
-
-        assert!(evm_opts.networks.is_tempo(), "should detect tempo via anvil_nodeInfo");
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2495,263 +2294,6 @@ mod tests {
         assert!(!fork.matches_request(&evm_opts));
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn create2_deployer_preflight_uses_exact_fork_hash() {
-        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
-        let provider = handle.http_provider();
-        let sender = handle.dev_accounts().next().unwrap();
-
-        let init_code = bytes!("6001600c60003960016000f300");
-        let receipt = provider
-            .send_transaction(WithOtherFields::new(
-                TransactionRequest::default().from(sender).with_deploy_code(init_code),
-            ))
-            .await
-            .unwrap()
-            .get_receipt()
-            .await
-            .unwrap();
-        let deployer = receipt.contract_address.unwrap();
-        let block_number = receipt.block_number.unwrap();
-
-        let evm_opts = EvmOpts {
-            fork_url: Some(handle.http_endpoint()),
-            fork_block_number: Some(block_number),
-            create2_deployer: deployer,
-            ..Default::default()
-        };
-        let fork = evm_opts.prepare_fork().await.unwrap();
-        let fork = fork.unwrap();
-        assert!(evm_opts.can_use_create2_deployer_at(Some(&fork)).await.unwrap());
-
-        provider
-            .raw_request::<_, ()>("anvil_reorg".into(), (1_u64, Vec::<serde_json::Value>::new()))
-            .await
-            .unwrap();
-        let replacement = provider.get_block_by_number(block_number.into()).await.unwrap().unwrap();
-        assert_ne!(replacement.header().hash(), fork.hash());
-        assert!(
-            provider.get_code_at(deployer).number(block_number).await.unwrap().is_empty(),
-            "the replacement block must not contain the deployer"
-        );
-
-        assert!(
-            !matches!(evm_opts.can_use_create2_deployer_at(Some(&fork)).await, Ok(false)),
-            "the exact lookup fell back to the replacement block"
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    #[cfg(feature = "monad")]
-    async fn infer_network_monad_anvil_via_node_info() {
-        for chain_id in [NamedChain::Mainnet as u64, NamedChain::AnvilHardhat as u64, 98_765_432] {
-            let (_api, handle) =
-                anvil::spawn(anvil::NodeConfig::test_monad().with_chain_id(Some(chain_id))).await;
-
-            let config = Config::figment();
-            let mut evm_opts = config.extract::<EvmOpts>().unwrap();
-            evm_opts.fork_url = Some(handle.http_endpoint());
-            assert_eq!(evm_opts.networks, NetworkConfigs::default());
-
-            evm_opts.infer_network_from_fork().await.unwrap();
-
-            assert_eq!(evm_opts.env.chain_id, Some(chain_id));
-            assert!(
-                evm_opts.networks.is_monad(),
-                "should detect Monad via anvil_nodeInfo for chain {chain_id}"
-            );
-        }
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    #[cfg(feature = "monad")]
-    async fn fork_context_carries_exact_monad_anvil_hardfork() {
-        let activation =
-            foundry_evm_hardforks::MonadHardfork::MonadNine.mainnet_activation_timestamp().unwrap();
-        let (_api, handle) = anvil::spawn(
-            anvil::NodeConfig::test_monad()
-                .with_chain_id(Some(NamedChain::Monad as u64))
-                .with_genesis_timestamp(Some(activation))
-                .with_hardfork(Some(foundry_evm_hardforks::MonadHardfork::MonadEight.into())),
-        )
-        .await;
-        let mut evm_opts = EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() };
-
-        evm_opts.infer_network_from_fork().await.unwrap();
-        let (mut evm_env, _, fork) = evm_opts
-            .env_with_fork_context::<foundry_evm_hardforks::MonadHardfork, BlockEnv, TxEnv>()
-            .await
-            .unwrap();
-        let context = fork.unwrap();
-
-        assert_eq!(
-            context.hardfork,
-            Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadEight))
-        );
-        assert_eq!(
-            resolve_execution_spec(
-                Config::default().evm_version,
-                Config::default().hardfork,
-                &mut evm_env,
-                ExecutionSpecContext::fork(context.source_chain_id, context.hardfork),
-                None,
-            ),
-            context.hardfork
-        );
-        assert_eq!(evm_env.cfg_env.spec, foundry_evm_hardforks::MonadHardfork::MonadEight);
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    #[cfg(feature = "monad")]
-    async fn fork_context_refreshes_identity_after_same_url_reset() {
-        let (_api, monad_eight) = anvil::spawn(
-            anvil::NodeConfig::test_monad()
-                .with_chain_id(Some(NamedChain::MonadTestnet as u64))
-                .with_hardfork(Some(foundry_evm_hardforks::MonadHardfork::MonadEight.into())),
-        )
-        .await;
-        let (_api, monad_nine) = anvil::spawn(
-            anvil::NodeConfig::test_monad()
-                .with_chain_id(Some(NamedChain::Monad as u64))
-                .with_hardfork(Some(foundry_evm_hardforks::MonadHardfork::MonadNine.into())),
-        )
-        .await;
-        let (fork_api, fork_handle) = anvil::spawn(
-            anvil::NodeConfig::test()
-                .with_chain_id(Some(NamedChain::Mainnet as u64))
-                .with_no_storage_caching(true)
-                .with_eth_rpc_url(Some(monad_eight.http_endpoint()))
-                .with_fork_block_number(Some(0u64)),
-        )
-        .await;
-
-        let mut evm_opts =
-            EvmOpts { fork_url: Some(fork_handle.http_endpoint()), ..Default::default() };
-        evm_opts.infer_network_from_fork().await.unwrap();
-        let cached = evm_opts.fork_endpoint.as_ref().unwrap();
-        assert_eq!(cached.source_chain_id, NamedChain::MonadTestnet as u64);
-        assert_eq!(
-            cached.hardfork,
-            Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadEight))
-        );
-
-        let (_, _, first) = evm_opts
-            .env_with_fork_context::<foundry_evm_hardforks::MonadHardfork, BlockEnv, TxEnv>()
-            .await
-            .unwrap();
-        assert_eq!(first.unwrap().source_chain_id, NamedChain::MonadTestnet as u64);
-
-        fork_api
-            .anvil_reset(Some(alloy_rpc_types::anvil::Forking {
-                json_rpc_url: Some(monad_nine.http_endpoint()),
-                block_number: Some(0),
-            }))
-            .await
-            .unwrap();
-
-        let (_, _, second) = evm_opts
-            .env_with_fork_context::<foundry_evm_hardforks::MonadHardfork, BlockEnv, TxEnv>()
-            .await
-            .unwrap();
-        let second = second.unwrap();
-        assert_eq!(second.source_chain_id, NamedChain::Monad as u64);
-        assert_eq!(
-            second.hardfork,
-            Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadNine))
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn expected_fork_endpoint_detects_same_url_reset() {
-        let (api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
-        let mut evm_opts = EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() };
-        evm_opts.infer_network_from_fork().await.unwrap();
-        let identity = evm_opts.fork_endpoint.clone().unwrap();
-        let original_instance = identity.instance_id;
-        let network_is_inferred = evm_opts.fork_network_is_inferred;
-        evm_opts.expect_fork_endpoint(identity, network_is_inferred);
-
-        api.anvil_reset(None).await.unwrap();
-
-        assert_ne!(api.instance_id(), original_instance.unwrap());
-        let error = evm_opts.env_with_fork_context::<SpecId, BlockEnv, TxEnv>().await.unwrap_err();
-        assert!(
-            error.to_string().contains("changed after its execution context was selected"),
-            "{error}"
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn prepared_fork_preserves_inferred_execution_profile_guard() {
-        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
-        let mut opts = EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() };
-        let fork = opts.prepare_fork().await.unwrap().unwrap();
-        opts.networks = NetworkConfigs::with_tempo();
-        opts.fork_network_is_inferred = true;
-        let error = opts.env_at_fork::<SpecId, BlockEnv, TxEnv>(Some(&fork)).await.unwrap_err();
-        assert!(error.to_string().contains("changed execution profile"), "{error}");
-        opts.fork_network_is_inferred = false;
-        opts.env_at_fork::<SpecId, BlockEnv, TxEnv>(Some(&fork)).await.unwrap();
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn prepared_fork_reconnects_after_runtime_shutdown() {
-        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
-        for endpoint in [handle.http_endpoint(), handle.ws_endpoint()] {
-            tokio::task::spawn_blocking(move || {
-                let opts = EvmOpts { fork_url: Some(endpoint), ..Default::default() };
-                let runtime =
-                    || tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-                let fork = runtime().block_on(opts.prepare_fork()).unwrap().unwrap();
-                let (env, _) = runtime()
-                    .block_on(opts.env_at_fork::<SpecId, BlockEnv, TxEnv>(Some(&fork)))
-                    .unwrap();
-                assert_eq!(env.block_env.number, U256::from(fork.number()));
-            })
-            .await
-            .unwrap();
-        }
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn resolved_fork_environment_retains_exact_block() {
-        let (api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
-        let evm_opts = EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() };
-        let fork = evm_opts.prepare_fork().await.unwrap().unwrap();
-        let provider = handle.http_provider();
-
-        api.anvil_mine(Some(U256::ONE), None).await.unwrap();
-        assert!(provider.get_block_number().await.unwrap() > fork.number());
-
-        let (evm_env, _) =
-            evm_opts.env_at_fork::<SpecId, BlockEnv, TxEnv>(Some(&fork)).await.unwrap();
-        let block = &fork.block;
-
-        assert_eq!(block.header().hash(), fork.hash());
-        assert_eq!(block.header().number(), fork.number());
-        assert_eq!(evm_env.block_env.number, U256::from(fork.number()));
-        assert_eq!(evm_env.block_env.timestamp, U256::from(block.header().timestamp()));
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn resolved_fork_detects_same_url_reset_without_cached_expectation() {
-        let (api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
-        let evm_opts = EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() };
-        let fork = evm_opts.prepare_fork().await.unwrap().unwrap();
-        let original_instance = fork.context().instance_id;
-
-        api.anvil_reset(None).await.unwrap();
-
-        assert_ne!(api.instance_id(), original_instance.unwrap());
-        let error = evm_opts.env_at_fork::<SpecId, BlockEnv, TxEnv>(Some(&fork)).await.unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("changed after its block and execution context were resolved"),
-            "{error}"
-        );
-    }
-
     #[test]
     #[cfg(feature = "monad")]
     fn unknown_endpoint_hardfork_is_optional_only_for_remote_execution() {
@@ -2802,19 +2344,6 @@ mod tests {
             endpoint_hardfork(NetworkVariant::Base, "Beryl", EndpointHardforkPolicy::Required)
                 .unwrap(),
             Some(FoundryHardfork::Base(BaseUpgrade::Beryl))
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    #[cfg(feature = "monad")]
-    async fn fork_network_detects_monad_anvil() {
-        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test_monad()).await;
-        let evm_opts = EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() };
-
-        let identity = evm_opts.discover_fork_endpoint().await.unwrap();
-        assert_eq!(
-            (identity.execution_chain_id, identity.network),
-            (NamedChain::AnvilHardhat as u64, NetworkVariant::Monad)
         );
     }
 
@@ -2872,16 +2401,14 @@ mod tests {
         assert!(evm_opts.fork_block_number.is_none());
 
         // Fetch the environment (this resolves "latest" to an actual block number)
-        let (evm_env, _, fork) =
-            evm_opts.env_with_fork_context::<SpecId, BlockEnv, TxEnv>().await.unwrap();
+        let (evm_env, _, fork) = evm_opts.env_with_fork_context::<EthEvmNetwork>().await.unwrap();
         let fork_block = fork.as_ref().map(|context| context.block_number);
         assert!(fork_block.is_some(), "should have resolved a fork block number");
         let resolved_block = fork_block.unwrap();
         assert!(resolved_block > 0, "should have resolved to a real block number");
 
         // Create the fork - this should pin the block number
-        let fork =
-            evm_opts.get_fork(&Config::default(), evm_env.cfg_env.chain_id, fork_block).unwrap();
+        let fork = evm_opts.get_fork(&Config::default(), evm_env.chain_id(), fork_block).unwrap();
 
         // The fork's evm_opts should now have fork_block_number set to the resolved block
         assert_eq!(
@@ -2890,25 +2417,6 @@ mod tests {
             "get_fork should pin fork_block_number to the block from env"
         );
         assert!(fork.evm_opts.fork_block_number_is_inferred);
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn fork_backend_rejects_changed_selected_endpoint() {
-        let (api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
-        let mut opts = EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() };
-        opts.infer_network_from_fork().await.unwrap();
-        opts.expect_fork_endpoint(
-            opts.fork_endpoint.clone().unwrap(),
-            opts.fork_network_is_inferred,
-        );
-        let request = opts.get_fork(&Config::default(), 31337, None);
-        api.anvil_reset(None).await.unwrap();
-        let error =
-            crate::backend::Backend::<crate::evm::EthEvmNetwork>::spawn(request).unwrap_err();
-        assert!(
-            error.to_string().contains("changed after its execution context was selected"),
-            "{error}"
-        );
     }
 
     // Regression test for https://github.com/foundry-rs/foundry/issues/13576
@@ -2925,8 +2433,7 @@ mod tests {
         evm_opts.fork_url = Some(endpoint.clone());
         assert!(evm_opts.fork_block_number.is_none());
 
-        let (evm_env, _, fork) =
-            evm_opts.env_with_fork_context::<SpecId, BlockEnv, TxEnv>().await.unwrap();
+        let (evm_env, _, fork) = evm_opts.env_with_fork_context::<EthEvmNetwork>().await.unwrap();
         let fork_block = fork
             .as_ref()
             .map(|context| context.block_number)
@@ -2934,7 +2441,7 @@ mod tests {
 
         // On Arbitrum, block_env.number is the L1 block number (much smaller).
         // The fork_block should be the actual L2 block number (much larger).
-        let block_env_number: u64 = evm_env.block_env.number.to();
+        let block_env_number: u64 = evm_env.block.number.to();
         assert!(
             fork_block > block_env_number,
             "fork_block ({fork_block}) should be the L2 block, which is larger than \
@@ -2942,9 +2449,8 @@ mod tests {
         );
 
         // Verify get_fork pins to the correct L2 block number
-        let fork = evm_opts
-            .get_fork(&Config::default(), evm_env.cfg_env.chain_id, Some(fork_block))
-            .unwrap();
+        let fork =
+            evm_opts.get_fork(&Config::default(), evm_env.chain_id(), Some(fork_block)).unwrap();
         assert_eq!(
             fork.evm_opts.fork_block_number,
             Some(fork_block),
@@ -2962,12 +2468,10 @@ mod tests {
         // Set an explicit block number
         evm_opts.fork_block_number = Some(12345678);
 
-        let (evm_env, _, fork) =
-            evm_opts.env_with_fork_context::<SpecId, BlockEnv, TxEnv>().await.unwrap();
+        let (evm_env, _, fork) = evm_opts.env_with_fork_context::<EthEvmNetwork>().await.unwrap();
         let fork_block = fork.as_ref().map(|context| context.block_number);
 
-        let fork =
-            evm_opts.get_fork(&Config::default(), evm_env.cfg_env.chain_id, fork_block).unwrap();
+        let fork = evm_opts.get_fork(&Config::default(), evm_env.chain_id(), fork_block).unwrap();
 
         // Should preserve the explicit block number, not override it
         assert_eq!(
@@ -2976,5 +2480,335 @@ mod tests {
             "get_fork should preserve explicitly set fork_block_number"
         );
         assert!(!fork.evm_opts.fork_block_number_is_inferred);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn create2_deployer_preflight_uses_exact_fork_hash() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let provider = handle.http_provider();
+        let sender = handle.dev_accounts().next().unwrap();
+
+        let init_code = bytes!("6001600c60003960016000f300");
+        let receipt = provider
+            .send_transaction(WithOtherFields::new(
+                TransactionRequest::default().from(sender).with_deploy_code(init_code),
+            ))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        let deployer = receipt.contract_address.unwrap();
+        let block_number = receipt.block_number.unwrap();
+
+        let evm_opts = EvmOpts {
+            fork_url: Some(handle.http_endpoint()),
+            fork_block_number: Some(block_number),
+            create2_deployer: deployer,
+            ..Default::default()
+        };
+        let fork = evm_opts.prepare_fork().await.unwrap();
+        let fork = fork.unwrap();
+        assert!(evm_opts.can_use_create2_deployer_at(Some(&fork)).await.unwrap());
+
+        provider
+            .raw_request::<_, ()>("anvil_reorg".into(), (1_u64, Vec::<serde_json::Value>::new()))
+            .await
+            .unwrap();
+        let replacement = provider.get_block_by_number(block_number.into()).await.unwrap().unwrap();
+        assert_ne!(replacement.header().hash(), fork.hash());
+        assert!(
+            provider.get_code_at(deployer).number(block_number).await.unwrap().is_empty(),
+            "the replacement block must not contain the deployer"
+        );
+
+        assert!(
+            !matches!(evm_opts.can_use_create2_deployer_at(Some(&fork)).await, Ok(false)),
+            "the exact lookup fell back to the replacement block"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn expected_fork_endpoint_detects_same_url_reset() {
+        let (api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let mut evm_opts = EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() };
+        evm_opts.infer_network_from_fork().await.unwrap();
+        let identity = evm_opts.fork_endpoint.clone().unwrap();
+        let original_instance = identity.instance_id;
+        let network_is_inferred = evm_opts.fork_network_is_inferred;
+        evm_opts.expect_fork_endpoint(identity, network_is_inferred);
+
+        api.anvil_reset(None).await.unwrap();
+
+        assert_ne!(api.instance_id(), original_instance.unwrap());
+        let error = evm_opts.env_with_fork_context::<EthEvmNetwork>().await.unwrap_err();
+        assert!(
+            error.to_string().contains("changed after its execution context was selected"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_backend_rejects_changed_selected_endpoint() {
+        let (api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let mut opts = EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() };
+        opts.infer_network_from_fork().await.unwrap();
+        opts.expect_fork_endpoint(
+            opts.fork_endpoint.clone().unwrap(),
+            opts.fork_network_is_inferred,
+        );
+        let request = opts.get_fork(&Config::default(), 31337, None);
+        api.anvil_reset(None).await.unwrap();
+        let error = crate::backend::Backend::<EthEvmNetwork>::spawn(
+            request,
+            opts.local_evm_env::<EthEvmNetwork>(),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("changed after its execution context was selected"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_network_detects_ethereum_anvil() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let evm_opts = EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() };
+
+        let identity = evm_opts.discover_fork_endpoint().await.unwrap();
+        assert_eq!(
+            (identity.execution_chain_id, identity.network),
+            (NamedChain::AnvilHardhat as u64, NetworkVariant::Ethereum)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_network_uses_anvil_metadata_for_unknown_chain() {
+        let chain_id = 98_765_432;
+        let (_api, handle) =
+            anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(chain_id))).await;
+        let evm_opts = EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() };
+
+        let identity = evm_opts.discover_fork_endpoint().await.unwrap();
+        assert_eq!(
+            (identity.execution_chain_id, identity.network),
+            (chain_id, NetworkVariant::Ethereum)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_non_anvil_node_info_rpc_error_is_optional() {
+        let (_api, handle) =
+            anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64)))
+                .await;
+        let fork_url =
+            spawn_rpc_proxy_internal_error_after(handle.http_endpoint(), "anvil_nodeInfo", 0).await;
+        let mut evm_opts = EvmOpts { fork_url: Some(fork_url), ..Default::default() };
+
+        evm_opts.infer_network_from_fork().await.unwrap();
+
+        assert_eq!(evm_opts.networks, NetworkConfigs::default());
+        assert_eq!(evm_opts.env.chain_id, Some(NamedChain::Mainnet as u64));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_node_info_failure_is_strict_after_anvil_is_identified() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let fork_url =
+            spawn_rpc_proxy_rejecting_method_after(handle.http_endpoint(), "anvil_nodeInfo", 1)
+                .await;
+        let evm_opts = EvmOpts { fork_url: Some(fork_url), ..Default::default() };
+
+        let error = evm_opts.discover_fork_endpoint().await.unwrap_err();
+
+        assert!(
+            error.to_string().contains("failed to determine network family from endpoint"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_node_info_probe_becomes_strict_after_initial_failure() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let fork_url =
+            spawn_rpc_proxy_method_not_found_before(handle.http_endpoint(), "anvil_nodeInfo", 1)
+                .await;
+        let evm_opts = EvmOpts { fork_url: Some(fork_url), ..Default::default() };
+
+        let fork = evm_opts.prepare_fork().await.unwrap().unwrap();
+
+        assert!(fork.context().hardfork.is_some());
+        assert!(fork.context().instance_id.is_some());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_cached_anvil_identity_keeps_node_info_probe_strict() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let fork_url =
+            spawn_rpc_proxy_rejecting_method_after(handle.http_endpoint(), "anvil_nodeInfo", 2)
+                .await;
+        let mut evm_opts = EvmOpts { fork_url: Some(fork_url), ..Default::default() };
+        evm_opts.infer_network_from_fork().await.unwrap();
+        assert!(evm_opts.fork_endpoint.as_ref().unwrap().reported_hardfork.is_some());
+
+        let error = evm_opts.discover_fork_endpoint().await.unwrap_err();
+
+        assert!(
+            error.to_string().contains("failed to determine network family from endpoint"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_non_anvil_discovery_is_reused_by_resolution() {
+        let (_api, handle) =
+            anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64)))
+                .await;
+        let endpoint = spawn_rpc_proxy_method_not_found_before(
+            handle.http_endpoint(),
+            "anvil_nodeInfo",
+            usize::MAX,
+        )
+        .await;
+        let (endpoint, chain_ids) = spawn_rpc_proxy_recording_method(endpoint, "eth_chainId").await;
+        let (endpoint, node_infos) =
+            spawn_rpc_proxy_recording_method(endpoint, "anvil_nodeInfo").await;
+        let (endpoint, blocks) =
+            spawn_rpc_proxy_recording_method(endpoint, "eth_getBlockByNumber").await;
+        let (endpoint, hashes) =
+            spawn_rpc_proxy_recording_method(endpoint, "eth_getBlockByHash").await;
+        let probes = || (chain_ids.lock().unwrap().len(), node_infos.lock().unwrap().len());
+        let mut evm_opts = EvmOpts { fork_url: Some(endpoint), ..Default::default() };
+
+        evm_opts.infer_network_from_fork().await.unwrap();
+        assert_eq!(probes(), (1, 1));
+        assert_eq!(evm_opts.fork_endpoint.as_ref().unwrap().reported_hardfork, None);
+
+        evm_opts.infer_network_from_fork().await.unwrap();
+        let backend = crate::backend::Backend::<EthEvmNetwork>::spawn(
+            evm_opts.get_fork(&Config::default(), NamedChain::Mainnet as u64, None),
+            evm_opts.local_evm_env::<EthEvmNetwork>(),
+        )
+        .unwrap();
+        backend.env(&evm_opts).await.unwrap();
+        backend.env(&evm_opts).await.unwrap();
+        backend.can_use_create2_deployer(evm_opts.create2_deployer).await.unwrap();
+        backend.transaction_count(evm_opts.sender).await.unwrap();
+        assert_eq!(probes(), (1, 1));
+        assert_eq!(blocks.lock().unwrap().len(), 1);
+        assert!(hashes.lock().unwrap().is_empty());
+        assert_eq!(evm_opts.fork_block_number, None);
+
+        // Explicit discovery always inspects the endpoint.
+        evm_opts.discover_fork_endpoint().await.unwrap();
+        assert_eq!(probes(), (2, 2));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn infer_network_default_and_custom_anvil_selects_ethereum() {
+        for chain_id in [NamedChain::Mainnet as u64, NamedChain::AnvilHardhat as u64, 98_765_432] {
+            let (_api, handle) =
+                anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(chain_id))).await;
+
+            let config = Config::figment();
+            let mut evm_opts = config.extract::<EvmOpts>().unwrap();
+            evm_opts.fork_url = Some(handle.http_endpoint());
+            assert_eq!(evm_opts.networks, NetworkConfigs::default());
+
+            evm_opts.infer_network_from_fork().await.unwrap();
+
+            assert_eq!(evm_opts.env.chain_id, Some(chain_id));
+            assert!(!evm_opts.networks.is_tempo());
+            #[cfg(feature = "optimism")]
+            assert!(!evm_opts.networks.is_optimism());
+            #[cfg(feature = "base")]
+            assert!(!evm_opts.networks.is_base());
+            assert!(!evm_opts.networks.is_celo());
+            assert_eq!(evm_opts.networks, NetworkConfigs::default());
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn infer_network_tempo_anvil_via_node_info() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test_tempo()).await;
+
+        let config = Config::figment();
+        let mut evm_opts = config.extract::<EvmOpts>().unwrap();
+        evm_opts.fork_url = Some(handle.http_endpoint());
+        // Networks not set -> should query anvil_nodeInfo to discover tempo.
+        assert_eq!(evm_opts.networks, NetworkConfigs::default());
+
+        evm_opts.infer_network_from_fork().await.unwrap();
+
+        assert!(evm_opts.networks.is_tempo(), "should detect tempo via anvil_nodeInfo");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn prepared_fork_preserves_inferred_execution_profile_guard() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let mut opts = EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() };
+        let fork = opts.prepare_fork().await.unwrap().unwrap();
+        opts.networks = NetworkConfigs::with_tempo();
+        opts.fork_network_is_inferred = true;
+        let error = opts.env_at_fork::<EthEvmNetwork>(Some(&fork)).await.unwrap_err();
+        assert!(error.to_string().contains("changed execution profile"), "{error}");
+        opts.fork_network_is_inferred = false;
+        opts.env_at_fork::<EthEvmNetwork>(Some(&fork)).await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn prepared_fork_reconnects_after_runtime_shutdown() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        for endpoint in [handle.http_endpoint(), handle.ws_endpoint()] {
+            tokio::task::spawn_blocking(move || {
+                let opts = EvmOpts { fork_url: Some(endpoint), ..Default::default() };
+                let runtime =
+                    || tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                let fork = runtime().block_on(opts.prepare_fork()).unwrap().unwrap();
+                let (env, _) =
+                    runtime().block_on(opts.env_at_fork::<EthEvmNetwork>(Some(&fork))).unwrap();
+                assert_eq!(env.block.number, U256::from(fork.number()));
+            })
+            .await
+            .unwrap();
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn resolved_fork_environment_retains_exact_block() {
+        let (api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let evm_opts = EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() };
+        let fork = evm_opts.prepare_fork().await.unwrap().unwrap();
+        let provider = handle.http_provider();
+
+        api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+        assert!(provider.get_block_number().await.unwrap() > fork.number());
+
+        let (evm_env, _) = evm_opts.env_at_fork::<EthEvmNetwork>(Some(&fork)).await.unwrap();
+        let block = &fork.block;
+
+        assert_eq!(block.header().hash(), fork.hash());
+        assert_eq!(block.header().number(), fork.number());
+        assert_eq!(evm_env.block.number, U256::from(fork.number()));
+        assert_eq!(evm_env.block.timestamp, U256::from(block.header().timestamp()));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn resolved_fork_detects_same_url_reset_without_cached_expectation() {
+        let (api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let evm_opts = EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() };
+        let fork = evm_opts.prepare_fork().await.unwrap().unwrap();
+        let original_instance = fork.context().instance_id;
+
+        api.anvil_reset(None).await.unwrap();
+
+        assert_ne!(api.instance_id(), original_instance.unwrap());
+        let error = evm_opts.env_at_fork::<EthEvmNetwork>(Some(&fork)).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("changed after its block and execution context were resolved"),
+            "{error}"
+        );
     }
 }

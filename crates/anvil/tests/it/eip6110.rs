@@ -5,7 +5,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, spawn};
-use foundry_evm::hardfork::EthereumHardfork;
+use foundry_evm_hardforks::EthereumHardfork;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn eip6110_pending_block_returns_malformed_deposit_error() {

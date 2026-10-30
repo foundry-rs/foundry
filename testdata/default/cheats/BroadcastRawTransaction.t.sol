@@ -242,6 +242,10 @@ contract BroadcastRawTransactionTest is Test {
         vm.deal(0x5316812db67073C4d4af8BB3000C5B86c2877e94, 1 ether);
         try this.mintThenSucceedSignedTxThenRevert() {} catch {}
 
+        assertEq(vm.getNonce(0x5316812db67073C4d4af8BB3000C5B86c2877e94), 1);
+        assertEq(0x5316812db67073C4d4af8BB3000C5B86c2877e94.balance, 1 ether - 21_000 * 100 - 17);
+        assertEq(0x6Fd0A0CFF9A87aDF51695b40b4fA267855a8F4c6.balance, 17);
+
         // A successful signed tx reloads every journaled account from the backend.
         vm.deal(0x7ED31830602f9F7419307235c0610Fb262AA0375, 1 ether);
         vm.broadcastRawTransaction(
@@ -328,6 +332,40 @@ contract BroadcastRawTransactionTest is Test {
         assertEq(revertedMintToken.balanceOf(address(this)), nested && !revertParent ? 1 : 0);
     }
 
+    function test_signed_tx_calls_observed_once() public {
+        vm.fee(1);
+        vm.chainId(1);
+        vm.txGasPrice(7);
+        bytes32[] memory hashes = new bytes32[](1);
+        hashes[0] = bytes32(uint256(0xbeef));
+        vm.blobhashes(hashes);
+
+        address from = 0x5316812db67073C4d4af8BB3000C5B86c2877e94;
+        address to = 0x6Fd0A0CFF9A87aDF51695b40b4fA267855a8F4c6;
+        vm.deal(from, 1 ether);
+        vm.etch(to, address(new RawTxRelay()).code);
+
+        // The transaction's root call and its subcall are each observed once.
+        vm.expectCall(to, 17, "", 1);
+        vm.expectCall(RELAY_TARGET, "", 1);
+        vm.recordLogs();
+
+        /*
+        Signed transaction:
+        TransactionRequest { from: Some(0x5316812db67073c4d4af8bb3000c5b86c2877e94), to: Some(Address(0x6fd0a0cff9a87adf51695b40b4fa267855a8f4c6)), gas: Some(200000), gas_price: Some(100), value: Some(17), data: None, nonce: Some(0), chain_id: Some(1) }
+        */
+        vm.broadcastRawTransaction(
+            hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856"
+        );
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 1);
+        assertEq(logs[0].emitter, to);
+        assertEq(logs[0].data, abi.encode(uint256(100), bytes32(0)));
+        assertEq(tx.gasprice, 7);
+        assertEq(blobhash(0), hashes[0]);
+    }
+
     function signTransfer(bytes memory nonce) internal pure returns (bytes memory) {
         bytes[] memory fields = new bytes[](9);
         fields[0] = nonce;
@@ -358,6 +396,19 @@ contract BroadcastRawTransactionTest is Test {
 
 /// forge-config: default.isolate = false
 contract BroadcastRawTransactionNonIsolatedTest is BroadcastRawTransactionTest {}
+
+address constant RELAY_TARGET = address(0x2222);
+
+/// Emits a log and calls `RELAY_TARGET` whenever it is called.
+contract RawTxRelay {
+    event Relayed(uint256 gasPrice, bytes32 blobHash);
+
+    fallback() external payable {
+        emit Relayed(tx.gasprice, blobhash(0));
+        (bool success,) = RELAY_TARGET.call("");
+        require(success);
+    }
+}
 
 contract MyERC20 {
     mapping(address => uint256) private _balances;

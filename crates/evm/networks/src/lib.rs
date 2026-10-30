@@ -12,21 +12,16 @@
 //!
 //! [custom EVM integration guide]: https://github.com/foundry-rs/foundry/blob/master/docs/dev/networks.md
 
-use crate::celo::transfer::{CELO_TRANSFER_ADDRESS, PRECOMPILE_ID_CELO_TRANSFER};
+use crate::celo::transfer::{CELO_TRANSFER_ADDRESS, CELO_TRANSFER_PRECOMPILE_NAME};
 use alloy_chains::{
     Chain, NamedChain,
     NamedChain::{Chiado, Gnosis, Moonbase, Moonbeam, MoonbeamDev, Moonriver, Rsk, RskTestnet},
 };
 use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
-use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use alloy_primitives::{Address, ChainId, address, map::AddressHashMap};
 use clap::Parser;
 use foundry_evm_hardforks::{
     EthereumHardfork, ExecutionSpec, FoundryHardfork, TempoHardfork, latest_active_tempo_hardfork,
-};
-use revm::precompile::{
-    Precompile as RevmPrecompile,
-    secp256r1::{P256VERIFY, P256VERIFY_OSAKA},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -39,9 +34,10 @@ use tempo_contracts::precompiles::{
 };
 
 #[cfg(feature = "base")]
-use base_common_precompiles::{
-    ActivationRegistryStorage, B20FactoryStorage, NonceManagerStorage, PolicyRegistryStorage,
-    TxContextStorage,
+use base_common_eip8130::NonceManagerSlots;
+#[cfg(feature = "base")]
+use base_evm2::precompiles::{
+    ACTIVATION_REGISTRY_ADDRESS, B20_FACTORY_ADDRESS, POLICY_REGISTRY_ADDRESS, TX_CONTEXT_ADDRESS,
 };
 #[cfg(feature = "base")]
 use foundry_evm_hardforks::BaseUpgrade;
@@ -81,23 +77,23 @@ pub const TEMPO_PRECOMPILES: &[(&str, Address)] = &[
 
 #[cfg(feature = "monad")]
 const MONAD_PRECOMPILE_LABELS: &[(&str, Address)] = &[
-    ("Staking", monad_revm::staking::STAKING_ADDRESS),
-    ("ReserveBalance", monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS),
+    ("Staking", monad_evm2::staking::STAKING_ADDRESS),
+    ("ReserveBalance", monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS),
 ];
 
 #[cfg(feature = "monad")]
 const MONAD_PRECOMPILES: &[(&str, Address)] = &[
-    ("MonadStaking", monad_revm::staking::STAKING_ADDRESS),
-    ("MonadReserveBalance", monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS),
+    ("MonadStaking", monad_evm2::staking::STAKING_ADDRESS),
+    ("MonadReserveBalance", monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS),
 ];
 
 #[cfg(feature = "base")]
 const BASE_PRECOMPILES: &[(&str, Address)] = &[
-    ("B20Factory", B20FactoryStorage::ADDRESS),
-    ("ActivationRegistry", ActivationRegistryStorage::ADDRESS),
-    ("PolicyRegistry", PolicyRegistryStorage::ADDRESS),
-    ("TxContext", TxContextStorage::ADDRESS),
-    ("NonceManager", NonceManagerStorage::ADDRESS),
+    ("B20Factory", B20_FACTORY_ADDRESS),
+    ("ActivationRegistry", ACTIVATION_REGISTRY_ADDRESS),
+    ("PolicyRegistry", POLICY_REGISTRY_ADDRESS),
+    ("TxContext", TX_CONTEXT_ADDRESS),
+    ("NonceManager", NonceManagerSlots::ADDRESS),
 ];
 
 /// Fixed Base precompiles that expose at least one function returning no data.
@@ -113,17 +109,7 @@ const BASE_PRECOMPILES: &[(&str, Address)] = &[
 /// `extcodesize`. That transition owns it; this list must not.
 #[cfg(feature = "base")]
 pub const BASE_CODE_SENTINEL_ADDRESSES: &[Address] =
-    &[ActivationRegistryStorage::ADDRESS, PolicyRegistryStorage::ADDRESS];
-
-/// BSC secp256r1 precompile address introduced by the Haber hardfork.
-const BSC_P256_ADDRESS: Address = address!("0000000000000000000000000000000000000100");
-
-const BSC_MAINNET_CHAIN_ID: u64 = 56;
-const BSC_TESTNET_CHAIN_ID: u64 = 97;
-const BSC_MAINNET_HABER_TIMESTAMP: u64 = 1_718_863_500;
-const BSC_TESTNET_HABER_TIMESTAMP: u64 = 1_716_962_820;
-const BSC_MAINNET_OSAKA_TIMESTAMP: u64 = 1_777_343_400;
-const BSC_TESTNET_OSAKA_TIMESTAMP: u64 = 1_774_319_400;
+    &[ACTIVATION_REGISTRY_ADDRESS, POLICY_REGISTRY_ADDRESS];
 
 /// All well-known Tempo precompile addresses.
 pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &{
@@ -691,8 +677,8 @@ impl NetworkConfigs {
     #[cfg(feature = "monad")]
     pub fn contract_size_limits(&self) -> Option<NetworkContractSizeLimits> {
         self.is_monad().then_some(NetworkContractSizeLimits {
-            runtime: monad_revm::MONAD_MAX_CODE_SIZE,
-            initcode: monad_revm::MONAD_MAX_INITCODE_SIZE,
+            runtime: monad_evm2::MONAD_MAX_CODE_SIZE,
+            initcode: monad_evm2::MONAD_MAX_INITCODE_SIZE,
         })
     }
 
@@ -866,21 +852,11 @@ impl NetworkConfigs {
         Ok(network)
     }
 
-    /// Inject precompiles for configured networks.
-    pub fn inject_precompiles(self, precompiles: &mut PrecompilesMap) {
-        if self.is_celo() {
-            precompiles.apply_precompile(&CELO_TRANSFER_ADDRESS, move |_| {
-                Some(celo::transfer::precompile())
-            });
-        }
-    }
-
     /// Returns precompiles for configured networks at the given hardfork.
     pub fn precompiles(self, hardfork: Option<FoundryHardfork>) -> BTreeMap<String, Address> {
         let mut precompiles = BTreeMap::new();
         if self.is_celo() {
-            precompiles
-                .insert(PRECOMPILE_ID_CELO_TRANSFER.name().to_string(), CELO_TRANSFER_ADDRESS);
+            precompiles.insert(CELO_TRANSFER_PRECOMPILE_NAME.to_string(), CELO_TRANSFER_ADDRESS);
         }
         if self.is_tempo() {
             let tempo_hardfork = hardfork.and_then(TempoHardfork::from_foundry_hardfork);
@@ -932,22 +908,6 @@ impl NetworkConfigs {
     }
 }
 
-/// Applies the BSC P256 precompile active at the given timestamp.
-pub fn apply_bsc_p256_precompile(
-    precompiles: &mut PrecompilesMap,
-    chain_id: ChainId,
-    timestamp: u64,
-) {
-    let Some(p256verify) = bsc_p256_precompile(chain_id, timestamp) else { return };
-    precompiles.apply_precompile(&BSC_P256_ADDRESS, move |_| {
-        p256verify.map(|p256verify| {
-            DynPrecompile::new(p256verify.id().clone(), move |input| {
-                p256verify.execute(input.data, input.gas(), input.reservoir)
-            })
-        })
-    });
-}
-
 impl From<NetworkVariant> for NetworkConfigs {
     fn from(network: NetworkVariant) -> Self {
         match network {
@@ -966,24 +926,6 @@ impl From<NetworkVariant> for NetworkConfigs {
                 Self { network: Some(network), optimism: true, ..Default::default() }
             }
         }
-    }
-}
-
-/// Returns the BSC P256 precompile for the given timestamp. The outer option distinguishes BSC
-/// chains from unrelated chains, while the inner option disables P256 before Haber.
-const fn bsc_p256_precompile(chain_id: ChainId, timestamp: u64) -> Option<Option<RevmPrecompile>> {
-    let (haber_timestamp, osaka_timestamp) = match chain_id {
-        BSC_MAINNET_CHAIN_ID => (BSC_MAINNET_HABER_TIMESTAMP, BSC_MAINNET_OSAKA_TIMESTAMP),
-        BSC_TESTNET_CHAIN_ID => (BSC_TESTNET_HABER_TIMESTAMP, BSC_TESTNET_OSAKA_TIMESTAMP),
-        _ => return None,
-    };
-
-    if timestamp < haber_timestamp {
-        Some(None)
-    } else if timestamp < osaka_timestamp {
-        Some(Some(P256VERIFY))
-    } else {
-        Some(Some(P256VERIFY_OSAKA))
     }
 }
 
@@ -1040,21 +982,19 @@ pub fn active_tempo_precompile_addresses(hardfork: TempoHardfork) -> impl Iterat
 /// Returns whether a well-known Monad precompile address is active at `hardfork`.
 #[cfg(feature = "monad")]
 pub fn is_monad_precompile_active_at(address: Address, hardfork: MonadHardfork) -> bool {
-    address == monad_revm::staking::STAKING_ADDRESS
-        || (address == monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS
+    address == monad_evm2::staking::STAKING_ADDRESS
+        || (address == monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS
             && MonadHardfork::MonadNine.is_enabled_in(hardfork))
 }
 
 /// Returns whether a fixed Base precompile is active at `upgrade`.
 #[cfg(feature = "base")]
 pub fn is_base_precompile_active_at(address: Address, upgrade: BaseUpgrade) -> bool {
-    if matches!(address, TxContextStorage::ADDRESS | NonceManagerStorage::ADDRESS) {
+    if matches!(address, TX_CONTEXT_ADDRESS | NonceManagerSlots::ADDRESS) {
         upgrade >= BaseUpgrade::Cobalt
     } else if matches!(
         address,
-        B20FactoryStorage::ADDRESS
-            | ActivationRegistryStorage::ADDRESS
-            | PolicyRegistryStorage::ADDRESS
+        B20_FACTORY_ADDRESS | ACTIVATION_REGISTRY_ADDRESS | POLICY_REGISTRY_ADDRESS
     ) {
         upgrade >= BaseUpgrade::Beryl
     } else {
@@ -1076,10 +1016,6 @@ pub fn active_base_precompiles(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use revm::precompile::{
-        Precompiles,
-        secp256r1::{P256VERIFY_BASE_GAS_FEE, P256VERIFY_BASE_GAS_FEE_OSAKA},
-    };
 
     // --- Equivalence: new flag == legacy flag ---
 
@@ -1616,14 +1552,14 @@ mod tests {
         assert!(resolved_precompile_labels(Some(BaseUpgrade::Azul.into())).is_empty());
 
         let beryl = resolved_precompile_labels(Some(BaseUpgrade::Beryl.into()));
-        assert_eq!(beryl.get(&B20FactoryStorage::ADDRESS), Some(&"B20Factory".to_string()));
+        assert_eq!(beryl.get(&B20_FACTORY_ADDRESS), Some(&"B20Factory".to_string()));
         assert_eq!(
-            beryl.get(&ActivationRegistryStorage::ADDRESS),
+            beryl.get(&ACTIVATION_REGISTRY_ADDRESS),
             Some(&"ActivationRegistry".to_string())
         );
-        assert_eq!(beryl.get(&PolicyRegistryStorage::ADDRESS), Some(&"PolicyRegistry".to_string()));
-        assert!(!beryl.contains_key(&TxContextStorage::ADDRESS));
-        assert!(!beryl.contains_key(&NonceManagerStorage::ADDRESS));
+        assert_eq!(beryl.get(&POLICY_REGISTRY_ADDRESS), Some(&"PolicyRegistry".to_string()));
+        assert!(!beryl.contains_key(&TX_CONTEXT_ADDRESS));
+        assert!(!beryl.contains_key(&NonceManagerSlots::ADDRESS));
 
         let cobalt = resolved_precompile_labels(Some(BaseUpgrade::Cobalt.into()));
         assert_eq!(cobalt.len(), BASE_PRECOMPILES.len());
@@ -1631,11 +1567,11 @@ mod tests {
         // The name-keyed precompile map must honor the same upgrade boundaries.
         assert!(config.precompiles(Some(BaseUpgrade::Azul.into())).is_empty());
         let beryl = config.precompiles(Some(BaseUpgrade::Beryl.into()));
-        assert_eq!(beryl.get("B20Factory"), Some(&B20FactoryStorage::ADDRESS));
+        assert_eq!(beryl.get("B20Factory"), Some(&B20_FACTORY_ADDRESS));
         assert!(!beryl.contains_key("NonceManager"));
         assert_eq!(
             config.precompiles(Some(BaseUpgrade::Cobalt.into())).get("NonceManager"),
-            Some(&NonceManagerStorage::ADDRESS)
+            Some(&NonceManagerSlots::ADDRESS)
         );
     }
 
@@ -1646,52 +1582,6 @@ mod tests {
         assert_eq!(via_new.is_tempo(), via_old.is_tempo());
         assert_eq!(via_new.active_network_name(), via_old.active_network_name());
         assert_eq!(via_new.precompiles(None), via_old.precompiles(None));
-    }
-
-    fn bsc_p256_gas_used(chain_id: ChainId, timestamp: u64) -> Option<u64> {
-        bsc_p256_precompile(chain_id, timestamp)
-            .flatten()
-            .map(|precompile| precompile.execute(&[], u64::MAX, 0).unwrap().gas_used)
-    }
-
-    fn assert_bsc_p256_boundaries(chain_id: ChainId, haber_timestamp: u64, osaka_timestamp: u64) {
-        assert!(matches!(bsc_p256_precompile(chain_id, haber_timestamp - 1), Some(None)));
-        assert_eq!(bsc_p256_gas_used(chain_id, haber_timestamp), Some(P256VERIFY_BASE_GAS_FEE));
-        assert_eq!(bsc_p256_gas_used(chain_id, osaka_timestamp - 1), Some(P256VERIFY_BASE_GAS_FEE));
-        assert_eq!(
-            bsc_p256_gas_used(chain_id, osaka_timestamp),
-            Some(P256VERIFY_BASE_GAS_FEE_OSAKA)
-        );
-    }
-
-    #[test]
-    fn selects_bsc_p256_at_mainnet_boundaries() {
-        assert_bsc_p256_boundaries(
-            BSC_MAINNET_CHAIN_ID,
-            BSC_MAINNET_HABER_TIMESTAMP,
-            BSC_MAINNET_OSAKA_TIMESTAMP,
-        );
-    }
-
-    #[test]
-    fn selects_bsc_p256_at_testnet_boundaries() {
-        assert_bsc_p256_boundaries(
-            BSC_TESTNET_CHAIN_ID,
-            BSC_TESTNET_HABER_TIMESTAMP,
-            BSC_TESTNET_OSAKA_TIMESTAMP,
-        );
-    }
-
-    #[test]
-    fn removes_bsc_p256_before_haber() {
-        let mut precompiles = PrecompilesMap::from_static(Precompiles::osaka());
-        assert!(precompiles.get(&BSC_P256_ADDRESS).is_some());
-        apply_bsc_p256_precompile(
-            &mut precompiles,
-            BSC_MAINNET_CHAIN_ID,
-            BSC_MAINNET_HABER_TIMESTAMP - 1,
-        );
-        assert!(precompiles.get(&BSC_P256_ADDRESS).is_none());
     }
 
     #[test]
@@ -1740,7 +1630,7 @@ mod tests {
 
         assert_eq!(
             cfg.precompiles(Some(MonadHardfork::MonadEight.into())).get("MonadStaking"),
-            Some(&monad_revm::staking::STAKING_ADDRESS)
+            Some(&monad_evm2::staking::STAKING_ADDRESS)
         );
         assert!(
             !cfg.precompiles(Some(MonadHardfork::MonadEight.into()))
@@ -1748,16 +1638,16 @@ mod tests {
         );
         assert_eq!(
             cfg.precompiles(Some(MonadHardfork::MonadNine.into())).get("MonadReserveBalance"),
-            Some(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
+            Some(&monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS)
         );
         assert_eq!(
             resolved_precompile_labels(Some(MonadHardfork::MonadNine.into()))
-                .get(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS),
+                .get(&monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS),
             Some(&"ReserveBalance".to_string())
         );
         assert!(
             !resolved_precompile_labels(Some(MonadHardfork::MonadEight.into()))
-                .contains_key(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
+                .contains_key(&monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS)
         );
     }
 
@@ -1804,8 +1694,8 @@ mod tests {
     #[cfg(feature = "monad")]
     fn contract_size_limits_monad() {
         let limits = NetworkConfigs::with_monad().contract_size_limits().unwrap();
-        assert_eq!(limits.runtime, monad_revm::MONAD_MAX_CODE_SIZE);
-        assert_eq!(limits.initcode, monad_revm::MONAD_MAX_INITCODE_SIZE);
+        assert_eq!(limits.runtime, monad_evm2::MONAD_MAX_CODE_SIZE);
+        assert_eq!(limits.initcode, monad_evm2::MONAD_MAX_INITCODE_SIZE);
         assert!(NetworkConfigs::default().contract_size_limits().is_none());
     }
 

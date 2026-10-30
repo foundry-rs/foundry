@@ -16,6 +16,12 @@ contract ExecuteTransactionTracingTest is Test {
         assertEq(calls, 3);
     }
 
+    function test_broadcast_raw_subcall() public {
+        this.broadcast(signedTransaction(abi.encodeCall(this.subcall, ()), false, false));
+        this.leaf();
+        assertEq(calls, 3);
+    }
+
     function test_nested_create() public {
         this.execute(signedTransaction(type(TraceChild).creationCode, true, false));
     }
@@ -58,6 +64,16 @@ contract ExecuteTransactionTracingTest is Test {
         vm.executeTransaction(rawTx);
         assertEq(tx.origin, origin);
         this.leaf();
+    }
+
+    function broadcast(bytes memory rawTx) external {
+        vm.broadcastRawTransaction(rawTx);
+        // The signed transaction's write is the slot's original value, as after a mined
+        // transaction, so writing the slot again is charged as a clean write (EIP-2200) after
+        // a cold read: over 2,900 + 2,100 gas, not a 100 gas dirty write.
+        uint256 start = gasleft();
+        this.leaf();
+        assertGt(start - gasleft(), 5000);
     }
 
     function executeFailure(bytes memory rawTx, string memory expectedError) external {

@@ -1,21 +1,29 @@
-use alloy_evm::{Evm, EvmEnv, FromRecoveredTx};
+//! Tempo execution over evm2: nested transactions keep their halt reason, keychain spending
+//! limits settle storage credits as on chain, and spec changes keep Tempo's gas schedule.
+
+use alloy_consensus::transaction::Recovered;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
-use alloy_signer::Signer;
+use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
+use evm2::{
+    Evm, SpecId, Version,
+    bytecode::Bytecode,
+    evm::{AccountInfo, InMemoryDB},
+    interpreter::InstrStop,
+};
 use foundry_evm_core::{
-    backend::Backend,
-    evm::{FoundryEvmFactory, TempoEvmNetwork},
-    fork::MultiFork,
+    constants::TEST_CONTRACT_ADDRESS,
+    evm::{
+        EvmEnv, ExecutionLifecycle, FoundryEvmFactory, FoundryEvmNetwork, TempoEvmNetwork,
+        TxEnvelopeFor, TxPayload,
+    },
 };
-use revm::{
-    Inspector,
-    context::result::{ExecutionResult, HaltReason},
-    inspector::NoOpInspector,
-    state::{AccountInfo, Bytecode},
+use tempo_alloy::primitives::{
+    TempoSignature, TempoTransaction,
+    transaction::{Call, KeychainSignature, PrimitiveSignature, calc_gas_balance_spending},
 };
-use tempo_alloy::primitives::TempoTxEnvelope;
-use tempo_evm::{TempoBlockEnv, TempoEvmFactory};
+use tempo_evm::{TempoEvmFactory, TempoEvmTypes, TempoTxEnv, tempo_execution_config};
 use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, DEFAULT_FEE_TOKEN,
@@ -23,44 +31,70 @@ use tempo_precompiles::{
         KeyRestrictions, SignatureType as KeychainSignatureType, TokenLimit as KeychainTokenLimit,
         authorizeKeyCall,
     },
-    storage::{StorageActions, StorageCtx},
+    storage::StorageCtx,
     storage_credits::StorageCredits,
     tip20::{ITIP20, TIP20Token},
 };
-use tempo_primitives::{
-    TempoSignature, TempoTransaction,
-    transaction::{Call, KeychainSignature, PrimitiveSignature, calc_gas_balance_spending},
-};
-use tempo_revm::{TempoTxEnv, gas_params::tempo_gas_params};
 
 const GAS_LIMIT: u64 = 500_000;
 const GAS_PRICE: u128 = 1_000_000_000_000;
 const TRANSFER_AMOUNT: u64 = 1_234;
+const CHAIN_ID: u64 = 1;
 
-#[tokio::test]
-async fn nested_tempo_execution_preserves_halt_reason() {
+fn tempo_env(spec: TempoHardfork) -> EvmEnv<TempoEvmTypes> {
+    EvmEnv::new(spec, TempoEvmFactory::default().version(spec, CHAIN_ID), Default::default())
+}
+
+/// Funds `account` with enough of the default fee token to pay a full `GAS_LIMIT` at
+/// `GAS_PRICE` and transfer `TRANSFER_AMOUNT`, and gives `recipient` a non-zero balance.
+fn seed_fee_token_balances(evm: &mut Evm<'_, TempoEvmTypes>, account: Address, recipient: Address) {
+    let amount = calc_gas_balance_spending(GAS_LIMIT, GAS_PRICE) + U256::from(TRANSFER_AMOUNT);
+    StorageCtx::enter_evm(evm, || {
+        let mut token = TIP20Token::from_address_unchecked(DEFAULT_FEE_TOKEN);
+        token.mint(TEST_CONTRACT_ADDRESS, ITIP20::mintCall { to: account, amount }).unwrap();
+        token
+            .mint(TEST_CONTRACT_ADDRESS, ITIP20::mintCall { to: recipient, amount: U256::ONE })
+            .unwrap();
+    });
+    evm.state_mut().commit_transaction();
+}
+
+fn storage_credit_balance(evm: &mut Evm<'_, TempoEvmTypes>, owner: Address) -> u64 {
+    StorageCtx::enter_evm(evm, || StorageCredits::new().balance_of(owner).unwrap())
+}
+
+fn signed_tx(
+    envelope: impl Into<TxEnvelopeFor<TempoEvmNetwork>>,
+    sender: Address,
+) -> Recovered<TempoTxEnv> {
+    TempoEvmNetwork::evm_tx(envelope.into(), sender, TxPayload::Signed).unwrap()
+}
+
+fn primitive_tx(account: &PrivateKeySigner, tx: TempoTransaction) -> Recovered<TempoTxEnv> {
+    let signature = account.sign_hash_sync(&tx.signature_hash()).unwrap();
+    signed_tx(tx.into_signed(signature.into()), account.address())
+}
+
+#[test]
+fn nested_tempo_execution_preserves_halt_reason() {
     let account = PrivateKeySigner::random();
     let target = Address::repeat_byte(0xee);
 
-    for (opcode, expected) in
-        [(0x0c, HaltReason::OpcodeNotFound), (0x50, HaltReason::StackUnderflow)]
+    for (opcode, expected) in [(0x0c, InstrStop::OpcodeNotFound), (0x50, InstrStop::StackUnderflow)]
     {
-        let mut db = in_memory_tempo_backend();
-        seed_fee_token_balances(&mut db, account.address(), target);
-        db.insert_account_info(
-            target,
-            AccountInfo::default().with_code(Bytecode::new_raw(Bytes::from(vec![opcode]))),
-        );
-        let evm_env = EvmEnv::new(
-            revm::context::CfgEnv::<TempoHardfork>::default()
-                .with_spec_and_gas_params(TempoHardfork::T11, tempo_gas_params(TempoHardfork::T11)),
-            TempoBlockEnv::default(),
-        );
-        let mut evm = TempoEvmFactory::default().create_nested_evm(&mut db, evm_env);
+        let mut db = InMemoryDB::default();
+        let mut info =
+            AccountInfo::default().with_code(Bytecode::new_raw(Bytes::from(vec![opcode])));
+        db.insert_contract(&mut info);
+        db.insert_account_info(&target, info);
+        let mut lifecycle =
+            ExecutionLifecycle::new(TempoEvmFactory::default(), db, tempo_env(TempoHardfork::T11));
+        let mut evm = lifecycle.create_evm();
+        seed_fee_token_balances(&mut evm, account.address(), target);
         let tx = primitive_tx(
             &account,
             TempoTransaction {
-                chain_id: 1,
+                chain_id: CHAIN_ID,
                 fee_token: Some(DEFAULT_FEE_TOKEN),
                 gas_limit: GAS_LIMIT,
                 calls: vec![Call {
@@ -70,62 +104,19 @@ async fn nested_tempo_execution_preserves_halt_reason() {
                 }],
                 ..Default::default()
             },
-        )
-        .await;
-
-        let result = evm.transact_raw(tx).expect("nested transaction executes");
-        assert!(
-            matches!(result.result, ExecutionResult::Halt { reason, .. } if reason == expected)
         );
+
+        let executed = lifecycle
+            .prepare_nested(&mut evm, tx, None, None)
+            .execute(&mut evm, None, false)
+            .expect("nested transaction executes");
+        let result = lifecycle.store_executed(executed);
+        assert!(!result.status);
+        assert_eq!(result.stop, expected);
     }
 }
 
-fn in_memory_tempo_backend() -> Backend<TempoEvmNetwork> {
-    let (forks, _fork_handler) = MultiFork::new();
-    Backend::new(forks, None).unwrap()
-}
-
-fn seed_fee_token_balances(
-    db: &mut Backend<TempoEvmNetwork>,
-    account: Address,
-    recipient: Address,
-) {
-    db.insert_account_info(
-        account,
-        AccountInfo { balance: U256::from(1_000_000_000_000_000_000u128), ..Default::default() },
-    );
-    let initial_balance =
-        calc_gas_balance_spending(GAS_LIMIT, GAS_PRICE) + U256::from(TRANSFER_AMOUNT);
-    let token = TIP20Token::from_address_unchecked(DEFAULT_FEE_TOKEN);
-    db.insert_account_storage(DEFAULT_FEE_TOKEN, token.balances[account].slot(), initial_balance)
-        .unwrap();
-    db.insert_account_storage(DEFAULT_FEE_TOKEN, token.balances[recipient].slot(), U256::ONE)
-        .unwrap();
-}
-
-fn storage_credit_balance<DB, I>(evm: &mut tempo_evm::evm::TempoEvm<DB, I>, owner: Address) -> u64
-where
-    DB: alloy_evm::Database,
-    I: Inspector<tempo_revm::evm::TempoContext<DB>>,
-{
-    let ctx = evm.ctx_mut();
-    StorageCtx::enter_evm(
-        &mut ctx.journaled_state,
-        &ctx.block,
-        &ctx.cfg,
-        &ctx.tx,
-        StorageActions::disabled(),
-        || StorageCredits::new().balance_of(owner).unwrap(),
-    )
-}
-
-async fn primitive_tx(account: &PrivateKeySigner, tx: TempoTransaction) -> TempoTxEnv {
-    let signature = account.sign_hash(&tx.signature_hash()).await.unwrap();
-    let envelope = TempoTxEnvelope::AA(tx.into_signed(signature.into()));
-    TempoTxEnv::from_recovered_tx(&envelope, account.address())
-}
-
-async fn keychain_spend_setup() -> (Address, Address, TempoTxEnv, TempoTxEnv) {
+fn keychain_spend_setup() -> (Address, Address, Recovered<TempoTxEnv>, Recovered<TempoTxEnv>) {
     let root = PrivateKeySigner::random();
     let access_key = PrivateKeySigner::random();
     let recipient = Address::repeat_byte(0xee);
@@ -150,30 +141,20 @@ async fn keychain_spend_setup() -> (Address, Address, TempoTxEnv, TempoTxEnv) {
     let auth_tx = primitive_tx(
         &root,
         TempoTransaction {
-            chain_id: 1,
+            chain_id: CHAIN_ID,
             fee_token: Some(DEFAULT_FEE_TOKEN),
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 0,
             gas_limit: 2_000_000,
             calls: vec![Call {
                 to: TxKind::Call(ACCOUNT_KEYCHAIN_ADDRESS),
                 value: U256::ZERO,
                 input: authorize.abi_encode().into(),
             }],
-            access_list: Default::default(),
-            nonce_key: U256::ZERO,
-            nonce: 0,
-            fee_payer_signature: None,
-            valid_before: None,
-            valid_after: None,
-            key_authorization: None,
-            tempo_authorization_list: vec![],
+            ..Default::default()
         },
-    )
-    .await;
+    );
 
     let spend_tx = TempoTransaction {
-        chain_id: 1,
+        chain_id: CHAIN_ID,
         fee_token: Some(DEFAULT_FEE_TOKEN),
         max_priority_fee_per_gas: GAS_PRICE,
         max_fee_per_gas: GAS_PRICE,
@@ -185,49 +166,60 @@ async fn keychain_spend_setup() -> (Address, Address, TempoTxEnv, TempoTxEnv) {
                 .abi_encode()
                 .into(),
         }],
-        access_list: Default::default(),
-        nonce_key: U256::ZERO,
         nonce: 1,
-        fee_payer_signature: None,
-        valid_before: None,
-        valid_after: None,
-        key_authorization: None,
-        tempo_authorization_list: vec![],
+        ..Default::default()
     };
     let keychain_hash = KeychainSignature::signing_hash(spend_tx.signature_hash(), root.address());
-    let access_signature = access_key.sign_hash(&keychain_hash).await.unwrap();
-    let envelope = TempoTxEnvelope::AA(spend_tx.into_signed(TempoSignature::Keychain(
-        KeychainSignature::new(root.address(), PrimitiveSignature::Secp256k1(access_signature)),
-    )));
-    let spend_env = TempoTxEnv::from_recovered_tx(&envelope, root.address());
-    (spend_env.inner.caller, recipient, auth_tx, spend_env)
+    let access_signature = access_key.sign_hash_sync(&keychain_hash).unwrap();
+    let spend_tx = signed_tx(
+        spend_tx.into_signed(TempoSignature::Keychain(KeychainSignature::new(
+            root.address(),
+            PrimitiveSignature::Secp256k1(access_signature),
+        ))),
+        root.address(),
+    );
+    (root.address(), recipient, auth_tx, spend_tx)
 }
 
-#[tokio::test]
-async fn foundry_factory_keychain_limit_refund_does_not_leak_storage_credit() {
-    let (account, recipient, auth_tx, spend_tx) = keychain_spend_setup().await;
-    let mut db = in_memory_tempo_backend();
-    seed_fee_token_balances(&mut db, account, recipient);
-
-    let evm_env = EvmEnv::new(
-        revm::context::CfgEnv::<TempoHardfork>::default()
-            .with_spec_and_gas_params(TempoHardfork::T7, tempo_gas_params(TempoHardfork::T7)),
-        TempoBlockEnv::default(),
+#[test]
+fn foundry_factory_keychain_limit_refund_does_not_leak_storage_credit() {
+    let (account, recipient, auth_tx, spend_tx) = keychain_spend_setup();
+    let factory = TempoEvmFactory::default();
+    let mut evm = FoundryEvmFactory::create_evm(
+        &factory,
+        InMemoryDB::default(),
+        tempo_env(TempoHardfork::T7),
     );
-    let mut evm = TempoEvmFactory::default().create_foundry_evm_with_inspector(
-        &mut db,
-        evm_env,
-        NoOpInspector,
-    );
+    seed_fee_token_balances(&mut evm, account, recipient);
 
-    let auth_result = evm.transact_commit(auth_tx).expect("auth transaction executes");
-    assert!(auth_result.is_success(), "auth transaction should succeed: {auth_result:?}");
+    let auth_result = evm.transact(&auth_tx).expect("auth transaction executes").commit();
+    assert!(auth_result.status, "auth transaction should succeed: {auth_result:?}");
 
-    let spend_result = evm.transact_commit(spend_tx).expect("spend transaction executes");
-    assert!(spend_result.is_success(), "keychain spend should succeed: {spend_result:?}");
+    let spend_result = evm.transact(&spend_tx).expect("spend transaction executes").commit();
+    assert!(spend_result.status, "keychain spend should succeed: {spend_result:?}");
     assert_eq!(
         storage_credit_balance(&mut evm, ACCOUNT_KEYCHAIN_ADDRESS),
         0,
         "post-tx fee refund recreates the keychain spending-limit slot, so the same-tx clear credit must be canceled",
     );
+}
+
+#[test]
+fn tempo_execution_spec_preserves_network_gas() {
+    let factory = TempoEvmFactory::default();
+    let mut evm = FoundryEvmFactory::create_evm(
+        &factory,
+        InMemoryDB::default(),
+        tempo_env(TempoHardfork::default()),
+    );
+    for spec in [TempoHardfork::T3, TempoHardfork::T7, TempoHardfork::T14] {
+        let env = EvmEnv::new(spec, *evm.version(), *evm.block());
+        factory.set_env(&mut evm, env);
+        assert_eq!(evm.config_spec_id(), spec);
+        assert_eq!(
+            evm.version().gas_params,
+            tempo_execution_config(spec, CHAIN_ID).version().gas_params
+        );
+        assert_ne!(evm.version().gas_params, Version::new(SpecId::OSAKA).gas_params);
+    }
 }

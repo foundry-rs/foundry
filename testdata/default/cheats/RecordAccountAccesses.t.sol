@@ -1186,12 +1186,18 @@ contract RecordAccountAccessesTest is Test {
     ///         are public networks that support the opcode, regardless of whether
     ///         or not Ethereum mainnet does.
     function testSelfDestruct() public {
+        vm.chainId(42);
         uint256 startingBalance = address(this).balance;
         this.startRecordingFromLowerDepth();
         address a = address(new SelfDestructor{value: 1 ether}(address(this)));
         address b = address(new SelfDestructor{value: 1 ether}(address(bytes20("doesn't exist yet"))));
+        // Changing chains must not rewrite previously recorded accesses.
+        vm.chainId(43);
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
         assertEq(called.length, 5, "incorrect length");
+        for (uint256 i; i < called.length; ++i) {
+            assertEq(called[i].chainInfo.chainId, 42, "incorrect recorded chain");
+        }
         assertEq(
             called[1],
             Vm.AccountAccess({
@@ -1292,10 +1298,14 @@ contract RecordAccountAccessesTest is Test {
 
     /// @notice Test that EXT* opcodes are recorded as account accesses
     function testExtOpcodes() public {
+        vm.chainId(42);
         vm.startStateDiffRecording();
         extChecker.checkExts(address(1234));
         Vm.AccountAccess[] memory called = vm.stopAndReturnStateDiff();
         assertEq(called.length, 5, "incorrect length");
+        for (uint256 i; i < called.length; ++i) {
+            assertEq(called[i].chainInfo.chainId, 42, "incorrect recorded chain");
+        }
         // call to extChecker
         assertEq(toUint(called[0].kind), toUint(Vm.AccountAccessKind.Call));
         // extChecker checks

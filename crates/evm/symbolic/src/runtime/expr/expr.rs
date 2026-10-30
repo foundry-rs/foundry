@@ -1,5 +1,4 @@
 use super::{hashcons::HashConsed, *};
-use foundry_evm::revm::interpreter::instructions::i256::{i256_div, i256_mod};
 
 // Boolean selector recovery is an optional expression rewrite. Bound it to one word's worth of
 // unique nodes so adversarial expression trees cannot make construction unbounded.
@@ -2240,8 +2239,20 @@ impl SymBinOp {
                     left % right
                 }
             }
-            Self::SDiv => i256_div(left, right),
-            Self::SRem => i256_mod(left, right),
+            Self::SDiv => {
+                if right.is_zero() {
+                    U256::ZERO
+                } else {
+                    I256::from_raw(left).wrapping_div(I256::from_raw(right)).into_raw()
+                }
+            }
+            Self::SRem => {
+                if right.is_zero() {
+                    U256::ZERO
+                } else {
+                    I256::from_raw(left).wrapping_rem(I256::from_raw(right)).into_raw()
+                }
+            }
             Self::And => left & right,
             Self::Or => left | right,
             Self::Xor => left ^ right,

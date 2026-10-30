@@ -20,7 +20,6 @@ foundry-config.workspace = true
 foundry-common.workspace = true
 foundry-evm.workspace = true
 foundry-evm-networks.workspace = true
-alloy-evm.workspace = true
 foundry-debugger.workspace = true
 foundry-cheatcodes.workspace = true
 foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
@@ -56,12 +55,10 @@ alloy-primitives.workspace = true
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
 thiserror.workspace = true
+evm2.workspace = true
 
 tempo-alloy.workspace = true
 tempo-primitives.workspace = true
-
-# monad
-monad-revm = { workspace = true, optional = true }
 
 [dev-dependencies]
 anvil.workspace = true
@@ -71,7 +68,6 @@ alloy-signer-local.workspace = true
 [features]
 default = ["optimism"]
 monad = [
-    "dep:monad-revm",
     "anvil/monad",
     "foundry-config/monad",
     "foundry-evm/monad",

@@ -9,9 +9,9 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxHash};
 use alloy_rlp::{Decodable, Encodable};
 use bytes::BufMut;
-use foundry_evm::traces::CallTraceNode;
+use evm2::interpreter::InstrStop;
+use evm2_inspectors::tracing::types::CallTraceNode;
 use foundry_primitives::FoundryTxEnvelope;
-use revm::interpreter::InstructionResult;
 use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 
@@ -205,7 +205,7 @@ pub struct TransactionInfo {
     pub to: Option<Address>,
     pub contract_address: Option<Address>,
     pub traces: Vec<CallTraceNode>,
-    pub exit: InstructionResult,
+    pub exit: InstrStop,
     pub out: Option<Bytes>,
     pub nonce: u64,
     pub gas_used: u64,

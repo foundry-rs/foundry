@@ -1,17 +1,16 @@
-use crate::{EvmEnv, FoundryBlock, hardfork::FoundryHardfork};
+use crate::{evm::EvmEnv, hardfork::FoundryHardfork};
 use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, private::alloy_eips::eip7840::BlobParams};
 use alloy_hardforks::EthereumHardfork;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{ChainId, Selector, U256};
 use alloy_provider::{Network, network::BlockResponse};
+use evm2::{EvmFeatures, EvmTypesHost, SpecId, env::BlockEnv};
 use foundry_config::NamedChain::{
     self, Avalanche, AvalancheFuji, BinanceSmartChain, BinanceSmartChainTestnet, Polygon,
     PolygonAmoy,
 };
-use foundry_evm_networks::NetworkConfigs;
-use revm::primitives::hardfork::SpecId;
-pub use revm::state::EvmState as StateChangeset;
+use foundry_evm_networks::{NetworkConfigs, arbitrum};
 
 /// Hints to the compiler that this is a cold path, i.e. unlikely to be taken.
 #[cold]
@@ -20,60 +19,63 @@ pub const fn cold_path() {
     // TODO: remove `#[cold]` and call `std::hint::cold_path` once stable.
 }
 
-/// Constructs a generic [`FoundryBlock`] from a block header.
-pub fn block_env_from_header<BLOCK: FoundryBlock + Default>(header: &impl BlockHeader) -> BLOCK {
-    let mut block = BLOCK::default();
-    block.set_number(U256::from(header.number()));
-    block.set_slot_num(header.slot_number().unwrap_or_default());
-    block.set_beneficiary(header.beneficiary());
-    block.set_timestamp(U256::from(header.timestamp()));
-    block.set_difficulty(header.difficulty());
-    block.set_prevrandao(header.mix_hash());
-    block.set_basefee(header.base_fee_per_gas().unwrap_or_default());
-    block.set_gas_limit(header.gas_limit());
-    block
+/// Constructs a block environment from a block header.
+///
+/// A header without `mixHash` leaves `prevrandao` at zero.
+pub fn block_env_from_header<T: EvmTypesHost>(header: &impl BlockHeader) -> BlockEnv<T> {
+    BlockEnv::<T> {
+        number: U256::from(header.number()),
+        beneficiary: header.beneficiary(),
+        timestamp: U256::from(header.timestamp()),
+        gas_limit: U256::from(header.gas_limit()),
+        basefee: U256::from(header.base_fee_per_gas().unwrap_or_default()),
+        difficulty: header.difficulty(),
+        prevrandao: header.mix_hash().unwrap_or_default().into(),
+        slot_num: U256::from(header.slot_number().unwrap_or_default()),
+        ..Default::default()
+    }
 }
 
 /// Applies replay normalization for the provided source chain.
 ///
 /// This keeps fork-specific transaction validation independent from an execution `CHAINID`
 /// override.
-pub fn apply_chain_specific_tx_replay_env_changes_for_chain<SPEC, BLOCK>(
-    evm_env: &mut EvmEnv<SPEC, BLOCK>,
+pub fn apply_chain_specific_tx_replay_env_changes_for_chain<T: EvmTypesHost>(
+    evm_env: &mut EvmEnv<T>,
     source_chain_id: ChainId,
 ) {
-    if NamedChain::try_from(source_chain_id).is_ok_and(|chain| chain.is_arbitrum()) {
+    let chain = NamedChain::try_from(source_chain_id);
+    if chain.is_ok_and(|chain| chain.is_arbitrum()) {
         // Arbitrum does not enforce the EIP-1559 priority fee ordering constraint.
-        evm_env.cfg_env.disable_priority_fee_check = true;
+        evm_env.set_feature(EvmFeatures::PRIORITY_FEE_CHECK, false);
+    }
+    if matches!(chain, Ok(NamedChain::Celo | NamedChain::CeloSepolia)) {
+        // CIP-64 fee caps are denominated in the fee currency, not in the native base fee.
+        evm_env.set_feature(EvmFeatures::BASE_FEE_CHECK, false);
     }
 }
 
 /// Applies block normalization for the provided source chain.
 ///
-/// - checks for prevrandao mixhash after merge
-/// - applies chain specifics: on Arbitrum `block.number` is the L1 block
-///
 /// This keeps fork-specific header handling independent from an execution `CHAINID` override.
-pub fn apply_chain_and_block_specific_env_changes_for_chain<
-    N: Network,
-    SPEC: Into<SpecId> + Copy,
-    BLOCK: FoundryBlock,
->(
-    evm_env: &mut EvmEnv<SPEC, BLOCK>,
+pub fn apply_chain_and_block_specific_env_changes_for_chain<N: Network, T: EvmTypesHost>(
+    evm_env: &mut EvmEnv<T>,
     block: &N::BlockResponse,
     source_chain_id: ChainId,
     configs: NetworkConfigs,
 ) {
+    let header = block.header();
     // The blob fee market is priced from the header's excess blob gas and the source chain's
     // blob schedule at the block timestamp. Headers without the field (pre-Cancun blocks and
     // chains without EIP-4844) keep the default blob environment.
-    if let Some(excess_blob_gas) = block.header().excess_blob_gas() {
-        evm_env.block_env.set_blob_excess_gas_and_price(
+    if let Some(excess_blob_gas) = header.excess_blob_gas() {
+        evm_env.set_blob_excess_gas(
             excess_blob_gas,
-            get_blob_base_fee_update_fraction(source_chain_id, block.header().timestamp()),
+            get_blob_base_fee_update_fraction(source_chain_id, header.timestamp()),
         );
     }
 
+    let block_env = &mut evm_env.block;
     if let Ok(chain) = NamedChain::try_from(source_chain_id) {
         match chain {
             BinanceSmartChain
@@ -86,9 +88,8 @@ pub fn apply_chain_and_block_specific_env_changes_for_chain<
                 // As far as observed from the source code of bnb-chain/bsc, the `difficulty` field
                 // is still in use and returned by the corresponding opcode but `prevrandao`
                 // (`mixHash`) is always zero, even though bsc adopts the newer EVM
-                // specification. This will confuse revm and causes emulation
-                // failure. Polygon and Avalanche behave the same way.
-                evm_env.block_env.set_prevrandao(Some(evm_env.block_env.difficulty().into()));
+                // specification. Polygon and Avalanche behave the same way.
+                block_env.prevrandao = block_env.difficulty;
                 return;
             }
             c if c.is_arbitrum() => {
@@ -101,26 +102,26 @@ pub fn apply_chain_and_block_specific_env_changes_for_chain<
                         serde_json::from_value::<U256>(l1_block_number).ok()
                     })
                 {
-                    evm_env.block_env.set_number(l1_block_number);
+                    block_env.number = l1_block_number;
                 }
 
                 // `mixHash` carries L1 metadata rather than randomness here, while the
                 // `PREVRANDAO` opcode returns `difficulty` like it does on the chains above.
-                evm_env.block_env.set_prevrandao(Some(evm_env.block_env.difficulty().into()));
+                block_env.prevrandao = block_env.difficulty;
             }
             _ => {}
         }
     }
 
-    if configs.bypass_prevrandao(source_chain_id) && evm_env.block_env.prevrandao().is_none() {
+    if configs.bypass_prevrandao(source_chain_id) && header.mix_hash().is_none() {
         // Chains without randomness keep the historical DIFFICULTY opcode semantics.
         // <https://github.com/foundry-rs/foundry/issues/4232>
-        evm_env.block_env.set_prevrandao(Some(evm_env.block_env.difficulty().into()));
+        block_env.prevrandao = block_env.difficulty;
     }
 
     // if difficulty is `0` we assume it's past merge
-    if block.header().difficulty().is_zero() {
-        evm_env.block_env.set_difficulty(evm_env.block_env.prevrandao().unwrap_or_default().into());
+    if header.difficulty().is_zero() {
+        block_env.difficulty = block_env.prevrandao;
     }
 }
 
@@ -201,20 +202,38 @@ pub fn get_function<'a>(
         .ok_or_else(|| eyre::eyre!("{contract_name} does not have the selector {selector}"))
 }
 
+/// Returns the addresses a transaction in `env` with `access_list` warms when it starts and that
+/// `vm.cool` keeps warm: the EIP-3651 coinbase, Arbitrum's ArbSys on Arbitrum chains, and the
+/// access list.
+pub fn tx_warm_addresses<T: EvmTypesHost>(
+    env: &EvmEnv<T>,
+    access_list: Option<&alloy_eips::eip2930::AccessList>,
+) -> Vec<alloy_primitives::Address> {
+    let coinbase = env.version.feature(EvmFeatures::EIP3651).then_some(env.block.beneficiary);
+    let arb_sys =
+        arbitrum::is_arbitrum_chain(env.version.chain_id).then_some(arbitrum::ARB_SYS_ADDRESS);
+    let access_list = access_list.into_iter().flat_map(|list| list.iter().map(|item| item.address));
+    coinbase.into_iter().chain(arb_sys).chain(access_list).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_network::{AnyHeader, AnyNetwork, AnyRpcBlock, AnyRpcHeader};
     use alloy_primitives::B256;
     use alloy_rpc_types::{Block, BlockTransactions};
-    use revm::context::{BlockEnv, CfgEnv};
+    use evm2::{BaseEvmTypes, Version};
+
+    fn env(block: BlockEnv<BaseEvmTypes>) -> EvmEnv<BaseEvmTypes> {
+        EvmEnv::new(SpecId::PRAGUE, Version::new(SpecId::PRAGUE), block)
+    }
 
     #[test]
     fn block_env_preserves_slot_number() {
         for slot_number in [None, Some(0), Some(42), Some(u64::MAX)] {
             let header = AnyHeader { slot_number, ..Default::default() };
-            let block = block_env_from_header::<BlockEnv>(&header);
-            assert_eq!(block.slot_num, slot_number.unwrap_or_default());
+            let block = block_env_from_header::<BaseEvmTypes>(&header);
+            assert_eq!(block.slot_num, U256::from(slot_number.unwrap_or_default()));
         }
     }
 
@@ -230,22 +249,19 @@ mod tests {
         );
         block.other.insert("l1BlockNumber".to_string(), serde_json::json!("0x64"));
 
-        let mut cfg_env = CfgEnv::<SpecId>::default();
-        cfg_env.chain_id = NamedChain::Mainnet as u64;
-        let mut evm_env = EvmEnv {
-            cfg_env,
-            block_env: BlockEnv { number: U256::from(500), ..Default::default() },
-        };
+        let mut evm_env =
+            env(BlockEnv::<BaseEvmTypes> { number: U256::from(500), ..Default::default() });
+        evm_env.set_chain_id(NamedChain::Mainnet as u64);
 
-        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _>(
             &mut evm_env,
             &block,
             NamedChain::Arbitrum as u64,
             NetworkConfigs::default(),
         );
 
-        assert_eq!(evm_env.cfg_env.chain_id, NamedChain::Mainnet as u64);
-        assert_eq!(evm_env.block_env.number, U256::from(100));
+        assert_eq!(evm_env.chain_id(), NamedChain::Mainnet as u64);
+        assert_eq!(evm_env.block.number, U256::from(100));
     }
 
     #[test]
@@ -263,20 +279,18 @@ mod tests {
             )
             .into(),
         );
-        let mut evm_env = EvmEnv::new(CfgEnv::<SpecId>::default(), BlockEnv::default());
+        let mut evm_env = env(BlockEnv::<BaseEvmTypes>::default());
         // The execution chain id can be overridden; the blob schedule follows the source chain.
-        evm_env.cfg_env.chain_id = 1337;
+        evm_env.set_chain_id(1337);
 
-        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _>(
             &mut evm_env,
             &block,
             NamedChain::Mainnet as u64,
             NetworkConfigs::default(),
         );
 
-        let blob = evm_env.block_env.blob_excess_gas_and_price.unwrap();
-        assert_eq!(blob.excess_blob_gas, 22_151_168);
-        assert_eq!(blob.blob_gasprice, 761);
+        assert_eq!(evm_env.block.blob_basefee, U256::from(761));
     }
 
     #[test]
@@ -289,19 +303,16 @@ mod tests {
             )
             .into(),
         );
-        let mut evm_env = EvmEnv::new(CfgEnv::<SpecId>::default(), BlockEnv::default());
+        let mut evm_env = env(BlockEnv::<BaseEvmTypes>::default());
 
-        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _>(
             &mut evm_env,
             &block,
             NamedChain::Mainnet as u64,
             NetworkConfigs::default(),
         );
 
-        assert_eq!(
-            evm_env.block_env.blob_excess_gas_and_price,
-            BlockEnv::default().blob_excess_gas_and_price
-        );
+        assert_eq!(evm_env.block.blob_basefee, BlockEnv::<BaseEvmTypes>::default().blob_basefee);
     }
 
     #[test]
@@ -328,22 +339,20 @@ mod tests {
                 );
                 let mut previous = None;
                 for _ in 0..2 {
-                    let mut evm_env = EvmEnv::new(
-                        CfgEnv::<SpecId>::default(),
-                        block_env_from_header::<BlockEnv>(block.header()),
-                    );
-                    apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+                    let mut evm_env = env(block_env_from_header::<BaseEvmTypes>(block.header()));
+                    apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _>(
                         &mut evm_env,
                         &block,
                         chain,
                         configs,
                     );
-                    assert_eq!(evm_env.block_env.prevrandao, bypass.then(|| difficulty.into()));
-                    assert_eq!(evm_env.block_env.difficulty, difficulty);
+                    let expected = if bypass { difficulty } else { U256::ZERO };
+                    assert_eq!(evm_env.block.prevrandao, expected);
+                    assert_eq!(evm_env.block.difficulty, difficulty);
                     if let Some(previous) = &previous {
-                        assert_eq!(&evm_env.block_env, previous);
+                        assert_eq!(&evm_env.block, previous);
                     }
-                    previous = Some(evm_env.block_env);
+                    previous = Some(evm_env.block);
                 }
             }
         }
@@ -360,17 +369,14 @@ mod tests {
             )
             .into(),
         );
-        let mut evm_env = EvmEnv::new(
-            CfgEnv::<SpecId>::default(),
-            block_env_from_header::<BlockEnv>(block.header()),
-        );
-        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+        let mut evm_env = env(block_env_from_header::<BaseEvmTypes>(block.header()));
+        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _>(
             &mut evm_env,
             &block,
             NamedChain::Gnosis as u64,
             NetworkConfigs::default(),
         );
-        assert_eq!(evm_env.block_env.prevrandao, Some(randao));
+        assert_eq!(evm_env.block.prevrandao, U256::from_be_bytes(randao.0));
     }
 
     #[test]
@@ -387,19 +393,16 @@ mod tests {
                 )
                 .into(),
             );
-            let mut evm_env = EvmEnv::new(
-                CfgEnv::<SpecId>::default(),
-                block_env_from_header::<BlockEnv>(block.header()),
-            );
-            apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+            let mut evm_env = env(block_env_from_header::<BaseEvmTypes>(block.header()));
+            apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _>(
                 &mut evm_env,
                 &block,
                 NamedChain::Mainnet as u64,
                 NetworkConfigs::default(),
             );
             let expected = if difficulty.is_zero() { randao.into() } else { difficulty };
-            assert_eq!(evm_env.block_env.difficulty, expected, "block {number}");
-            assert_eq!(evm_env.block_env.prevrandao, Some(randao));
+            assert_eq!(evm_env.block.difficulty, expected, "block {number}");
+            assert_eq!(evm_env.block.prevrandao, U256::from_be_bytes(randao.0));
         }
     }
 
@@ -426,16 +429,13 @@ mod tests {
                 )
                 .into(),
             );
-            let mut evm_env = EvmEnv::new(
-                CfgEnv::<SpecId>::default(),
-                BlockEnv {
-                    difficulty: U256::ONE,
-                    prevrandao: Some(mix_hash),
-                    ..Default::default()
-                },
-            );
+            let mut evm_env = env(BlockEnv::<BaseEvmTypes> {
+                difficulty: U256::ONE,
+                prevrandao: mix_hash.into(),
+                ..Default::default()
+            });
 
-            apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+            apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _>(
                 &mut evm_env,
                 &block,
                 chain as u64,
@@ -443,49 +443,37 @@ mod tests {
             );
 
             assert_eq!(
-                evm_env.block_env.prevrandao,
-                Some(B256::with_last_byte(1)),
+                evm_env.block.prevrandao,
+                U256::ONE,
                 "{chain:?} should expose `difficulty` as `PREVRANDAO`"
             );
         }
     }
 
     #[test]
-    fn tx_replay_env_changes_disable_priority_fee_check_only_for_arbitrum() {
-        let mut evm_env = EvmEnv::new(
-            revm::context::CfgEnv::<SpecId>::default(),
-            revm::context::BlockEnv::default(),
-        );
+    fn tx_replay_env_changes_relax_fee_checks_per_source_chain() {
+        let mut evm_env = env(BlockEnv::<BaseEvmTypes>::default());
+        evm_env.set_chain_id(NamedChain::Mainnet as u64);
+        assert!(evm_env.version.feature(EvmFeatures::PRIORITY_FEE_CHECK));
+
         apply_chain_specific_tx_replay_env_changes_for_chain(
             &mut evm_env,
             NamedChain::Arbitrum as u64,
         );
-        assert!(evm_env.cfg_env.disable_priority_fee_check);
+        assert_eq!(evm_env.chain_id(), NamedChain::Mainnet as u64);
+        assert!(!evm_env.version.feature(EvmFeatures::PRIORITY_FEE_CHECK));
 
-        evm_env.cfg_env.disable_priority_fee_check = false;
-
+        evm_env.set_feature(EvmFeatures::PRIORITY_FEE_CHECK, true);
         apply_chain_specific_tx_replay_env_changes_for_chain(
             &mut evm_env,
             NamedChain::Mainnet as u64,
         );
-        assert!(!evm_env.cfg_env.disable_priority_fee_check);
-    }
+        assert!(evm_env.version.feature(EvmFeatures::PRIORITY_FEE_CHECK));
+        assert!(evm_env.version.feature(EvmFeatures::BASE_FEE_CHECK));
 
-    #[test]
-    fn tx_replay_env_changes_use_source_chain() {
-        let mut evm_env = EvmEnv::new(
-            revm::context::CfgEnv::<SpecId>::default(),
-            revm::context::BlockEnv::default(),
-        );
-        evm_env.cfg_env.chain_id = NamedChain::Mainnet as u64;
-
-        apply_chain_specific_tx_replay_env_changes_for_chain(
-            &mut evm_env,
-            NamedChain::Arbitrum as u64,
-        );
-
-        assert_eq!(evm_env.cfg_env.chain_id, NamedChain::Mainnet as u64);
-        assert!(evm_env.cfg_env.disable_priority_fee_check);
+        apply_chain_specific_tx_replay_env_changes_for_chain(&mut evm_env, NamedChain::Celo as u64);
+        assert!(!evm_env.version.feature(EvmFeatures::BASE_FEE_CHECK));
+        assert!(evm_env.version.feature(EvmFeatures::PRIORITY_FEE_CHECK));
     }
 
     #[test]

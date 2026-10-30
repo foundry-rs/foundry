@@ -16,7 +16,7 @@
 //!
 //! [`TempoHeader`] owns the full RLP encoding and hash, including all execution fields and the
 //! optional context. Genesis is unsigned and contextless. Context is omitted before T4, following
-//! [TIP-1031's activation gate][tip1031]. The supported wire mapping is pinned to Tempo `2c25f7cd`
+//! [TIP-1031's activation gate][tip1031]. The supported wire mapping is pinned to Tempo `6800820`
 //! and Commonware `2026.9.0`, and rejects unknown hardforks pending review. This is not a claim of
 //! upstream format stability; protocol-owner confirmation remains tracked by OSS-1186. Older
 //! execution hardforks still use the pinned certificate/DKG codec, not historical Commonware

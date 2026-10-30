@@ -36,7 +36,7 @@ use super::{
 };
 use crate::eth::{
     backend::{
-        db::MaybeFullDatabase,
+        db::{DbAccount, MaybeFullDatabase},
         tempo_consensus::{TempoConsensus, TempoConsensusIdentity, TempoFinalization},
     },
     error::BlockchainError,
@@ -53,7 +53,6 @@ use alloy_rpc_types::EIP1186AccountProofResponse as AccountProof;
 use anvil_core::eth::block::{Block, canonical_block};
 use anvil_rpc::error::{ErrorCode, RpcError};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
-use revm::database::DbAccount;
 use std::{fmt, num::NonZeroU64, sync::Arc};
 use tempo_hardfork::TempoHardfork;
 use tempo_primitives::TempoHeader;
@@ -388,8 +387,8 @@ mod tests {
         eth::{
             api::EthApi,
             backend::{
-                db::{SerializableState, StateDb},
-                mem::MiningCommitHook,
+                db::{AccountState, SerializableState, StateDb},
+                mem::{MiningCommitHook, in_memory_db::MemDb},
             },
         },
         spawn,
@@ -399,12 +398,8 @@ mod tests {
     use alloy_serde::WithOtherFields;
     use alloy_trie::{Nibbles, TrieAccount, proof::verify_proof};
     use anvil_core::types::ReorgOptions;
-    use foundry_evm::{
-        backend::MemDb,
-        hardfork::{EthereumHardfork, FoundryHardfork},
-    };
+    use foundry_evm_hardforks::{EthereumHardfork, FoundryHardfork};
     use foundry_primitives::{FoundryHeader, FoundryNetwork};
-    use revm::database::AccountState;
     use std::{
         sync::atomic::{AtomicBool, Ordering},
         time::Duration,

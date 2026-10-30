@@ -307,3 +307,28 @@ contract DumpStateTest is Test {
         return vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(account)), '"'));
     }
 }
+
+contract DumpStateLoadedAccountsTest is Test {
+    address constant readOnly = address(0x10001);
+    address constant modified = address(0x10002);
+    address constant absent = address(0x10003);
+
+    function setUp() public {
+        vm.setNonce(readOnly, 7);
+    }
+
+    function testDumpStateReadOnlyAccount() public {
+        string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_loaded_accounts.json");
+        assertEq(vm.getNonce(readOnly), 7);
+        assertEq(vm.getNonce(absent), 0);
+        vm.deal(modified, 23);
+
+        // Like REVM's journal, the dump has every account the transaction loaded.
+        vm.dumpState(path);
+        string memory json = vm.readFile(path);
+        assertEq(vm.parseJsonKeys(json, "").length, 2);
+        assertEq(vm.parseJsonUint(json, string.concat(".", vm.toString(readOnly), ".nonce")), 7);
+        assertEq(vm.parseJsonUint(json, string.concat(".", vm.toString(modified), ".balance")), 23);
+        vm.removeFile(path);
+    }
+}

@@ -1242,15 +1242,11 @@ fn handlers_succeeded<FEN: FoundryEvmNetwork>(
 mod tests {
     use super::*;
     use crate::executors::ExecutorBuilder;
-    use alloy_evm::EvmEnv;
     use alloy_primitives::hex;
+    use evm2::bytecode::Bytecode;
     use foundry_cheatcodes::CheatsConfig;
-    use foundry_evm_core::{FoundryBlock, backend::Backend, evm::EthEvmNetwork};
+    use foundry_evm_core::evm::EthEvmNetwork;
     use foundry_evm_fuzz::CallDetails;
-    use revm::{
-        bytecode::Bytecode,
-        context::{Block, TxEnv},
-    };
     use std::sync::Arc;
 
     fn tx(warp: Option<u64>, roll: Option<u64>) -> BasicTxDetails {
@@ -1309,11 +1305,12 @@ mod tests {
 
     #[test]
     fn check_sequence_value_applies_trailing_delay_before_invariant() {
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default()
-            .inspectors(|stack| stack.cheatcodes(Arc::new(CheatsConfig::default())))
-            .gas_limit(1 << 24)
-            .build(EvmEnv::default(), TxEnv::default(), backend, Default::default());
+        let mut executor = crate::executors::test_executor(
+            ExecutorBuilder::<EthEvmNetwork>::default()
+                .inspectors(|stack| stack.cheatcodes(Arc::new(CheatsConfig::default())))
+                .gas_limit(1 << 24),
+            Default::default(),
+        );
         // Returns `(block.number << 128) + block.timestamp`.
         let test_address = Address::repeat_byte(0x11);
         let code = hex!("4360801b420160005260206000f3");
@@ -1321,15 +1318,15 @@ mod tests {
         let block_value =
             |timestamp: U256, number: U256| I256::from_raw((number << 128) + timestamp);
         let calls = [tx(Some(3), Some(5)), tx(Some(7), Some(11))];
-        let block = executor.evm_env().block_env.clone();
+        let block = executor.evm_env().block;
 
         // Removed calls still contribute their delays to the invariant check, whether the
         // cheatcode block mirrors the environment, is unset, or overrides it.
         let delayed =
-            Some(block_value(block.timestamp() + U256::from(10), block.number() + U256::from(16)));
+            Some(block_value(block.timestamp + U256::from(10), block.number + U256::from(16)));
         let mut cheatcode_block = block;
-        cheatcode_block.set_timestamp(U256::from(1000));
-        cheatcode_block.set_number(U256::from(2000));
+        cheatcode_block.timestamp = U256::from(1000);
+        cheatcode_block.number = U256::from(2000);
         let cases = [
             (&[0][..], None, delayed),
             (&[], None, delayed),

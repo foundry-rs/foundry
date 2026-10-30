@@ -365,10 +365,28 @@ abstract contract NestedRestoreFrameRevertBase is Test {
     }
 
     function testRestoreInSucceedingCallIsKept() public {
+        address cooled = address(0xC001);
+        balanceGas(cooled);
+        vm.cool(cooled);
         uint256 snapshotId = prepare(20);
         helper.restoreSet(snapshotId, store, 5);
+        // The transaction's origin and recipient stay warm (EIP-2929), and the account it cooled
+        // stays cold.
+        assertEq(balanceGas(tx.origin), 105);
+        assertEq(balanceGas(address(this)), 105);
+        assertEq(balanceGas(cooled), 2605);
         assertEq(store.marker(), 0);
         assertEq(store.value(), 5);
+    }
+
+    function balanceGas(address target) internal view returns (uint256 gasUsed) {
+        assembly {
+            let start := gas()
+            let targetBalance := balance(target)
+            gasUsed := sub(start, gas())
+            // Keeps the `BALANCE` from being optimized out.
+            if eq(targetBalance, 0xdeadbeef) { revert(0, 0) }
+        }
     }
 
     function testRevertedOuterCallUndoesSiblingRestores() public {

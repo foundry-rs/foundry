@@ -15,6 +15,7 @@ use alloy_rpc_types::{AccessList, AccessListItem, Authorization, TransactionRequ
 use alloy_signer::SignerSync;
 use anvil::{NodeConfig, spawn};
 use axum::{Router, body::Bytes as BodyBytes, http::StatusCode, response::IntoResponse};
+use evm2::interpreter::op as opcode;
 use forge_script_sequence::ScriptSequence;
 use foundry_compilers::{PathStyle, artifacts::EvmVersion};
 use foundry_evm::{constants::CALLER, hardfork::TempoHardfork};
@@ -29,7 +30,6 @@ use foundry_test_utils::{
     util::{OTHER_SOLC_VERSION, SOLC_VERSION, TestCommand, TestProject},
 };
 use regex::Regex;
-use revm::bytecode::opcode;
 use serde_json::Value;
 use std::{
     env, fs,

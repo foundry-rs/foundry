@@ -1,6 +1,8 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
-use crate::{Cheatcode, CheatcodesCore, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
+use crate::{
+    Cheatcode, CheatcodesCore, CheatcodesExecutor, CheatsCtxt, Result, Vm::*, evm::touch_account,
+};
 use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver, TypedData, eip712_parser::EncodeType};
 use alloy_ens::namehash;
 use alloy_primitives::{B64, Bytes, I256, U256, aliases::B32, keccak256, map::HashMap};
@@ -12,7 +14,6 @@ use foundry_evm_core::{constants::DEFAULT_CREATE2_DEPLOYER, evm::FoundryEvmNetwo
 use foundry_evm_fuzz::strategies::BoundMutator;
 use proptest::prelude::Strategy;
 use rand::{Rng, RngCore, seq::SliceRandom};
-use revm::context::{ContextTr, JournalTr};
 use std::path::PathBuf;
 
 /// Contains locations of traces ignored via cheatcodes.
@@ -256,15 +257,22 @@ impl Cheatcode for copyStorageCall {
             "target address cannot have arbitrary storage"
         );
 
-        if let Ok(from_account) = ccx.ecx.journal_mut().load_account(*from) {
-            let from_storage = from_account.storage.clone();
-            if ccx.ecx.journal_mut().load_account(*to).is_ok() {
-                // SAFETY: We ensured the account was already loaded.
-                ccx.ecx.journal_mut().evm_state_mut().get_mut(to).unwrap().storage = from_storage;
-                if let Some(arbitrary_storage) = &mut ccx.state.core.arbitrary_storage {
-                    arbitrary_storage.mark_copy(from, to);
-                }
+        let slots = ccx.backend.backend().lifecycle().loaded_storage(ccx.evm.state(), from);
+        let state = ccx.evm.state_mut();
+        state.account(from)?.warm();
+        touch_account(state, *to)?;
+        for slot in slots {
+            let value = state.storage_slot_untracked(from, &slot)?;
+            // The copied slot keeps the source slot's warmth.
+            let is_warm = state.storage(from)?.is_warm(&slot);
+            let mut copied = state.storage_slot(to, slot)?;
+            if is_warm {
+                copied.warm();
             }
+            copied.set(value);
+        }
+        if let Some(arbitrary_storage) = &mut ccx.state.core.arbitrary_storage {
+            arbitrary_storage.mark_copy(from, to);
         }
 
         Ok(Default::default())

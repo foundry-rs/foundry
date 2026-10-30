@@ -1,7 +1,7 @@
 //! Debug steps recorded straight into a SolDB step table.
 
 use alloy_primitives::{Bytes, U256, hex};
-use revm::bytecode::opcode;
+use evm2::interpreter::op as opcode;
 use soldb_core::{StepTable, StorageChange};
 use std::{
     collections::BTreeMap,

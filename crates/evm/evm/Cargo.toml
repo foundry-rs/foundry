@@ -26,10 +26,11 @@ foundry-evm-hardforks.workspace = true
 foundry-evm-networks.workspace = true
 foundry-evm-traces.workspace = true
 
+alloy-consensus.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-eips.workspace = true
-alloy-evm.workspace = true
 alloy-json-abi.workspace = true
+alloy-network.workspace = true
 alloy-primitives = { workspace = true, features = [
     "serde",
     "getrandom",
@@ -38,18 +39,8 @@ alloy-primitives = { workspace = true, features = [
 ] }
 alloy-rpc-types = { workspace = true, features = ["trace"] }
 alloy-sol-types.workspace = true
-revm = { workspace = true, default-features = false, features = [
-    "std",
-    "serde",
-    "memory_limit",
-    "optional_eip3607",
-    "optional_eip7623",
-    "optional_block_gas_limit",
-    "optional_no_base_fee",
-    "arbitrary",
-    "c-kzg",
-] }
-revm-inspectors.workspace = true
+evm2.workspace = true
+evm2-inspectors.workspace = true
 tempo-precompiles.workspace = true
 tempo-primitives.workspace = true
 
@@ -67,18 +58,9 @@ uuid.workspace = true
 rayon.workspace = true
 tokio.workspace = true
 
-# monad
-alloy-monad-evm = { workspace = true, optional = true }
-monad-revm = { workspace = true, optional = true }
-
-[dev-dependencies]
-tempo-revm.workspace = true
-
 [features]
 default = ["optimism"]
 monad = [
-    "dep:monad-revm",
-    "dep:alloy-monad-evm",
     "foundry-evm-core/monad",
     "foundry-evm-hardforks/monad",
     "foundry-evm-networks/monad",
