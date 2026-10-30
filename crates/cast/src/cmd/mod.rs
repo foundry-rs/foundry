@@ -134,6 +134,7 @@ pub mod receive_policy;
 pub mod rpc;
 pub mod run;
 pub mod safe;
+pub mod secret;
 pub mod send;
 pub mod storage;
 pub mod storage_credits;

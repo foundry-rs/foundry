@@ -74,6 +74,8 @@ pub use etherscan::{EtherscanConfigError, EtherscanConfigs, ResolvedEtherscanCon
 pub mod resolve;
 pub use resolve::UnresolvedEnvVarError;
 
+pub mod secrets;
+
 pub mod cache;
 use cache::{Cache, ChainCache};
 
@@ -1164,7 +1166,15 @@ impl Config {
             .merge(EtherscanEnvProvider::default())
             .merge(
                 Env::prefixed("FOUNDRY_")
-                    .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
+                    .ignore(&[
+                        "PROFILE",
+                        "REMAPPINGS",
+                        "LIBRARIES",
+                        "FFI",
+                        "FS_PERMISSIONS",
+                        "SECRETS_DIR",
+                        "SECRETS_PASSWORD",
+                    ])
                     .map(|key| {
                         let key = key.as_str();
                         if Self::STANDALONE_SECTIONS.iter().any(|section| {
@@ -2098,11 +2108,20 @@ impl Config {
         &self,
         chain: Option<Chain>,
     ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
-        self.etherscan.resolve_for(
+        let chain = chain.or(self.chain);
+        let resolved = self.etherscan.resolve_for(
             self.etherscan_alias(),
             self.etherscan_api_key.as_deref(),
-            chain.or(self.chain),
-        )
+            chain,
+        );
+        // No key from a flag, the environment or `[etherscan]`: it may be in the secret store.
+        if self.etherscan_api_key.is_none()
+            && !matches!(resolved, Ok(Some(_)))
+            && let Some(key) = resolve::secret("ETHERSCAN_API_KEY")
+        {
+            return self.etherscan.resolve_for(self.etherscan_alias(), Some(&key), chain);
+        }
+        resolved
     }
 
     /// The `[etherscan]` entry to prefer over matching on chain id, if it names one.
@@ -4245,6 +4264,33 @@ mod tests {
 
             let _config = Config::load().unwrap();
 
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn etherscan_key_from_secret_store_after_environment() {
+        crate::resolve::set_secret_resolver(crate::resolve::test_secret_resolver);
+        figment::Jail::expect_with(|jail| {
+            jail.create_file("foundry.toml", "[profile.default]\n")?;
+            let config = Config::load().unwrap();
+            assert_eq!(config.get_etherscan_api_key(Some(Chain::mainnet())), None);
+
+            // Not in the environment: the stored key is used.
+            jail.set_env("FOUNDRY_TEST_STORE_ETHERSCAN_KEY", "stored-key");
+            let config = Config::load().unwrap();
+            assert_eq!(
+                config.get_etherscan_api_key(Some(Chain::mainnet())).as_deref(),
+                Some("stored-key")
+            );
+
+            // The environment wins.
+            jail.set_env("ETHERSCAN_API_KEY", "env-key");
+            let config = Config::load().unwrap();
+            assert_eq!(
+                config.get_etherscan_api_key(Some(Chain::mainnet())).as_deref(),
+                Some("env-key")
+            );
             Ok(())
         });
     }

@@ -3670,3 +3670,51 @@ optimizer_runs = 456
         )
         .stderr_eq(str![""]);
 }
+
+// Stored secrets resolve `${NAME}` in the config, but stay invisible to environment cheatcodes.
+#[forgetest_init]
+fn secret_store_feeds_config_not_env_cheatcodes(prj: _, cmd: _) {
+    let secrets = prj.root().join("secrets");
+    let toml = prj.root().join("foundry.toml");
+    let mut config = std::fs::read_to_string(&toml).unwrap();
+    config.push_str("\n[rpc_endpoints]\nprivate = \"${FOUNDRY_TEST_PRIVATE_RPC}\"\n");
+    std::fs::write(&toml, config).unwrap();
+    prj.add_test(
+        "Secret.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract SecretTest is Test {
+    function test_rpcUrl() public view {
+        assertEq(vm.rpcUrl("private"), "https://rpc.example/v2/stored-key");
+    }
+
+    function test_envOr() public view {
+        assertEq(vm.envOr("FOUNDRY_TEST_PRIVATE_RPC", string("unset")), "unset");
+    }
+
+    function test_resolveEnv() public {
+        try vm.resolveEnv("${FOUNDRY_TEST_PRIVATE_RPC}") returns (string memory) {
+            revert("resolveEnv read a stored secret");
+        } catch {}
+    }
+}
+"#,
+    );
+
+    cmd.cast_fuse().args(["secret", "set", "FOUNDRY_TEST_PRIVATE_RPC"]);
+    cmd.env("FOUNDRY_SECRETS_DIR", &secrets);
+    cmd.env("FOUNDRY_SECRETS_PASSWORD", "pw");
+    cmd.stdin("https://rpc.example/v2/stored-key\n").assert_success();
+
+    cmd.forge_fuse().args(["test", "--mc", "SecretTest"]);
+    cmd.env("FOUNDRY_SECRETS_DIR", &secrets);
+    cmd.env("FOUNDRY_SECRETS_PASSWORD", "pw");
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+[PASS] test_envOr() ([GAS])
+[PASS] test_resolveEnv() ([GAS])
+[PASS] test_rpcUrl() ([GAS])
+...
+"#]]);
+}

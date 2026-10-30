@@ -19,6 +19,7 @@ workspace = true
 foundry-cli-markdown.workspace = true
 foundry-common.workspace = true
 foundry-config.workspace = true
+rpassword = "7"
 foundry-evm.workspace = true
 foundry-evm-networks.workspace = true
 foundry-wallets = { workspace = true, features = ["browser", "tempo"] }

@@ -28,6 +28,8 @@ pub use suggestions::*;
 mod abi;
 pub use abi::*;
 
+mod secrets;
+
 mod allocator;
 pub use allocator::*;
 
@@ -199,6 +201,7 @@ pub fn common_setup() -> Vec<String> {
     install_crypto_provider();
     crate::handler::install();
     let warnings = load_dotenv();
+    foundry_config::resolve::set_secret_resolver(secrets::resolve_secret);
     enable_paint();
     warnings
 }

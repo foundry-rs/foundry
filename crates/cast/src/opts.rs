@@ -24,6 +24,7 @@ use crate::cmd::{
     rpc::RpcArgs,
     run::RunArgs,
     safe::SafeSubcommand,
+    secret::SecretSubcommand,
     send::SendTxArgs,
     storage::StorageArgs,
     storage_credits::StorageCreditsSubcommand,
@@ -1405,6 +1406,12 @@ pub enum MiscSubcommand {
     Wallet {
         #[command(subcommand)]
         command: WalletSubcommands,
+    },
+
+    /// Manage encrypted secrets, such as RPC URLs and API keys, used as `${NAME}` in foundry.toml.
+    Secret {
+        #[command(subcommand)]
+        command: SecretSubcommand,
     },
 
     /// Create, propose, and sign Safe transactions.
