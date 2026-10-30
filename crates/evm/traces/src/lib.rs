@@ -847,30 +847,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tracing_eth() {
+    async fn tracing() {
         tracing_suite::<foundry_evm_core::evm::EthEvmNetwork>().await;
-    }
-
-    #[tokio::test]
-    async fn tracing_tempo() {
         tracing_suite::<foundry_evm_core::evm::TempoEvmNetwork>().await;
-    }
-
-    #[cfg(feature = "optimism")]
-    #[tokio::test]
-    async fn tracing_op() {
+        #[cfg(feature = "optimism")]
         tracing_suite::<foundry_evm_core::evm::OpEvmNetwork>().await;
-    }
-
-    #[cfg(feature = "base")]
-    #[tokio::test]
-    async fn tracing_base() {
+        #[cfg(feature = "base")]
         tracing_suite::<foundry_evm_core::evm::BaseEvmNetwork>().await;
-    }
-
-    #[cfg(feature = "monad")]
-    #[tokio::test]
-    async fn tracing_monad() {
+        #[cfg(feature = "monad")]
         tracing_suite::<foundry_evm_core::evm::MonadEvmNetwork>().await;
     }
 

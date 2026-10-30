@@ -55,17 +55,6 @@ impl Default for EdgeCovConfig {
     }
 }
 
-impl From<&foundry_config::FuzzCorpusConfig> for EdgeCovConfig {
-    fn from(corpus: &foundry_config::FuzzCorpusConfig) -> Self {
-        let kind = if corpus.evm_edge_coverage_collision_free() {
-            EdgeCovKind::CollisionFree
-        } else {
-            EdgeCovKind::Hash
-        };
-        Self::new(kind, corpus.evm_edge_coverage_include_call_depth())
-    }
-}
-
 /// A comparison operand pair captured during execution.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CmpOperands {
@@ -722,30 +711,14 @@ mod tests {
     }
 
     #[test]
-    fn edge_coverage_eth() {
+    fn edge_coverage() {
         edge_coverage_suite::<foundry_evm_core::evm::EthEvmNetwork>();
-    }
-
-    #[test]
-    fn edge_coverage_tempo() {
         edge_coverage_suite::<foundry_evm_core::evm::TempoEvmNetwork>();
-    }
-
-    #[cfg(feature = "optimism")]
-    #[test]
-    fn edge_coverage_op() {
+        #[cfg(feature = "optimism")]
         edge_coverage_suite::<foundry_evm_core::evm::OpEvmNetwork>();
-    }
-
-    #[cfg(feature = "base")]
-    #[test]
-    fn edge_coverage_base() {
+        #[cfg(feature = "base")]
         edge_coverage_suite::<foundry_evm_core::evm::BaseEvmNetwork>();
-    }
-
-    #[cfg(feature = "monad")]
-    #[test]
-    fn edge_coverage_monad() {
+        #[cfg(feature = "monad")]
         edge_coverage_suite::<foundry_evm_core::evm::MonadEvmNetwork>();
     }
 }

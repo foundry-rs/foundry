@@ -13,12 +13,13 @@ use crate::{
             FuzzBranchFrontier, FuzzFrontierRecorder, StatefulFuzzBranchFrontierArtifact,
             merge_frontiers, write_frontier_artifact,
         },
+        worker_seed,
     },
     inspectors::Fuzzer,
 };
 use alloy_json_abi::Function;
 use alloy_primitives::{
-    Address, Bytes, FixedBytes, I256, KECCAK256_EMPTY, Selector, U256, keccak256,
+    Address, Bytes, FixedBytes, I256, KECCAK256_EMPTY, Selector, U256,
     map::{AddressMap, AddressSet, HashMap},
 };
 use alloy_sol_types::{SolCall, sol};
@@ -298,16 +299,6 @@ fn invariant_focus_worker_index(worker_id: u32, worker_count: usize) -> Option<u
         .then(|| worker_id - first_focus_worker)
 }
 
-#[cfg(test)]
-fn campaign_seed_for_worker(
-    campaign_seed: &InvariantCampaignSeed,
-    plan: InvariantWorkerPlan,
-    worker_count: usize,
-) -> InvariantCampaignSeed {
-    focused_campaign_seed_for_worker(campaign_seed, plan, worker_count, None)
-        .unwrap_or_else(|| campaign_seed.clone())
-}
-
 fn focused_campaign_seed_for_worker(
     campaign_seed: &InvariantCampaignSeed,
     plan: InvariantWorkerPlan,
@@ -378,15 +369,6 @@ fn focused_targeted_contracts(
     Some(focused)
 }
 
-fn invariant_worker_seed(seed: U256, worker_id: u32) -> U256 {
-    if worker_id == 0 {
-        seed
-    } else {
-        let seed_data = [&seed.to_be_bytes::<32>()[..], &worker_id.to_be_bytes()[..]].concat();
-        keccak256(seed_data).into()
-    }
-}
-
 fn should_continue_invariant_worker(
     campaign_state: &InvariantCampaignState,
     runs: u32,
@@ -405,7 +387,7 @@ fn invariant_worker_runner(
     seed: Option<U256>,
 ) -> TestRunner {
     if let Some(seed) = seed {
-        let worker_seed = invariant_worker_seed(seed, worker_id);
+        let worker_seed = worker_seed(seed, worker_id);
         trace!(target: "forge::test", ?worker_seed, "deterministic seed for invariant worker {worker_id}");
         let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &worker_seed.to_be_bytes::<32>());
         TestRunner::new_with_rng(runner.config().clone(), rng)
@@ -2499,16 +2481,6 @@ mod tests {
     }
 
     #[test]
-    fn invariant_worker_seed_preserves_master_seed_and_derives_workers() {
-        let seed = U256::from(0x1234);
-
-        assert_eq!(invariant_worker_seed(seed, 0), seed);
-        assert_ne!(invariant_worker_seed(seed, 1), seed);
-        assert_ne!(invariant_worker_seed(seed, 1), invariant_worker_seed(seed, 2));
-        assert_ne!(invariant_worker_seed(seed, 1), invariant_worker_seed(U256::from(0x5678), 1));
-    }
-
-    #[test]
     fn invariant_worker_runner_preserves_seed_for_master_worker() {
         let seed = U256::from(0x1234);
         let mut seeded_runner = seeded_test_runner(seed);
@@ -3011,16 +2983,20 @@ mod tests {
             initial_handler_failures: Map::default(),
         };
 
-        let normal_worker = campaign_seed_for_worker(
+        let normal_worker = focused_campaign_seed_for_worker(
             &campaign_seed,
             InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 1 },
             2,
-        );
-        let focus_worker = campaign_seed_for_worker(
+            None,
+        )
+        .unwrap_or_else(|| campaign_seed.clone());
+        let focus_worker = focused_campaign_seed_for_worker(
             &campaign_seed,
             InvariantWorkerPlan { worker_id: 1, first_global_run: 1, runs: 1 },
             2,
-        );
+            None,
+        )
+        .unwrap_or_else(|| campaign_seed.clone());
 
         assert!(normal_worker.targets_are_updatable);
         assert!(!focus_worker.targets_are_updatable);

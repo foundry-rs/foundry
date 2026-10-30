@@ -13,8 +13,8 @@ use std::{
 
 /// A clone-on-write [`Backend`].
 ///
-/// Reads and executions that discard their state ([`Backend::create_evm`],
-/// [`Backend::inspect_call`]) borrow the wrapped backend. The first mutable access, such as a
+/// Reads and executions that discard their state ([`Backend::create_evm`]) borrow the wrapped
+/// backend. The first mutable access, such as a
 /// cheatcode that switches forks, clones it and applies the pending test initialization, so the
 /// original backend is never modified.
 ///
@@ -27,6 +27,7 @@ use std::{
 /// don't make use of them. Alternatively each test case would require its own `Backend` clone,
 /// which would add significant overhead for large fuzz sets even if the Database is not big after
 /// setup.
+#[derive(Clone, Debug)]
 pub struct CowBackend<'a, FEN: FoundryEvmNetwork> {
     /// The underlying `Backend`.
     ///
@@ -34,21 +35,6 @@ pub struct CowBackend<'a, FEN: FoundryEvmNetwork> {
     pub backend: Cow<'a, Backend<FEN>>,
     /// Test initialization applied on first mutable access.
     pending_init: Option<(Address, TxKind)>,
-}
-
-impl<FEN: FoundryEvmNetwork> Clone for CowBackend<'_, FEN> {
-    fn clone(&self) -> Self {
-        Self { backend: self.backend.clone(), pending_init: self.pending_init }
-    }
-}
-
-impl<FEN: FoundryEvmNetwork> Debug for CowBackend<'_, FEN> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CowBackend")
-            .field("backend", &self.backend)
-            .field("pending_init", &self.pending_init)
-            .finish()
-    }
 }
 
 impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {

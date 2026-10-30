@@ -97,21 +97,11 @@ pub fn eth_envelope_from_any_rpc(
 
 /// Transactions of a block and its two ancestors, for network state that depends on the block
 /// position of a transaction (see [`FoundryEvmExt::for_block`]).
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct BlockContext<FEN: FoundryEvmNetwork> {
     grandparent: Vec<Recovered<TxFor<FEN>>>,
     parent: Vec<Recovered<TxFor<FEN>>>,
     current: Vec<Recovered<TxFor<FEN>>>,
-}
-
-impl<FEN: FoundryEvmNetwork> Clone for BlockContext<FEN> {
-    fn clone(&self) -> Self {
-        Self {
-            grandparent: self.grandparent.clone(),
-            parent: self.parent.clone(),
-            current: self.current.clone(),
-        }
-    }
 }
 
 impl<FEN: FoundryEvmNetwork> BlockContext<FEN> {

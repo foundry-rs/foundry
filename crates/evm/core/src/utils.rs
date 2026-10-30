@@ -36,12 +36,6 @@ pub fn block_env_from_header<T: EvmTypesHost>(header: &impl BlockHeader) -> Bloc
     }
 }
 
-/// Applies chain-specific changes required to replay transactions accepted on-chain.
-pub fn apply_chain_specific_tx_replay_env_changes<T: EvmTypesHost>(evm_env: &mut EvmEnv<T>) {
-    let chain_id = evm_env.chain_id();
-    apply_chain_specific_tx_replay_env_changes_for_chain(evm_env, chain_id);
-}
-
 /// Applies replay normalization for the provided source chain.
 ///
 /// This keeps fork-specific transaction validation independent from an execution `CHAINID`
@@ -59,21 +53,6 @@ pub fn apply_chain_specific_tx_replay_env_changes_for_chain<T: EvmTypesHost>(
         // CIP-64 fee caps are denominated in the fee currency, not in the native base fee.
         evm_env.set_feature(EvmFeatures::BASE_FEE_CHECK, false);
     }
-}
-
-/// Depending on the configured chain id and block number this should apply any specific changes
-///
-/// - checks for prevrandao mixhash after merge
-/// - applies chain specifics: on Arbitrum `block.number` is the L1 block
-///
-/// Should be called with proper chain id (retrieved from provider if not provided).
-pub fn apply_chain_and_block_specific_env_changes<N: Network, T: EvmTypesHost>(
-    evm_env: &mut EvmEnv<T>,
-    block: &N::BlockResponse,
-    configs: NetworkConfigs,
-) {
-    let chain_id = evm_env.chain_id();
-    apply_chain_and_block_specific_env_changes_for_chain::<N, T>(evm_env, block, chain_id, configs);
 }
 
 /// Applies block normalization for the provided source chain.
@@ -472,39 +451,29 @@ mod tests {
     }
 
     #[test]
-    fn tx_replay_env_changes_relax_fee_checks_per_chain() {
-        let mut evm_env = env(BlockEnv::<BaseEvmTypes>::default());
-        evm_env.set_chain_id(NamedChain::Arbitrum as u64);
-        assert!(evm_env.version.feature(EvmFeatures::PRIORITY_FEE_CHECK));
-
-        apply_chain_specific_tx_replay_env_changes(&mut evm_env);
-        assert!(!evm_env.version.feature(EvmFeatures::PRIORITY_FEE_CHECK));
-
-        evm_env.set_chain_id(NamedChain::Mainnet as u64);
-        evm_env.set_feature(EvmFeatures::PRIORITY_FEE_CHECK, true);
-
-        apply_chain_specific_tx_replay_env_changes(&mut evm_env);
-        assert!(evm_env.version.feature(EvmFeatures::PRIORITY_FEE_CHECK));
-        assert!(evm_env.version.feature(EvmFeatures::BASE_FEE_CHECK));
-
-        evm_env.set_chain_id(NamedChain::Celo as u64);
-        apply_chain_specific_tx_replay_env_changes(&mut evm_env);
-        assert!(!evm_env.version.feature(EvmFeatures::BASE_FEE_CHECK));
-        assert!(evm_env.version.feature(EvmFeatures::PRIORITY_FEE_CHECK));
-    }
-
-    #[test]
-    fn tx_replay_env_changes_use_source_chain() {
+    fn tx_replay_env_changes_relax_fee_checks_per_source_chain() {
         let mut evm_env = env(BlockEnv::<BaseEvmTypes>::default());
         evm_env.set_chain_id(NamedChain::Mainnet as u64);
+        assert!(evm_env.version.feature(EvmFeatures::PRIORITY_FEE_CHECK));
 
         apply_chain_specific_tx_replay_env_changes_for_chain(
             &mut evm_env,
             NamedChain::Arbitrum as u64,
         );
-
         assert_eq!(evm_env.chain_id(), NamedChain::Mainnet as u64);
         assert!(!evm_env.version.feature(EvmFeatures::PRIORITY_FEE_CHECK));
+
+        evm_env.set_feature(EvmFeatures::PRIORITY_FEE_CHECK, true);
+        apply_chain_specific_tx_replay_env_changes_for_chain(
+            &mut evm_env,
+            NamedChain::Mainnet as u64,
+        );
+        assert!(evm_env.version.feature(EvmFeatures::PRIORITY_FEE_CHECK));
+        assert!(evm_env.version.feature(EvmFeatures::BASE_FEE_CHECK));
+
+        apply_chain_specific_tx_replay_env_changes_for_chain(&mut evm_env, NamedChain::Celo as u64);
+        assert!(!evm_env.version.feature(EvmFeatures::BASE_FEE_CHECK));
+        assert!(evm_env.version.feature(EvmFeatures::PRIORITY_FEE_CHECK));
     }
 
     #[test]

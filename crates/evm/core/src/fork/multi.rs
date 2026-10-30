@@ -214,11 +214,6 @@ impl MultiFork {
         rx.recv()?
     }
 
-    /// Rolls a fork to an already resolved exact block.
-    pub fn roll_fork_exact(&self, fork: ForkId, block: BlockNumHash) -> eyre::Result<ForkResult> {
-        self.roll_fork_exact_with_bal(fork, block, false)
-    }
-
     /// Rolls to an exact parent block, optionally warming its cache before transaction replay.
     pub(crate) fn roll_fork_exact_with_bal(
         &self,

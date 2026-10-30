@@ -1,7 +1,7 @@
 //! Aggregated error type for this module
 
 use alloy_consensus::crypto::RecoveryError;
-use alloy_primitives::{B256, Bytes, SignatureError, TxHash, U256};
+use alloy_primitives::{B256, Bytes, SignatureError, TxHash};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Error as SignerError;
 use alloy_transport::TransportError;
@@ -43,8 +43,6 @@ pub enum BlockchainError {
     UnsupportedTransactionEncoding(u8),
     #[error("Failed to decode state")]
     FailedToDecodeStateDump,
-    #[error("Prevrandao not in the EVM's environment after merge")]
-    PrevrandaoNotSet,
     #[error(transparent)]
     SignatureError(#[from] SignatureError),
     #[error(transparent)]
@@ -89,8 +87,6 @@ pub enum BlockchainError {
     TrieError(String),
     #[error("{0}")]
     UintConversion(&'static str),
-    #[error("State override error: {0}")]
-    StateOverrideError(String),
     #[error("Timestamp error: {0}")]
     TimestampError(String),
     #[error(transparent)]
@@ -299,9 +295,6 @@ pub enum InvalidTransactionError {
     /// Represents the inability to cover max cost + value (account balance too low).
     #[error("Insufficient funds for gas * price + value")]
     InsufficientFunds,
-    /// Thrown when calculating gas usage
-    #[error("gas uint64 overflow")]
-    GasUintOverflow,
     /// returned if the transaction is specified to use less gas than required to start the
     /// invocation.
     #[error("intrinsic gas too low")]
@@ -331,20 +324,10 @@ pub enum InvalidTransactionError {
     /// Thrown when a legacy tx was signed for a different chain
     #[error("Incompatible EIP-155 transaction, signed for another chain")]
     IncompatibleEIP155,
-    /// Thrown when an access list is used before the berlin hard fork.
-    #[error("Access lists are not supported before the Berlin hardfork")]
-    AccessListNotSupported,
     /// Thrown when the block's `blob_gas_price` is greater than tx-specified
     /// `max_fee_per_blob_gas` after Cancun.
     #[error("Block `blob_gas_price` is greater than tx-specified `max_fee_per_blob_gas`")]
     BlobFeeCapTooLow(u128, u128),
-    /// Thrown when we receive a tx with `blob_versioned_hashes` and we're not on the Cancun hard
-    /// fork.
-    #[error("Block `blob_versioned_hashes` is not supported before the Cancun hardfork")]
-    BlobVersionedHashesNotSupported,
-    /// Thrown when `max_fee_per_blob_gas` is not supported for blocks before the Cancun hardfork.
-    #[error("`max_fee_per_blob_gas` is not supported for blocks before the Cancun hardfork.")]
-    MaxFeePerBlobGasNotSupported,
     /// Thrown when there are no `blob_hashes` in the transaction, and it is an EIP-4844 tx.
     #[error("`blob_hashes` are required for EIP-4844 transactions")]
     NoBlobHashes,
@@ -365,17 +348,11 @@ pub enum InvalidTransactionError {
     /// Thrown when there are no `blob_hashes` in the transaction.
     #[error("There should be at least one blob in a Blob transaction.")]
     EmptyBlobs,
-    /// Thrown when an access list is used before the berlin hard fork.
-    #[error("EIP-7702 authorization lists are not supported before the Prague hardfork")]
-    AuthorizationListNotSupported,
     #[error("Transaction gas limit is greater than the block gas limit, gas_limit: {0}, cap: {1}")]
     TxGasLimitGreaterThanCap(u64, u64),
     /// Any other transaction validation failure reported by evm2.
     #[error("{0}")]
     Rejected(String),
-    /// Deposit transaction error post regolith
-    #[error("op-deposit failure post regolith")]
-    DepositTxErrorPostRegolith,
     /// Missing enveloped transaction
     #[error("missing enveloped transaction")]
     MissingEnvelopedTx,
@@ -402,9 +379,6 @@ pub enum InvalidTransactionError {
     /// Tempo transaction has too many authorizations
     #[error("Tempo tx has too many authorizations ({count}), max allowed is {max}")]
     TempoTooManyAuthorizations { count: usize, max: usize },
-    /// Tempo transaction fee payer has insufficient fee token balance
-    #[error("insufficient fee token balance: have {balance}, need {required}")]
-    TempoInsufficientFeeTokenBalance { balance: U256, required: U256 },
 }
 
 impl From<HandlerError> for InvalidTransactionError {
@@ -549,7 +523,6 @@ fn blockchain_error_to_rpc_result(err: BlockchainError) -> ResponseResult {
         BlockchainError::SignerError(err) => RpcError::invalid_params(err.to_string()),
         BlockchainError::SignatureError(err) => RpcError::invalid_params(err.to_string()),
         BlockchainError::RpcUnimplemented => RpcError::internal_error_with("Not implemented"),
-        BlockchainError::PrevrandaoNotSet => RpcError::internal_error_with(err.to_string()),
         BlockchainError::RpcError(err) => err,
         BlockchainError::InvalidFeeInput => RpcError::invalid_params(
             "Invalid input: `max_priority_fee_per_gas` greater than `max_fee_per_gas`",
@@ -605,7 +578,6 @@ fn blockchain_error_to_rpc_result(err: BlockchainError) -> ResponseResult {
         },
         err @ BlockchainError::TrieError(_) => RpcError::internal_error_with(err.to_string()),
         BlockchainError::UintConversion(err) => RpcError::invalid_params(err),
-        err @ BlockchainError::StateOverrideError(_) => RpcError::invalid_params(err.to_string()),
         err @ BlockchainError::TimestampError(_) => RpcError::invalid_params(err.to_string()),
         BlockchainError::DatabaseError(err) => RpcError::internal_error_with(err.to_string()),
         err @ BlockchainError::EIP1559TransactionUnsupportedAtHardfork => {

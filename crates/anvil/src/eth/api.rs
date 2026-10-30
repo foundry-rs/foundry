@@ -1,6 +1,6 @@
 use super::{
     backend::{
-        db::{CacheDB, DatabaseRef, apply_state_overrides},
+        db::{CacheDB, DatabaseRef, apply_block_overrides, apply_state_overrides},
         env::{BlobExcessGasAndPrice, BlockEnv},
         mem::{
             BlockRequest, CallOutcome, GasEstimateCallOptions, MonadReplayContext,
@@ -4983,7 +4983,7 @@ impl EthApi<FoundryNetwork> {
                             apply_state_overrides(state_overrides, &mut cache_db)?;
                         }
                         if let Some(block_overrides) = overrides.block {
-                            cache_db.apply_block_overrides(*block_overrides, &mut block);
+                            apply_block_overrides(*block_overrides, &mut cache_db, &mut block);
                         }
                         this.do_estimate_gas_with_state(request, &cache_db, block, monad_context)
                     },

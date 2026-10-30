@@ -649,7 +649,9 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         evm_env: EvmEnvFor<FEN>,
         tx: TransactionRequestFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let mut result = self.call_tx(evm_env, &FEN::tx_from_request(tx.clone())?, None)?;
+        let init = tx.from().zip(tx.kind());
+        let tx_env = FEN::tx_from_request(tx.clone())?;
+        let mut result = self.call_tx_with_init(evm_env, &tx_env, None, init)?;
         result.set_stipend(&evm_env, tx);
         Ok(result)
     }
@@ -665,8 +667,23 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         tx: &Recovered<TxFor<FEN>>,
         ext: Option<ChainFor<FEN>>,
     ) -> eyre::Result<RawCallResult<FEN>> {
+        self.call_tx_with_init(evm_env, tx, ext, None)
+    }
+
+    /// Like [`Self::call_tx`], recording `init`'s caller and test contract, as on master, if the
+    /// call modifies the backend.
+    fn call_tx_with_init(
+        &self,
+        evm_env: EvmEnvFor<FEN>,
+        tx: &Recovered<TxFor<FEN>>,
+        ext: Option<ChainFor<FEN>>,
+        init: Option<(Address, TxKind)>,
+    ) -> eyre::Result<RawCallResult<FEN>> {
         let mut stack = self.inspector().clone();
         let mut backend = CowBackend::new_borrowed(self.backend());
+        if let Some((caller, kind)) = init {
+            backend.initialize(caller, kind);
+        }
         let (execution, evm) = execute(&mut backend, evm_env, tx, ext, &mut stack)?;
         // Retain lifecycle changes; defer pending writes until commit.
         backend.park_detached(evm);
@@ -684,6 +701,10 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         evm_env: EvmEnvFor<FEN>,
         tx: TransactionRequestFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
+        // As on master, every transaction records its caller and test contract.
+        if let (Some(caller), Some(kind)) = (tx.from(), tx.kind()) {
+            self.backend_mut().initialize(caller, kind);
+        }
         let mut result = self.transact_tx(evm_env, &FEN::tx_from_request(tx.clone())?, None)?;
         result.set_stipend(&evm_env, tx);
         Ok(result)

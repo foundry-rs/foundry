@@ -1,29 +1,29 @@
 use super::*;
-use evm2::evm::AccountInfo;
-use foundry_evm::core::backend::{Backend, StateResult};
+use evm2::evm::{AccountInfo, DbResult};
+use foundry_evm::core::backend::Backend;
 
 /// Reads of a backend's accepted state, independent of its network.
 pub(crate) trait AcceptedState {
     /// Returns an account, with its code.
-    fn basic(&self, address: Address) -> StateResult<Option<AccountInfo>>;
+    fn basic(&self, address: Address) -> DbResult<Option<AccountInfo>>;
 
     /// Returns a storage slot.
-    fn storage(&self, address: Address, slot: U256) -> StateResult<U256>;
+    fn storage(&self, address: Address, slot: U256) -> DbResult<U256>;
 
     /// Returns a block hash.
-    fn block_hash(&self, number: U256) -> StateResult<B256>;
+    fn block_hash(&self, number: U256) -> DbResult<B256>;
 }
 
 impl<FEN: FoundryEvmNetwork> AcceptedState for Backend<FEN> {
-    fn basic(&self, address: Address) -> StateResult<Option<AccountInfo>> {
+    fn basic(&self, address: Address) -> DbResult<Option<AccountInfo>> {
         Self::basic(self, address)
     }
 
-    fn storage(&self, address: Address, slot: U256) -> StateResult<U256> {
+    fn storage(&self, address: Address, slot: U256) -> DbResult<U256> {
         Self::storage(self, address, slot)
     }
 
-    fn block_hash(&self, number: U256) -> StateResult<B256> {
+    fn block_hash(&self, number: U256) -> DbResult<B256> {
         Self::block_hash(self, number)
     }
 }

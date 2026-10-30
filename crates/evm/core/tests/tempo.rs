@@ -213,7 +213,8 @@ fn tempo_execution_spec_preserves_network_gas() {
         tempo_env(TempoHardfork::default()),
     );
     for spec in [TempoHardfork::T3, TempoHardfork::T7, TempoHardfork::T14] {
-        factory.set_execution_spec(&mut evm, spec);
+        let env = EvmEnv::new(spec, *evm.version(), *evm.block());
+        factory.set_env(&mut evm, env);
         assert_eq!(evm.config_spec_id(), spec);
         assert_eq!(
             evm.version().gas_params,

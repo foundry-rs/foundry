@@ -392,11 +392,6 @@ impl<T: EvmTypesHost> ForkRegistry<T> {
         self.persistent.contains(address)
     }
 
-    /// Returns the accounts that persist across fork switches.
-    pub const fn persistent(&self) -> &AddressSet {
-        &self.persistent
-    }
-
     /// Merges persistent accounts' accepted state from `source` into `target`.
     ///
     /// Slots of `source` override those of `target`, and other `target` slots are kept unless
