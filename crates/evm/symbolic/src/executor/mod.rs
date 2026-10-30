@@ -1,5 +1,8 @@
 use super::{abi::*, runtime::*, *};
-use foundry_evm::inspectors::cheatcodes::{DUMMY_CALL_OUTPUT, DUMMY_CREATE_ADDRESS};
+use foundry_evm::{
+    constants::MAGIC_ASSUME,
+    inspectors::cheatcodes::{DUMMY_CALL_OUTPUT, DUMMY_CREATE_ADDRESS},
+};
 
 mod calls;
 mod cheatcodes;
@@ -24,7 +27,6 @@ enum CallStatus {
 }
 
 enum JoinedCallOutcome {
-    Rejected,
     ExpectedRevert {
         parent: PathState,
         child: PathState,
@@ -159,6 +161,7 @@ impl SymbolicExecutor {
         state: &PathState,
         mut outcome: CallOutcome,
         reverter: Address,
+        assume_no_revert: Option<&AssumeNoRevert>,
     ) -> Result<JoinedCallOutcome, SymbolicError> {
         let mut parent = state.clone();
         parent.take_call_outcome_state(&mut outcome.state);
@@ -169,16 +172,21 @@ impl SymbolicExecutor {
             );
         }
 
-        if let Some(assumption) = parent.assume_no_revert_next_call.take()
+        // Like Forge, a revert under `vm.assumeNoRevert` skips `vm.expectRevert`, and a matching
+        // revert returns `FOUNDRY::ASSUME`, which discards the run only if it reaches the top.
+        if let Some(assumption) = assume_no_revert
             && matches!(outcome.status, CallStatus::Revert)
-            && self.assume_no_revert_rejects(
-                &mut parent,
-                &assumption,
+        {
+            if self.assume_no_revert_matches(
+                &parent,
+                assumption,
                 reverter,
                 &outcome.state.frame.return_data,
-            )?
-        {
-            return Ok(JoinedCallOutcome::Rejected);
+            )? {
+                outcome.state.frame.return_data =
+                    SymReturnData::from_concrete_bytes(&mut self.cx, MAGIC_ASSUME.to_vec());
+            }
+            return Ok(JoinedCallOutcome::Revert { parent, child: outcome.state });
         }
 
         if let Some(mut expected) = parent.expected_revert.clone() {
