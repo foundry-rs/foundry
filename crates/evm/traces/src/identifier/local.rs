@@ -2,7 +2,9 @@ use super::{IdentifiedAddress, TraceIdentifier};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{Bytes, map::AddressHashMap};
-use foundry_common::contracts::{ContractsByArtifact, bytecode_diff_score};
+use foundry_common::contracts::{
+    ContractsByArtifact, bytecode_diff_score, matches_contract_creation,
+};
 use foundry_compilers::ArtifactId;
 use revm_inspectors::tracing::types::CallTraceNode;
 use std::borrow::Cow;
@@ -114,6 +116,23 @@ impl<'a> LocalTraceIdentifier<'a> {
             }
         }
 
+        // Constructors can return custom runtime whose length differs from the artifact's.
+        // Try exact creation matches outside the runtime-length window before fuzzy/runtime
+        // matches. Prefer the longest initcode if another artifact matches only its prefix.
+        if !creation_code.is_empty()
+            && let Some((id, contract)) = self
+                .known_contracts
+                .iter()
+                .filter(|(_, contract)| matches_contract_creation(contract, creation_code))
+                .max_by_key(|(_, contract)| contract.bytecode().map(|bytecode| bytecode.len()))
+        {
+            let constructor_args_offset = contract
+                .bytecode()
+                .map(|bytecode| bytecode.len())
+                .filter(|&offset| offset < creation_code.len());
+            return Some((id, &contract.abi, constructor_args_offset));
+        }
+
         // Fallback to comparing deployed code if min score greater than threshold.
         if min_score >= 0.85 {
             for (artifact, _) in &self.ordered_ids {
@@ -191,5 +210,145 @@ impl TraceIdentifier for LocalTraceIdentifier<'_> {
                 })
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_compilers::artifacts::{
+        BytecodeObject, CompactBytecode, CompactContractBytecode, CompactDeployedBytecode,
+    };
+
+    fn artifact(
+        name: &str,
+        abi: JsonAbi,
+        creation: &[u8],
+        runtime: &[u8],
+    ) -> (ArtifactId, CompactContractBytecode) {
+        (
+            ArtifactId {
+                path: format!("out/{name}.json").into(),
+                source: format!("{name}.sol").into(),
+                name: name.to_owned(),
+                version: "0.8.30".parse().unwrap(),
+                build_id: String::new(),
+                profile: "default".to_owned(),
+            },
+            CompactContractBytecode {
+                abi: Some(abi),
+                bytecode: Some(CompactBytecode {
+                    object: BytecodeObject::Bytecode(Bytes::copy_from_slice(creation)),
+                    source_map: None,
+                    link_references: Default::default(),
+                }),
+                deployed_bytecode: Some(CompactDeployedBytecode {
+                    bytecode: Some(CompactBytecode {
+                        object: BytecodeObject::Bytecode(Bytes::copy_from_slice(runtime)),
+                        source_map: None,
+                        link_references: Default::default(),
+                    }),
+                    immutable_references: Default::default(),
+                }),
+            },
+        )
+    }
+
+    #[test]
+    fn identifies_creation_with_different_runtime_length() {
+        let creation = [0x60; 64];
+        let runtime = [0x5b; 64];
+        let abi = JsonAbi::parse(["constructor(uint256 value)"]).unwrap();
+        let mut input = creation.to_vec();
+        input.extend_from_slice(&[0; 32]);
+
+        // A constructor can return arbitrary runtime via assembly. Its artifact's runtime
+        // length does not have to resemble the code returned by CREATE.
+        for compiled_runtime in [vec![0], vec![0; 128]] {
+            let contracts = ContractsByArtifact::new([
+                artifact("Decoy", JsonAbi::default(), &[0xff; 64], &runtime),
+                artifact("ReturnedRuntime", abi.clone(), &creation, &compiled_runtime),
+            ]);
+            let identifier = LocalTraceIdentifier::new(&contracts);
+            let (id, _, offset) = identifier.identify_code(&runtime, &input).unwrap();
+            assert_eq!(id.name, "ReturnedRuntime");
+            assert_eq!(offset, Some(creation.len()));
+
+            // Calls without initcode still use the runtime match.
+            let (id, _, offset) = identifier.identify_code(&runtime, &[]).unwrap();
+            assert_eq!(id.name, "Decoy");
+            assert_eq!(offset, None);
+        }
+    }
+
+    #[test]
+    fn identifies_creation_without_constructor_arguments() {
+        let creation = [0x60; 64];
+        let runtime = [0x5b; 64];
+        let contracts = ContractsByArtifact::new([
+            artifact("Decoy", JsonAbi::default(), &[0xff; 64], &runtime),
+            artifact("ReturnedRuntime", JsonAbi::default(), &creation, &[0]),
+        ]);
+        let identifier = LocalTraceIdentifier::new(&contracts);
+        let (id, _, offset) = identifier.identify_code(&runtime, &creation).unwrap();
+        assert_eq!(id.name, "ReturnedRuntime");
+        assert_eq!(offset, None);
+    }
+
+    #[test]
+    fn creation_fallback_rejects_invalid_constructor_arguments() {
+        let creation = [0x60; 64];
+        let runtime = [0x5b; 64];
+        let contracts = ContractsByArtifact::new([
+            artifact("Decoy", JsonAbi::default(), &[0xff; 64], &runtime),
+            artifact(
+                "ReturnedRuntime",
+                JsonAbi::parse(["constructor(uint256 value)"]).unwrap(),
+                &creation,
+                &[0],
+            ),
+        ]);
+        let identifier = LocalTraceIdentifier::new(&contracts);
+        for suffix in [vec![], vec![0; 31], vec![0; 33]] {
+            let input = [creation.as_slice(), &suffix].concat();
+            let (id, _, offset) = identifier.identify_code(&runtime, &input).unwrap();
+            assert_eq!(id.name, "Decoy");
+            assert_eq!(offset, None);
+        }
+    }
+
+    #[test]
+    fn exact_creation_match_overrides_similar_in_range_creation() {
+        let creation = [0x60; 64];
+        let runtime = [0x5b; 64];
+        let mut similar_creation = creation;
+        similar_creation[0] = 0x61;
+        let contracts = ContractsByArtifact::new([
+            artifact("Decoy", JsonAbi::default(), &similar_creation, &runtime),
+            artifact("ReturnedRuntime", JsonAbi::default(), &creation, &[0]),
+        ]);
+        let identifier = LocalTraceIdentifier::new(&contracts);
+        let (id, _, _) = identifier.identify_code(&runtime, &creation).unwrap();
+        assert_eq!(id.name, "ReturnedRuntime");
+    }
+
+    #[test]
+    fn creation_fallback_prefers_longer_initcode() {
+        let creation = [0x60; 64];
+        let input = [creation.as_slice(), &[0; 32]].concat();
+        let runtime = [0x5b; 64];
+        let contracts = ContractsByArtifact::new([
+            artifact(
+                "Prefix",
+                JsonAbi::parse(["constructor(uint256 value)"]).unwrap(),
+                &creation,
+                &[0],
+            ),
+            artifact("ReturnedRuntime", JsonAbi::default(), &input, &[0, 0]),
+        ]);
+        let identifier = LocalTraceIdentifier::new(&contracts);
+        let (id, _, offset) = identifier.identify_code(&runtime, &input).unwrap();
+        assert_eq!(id.name, "ReturnedRuntime");
+        assert_eq!(offset, None);
     }
 }
