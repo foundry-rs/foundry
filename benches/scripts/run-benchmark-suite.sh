@@ -6,27 +6,30 @@ join_repositories() {
   printf '%s' "$*"
 }
 
-# The pinned account test expects a bare selector, but `Simulator` reverts with 32 bytes, which exact matching rejects.
 CI_TEST_REPOSITORIES=$(join_repositories \
-  "ithacaxyz/account:v0.5.7 --nmt testSimulateExecuteNoRevertUnderfundedReverts" \
+  "morpho-org/morpho-blue:9cf6d5b844625ba108e36d1cf911f5d2faf7c136" \
+  "tempoxyz/tempo/crates/zones/contracts:4f7c995d49ba735b96cb0a6afddd9235d27c88f1" \
   "vectorized/solady:v0.1.26 --nmc 'LifebuoyTest|LibBitTest|Base58Test|LibStringTest'" \
   "uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75 --nmc 'TickMathTestTest'" \
   "sparkdotfi/spark-psm:v1.0.0 --nmc PSMInvariants_TimeBasedRateSetting_WithTransfers_WithPocketSetting")
 
 CI_ISOLATE_REPOSITORIES=$(join_repositories \
-  "ithacaxyz/account:v0.5.7 --nmc SimulateExecuteTest" \
+  "morpho-org/morpho-blue:9cf6d5b844625ba108e36d1cf911f5d2faf7c136" \
+  "tempoxyz/tempo/crates/zones/contracts:4f7c995d49ba735b96cb0a6afddd9235d27c88f1" \
   "vectorized/solady:v0.1.26 --nmc 'SafeTransferLibTest|LifebuoyTest|LibBitTest|Base58Test|LibStringTest'" \
   "uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75 --nmc 'TickMathTestTest'" \
   "sparkdotfi/spark-psm:v1.0.0 --nmc PSMInvariants_TimeBasedRateSetting_WithTransfers_WithPocketSetting")
 
 CI_BUILD_REPOSITORIES=$(join_repositories \
-  "ithacaxyz/account:v0.5.7" \
+  "morpho-org/morpho-blue:9cf6d5b844625ba108e36d1cf911f5d2faf7c136" \
+  "tempoxyz/tempo/crates/zones/contracts:4f7c995d49ba735b96cb0a6afddd9235d27c88f1" \
   "vectorized/solady:v0.1.26" \
   "uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75" \
   "sparkdotfi/spark-psm:v1.0.0")
 
+# Zones contracts hit stack-too-deep without via-IR, so they are not covered.
 CI_COVERAGE_REPOSITORIES=$(join_repositories \
-  "ithacaxyz/account:v0.5.7 --nmc SimulateExecuteTest" \
+  "morpho-org/morpho-blue:9cf6d5b844625ba108e36d1cf911f5d2faf7c136" \
   "uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75" \
   "sparkdotfi/spark-psm:v1.0.0 --nmc PSMInvariants_TimeBasedRateSetting_WithTransfers_WithPocketSetting")
 
