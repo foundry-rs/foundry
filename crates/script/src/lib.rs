@@ -79,6 +79,7 @@ mod build;
 mod execute;
 mod library_deployments;
 mod multi_sequence;
+mod named_args;
 mod progress;
 mod providers;
 mod receipts;
@@ -120,6 +121,13 @@ pub struct ScriptArgs {
 
     /// Arguments to pass to the script function.
     pub args: Vec<String>,
+
+    /// An argument to the script function by parameter name, e.g. `--arg amount=5`.
+    ///
+    /// Order does not matter. Arguments left out take the values of the function's
+    /// `@custom:defaults` NatSpec tag, e.g. `/// @custom:defaults amount=5 recipient=0xabc...`.
+    #[arg(long = "arg", value_name = "NAME=VALUE", conflicts_with = "args")]
+    pub named_args: Vec<String>,
 
     /// The name of the contract you want to run.
     #[arg(long, visible_alias = "tc", value_name = "CONTRACT_NAME")]
@@ -747,7 +755,13 @@ impl ScriptArgs {
     /// corresponding function by matching the selector, first 4 bytes in the calldata.
     ///
     /// Note: We assume that the `sig` is already stripped of its prefix, See [`ScriptArgs`]
-    fn get_method_and_calldata(&self, abi: &JsonAbi) -> Result<(Function, Bytes)> {
+    /// With `--arg`, arguments are matched to parameter names, and `raw_metadata` (the target's
+    /// solc metadata) provides their `@custom:defaults`.
+    fn get_method_and_calldata(
+        &self,
+        abi: &JsonAbi,
+        raw_metadata: Option<&str>,
+    ) -> Result<(Function, Bytes)> {
         // Hex shorter than a selector cannot be calldata, so it is treated as a function name.
         if let Ok(decoded) = hex::decode(&self.sig)
             && let Some(selector) = decoded.get(..SELECTOR_LEN)
@@ -760,6 +774,12 @@ impl ScriptArgs {
                     )
                 })?;
             return Ok((func.clone(), decoded.into()));
+        }
+
+        if !self.named_args.is_empty() {
+            let (func, data) =
+                named_args::method_and_calldata(&self.sig, abi, raw_metadata, &self.named_args)?;
+            return Ok((func, data.into()));
         }
 
         let func = if self.sig.contains('(') {
@@ -1957,7 +1977,7 @@ mod tests {
         let abi = JsonAbi::parse(["function fade()", "function run()"]).unwrap();
         let method = |sig: &str| {
             ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--sig", sig])
-                .get_method_and_calldata(&abi)
+                .get_method_and_calldata(&abi, None)
         };
 
         let fade = abi.function("fade").unwrap()[0].clone();
