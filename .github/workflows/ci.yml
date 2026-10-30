@@ -6,6 +6,7 @@ on:
   push:
     branches: [master]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -90,7 +91,7 @@ jobs:
 
   touch-id-link:
     name: touch-id link (macOS)
-    if: github.event_name == 'push'
+    if: github.event_name != 'pull_request'
     runs-on: depot-macos-latest
     timeout-minutes: 45
     permissions:
@@ -160,6 +161,8 @@ jobs:
         with:
           persist-credentials: false
       - name: Test GitHub scripts
+        env:
+          RUSTC_WRAPPER: ""
         run: |
           python3 -m unittest discover -s .github/scripts/tests -p 'test_*.py'
 
