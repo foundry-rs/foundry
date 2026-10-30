@@ -807,10 +807,6 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
         } else {
             let block_number = self.evm_env.block_env.number();
             let replay_system_txes = self.args.replay_system_txes;
-            // Every Arbitrum block opens with an ArbOS internal transaction. Replay takes the block
-            // numbers, base fee, and L1 gas these transactions account for from the header, block,
-            // and receipts, and cannot execute them locally, so the warning is skipped for them.
-            let is_arbitrum = arbitrum::is_arbitrum_chain(self.trace_context.chain().id());
             let mut skipped_system_txes = Vec::new();
             self.for_each_prefix_transaction(target_index, |_, tx| {
                 if !is_system_transaction(tx) || replay_system_txes {
@@ -823,9 +819,12 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
                         )
                     })?;
                     replay.push((tx.tx_hash(), tx_env));
-                } else if !(is_arbitrum
-                    && tx.transaction_type() == Some(arbitrum::ARBITRUM_INTERNAL_TX_TYPE))
-                {
+                } else if tx.transaction_type() != Some(arbitrum::ARBITRUM_INTERNAL_TX_TYPE) {
+                    // ArbOS internal transactions open every Arbitrum block, Orbit chains included,
+                    // and also report batch postings mid-block. They mostly update ArbOS
+                    // bookkeeping, which no flag can replay, and the replay takes block numbers,
+                    // base fee, and L1 gas from the header and receipts, so they are left out
+                    // without a warning; the receipt check still reports a divergent result.
                     skipped_system_txes.push(tx.tx_hash());
                 }
                 Ok(())
