@@ -155,7 +155,7 @@ pub(crate) fn unknown_transaction_type(tx: &AnyRpcTransaction, target: &str) -> 
 ///
 /// Like REVM, existing delegations resolve on every spec; only authorization processing is
 /// fork-gated, by the transaction registry.
-pub(crate) fn with_eip7702_delegations(mut version: Version) -> Version {
+pub(crate) const fn with_eip7702_delegations(mut version: Version) -> Version {
     version.features.insert(evm2::EvmFeatures::EIP7702);
     version
 }
