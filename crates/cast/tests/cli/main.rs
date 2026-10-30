@@ -139,6 +139,7 @@ mod receipt;
 mod rpc;
 mod run;
 mod run_trace;
+mod secret;
 mod send;
 mod source;
 mod storage;

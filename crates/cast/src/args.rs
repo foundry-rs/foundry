@@ -1358,6 +1358,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Misc(MiscSubcommand::Create2(cmd)) => cmd.execute()?,
         CastSubcommand::Misc(MiscSubcommand::Wallet { command }) => command.run().await?,
+        CastSubcommand::Misc(MiscSubcommand::Secret { command }) => command.run()?,
         CastSubcommand::Misc(MiscSubcommand::Safe { command }) => command.run().await?,
         CastSubcommand::Misc(MiscSubcommand::Completions { shell }) => {
             generate(shell, &mut CastArgs::command(), "cast", &mut std::io::stdout())
