@@ -265,10 +265,9 @@ mod tests {
         let id = SubscriptionId::String("0x1234".to_owned());
         let context = PubSubContext::<PubSubEthRpcHandler>::default();
         let handler = PubSubEthRpcHandler::new(api);
-        context.add_subscription(
-            PubSubSubscriptionId::Consensus(id.clone()),
-            EthSubscription::tempo_consensus(events.subscribe(), id.clone()),
-        );
+        let mut subscription = EthSubscription::tempo_consensus(events.subscribe(), id.clone());
+        assert!(futures::poll!(subscription.next()).is_pending());
+        context.add_subscription(PubSubSubscriptionId::Consensus(id.clone()), subscription);
         context.add_subscription(
             PubSubSubscriptionId::Eth(id.clone()),
             EthSubscription::Syncing(Some(id.clone())),
@@ -307,10 +306,9 @@ mod tests {
         let events = broadcast::Sender::new(1);
         let id = SubscriptionId::String("0x1234".to_owned());
         let context = PubSubContext::<PubSubEthRpcHandler>::default();
-        context.add_subscription(
-            PubSubSubscriptionId::Consensus(id.clone()),
-            EthSubscription::tempo_consensus(events.subscribe(), id),
-        );
+        let mut subscription = EthSubscription::tempo_consensus(events.subscribe(), id.clone());
+        assert!(futures::poll!(subscription.next()).is_pending());
+        context.add_subscription(PubSubSubscriptionId::Consensus(id), subscription);
         assert_eq!(events.receiver_count(), 1);
         drop(context);
         assert_eq!(events.receiver_count(), 0);
