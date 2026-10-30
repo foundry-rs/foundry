@@ -3111,6 +3111,140 @@ Suite result: FAILED. 5 passed; 1 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
+// Like Forge, the next call consumes `vm.expectRevert` and `vm.assumeNoRevert` even when it runs no
+// callee code: a mock, a precompile, an account without code or a failed value transfer.
+#[forgetest_init]
+fn symbolic_vm_expect_revert_applies_to_codeless_calls(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_expect_revert_applies_to_codeless_calls");
+
+    prj.add_test(
+        "SymbolicExpectRevertCodeless.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract CodelessTarget {
+    function ping() external {}
+
+    function f(uint256) external pure returns (uint256) {
+        return 1;
+    }
+
+    function deny() external pure {
+        revert("denied");
+    }
+}
+
+contract SymbolicExpectRevertCodeless is Test {
+    CodelessTarget target;
+
+    function setUp() public {
+        target = new CodelessTarget();
+    }
+
+    function checkNoCode() public {
+        vm.expectRevert();
+        (bool ok,) = address(0x1234).call("");
+        assertFalse(ok);
+        (bool denied,) = address(target).call(abi.encodeCall(CodelessTarget.deny, ()));
+        assertFalse(denied);
+    }
+
+    function checkAssumeNoRevertNoCode() public {
+        vm.assumeNoRevert();
+        (bool ok,) = address(0x1234).call("");
+        assertTrue(ok);
+        (bool denied,) = address(target).call(abi.encodeCall(CodelessTarget.deny, ()));
+        assertFalse(denied);
+    }
+
+    function checkMockedSuccess() public {
+        vm.mockCall(address(target), abi.encodeCall(CodelessTarget.ping, ()), "");
+        vm.expectRevert();
+        (bool ok,) = address(target).call(abi.encodeCall(CodelessTarget.ping, ()));
+        assertFalse(ok);
+    }
+
+    function checkMockedRevert() public {
+        vm.mockCallRevert(address(target), abi.encodeCall(CodelessTarget.ping, ()), bytes("mocked"));
+        vm.expectRevert(bytes("mocked"));
+        target.ping();
+    }
+
+    function checkMockedRevertMismatch() public {
+        vm.mockCallRevert(address(target), abi.encodeCall(CodelessTarget.ping, ()), bytes("actual"));
+        vm.expectRevert(bytes("expected"));
+        target.ping();
+    }
+
+    function checkPrecompileSuccess() public {
+        vm.expectRevert();
+        (bool ok,) = address(4).call("x");
+        assertFalse(ok);
+    }
+
+    function checkPrecompileFailure() public {
+        vm.expectRevert();
+        (bool ok,) = address(6).call(abi.encode(1, 3, 0, 0));
+        assertTrue(ok);
+    }
+
+    function checkKzgFailure() public {
+        vm.expectRevert();
+        (bool ok,) = address(0x0a).call("");
+        assertTrue(ok);
+    }
+
+    function checkValueTransfer(uint256 value) public {
+        vm.deal(address(this), 1 ether);
+        vm.expectRevert();
+        (bool ok,) = address(0x1234).call{value: value}("");
+        assertEq(ok, value > 1 ether);
+    }
+
+    function checkAssumeNoRevertKeepsExpectRevert() public {
+        vm.mockCallRevert(address(target), abi.encodeCall(CodelessTarget.ping, ()), bytes("m"));
+        vm.assumeNoRevert();
+        vm.expectRevert(bytes("m"));
+        (bool ok,) = address(target).call(abi.encodeCall(CodelessTarget.ping, ()));
+        assertTrue(ok);
+    }
+
+    function checkAssumeNoRevertCaughtMock(uint256 x) public {
+        vm.mockCallRevert(address(target), abi.encodeCall(CodelessTarget.f, (1)), bytes("mocked"));
+        vm.assumeNoRevert();
+        (bool ok,) = address(target).call(abi.encodeCall(CodelessTarget.f, (x)));
+        assertTrue(ok);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicExpectRevertCodeless",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 11 tests for test/SymbolicExpectRevertCodeless.t.sol:SymbolicExpectRevertCodeless
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertCaughtMock(uint256) ([METRICS])
+[FAIL: Error != expected error: assertion failed != m; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertKeepsExpectRevert() ([METRICS])
+[PASS] checkAssumeNoRevertNoCode() ([METRICS])
+[PASS] checkKzgFailure() ([METRICS])
+[PASS] checkMockedRevert() ([METRICS])
+[FAIL: Error != expected error: actual != expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockedRevertMismatch() ([METRICS])
+[PASS] checkMockedSuccess() ([METRICS])
+[PASS] checkNoCode() ([METRICS])
+[PASS] checkPrecompileFailure() ([METRICS])
+[PASS] checkPrecompileSuccess() ([METRICS])
+[PASS] checkValueTransfer(uint256) ([METRICS])
+Suite result: FAILED. 8 passed; 3 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
 #[forgetest_init]
 fn symbolic_vm_expect_emit_matches_external_logs(prj: _, cmd: _) {
     if !z3_available() {
