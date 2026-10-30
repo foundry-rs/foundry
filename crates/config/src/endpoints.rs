@@ -39,7 +39,14 @@ impl RpcEndpoints {
     /// Returns all (alias -> rpc_endpoint) pairs
     pub fn resolved(self) -> ResolvedRpcEndpoints {
         ResolvedRpcEndpoints {
-            endpoints: self.endpoints.into_iter().map(|(name, e)| (name, e.resolve())).collect(),
+            endpoints: self
+                .endpoints
+                .into_iter()
+                .map(|(name, e)| {
+                    let resolved = e.resolve().with_context(&format!("rpc_endpoints.{name}"));
+                    (name, resolved)
+                })
+                .collect(),
         }
     }
 }
@@ -465,6 +472,21 @@ impl ResolvedRpcEndpoint {
             urls.push(ep.clone()?);
         }
         Ok(urls)
+    }
+
+    /// Names the config key that references any unresolved environment variable.
+    pub fn with_context(mut self, context: &str) -> Self {
+        fn add(
+            res: Result<String, UnresolvedEnvVarError>,
+            context: &str,
+        ) -> Result<String, UnresolvedEnvVarError> {
+            res.map_err(|err| err.with_context(context))
+        }
+        self.endpoint = add(self.endpoint, context);
+        self.extra_endpoints =
+            self.extra_endpoints.into_iter().map(|res| add(res, context)).collect();
+        self.auth = self.auth.map(|res| add(res, context));
+        self
     }
 
     // Returns true if all environment variables are resolved successfully

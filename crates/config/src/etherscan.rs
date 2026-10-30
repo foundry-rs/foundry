@@ -130,7 +130,12 @@ impl EtherscanConfigs {
                 .configs
                 .into_iter()
                 .map(|(name, e)| {
-                    let resolved = e.resolve(Some(&name));
+                    let resolved = e.resolve(Some(&name)).map_err(|err| match err {
+                        EtherscanConfigError::Unresolved(err) => EtherscanConfigError::Unresolved(
+                            err.with_context(format!("etherscan.{name}")),
+                        ),
+                        err => err,
+                    });
                     (name, resolved)
                 })
                 .collect(),
