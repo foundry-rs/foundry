@@ -231,8 +231,10 @@ where
 
             // Pause reading while responses await the client, so a client that does not read is
             // throttled by transport backpressure instead of growing the backlog. Requests still
-            // being processed do not count, since they may wait on a later request.
-            while pin.pending.responses < MAX_PENDING_RESPONSES {
+            // being processed have a much higher limit, since they may wait on a later request.
+            while pin.pending.responses < MAX_PENDING_RESPONSES
+                && pin.processing.len() < MAX_PROCESSING_REQUESTS
+            {
                 match pin.connection.poll_next_unpin(cx) {
                     Poll::Ready(Some(req)) => match req {
                         Ok(Some(req)) => {
@@ -268,23 +270,23 @@ where
             let mut progress = false;
             for n in (0..pin.processing.len()).rev() {
                 let mut req = pin.processing.swap_remove(n);
-                #[allow(clippy::collapsible_match)]
                 match req.poll_unpin(cx) {
-                    Poll::Ready(Some(resp)) => {
-                        if let Ok(text) = serde_json::to_string(&resp) {
-                            if !pin.pending.send(
+                    Poll::Ready(resp) => {
+                        // A finished request may reopen request reading, so always loop again.
+                        progress = true;
+                        if let Some(resp) = resp
+                            && let Ok(text) = serde_json::to_string(&resp)
+                            && !pin.pending.send(
                                 &mut pin.connection,
                                 cx,
                                 text,
                                 false,
                                 &mut writable,
-                            ) {
-                                return Poll::Ready(());
-                            }
-                            progress = true;
+                            )
+                        {
+                            return Poll::Ready(());
                         }
                     }
-                    Poll::Ready(None) => {}
                     Poll::Pending => pin.processing.push(req),
                 }
             }
@@ -414,6 +416,8 @@ const MAX_PENDING_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PENDING_MESSAGES: usize = 4096;
 // Bound the number of responses awaiting a slow client before request reads pause.
 const MAX_PENDING_RESPONSES: usize = 256;
+// Bound requests being processed, since their responses are queued without further checks.
+const MAX_PROCESSING_REQUESTS: usize = 4096;
 
 #[cfg(test)]
 mod tests {
@@ -854,16 +858,28 @@ mod tests {
     }
 
     #[test]
-    fn requests_in_flight_do_not_pause_request_reads() {
-        // In-flight requests may wait on a later request, so they must not stop reads.
+    fn requests_in_flight_have_their_own_read_limit() {
+        // In-flight requests may wait on a later request, so their limit is far above the
+        // response limit.
         let handler = TestHandler { block: true, ..Default::default() };
         let mut connection = PubSubConnection::new(TestConnection::default(), handler.clone());
-        let requests = (0..=MAX_PENDING_RESPONSES as i64).map(method_call);
+        let requests = (0..=MAX_PROCESSING_REQUESTS as i64).map(method_call);
         connection.connection.requests.extend(requests);
 
         assert!(poll_once(&mut connection).is_pending());
-        assert_eq!(handler.requests.load(Ordering::Relaxed), MAX_PENDING_RESPONSES + 1);
-        assert!(connection.connection.requests.is_empty());
+        assert_eq!(handler.requests.load(Ordering::Relaxed), MAX_PROCESSING_REQUESTS);
+        assert_eq!(connection.connection.requests.len(), 1);
+    }
+
+    #[test]
+    fn completed_requests_without_responses_resume_reads() {
+        let handler = TestHandler::default();
+        let mut connection = PubSubConnection::new(TestConnection::default(), handler.clone());
+        let notifications = (0..=MAX_PROCESSING_REQUESTS).map(|_| Request::Single(notification()));
+        connection.connection.requests.extend(notifications);
+
+        assert!(poll_once(&mut connection).is_pending());
+        assert_eq!(handler.requests.load(Ordering::Relaxed), MAX_PROCESSING_REQUESTS + 1);
     }
 
     #[test]
