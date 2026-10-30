@@ -1775,9 +1775,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             self.cheatcodes.as_deref().map_or(OpcodeSet::EMPTY, Cheatcodes::steps);
     }
 
-    /// Refreshes the cheatcodes' opcodes after a message returns. The message's frames overwrote
-    /// whether the cheatcodes stepped the instruction that made it, so that instruction's
-    /// `step_end` runs the cheatcode hook whenever they step any instruction.
+    /// Refreshes the cheatcodes' opcodes after a message's end hooks finish mutating their state.
+    /// The message's frames overwrote whether the cheatcodes stepped the instruction that made it,
+    /// so that instruction's `step_end` runs the cheatcode hook whenever they step any instruction.
     fn restore_cheat_stepped(&mut self) {
         self.refresh_cheat_steps();
         self.inner.cheat_stepped = self.inner.cheat_steps != OpcodeSet::EMPTY;
@@ -2113,9 +2113,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         message: &MessageFor<FEN>,
         result: &mut MessageResultFor<FEN>,
     ) {
-        self.restore_cheat_stepped();
         // A frame handed off to a frame EVM already ran its end hooks there.
         if mem::take(&mut self.inner.env_handoff_ended) {
+            self.restore_cheat_stepped();
             return;
         }
         self.end_snapshot_frame(interp, message, result);
@@ -2125,6 +2125,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if self.inner.is_inner_context_root(message.depth) {
             self.capture_switch_warmth(interp, result);
             self.capture_executed_destructs(interp);
+            self.restore_cheat_stepped();
             return;
         }
 
@@ -2145,6 +2146,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if let Some(revert_diag) = self.inner.revert_diag.as_deref_mut() {
             revert_diag.frame_end();
         }
+        self.restore_cheat_stepped();
     }
 
     fn create(
@@ -2243,9 +2245,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         message: &MessageFor<FEN>,
         result: &mut MessageResultFor<FEN>,
     ) {
-        self.restore_cheat_stepped();
         // A frame handed off to a frame EVM already ran its end hooks there.
         if mem::take(&mut self.inner.env_handoff_ended) {
+            self.restore_cheat_stepped();
             return;
         }
         // A redirected CREATE ends as the call to the factory, then becomes the CREATE result.
@@ -2260,6 +2262,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if self.inner.is_inner_context_root(message.depth) {
             self.capture_switch_warmth(interp, result);
             self.capture_executed_destructs(interp);
+            self.restore_cheat_stepped();
             return;
         }
 
@@ -2268,6 +2271,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if let Some(revert_diag) = self.inner.revert_diag.as_deref_mut() {
             revert_diag.frame_end();
         }
+        self.restore_cheat_stepped();
     }
 
     fn selfdestruct(
