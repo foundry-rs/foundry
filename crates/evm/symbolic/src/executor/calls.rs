@@ -1094,7 +1094,7 @@ impl SymbolicExecutor {
 
         let mut parents = VecDeque::with_capacity(outcomes.len());
         for outcome in outcomes {
-            match self.join_call_outcome(state, outcome, to)? {
+            match self.join_call_outcome(executor, state, outcome, to)? {
                 JoinedCallOutcome::Rejected => {}
                 JoinedCallOutcome::Failure(parent) => {
                     *state = parent;
@@ -1110,21 +1110,33 @@ impl SymbolicExecutor {
                 JoinedCallOutcome::ExpectedRevert { mut parent, child } => {
                     parent.expected_creates = child.expected_creates;
                     parent.world = original_world.clone();
-                    parent.return_data = SymReturnData::empty(&mut self.cx);
+                    parent.return_data = SymReturnData::from_concrete_bytes(
+                        &mut self.cx,
+                        DUMMY_CALL_OUTPUT.to_vec(),
+                    );
                     parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
                     parent.stack.push(SymExpr::one(&mut self.cx))?;
                     parents.push_back(parent);
                 }
-                JoinedCallOutcome::Success { mut parent, child } => {
+                JoinedCallOutcome::Success { mut parent, child, unmet_expected_revert } => {
                     parent.world = child.world;
                     if isolated {
                         parent.world.restore_transient_storage(&original_world);
                     }
                     parent.expected_emit = child.expected_emit;
                     parent.expected_creates = child.expected_creates;
-                    parent.return_data = child.frame.return_data;
+                    parent.return_data = if unmet_expected_revert {
+                        error_string_return_data(
+                            &mut self.cx,
+                            "next call did not revert as expected",
+                        )
+                    } else {
+                        child.frame.return_data
+                    };
                     parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
-                    parent.stack.push(SymExpr::one(&mut self.cx))?;
+                    let success =
+                        SymExpr::constant(&mut self.cx, U256::from(!unmet_expected_revert));
+                    parent.stack.push(success)?;
                     parents.push_back(parent);
                 }
                 JoinedCallOutcome::Revert { mut parent, child } => {

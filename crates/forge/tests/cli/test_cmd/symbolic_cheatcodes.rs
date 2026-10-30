@@ -590,13 +590,13 @@ contract SymbolicExpectRevert is Test {
     }
 
     function checkExpectRevert(uint256) public {
-        vm.expectRevert(SymbolicExpectedReverter.Custom.selector);
+        vm.expectPartialRevert(SymbolicExpectedReverter.Custom.selector);
         helper.failWithCustom(7);
 
         vm.expectRevert(abi.encodeWithSelector(SymbolicExpectedReverter.Custom.selector, uint256(9)));
         helper.failWithCustom(9);
 
-        vm.expectRevert(bytes4(0x4e487b71));
+        vm.expectPartialRevert(bytes4(0x4e487b71));
         helper.failPanic();
     }
 }
@@ -2575,7 +2575,7 @@ contract DoubleExpectRevert is Test {
     .stdout_eq(str![[r#"
 ...
 Ran 1 test for test/DoubleExpectRevert.t.sol:DoubleExpectRevert
-[FAIL: incomplete symbolic execution (RevertAll): all symbolic paths reverted] checkDoubleExpectRevert(uint256) ([METRICS])
+[FAIL: call didn't revert at a lower depth than cheatcode call depth; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkDoubleExpectRevert(uint256) ([METRICS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
@@ -2847,6 +2847,268 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
     .stdout_lossy();
 
     assert!(!stdout.contains("symbolic vm.expectRevert"), "{stdout}");
+}
+
+// Like Forge, an unmet `vm.expectRevert` makes the next call revert with a cheatcode error that
+// the caller may catch, and a call that succeeded keeps its state changes.
+#[forgetest_init]
+fn symbolic_vm_expect_revert_unmet_reverts_call(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_expect_revert_unmet_reverts_call");
+
+    prj.add_test(
+        "SymbolicExpectRevertUnmet.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract UnmetTarget {
+    uint256 public value;
+
+    function f(uint256 x) external pure {
+        if (x != 12345) revert("nope");
+    }
+
+    function set(uint256 x) external {
+        value = x;
+    }
+}
+
+contract SymbolicExpectRevertUnmet is Test {
+    UnmetTarget target;
+
+    function setUp() public {
+        target = new UnmetTarget();
+    }
+
+    function checkTryCatch(uint256 x) public {
+        vm.expectRevert();
+        try target.f(x) {} catch {}
+    }
+
+    function checkUnmetKeepsState(uint256 x) public {
+        vm.expectRevert();
+        (bool ok,) = address(target).call(abi.encodeCall(UnmetTarget.set, (x)));
+        assert(!ok);
+        assert(target.value() == x);
+    }
+
+    function checkExactReason(uint256 x) public {
+        vm.expectRevert(abi.encodeWithSignature("Error(string)", "nope"));
+        (bool ok,) = address(target).call(abi.encodeCall(UnmetTarget.f, (x)));
+        assert(ok == (x != 12345));
+    }
+
+    function checkWrongReasonPayload() public {
+        vm.expectRevert(bytes("other"));
+        (bool ok, bytes memory data) = address(target).call(abi.encodeCall(UnmetTarget.f, (0)));
+        assert(!ok);
+        assert(data.length == 100);
+    }
+
+    function checkUnmetCreate() public {
+        vm.expectRevert();
+        try new UnmetTarget() returns (UnmetTarget) {
+            assert(false);
+        } catch {}
+    }
+
+    function checkCountZero(uint256 x) public {
+        vm.expectRevert(uint64(0));
+        target.set(x);
+    }
+
+    function checkUnmetSymbolicOffset(uint256 x) public {
+        if (x == 0) return;
+        vm.expectRevert();
+        (bool ok,) = address(target).call(abi.encodeCall(UnmetTarget.set, (x)));
+        assembly {
+            let p := add(0x100, and(x, 31))
+            returndatacopy(p, 0, returndatasize())
+            revert(p, returndatasize())
+        }
+    }
+
+    function checkUnmetSymbolicSuffix(uint256 x) public {
+        if (x == 0) return;
+        vm.expectRevert();
+        (bool ok,) = address(target).call(abi.encodeCall(UnmetTarget.set, (x)));
+        assembly {
+            let n := returndatasize()
+            returndatacopy(0x100, 0, n)
+            mstore(add(0x100, n), x)
+            revert(0x100, add(n, 32))
+        }
+    }
+
+    function checkUnmetSymbolicSize(uint256 x) public {
+        if (x == 0) return;
+        vm.expectRevert();
+        (bool ok,) = address(target).call(abi.encodeCall(UnmetTarget.set, (x)));
+        assembly {
+            let n := returndatasize()
+            returndatacopy(0x100, 0, n)
+            revert(0x100, add(n, and(x, 31)))
+        }
+    }
+
+    function checkUnmetSymbolicSelector(bytes4 selector) public {
+        if (selector == bytes4(0)) return;
+        vm.expectRevert();
+        (bool ok,) = address(target).call(abi.encodeCall(UnmetTarget.set, (1)));
+        assembly {
+            returndatacopy(0x100, 0, returndatasize())
+            mstore(0x100, selector)
+            revert(0x100, returndatasize())
+        }
+    }
+
+    function checkUnmetNonCheatcodeSelector(bytes4 selector) public {
+        vm.assume(selector != bytes4(keccak256("CheatcodeError(string)")));
+        if (selector == bytes4(0)) return;
+        vm.expectRevert();
+        (bool ok,) = address(target).call(abi.encodeCall(UnmetTarget.set, (1)));
+        assembly {
+            mstore(0x100, selector)
+            revert(0x100, 4)
+        }
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicExpectRevertUnmet",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 11 tests for test/SymbolicExpectRevertUnmet.t.sol:SymbolicExpectRevertUnmet
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectRevert count 0] checkCountZero(uint256) ([METRICS])
+[PASS] checkExactReason(uint256) ([METRICS])
+[PASS] checkTryCatch(uint256) ([METRICS])
+[PASS] checkUnmetCreate() ([METRICS])
+[PASS] checkUnmetKeepsState(uint256) ([METRICS])
+[PASS] checkUnmetNonCheatcodeSelector(bytes4) ([METRICS])
+[FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnmetSymbolicOffset(uint256) ([METRICS])
+[FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnmetSymbolicSelector(bytes4) ([METRICS])
+[FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnmetSymbolicSize(uint256) ([METRICS])
+[FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnmetSymbolicSuffix(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkWrongReasonPayload() ([METRICS])
+Suite result: FAILED. 5 passed; 6 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// Like Forge, a matched `vm.expectRevert` compares reasons by raw bytes or by the message of
+// `Error(string)`, matches `bytes4` exactly, and returns Forge's dummy call output and CREATE
+// address.
+#[forgetest_init]
+fn symbolic_vm_expect_revert_matches_like_forge(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_expect_revert_matches_like_forge");
+
+    prj.add_test(
+        "SymbolicExpectRevertMatch.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract MatchToken {
+    error Unauthorized(address caller);
+
+    mapping(address => uint256) public balanceOf;
+
+    function burn(uint256 amount) external returns (bool) {
+        require(balanceOf[msg.sender] >= amount, "insufficient balance");
+        balanceOf[msg.sender] -= amount;
+        return true;
+    }
+
+    function deny() external view {
+        revert Unauthorized(msg.sender);
+    }
+
+    function failEmpty() external pure {
+        revert("");
+    }
+}
+
+contract MatchBadCtor {
+    constructor() {
+        revert("nope");
+    }
+}
+
+contract SymbolicExpectRevertMatch is Test {
+    function checkStringReason(uint256 amount) public {
+        vm.assume(amount > 0);
+        MatchToken token = new MatchToken();
+        vm.expectRevert("insufficient balance");
+        bool ok = token.burn(amount);
+        assertFalse(ok);
+    }
+
+    function checkEmptyReason() public {
+        MatchToken token = new MatchToken();
+        vm.expectRevert(bytes(""));
+        token.failEmpty();
+    }
+
+    function checkSelectorWithArgs() public {
+        MatchToken token = new MatchToken();
+        vm.expectRevert(MatchToken.Unauthorized.selector);
+        token.deny();
+    }
+
+    function checkPartialSelector() public {
+        MatchToken token = new MatchToken();
+        vm.expectPartialRevert(MatchToken.Unauthorized.selector);
+        token.deny();
+    }
+
+    function checkMatchedCallOutput() public {
+        MatchToken token = new MatchToken();
+        vm.expectRevert();
+        (bool ok, bytes memory data) = address(token).call(abi.encodeCall(MatchToken.burn, (1)));
+        assertTrue(ok);
+        assertEq(data.length, 8192);
+    }
+
+    function checkMatchedCreateAddress() public {
+        bytes memory code = type(MatchBadCtor).creationCode;
+        vm.expectRevert();
+        address created;
+        uint256 size;
+        assembly {
+            created := create(0, add(code, 32), mload(code))
+            size := returndatasize()
+        }
+        assertEq(created, address(1));
+        assertEq(size, 0);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicExpectRevertMatch",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 6 tests for test/SymbolicExpectRevertMatch.t.sol:SymbolicExpectRevertMatch
+[PASS] checkEmptyReason() ([METRICS])
+[PASS] checkMatchedCallOutput() ([METRICS])
+[PASS] checkMatchedCreateAddress() ([METRICS])
+[PASS] checkPartialSelector() ([METRICS])
+[FAIL: Error != expected error: Unauthorized(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496) != custom error 0x8e4a23d6; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSelectorWithArgs() ([METRICS])
+[PASS] checkStringReason(uint256) ([METRICS])
+Suite result: FAILED. 5 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]

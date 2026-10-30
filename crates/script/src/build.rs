@@ -18,7 +18,7 @@ use foundry_cheatcodes::Wallets;
 use foundry_cli::opts::TempoOpts;
 use foundry_common::{
     ContractData, ContractsByArtifact, ContractsByArtifactBuilder, compile::ProjectCompiler,
-    external_compiler::is_builtin_compiler_source, fs::canonicalize_path,
+    external_compiler::is_builtin_compiler_source, fs::canonicalize_path, namespaced_storage,
     provider::ProviderBuilder,
 };
 use foundry_compilers::{
@@ -165,7 +165,7 @@ impl LinkedBuildData {
     pub fn new(
         libraries: Libraries,
         predeploy_libraries: ScriptPredeployLibraries,
-        build_data: BuildData,
+        mut build_data: BuildData,
     ) -> Result<Self> {
         let sources = ContractSources::from_project_output(
             &build_data.output,
@@ -173,13 +173,15 @@ impl LinkedBuildData {
             Some(&libraries),
         )?;
 
+        let storage_layouts = namespaced_storage::project_storage_layouts(
+            &mut build_data.output,
+            &build_data.project_root,
+        );
         let linked_contracts = build_data.get_linker().get_linked_artifacts(&libraries)?;
         let known_contracts = ContractsByArtifactBuilder::new(
             linked_contracts.iter().map(|(id, artifact)| (id.clone(), artifact.into())),
         )
-        .with_storage_layouts(build_data.output.artifact_ids().filter_map(|(id, artifact)| {
-            artifact.storage_layout.as_ref().map(|layout| (id, layout.clone()))
-        }))
+        .with_storage_layouts(storage_layouts)
         .build();
 
         Ok(Self { build_data, known_contracts, libraries, predeploy_libraries, sources })

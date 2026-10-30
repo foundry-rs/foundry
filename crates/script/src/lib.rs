@@ -44,7 +44,6 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
-use foundry_debugger::DebuggerLayout;
 use foundry_evm::{
     backend::Backend,
     core::{
@@ -244,11 +243,10 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub debug: bool,
 
-    /// Debugger layout to use.
-    #[arg(long = "debug-layout", requires = "debug", value_enum)]
-    pub debug_layout: Option<DebuggerLayout>,
-
-    /// Dumps all debugger steps to file.
+    /// Writes a SolDB trace and source bundle to a directory.
+    ///
+    /// Read the bundle with SolDB tools, for example:
+    /// `soldb profile --trace-file <PATH>/trace.json --contracts <PATH>/contracts.json`.
     #[arg(
         long,
         requires = "debug",
@@ -402,7 +400,17 @@ impl ScriptArgs {
             // If no sender was explicitly set via --sender, auto-detect it from available signers:
             // use the sole signer's address if there's exactly one, or fall back to the browser
             // wallet address if present.
-            let addresses = script_wallets.addresses();
+            let mut addresses = script_wallets.addresses();
+            if addresses.is_empty() && browser_wallet.is_none() {
+                // A keystore without an `address` field, such as one written by `cast wallet`,
+                // must be unlocked to find its address.
+                addresses = script_wallets.signers().map_err(|err| {
+                    eyre::eyre!("{err}").wrap_err(
+                        "failed to unlock the wallet to find the script sender; pass `--sender`, \
+                         or a keystore password file with `--password-file` or `ETH_PASSWORD`",
+                    )
+                })?;
+            }
             if addresses.len() == 1 {
                 evm_opts.sender = addresses[0];
             } else if let Some(signer) = browser_wallet.as_ref().map(|b| b.address()) {
@@ -412,8 +420,17 @@ impl ScriptArgs {
 
         tempo.resolve_expires();
         config.tracing = args.tracing.resolve(&config.tracing, evm_opts.verbosity);
-        if args.debug && !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
-            config.extra_output.push(ContractOutputSelection::StorageLayout);
+        if args.debug {
+            if !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
+                config.extra_output.push(ContractOutputSelection::StorageLayout);
+            }
+            // Full build infos keep the sources the compiler saw, which dynamic test linking
+            // rewrites in scripts.
+            if let Err(error) = config.enable_debug_build_info() {
+                let _ = sh_warn!(
+                    "the debugger may show source files that differ from the compiled ones: {error:#}"
+                );
+            }
         }
 
         let script_config = ScriptConfig::new(
@@ -994,13 +1011,18 @@ impl<N: Network> ScriptResult<N> {
                     }
 
                     let init_code = node.trace.data.clone();
-                    let contract_name = known_contracts
-                        .find_by_creation_code(init_code.as_ref())
-                        .map(|artifact| artifact.0.name.clone());
+                    let artifact = known_contracts.find_by_creation_code_prefix(init_code.as_ref());
+                    let contract_name = artifact
+                        .or_else(|| known_contracts.find_by_creation_code(init_code.as_ref()))
+                        .map(|(id, _)| id.name.clone());
+                    let exact_artifact_match = artifact.is_some_and(|(id, _)| {
+                        !id.source.extension().is_some_and(|ext| ext == "vy")
+                    });
                     Some(AdditionalContract {
                         call_kind: node.trace.kind,
                         address: node.trace.address,
                         contract_name,
+                        exact_artifact_match,
                         init_code,
                         creator_code_addresses,
                     })
@@ -1292,7 +1314,7 @@ async fn prepare_script_source(
 const fn script_trace_requirements(config: &Config, debug: bool) -> TraceRequirements {
     TraceRequirements::none()
         .with_calls(true)
-        .with_debug(debug)
+        .with_debug_recording(debug)
         .with_verbosity(config.tracing.verbosity)
         .with_decode_internal(if config.tracing.decode_internal {
             InternalTraceMode::Full
@@ -1807,6 +1829,7 @@ mod tests {
                     arena,
                     ignored: Default::default(),
                     diagnostics: Default::default(),
+                    debug_steps: None,
                 },
             )],
             ..Default::default()
@@ -1849,6 +1872,7 @@ mod tests {
                     arena,
                     ignored: Default::default(),
                     diagnostics: Default::default(),
+                    debug_steps: None,
                 },
             )],
             ..Default::default()
