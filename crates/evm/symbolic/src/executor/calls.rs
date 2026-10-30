@@ -553,8 +553,8 @@ impl SymbolicExecutor {
     }
 
     /// Finishes a call that runs no callee code, such as a mock, a precompile, an account without
-    /// code or a failed value transfer, applying a pending `vm.expectRevert` as
-    /// `join_call_outcome` does for other calls.
+    /// code or a failed value transfer, applying a pending `vm.expectRevert` as Forge's
+    /// `call_end` does. Like `join_call_outcome`, a mismatch fails the path.
     ///
     /// A pending `vm.assumeNoRevert` is consumed but never rejects the path, because Forge only
     /// discards the run when the reverted call's error reaches the test frame, which is not
