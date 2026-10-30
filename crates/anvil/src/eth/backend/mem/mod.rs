@@ -4072,7 +4072,7 @@ impl<N: Network> Backend<N> {
 
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
-            if fork.predates_fork(number) {
+            if fork.predates_fork_inclusive(number) {
                 return Ok(fork
                     .transaction_by_block_number_and_index(number, index.into())
                     .await?);
