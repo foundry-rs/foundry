@@ -207,11 +207,6 @@ pub(crate) fn transfer_value<E>(message: &MessageExt<E>) -> Option<U256> {
         .then_some(message.value)
 }
 
-/// Returns whether a message executes in a static context.
-pub(crate) fn is_static<E>(message: &MessageExt<E>) -> bool {
-    message.caller_is_static || message.kind == MessageKind::StaticCall
-}
-
 /// Helps collecting transactions from different forks.
 #[derive(Clone, Debug)]
 pub struct BroadcastableTransaction<N: Network = Ethereum> {
@@ -1196,7 +1191,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 backend,
                 gas,
                 caller,
-                is_static: is_static(message),
+                is_static: message.is_static(),
                 depth: message.depth.into(),
             },
             executor,
@@ -1225,7 +1220,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 backend,
                 gas,
                 caller,
-                is_static: is_static(message),
+                is_static: message.is_static(),
                 depth: message.depth.into(),
             },
             &message.input,
@@ -1479,7 +1474,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 // because we only need the from, to, value, and data. We can later change this
                 // into 1559, in the cli package, relatively easily once we
                 // know the target chain supports EIP-1559.
-                if !is_static(call) {
+                if !call.is_static() {
                     let evm = interp.host();
                     // Reading the nonce warms the broadcaster.
                     let nonce = match evm.state_mut().account(&new_origin) {
@@ -2153,7 +2148,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// Called when a log is emitted.
     pub fn log_hook(&mut self, log: &Log) {
         if !self.expected_emits.is_empty()
-            && let Some(reason) = expect::handle_expect_emit(self, log)
+            && let Some(reason) = crate::expected_emit::observe_log(&mut self.expected_emits, log)
         {
             // The emitting frame reverts once its `LOG` instruction finishes.
             self.pending_emit_failure = Some(reason);
@@ -2488,7 +2483,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if let Some(unmet) = expected_emit::check_call_emits(
             &mut self.expected_emits,
             curr_depth,
-            is_static(call),
+            call.is_static(),
             outcome.is_success(),
         ) {
             set_revert(outcome, unmet.encode(|| self.signatures_identifier()));

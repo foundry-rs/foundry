@@ -299,16 +299,6 @@ fn invariant_focus_worker_index(worker_id: u32, worker_count: usize) -> Option<u
         .then(|| worker_id - first_focus_worker)
 }
 
-#[cfg(test)]
-fn campaign_seed_for_worker(
-    campaign_seed: &InvariantCampaignSeed,
-    plan: InvariantWorkerPlan,
-    worker_count: usize,
-) -> InvariantCampaignSeed {
-    focused_campaign_seed_for_worker(campaign_seed, plan, worker_count, None)
-        .unwrap_or_else(|| campaign_seed.clone())
-}
-
 fn focused_campaign_seed_for_worker(
     campaign_seed: &InvariantCampaignSeed,
     plan: InvariantWorkerPlan,
@@ -2993,16 +2983,20 @@ mod tests {
             initial_handler_failures: Map::default(),
         };
 
-        let normal_worker = campaign_seed_for_worker(
+        let normal_worker = focused_campaign_seed_for_worker(
             &campaign_seed,
             InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 1 },
             2,
-        );
-        let focus_worker = campaign_seed_for_worker(
+            None,
+        )
+        .unwrap_or_else(|| campaign_seed.clone());
+        let focus_worker = focused_campaign_seed_for_worker(
             &campaign_seed,
             InvariantWorkerPlan { worker_id: 1, first_global_run: 1, runs: 1 },
             2,
-        );
+            None,
+        )
+        .unwrap_or_else(|| campaign_seed.clone());
 
         assert!(normal_worker.targets_are_updatable);
         assert!(!focus_worker.targets_are_updatable);
