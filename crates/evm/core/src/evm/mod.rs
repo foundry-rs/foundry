@@ -6,18 +6,8 @@
 //! [`EthEvmNetwork`], [`OpEvmNetwork`], [`BaseEvmNetwork`], [`MonadEvmNetwork`] and
 //! [`TempoEvmNetwork`].
 //!
-//! Transactions stay network-native until execution (see [`tx`](self::TxPayload)): tools keep
-//! [`TransactionRequestFor`] or [`TxEnvelopeFor`] values and convert once with
-//! [`FoundryEvmNetwork::tx_from_request`], [`FoundryEvmNetwork::tx_from_signed`],
-//! [`FoundryEvmNetwork::decode_tx`] or [`FoundryEvmNetwork::tx_from_any_rpc`].
-//!
-//! State ownership is split three ways:
-//!
-//! - evm2's `State` owns transaction scratch, journaling, warmth, transient storage, logs and the
-//!   running context's accepted overlay;
-//! - a [`BackingDb`] serves reads that miss the overlay and never receives writes;
-//! - [`ExecutionLifecycle`] owns the accepted state of inactive forks, persistent accounts,
-//!   snapshots and nested execution.
+//! Transactions stay network-native until execution (see [`tx`](self::TxPayload)).
+//! [`ExecutionLifecycle`] owns the accepted state that evm2's `State` does not.
 //!
 //! [`crate::backend::Backend`] layers RPC forks and Foundry's cheatcode policy on top of the
 //! lifecycle.
