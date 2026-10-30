@@ -5,6 +5,7 @@ use foundry_common::{
         inline_config::{InlineConfig, InlineConfigItem},
     },
     errors::convert_solar_errors,
+    fs::canonicalize_path,
     sh_warn,
 };
 use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
@@ -339,11 +340,22 @@ impl<'a> Linter for SolidityLinter<'a> {
             let mut targets = Vec::with_capacity(input.len());
             let mut seen_sources = HashSet::new();
             for path in input {
-                let path = self.path_config.root.join(path);
+                let joined = self.path_config.root.join(path);
+                let mut path = joined.clone();
+                // Sources are keyed by their canonical path, so look up symlinks by their target.
+                if gcx.get_ast_source(&path).is_none()
+                    && let Ok(canonical) = canonicalize_path(&path)
+                {
+                    path = canonical;
+                }
                 let Some((_, source)) = gcx.get_ast_source(&path) else {
                     // Issue a warning rather than panicking when some input files use old
                     // Solidity versions that Solar does not support.
-                    _ = sh_warn!("AST source not found for {}", path.display());
+                    let shown = joined.strip_prefix(&self.path_config.root).unwrap_or(&joined);
+                    _ = sh_warn!(
+                        "unable to lint {}. Solar only supports Solidity versions >=0.8.0",
+                        shown.display()
+                    );
                     continue;
                 };
                 if seen_sources.insert(source.file.start_pos) {
