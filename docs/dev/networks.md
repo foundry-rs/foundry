@@ -250,7 +250,16 @@ release and Docker workflows. Tests that use forks must contain `fork` in their 
 ### Tempo certificate and storage proofs
 
 On Unix, the [Forge test](../../crates/forge/tests/cli/tempo_proofs.rs) verifies fresh Anvil certificates,
-key rotation and account/storage proofs in Solidity; uncached runs download pinned sources and Solc.
+key rotation and account/storage proofs in Solidity, including a local two-node fork pinned to a
+fixed upstream height. It deploys and updates a contract on the fork, then checks that late upstream
+reads and later writes preserve the earlier certified proofs. It also writes to an upstream account
+and verifies its inclusion in a later sealed partial trie while preserving its earlier exclusion.
+Uncached runs download pinned sources and Solc.
+
+Fork certificates authenticate the sealed trie of cached local state, not the complete upstream
+state. An uncached upstream account remains absent from an earlier sealed trie even after a later
+RPC read loads it. The fork uses an explicit local development consensus identity distinct from the
+upstream identity; this test does not authenticate an upstream committee handoff to that local key.
 
 ```sh
 cargo nextest run -p forge --test cli tempo_proofs
