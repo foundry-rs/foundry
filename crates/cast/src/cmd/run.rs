@@ -821,10 +821,8 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
                     replay.push((tx.tx_hash(), tx_env));
                 } else if tx.transaction_type() != Some(arbitrum::ARBITRUM_INTERNAL_TX_TYPE) {
                     // ArbOS internal transactions open every Arbitrum block, Orbit chains included,
-                    // and also report batch postings mid-block. They mostly update ArbOS
-                    // bookkeeping, which no flag can replay, and the replay takes block numbers,
-                    // base fee, and L1 gas from the header and receipts, so they are left out
-                    // without a warning; the receipt check still reports a divergent result.
+                    // and also report batch postings mid-block. They update ArbOS bookkeeping,
+                    // which no flag can replay, so they are left out without a warning.
                     skipped_system_txes.push(tx.tx_hash());
                 }
                 Ok(())
