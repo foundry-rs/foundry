@@ -195,12 +195,13 @@ impl SymbolicExecutor {
             match outcome.status {
                 CallStatus::Success => return Ok(JoinedCallOutcome::Failure(parent)),
                 CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {
-                    if !self.expected_revert_matches(
+                    if self.expected_revert_matches(
                         &mut parent,
                         &expected,
                         reverter,
                         &outcome.state.frame.return_data,
-                    )? {
+                    )? != Some(true)
+                    {
                         return Ok(JoinedCallOutcome::Failure(parent));
                     }
                     if expected.consume_one() {

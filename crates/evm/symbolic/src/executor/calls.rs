@@ -522,22 +522,23 @@ impl SymbolicExecutor {
         self.constraints_for_condition(state, condition)
     }
 
-    /// Returns whether `expected_revert_matches` holds.
+    /// Returns whether a revert matches `expected`, or `None` when both outcomes are feasible,
+    /// after narrowing `state` to the mismatch.
     pub(super) fn expected_revert_matches(
         &mut self,
         state: &mut PathState,
         expected: &ExpectedRevert,
         reverter: Address,
         return_data: &SymReturnData,
-    ) -> Result<bool, SymbolicError> {
+    ) -> Result<Option<bool>, SymbolicError> {
         let Some(condition) = expected.match_condition(&mut self.cx, reverter, return_data) else {
-            return Ok(false);
+            return Ok(Some(false));
         };
 
         let (match_constraints, match_sat) =
             self.constraints_with_condition(state, condition.clone())?;
         if !match_sat {
-            return Ok(false);
+            return Ok(Some(false));
         }
 
         let mismatch_condition = condition.not(&mut self.cx);
@@ -545,11 +546,11 @@ impl SymbolicExecutor {
             self.constraints_with_condition(state, mismatch_condition)?;
         if mismatch_sat {
             state.constraints = mismatch_constraints;
-            return Ok(false);
+            return Ok(None);
         }
 
         state.constraints = match_constraints;
-        Ok(true)
+        Ok(Some(true))
     }
 
     /// Finishes a call that runs no callee code, such as a mock, a precompile, an account without
@@ -577,18 +578,31 @@ impl SymbolicExecutor {
         {
             if success {
                 state.expected_revert = None;
+                success = false;
                 return_data =
                     error_string_return_data(&mut self.cx, "next call did not revert as expected");
             } else {
-                if !self.expected_revert_matches(state, &expected, reverter, &return_data)? {
-                    return Ok(StepOutcome::Failure);
+                match self.expected_revert_matches(state, &expected, reverter, &return_data)? {
+                    Some(true) => {
+                        let done = expected.consume_one();
+                        state.expected_revert = (!done).then_some(expected);
+                        success = true;
+                        return_data = SymReturnData::from_concrete_bytes(
+                            &mut self.cx,
+                            DUMMY_CALL_OUTPUT.to_vec(),
+                        );
+                    }
+                    // Like Forge, a mismatch only fails this call, so a low-level caller can
+                    // catch it.
+                    Some(false) => {
+                        state.expected_revert = None;
+                        return_data =
+                            error_string_return_data(&mut self.cx, "expected revert mismatch");
+                    }
+                    // Continuing on the mismatch alone would skip the feasible match.
+                    None => return Ok(StepOutcome::Failure),
                 }
-                let done = expected.consume_one();
-                state.expected_revert = (!done).then_some(expected);
-                return_data =
-                    SymReturnData::from_concrete_bytes(&mut self.cx, DUMMY_CALL_OUTPUT.to_vec());
             }
-            success = !success;
         }
         state.return_data = return_data;
         state.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;
