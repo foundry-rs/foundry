@@ -316,7 +316,11 @@ contract LocalFourByteContract {
 library LocalFourByteLib {
     enum E { A }
 
+    struct S { uint256 a; uint256 b; }
+
     function myUniqueLibFunctionWithinLocalProject(E) external pure {}
+
+    function myUniqueLibStructWithinLocalProject(S calldata) external pure {}
 }
    "#,
     );
@@ -357,6 +361,17 @@ myUniqueLibFunctionWithinLocalProject(LocalFourByteLib.E)
         .stdout_eq(str![[r#"
 1) "myUniqueLibFunctionWithinLocalProject(LocalFourByteLib.E)"
 0
+
+"#]]);
+    // `LocalFourByteLib.S` parses as `uint8`, which would decode only the first struct field.
+    cmd.cast_fuse()
+        .args([
+            "4byte-calldata",
+            "0x1c422ee300000000000000000000000000000000000000000000000000000000000003e80000000000000000000000000000000000000000000000000000000000000007",
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: No signatures found
 
 "#]]);
 }

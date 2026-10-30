@@ -1191,9 +1191,16 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             }
 
             let local = match strip_0x(&calldata).get(..8).map(str::parse::<Selector>) {
-                Some(Ok(selector)) => local_function_signature(selector)
-                    .await?
-                    .filter(|sig| abi_decode_calldata(sig, &calldata, true, true).is_ok()),
+                // Library types such as `L.S` parse as `uint8`, so a signature whose parsed form
+                // has another selector is used only if decoding with that form loses nothing.
+                Some(Ok(selector)) => local_function_signature(selector).await?.filter(|sig| {
+                    abi_decode_calldata(sig, &calldata, true, true).is_ok_and(|values| {
+                        get_func(sig).is_ok_and(|f| f.selector() == selector)
+                            || hex::decode(&calldata).is_ok_and(|data| {
+                                DynSolValue::Tuple(values).abi_encode_params() == data[4..]
+                            })
+                    })
+                }),
                 _ => None,
             };
             let sigs = with_local_first(local, decode_calldata(&calldata).await)?;
