@@ -3111,6 +3111,208 @@ Suite result: FAILED. 5 passed; 1 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
+// Like Forge, the reverter of a `vm.expectRevert` is the first call or reverting CREATE that failed
+// below it, even when that failure was caught, or the call itself when a count is expected. A
+// DELEGATECALL reverts as the caller, a halting CREATE leaves no reverter to check, and a halting
+// `vm.deployCode` reverts as the cheatcode.
+#[forgetest_init]
+fn symbolic_vm_expect_revert_reverter_like_forge(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_expect_revert_reverter_like_forge");
+
+    prj.add_test(
+        "SymbolicExpectRevertReverter.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Inner {
+    function boom() external pure {
+        revert("boom");
+    }
+
+    function ping() external {}
+}
+
+contract Outer {
+    Inner public inner;
+
+    constructor(Inner inner_) {
+        inner = inner_;
+    }
+
+    function bubble() external view {
+        inner.boom();
+    }
+
+    function catchThenRevert() external view {
+        try inner.boom() {} catch {}
+        revert("own");
+    }
+
+    function callPing() external {
+        inner.ping();
+    }
+
+    function payInner() external {
+        (bool ok,) = address(inner).call{value: 1}("");
+        require(ok, "unpaid");
+    }
+}
+
+contract RevertingConstructor {
+    constructor(Inner inner) {
+        inner.boom();
+    }
+}
+
+contract HaltingConstructor {
+    constructor() {
+        assembly {
+            invalid()
+        }
+    }
+}
+
+library RevertingLibrary {
+    function boom() external pure {
+        revert("boom");
+    }
+}
+
+contract SymbolicExpectRevertReverter is Test {
+    Inner inner;
+    Outer outer;
+
+    function setUp() public {
+        inner = new Inner();
+        outer = new Outer(inner);
+    }
+
+    function checkNestedInner() public {
+        vm.expectRevert(address(inner));
+        outer.bubble();
+    }
+
+    function checkNestedOuter() public {
+        vm.expectRevert(address(outer));
+        outer.bubble();
+    }
+
+    function checkCaughtInner() public {
+        vm.expectRevert(address(inner));
+        outer.catchThenRevert();
+    }
+
+    function checkCaughtOuter() public {
+        vm.expectRevert(address(outer));
+        outer.catchThenRevert();
+    }
+
+    function checkMockedInner() public {
+        vm.mockCallRevert(address(inner), abi.encodeCall(Inner.ping, ()), bytes("mocked"));
+        vm.expectRevert(address(inner));
+        outer.callPing();
+    }
+
+    function checkMockedOuter() public {
+        vm.mockCallRevert(address(inner), abi.encodeCall(Inner.ping, ()), bytes("mocked"));
+        vm.expectRevert(address(outer));
+        outer.callPing();
+    }
+
+    function checkCountOuter() public {
+        vm.expectRevert(bytes("boom"), address(outer), 2);
+        outer.bubble();
+        outer.bubble();
+    }
+
+    function checkCountInner() public {
+        vm.expectRevert(bytes("boom"), address(inner), 2);
+        outer.bubble();
+        outer.bubble();
+    }
+
+    function checkCreateInner() public {
+        vm.expectRevert(address(inner));
+        new RevertingConstructor(inner);
+    }
+
+    function checkCreateOuter() public {
+        vm.expectRevert(vm.computeCreateAddress(address(this), vm.getNonce(address(this))));
+        new RevertingConstructor(inner);
+    }
+
+    function checkCreateHaltAnyReverter() public {
+        vm.expectRevert(address(0xdead));
+        new HaltingConstructor();
+    }
+
+    function checkDeployCodeHaltCheatcode() public {
+        vm.expectRevert(address(vm));
+        vm.deployCode("SymbolicExpectRevertReverter.t.sol:HaltingConstructor");
+    }
+
+    function checkDeployCodeHaltOther() public {
+        vm.expectRevert(address(0xdead));
+        vm.deployCode("SymbolicExpectRevertReverter.t.sol:HaltingConstructor");
+    }
+
+    function checkValueTransferInner() public {
+        vm.expectRevert(address(inner));
+        outer.payInner();
+    }
+
+    function checkValueTransferOuter() public {
+        vm.expectRevert(address(outer));
+        outer.payInner();
+    }
+
+    function checkDelegateCaller() public {
+        vm.expectRevert(address(this));
+        (bool ok,) = address(RevertingLibrary).delegatecall(abi.encodeWithSignature("boom()"));
+        assertTrue(ok);
+    }
+
+    function checkDelegateLibrary() public {
+        vm.expectRevert(address(RevertingLibrary));
+        (bool ok,) = address(RevertingLibrary).delegatecall(abi.encodeWithSignature("boom()"));
+        assertTrue(ok);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicExpectRevertReverter",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 17 tests for test/SymbolicExpectRevertReverter.t.sol:SymbolicExpectRevertReverter
+[PASS] checkCaughtInner() ([METRICS])
+[FAIL: Reverter != expected reverter: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f != 0x2e234DAe75C793f67A35089C9d99245E1C58470b; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCaughtOuter() ([METRICS])
+[FAIL: Reverter != expected reverter: 0x2e234DAe75C793f67A35089C9d99245E1C58470b != 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCountInner() ([METRICS])
+[PASS] checkCountOuter() ([METRICS])
+[PASS] checkCreateHaltAnyReverter() ([METRICS])
+[PASS] checkCreateInner() ([METRICS])
+[FAIL: Reverter != expected reverter: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f != 0xF62849F9A0B5Bf2913b396098F7c7019b51A820a; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCreateOuter() ([METRICS])
+[PASS] checkDelegateCaller() ([METRICS])
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkDelegateLibrary() ([METRICS])
+[PASS] checkDeployCodeHaltCheatcode() ([METRICS])
+[FAIL: Reverter != expected reverter: 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D != 0x000000000000000000000000000000000000dEaD; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkDeployCodeHaltOther() ([METRICS])
+[PASS] checkMockedInner() ([METRICS])
+[FAIL: Reverter != expected reverter: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f != 0x2e234DAe75C793f67A35089C9d99245E1C58470b; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockedOuter() ([METRICS])
+[PASS] checkNestedInner() ([METRICS])
+[FAIL: Reverter != expected reverter: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f != 0x2e234DAe75C793f67A35089C9d99245E1C58470b; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkNestedOuter() ([METRICS])
+[PASS] checkValueTransferInner() ([METRICS])
+[FAIL: Reverter != expected reverter: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f != 0x2e234DAe75C793f67A35089C9d99245E1C58470b; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkValueTransferOuter() ([METRICS])
+Suite result: FAILED. 9 passed; 8 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
 #[forgetest_init]
 fn symbolic_vm_expect_emit_matches_external_logs(prj: _, cmd: _) {
     if !z3_available() {

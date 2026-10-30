@@ -145,7 +145,7 @@ impl SymbolicExecutor {
         state: &mut PathState,
         data: ExpectedRevertData,
         reverter: Option<SymExpr>,
-        remaining: u64,
+        count: u64,
     ) -> CheatcodeOutcome {
         if state.expected_revert.is_some() {
             return CheatcodeOutcome::Revert(error_string_return_data(
@@ -153,7 +153,8 @@ impl SymbolicExecutor {
                 "you must call another function prior to expecting a second revert",
             ));
         }
-        state.expected_revert = Some(ExpectedRevert::new(data, reverter, remaining));
+        state.expected_revert = Some(ExpectedRevert::new(data, reverter, count));
+        state.first_failed_callee = None;
         CheatcodeOutcome::Continue(Vec::new())
     }
 
@@ -283,6 +284,7 @@ impl SymbolicExecutor {
         out_size: &BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
         if state.is_static {
+            state.first_failed_callee.get_or_insert(CHEATCODE_ADDRESS);
             state.return_data = SymReturnData::empty(&mut self.cx);
             return Ok(StepOutcome::Revert);
         }
@@ -331,7 +333,20 @@ impl SymbolicExecutor {
 
         let mut parents = VecDeque::with_capacity(outcomes.len());
         for outcome in outcomes {
-            match self.join_call_outcome(executor, state, outcome, created)? {
+            if !matches!(outcome.status, CallStatus::Success)
+                && state.expected_revert.as_ref().is_some_and(ExpectedRevert::repeats_with_reverter)
+            {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic vm.expectRevert reverter count on CREATE",
+                ));
+            }
+            // Forge records a reverting CREATE, and otherwise the failed cheatcode call.
+            let failed_callee = match outcome.status {
+                CallStatus::Success => None,
+                CallStatus::Revert => Some(created),
+                CallStatus::ExceptionalHalt | CallStatus::Failure => Some(CHEATCODE_ADDRESS),
+            };
+            match self.join_call_outcome(executor, state, outcome, failed_callee)? {
                 JoinedCallOutcome::Rejected => {}
                 JoinedCallOutcome::Failure(parent)
                 | JoinedCallOutcome::Success { parent, unmet_expected_revert: true, .. } => {

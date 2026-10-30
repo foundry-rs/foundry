@@ -124,6 +124,15 @@ impl SymbolicExecutor {
 
         let mut parents = VecDeque::with_capacity(outcomes.len());
         for mut outcome in outcomes {
+            if !matches!(outcome.status, CallStatus::Success)
+                && state.expected_revert.as_ref().is_some_and(ExpectedRevert::repeats_with_reverter)
+            {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic vm.expectRevert reverter count on CREATE",
+                ));
+            }
+            // Forge records a CREATE as the reverter only when it reverts, not when it halts.
+            let failed_callee = matches!(outcome.status, CallStatus::Revert).then_some(created);
             let runtime = &outcome.state.frame.return_data;
             let spec_id = executor.spec_id;
             let mut rejected_runtime = false;
@@ -136,7 +145,7 @@ impl SymbolicExecutor {
                     rejected_runtime = true;
                 }
             }
-            match self.join_call_outcome(executor, state, outcome, created)? {
+            match self.join_call_outcome(executor, state, outcome, failed_callee)? {
                 JoinedCallOutcome::Rejected => {}
                 JoinedCallOutcome::Failure(mut parent) => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
