@@ -70,8 +70,8 @@ where
                         let (Some(block), Some(receipts)) =
                             (self.storage.block(hash), self.storage.receipts(hash))
                         else {
-                            // The block was unwound or replaced and is no longer canonical;
-                            // reverts and rollbacks publish its retained logs as `RemovedLogs`.
+                            // Pruning keeps headers, so the block was unwound or dropped by a
+                            // reset. Reverts and rollbacks publish its logs as `RemovedLogs`.
                             continue;
                         };
                         if block.body.transactions.len() != receipts.len()
