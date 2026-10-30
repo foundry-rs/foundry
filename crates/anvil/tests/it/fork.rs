@@ -37,7 +37,12 @@ use anvil::{
     spawn, try_spawn,
 };
 use anvil_core::types::{ReorgOptions, TransactionData};
-use axum::{Json, Router, routing::post};
+use axum::{
+    Json, Router,
+    http::{HeaderMap, Uri},
+    response::{IntoResponse, Redirect},
+    routing::post,
+};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
@@ -62,7 +67,7 @@ use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
@@ -5509,4 +5514,159 @@ async fn test_fork_rollback_to_root_restores_fee_and_gas_overrides() {
             provider.get_transaction_receipt(*pending.tx_hash()).await.expect(case).expect(case);
         assert!(receipt.status(), "{case}");
     }
+}
+
+/// Forwards requests to `endpoint` and records each request path with its `x-api-key` header.
+async fn spawn_fork_header_recorder(
+    endpoint: String,
+) -> (String, Arc<Mutex<Vec<(String, Option<String>)>>>) {
+    let client = reqwest::Client::new();
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let recorded = requests.clone();
+    let router =
+        Router::new().fallback(move |uri: Uri, headers: HeaderMap, Json(request): Json<Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            let requests = requests.clone();
+            async move {
+                let secret =
+                    headers.get("x-api-key").map(|value| value.to_str().unwrap().to_string());
+                requests.lock().unwrap().push((uri.path().to_string(), secret));
+                match uri.path() {
+                    "/redirect" => return Redirect::temporary(&endpoint).into_response(),
+                    "/redirect-permanent" => return Redirect::permanent(&endpoint).into_response(),
+                    "/redirect-same-origin" => {
+                        return Redirect::temporary("/rotated").into_response();
+                    }
+                    _ => {}
+                }
+                Json(
+                    client
+                        .post(endpoint)
+                        .json(&request)
+                        .send()
+                        .await
+                        .unwrap()
+                        .json::<Value>()
+                        .await
+                        .unwrap(),
+                )
+                .into_response()
+            }
+        });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (format!("http://{address}"), recorded)
+}
+
+// Fork headers and `MPP_API_KEY` are credentials for the configured endpoint, so URLs chosen over
+// RPC only receive them when they share its origin.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_headers_are_not_sent_to_other_origins() {
+    // SAFETY: nextest runs each test in its own process.
+    unsafe { std::env::set_var("MPP_API_KEY", "ambient") };
+    let (_origin_api, origin) = spawn(NodeConfig::test()).await;
+    for use_reset in [false, true] {
+        let (configured_url, configured) = spawn_fork_header_recorder(origin.http_endpoint()).await;
+        let (other_url, other) = spawn_fork_header_recorder(origin.http_endpoint()).await;
+        // Configure the scheme-less form so origins are compared after provider normalization.
+        let (api, _handle) = spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(configured_url.strip_prefix("http://").map(str::to_string))
+                .with_fork_headers(vec!["x-api-key: secret".to_string()]),
+        )
+        .await;
+
+        for url in [
+            Some(format!("{configured_url}/rotated")),
+            Some(format!("{configured_url}/redirect-same-origin")),
+            Some(other_url),
+            // A URL-less reset reuses the other URL, which still receives no credentials.
+            None,
+            // Switching back to the configured origin sends the headers again.
+            Some(configured_url.clone()),
+        ] {
+            match url {
+                Some(url) if !use_reset => api.anvil_set_rpc_url(url).await.unwrap(),
+                url => api
+                    .anvil_reset(Some(Forking { json_rpc_url: url, block_number: None }))
+                    .await
+                    .unwrap(),
+            }
+        }
+
+        let configured = configured.lock().unwrap();
+        assert!(configured.iter().any(|(path, _)| path == "/"), "use_reset: {use_reset}");
+        assert!(configured.iter().any(|(path, _)| path == "/rotated"), "use_reset: {use_reset}");
+        assert!(
+            configured.iter().all(|(_, secret)| secret.as_deref() == Some("secret")),
+            "use_reset: {use_reset}"
+        );
+        let other = other.lock().unwrap();
+        assert!(!other.is_empty(), "use_reset: {use_reset}");
+        assert!(other.iter().all(|(_, secret)| secret.is_none()), "use_reset: {use_reset}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_headers_are_not_sent_to_redirect_origins() {
+    let (_origin_api, origin) = spawn(NodeConfig::test()).await;
+    for use_reset in [false, true] {
+        let (other_url, other) = spawn_fork_header_recorder(origin.http_endpoint()).await;
+        let (configured_url, configured) = spawn_fork_header_recorder(other_url).await;
+        let (_api, handle) = spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(configured_url.clone()))
+                .fork_request_retries(Some(0))
+                .with_fork_headers(vec!["x-api-key: secret".to_string()]),
+        )
+        .await;
+        let provider = handle.http_provider();
+
+        for path in ["/redirect", "/redirect-permanent"] {
+            other.lock().unwrap().clear();
+            let url = format!("{configured_url}{path}");
+            let result = if use_reset {
+                provider
+                    .raw_request::<_, Value>(
+                        "anvil_reset".into(),
+                        (Forking { json_rpc_url: Some(url), block_number: None },),
+                    )
+                    .await
+            } else {
+                provider.raw_request::<_, Value>("anvil_setRpcUrl".into(), (url,)).await
+            };
+            assert!(
+                other.lock().unwrap().iter().all(|(_, secret)| secret.is_none()),
+                "fork header leaked through redirect: use_reset={use_reset}, path={path}"
+            );
+            assert!(result.is_err(), "use_reset={use_reset}, path={path}");
+        }
+
+        // Failed replacements must preserve the original endpoint and its credentials.
+        configured.lock().unwrap().clear();
+        provider
+            .raw_request::<_, Value>(
+                "anvil_reset".into(),
+                (Forking { json_rpc_url: None, block_number: None },),
+            )
+            .await
+            .unwrap();
+        let configured = configured.lock().unwrap();
+        assert!(!configured.is_empty(), "use_reset={use_reset}");
+        assert!(
+            configured
+                .iter()
+                .all(|(path, secret)| { path == "/" && secret.as_deref() == Some("secret") })
+        );
+        assert!(other.lock().unwrap().iter().all(|(_, secret)| secret.is_none()));
+    }
+
+    // Without credentials to protect, cross-origin redirects are still followed.
+    let (other_url, _) = spawn_fork_header_recorder(origin.http_endpoint()).await;
+    let (configured_url, _) = spawn_fork_header_recorder(other_url).await;
+    let (api, _handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(configured_url.clone()))).await;
+    api.anvil_set_rpc_url(format!("{configured_url}/redirect")).await.unwrap();
 }

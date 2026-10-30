@@ -1201,9 +1201,16 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             }
 
             let local = match strip_0x(&calldata).get(..8).map(str::parse::<Selector>) {
-                Some(Ok(selector)) => local_function_signature(selector)
-                    .await?
-                    .filter(|sig| abi_decode_calldata(sig, &calldata, true, true).is_ok()),
+                // Library types such as `L.S` parse as `uint8`, so a signature whose parsed form
+                // has another selector is used only if decoding with that form loses nothing.
+                Some(Ok(selector)) => local_function_signature(selector).await?.filter(|sig| {
+                    abi_decode_calldata(sig, &calldata, true, true).is_ok_and(|values| {
+                        get_func(sig).is_ok_and(|f| f.selector() == selector)
+                            || hex::decode(&calldata).is_ok_and(|data| {
+                                DynSolValue::Tuple(values).abi_encode_params() == data[4..]
+                            })
+                    })
+                }),
                 _ => None,
             };
             let sigs = with_local_first(local, decode_calldata(&calldata).await)?;
@@ -1226,8 +1233,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Abi(AbiSubcommand::FourByteEvent { topic }) => {
             let topic = stdin::unwrap_line(topic)?;
             let local = SignaturesIdentifier::new(true)?.identify_event(topic).await;
+            // Drop cached signatures whose parsed form hashes to another topic.
             let sigs = with_local_first(
-                local.map(|event| event.signature()),
+                local.filter(|event| event.selector() == topic).map(|event| event.signature()),
                 decode_event_topic(topic).await,
             )?;
             if sigs.is_empty() {
@@ -1714,8 +1722,15 @@ fn encode_event_topic_preimage(value: &DynSolValue, out: &mut Vec<u8>) {
 
 /// Returns the signature of a function selector from the local signatures cache, which
 /// `forge build` and trace decoding populate.
+///
+/// The stored text is returned as is: parsing it would turn library signatures such as
+/// `f(L.E)` into `f(uint8)`, which hashes to another selector.
 async fn local_function_signature(selector: Selector) -> Result<Option<String>> {
-    Ok(SignaturesIdentifier::new(true)?.identify_function(selector).await.map(|f| f.signature()))
+    Ok(SignaturesIdentifier::new(true)?
+        .identify(&[SelectorKind::Function(selector)])
+        .await
+        .pop()
+        .flatten())
 }
 
 /// Lists a signature from the local cache first, followed by the other signatures found remotely.
