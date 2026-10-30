@@ -16,12 +16,20 @@ pub struct UnresolvedEnvVarError {
     pub var: String,
     /// the `env::var` error
     pub source: VarError,
+    /// The config key that references the variable, e.g. `rpc_endpoints.sepolia`.
+    pub context: Option<String>,
 }
 
 impl UnresolvedEnvVarError {
     /// Tries to resolve a value
     pub fn try_resolve(&self) -> Result<String, Self> {
-        interpolate(&self.unresolved)
+        interpolate(&self.unresolved).map_err(|err| Self { context: self.context.clone(), ..err })
+    }
+
+    /// Sets the config key that references the variable.
+    pub fn with_context(mut self, context: impl Into<String>) -> Self {
+        self.context = Some(context.into());
+        self
     }
 }
 
@@ -32,7 +40,14 @@ impl fmt::Display for UnresolvedEnvVarError {
         f.write_str(match self.source {
             VarError::NotPresent => "not found",
             VarError::NotUnicode(_) => "is not valid unicode",
-        })
+        })?;
+        if let Some(context) = &self.context {
+            write!(f, " (used by `{context}` in foundry.toml)")?;
+        }
+        if matches!(self.source, VarError::NotPresent) {
+            f.write_str("; set it in your environment or in the project's `.env` file")?;
+        }
+        Ok(())
     }
 }
 
@@ -53,6 +68,7 @@ pub fn interpolate(input: &str) -> Result<String, UnresolvedEnvVarError> {
             unresolved: input.to_string(),
             var: var.to_string(),
             source,
+            context: None,
         })?;
 
         res = res.replacen(&caps["outer"], &value, 1);
@@ -86,6 +102,13 @@ mod tests {
             "https://user:synthetic-password@rpc.invalid/${FOUNDRY_TEST_UNSET_A}/${FOUNDRY_TEST_UNSET_B}",
         )
         .unwrap_err();
-        assert_eq!(err.to_string(), "environment variable `FOUNDRY_TEST_UNSET_A` not found");
+        assert_eq!(
+            err.to_string(),
+            "environment variable `FOUNDRY_TEST_UNSET_A` not found; set it in your environment or in the project's `.env` file"
+        );
+        assert_eq!(
+            err.with_context("rpc_endpoints.sepolia").to_string(),
+            "environment variable `FOUNDRY_TEST_UNSET_A` not found (used by `rpc_endpoints.sepolia` in foundry.toml); set it in your environment or in the project's `.env` file"
+        );
     }
 }
