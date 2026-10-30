@@ -119,6 +119,9 @@ async fn tempo_consensus_subscription_preserves_events_across_history_changes() 
 
     api.mine_one().await.unwrap();
     expected.push(tempo_finalization(&http, 1).await);
+    let state = api.anvil_dump_state(None).await.unwrap();
+    assert!(api.anvil_load_state(state.clone()).await.unwrap());
+    assert_eq!(tempo_finalization(&http, 1).await, expected[0]);
     let snapshot = api.evm_snapshot().await.unwrap();
     api.mine_one().await.unwrap();
     expected.push(tempo_finalization(&http, 2).await);
@@ -139,6 +142,13 @@ async fn tempo_consensus_subscription_preserves_events_across_history_changes() 
     api.anvil_reorg(ReorgOptions { depth: 1, tx_block_pairs: Vec::new() }).await.unwrap();
     expected.push(tempo_finalization(&http, 2).await);
     assert_ne!(expected[3].digest, expected[4].digest);
+
+    assert!(api.anvil_load_state(state).await.unwrap());
+    assert_eq!(http.get_block_number().await.unwrap(), 1);
+    api.anvil_set_coinbase(Address::repeat_byte(0x34)).await.unwrap();
+    api.mine_one().await.unwrap();
+    expected.push(tempo_finalization(&http, 2).await);
+    assert_ne!(expected[4].digest, expected[5].digest);
 
     api.anvil_reset(None).await.unwrap();
     api.mine_one().await.unwrap();
