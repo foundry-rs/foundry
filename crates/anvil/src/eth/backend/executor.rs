@@ -15,7 +15,7 @@ use crate::{
         error::{BlockchainError, InvalidTransactionError},
         pool::transactions::{PoolTransaction, TxMarker},
     },
-    mem::inspector::{AnvilInspector, InspectorTxConfig, SharedInspector},
+    mem::inspector::{AnvilInspector, InspectorTxConfig},
 };
 use alloy_consensus::{Eip658Value, Receipt, Transaction, TransactionEnvelope};
 use alloy_eips::{
@@ -174,8 +174,8 @@ pub struct AnvilBlockExecutor<'a, N: AnvilEvmNetwork> {
     pub(crate) evm: Evm<'a, TypesFor<N>>,
     /// State changes of the block.
     pub(crate) state: BlockStateAccumulator,
-    /// Inspector shared with the EVM.
-    pub(crate) inspector: SharedInspector<AnvilInspector>,
+    /// Inspector lent to the EVM for each transaction.
+    pub(crate) inspector: AnvilInspector,
     /// Parent block hash — needed for the EIP-2935 system call.
     parent_hash: B256,
     /// Canonical Ethereum consensus transitions, disabled for other networks.
@@ -219,14 +219,12 @@ impl<N: AnvilEvmNetwork> fmt::Debug for AnvilBlockExecutor<'_, N> {
 impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
     /// Creates an executor over `evm`, inspecting with `inspector`.
     pub(crate) fn new(
-        mut evm: Evm<'a, TypesFor<N>>,
+        evm: Evm<'a, TypesFor<N>>,
         inspector: AnvilInspector,
         parent_hash: B256,
         is_cancun: bool,
         ethereum_transitions: Option<EthereumBlockTransitions>,
     ) -> Self {
-        let inspector = SharedInspector::new(inspector);
-        evm.set_inspector(inspector.clone());
         let precompiles = evm.precompiles().addresses().into_iter().collect();
         Self {
             evm,
@@ -375,10 +373,10 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
                 .state_mut()
                 .set_bal_index(BlockAccessIndex::new(self.receipts.len() as u64 + 1));
         }
-        let result = match self.evm.transact(&evm_tx) {
+        let result = match self.evm.transact_with_inspector(&evm_tx, &mut self.inspector) {
             Ok(executed) => exec_result::<N>(executed.commit_to(&mut self.state)),
             Err(err) => {
-                self.inspector.borrow_mut().discard_transaction(inspector_config);
+                self.inspector.discard_transaction(inspector_config);
                 return Err(err.into());
             }
         };
@@ -420,7 +418,6 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
         let precompiles = &self.precompiles;
         let traces = self
             .inspector
-            .borrow_mut()
             .finish_transaction(inspector_config, |address| precompiles.contains(address));
         Ok(CommittedTx { result, traces })
     }

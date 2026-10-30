@@ -266,6 +266,7 @@ fn deserialize_snapshot_code<'de, D: Deserializer<'de>>(
 ///
 /// Like REVM's `DatabaseRef`, a missing account of a local database is reported as an existing
 /// empty account; [`EvmDb`] maps it to evm2's absent account where execution requires it.
+#[auto_impl::auto_impl(&, Box)]
 pub trait DatabaseRef: Debug {
     /// Returns the account at `address`, with its bytecode when available.
     fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>>;
@@ -278,42 +279,6 @@ pub trait DatabaseRef: Debug {
 
     /// Returns the hash of block `number`.
     fn block_hash_ref(&self, number: u64) -> DatabaseResult<B256>;
-}
-
-impl<T: DatabaseRef + ?Sized> DatabaseRef for &T {
-    fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
-        (**self).basic_ref(address)
-    }
-
-    fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
-        (**self).code_by_hash_ref(code_hash)
-    }
-
-    fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
-        (**self).storage_ref(address, index)
-    }
-
-    fn block_hash_ref(&self, number: u64) -> DatabaseResult<B256> {
-        (**self).block_hash_ref(number)
-    }
-}
-
-impl<T: DatabaseRef + ?Sized> DatabaseRef for Box<T> {
-    fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
-        (**self).basic_ref(address)
-    }
-
-    fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
-        (**self).code_by_hash_ref(code_hash)
-    }
-
-    fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
-        (**self).storage_ref(address, index)
-    }
-
-    fn block_hash_ref(&self, number: u64) -> DatabaseResult<B256> {
-        (**self).block_hash_ref(number)
-    }
 }
 
 /// The empty backing database of local state: every account exists and is empty.
