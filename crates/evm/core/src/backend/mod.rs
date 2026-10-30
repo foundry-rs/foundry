@@ -19,8 +19,8 @@
 //!    network state back into the active context. Dropping the EVM instead discards everything it
 //!    did, as for calls.
 //!
-//! [`Backend::inspect_call`] and [`Backend::inspect_commit`] wrap these steps for executions that
-//! need no backend access from their inspector.
+//! [`Backend::inspect_commit`] wraps these steps for executions that need no backend access from
+//! their inspector.
 
 use crate::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER},
@@ -426,19 +426,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         self.lifecycle.restore_persistent_warmth(warmth);
     }
 
-    /// Executes `tx` over the active context with `inspector` and discards its state.
-    pub fn inspect_call<'a>(
-        &self,
-        tx: &Recovered<TxFor<FEN>>,
-        inspector: impl Inspector<TypesFor<FEN>> + 'a,
-    ) -> eyre::Result<TxResultFor<FEN>> {
-        let mut evm: FoundryEvmFor<'a, FEN> = self.create_evm();
-        evm.set_inspector(inspector);
-        evm.ext_mut().for_next_transaction(tx);
-        let executed = evm.transact(tx).map_err(handler_error)?;
-        Ok(executed.result().clone())
-    }
-
     /// Executes `tx` over the active context with `inspector` and accepts its state.
     pub fn inspect_commit<'a>(
         &mut self,
@@ -702,11 +689,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         }
     }
 
-    /// Returns the remote fork identifier of `id`.
-    pub fn ensure_fork_id(&self, id: LocalForkId) -> eyre::Result<&ForkId> {
-        Ok(&self.fork_info(id)?.id)
-    }
-
     fn fork_info(&self, id: LocalForkId) -> eyre::Result<&ForkInfo> {
         self.lifecycle
             .forks()
@@ -828,7 +810,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             None
         };
         let db = ForkDb::new(backend, remote.context().source_chain_id);
-        self.lifecycle.roll_fork(evm, Some(id), db, env, phase)?;
+        self.lifecycle.roll_fork(evm, Some(id), db, env, None, phase)?;
         let block = Some(remote.number());
         self.set_fork_info(
             id,
@@ -854,7 +836,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let id = self.ensure_fork(id)?;
         let (db, env, cache, info, cursor, replayed) =
             self.prepare_roll_to_transaction(id, transaction, evm_env(evm).spec)?;
-        self.lifecycle.roll_fork_with(evm, Some(id), db, env, cache, phase)?;
+        self.lifecycle.roll_fork(evm, Some(id), db, env, cache, phase)?;
         self.set_fork_info(id, info);
         if let Some((position, cursor)) = cursor {
             self.retain_cursor(id, position, &cursor, Some(evm));

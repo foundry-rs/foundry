@@ -13,8 +13,8 @@ use std::{
 
 /// A clone-on-write [`Backend`].
 ///
-/// Reads and executions that discard their state ([`Backend::create_evm`],
-/// [`Backend::inspect_call`]) borrow the wrapped backend. The first mutable access, such as a
+/// Reads and executions that discard their state ([`Backend::create_evm`]) borrow the wrapped
+/// backend. The first mutable access, such as a
 /// cheatcode that switches forks, clones it and applies the pending test initialization, so the
 /// original backend is never modified.
 ///

@@ -172,7 +172,7 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
         + EvmTypesHost<
             SpecId: ExecutionSpec + Default + Debug + PartialEq + Send + Sync + Unpin,
             Tx: Typed2718 + Clone + Debug + Send + Sync,
-            BlockEnvExt: FoundryBlockExt,
+            BlockEnvExt: Copy + Debug + Default + Send + Sync + 'static,
             EvmExt: FoundryEvmExt<<Self::Types as EvmTypesHost>::Tx>,
             TxResultExt: FoundryTxResultExt,
         >;
@@ -299,20 +299,12 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
         EvmEnv::new(spec, carry_execution_policy(&current_default, &env.version, next), env.block)
     }
 
-    /// Switches `evm` to `spec`, keeping Foundry's execution toggles and limits.
+    /// Switches `evm` to `env`: its block, spec and chain ID, keeping Foundry's execution toggles
+    /// and limits.
     ///
     /// This rebuilds the dispatch tables, the transaction registry and the precompiles, so opcode
     /// and precompile availability follows the new spec. It must not be called while `evm` is
     /// executing.
-    fn set_execution_spec(&self, evm: &mut Evm<'_, Self::Types>, spec: SpecOf<Self>) {
-        let env = EvmEnv::new(spec, *evm.version(), *evm.block());
-        self.set_env(evm, env);
-    }
-
-    /// Switches `evm` to `env`: its block, spec and chain ID, keeping Foundry's execution toggles
-    /// and limits.
-    ///
-    /// Like [`Self::set_execution_spec`], this must not be called while `evm` is executing.
     fn set_env(&self, evm: &mut Evm<'_, Self::Types>, env: EvmEnv<Self::Types>) {
         let current = *evm.version();
         let current_default = self.version(evm.config_spec_id(), current.chain_id);

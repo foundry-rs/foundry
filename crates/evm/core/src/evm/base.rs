@@ -1,7 +1,7 @@
 //! Base on evm2, using `base-evm2`.
 
 use super::{
-    EvmEnv, FoundryBlockExt, FoundryDatabase, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork,
+    EvmEnv, FoundryDatabase, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork,
     FoundryTxResultExt, SendableExt, TxPayload,
 };
 use crate::constants::SYSTEM_PRECOMPILE_STUB;
@@ -10,9 +10,8 @@ use alloy_network::AnyRpcTransaction;
 use alloy_primitives::{Address, Bytes, KECCAK256_EMPTY};
 use base_common_network::Base;
 use base_evm2::{
-    BaseBlockEnvExt, BaseEvmExt, BaseEvmFactory, BaseEvmTypes, BaseSpecId, BaseTxEnvelope,
-    BaseTxResultExt, base_tx_registry, base_version,
-    precompiles::activation_admin_address_for_upgrade_by_chain_id,
+    BaseEvmExt, BaseEvmFactory, BaseEvmTypes, BaseSpecId, BaseTxEnvelope, BaseTxResultExt,
+    base_tx_registry, base_version, precompiles::activation_admin_address_for_upgrade_by_chain_id,
 };
 use evm2::{
     Evm, TxResult, Version, bytecode::Bytecode, evm::precompile::PrecompileProvider,
@@ -23,8 +22,6 @@ use foundry_evm_networks::{BASE_CODE_SENTINEL_ADDRESSES, is_base_precompile_acti
 /// Base EVM network.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BaseEvmNetwork;
-
-impl FoundryBlockExt for BaseBlockEnvExt {}
 
 // SAFETY: `BaseEvmExt` is `Send + Sync`, as asserted below, so clones share only thread-safe state.
 unsafe impl SendableExt for BaseEvmExt {}

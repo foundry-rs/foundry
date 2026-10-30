@@ -89,7 +89,7 @@ where
     assert_eq!(backend.storage(other, U256::from(1)).unwrap(), U256::from(4));
 
     // Calls discard their state; commits accept it.
-    assert!(backend.inspect_call(&store(0, 7), NoopInspector::default()).unwrap().status);
+    assert!(backend.create_evm().transact(&store(0, 7)).unwrap().result().status);
     assert_eq!(backend.storage(STORE_ADDRESS, U256::ZERO).unwrap(), U256::from(2));
     assert_eq!(backend.basic(caller).unwrap().unwrap().nonce, 0);
     assert!(backend.inspect_commit(&store(0, 7), NoopInspector::default()).unwrap().status);
@@ -99,7 +99,7 @@ where
     // A clone-on-write backend borrows until its first mutation, then leaves the original alone.
     let mut cow = CowBackend::new_borrowed(&backend);
     cow.initialize(caller, TxKind::Call(STORE_ADDRESS));
-    assert!(cow.inspect_call(&store(1, 8), NoopInspector::default()).unwrap().status);
+    assert!(cow.create_evm().transact(&store(1, 8)).unwrap().result().status);
     assert!(!cow.is_owned());
     assert!(cow.inspect_commit(&store(1, 8), NoopInspector::default()).unwrap().status);
     assert!(cow.is_owned());
@@ -169,10 +169,7 @@ where
     let rolled = db_with(&[(caller, ETHER)], 200);
     let block = rpc_block(vec![rpc_store_tx(caller, 0, 201), rpc_store_tx(caller, 1, 202)]);
     let cache = backend.replay_until(&rolled, env, &block, 1, None, CHAIN_ID).unwrap();
-    backend
-        .lifecycle
-        .roll_fork_with(&mut evm, Some(fork), rolled, env, Some(cache), boundary)
-        .unwrap();
+    backend.lifecycle.roll_fork(&mut evm, Some(fork), rolled, env, Some(cache), boundary).unwrap();
     assert_eq!((slot(&mut evm), nonce(&mut evm, caller)), (U256::from(201), 1));
     assert_eq!(balance(&mut evm, alloc), U256::from(9));
 
@@ -283,14 +280,14 @@ async fn fork_execution_scopes_release_their_registry() {
     };
     let env = EvmOpts::default().local_evm_env::<EthEvmNetwork>();
     let seed = Backend::<EthEvmNetwork>::spawn(Some(request.clone()), env).unwrap();
-    let initial = seed.ensure_fork_id(seed.active_fork_id().unwrap()).unwrap().clone();
+    let initial = seed.fork_info(seed.active_fork_id().unwrap()).unwrap().id.clone();
     let shared = seed.forks.get_fork(initial.clone()).unwrap().unwrap();
     let mut execution = seed.clone_with_fork_scope().unwrap();
     let inherited = execution.forks.get_fork(initial.clone()).unwrap().unwrap();
     assert!(Arc::ptr_eq(&shared.data(), &inherited.data()));
 
     let local = execution.create_fork(request).unwrap();
-    let local = execution.ensure_fork_id(local).unwrap().clone();
+    let local = execution.fork_info(local).unwrap().id.clone();
     assert!(execution.forks.get_fork(local.clone()).unwrap().is_some());
     assert!(seed.forks.get_fork(local.clone()).unwrap().is_none());
     let next = seed.clone_with_fork_scope().unwrap();
@@ -303,7 +300,7 @@ async fn fork_execution_scopes_release_their_registry() {
             evm_opts: EvmOpts { fork_url: Some(other.http_endpoint()), ..Default::default() },
         })
         .unwrap();
-    let unique = execution.ensure_fork_id(unique).unwrap().clone();
+    let unique = execution.fork_info(unique).unwrap().id.clone();
     let unique = execution.forks.get_fork(unique).unwrap().unwrap();
     let cache = Arc::downgrade(&unique.data());
     drop(unique);

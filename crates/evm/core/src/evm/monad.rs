@@ -1,8 +1,8 @@
 //! Monad on evm2, using `monad-evm2`.
 
 use super::{
-    EvmEnv, FoundryBlockExt, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork,
-    FoundryTxResultExt, SendableExt, TxPayload, eth_envelope_from_any_rpc, eth_tx,
+    EvmEnv, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork, FoundryTxResultExt, SendableExt,
+    TxPayload, eth_envelope_from_any_rpc, eth_tx,
 };
 use alloy_consensus::{TxLegacy, transaction::Recovered};
 use alloy_network::{AnyRpcTransaction, Ethereum};
@@ -17,7 +17,7 @@ use evm2::{
     registry::TxRegistry,
 };
 use monad_evm2::{
-    MonadBlockExt, MonadChainContext, MonadEvmExt, MonadEvmFactory, MonadEvmTypes, MonadHardfork,
+    MonadChainContext, MonadEvmExt, MonadEvmFactory, MonadEvmTypes, MonadHardfork,
     MonadPrecompiles, MonadTxResultExt, monad_memory_limit, monad_tx_registry, monad_version,
     protocol_system_call,
     reserve_balance::{reserve_account, sync_reserve_balance},
@@ -27,8 +27,6 @@ use monad_evm2::{
 /// Monad EVM network.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MonadEvmNetwork;
-
-impl FoundryBlockExt for MonadBlockExt {}
 
 // SAFETY: `MonadEvmExt` is `Send + Sync`, as asserted below, so clones share only thread-safe
 // state.

@@ -117,13 +117,6 @@ pub fn carry_execution_policy(
     next
 }
 
-/// Network-specific block environment fields.
-///
-/// Common block fields are public on [`BlockEnv`]; only extension fields need accessors.
-pub trait FoundryBlockExt: Copy + Debug + Default + Send + Sync + 'static {}
-
-impl FoundryBlockExt for () {}
-
 /// Per-EVM network state, such as OP L1 block info or Monad's reserve-balance context.
 pub trait FoundryEvmExt<Tx>: SendableExt + Debug + Default + 'static {
     /// Prepares the state for a standalone synthetic transaction.

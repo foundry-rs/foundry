@@ -126,22 +126,6 @@ where
     assert!(lifecycle.revert(&mut evm, first, remove, phase).is_none());
     assert!(lifecycle.revert(&mut evm, second, remove, phase).is_none(), "later snapshot dropped");
 
-    // A nested frame rolls back only when it fails.
-    let failed = nested_frame(&mut evm, |evm| {
-        evm.state_mut().storage_slot(&STORE_ADDRESS, U256::ZERO).unwrap().set(U256::from(99));
-        Err::<(), _>("boom")
-    });
-    assert!(failed.is_err());
-    assert_eq!(slot(&mut evm), U256::from(8));
-    nested_frame(&mut evm, |evm| {
-        evm.state_mut().storage_slot(&STORE_ADDRESS, U256::ZERO).unwrap().set(U256::from(98));
-        Ok::<_, ()>(())
-    })
-    .unwrap();
-    assert_eq!(slot(&mut evm), U256::from(98));
-    evm.state_mut().clear_transaction_state();
-    assert_eq!(slot(&mut evm), U256::from(8));
-
     // A nested transaction sees in-flight writes and merges its changes as journaled writes of
     // the running transaction; a failed one only keeps its nonce increment and fee payment.
     let checkpoint = evm.state().checkpoint();
@@ -194,7 +178,7 @@ where
 
     // Rolling drops the fork's own writes but keeps persistent accounts.
     let rolled = db_with(&[(caller, ETHER)], 200);
-    lifecycle.roll_fork(&mut evm, None, rolled, fork_env, phase).unwrap();
+    lifecycle.roll_fork(&mut evm, None, rolled, fork_env, None, phase).unwrap();
     assert_eq!(slot(&mut evm), U256::from(200));
     assert_eq!(nonce(&mut evm, caller), 0);
     assert_eq!(balance(&mut evm, persistent), U256::from(6));
@@ -321,7 +305,8 @@ fn spec_changes_keep_foundry_policy() {
     let stored = evm.state_mut().storage_slot_untracked(&delegated, &U256::ZERO).unwrap();
     assert_eq!(stored, U256::from(42));
 
-    factory.set_execution_spec(&mut evm, SpecId::PRAGUE);
+    let env = EvmEnv::new(SpecId::PRAGUE, *evm.version(), *evm.block());
+    factory.set_env(&mut evm, env);
 
     assert_eq!(evm.config_spec_id(), SpecId::PRAGUE);
     assert!(evm.feature(EvmFeatures::EIP7623), "fork features follow the new spec");

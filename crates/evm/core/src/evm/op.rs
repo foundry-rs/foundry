@@ -1,8 +1,8 @@
 //! OP Stack on evm2, using `op-evm2`.
 
 use super::{
-    EvmEnv, FoundryBlockExt, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork,
-    FoundryTxResultExt, SendableExt, TxPayload,
+    EvmEnv, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork, FoundryTxResultExt, SendableExt,
+    TxPayload,
 };
 use alloy_consensus::transaction::Recovered;
 use alloy_eips::Encodable2718;
@@ -12,15 +12,13 @@ use evm2::{TxResult, Version, evm::precompile::PrecompileProvider, registry::TxR
 use op_alloy_consensus::OpTxEnvelope as OpConsensusTxEnvelope;
 use op_alloy_network::Optimism;
 use op_evm2::{
-    OpBlockEnvExt, OpEvmExt, OpEvmFactory, OpEvmTypes, OpPrecompiles, OpSpecId, OpTxEnvelope,
-    OpTxResultExt, OpTypedTx, TxDeposit, op_tx_registry, op_version,
+    OpEvmExt, OpEvmFactory, OpEvmTypes, OpPrecompiles, OpSpecId, OpTxEnvelope, OpTxResultExt,
+    OpTypedTx, TxDeposit, op_tx_registry, op_version,
 };
 
 /// OP Stack EVM network.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OpEvmNetwork;
-
-impl FoundryBlockExt for OpBlockEnvExt {}
 
 // SAFETY: `OpEvmExt` is `Send + Sync`, as asserted below, so clones share only thread-safe state.
 unsafe impl SendableExt for OpEvmExt {}

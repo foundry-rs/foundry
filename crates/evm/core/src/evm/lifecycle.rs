@@ -574,20 +574,10 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
     /// The fork starts over from the initial fork state, keeping persistent accounts and accounts
     /// created on the fork. Rolling the running context also keeps other loaded accounts, but
     /// reloads only their info from the new database, discarding their pre-roll storage slots.
+    ///
+    /// With `cache`, the fork resumes with it as its accepted state, such as state replayed up to a
+    /// transaction.
     pub fn roll_fork(
-        &mut self,
-        evm: &mut Evm<'_, F::Types>,
-        id: Option<U256>,
-        db: impl BackingDb,
-        env: EvmEnv<F::Types>,
-        phase: ExecutionPhase,
-    ) -> eyre::Result<()> {
-        self.roll_fork_with(evm, id, db, env, None, phase)
-    }
-
-    /// Like [`Self::roll_fork`], but resumes the fork with `cache` as its accepted state, such as
-    /// state replayed up to a transaction.
-    pub fn roll_fork_with(
         &mut self,
         evm: &mut Evm<'_, F::Types>,
         id: Option<U256>,
@@ -1359,20 +1349,6 @@ pub unsafe fn release_inspector<'b, T: EvmTypes>(mut evm: Evm<'_, T>) -> Evm<'b,
     // SAFETY: The inspector is cleared and the caller guarantees the databases and precompiles
     // outlive `'b`. The value is moved out exactly once and the original is never dropped.
     unsafe { std::ptr::read((&raw const *evm).cast::<Evm<'b, T>>()) }
-}
-
-/// Runs `f` as a nested frame of the running transaction: its writes are rolled back if it fails.
-pub fn nested_frame<T: EvmTypes, R, E>(
-    evm: &mut Evm<'_, T>,
-    f: impl FnOnce(&mut Evm<'_, T>) -> Result<R, E>,
-) -> Result<R, E> {
-    let checkpoint = evm.state().checkpoint();
-    let result = f(evm);
-    if result.is_err() {
-        let features = evm.version().features;
-        evm.state_mut().rollback(checkpoint, features);
-    }
-    result
 }
 
 /// Applies a nested transaction's changes to the running transaction's `state` as journaled
