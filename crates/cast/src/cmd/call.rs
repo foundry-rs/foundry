@@ -655,7 +655,7 @@ impl CallArgs {
 
             let trace_requirements = TraceRequirements::none()
                 .with_calls(true)
-                .with_debug(debug)
+                .with_debug_recording(debug)
                 .with_decode_internal(if tracing.decode_internal {
                     InternalTraceMode::Full
                 } else {

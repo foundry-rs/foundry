@@ -4876,6 +4876,7 @@ impl<N: Network> Backend<N> {
         if rpc_url_was_provided {
             staged_config.fork_chain_id = None;
         }
+        staged_config.warn_if_fork_headers_withheld(target_rpc_url);
         let configured_endpoint_is_anvil = staged_config.fork_endpoint_is_anvil
             && staged_config.fork_urls.contains(target_rpc_url);
         let cached_endpoint_is_anvil = previous_source.as_ref().is_some_and(|source| {

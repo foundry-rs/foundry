@@ -50,8 +50,8 @@ static HTTP_URL_RE: LazyLock<Regex> =
 pub enum InnerTransport {
     /// HTTP transport with lazy MPP 402 handling.
     ///
-    /// For known Tempo endpoints, the MPP layer additionally runs the
-    /// `wallet.tempo.xyz` device-code flow on a 402 when no local access key
+    /// Unless MPP is disabled, for known Tempo endpoints the MPP layer additionally
+    /// runs the `wallet.tempo.xyz` device-code flow on a 402 when no local access key
     /// is configured (see [`crate::tempo::ensure_access_key`]).
     Http(LazyMppHttpTransport),
     /// WebSocket transport
@@ -111,6 +111,8 @@ pub struct RuntimeTransport {
     accept_invalid_certs: bool,
     /// Whether to disable automatic proxy detection.
     no_proxy: bool,
+    /// Whether to disable MPP: no `MPP_API_KEY` `x-api-key` header and no 402 payments.
+    no_mpp: bool,
 }
 
 /// A builder for [RuntimeTransport].
@@ -122,6 +124,7 @@ pub struct RuntimeTransportBuilder {
     timeout: std::time::Duration,
     accept_invalid_certs: bool,
     no_proxy: bool,
+    no_mpp: bool,
 }
 
 impl RuntimeTransportBuilder {
@@ -134,6 +137,7 @@ impl RuntimeTransportBuilder {
             timeout: REQUEST_TIMEOUT,
             accept_invalid_certs: false,
             no_proxy: false,
+            no_mpp: false,
         }
     }
 
@@ -170,6 +174,12 @@ impl RuntimeTransportBuilder {
         self
     }
 
+    /// Set whether to disable MPP: no `MPP_API_KEY` `x-api-key` header and no 402 payments.
+    pub const fn no_mpp(mut self, no_mpp: bool) -> Self {
+        self.no_mpp = no_mpp;
+        self
+    }
+
     /// Builds the [RuntimeTransport] and returns it in a disconnected state.
     /// The runtime transport will then connect when the first request happens.
     pub fn build(self) -> RuntimeTransport {
@@ -181,6 +191,7 @@ impl RuntimeTransportBuilder {
             timeout: self.timeout,
             accept_invalid_certs: self.accept_invalid_certs,
             no_proxy: self.no_proxy,
+            no_mpp: self.no_mpp,
         }
     }
 }
@@ -239,7 +250,8 @@ impl RuntimeTransport {
 
         // If MPP_API_KEY is set, attach it as x-api-key for gated MPP proxies.
         // Does not override an explicit x-api-key header from the user.
-        if !headers.contains_key(HeaderName::from_static("x-api-key"))
+        if !self.no_mpp
+            && !headers.contains_key(HeaderName::from_static("x-api-key"))
             && let Ok(api_key) = std::env::var("MPP_API_KEY")
         {
             let api_key = api_key.trim();
@@ -262,6 +274,23 @@ impl RuntimeTransport {
             .timeout(self.timeout)
             .danger_accept_invalid_certs(self.accept_invalid_certs);
 
+        // Custom headers and `x-api-key` may contain credentials that reqwest does not strip on
+        // redirects, so only same-origin redirects are followed when they are sent.
+        if !self.headers.is_empty() || headers.contains_key(HeaderName::from_static("x-api-key")) {
+            client_builder =
+                client_builder.redirect(reqwest::redirect::Policy::custom(|attempt| {
+                    if attempt
+                        .previous()
+                        .last()
+                        .is_some_and(|previous| previous.origin() != attempt.url().origin())
+                    {
+                        attempt.error("cross-origin RPC redirects are not allowed")
+                    } else {
+                        reqwest::redirect::Policy::default().redirect(attempt)
+                    }
+                }));
+        }
+
         // Disable automatic proxy detection if requested. This helps in sandboxed environments
         // (e.g., Cursor IDE sandbox, macOS App Sandbox) where system proxy detection via
         // SCDynamicStore causes crashes. See: https://github.com/foundry-rs/foundry/issues/12733
@@ -283,13 +312,18 @@ impl RuntimeTransport {
     fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let headers = self.reqwest_headers()?;
         let client = self.reqwest_client_with_headers(headers.clone())?;
-        Ok(InnerTransport::Http(LazyMppHttpTransport::lazy(client, self.url.clone(), headers)))
+        Ok(InnerTransport::Http(LazyMppHttpTransport::lazy(
+            client,
+            self.url.clone(),
+            headers,
+            !self.no_mpp,
+        )))
     }
 
     /// Connects to a WS transport.
     ///
     /// Uses the canonical Alloy MPP WebSocket transport when the endpoint is a
-    /// known MPP service.
+    /// known MPP service; it only pays challenges when MPP is not disabled.
     /// Otherwise falls back to alloy's plain [`WsConnect`] with zero overhead.
     async fn connect_ws(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let auth = self
@@ -300,7 +334,7 @@ impl RuntimeTransport {
             .map_err(|e| RuntimeTransportError::InvalidJwt(e.to_string()))?;
 
         let service = if is_known_mpp_endpoint(&self.url) {
-            let mut ws = lazy_mpp_ws_connect(&self.url);
+            let mut ws = lazy_mpp_ws_connect(&self.url, !self.no_mpp);
             if let Some(auth) = auth {
                 ws = ws.with_auth(auth);
             }

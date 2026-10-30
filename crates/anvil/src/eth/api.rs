@@ -698,6 +698,7 @@ impl<N: Network> EthApi<N> {
         let _reset = self.reset_lock.lock().await;
         let staged_fork = if let Some(fork) = self.backend.get_fork() {
             let mut validation_config = self.backend.node_config.read().await.clone();
+            validation_config.warn_if_fork_headers_withheld(&url);
             let (expected_identity, block_number, block_hash) = {
                 let config = fork.config.read();
                 (config.endpoint_identity, config.block_number, config.block_hash)
