@@ -274,7 +274,7 @@ pub fn set_execution_context(context: ForgeContext) {
 }
 
 fn env(key: &str, ty: &DynSolType) -> Result {
-    get_env(key).and_then(|val| string::parse(&val, ty).map_err(map_env_err(key, &val)))
+    get_env(key).and_then(|val| string::parse(&val, ty).map_err(|_| parse_error(key, ty)))
 }
 
 fn env_default<T: SolValue>(key: &str, default: &T, ty: &DynSolType) -> Result {
@@ -287,12 +287,17 @@ fn env_default<T: SolValue>(key: &str, default: &T, ty: &DynSolType) -> Result {
     if val.is_empty() && !matches!(ty, DynSolType::String) {
         return Ok(default.abi_encode());
     }
-    string::parse(&val, ty).map_err(map_env_err(key, &val))
+    string::parse(&val, ty).map_err(|_| parse_error(key, ty))
 }
 
 fn env_array(key: &str, delim: &str, ty: &DynSolType) -> Result {
     get_env(key).and_then(|val| {
-        string::parse_array(val.split(delim).map(str::trim), ty).map_err(map_env_err(key, &val))
+        let values = || val.split(delim).map(str::trim);
+        string::parse_array(values(), ty).map_err(|_| {
+            // Only the position of the first element that fails to parse is reported.
+            let index = values().position(|value| string::parse_value(value, ty).is_err());
+            fmt_err!("failed parsing ${key}[{}] as type `{ty}`", index.unwrap_or_default())
+        })
     })
 }
 
@@ -320,19 +325,11 @@ fn get_env(key: &str) -> Result<String> {
     }
 }
 
-/// Converts the error message of a failed parsing attempt to a more user-friendly message that
-/// doesn't leak the value.
-fn map_env_err<'a>(key: &'a str, value: &'a str) -> impl FnOnce(Error) -> Error + 'a {
-    move |e| {
-        // failed parsing <value> as type `uint256`: parser error:
-        // <value>
-        //   ^
-        //   expected at least one digit
-        let mut e = e.to_string();
-        e = e.replacen(&format!("\"{value}\""), &format!("${key}"), 1);
-        e = e.replacen(&format!("\n{value}\n"), &format!("\n${key}\n"), 1);
-        Error::from(e)
-    }
+/// Returns the error for a value of `key` that does not parse as `ty`.
+///
+/// The parser's own message is dropped because it quotes the value, which may be a secret.
+fn parse_error(key: &str, ty: &DynSolType) -> Error {
+    fmt_err!("failed parsing ${key} as type `{ty}`")
 }
 
 #[cfg(test)]
@@ -402,7 +399,34 @@ mod tests {
         }
 
         let err = env(key, &DynSolType::Uint(256)).unwrap_err().to_string();
-        assert_eq!(err.matches("$parse_env_uint").count(), 2, "{err:?}");
+        assert_eq!(err, "failed parsing $parse_env_uint as type `uint256`");
+        unsafe {
+            env::remove_var(key);
+        }
+    }
+
+    #[test]
+    fn parse_env_errors_do_not_leak_values() {
+        let key = "parse_env_errors_do_not_leak_values";
+        let uint = DynSolType::Uint(256);
+        for (value, index) in [
+            ("1, secretvalue", 1),
+            ("1,\"1\"secret", 1),
+            ("ff,0x", 0),
+            ("secret\\value", 0),
+            ("secret\nvalue", 0),
+            ("1,secret\nvalue", 1),
+        ] {
+            unsafe {
+                env::set_var(key, value);
+            }
+            let scalar = env(key, &uint).unwrap_err().to_string();
+            assert_eq!(scalar, format!("failed parsing ${key} as type `uint256`"));
+            let array = env_array(key, ",", &uint).unwrap_err().to_string();
+            assert_eq!(array, format!("failed parsing ${key}[{index}] as type `uint256`"));
+            let array_default = env_array_default(key, ",", &7u64, &uint).unwrap_err().to_string();
+            assert_eq!(array_default, array);
+        }
         unsafe {
             env::remove_var(key);
         }
