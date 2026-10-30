@@ -111,8 +111,8 @@ pub struct RuntimeTransport {
     accept_invalid_certs: bool,
     /// Whether to disable automatic proxy detection.
     no_proxy: bool,
-    /// Whether to skip the `MPP_API_KEY` fallback for the `x-api-key` header.
-    no_mpp_api_key: bool,
+    /// Whether to disable MPP: no `MPP_API_KEY` `x-api-key` header and no 402 payments.
+    no_mpp: bool,
 }
 
 /// A builder for [RuntimeTransport].
@@ -124,7 +124,7 @@ pub struct RuntimeTransportBuilder {
     timeout: std::time::Duration,
     accept_invalid_certs: bool,
     no_proxy: bool,
-    no_mpp_api_key: bool,
+    no_mpp: bool,
 }
 
 impl RuntimeTransportBuilder {
@@ -137,7 +137,7 @@ impl RuntimeTransportBuilder {
             timeout: REQUEST_TIMEOUT,
             accept_invalid_certs: false,
             no_proxy: false,
-            no_mpp_api_key: false,
+            no_mpp: false,
         }
     }
 
@@ -174,9 +174,9 @@ impl RuntimeTransportBuilder {
         self
     }
 
-    /// Set whether to skip the `MPP_API_KEY` fallback for the `x-api-key` header.
-    pub const fn no_mpp_api_key(mut self, no_mpp_api_key: bool) -> Self {
-        self.no_mpp_api_key = no_mpp_api_key;
+    /// Set whether to disable MPP: no `MPP_API_KEY` `x-api-key` header and no 402 payments.
+    pub const fn no_mpp(mut self, no_mpp: bool) -> Self {
+        self.no_mpp = no_mpp;
         self
     }
 
@@ -191,7 +191,7 @@ impl RuntimeTransportBuilder {
             timeout: self.timeout,
             accept_invalid_certs: self.accept_invalid_certs,
             no_proxy: self.no_proxy,
-            no_mpp_api_key: self.no_mpp_api_key,
+            no_mpp: self.no_mpp,
         }
     }
 }
@@ -250,7 +250,7 @@ impl RuntimeTransport {
 
         // If MPP_API_KEY is set, attach it as x-api-key for gated MPP proxies.
         // Does not override an explicit x-api-key header from the user.
-        if !self.no_mpp_api_key
+        if !self.no_mpp
             && !headers.contains_key(HeaderName::from_static("x-api-key"))
             && let Ok(api_key) = std::env::var("MPP_API_KEY")
         {
@@ -312,7 +312,12 @@ impl RuntimeTransport {
     fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let headers = self.reqwest_headers()?;
         let client = self.reqwest_client_with_headers(headers.clone())?;
-        Ok(InnerTransport::Http(LazyMppHttpTransport::lazy(client, self.url.clone(), headers)))
+        Ok(InnerTransport::Http(LazyMppHttpTransport::lazy(
+            client,
+            self.url.clone(),
+            headers,
+            !self.no_mpp,
+        )))
     }
 
     /// Connects to a WS transport.

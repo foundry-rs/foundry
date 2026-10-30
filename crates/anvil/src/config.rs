@@ -288,7 +288,7 @@ pub struct NodeConfig {
     /// headers to use with fork RPC endpoints
     pub fork_headers: Vec<String>,
     /// Fork URLs configured at startup. Unlike `fork_urls`, these do not change when the fork is
-    /// switched over RPC, so only their origins receive `fork_headers` and `MPP_API_KEY`.
+    /// switched over RPC, so only their origins receive `fork_headers` and use MPP.
     pub trusted_fork_urls: Vec<String>,
     /// specifies chain id for cache to skip fetching from remote in offline-start mode
     pub fork_chain_id: Option<U256>,
@@ -1733,8 +1733,8 @@ impl NodeConfig {
             .wrap_err("failed to establish provider to fork url")
     }
 
-    /// Returns the fork provider builder for `eth_rpc_url`, which only carries `fork_headers` and
-    /// `MPP_API_KEY` when the URL is trusted.
+    /// Returns the fork provider builder for `eth_rpc_url`, which only sends `fork_headers` and
+    /// `MPP_API_KEY`, and only pays MPP challenges, when the URL is trusted.
     fn fork_provider_builder(&self, eth_rpc_url: &str) -> ProviderBuilder {
         let trusted = self.is_trusted_fork_url(eth_rpc_url);
         ProviderBuilder::new(eth_rpc_url)
@@ -1743,11 +1743,12 @@ impl NodeConfig {
             .compute_units_per_second(self.compute_units_per_second)
             .max_retry(self.fork_request_retries)
             .headers(if trusted { self.fork_headers.clone() } else { Vec::new() })
-            .no_mpp_api_key(!trusted)
+            .no_mpp(!trusted)
     }
 
-    /// Returns whether `url` shares an origin with a configured fork URL. Fork headers and
-    /// `MPP_API_KEY` are only sent to such URLs, so a URL chosen over RPC cannot receive them.
+    /// Returns whether `url` shares an origin with a configured fork URL. Fork headers,
+    /// `MPP_API_KEY` and MPP payments are only used with such URLs, so a URL chosen over RPC cannot
+    /// receive them.
     fn is_trusted_fork_url(&self, url: &str) -> bool {
         // Compare the endpoints the provider actually connects to.
         let origin =
@@ -1781,7 +1782,7 @@ impl NodeConfig {
                 encoded.extend_from_slice(part.as_bytes());
             }
         }
-        // Untrusted URLs do not receive `MPP_API_KEY` either. Only they are marked, so trusted
+        // Untrusted URLs do not use MPP either. Only they are marked, so trusted
         // sources keep their existing cache identity.
         if !trusted {
             encoded.push(0);

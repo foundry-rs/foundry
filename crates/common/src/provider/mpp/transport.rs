@@ -44,9 +44,16 @@ const MAX_MPP_SESSION_DEPOSIT: u128 = 1_000_000;
 pub struct LazyMppHttpTransport(MppHttpTransport<LazyAccountsProvider>);
 
 impl LazyMppHttpTransport {
-    /// Create a transport that opens Tempo Accounts only after a paid challenge.
-    pub fn lazy(client: reqwest::Client, url: Url, headers: reqwest::header::HeaderMap) -> Self {
-        let provider = LazyAccountsProvider::new(url.to_string());
+    /// Create a transport that opens Tempo Accounts only after a paid challenge. Without
+    /// `payments`, 402 challenges are never paid and no funding flow is started.
+    pub fn lazy(
+        client: reqwest::Client,
+        url: Url,
+        headers: reqwest::header::HeaderMap,
+        payments: bool,
+    ) -> Self {
+        let provider =
+            LazyAccountsProvider { payments, ..LazyAccountsProvider::new(url.to_string()) };
         Self(
             MppHttpTransport::new(client, url, provider)
                 .with_headers(headers)
@@ -76,9 +83,9 @@ impl Service<RequestPacket> for LazyMppHttpTransport {
         Box::pin(async move {
             match transport.call(request).await {
                 Err(error) => {
-                    let Some(problem) = insufficient_balance_details(&error)
-                        .filter(|problem| problem.problem_type.ends_with("/insufficient-balance"))
-                    else {
+                    let Some(problem) = insufficient_balance_details(&error).filter(|problem| {
+                        provider.payments && problem.problem_type.ends_with("/insufficient-balance")
+                    }) else {
                         return Err(error);
                     };
                     let context = provider.take_funding_context(problem.challenge_id.as_deref());
@@ -136,6 +143,8 @@ pub struct LazyAccountsProvider {
     inner: Arc<Mutex<HashMap<Option<u64>, TempoAccountsProvider>>>,
     funding_by_challenge: Arc<Mutex<HashMap<String, FundingContext>>>,
     origin: String,
+    /// Whether 402 challenges from `origin` may be paid.
+    payments: bool,
 }
 
 impl fmt::Debug for LazyAccountsProvider {
@@ -152,6 +161,7 @@ impl LazyAccountsProvider {
             inner: Arc::new(Mutex::new(HashMap::new())),
             funding_by_challenge: Arc::new(Mutex::new(HashMap::new())),
             origin,
+            payments: true,
         }
     }
 
@@ -262,7 +272,7 @@ impl LazyAccountsProvider {
 
 impl PaymentProvider for LazyAccountsProvider {
     fn supports(&self, method: &str, intent: &str) -> bool {
-        method == "tempo" && matches!(intent, "session" | "charge")
+        self.payments && method == "tempo" && matches!(intent, "session" | "charge")
     }
 
     async fn pay(&self, challenge: &PaymentChallenge) -> Result<PaymentCredential, MppError> {
@@ -358,7 +368,7 @@ impl PaymentProvider for LazyAccountsProvider {
     }
 
     fn accept_payment_header(&self) -> Option<String> {
-        Some("tempo/session, tempo/charge;q=0.5".to_owned())
+        self.payments.then(|| "tempo/session, tempo/charge;q=0.5".to_owned())
     }
 }
 
@@ -568,6 +578,12 @@ mod tests {
             provider.accept_payment_header().as_deref(),
             Some("tempo/session, tempo/charge;q=0.5")
         );
+
+        // Endpoints without payments must not advertise or accept any challenge.
+        let provider = LazyAccountsProvider { payments: false, ..provider };
+        assert_eq!(provider.accept_payment_header(), None);
+        assert!(!provider.supports("tempo", "session"));
+        assert!(!provider.supports("tempo", "charge"));
     }
 
     #[test]
