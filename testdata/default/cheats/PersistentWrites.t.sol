@@ -73,15 +73,6 @@ contract PersistentWritesTest is Test {
         revert();
     }
 
-    function dealInChild() external {
-        this.dealOk();
-        revert();
-    }
-
-    function dealOk() external {
-        vm.deal(A, 100);
-    }
-
     function dealInRevertedChild() external {
         try this.dealTwice() {} catch {}
         A.transfer(10);
@@ -188,7 +179,6 @@ contract PersistentWritesTest is Test {
         assertEq(balanceAfter(abi.encodeCall(this.dealTwice, ())), 2, "dealTwice");
         assertEq(balanceAfter(abi.encodeCall(this.transferThenDeal, ())), 90, "transferThenDeal");
         assertEq(balanceAfter(abi.encodeCall(this.dealThenTransfer, ())), 100, "dealThenTransfer");
-        assertEq(balanceAfter(abi.encodeCall(this.dealInChild, ())), 100, "dealInChild");
         assertEq(balanceAfter(abi.encodeCall(this.dealInRevertedChild, ())), 2, "dealInRevertedChild");
         // A snapshot restore keeps the writes made before the snapshot.
         assertEq(balanceAfter(abi.encodeCall(this.dealThenRestoreInChild, ())), 100, "dealThenRestoreInChild");

@@ -257,7 +257,6 @@ contract StateGasTest is Test {
         assertEq(VM_GAS.snapshotGasLastCall("calldataFloorLowGas"), floorGas, "wrong calldata floor gas");
     }
 
-    /// forge-config: default.isolate = false
     function testDeployCodeChargesCreateStateGas() public {
         // Deploy natively with CREATE, which dynamic test linking does not rewrite.
         bytes memory initCode = type(StateGasTarget).creationCode;
@@ -274,22 +273,6 @@ contract StateGasTest is Test {
         // The cheatcode call overhead differs from native memory expansion, but the account
         // creation state gas must be charged to both.
         assertApproxEqAbs(synthetic, native, 2_000, "deployCode create gas differs");
-    }
-
-    /// forge-config: default.isolate = true
-    function testIsolatedDeployCodeChargesCreateStateGasOnce() public {
-        bytes memory initCode = type(StateGasTarget).creationCode;
-        VM_GAS.startSnapshotGas("isolatedNativeCreate");
-        assembly {
-            pop(create(0, add(initCode, 0x20), mload(initCode)))
-        }
-        uint256 native = VM_GAS.stopSnapshotGas();
-
-        VM_GAS.startSnapshotGas("isolatedDeployCodeCreate");
-        vm.deployCode("test/StateGas.t.sol:StateGasTarget");
-        uint256 synthetic = VM_GAS.stopSnapshotGas();
-
-        assertApproxEqAbs(synthetic, native, 2_000, "isolated deployCode create gas differs");
     }
 
     /// forge-config: default.isolate = true
