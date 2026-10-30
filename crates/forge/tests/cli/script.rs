@@ -9598,3 +9598,53 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 ...
 "#]]);
 }
+
+// `--arg NAME=VALUE` matches the script function's parameter names, in any order, and missing
+// arguments take the values of `@custom:defaults`.
+#[forgetest_init]
+fn script_named_arguments_with_defaults(prj: _, cmd: _) {
+    let script = prj.add_source(
+        "Named.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract NamedArgs is Script {
+    /// @param chain Chain name
+    /// @param capacity Rate limit capacity in wei
+    /// @param rate Refill rate in wei per second
+    /// @custom:defaults capacity=1000 rate=7
+    function run(string memory chain, uint256 capacity, uint256 rate) external pure {
+        console.log(chain, capacity, rate);
+    }
+}"#,
+    );
+    let target = format!("{}:NamedArgs", script.display());
+
+    cmd.args(["script", &target, "--arg", "rate=9", "--arg", "chain=sepolia"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+== Logs ==
+  sepolia 1000 9
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["script", &target, "--arg", "chian=sepolia"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: unknown argument `chian`, missing argument `chain` for run(string,uint256,uint256):
+  chain  string  Chain name
+  capacity  uint256  Rate limit capacity in wei (default 1000)
+  rate  uint256  Refill rate in wei per second (default 7)
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["script", &target, "sepolia", "--arg", "rate=9"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+error: the argument '[ARGS]...' cannot be used with '--arg <NAME=VALUE>'
+...
+"#]]);
+}
