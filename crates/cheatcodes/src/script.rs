@@ -269,6 +269,24 @@ impl Cheatcode for startBroadcast_2Call {
     }
 }
 
+impl Cheatcode for setExitCodeCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { code } = self;
+        if !matches!(
+            crate::env::current_execution_context(),
+            Some(
+                ForgeContext::ScriptDryRun
+                    | ForgeContext::ScriptBroadcast
+                    | ForgeContext::ScriptResume
+            )
+        ) {
+            bail!("only available in `forge script`");
+        }
+        ccx.state.exit_code = Some(*code);
+        Ok(Default::default())
+    }
+}
+
 impl Cheatcode for stopBroadcastCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;

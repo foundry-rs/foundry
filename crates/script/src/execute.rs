@@ -150,6 +150,9 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
             .await;
         }
 
+        if let Some(code) = result.exit_code {
+            let _ = self.args.exit_code.set(code);
+        }
         Ok(ExecutedState {
             args: self.args,
             script_config: self.script_config,
@@ -186,6 +189,7 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
             setup_result.returned = script_result.returned;
             setup_result.exit_reason = script_result.exit_reason;
             setup_result.breakpoints = script_result.breakpoints;
+            setup_result.exit_code = script_result.exit_code.or(setup_result.exit_code);
 
             match (&mut setup_result.transactions, script_result.transactions) {
                 (Some(txs), Some(new_txs)) => {

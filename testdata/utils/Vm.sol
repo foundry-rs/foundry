@@ -550,6 +550,7 @@ interface Vm {
     function setBlockhash(uint256 blockNumber, bytes32 blockHash) external;
     function setEnv(string calldata name, string calldata value) external;
     function setEvmVersion(string calldata evm) external;
+    function setExitCode(uint8 code) external;
     function setLogoURI(address token, string calldata newLogoURI) external;
     function setNonce(address account, uint64 newNonce) external;
     function setNonceUnsafe(address account, uint64 newNonce) external;

@@ -9598,3 +9598,118 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 ...
 "#]]);
 }
+
+const EXIT_CODE_SCRIPTS: &str = r#"
+import "forge-std/Script.sol";
+import "forge-std/Test.sol";
+
+interface ExitVm {
+    function setExitCode(uint8 code) external;
+}
+
+ExitVm constant EXIT_VM = ExitVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+contract Drift is Script {
+    function run() external {
+        console.log("drift found");
+        EXIT_VM.setExitCode(2);
+    }
+}
+
+contract SetUpCode is Script {
+    function setUp() public {
+        EXIT_VM.setExitCode(3);
+    }
+
+    function run() external {}
+
+    function overrides() external {
+        EXIT_VM.setExitCode(4);
+    }
+}
+
+contract RevertsAfter is Script {
+    function run() external {
+        EXIT_VM.setExitCode(2);
+        revert("broken");
+    }
+}
+
+contract Counter {
+    uint256 public number;
+}
+
+contract DeployThenCode is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Counter();
+        vm.stopBroadcast();
+        EXIT_VM.setExitCode(5);
+    }
+}
+
+contract ExitCodeInTest is Test {
+    function test_setExitCode() public {
+        EXIT_VM.setExitCode(2);
+    }
+}
+"#;
+
+// `vm.setExitCode` sets the exit code of `forge script` once the run succeeds.
+#[forgetest_init]
+async fn script_set_exit_code(prj: _, cmd: _) {
+    let path = prj.add_source("ExitCode.s.sol", EXIT_CODE_SCRIPTS);
+    let target = |name: &str| format!("{}:{name}", path.display());
+
+    // A dry run, in text and JSON mode.
+    cmd.args(["script", &target("Drift")]).assert_code(2).stdout_eq(str![[r#"
+...
+Script ran successfully.
+...
+== Logs ==
+  drift found
+...
+"#]]);
+    cmd.forge_fuse().args(["script", &target("Drift"), "--json"]).assert_code(2);
+
+    // Set in `setUp`, and overridden by the script function.
+    cmd.forge_fuse().args(["script", &target("SetUpCode")]).assert_code(3);
+    cmd.forge_fuse().args(["script", &target("SetUpCode"), "--sig", "overrides()"]).assert_code(4);
+
+    // A reverting script keeps forge's own failure.
+    cmd.forge_fuse().args(["script", &target("RevertsAfter")]).assert_code(1).stderr_eq(str![[
+        r#"
+Error: script failed: broken
+
+"#
+    ]]);
+
+    // After a broadcast, the code is applied once the transactions are sent and saved.
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.forge_fuse()
+        .args([
+            "script",
+            &target("DeployThenCode"),
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--broadcast",
+            "--private-key",
+            "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        ])
+        .assert_code(5)
+        .stdout_eq(str![[r#"
+...
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+...
+"#]]);
+    assert!(prj.root().join("broadcast/ExitCode.s.sol/31337/run-latest.json").exists());
+
+    // Outside `forge script` the cheatcode is an error.
+    cmd.forge_fuse().args(["test", "--mc", "ExitCodeInTest"]).assert_failure().stdout_eq(str![[
+        r#"
+...
+[FAIL: vm.setExitCode: only available in `forge script`] test_setExitCode() ([GAS])
+...
+"#
+    ]]);
+}
