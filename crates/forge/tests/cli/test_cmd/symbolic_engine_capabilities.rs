@@ -331,6 +331,177 @@ Ran 1 test for test/CancunTransient.t.sol:CancunTransient
 "#]]);
 }
 
+// With call isolation, each CALL or CREATE made by the test runs as its own
+// transaction: it starts with empty transient storage, its transient writes end
+// with it, and a CALL increments the test's nonce even when it fails. A
+// STATICCALL is not isolated. Without isolation, every check passes.
+#[forgetest_init]
+fn symbolic_isolated_calls_are_transactions(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_isolated_calls_are_transactions");
+
+    prj.add_test(
+        "SymbolicIsolation.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract TStore {
+    function set() external {
+        assembly {
+            tstore(0, 1)
+        }
+    }
+
+    function get() external view returns (uint256 v) {
+        assembly {
+            v := tload(0)
+        }
+    }
+
+    function probe() external returns (uint256) {
+        return IsolationChecks(msg.sender).readT();
+    }
+
+    function peek() external view returns (uint256) {
+        return IsolationChecks(msg.sender).readT();
+    }
+
+    function fail() external pure {
+        revert();
+    }
+}
+
+contract Ctor {
+    uint256 public seen;
+
+    constructor() {
+        seen = IsolationChecks(msg.sender).readT();
+    }
+}
+
+abstract contract IsolationChecks is Test {
+    TStore t;
+
+    function setUp() public {
+        t = new TStore();
+    }
+
+    function readT() external view returns (uint256 v) {
+        assembly {
+            v := tload(0)
+        }
+    }
+
+    function checkCalleeTransientPersists() public {
+        t.set();
+        assert(t.get() == 1);
+    }
+
+    function checkCalleeSeesTestTransient() public {
+        assembly {
+            tstore(0, 7)
+        }
+        assert(t.probe() == 7);
+    }
+
+    function checkConstructorSeesTestTransient() public {
+        assembly {
+            tstore(0, 7)
+        }
+        assert(new Ctor().seen() == 7);
+    }
+
+    function checkCallKeepsNonce() public {
+        uint64 nonce = vm.getNonce(address(this));
+        t.set();
+        assert(vm.getNonce(address(this)) == nonce);
+    }
+
+    function checkRevertingCallKeepsNonce() public {
+        uint64 nonce = vm.getNonce(address(this));
+        (bool ok,) = address(t).call(abi.encodeCall(TStore.fail, ()));
+        assert(!ok);
+        assert(vm.getNonce(address(this)) == nonce);
+    }
+
+    function checkStaticCallSeesTestTransient() public {
+        assembly {
+            tstore(0, 7)
+        }
+        assert(t.peek() == 7);
+    }
+
+    function checkTestTransientSurvivesCall() public {
+        assembly {
+            tstore(0, 7)
+        }
+        t.set();
+        uint256 v;
+        assembly {
+            v := tload(0)
+        }
+        assert(v == 7);
+    }
+
+    function checkUnderfundedCallKeepsNonce() public {
+        uint64 nonce = vm.getNonce(address(this));
+        (bool ok,) = address(t).call{value: address(this).balance + 1}("");
+        assert(!ok);
+        assert(vm.getNonce(address(this)) == nonce);
+    }
+}
+
+contract SymbolicIsolation is IsolationChecks {}
+
+/// forge-config: default.isolate = false
+contract SymbolicNoIsolation is IsolationChecks {}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "^SymbolicIsolation$",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 8 tests for test/SymbolicIsolation.t.sol:SymbolicIsolation
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCallKeepsNonce() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCalleeSeesTestTransient() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCalleeTransientPersists() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkConstructorSeesTestTransient() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkRevertingCallKeepsNonce() ([METRICS])
+[PASS] checkStaticCallSeesTestTransient() ([METRICS])
+[PASS] checkTestTransientSurvivesCall() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnderfundedCallKeepsNonce() ([METRICS])
+Suite result: FAILED. 2 passed; 6 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicNoIsolation",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 8 tests for test/SymbolicIsolation.t.sol:SymbolicNoIsolation
+[PASS] checkCallKeepsNonce() ([METRICS])
+[PASS] checkCalleeSeesTestTransient() ([METRICS])
+[PASS] checkCalleeTransientPersists() ([METRICS])
+[PASS] checkConstructorSeesTestTransient() ([METRICS])
+[PASS] checkRevertingCallKeepsNonce() ([METRICS])
+[PASS] checkStaticCallSeesTestTransient() ([METRICS])
+[PASS] checkTestTransientSurvivesCall() ([METRICS])
+[PASS] checkUnderfundedCallKeepsNonce() ([METRICS])
+Suite result: ok. 8 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
 // ---------------------------------------------------------------------------
 // Shanghai PUSH0 opcode.
 // ---------------------------------------------------------------------------

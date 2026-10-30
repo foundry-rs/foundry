@@ -11,7 +11,7 @@ use foundry_common::compile::etherscan_project;
 use foundry_config::{Chain, Config, EtherscanConfigs, NamedChain, ResolvedEtherscanConfig};
 use foundry_evm_core::constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS};
 use futures::{
-    future::join_all,
+    future::{Either, join_all, select},
     stream::{FuturesUnordered, Stream, StreamExt},
     task::{Context, Poll},
 };
@@ -19,13 +19,13 @@ use revm_inspectors::tracing::types::CallTraceNode;
 use serde::Deserialize;
 use std::{
     borrow::Cow,
-    pin::Pin,
+    pin::{Pin, pin},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::{Duration, Instant},
 };
-use tokio::time::{Duration, Interval};
 
 /// A trace identifier that tries to identify addresses using Etherscan.
 pub struct ExternalIdentifier {
@@ -34,6 +34,7 @@ pub struct ExternalIdentifier {
     contracts: HashMap<Address, (FetcherKind, Option<Metadata>)>,
     /// Remaining time external identification may block trace rendering.
     remaining_budget: Duration,
+    clock: Arc<dyn Clock>,
 }
 
 /// The [`Config`] settings an [`ExternalIdentifier`] is built from, detached from the config
@@ -135,6 +136,7 @@ impl ExternalIdentifierConfig {
             fetchers,
             contracts: Default::default(),
             remaining_budget: Duration::from_secs(self.timeout),
+            clock: Arc::new(TokioClock),
         })
     }
 
@@ -295,21 +297,24 @@ impl ExternalIdentifier {
             return;
         }
 
+        let clock = Arc::clone(&self.clock);
         let fetchers = self
             .fetchers
             .clone()
             .into_iter()
-            .map(|fetcher| ExternalFetcher::new(fetcher, addresses));
-        let started = tokio::time::Instant::now();
-        let timed_out = tokio::time::timeout(timeout, async {
-            let mut fetched = futures::stream::select_all(fetchers);
-            while let Some((address, value)) = fetched.next().await {
-                self.cache_fetched(address, value);
-            }
-        })
-        .await
-        .is_err();
-        self.remaining_budget = self.remaining_budget.saturating_sub(started.elapsed());
+            .map(|fetcher| ExternalFetcher::new(fetcher, addresses, Arc::clone(&clock)));
+        let started = clock.now();
+        let deadline = clock.sleep(timeout);
+        let timed_out = {
+            let fetch = pin!(async {
+                let mut fetched = futures::stream::select_all(fetchers);
+                while let Some((address, value)) = fetched.next().await {
+                    self.cache_fetched(address, value);
+                }
+            });
+            matches!(select(fetch, deadline).await, Either::Right(_))
+        };
+        self.remaining_budget = self.remaining_budget.saturating_sub(clock.now() - started);
         if timed_out && self.remaining_budget.is_zero() {
             warn!(target: "evm::traces::external", "external identification timed out; disabling it for the remainder of this session");
         }
@@ -474,8 +479,27 @@ type FetchFuture =
 /// Cloudflare block before we give up on it. Bounded so a persistent block can't loop forever.
 const MAX_TRANSIENT_RETRIES: u32 = 5;
 
-fn backoff_interval(period: Duration) -> Interval {
-    tokio::time::interval_at(tokio::time::Instant::now() + period, period)
+type Sleep = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+/// The source of time for the identification budget and the rate limit backoff.
+///
+/// Tests replace it to drive time by hand.
+trait Clock: Send + Sync {
+    fn now(&self) -> Instant;
+    fn sleep(&self, duration: Duration) -> Sleep;
+}
+
+/// The [`Clock`] backed by tokio's timers.
+struct TokioClock;
+
+impl Clock for TokioClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+
+    fn sleep(&self, duration: Duration) -> Sleep {
+        Box::pin(tokio::time::sleep(duration))
+    }
 }
 
 /// A rate limit aware fetcher.
@@ -486,8 +510,9 @@ struct ExternalFetcher {
     fetcher: Arc<dyn ExternalFetcherT>,
     /// The time we wait if we hit the rate limit
     timeout: Duration,
-    /// The interval we are currently waiting for before making a new request
-    backoff: Option<Interval>,
+    /// The backoff we are currently waiting for before making a new request
+    backoff: Option<Sleep>,
+    clock: Arc<dyn Clock>,
     /// The maximum amount of requests to send concurrently
     concurrency: usize,
     /// The addresses we have yet to make requests for
@@ -499,10 +524,15 @@ struct ExternalFetcher {
 }
 
 impl ExternalFetcher {
-    fn new(fetcher: Arc<dyn ExternalFetcherT>, to_fetch: &[Address]) -> Self {
+    fn new(
+        fetcher: Arc<dyn ExternalFetcherT>,
+        to_fetch: &[Address],
+        clock: Arc<dyn Clock>,
+    ) -> Self {
         Self {
             timeout: fetcher.timeout(),
             backoff: None,
+            clock,
             concurrency: fetcher.concurrency(),
             fetcher,
             queue: to_fetch.to_vec(),
@@ -533,7 +563,7 @@ impl ExternalFetcher {
         if *attempts > MAX_TRANSIENT_RETRIES {
             return false;
         }
-        self.backoff = Some(backoff_interval(self.timeout));
+        self.backoff = Some(self.clock.sleep(self.timeout));
         self.queue.push(addr);
         true
     }
@@ -555,7 +585,7 @@ impl Stream for ExternalFetcher {
 
         loop {
             if let Some(mut backoff) = pin.backoff.take()
-                && backoff.poll_tick(cx).is_pending()
+                && backoff.as_mut().poll(cx).is_pending()
             {
                 pin.backoff = Some(backoff);
                 return Poll::Pending;
@@ -815,6 +845,7 @@ impl From<SourcifyMetadata> for Metadata {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::task::ArcWake;
     use std::{
         collections::HashSet as StdHashSet,
         future::pending,
@@ -824,11 +855,93 @@ mod tests {
             Mutex,
             atomic::{AtomicUsize, Ordering as AtomicOrdering},
         },
+        task::Waker,
     };
+
+    /// A [`Clock`] that moves only when [`ManualClock::run`] has nothing else to do, then jumps to
+    /// the earliest pending sleep.
+    struct ManualClock {
+        start: Instant,
+        state: Arc<Mutex<ClockState>>,
+    }
+
+    #[derive(Default)]
+    struct ClockState {
+        elapsed: Duration,
+        sleepers: Vec<(Duration, Waker)>,
+    }
+
+    struct ManualSleep {
+        state: Arc<Mutex<ClockState>>,
+        deadline: Duration,
+    }
+
+    struct WakeFlag(AtomicBool);
+
+    impl ArcWake for WakeFlag {
+        fn wake_by_ref(arc_self: &Arc<Self>) {
+            arc_self.0.store(true, AtomicOrdering::Relaxed);
+        }
+    }
+
+    impl ManualClock {
+        fn new() -> Arc<Self> {
+            Arc::new(Self { start: Instant::now(), state: Default::default() })
+        }
+
+        /// Polls `fut` to completion, jumping to the earliest pending sleep whenever nothing else
+        /// can progress.
+        fn run<F: Future>(&self, fut: F) -> F::Output {
+            let mut fut = pin!(fut);
+            let woken = Arc::new(WakeFlag(AtomicBool::new(false)));
+            let waker = futures::task::waker(Arc::clone(&woken));
+            let mut cx = Context::from_waker(&waker);
+            loop {
+                woken.0.store(false, AtomicOrdering::Relaxed);
+                if let Poll::Ready(output) = fut.as_mut().poll(&mut cx) {
+                    return output;
+                }
+                if woken.0.load(AtomicOrdering::Relaxed) {
+                    continue;
+                }
+                let mut state = self.state.lock().unwrap();
+                let next = state.sleepers.iter().map(|(deadline, _)| *deadline).min();
+                state.elapsed = state.elapsed.max(next.expect("pending without a sleep"));
+                for (_, waker) in state.sleepers.drain(..) {
+                    waker.wake();
+                }
+            }
+        }
+    }
+
+    impl Clock for ManualClock {
+        fn now(&self) -> Instant {
+            self.start + self.state.lock().unwrap().elapsed
+        }
+
+        fn sleep(&self, duration: Duration) -> Sleep {
+            let deadline = self.state.lock().unwrap().elapsed + duration;
+            Box::pin(ManualSleep { state: Arc::clone(&self.state), deadline })
+        }
+    }
+
+    impl Future for ManualSleep {
+        type Output = ();
+
+        fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+            let mut state = self.state.lock().unwrap();
+            if state.elapsed >= self.deadline {
+                return Poll::Ready(());
+            }
+            state.sleepers.push((self.deadline, cx.waker().clone()));
+            Poll::Pending
+        }
+    }
 
     struct TestFetcher {
         kind: FetcherKind,
         delay: Option<Duration>,
+        clock: Arc<dyn Clock>,
         contract_name: Option<&'static str>,
         calls: Arc<AtomicUsize>,
         invalid: AtomicBool,
@@ -856,7 +969,7 @@ mod tests {
             self.calls.fetch_add(1, AtomicOrdering::Relaxed);
             let Some(delay) = self.delay else { return pending().await };
             if !delay.is_zero() {
-                tokio::time::sleep(delay).await;
+                self.clock.sleep(delay).await;
             }
             Ok(self.contract_name.map(metadata))
         }
@@ -935,7 +1048,15 @@ mod tests {
         fetchers: Vec<Arc<dyn ExternalFetcherT>>,
         remaining_budget: Duration,
     ) -> ExternalIdentifier {
-        ExternalIdentifier { fetchers, contracts: Default::default(), remaining_budget }
+        test_identifier_with_clock(fetchers, remaining_budget, Arc::new(TokioClock))
+    }
+
+    fn test_identifier_with_clock(
+        fetchers: Vec<Arc<dyn ExternalFetcherT>>,
+        remaining_budget: Duration,
+        clock: Arc<dyn Clock>,
+    ) -> ExternalIdentifier {
+        ExternalIdentifier { fetchers, contracts: Default::default(), remaining_budget, clock }
     }
 
     #[test]
@@ -1041,21 +1162,24 @@ mod tests {
             invalid: AtomicBool::new(false),
         });
 
-        let collected: Vec<_> = ExternalFetcher::new(fetcher, &addrs).collect().await;
+        let collected: Vec<_> =
+            ExternalFetcher::new(fetcher, &addrs, Arc::new(TokioClock)).collect().await;
 
         let got: StdHashSet<Address> = collected.into_iter().map(|(addr, _)| addr).collect();
         let want: StdHashSet<Address> = addrs.into_iter().collect();
         assert_eq!(got, want, "every address must be yielded despite a transient cloudflare block");
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn timeout_keeps_partial_results_and_opens_circuit() {
+    #[test]
+    fn timeout_keeps_partial_results_and_opens_circuit() {
+        let clock = ManualClock::new();
         let successful_calls = Arc::new(AtomicUsize::new(0));
         let stalled_calls = Arc::new(AtomicUsize::new(0));
         let fetchers: Vec<Arc<dyn ExternalFetcherT>> = vec![
             Arc::new(TestFetcher {
                 kind: FetcherKind::Sourcify,
                 delay: Some(Duration::ZERO),
+                clock: clock.clone(),
                 contract_name: Some("PartialResult"),
                 calls: Arc::clone(&successful_calls),
                 invalid: AtomicBool::new(false),
@@ -1063,15 +1187,17 @@ mod tests {
             Arc::new(TestFetcher {
                 kind: FetcherKind::Etherscan,
                 delay: None,
+                clock: clock.clone(),
                 contract_name: None,
                 calls: Arc::clone(&stalled_calls),
                 invalid: AtomicBool::new(false),
             }),
         ];
-        let mut identifier = test_identifier(fetchers, Duration::from_millis(20));
+        let mut identifier =
+            test_identifier_with_clock(fetchers, Duration::from_millis(20), clock.clone());
         let address = Address::with_last_byte(1);
 
-        identifier.fetch_addresses_async(&[address]).await;
+        clock.run(identifier.fetch_addresses_async(&[address]));
 
         assert!(identifier.remaining_budget.is_zero());
         assert_eq!(
@@ -1081,7 +1207,7 @@ mod tests {
         assert_eq!(successful_calls.load(AtomicOrdering::Relaxed), 1);
         assert_eq!(stalled_calls.load(AtomicOrdering::Relaxed), 1);
 
-        identifier.fetch_addresses_async(&[Address::with_last_byte(2)]).await;
+        clock.run(identifier.fetch_addresses_async(&[Address::with_last_byte(2)]));
         assert_eq!(successful_calls.load(AtomicOrdering::Relaxed), 1);
         assert_eq!(stalled_calls.load(AtomicOrdering::Relaxed), 1);
     }
@@ -1092,6 +1218,7 @@ mod tests {
             Arc::new(TestFetcher {
                 kind: FetcherKind::Sourcify,
                 delay: Some(Duration::ZERO),
+                clock: Arc::new(TokioClock),
                 contract_name: Some("PartialResult"),
                 calls: Arc::new(AtomicUsize::new(0)),
                 invalid: AtomicBool::new(false),
@@ -1099,6 +1226,7 @@ mod tests {
             Arc::new(TestFetcher {
                 kind: FetcherKind::Etherscan,
                 delay: None,
+                clock: Arc::new(TokioClock),
                 contract_name: None,
                 calls: Arc::new(AtomicUsize::new(0)),
                 invalid: AtomicBool::new(false),
@@ -1114,77 +1242,89 @@ mod tests {
         assert_eq!(identities[0].label.as_deref(), Some("PartialResult"));
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn timeout_budget_is_cumulative_across_fetches() {
+    #[test]
+    fn timeout_budget_is_cumulative_across_fetches() {
+        let clock = ManualClock::new();
         let calls = Arc::new(AtomicUsize::new(0));
         let fetcher: Arc<dyn ExternalFetcherT> = Arc::new(TestFetcher {
             kind: FetcherKind::Sourcify,
             delay: Some(Duration::from_millis(20)),
+            clock: clock.clone(),
             contract_name: Some("FirstResult"),
             calls: Arc::clone(&calls),
             invalid: AtomicBool::new(false),
         });
-        let mut identifier = test_identifier(vec![fetcher], Duration::from_millis(30));
+        let mut identifier =
+            test_identifier_with_clock(vec![fetcher], Duration::from_millis(30), clock.clone());
         let first = Address::with_last_byte(1);
         let second = Address::with_last_byte(2);
 
-        identifier.fetch_addresses_async(&[first]).await;
+        clock.run(identifier.fetch_addresses_async(&[first]));
         assert!(identifier.contracts[&first].1.is_some());
-        assert!(identifier.remaining_budget < Duration::from_millis(15));
+        assert_eq!(identifier.remaining_budget, Duration::from_millis(10));
 
-        identifier.fetch_addresses_async(&[second]).await;
+        clock.run(identifier.fetch_addresses_async(&[second]));
         assert!(identifier.remaining_budget.is_zero());
         assert!(!identifier.contracts.contains_key(&second));
         assert_eq!(calls.load(AtomicOrdering::Relaxed), 2);
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn metadata_requests_preserve_cumulative_budget() {
+    #[test]
+    fn metadata_requests_preserve_cumulative_budget() {
+        let clock = ManualClock::new();
         let calls = Arc::new(AtomicUsize::new(0));
         let fetcher: Arc<dyn ExternalFetcherT> = Arc::new(TestFetcher {
             kind: FetcherKind::Etherscan,
             delay: None,
+            clock: clock.clone(),
             contract_name: None,
             calls: Arc::clone(&calls),
             invalid: AtomicBool::new(false),
         });
-        let mut identifier = test_identifier(vec![fetcher], Duration::from_millis(30));
+        let mut identifier =
+            test_identifier_with_clock(vec![fetcher], Duration::from_millis(30), clock.clone());
         let address = Address::with_last_byte(1);
 
-        assert!(identifier.get_metadata(&[address], Duration::from_millis(10)).await.is_empty());
-        assert!(!identifier.remaining_budget.is_zero());
-        assert!(identifier.remaining_budget <= Duration::from_millis(20));
-        assert!(identifier.get_metadata(&[address], Duration::from_secs(1)).await.is_empty());
+        assert!(
+            clock.run(identifier.get_metadata(&[address], Duration::from_millis(10))).is_empty()
+        );
+        assert_eq!(identifier.remaining_budget, Duration::from_millis(20));
+        assert!(clock.run(identifier.get_metadata(&[address], Duration::from_secs(1))).is_empty());
         assert!(identifier.remaining_budget.is_zero());
-        assert!(identifier.get_metadata(&[address], Duration::from_secs(1)).await.is_empty());
+        assert!(clock.run(identifier.get_metadata(&[address], Duration::from_secs(1))).is_empty());
         assert_eq!(calls.load(AtomicOrdering::Relaxed), 2);
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn rate_limit_retries_cannot_escape_timeout_budget() {
+    #[test]
+    fn rate_limit_retries_cannot_escape_timeout_budget() {
+        let clock = ManualClock::new();
         let calls = Arc::new(AtomicUsize::new(0));
         let fetcher: Arc<dyn ExternalFetcherT> = Arc::new(RateLimitedFetcher {
             calls: Arc::clone(&calls),
             invalid: AtomicBool::new(false),
         });
-        let mut identifier = test_identifier(vec![fetcher], Duration::from_millis(20));
+        let mut identifier =
+            test_identifier_with_clock(vec![fetcher], Duration::from_millis(20), clock.clone());
 
-        identifier.fetch_addresses_async(&[Address::with_last_byte(1)]).await;
+        clock.run(identifier.fetch_addresses_async(&[Address::with_last_byte(1)]));
 
         assert!(identifier.remaining_budget.is_zero());
         assert!(calls.load(AtomicOrdering::Relaxed) > 1);
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn rate_limit_retries_are_bounded() {
+    #[test]
+    fn rate_limit_retries_are_bounded() {
+        let clock = ManualClock::new();
         let calls = Arc::new(AtomicUsize::new(0));
         let fetcher: Arc<dyn ExternalFetcherT> = Arc::new(RateLimitedFetcher {
             calls: Arc::clone(&calls),
             invalid: AtomicBool::new(false),
         });
 
-        let fetched =
-            ExternalFetcher::new(fetcher, &[Address::with_last_byte(1)]).collect::<Vec<_>>().await;
+        let fetched = clock.run(
+            ExternalFetcher::new(fetcher, &[Address::with_last_byte(1)], clock.clone())
+                .collect::<Vec<_>>(),
+        );
 
         assert!(fetched.is_empty());
         assert_eq!(calls.load(AtomicOrdering::Relaxed), MAX_TRANSIENT_RETRIES as usize + 1);
@@ -1254,6 +1394,7 @@ mod tests {
             vec![Arc::new(TestFetcher {
                 kind: FetcherKind::Sourcify,
                 delay: Some(Duration::ZERO),
+                clock: Arc::new(TokioClock),
                 contract_name: None,
                 calls: Arc::clone(&calls),
                 invalid: AtomicBool::new(false),

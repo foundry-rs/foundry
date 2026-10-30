@@ -5,6 +5,7 @@ members = [
     "crates/anvil/core/",
     "crates/anvil/rpc/",
     "crates/anvil/server/",
+    "crates/anvil/tests/fixtures/tempo-consensus-compat/",
     "crates/cast/",
     "crates/cheatcodes/",
     "crates/cheatcodes/spec/",
@@ -37,7 +38,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.8.7"
+version = "1.8.8"
 edition = "2024"
 rust-version = "1.98"
 authors = ["Foundry Contributors"]
@@ -138,6 +139,10 @@ all = "warn"
 # https://davidlattimore.github.io/posts/2024/02/04/speeding-up-the-rust-edit-build-run-cycle.html
 debug = "line-tables-only"
 split-debuginfo = "unpacked"
+
+[profile.dev.build-override]
+# Host units share the dev debuginfo level, so switching package selections reuses them.
+debug = "line-tables-only"
 
 [profile.test.package.tempo-precompiles]
 # Historical Moderato ghost orders violate an upstream debug-only invariant.
@@ -373,7 +378,7 @@ alloy-ens = { version = "2.5.0", default-features = false }
 alloy-genesis = { version = "2.5.0", default-features = false }
 alloy-json-rpc = { version = "2.5.0", default-features = false }
 alloy-network = { version = "2.5.0", default-features = false }
-alloy-provider = { version = "2.5.0", default-features = false }
+alloy-provider = { version = "2.5.0", default-features = false, features = ["reqwest", "ws", "ipc", "pubsub", "trace-api", "txpool-api", "debug-api"] }
 alloy-pubsub = { version = "2.5.0", default-features = false }
 alloy-rpc-client = { version = "2.5.0", default-features = false }
 alloy-rpc-types = { version = "2.5.0", default-features = true }
@@ -405,7 +410,7 @@ alloy-sol-types = "1.7.0"
 
 alloy-chains = "0.2.38"
 alloy-rlp = "0.3"
-alloy-trie = "0.9"
+alloy-trie = { version = "0.9", default-features = false }
 
 ## op-alloy
 op-alloy-consensus = "2.0.0"
@@ -437,7 +442,6 @@ quote = "1.0"
 syn = "2.0"
 async-trait = "0.1"
 async-lsp = { version = "0.2.4", default-features = false, features = ["omni-trait"] }
-tokio-util = { version = "0.7", features = ["compat"] }
 derive_more = { version = "2.1", features = ["full"] }
 thiserror = "2"
 
@@ -457,7 +461,7 @@ chrono = { version = "0.4", default-features = false, features = [
     "clock",
     "std",
 ] }
-axum = "0.8"
+axum = { version = "0.8", default-features = false, features = ["form", "http1", "json", "query", "tokio"] }
 ciborium = "0.2"
 color-eyre = "0.6"
 comfy-table = "8"
@@ -494,14 +498,20 @@ ron = "0.12"
 rustls = "0.23.46"
 semver = "1"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0", features = ["arbitrary_precision"] }
+serde_json = { version = "1.0", features = ["arbitrary_precision", "unbounded_depth"] }
 shlex = "2"
 similar-asserts = "2.0"
+smolgen = { version = "0.1.1", features = ["build", "gitcl"] }
+soldb-core = "0.4.5"
+soldb-debugger = "0.4.5"
+soldb-ethdebug = "0.4.5"
+soldb-repl = "0.4.5"
+soldb-tui = "0.4.5"
 soldeer-commands = "=0.12.1"
 soldeer-core = { version = "=0.12.1", features = ["serde"] }
 strum = "0.28"
 tempfile = "3.23"
-tokio = "1"
+tokio = { version = "1.53.3", features = ["full"] }
 toml = "1.1"
 toml_edit = "0.25"
 tower = "0.5"
@@ -509,10 +519,6 @@ tower-http = "0.7"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 url = "2"
-vergen = { package = "vergen-gitcl", version = "10.0.0", default-features = false, features = [
-    "build",
-    "cargo",
-] }
 yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 path-slash = "0.2"
 jiff = { version = "0.2", default-features = false, features = [
@@ -549,6 +555,16 @@ tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "2c25f7cd8267b20
 ] }
 tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "2c25f7cd8267b205a6b95e08bbc73baf887bea88" }
 tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "2c25f7cd8267b205a6b95e08bbc73baf887bea88" }
+tempo-dkg-onchain-artifacts = { git = "https://github.com/tempoxyz/tempo", rev = "2c25f7cd8267b205a6b95e08bbc73baf887bea88", default-features = false }
+
+# Tempo consensus certificate primitives.
+commonware-codec = { version = "=2026.9.0", default-features = false }
+commonware-cryptography = { version = "=2026.9.0", default-features = false }
+commonware-math = { version = "=2026.9.0", default-features = false }
+commonware-parallel = { version = "=2026.9.0", default-features = false }
+commonware-utils = { version = "=2026.9.0", default-features = false }
+blst = "0.3.17"
+rand_chacha = { version = "=0.10.0", default-features = false }
 
 # Monad
 alloy-monad-evm = { version = "0.8.0", default-features = false, features = [
@@ -584,27 +600,27 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "2287a3a8e737a98a32bdff3f8724468ec4488160" }
-solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "2287a3a8e737a98a32bdff3f8724468ec4488160" }
-solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "2287a3a8e737a98a32bdff3f8724468ec4488160" }
-solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "2287a3a8e737a98a32bdff3f8724468ec4488160" }
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "4935059a6a9bc1b4b91649c39573d6b6ce7522d4" }
+solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "4935059a6a9bc1b4b91649c39573d6b6ce7522d4" }
+solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "4935059a6a9bc1b4b91649c39573d6b6ce7522d4" }
+solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "4935059a6a9bc1b4b91649c39573d6b6ce7522d4" }
 
 ## foundry-core
-foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "306a7585e26644634ec04a73f1b3c04f93f7cd00" }
-foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "306a7585e26644634ec04a73f1b3c04f93f7cd00" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "306a7585e26644634ec04a73f1b3c04f93f7cd00" }
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "306a7585e26644634ec04a73f1b3c04f93f7cd00" }
+foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74" }
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "e47676d1f8faa01b930d32ca4b6e9d16a5b6bb74" }
 
 ## alloy-core
-# alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
-# alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }
-# alloy-primitives = { path = "../../alloy-rs/core/crates/primitives" }
-# alloy-sol-macro = { path = "../../alloy-rs/core/crates/sol-macro" }
-# alloy-sol-macro-expander = { path = "../../alloy-rs/core/crates/sol-macro-expander" }
-# alloy-sol-macro-input = { path = "../../alloy-rs/core/crates/sol-macro-input" }
-# alloy-sol-type-parser = { path = "../../alloy-rs/core/crates/sol-type-parser" }
-# alloy-sol-types = { path = "../../alloy-rs/core/crates/sol-types" }
-# syn-solidity = { path = "../../alloy-rs/core/crates/syn-solidity" }
+alloy-dyn-abi = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
+alloy-json-abi = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
+alloy-primitives = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
+alloy-sol-macro = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
+alloy-sol-macro-expander = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
+alloy-sol-macro-input = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
+alloy-sol-type-parser = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
+alloy-sol-types = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
+syn-solidity = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
 
 ## alloy
 # alloy-consensus = { git = "https://github.com/alloy-rs/alloy", rev = "395521c" }

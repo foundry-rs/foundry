@@ -18,9 +18,9 @@ use solar::parse::{ast::Span, interface::SourceMap};
 use std::{
     collections::{BTreeSet, HashSet},
     ops::{ControlFlow, Range},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -43,12 +43,24 @@ use deps::{ConstructorContext, PreprocessorDependencies, remove_bytecode_depende
 pub struct DynamicTestLinkingPreprocessor {
     /// Set when preprocessing changes any compiler input. Shared by clones.
     rewrote_sources: Arc<AtomicBool>,
+    /// One warning per compiler job that disabled DTL; printed after a successful compile.
+    /// Skipping the print when solc fails avoids duplicating solc's own diagnostics
+    /// (see <https://github.com/foundry-rs/foundry/issues/17913>).
+    pending_disable_warnings: Arc<Mutex<Vec<String>>>,
 }
 
 impl DynamicTestLinkingPreprocessor {
     /// Returns whether preprocessing changed any compiler input.
     pub fn rewrote_sources(&self) -> bool {
         self.rewrote_sources.load(Ordering::Relaxed)
+    }
+
+    /// Takes the pending "dynamic test linking disabled" warnings.
+    pub fn take_disable_warnings(&self) -> Vec<String> {
+        self.pending_disable_warnings
+            .lock()
+            .map(|mut g| std::mem::take(&mut *g))
+            .unwrap_or_default()
     }
 }
 
@@ -202,13 +214,28 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
                     .as_deref()
                     .and_then(solar_error_summary)
                     .unwrap_or_else(|| "Solar analysis failed".to_string());
-                let _ = sh_warn!("dynamic test linking disabled for {affected} files: {reason}");
+                // Defer printing until after solc succeeds so a source error is not
+                // reported twice (Solar wording here, then solc with a location).
+                if let Ok(mut warnings) = self.pending_disable_warnings.lock() {
+                    warnings.push(format!(
+                        "dynamic test linking disabled for {affected} files: {reason}"
+                    ));
+                }
             }
         } else if input.input.sources != original_sources {
             self.rewrote_sources.store(true, Ordering::Relaxed);
         }
 
         Ok(())
+    }
+
+    fn is_source_context_sensitive(
+        &self,
+        source: &Path,
+        paths: &ProjectPathsConfig<SolcLanguage>,
+    ) -> bool {
+        // Context changes can alter rewriting eligibility even for previously native deployments.
+        paths.is_test_or_script(source)
     }
 }
 
@@ -263,6 +290,18 @@ impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
             mocks,
             preprocessor_state,
             source_units,
+        )
+    }
+
+    fn is_source_context_sensitive(
+        &self,
+        source: &Path,
+        paths: &ProjectPathsConfig<MultiCompilerLanguage>,
+    ) -> bool {
+        <Self as Preprocessor<SolcCompiler>>::is_source_context_sensitive(
+            self,
+            source,
+            paths.with_language_ref(),
         )
     }
 }
@@ -949,6 +988,39 @@ mod tests {
                 if workaround { 0 } else { 8 }
             );
             assert_eq!(source.matches("payable(address(").count(), usize::from(workaround));
+        }
+    }
+
+    #[test]
+    fn source_context_sensitivity_uses_configured_directories() {
+        let root = tempfile::tempdir().unwrap();
+        let mut paths = ProjectPathsConfig::builder().root(root.path()).build().unwrap();
+        paths.tests = paths.root.join("src/spec");
+        paths.scripts = paths.root.join("ops");
+        let multi_paths = paths.clone().with_language::<MultiCompilerLanguage>();
+        let preprocessor = DynamicTestLinkingPreprocessor::default();
+        for (source, expected) in [
+            ("src/spec/Helper.sol", true),
+            ("ops/Utility.sol", true),
+            ("test/Default.t.sol", false),
+            ("src/LooksLikeTest.t.sol", false),
+            ("lib/Spec.t.sol", false),
+        ] {
+            let source = paths.root.join(source);
+            assert_eq!(
+                <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::is_source_context_sensitive(
+                    &preprocessor, &source, &paths,
+                ),
+                expected,
+                "{}", source.display(),
+            );
+            assert_eq!(
+                <DynamicTestLinkingPreprocessor as Preprocessor<MultiCompiler>>::is_source_context_sensitive(
+                    &preprocessor, &source, &multi_paths,
+                ),
+                expected,
+                "{}", source.display(),
+            );
         }
     }
 }

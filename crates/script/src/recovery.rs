@@ -1,10 +1,13 @@
-use crate::sequence::{SequenceData, completed_transaction_prefix, operation_ordinal};
+use crate::{
+    multi_sequence::MultiChainSequence,
+    sequence::{SequenceData, completed_transaction_prefix, operation_ordinal},
+};
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
-use alloy_network::{Network, TransactionBuilder, TransactionResponse};
+use alloy_network::{Network, ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, TxKind, keccak256};
 use eyre::{ContextCompat, Result, WrapErr, bail};
-use forge_script_sequence::TransactionWithMetadata;
+use forge_script_sequence::{DRY_RUN_DIR, ScriptSequence, TransactionWithMetadata, now};
 use foundry_common::{FoundryTransactionBuilder, TransactionMaybeSigned};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -30,6 +33,10 @@ struct RecoveryPlan<N: Network> {
     generation: B256,
     multi: bool,
     batch: bool,
+    /// Tempo sponsor of the run that created the snapshot. Resume must not prepare new
+    /// transactions without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sponsor: Option<Address>,
     deployments: Vec<RecoveryDeployment<N>>,
     data: SequenceData<N>,
 }
@@ -118,7 +125,15 @@ where
         self.plan.batch
     }
 
-    pub(crate) fn create(mut data: SequenceData<N>, batch: bool) -> Result<Self> {
+    pub(crate) const fn sponsor(&self) -> Option<Address> {
+        self.plan.sponsor
+    }
+
+    pub(crate) fn create(
+        mut data: SequenceData<N>,
+        batch: bool,
+        sponsor: Option<Address>,
+    ) -> Result<Self> {
         let paths = data.paths();
         let lock = RecoveryLock::acquire(&paths)?;
         let pending = pending_path(&lock.path);
@@ -128,11 +143,42 @@ where
                 pending.display()
             );
         }
+        if previous_unfinished::<N>(&lock.path, &paths, data.is_multi())? {
+            bail!(
+                "the previous broadcast `{}` has unfinished operations; finish it with `{}`, or pass `--start-fresh` to archive it and broadcast anew",
+                paths.0.display(),
+                if data.is_multi() { "--multi --resume" } else { "--resume" }
+            );
+        }
         let generation = B256::random();
         data.set_recovery_generation(generation);
-        let plan = RecoveryPlan::new(data, batch, generation)?;
+        let plan = RecoveryPlan { sponsor, ..RecoveryPlan::new(data, batch, generation)? };
         write_snapshot(&lock.path, &plan)?;
         Self::finish_open(lock, plan)
+    }
+
+    /// Moves the unfinished progress of a previous execution of `data` to timestamped names, so
+    /// that a new execution can replace it.
+    pub(crate) fn archive_unfinished(data: &SequenceData<N>) -> Result<()> {
+        let paths = &data.paths();
+        let lock = RecoveryLock::acquire(paths)?;
+        // A crash mid-commit leaves the newest complete snapshot pending, as resume would find it.
+        let pending = pending_path(&lock.path);
+        if pending.exists() {
+            commit_pending_plan(&pending, &lock.path)?;
+        }
+        if matches!(previous_unfinished::<N>(&lock.path, paths, data.is_multi()), Ok(false)) {
+            return Ok(());
+        }
+        let timestamp = now().as_millis();
+        for path in [&lock.path, &paths.0, &paths.1] {
+            if path.exists() {
+                let archive = path.with_extension(format!("{timestamp}.json"));
+                std::fs::rename(path, &archive)?;
+                sh_status!("Archived `{}` to `{}`", path.display(), archive.display())?;
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn load(
@@ -673,6 +719,7 @@ where
             generation,
             multi: data.is_multi(),
             batch,
+            sponsor: None,
             deployments,
             data,
         })
@@ -904,6 +951,71 @@ where
         .wrap_err_with(|| format!("recovery snapshot `{}` is corrupt", path.display()))
 }
 
+/// Returns whether the previous execution at `paths` submitted anything and left an operation, on
+/// any chain, with neither a receipt nor a recorded revert. Without a recovery snapshot, progress
+/// saved before snapshots existed is read from the broadcast export. An unreadable snapshot counts
+/// as unfinished, as resume would refuse it too; an unreadable export counts as finished.
+///
+/// Errors when a broadcast export written with a snapshot has such an operation but the snapshot
+/// is missing, for example in a checkout without `cache/`: only the snapshot records submission
+/// attempts, so the export cannot show a submission whose response was lost.
+fn previous_unfinished<N: Network>(
+    snapshot: &Path,
+    paths: &(PathBuf, PathBuf),
+    multi: bool,
+) -> Result<bool>
+where
+    N::TxEnvelope: for<'de> Deserialize<'de> + Serialize,
+{
+    let incomplete = |data: &SequenceData<N>| {
+        data.sequences().iter().any(|sequence| {
+            sequence.transactions.iter().any(|tx| {
+                !tx.hash.is_some_and(|hash| {
+                    sequence.reverted.contains(&hash)
+                        || sequence
+                            .receipts
+                            .iter()
+                            .any(|receipt| receipt.transaction_hash() == hash)
+                })
+            })
+        })
+    };
+    let (data, attempted) = if snapshot.exists() {
+        let Ok(plan) = load_plan::<N>(snapshot) else { return Ok(true) };
+        let attempted = plan.deployments.iter().any(|deployment| !deployment.attempts.is_empty());
+        (plan.data, attempted)
+    } else {
+        let data = if multi {
+            foundry_common::fs::read_json_file::<MultiChainSequence<N>>(&paths.0)
+                .map(SequenceData::Multi)
+        } else {
+            foundry_common::fs::read_json_file::<ScriptSequence<N>>(&paths.0)
+                .map(|sequence| SequenceData::Single(Box::new(sequence)))
+        };
+        let Ok(data) = data else { return Ok(false) };
+        // Dry runs never submit. Their exports sit under `DRY_RUN_DIR`, as laid out by
+        // `ScriptSequence::get_paths` and `MultiChainSequence::get_paths`.
+        let dry_run = paths.0.ancestors().nth(if multi { 2 } else { 1 }).and_then(Path::file_name)
+            == Some(DRY_RUN_DIR.as_ref());
+        if data.has_recovery_generation() && !dry_run && incomplete(&data) {
+            bail!(
+                "the recovery snapshot `{}` of the previous broadcast `{}` is missing, so its unfinished operations may already have been sent; restore the snapshot and finish with `{}`, or pass `--start-fresh` after confirming that none of its transactions reached the chain",
+                snapshot.display(),
+                paths.0.display(),
+                if multi { "--multi --resume" } else { "--resume" }
+            );
+        }
+        (data, false)
+    };
+    let submitted = attempted
+        || data
+            .sequences()
+            .iter()
+            .flat_map(|sequence| &sequence.transactions)
+            .any(|tx| tx.hash.is_some());
+    Ok(submitted && incomplete(&data))
+}
+
 fn pending_path(path: &Path) -> PathBuf {
     path.with_extension("pending")
 }
@@ -1125,7 +1237,6 @@ fn expiring_replay_hash(payload: &[u8], sender_scoped_replay: bool) -> Result<Op
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::multi_sequence::MultiChainSequence;
     use alloy_consensus::{
         Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, SignableTransaction, TxEip1559,
         TxEnvelope, transaction::Recovered,
@@ -1134,7 +1245,6 @@ mod tests {
     use alloy_primitives::{Bloom, Signature, U256, hex};
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionReceipt, TransactionRequest};
     use alloy_signer::SignerSync;
-    use forge_script_sequence::ScriptSequence;
     use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
     use tempo_primitives::{
         AASigned, TempoSignature,
@@ -1251,7 +1361,7 @@ mod tests {
         });
         let payload = sign_tempo_payload(expiring_request(signer.address(), 4217, 0), &signer);
 
-        let mut store = RecoveryStore::create(data, false).unwrap();
+        let mut store = RecoveryStore::create(data, false, None).unwrap();
         let hash = store.persist_signed_payload(0, 0, payload.clone(), true).unwrap();
         assert_eq!(
             store.persist_signed_payload(2, 0, payload, true).unwrap_err().to_string(),
@@ -1281,7 +1391,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let data = sequence(dir.path());
         let paths = data.paths();
-        let store = RecoveryStore::create(data, false).unwrap();
+        let store = RecoveryStore::create(data, false, None).unwrap();
         let value: serde_json::Value = foundry_common::fs::read_json_file(&store.path).unwrap();
         assert_eq!(value["version"], RECOVERY_VERSION);
         assert_eq!(value["deployments"][0]["operations"][0]["id"]["sequence"], 0);
@@ -1300,7 +1410,7 @@ mod tests {
         let paths = data.paths();
         let hash = B256::repeat_byte(0x11);
         {
-            let mut store = RecoveryStore::create(data, false).unwrap();
+            let mut store = RecoveryStore::create(data, false, None).unwrap();
             let deployment = &mut store.data_mut().sequences_mut()[0];
             deployment.transactions[0].hash = Some(hash);
             deployment.pending.push(hash);
@@ -1326,7 +1436,7 @@ mod tests {
         let paths = data.paths();
         let hash = B256::repeat_byte(0x22);
         {
-            let mut store = RecoveryStore::create(data.clone(), false).unwrap();
+            let mut store = RecoveryStore::create(data.clone(), false, None).unwrap();
             store.data_mut().sequences_mut()[0].transactions[0].hash = Some(hash);
             store.save().unwrap();
         }
@@ -1343,7 +1453,7 @@ mod tests {
         let paths = data.paths();
         data.publish(&paths).unwrap();
         let snapshot = {
-            let store = RecoveryStore::create(data, false).unwrap();
+            let store = RecoveryStore::create(data, false, None).unwrap();
             store.path
         };
         std::fs::write(snapshot, b"{").unwrap();
@@ -1358,7 +1468,7 @@ mod tests {
         let paths = data.paths();
         let hash = B256::repeat_byte(0x33);
         let snapshot = {
-            let mut store = RecoveryStore::create(data, false).unwrap();
+            let mut store = RecoveryStore::create(data, false, None).unwrap();
             store.data_mut().sequences_mut()[0].pending.push(hash);
             write_plan(&pending_path(&store.path), &store.plan).unwrap();
             store.path.clone()
@@ -1373,7 +1483,7 @@ mod tests {
     #[test]
     fn changed_operations_fail_closed() {
         let dir = tempfile::tempdir().unwrap();
-        let mut store = RecoveryStore::create(sequence(dir.path()), false).unwrap();
+        let mut store = RecoveryStore::create(sequence(dir.path()), false, None).unwrap();
         store.data_mut().sequences_mut()[0].transactions.clear();
         assert!(store.save().unwrap_err().to_string().contains("does not match"));
     }
@@ -1383,7 +1493,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let data = sequence(dir.path());
         let source_paths = data.paths();
-        let mut store = RecoveryStore::create(data, false).unwrap();
+        let mut store = RecoveryStore::create(data, false, None).unwrap();
         let destination = dir.path().join("broadcast-cache.json");
         let destination_snapshot = recovery_path_from_sensitive(&destination).unwrap();
         let paths = (dir.path().join("broadcasted.json"), destination);
@@ -1401,7 +1511,7 @@ mod tests {
         let data = signed_sequence(dir.path());
         let paths = data.paths();
         let expected_hash = {
-            let mut store = RecoveryStore::create(data, false).unwrap();
+            let mut store = RecoveryStore::create(data, false, None).unwrap();
             let hash = store.persist_signed_payload(0, 0, SIGNED_TX.into(), true).unwrap();
             assert!(store.persist_signed_payload(0, 0, OTHER_SIGNED_TX.into(), true).is_err());
             hash
@@ -1416,7 +1526,7 @@ mod tests {
     #[test]
     fn signed_payload_is_bound_to_its_planned_operation() {
         let dir = tempfile::tempdir().unwrap();
-        let mut store = RecoveryStore::create(signed_sequence(dir.path()), false).unwrap();
+        let mut store = RecoveryStore::create(signed_sequence(dir.path()), false, None).unwrap();
 
         assert!(store.persist_signed_payload(1, 0, SIGNED_TX.into(), true).is_err());
         assert!(store.persist_signed_payload(0, 1, SIGNED_TX.into(), true).is_err());
@@ -1430,7 +1540,7 @@ mod tests {
         let request = TransactionRequest::default();
         let hash = B256::repeat_byte(0x42);
         {
-            let mut store = RecoveryStore::create(data, false).unwrap();
+            let mut store = RecoveryStore::create(data, false, None).unwrap();
             store.persist_delegated_request(0, 0, request).unwrap();
             store.persist_delegated_status(0, 0, DelegatedStatus::Pending { hash }).unwrap();
             assert!(store.persist_delegated_request(0, 0, Default::default()).is_err());
@@ -1718,7 +1828,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let data = sequence(dir.path());
         let paths = data.paths();
-        let mut store = RecoveryStore::create(data, false).unwrap();
+        let mut store = RecoveryStore::create(data, false, None).unwrap();
         store.persist_delegated_request(0, 0, Default::default()).unwrap();
         store.clear_delegated_request(0, 0).unwrap();
         assert!(store.delegated_status(0, 0).is_none());
@@ -1734,7 +1844,7 @@ mod tests {
         let paths = data.paths();
         let request = TransactionRequest::default();
         {
-            let mut store = RecoveryStore::create(data, true).unwrap();
+            let mut store = RecoveryStore::create(data, true, None).unwrap();
             store.persist_batch_signed_payload(0, 0, request.clone(), SIGNED_TX.into()).unwrap();
             assert!(store.persist_signed_payload(0, 1, OTHER_SIGNED_TX.into(), true).is_err());
         }
@@ -1755,7 +1865,7 @@ mod tests {
             let data = signed_sequence(dir.path());
             let paths = data.paths();
             {
-                let mut store = RecoveryStore::create(data, true).unwrap();
+                let mut store = RecoveryStore::create(data, true, None).unwrap();
                 store
                     .persist_batch_signed_payload(
                         0,
@@ -1780,7 +1890,7 @@ mod tests {
         let data = signed_sequence(dir.path());
         let paths = data.paths();
         {
-            let mut store = RecoveryStore::create(data, true).unwrap();
+            let mut store = RecoveryStore::create(data, true, None).unwrap();
             store.data_mut().sequences_mut()[0].pending.push(B256::repeat_byte(0x77));
             write_snapshot(&store.path, &store.plan).unwrap();
         }
@@ -1907,7 +2017,7 @@ mod tests {
             expiring_replay_hash(&first, true).unwrap(),
             expiring_replay_hash(&duplicate, true).unwrap()
         );
-        let mut store = RecoveryStore::create(data, false).unwrap();
+        let mut store = RecoveryStore::create(data, false, None).unwrap();
         let first_hash = store.persist_signed_payload(0, 0, first, true).unwrap();
         assert_eq!(store.signed_payload(0, 0).unwrap().hash, first_hash);
         let snapshot = std::fs::read(&store.path).unwrap();
@@ -1970,5 +2080,111 @@ mod tests {
             ))
             .encoded_2718(),
         )
+    }
+
+    #[test]
+    fn sponsor_survives_reload_and_defaults_to_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = sequence(dir.path());
+        let paths = data.paths();
+        let sponsor = Address::repeat_byte(0x55);
+        let snapshot = RecoveryStore::create(data, false, Some(sponsor)).unwrap().path;
+        let store = load(&paths, false).unwrap();
+        assert_eq!(store.sponsor(), Some(sponsor));
+        drop(store);
+
+        // Snapshots written before the sponsor was recorded load without one.
+        let mut value: serde_json::Value = foundry_common::fs::read_json_file(&snapshot).unwrap();
+        assert_eq!(value["sponsor"], serde_json::json!(sponsor));
+        value.as_object_mut().unwrap().remove("sponsor");
+        std::fs::write(&snapshot, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(load(&paths, false).unwrap().sponsor(), None);
+    }
+
+    #[test]
+    fn new_execution_refuses_unfinished_progress() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = sequence(dir.path()).paths();
+        let refused = format!(
+            "the previous broadcast `{}` has unfinished operations; finish it with `--resume`, or pass `--start-fresh` to archive it and broadcast anew",
+            paths.0.display()
+        );
+        let create = || RecoveryStore::create(sequence(dir.path()), false, None).map(|_| ());
+
+        // Progress without any submission is replaced.
+        create().unwrap();
+        create().unwrap();
+
+        // A submission attempt makes it unfinished, also when its commit was interrupted.
+        let mut store = RecoveryStore::create(sequence(dir.path()), false, None).unwrap();
+        store.persist_delegated_request(0, 0, Default::default()).unwrap();
+        let snapshot = store.path.clone();
+        drop(store);
+        assert_eq!(create().unwrap_err().to_string(), refused);
+        std::fs::rename(&snapshot, pending_path(&snapshot)).unwrap();
+        RecoveryStore::<Ethereum>::archive_unfinished(&sequence(dir.path())).unwrap();
+        assert!(!snapshot.exists() && !pending_path(&snapshot).exists());
+        create().unwrap();
+
+        // An unreadable snapshot is never silently replaced.
+        std::fs::write(&snapshot, "garbage").unwrap();
+        assert_eq!(create().unwrap_err().to_string(), refused);
+        RecoveryStore::<Ethereum>::archive_unfinished(&sequence(dir.path())).unwrap();
+        create().unwrap();
+
+        // Without a snapshot, progress saved before snapshots existed is checked.
+        std::fs::remove_file(&snapshot).unwrap();
+        let mut legacy = sequence(dir.path());
+        legacy.sequences_mut()[0].transactions[0].hash = Some(B256::ZERO);
+        foundry_common::fs::write_json_file(&paths.0, &legacy.sequences()[0]).unwrap();
+        assert_eq!(create().unwrap_err().to_string(), refused);
+        RecoveryStore::<Ethereum>::archive_unfinished(&sequence(dir.path())).unwrap();
+        assert!(!paths.0.exists());
+        create().unwrap();
+
+        // An export written with a snapshot cannot show a submission whose response was lost, so
+        // without its snapshot it blocks while any operation is incomplete, even without hashes.
+        std::fs::remove_file(&snapshot).unwrap();
+        let mut export = sequence(dir.path());
+        export.set_recovery_generation(B256::ZERO);
+        export.publish(&paths).unwrap();
+        assert_eq!(
+            create().unwrap_err().to_string(),
+            format!(
+                "the recovery snapshot `{}` of the previous broadcast `{}` is missing, so its unfinished operations may already have been sent; restore the snapshot and finish with `--resume`, or pass `--start-fresh` after confirming that none of its transactions reached the chain",
+                snapshot.display(),
+                paths.0.display()
+            )
+        );
+        RecoveryStore::<Ethereum>::archive_unfinished(&sequence(dir.path())).unwrap();
+        assert!(!paths.0.exists());
+        create().unwrap();
+
+        // A completed export without its snapshot does not block.
+        std::fs::remove_file(&snapshot).unwrap();
+        export.sequences_mut()[0].transactions[0].hash = Some(B256::ZERO);
+        export.sequences_mut()[0].reverted.push(B256::ZERO);
+        export.publish(&paths).unwrap();
+        create().unwrap();
+
+        // Dry runs never submit, so their exports never block, in either layout.
+        let single = sequence(dir.path());
+        let multi = SequenceData::Multi(MultiChainSequence {
+            deployments: single.sequences().to_vec(),
+            path: PathBuf::new(),
+            sensitive_path: PathBuf::new(),
+            timestamp: 0,
+        });
+        for (mut dry_run, export) in
+            [(single, "dry-run/run.json"), (multi, "multi/dry-run/Script.s.sol-latest/run.json")]
+        {
+            let export = dir.path().join(export);
+            let paths = (export.clone(), export.with_file_name("cache.json"));
+            std::fs::create_dir_all(export.parent().unwrap()).unwrap();
+            dry_run.set_recovery_generation(B256::ZERO);
+            dry_run.publish(&paths).unwrap();
+            dry_run.set_paths(paths);
+            RecoveryStore::create(dry_run, false, None).unwrap();
+        }
     }
 }

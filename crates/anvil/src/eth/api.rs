@@ -4,13 +4,15 @@ use super::{
         sanitize_simulation_blocks,
     },
     preserve_simulation_request_fields,
+    tempo_consensus::{TempoCertifiedBlock, TempoConsensusState},
 };
 use crate::{
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
     eth::{
         backend::{
             self, db::SerializableState, mem::MIN_TRANSACTION_GAS,
-            notifications::ChainNotifications, validate::TransactionValidator,
+            notifications::ChainNotifications, tempo_consensus::TempoConsensusIdentity,
+            validate::TransactionValidator,
         },
         error::{
             BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
@@ -81,11 +83,11 @@ use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolValue, sol};
 use anvil_core::{
     eth::{
-        EthRequest,
+        EthRequest, TempoConsensusQuery,
         block::{Block, BlockInfo, canonical_block},
         transaction::{MaybeImpersonatedTransaction, PendingTransaction},
     },
-    types::{ReorgOptions, TransactionData},
+    types::{NodeBlobParams, ReorgOptions, TransactionData},
 };
 use anvil_rpc::{
     error::{ErrorCode, RpcError},
@@ -246,11 +248,16 @@ impl<N: Network> EthApi<N> {
 
     /// Returns the current gas price
     pub fn gas_price(&self) -> u128 {
+        self.gas_price_for_base_fee(self.backend.base_fee())
+    }
+
+    /// Returns the gas price for a block with the given base fee.
+    fn gas_price_for_base_fee(&self, base_fee: u64) -> u128 {
         if self.backend.is_eip1559() {
             if self.backend.is_min_priority_fee_enforced() {
-                (self.backend.base_fee() as u128).saturating_add(self.lowest_suggestion_tip())
+                (base_fee as u128).saturating_add(self.lowest_suggestion_tip())
             } else {
-                self.backend.base_fee() as u128
+                base_fee as u128
             }
         } else {
             self.backend.fees().raw_gas_price()
@@ -533,7 +540,7 @@ impl<N: Network> EthApi<N> {
     /// Retrieves the Anvil node configuration params.
     ///
     /// Handler for RPC call: `anvil_nodeInfo`
-    pub async fn anvil_node_info(&self) -> Result<NodeInfo> {
+    pub async fn anvil_node_info(&self) -> Result<WithOtherFields<NodeInfo>> {
         node_info!("anvil_nodeInfo");
         let _lifecycle = self.lifecycle_lock.read().await;
 
@@ -542,7 +549,7 @@ impl<N: Network> EthApi<N> {
         let tx_order = self.transaction_order.read();
         let hard_fork = self.backend.hardfork().name();
 
-        Ok(NodeInfo {
+        let mut node_info = WithOtherFields::new(NodeInfo {
             current_block_number: self.backend.best_number(),
             current_block_timestamp: evm_env.block_env.timestamp.saturating_to(),
             current_block_hash: self.backend.best_hash(),
@@ -571,7 +578,17 @@ impl<N: Network> EthApi<N> {
             // Always emit the execution profile. Older Anvil versions omitted plain Ethereum, so
             // consumers must still treat `None` as legacy unspecified metadata.
             network: Some(self.backend.execution_profile_name().to_string()),
-        })
+        });
+        // Forks of this node price blobs with these params, which can differ from those of the
+        // reported hardfork when this node is itself a fork.
+        node_info
+            .other
+            .insert_value(
+                "blobParams".to_string(),
+                NodeBlobParams::from(self.backend.blob_params()),
+            )
+            .map_err(|err| BlockchainError::Internal(err.to_string()))?;
+        Ok(node_info)
     }
 
     /// Retrieves metadata about the Anvil instance.
@@ -686,6 +703,7 @@ impl<N: Network> EthApi<N> {
         let _reset = self.reset_lock.lock().await;
         let staged_fork = if let Some(fork) = self.backend.get_fork() {
             let mut validation_config = self.backend.node_config.read().await.clone();
+            validation_config.warn_if_fork_headers_withheld(&url);
             let (expected_identity, block_number, block_hash) = {
                 let config = fork.config.read();
                 (config.endpoint_identity, config.block_number, config.block_hash)
@@ -788,6 +806,11 @@ impl<N: Network> EthApi<N> {
     /// Returns a new listeners for ready transactions
     pub fn new_ready_transactions(&self) -> Receiver<TxHash> {
         self.pool.add_ready_listener()
+    }
+
+    /// Returns a ready-transaction stream that ends if its bounded listener overflows.
+    pub(crate) fn new_ready_transaction_subscription(&self) -> Receiver<TxHash> {
+        self.pool.add_ready_subscription_listener()
     }
 
     /// Returns true if forked
@@ -1573,16 +1596,7 @@ impl<N: Network> EthApi<N> {
     {
         node_info!("trace_call");
         let block_id = block_id.unwrap_or_default();
-        let block_request = match &block_id {
-            BlockId::Number(BlockNumber::Pending) => {
-                let pending_txs = self.pool.ready_transactions().collect();
-                BlockRequest::Pending(pending_txs)
-            }
-            _ => {
-                let number = self.backend.ensure_block_number(Some(block_id)).await?;
-                BlockRequest::Number(number)
-            }
-        };
+        let block_request = self.trace_block_request(block_id).await?;
         let inner = request.as_ref();
         let fees = FeeDetails::new(
             inner.gas_price,
@@ -1644,7 +1658,7 @@ impl<N: Network> EthApi<N> {
         &self,
         block: BlockNumber,
         trace_types: HashSet<TraceType>,
-    ) -> Result<Option<Vec<TraceResultsWithTransactionHash>>> {
+    ) -> Result<Vec<TraceResultsWithTransactionHash>> {
         node_info!("trace_replayBlockTransactions");
         self.backend.trace_replay_block_transactions(block, trace_types).await
     }
@@ -1659,6 +1673,20 @@ impl<N: Network> EthApi<N> {
     ) -> Result<Option<TraceResultsWithTransactionHash>> {
         node_info!("trace_replayTransaction");
         self.backend.trace_replay_transaction(transaction, trace_types).await
+    }
+
+    /// Returns the block request a trace method executes against.
+    async fn trace_block_request(
+        &self,
+        block_id: BlockId,
+    ) -> Result<BlockRequest<FoundryTxEnvelope>>
+    where
+        N: Network<TxEnvelope = FoundryTxEnvelope>,
+    {
+        if block_id.is_pending() {
+            return Ok(BlockRequest::Pending(self.pool.ready_transactions().collect()));
+        }
+        Ok(BlockRequest::Number(self.backend.ensure_trace_block_number(block_id).await?))
     }
 }
 
@@ -1811,7 +1839,7 @@ impl EthApi<FoundryNetwork> {
             }
             BlockchainError::RecoveryError(error)
         })?;
-        let block_request = self.block_request(block_number).await?;
+        let block_request = self.trace_block_request(block_number.unwrap_or_default()).await?;
 
         self.backend
             .trace_raw_transaction(pending_transaction, trace_types, Some(block_request))
@@ -1827,24 +1855,25 @@ impl EthApi<FoundryNetwork> {
         Ok(())
     }
 
-    /// Returns a locally stored rollback ancestor, or the remote base of a Monad transaction-hash
-    /// fork when that integration is enabled.
+    /// Returns a local rollback ancestor, a Monad replay ancestor, or the pinned fork root.
     async fn rollback_block(&self, number: u64) -> Result<Option<Block>> {
         if let Some(block) = self.backend.get_block(number) {
             return Ok(Some(block));
         }
         #[cfg(feature = "monad")]
+        if self.backend.is_monad()
+            && let Some(block) = self.backend.monad_rollback_block(number).await?
         {
-            if self.backend.is_monad() {
-                self.backend.monad_rollback_block(number).await
-            } else {
-                Ok(None)
-            }
+            return Ok(Some(block));
         }
-        #[cfg(not(feature = "monad"))]
-        {
-            Ok(None)
-        }
+
+        let Some(fork) = self.get_fork().filter(|fork| fork.block_number() == number) else {
+            return Ok(None);
+        };
+        let Some(header) = fork.root_header().await? else { return Ok(None) };
+
+        // Rollback only needs the header; do not publish this placeholder as a complete block.
+        Ok(Some(Block { header, body: Default::default() }))
     }
 
     /// Rewinds through the selected execution family's recovery path.
@@ -2139,7 +2168,8 @@ impl EthApi<FoundryNetwork> {
         // Fork reset and RPC URL replacement take the write lock internally after their fallible
         // remote staging work. Memory reset takes it before staging because it snapshots live
         // state. Identity, snapshot, and chain-rewind methods also lock internally to keep direct
-        // API callers safe without recursively acquiring this fair RwLock.
+        // API callers safe without recursively acquiring this fair RwLock. Consensus queries
+        // snapshot their source under the backend DB lock before any upstream I/O.
         let _lifecycle = if matches!(
             &request,
             EthRequest::Reset(_)
@@ -2150,6 +2180,8 @@ impl EthApi<FoundryNetwork> {
                 | EthRequest::EvmRevert(_)
                 | EthRequest::Reorg(_)
                 | EthRequest::Rollback(_)
+                | EthRequest::ConsensusGetFinalization(_)
+                | EthRequest::ConsensusGetLatest(_)
         ) {
             None
         } else {
@@ -2640,6 +2672,16 @@ impl EthApi<FoundryNetwork> {
                 .anvil_set_fee_amm_liquidity(user_token, validator_token, amount)
                 .await
                 .to_rpc_result(),
+            EthRequest::ConsensusGetFinalization(query) => {
+                self.consensus_get_finalization(query).await.to_rpc_result()
+            }
+            EthRequest::ConsensusGetLatest(()) => self.consensus_get_latest().await.to_rpc_result(),
+            EthRequest::TempoConsensusIdentity(()) => {
+                self.anvil_tempo_consensus_identity().await.to_rpc_result()
+            }
+            EthRequest::TempoRotateConsensusIdentity(()) => {
+                self.anvil_tempo_rotate_consensus_identity().await.to_rpc_result()
+            }
         }
     }
 
@@ -3711,7 +3753,7 @@ impl EthApi<FoundryNetwork> {
 
         self.backend
             .with_database_at_and_context(Some(block_request), |state, block_env, monad_context| {
-                let mut cache_db = CacheDB::new(state);
+                let mut cache_db = CacheDB::new(&*state);
                 if let Some(state_override) = state_override {
                     apply_state_overrides(state_override.into_iter().collect(), &mut cache_db)?;
                 }
@@ -4264,7 +4306,7 @@ impl EthApi<FoundryNetwork> {
         block_number: Option<BlockId>,
     ) -> Result<Vec<TraceResults>> {
         node_info!("trace_callMany");
-        let block_request = self.block_request(block_number).await?;
+        let block_request = self.trace_block_request(block_number.unwrap_or_default()).await?;
 
         self.backend.trace_call_many(calls, Some(block_request)).await
     }
@@ -4541,6 +4583,19 @@ impl EthApi<FoundryNetwork> {
         };
         #[cfg(not(feature = "monad"))]
         let fee_defaults = None;
+        // Price fee-less transactions for the blocks mined on top of the common block, not for the
+        // head that is about to be discarded.
+        let fee_defaults = fee_defaults.or_else(|| {
+            let (base_fee, blob_fees) = self.backend.next_block_fees_after(&common_block.header);
+            Some(TransactionFeeDefaults {
+                gas_price: self.gas_price_for_base_fee(base_fee),
+                blob_gas_price: self
+                    .backend
+                    .fees()
+                    .blob_params()
+                    .calc_blob_fee(blob_fees.excess_blob_gas),
+            })
+        });
 
         // Convert the transaction requests to pool transactions if they exist, otherwise use empty
         // hashmap
@@ -4932,7 +4987,7 @@ impl EthApi<FoundryNetwork> {
                 .with_database_at_and_context(
                     Some(block_request),
                     |state, mut block, monad_context| {
-                        let mut cache_db = CacheDB::new(state);
+                        let mut cache_db = CacheDB::new(&*state);
                         if let Some(state_overrides) = overrides.state {
                             apply_state_overrides(
                                 state_overrides.into_iter().collect(),
@@ -4974,7 +5029,7 @@ impl EthApi<FoundryNetwork> {
     /// Returns a listener for pending transactions, yielding full transactions
     pub fn full_pending_transactions(&self) -> UnboundedReceiver<AnyRpcTransaction> {
         let (tx, rx) = unbounded_channel();
-        let mut hashes = self.new_ready_transactions();
+        let mut hashes = self.new_ready_transaction_subscription();
 
         let this = self.clone();
 
@@ -5563,6 +5618,57 @@ impl EthApi<FoundryNetwork> {
             return Ok(nonce);
         }
         self.request_nonce(request.as_ref(), from).await
+    }
+
+    /// Returns a local Tempo finalization or history at or before the pinned fork root.
+    ///
+    /// Handler for `consensus_getFinalization`; unavailable on non-Tempo networks.
+    /// Local signing leaves genesis and fork anchors unsigned. Historical fork queries use the
+    /// upstream committee; `latest` never advances past the pinned root without local mining.
+    /// Local `latest` uses the retained complete body; height queries require a matching stored
+    /// body. Returns JSON-RPC error code 503 if the requested certificate or a complete block
+    /// matching its commitments is unavailable.
+    pub async fn consensus_get_finalization(
+        &self,
+        query: TempoConsensusQuery,
+    ) -> Result<TempoCertifiedBlock> {
+        node_info!("consensus_getFinalization");
+        let height = match query {
+            TempoConsensusQuery::Latest => None,
+            TempoConsensusQuery::Height(height) => Some(height),
+        };
+        self.backend.tempo_finalization(height).await
+    }
+
+    /// Returns the latest local or pinned upstream finalization, with `notarized: null` as on
+    /// Tempo.
+    ///
+    /// Handler for `consensus_getLatest`; unavailable on non-Tempo networks.
+    /// Returns `finalized: null` for unsigned standalone history. A fork queries its pinned root
+    /// until local mining produces a certificate, preserving upstream errors.
+    /// Returns JSON-RPC error code 503 if a certificate exists but its complete block is
+    /// unavailable or no longer matches its commitments, including after rollback to a pruned
+    /// body.
+    pub async fn consensus_get_latest(&self) -> Result<TempoConsensusState> {
+        node_info!("consensus_getLatest");
+        let finalized = self.backend.tempo_latest_finalization().await?;
+        Ok(TempoConsensusState { finalized, notarized: None })
+    }
+
+    /// Returns the public local development committee on Tempo networks.
+    ///
+    /// Handler for `anvil_tempoConsensusIdentity`.
+    pub async fn anvil_tempo_consensus_identity(&self) -> Result<TempoConsensusIdentity> {
+        node_info!("anvil_tempoConsensusIdentity");
+        self.backend.tempo_consensus_identity().await
+    }
+
+    /// Schedules a new identity for the epoch following the next block's epoch.
+    ///
+    /// Handler for `anvil_tempoRotateConsensusIdentity`; unavailable on non-Tempo networks.
+    pub async fn anvil_tempo_rotate_consensus_identity(&self) -> Result<TempoConsensusIdentity> {
+        node_info!("anvil_tempoRotateConsensusIdentity");
+        self.backend.tempo_rotate_consensus_identity().await
     }
 }
 

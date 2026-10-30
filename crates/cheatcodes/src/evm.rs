@@ -228,6 +228,32 @@ impl Display for AccountStateDiffs {
             writeln!(f, "- state diff:")?;
             for (slot, slot_changes) in &self.state_diff {
                 match &slot_changes.slot_info {
+                    Some(slot_info)
+                        if slot_info.members.as_ref().is_some_and(|members| {
+                            members.iter().any(|member| member.decoded.is_some())
+                        }) =>
+                    {
+                        // Keep raw values because decoded members may omit unsupported fields.
+                        writeln!(
+                            f,
+                            "@ {slot} ({}, {}): {} → {}",
+                            slot_info.label,
+                            slot_info.slot_type.dyn_sol_type,
+                            slot_changes.previous_value,
+                            slot_changes.new_value
+                        )?;
+                        for member in slot_info.members.iter().flatten() {
+                            let Some(decoded) = &member.decoded else { continue };
+                            writeln!(
+                                f,
+                                "    {} ({}): {} → {}",
+                                member.label,
+                                member.slot_type.dyn_sol_type,
+                                format_token_raw(&decoded.previous_value),
+                                format_token_raw(&decoded.new_value)
+                            )?;
+                        }
+                    }
                     Some(slot_info) => {
                         if let Some(decoded) = &slot_info.decoded {
                             // Have slot info with decoded values - show decoded values
@@ -498,6 +524,7 @@ impl Cheatcode for recordLogsCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self {} = self;
         state.recorded_logs = Some(Default::default());
+        state.recorded_logs_generation += 1;
         Ok(Default::default())
     }
 }
@@ -505,6 +532,7 @@ impl Cheatcode for recordLogsCall {
 impl Cheatcode for getRecordedLogsCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self {} = self;
+        state.recorded_logs_generation += 1;
         Ok(state.recorded_logs.replace(Default::default()).unwrap_or_default().abi_encode())
     }
 }
@@ -512,6 +540,7 @@ impl Cheatcode for getRecordedLogsCall {
 impl Cheatcode for getRecordedLogsJsonCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self {} = self;
+        state.recorded_logs_generation += 1;
         let logs = state.recorded_logs.replace(Default::default()).unwrap_or_default();
         let json_logs: Vec<_> = logs
             .into_iter()
@@ -2565,5 +2594,50 @@ fn set_cold_slot<FEN: FoundryEvmNetwork>(
         && let Some(storage_slot) = account.storage.get_mut(&slot)
     {
         storage_slot.is_cold = cold;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_compilers::artifacts::StorageLayout;
+    use std::sync::Arc;
+
+    #[test]
+    fn state_diff_preserves_raw_values_with_partial_decoding() {
+        let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
+            "storage": [
+                { "astId": 1, "contract": "C", "label": "data", "offset": 0, "slot": "0", "type": "t_struct" }
+            ],
+            "types": {
+                "t_struct": {
+                    "encoding": "inplace", "label": "struct C.Data", "numberOfBytes": "32",
+                    "members": [
+                        { "astId": 2, "contract": "C", "label": "amount", "offset": 0, "slot": "0", "type": "t_amount" },
+                        { "astId": 3, "contract": "C", "label": "paused", "offset": 16, "slot": "0", "type": "t_bool" }
+                    ]
+                },
+                "t_amount": { "encoding": "inplace", "label": "Amount", "numberOfBytes": "16" },
+                "t_bool": { "encoding": "inplace", "label": "bool", "numberOfBytes": "1" }
+            }
+        }))
+        .unwrap();
+        let identifier = SlotIdentifier::new(Arc::new(layout));
+        let mut slot_info = identifier.identify(&B256::ZERO, None).unwrap();
+        let new_value = B256::from(U256::from(1));
+        slot_info.decode_values(B256::ZERO, new_value);
+        let diffs = AccountStateDiffs {
+            state_diff: BTreeMap::from([(
+                B256::ZERO,
+                SlotStateDiff { previous_value: B256::ZERO, new_value, slot_info: Some(slot_info) },
+            )]),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            diffs.to_string(),
+            "- state diff:\n\
+@ 0x0000000000000000000000000000000000000000000000000000000000000000 (data, (bool,)): 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000000000000000000000000000000001\n    paused (bool): false → false\n"
+        );
     }
 }

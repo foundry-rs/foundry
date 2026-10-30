@@ -11,6 +11,10 @@ updates:
   - package-ecosystem: npm
     directory: /editors/vscode
     patterns: ["*"]
+    # vsce requires @types/vscode to stay within engines.vscode.
+    ignore:
+      - dependency-name: "@types/vscode"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     multi-ecosystem-group: code-weekly
     cooldown:
       default-days: 7
@@ -39,24 +43,3 @@ updates:
       ci-weekly:
         patterns:
           - '*'
-  - package-ecosystem: cargo
-    directory: /
-    allow:
-      - dependency-type: all
-    patterns: ["*"]
-    multi-ecosystem-group: code-weekly
-    cooldown:
-      default-days: 7
-    ignore:
-      - dependency-name: syn
-        update-types:
-          - version-update:semver-major
-      - dependency-name: prettyplease
-        update-types:
-          - version-update:semver-minor
-      - dependency-name: p256
-        update-types:
-          - version-update:semver-minor
-      - dependency-name: ecdsa
-        update-types:
-          - version-update:semver-minor

@@ -8,6 +8,7 @@ use crate::{
 use alloy_chains::NamedChain;
 use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_eips::{eip2718::Decodable2718, eip4788::BEACON_ROOTS_ADDRESS};
+use alloy_genesis::{ChainConfig, Genesis};
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TxSignerSync};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256, fixed_bytes, keccak256};
 use alloy_provider::{Provider, ext::TxPoolApi};
@@ -598,7 +599,7 @@ async fn can_get_node_info() {
         network: Some("ethereum".to_string()),
     };
 
-    assert_eq!(node_info, expected_node_info);
+    assert_eq!(node_info.inner, expected_node_info);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1726,8 +1727,9 @@ async fn test_rollback() {
     let head = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(head, block4);
 
-    // Get block 1 for comparison
+    // Get blocks 1 and 2 for comparison.
     let block1 = provider.get_block(1.into()).await.unwrap().unwrap();
+    let original_block2 = provider.get_block(2.into()).await.unwrap().unwrap();
 
     // Rollback to block 1
     let depth = 3; // from block 4 to block 1
@@ -1736,6 +1738,92 @@ async fn test_rollback() {
     // Assert we're at block 1 and the block contents are kept the same
     let head = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(head, block1);
+
+    // Latest execution sees block 1's base fee, not the discarded head's.
+    let basefee_call = WithOtherFields::new(
+        TransactionRequest::default()
+            .from(handle.dev_accounts().next().unwrap())
+            .with_deploy_code(Bytes::from_static(&[0x48, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3]))
+            .gas_price(10_000_000_000),
+    );
+    let basefee = api.call(basefee_call, None, Default::default()).await.unwrap();
+    assert_eq!(U256::from_be_slice(&basefee), U256::from(block1.header.base_fee_per_gas.unwrap()));
+
+    // The replacement block 2 inherits its base fee from block 1, like the original block 2.
+    api.mine_one().await.unwrap();
+    let block2 = provider.get_block(2.into()).await.unwrap().unwrap();
+    assert_eq!(block2.header.base_fee_per_gas, original_block2.header.base_fee_per_gas);
+
+    // Rolling back to genesis restores the startup fee for block 1.
+    api.anvil_rollback(Some(2)).await.unwrap();
+    api.mine_one().await.unwrap();
+    let replacement_block1 = provider.get_block(1.into()).await.unwrap().unwrap();
+    assert_eq!(replacement_block1.header.base_fee_per_gas, block1.header.base_fee_per_gas);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reorg_prices_json_transactions_from_common_block() {
+    let (api, handle) = spawn(NodeConfig::test().with_base_fee(Some(20_000_000_000))).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_accounts().collect::<Vec<_>>();
+
+    for _ in 0..3 {
+        api.mine_one().await.unwrap();
+    }
+    let original_block2 = provider.get_block(2.into()).await.unwrap().unwrap();
+
+    // The fee-less transaction must be priced for the new block 2, not for the next block of the
+    // discarded chain.
+    let tx = TransactionRequest::default().from(accounts[0]).to(accounts[1]).value(U256::from(1));
+    api.anvil_reorg(ReorgOptions {
+        depth: 2,
+        tx_block_pairs: vec![(TransactionData::JSON(tx.into()), 0)],
+    })
+    .await
+    .unwrap();
+
+    let block2 = provider.get_block(2.into()).await.unwrap().unwrap();
+    assert_eq!(block2.header.base_fee_per_gas, original_block2.header.base_fee_per_gas);
+    assert_eq!(block2.transactions.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_rollback_to_genesis_restores_initial_fees() {
+    // The genesis header records 1 gwei, but the explicit zero base fee applies to block 1.
+    let (zero_api, zero_handle) = spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::default().into()))
+            .with_genesis(Some(Genesis {
+                config: ChainConfig { london_block: Some(0), ..Default::default() },
+                base_fee_per_gas: Some(INITIAL_BASE_FEE.into()),
+                ..Default::default()
+            }))
+            .with_base_fee(Some(0)),
+    )
+    .await;
+    zero_api.mine_one().await.unwrap();
+    // The reset genesis header keeps the live 123 wei, but block 1 starts at the default fee.
+    let (reset_api, reset_handle) = spawn(NodeConfig::test()).await;
+    reset_api.anvil_set_next_block_base_fee_per_gas(U256::from(123)).await.unwrap();
+    reset_api.anvil_reset(None).await.unwrap();
+    reset_api.mine_one().await.unwrap();
+    // The loaded chain was seeded with a zero base fee, unlike the default destination node.
+    let (source_api, _source_handle) = spawn(NodeConfig::test().with_base_fee(Some(0))).await;
+    source_api.mine_one().await.unwrap();
+    let dump = source_api.anvil_dump_state(Some(true)).await.unwrap();
+    let (load_api, load_handle) = spawn(NodeConfig::test()).await;
+    load_api.anvil_load_state(dump).await.unwrap();
+
+    for (api, handle, expected) in [
+        (zero_api, zero_handle, 0),
+        (reset_api, reset_handle, INITIAL_BASE_FEE),
+        (load_api, load_handle, 0),
+    ] {
+        api.anvil_rollback(Some(1)).await.unwrap();
+        api.mine_one().await.unwrap();
+        let block1 = handle.http_provider().get_block(1.into()).await.unwrap().unwrap();
+        assert_eq!(block1.header.base_fee_per_gas, Some(expected));
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2061,7 +2149,7 @@ async fn can_get_node_info_tempo_t0() {
         network: Some("tempo".to_string()),
     };
 
-    assert_eq!(node_info, expected_node_info);
+    assert_eq!(node_info.inner, expected_node_info);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2109,7 +2197,7 @@ async fn can_get_node_info_tempo_t1() {
         network: Some("tempo".to_string()),
     };
 
-    assert_eq!(node_info, expected_node_info);
+    assert_eq!(node_info.inner, expected_node_info);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2146,7 +2234,7 @@ async fn can_get_node_info_monad() {
         network: Some("monad".to_string()),
     };
 
-    assert_eq!(node_info, expected_node_info);
+    assert_eq!(node_info.inner, expected_node_info);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -372,16 +372,8 @@ impl FixedBlockTimeMiner {
         if self.next_tick.as_mut().poll(cx).is_pending() {
             return Poll::Pending;
         }
-        // Schedule like an interval with `MissedTickBehavior::Delay`, so that ticks are not
-        // shortened and late ticks shift the schedule rather than producing a burst of blocks.
-        let deadline = self.next_tick.deadline();
-        let now = Instant::now();
-        let next = if now > deadline + Duration::from_millis(5) {
-            now.checked_add(self.period)
-        } else {
-            deadline.checked_add(self.period)
-        };
-        self.next_tick.as_mut().reset(next.unwrap_or_else(|| now + FAR_FUTURE));
+        let next = next_deadline(self.next_tick.deadline(), Instant::now(), self.period);
+        self.next_tick.as_mut().reset(next);
         // Drain the pool.
         Poll::Ready(pool.ready_transactions().collect())
     }
@@ -392,15 +384,35 @@ impl FixedBlockTimeMiner {
     /// This compares deadlines to the current time instead of polling the timer, which may not
     /// have fired yet for a deadline that already passed.
     fn skip_missed_ticks(&mut self) {
-        let deadline = self.next_tick.deadline();
-        let now = Instant::now();
-        if deadline > now {
-            return;
+        if let Some(next) = resumed_deadline(self.next_tick.deadline(), Instant::now(), self.period)
+        {
+            self.next_tick.as_mut().reset(next);
         }
-        let late = (now - deadline).as_nanos() % self.period.as_nanos();
-        let next = now.checked_add(self.period - Duration::from_nanos_u128(late));
-        self.next_tick.as_mut().reset(next.unwrap_or_else(|| now + FAR_FUTURE));
     }
+}
+
+/// Returns the deadline of the tick after the one due at `deadline`, which fired at `now`.
+///
+/// Schedules like an interval with `MissedTickBehavior::Delay`, so that ticks are not shortened
+/// and late ticks shift the schedule rather than producing a burst of blocks.
+fn next_deadline(deadline: Instant, now: Instant, period: Duration) -> Instant {
+    let next = if now > deadline + Duration::from_millis(5) {
+        now.checked_add(period)
+    } else {
+        deadline.checked_add(period)
+    };
+    next.unwrap_or_else(|| now + FAR_FUTURE)
+}
+
+/// Returns the first deadline after `now` on the schedule of `deadline`, or `None` if the tick
+/// due at `deadline` has not come due.
+fn resumed_deadline(deadline: Instant, now: Instant, period: Duration) -> Option<Instant> {
+    if deadline > now {
+        return None;
+    }
+    let late = (now - deadline).as_nanos() % period.as_nanos();
+    let next = now.checked_add(period - Duration::from_nanos_u128(late));
+    Some(next.unwrap_or_else(|| now + FAR_FUTURE))
 }
 
 impl Default for FixedBlockTimeMiner {
@@ -485,7 +497,23 @@ impl fmt::Debug for ReadyTransactionMiner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::{FutureExt, channel::mpsc, future::poll_fn};
+    use futures::{channel::mpsc, future::poll_fn};
+
+    fn with_fixed<R>(miner: &Miner<()>, f: impl FnOnce(&mut FixedBlockTimeMiner) -> R) -> R {
+        let mut mode = miner.mode.write();
+        let (MiningMode::FixedBlockTime(fixed) | MiningMode::Mixed(_, fixed)) = &mut *mode else {
+            panic!("expected block time mining")
+        };
+        f(fixed)
+    }
+
+    fn deadline(miner: &Miner<()>) -> Instant {
+        with_fixed(miner, |fixed| fixed.next_tick.deadline())
+    }
+
+    fn set_deadline(miner: &Miner<()>, deadline: Instant) {
+        with_fixed(miner, |fixed| fixed.next_tick.as_mut().reset(deadline));
+    }
 
     #[test]
     fn stale_failure_resumes_replacement_autominer() {
@@ -562,12 +590,22 @@ mod tests {
         }
     }
 
-    #[tokio::test(start_paused = true)]
+    #[tokio::test]
     async fn paused_interval_skips_due_block() {
+        let t0 = Instant::now();
+        let period = Duration::from_secs(1);
+        assert_eq!(resumed_deadline(t0 + period, t0 + Duration::from_millis(500), period), None);
+        // Resume must skip overdue ticks without moving the next tick from 4s to 4.5s.
+        assert_eq!(
+            resumed_deadline(t0 + period, t0 + Duration::from_millis(3500), period),
+            Some(t0 + period * 4)
+        );
+        assert_eq!(resumed_deadline(t0 + period, t0 + period * 4, period), Some(t0 + period * 5));
+
+        let period = Duration::from_millis(100);
         for mixed in [false, true] {
             for poll_while_paused in [false, true] {
                 let (_tx, rx) = mpsc::channel(1);
-                let period = Duration::from_secs(1);
                 let mode = if mixed {
                     MiningMode::mixed(1, rx, period)
                 } else {
@@ -576,21 +614,18 @@ mod tests {
                 let mut miner = Miner::<()>::new(mode);
                 let pool = Arc::new(Pool::default());
                 let mut cx = Context::from_waker(futures::task::noop_waker_ref());
-                let start = Instant::now();
+                let due = Instant::now() - period * 5 / 2;
+                set_deadline(&miner, due);
                 miner.set_paused(true);
-                tokio::time::advance(Duration::from_millis(3500)).await;
                 if poll_while_paused {
                     assert!(miner.poll(&pool, &mut cx).is_pending());
                 }
 
-                // Resume must skip overdue ticks even if no paused poll ran, without moving
-                // the next tick from 4s to 4.5s.
+                let before = Instant::now();
                 miner.set_paused(false);
-                assert!(miner.poll(&pool, &mut cx).is_pending());
-                poll_fn(|cx| miner.poll(&pool, cx)).await;
-                let elapsed = start.elapsed();
-                assert!(elapsed >= Duration::from_secs(4));
-                assert!(elapsed <= Duration::from_millis(4001), "tick at {elapsed:?}");
+                let next = deadline(&miner);
+                assert!(next > before, "overdue tick not skipped");
+                assert_eq!((next - due).as_nanos() % period.as_nanos(), 0, "schedule moved");
             }
         }
     }
@@ -617,56 +652,67 @@ mod tests {
         assert_eq!(auto.has_pending_txs, Some(true));
     }
 
-    #[tokio::test(start_paused = true)]
+    #[tokio::test]
     async fn resume_skips_due_tick_before_timer_fires() {
-        let mut miner = Miner::<()>::new(MiningMode::interval(Duration::from_secs(1)));
+        let period = Duration::from_millis(100);
+        let mut miner = Miner::<()>::new(MiningMode::interval(period));
         let pool = Arc::new(Pool::default());
         let mut cx = Context::from_waker(futures::task::noop_waker_ref());
-        let start = Instant::now();
-        // Register the timer, so that only the timer driver can mark it as fired.
         assert!(miner.poll(&pool, &mut cx).is_pending());
         miner.set_paused(true);
 
-        // Move the clock past the tick due at 1s without yielding to the timer driver.
-        assert!(tokio::time::advance(Duration::from_millis(1500)).now_or_never().is_none());
+        // Resume decides from the deadline alone, so it skips the tick even though the timer
+        // never got to fire.
+        let due = Instant::now() - period / 2;
+        set_deadline(&miner, due);
+        let before = Instant::now();
         miner.set_paused(false);
 
-        poll_fn(|cx| miner.poll(&pool, cx)).await;
-        let elapsed = start.elapsed();
-        assert!(elapsed >= Duration::from_secs(2));
-        assert!(elapsed <= Duration::from_millis(2001), "tick at {elapsed:?}");
+        let next = deadline(&miner);
+        assert!(next > before, "overdue tick not skipped");
+        assert_eq!((next - due).as_nanos() % period.as_nanos(), 0, "schedule moved");
     }
 
-    #[tokio::test(start_paused = true)]
+    #[tokio::test]
     async fn late_tick_delays_schedule() {
-        let mut miner = Miner::<()>::new(MiningMode::interval(Duration::from_secs(1)));
-        let pool = Arc::new(Pool::default());
-        let start = Instant::now();
+        let t0 = Instant::now();
+        let period = Duration::from_secs(1);
+        // A tick polled on time keeps the schedule.
+        assert_eq!(next_deadline(t0 + period, t0 + period, period), t0 + period * 2);
+        assert_eq!(
+            next_deadline(t0 + period, t0 + period + Duration::from_millis(5), period),
+            t0 + period * 2
+        );
+        // A late tick delays it by its lateness.
+        assert_eq!(
+            next_deadline(t0 + period * 2, t0 + Duration::from_millis(2500), period),
+            t0 + Duration::from_millis(3500)
+        );
 
+        let period = Duration::from_millis(100);
+        let mut miner = Miner::<()>::new(MiningMode::interval(period));
+        let pool = Arc::new(Pool::default());
+        set_deadline(&miner, Instant::now() - period * 3 / 2);
+        let before = Instant::now();
         poll_fn(|cx| miner.poll(&pool, cx)).await;
-        assert_eq!(start.elapsed(), Duration::from_secs(1));
-        tokio::time::advance(Duration::from_millis(1500)).await;
-        poll_fn(|cx| miner.poll(&pool, cx)).await;
-        assert_eq!(start.elapsed(), Duration::from_millis(2500));
-        poll_fn(|cx| miner.poll(&pool, cx)).await;
-        assert_eq!(start.elapsed(), Duration::from_millis(3500));
+        let after = Instant::now();
+        let next = deadline(&miner);
+        assert!(next >= before + period && next <= after + period, "late tick kept schedule");
     }
 
-    #[tokio::test(start_paused = true)]
+    #[tokio::test]
     async fn failure_selected_before_pause_keeps_schedule() {
-        let mut miner = Miner::<()>::new(MiningMode::interval(Duration::from_secs(1)));
-        let pool = Arc::new(Pool::default());
-        let start = Instant::now();
-        let work = poll_fn(|cx| miner.poll(&pool, cx)).await;
+        let period = Duration::from_secs(3600);
+        let miner = Miner::<()>::new(MiningMode::interval(period));
+        let next = Instant::now() + period * 2;
+        set_deadline(&miner, next);
         miner.set_paused(true);
-        tokio::time::advance(Duration::from_millis(500)).await;
         miner.set_paused(false);
 
-        // The candidate selected before the pause fails after mining resumed.
-        miner.handle_failed_candidate(work.generation);
+        // The candidate selected at generation 0, before the pause, fails after mining resumed.
+        miner.handle_failed_candidate(0);
 
-        poll_fn(|cx| miner.poll(&pool, cx)).await;
-        assert_eq!(start.elapsed(), Duration::from_secs(2));
+        assert_eq!(deadline(&miner), next);
     }
 
     #[test]
@@ -686,18 +732,11 @@ mod tests {
         assert_eq!(auto.has_pending_txs, Some(true));
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn overflowing_tick_waits_indefinitely() {
-        let mut miner = Miner::<()>::new(MiningMode::interval(Duration::MAX));
-        let pool = Arc::new(Pool::default());
-        let mut cx = Context::from_waker(futures::task::noop_waker_ref());
-        let start = Instant::now();
-        assert!(miner.poll(&pool, &mut cx).is_pending());
-        miner.set_paused(true);
-        tokio::time::advance(FAR_FUTURE).await;
-        miner.set_paused(false);
-        tokio::time::advance(FAR_FUTURE).await;
-        poll_fn(|cx| miner.poll(&pool, cx)).await;
-        assert!(start.elapsed() >= FAR_FUTURE * 2);
+    #[test]
+    fn overflowing_tick_waits_indefinitely() {
+        let t0 = Instant::now();
+        let now = t0 + Duration::from_secs(1);
+        assert_eq!(next_deadline(t0, now, Duration::MAX), now + FAR_FUTURE);
+        assert_eq!(resumed_deadline(t0, now, Duration::MAX), Some(now + FAR_FUTURE));
     }
 }

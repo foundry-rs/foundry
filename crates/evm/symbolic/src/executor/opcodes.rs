@@ -179,9 +179,9 @@ impl SymbolicExecutor {
         SymCalldata::from_bytes(&mut self.cx, bytes)
     }
 
-    fn invoke_storage_hook<FEN: FoundryEvmNetwork>(
+    fn invoke_storage_hook(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         completed_paths: &mut usize,
@@ -291,15 +291,15 @@ impl SymbolicExecutor {
         Ok(true)
     }
 
-    fn guard_fixed_memory_access<FEN: FoundryEvmNetwork>(
+    fn guard_fixed_memory_access(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         offset: &SymExpr,
         size: usize,
     ) -> Result<Option<StepOutcome>, SymbolicError> {
-        let memory_limit = executor.evm_env().cfg_env.memory_limit();
+        let memory_limit = executor.memory_limit;
         let host_max_offset = (usize::MAX & !31usize).checked_sub(size);
         let constrained_offset = state.constrained_usize_checked(&mut self.cx, offset);
         if constrained_offset.as_ref().is_some_and(|offset| match offset {
@@ -379,15 +379,15 @@ impl SymbolicExecutor {
         }
     }
 
-    pub(super) fn guard_memory_range<FEN: FoundryEvmNetwork>(
+    pub(super) fn guard_memory_range(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         offset: &SymExpr,
         size: &SymExpr,
     ) -> Result<Option<StepOutcome>, SymbolicError> {
-        let memory_limit = executor.evm_env().cfg_env.memory_limit();
+        let memory_limit = executor.memory_limit;
         if let (Some(offset_value), Some(size_value)) = (offset.as_const(), size.as_const()) {
             let valid = size_value.is_zero()
                 || usize::try_from(offset_value)
@@ -445,9 +445,9 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    pub(super) fn step<FEN: FoundryEvmNetwork>(
+    pub(super) fn step(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         code: &SymCode,
         jumpdests: &JumpTable,
         state: &mut PathState,
@@ -457,7 +457,7 @@ impl SymbolicExecutor {
     ) -> Result<StepOutcome, SymbolicError> {
         state.pc += 1;
 
-        if Into::<SpecId>::into(executor.spec_id()) < opcode_activation(op) {
+        if executor.spec_id < opcode_activation(op) {
             state.return_data = SymReturnData::empty(&mut self.cx);
             return Ok(StepOutcome::ExceptionalHalt);
         }
@@ -1248,7 +1248,7 @@ impl SymbolicExecutor {
                     state.return_data = SymReturnData::empty(&mut self.cx);
                     return Ok(StepOutcome::ExceptionalHalt);
                 }
-                let spec_id: SpecId = executor.spec_id().into();
+                let spec_id = executor.spec_id;
                 let (beneficiary_word, beneficiary) =
                     state.pop_address_word_or_symbolic_slot(&mut self.cx)?;
                 if spec_id < SpecId::CANCUN
@@ -1465,14 +1465,9 @@ impl SymbolicExecutor {
         let size = state.stack.pop()?;
         match state.constrained_usize_checked(&mut self.cx, &size) {
             Some(Ok(size)) => {
-                state.return_data = state.memory.return_data(&mut self.cx, offset.clone(), size)?;
-                if is_revert {
-                    Ok(self.classify_revert(state, offset, size))
-                } else {
-                    Ok(StepOutcome::Halt)
-                }
+                state.return_data = state.memory.return_data(&mut self.cx, offset, size)?;
             }
-            Some(Err(_)) => Ok(StepOutcome::Revert),
+            Some(Err(_)) => return Ok(StepOutcome::Revert),
             None => {
                 let max_limit = self.config.max_calldata_bytes as usize;
                 let reason =
@@ -1480,27 +1475,39 @@ impl SymbolicExecutor {
                 let max_size = self.solver_upper_bound_usize(state, &size, max_limit, reason)?;
                 state.return_data =
                     state.memory.return_data_symbolic_size(&mut self.cx, offset, size, max_size)?;
-                Ok(if is_revert { StepOutcome::Revert } else { StepOutcome::Halt })
             }
         }
+        if is_revert { self.classify_revert(state) } else { Ok(StepOutcome::Halt) }
     }
 
     pub(super) fn classify_revert(
         &mut self,
-        state: &PathState,
-        offset: SymExpr,
-        size: usize,
-    ) -> StepOutcome {
-        if state.call_depth == 0
-            && let Some(offset) = offset.as_const()
-            && let Ok(offset) = usize::try_from(offset)
-            && let Ok(data) = state.memory.read_concrete(&mut self.cx, offset, size)
-            && is_assertion_revert(&data)
-        {
-            StepOutcome::Failure
-        } else {
-            StepOutcome::Revert
+        state: &mut PathState,
+    ) -> Result<StepOutcome, SymbolicError> {
+        if state.call_depth != 0 {
+            return Ok(StepOutcome::Revert);
         }
+        let data = state.return_data.read_concrete(&mut self.cx, "symbolic revert data");
+        // Like Forge's fuzz and invariant runners, a `vm.assumeNoRevert` rejection that reaches the
+        // top frame discards the run. Invariant predicates still treat it as a revert.
+        if !state.invariant_predicate && data.as_deref().is_ok_and(|data| data == MAGIC_ASSUME) {
+            return Ok(StepOutcome::AssumeRejected);
+        }
+        // In `check*`/`prove*` tests, a `CheatcodeError` that reaches the top frame, such as an
+        // unmet `vm.expectRevert`, is a failure. Invariant handlers treat it as a revert.
+        // Match its selector independently of the memory address and the rest of the payload.
+        if state.root_calldata.is_some()
+            && let Some(condition) =
+                cheatcode_error_revert_condition(&mut self.cx, &state.return_data)
+            && let Some(constraints) = self.constraints_for_condition(state, condition)?
+        {
+            state.constraints = constraints;
+            return Ok(StepOutcome::Failure);
+        }
+        if data.is_ok_and(|data| is_assertion_revert(&data)) {
+            return Ok(StepOutcome::Failure);
+        }
+        Ok(StepOutcome::Revert)
     }
 }
 

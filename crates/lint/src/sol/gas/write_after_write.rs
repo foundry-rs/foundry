@@ -109,7 +109,7 @@ impl Analyzer<'_, '_> {
             }
             // The placeholder runs the modified function; inline assembly and errors are opaque.
             StmtKind::Placeholder
-            | StmtKind::AssemblyBlock(_)
+            | StmtKind::AssemblyBlock(..)
             | StmtKind::Switch(_)
             | StmtKind::Err(_) => self.pending.clear(),
         }

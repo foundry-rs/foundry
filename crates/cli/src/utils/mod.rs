@@ -1082,7 +1082,11 @@ ignore them in the `.gitignore` file."
 
     /// Sets the branch for a submodule.
     pub fn set_submodule_branch(self, rel_path: &Path, branch: &str) -> Result<()> {
-        self.cmd().args(["submodule", "set-branch", "-b", branch]).arg(rel_path).exec().map(drop)
+        self.cmd()
+            .args(["submodule", "set-branch", "-b", branch])
+            .arg(rel_path.to_slash_lossy().as_ref())
+            .exec()
+            .map(drop)
     }
 
     /// Returns remote branch names as a newline-separated string.
@@ -1108,6 +1112,20 @@ ignore them in the `.gitignore` file."
                 )
             })?;
         Ok(())
+    }
+
+    /// Checks out a branch without fetching or resetting an existing local branch.
+    pub fn checkout_branch(self, recursive: bool, branch: &str) -> Result<()> {
+        validate_checkout_ref(branch.as_ref())?;
+        if self.has_branch(branch, self.root)? {
+            return self.checkout(recursive, branch);
+        }
+        self.cmd()
+            .arg("checkout")
+            .args(recursive.then_some("--recurse-submodules"))
+            .args(["-b", branch, &format!("refs/remotes/origin/{branch}"), "--"])
+            .exec()
+            .map(drop)
     }
 
     fn cmd(self) -> Command {
@@ -1279,6 +1297,7 @@ mod tests {
         fs::write(tmp.path().join("file"), "dirty\n").unwrap();
 
         assert!(git.checkout_at("-f", tmp.path()).is_err());
+        assert!(git.checkout_branch(false, "-f").is_err());
         assert_eq!(fs::read_to_string(tmp.path().join("file")).unwrap(), "dirty\n");
     }
 
@@ -1647,5 +1666,24 @@ mod tests {
         let git = git.root(&worktree);
         assert!(!git.submodules_initialized(&["lib".into()]).unwrap());
         assert!(git.has_missing_dependencies(["lib"]).is_err());
+    }
+
+    #[test]
+    fn sets_submodule_branch_with_native_path() {
+        let tmp = tempdir().unwrap();
+        let git = Git::new(tmp.path());
+        git.init().unwrap();
+        fs::write(
+            tmp.path().join(".gitmodules"),
+            "[submodule \"lib/dep\"]\npath = lib/dep\nurl = https://example.invalid/dep\n",
+        )
+        .unwrap();
+
+        git.set_submodule_branch(&Path::new("lib").join("dep"), "feature/v1").unwrap();
+
+        assert_eq!(
+            git.read_submodules_with_branch(tmp.path(), OsStr::new("lib")).unwrap(),
+            HashMap::from_iter([(PathBuf::from("lib/dep"), "feature/v1".to_string())])
+        );
     }
 }

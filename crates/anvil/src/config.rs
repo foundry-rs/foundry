@@ -8,6 +8,7 @@ use crate::{
             },
             genesis::GenesisConfig,
             mem::fork_db::ForkedDatabase,
+            tempo_consensus::TempoConsensus,
             time::duration_since_unix_epoch,
         },
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
@@ -33,6 +34,7 @@ use alloy_signer_local::{
     coins_bip39::{English, Mnemonic},
 };
 use alloy_transport::TransportError;
+use anvil_core::types::NodeBlobParams;
 use anvil_server::ServerConfig;
 use eyre::{Context, Result};
 use foundry_common::{
@@ -49,7 +51,7 @@ use foundry_evm::{
     traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier},
     utils::{
         apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header,
-        get_blob_params, get_blob_params_by_hardfork,
+        get_blob_params_by_hardfork,
     },
 };
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
@@ -64,6 +66,7 @@ use serde_json::{Value, json};
 use std::{
     fmt::Write as FmtWrite,
     net::{IpAddr, Ipv4Addr},
+    num::NonZeroU64,
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -91,6 +94,8 @@ pub const DEFAULT_GAS_LIMIT: u64 = 30_000_000;
 pub const DEFAULT_SLOTS_IN_AN_EPOCH: u64 = 32;
 /// Default mnemonic for dev accounts
 pub const DEFAULT_MNEMONIC: &str = "test test test test test test test test test test test junk";
+/// Default number of block heights in a Tempo consensus epoch.
+pub const DEFAULT_TEMPO_EPOCH_LENGTH: NonZeroU64 = NonZeroU64::new(21_600).unwrap();
 
 /// Resolves source-chain upgrades without changing another execution family's historical lookup.
 pub(crate) fn source_hardfork(
@@ -161,19 +166,25 @@ impl AnvilNodeInfoProbe {
         Self { identified, skip, inconclusive: false }
     }
 
-    async fn request(&mut self, provider: &RetryProvider) -> Result<Option<NodeInfo>> {
+    async fn request(
+        &mut self,
+        provider: &RetryProvider,
+    ) -> Result<Option<(NodeInfo, Option<BlobParams>)>> {
         if self.skip {
             return Ok(None);
         }
         let Ok(response) = tokio::time::timeout(
             FORK_IDENTITY_PROBE_TIMEOUT,
-            provider.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()),
+            provider.raw_request::<_, Value>("anvil_nodeInfo".into(), ()),
         )
         .await
         else {
             self.inconclusive = true;
             return Ok(None);
         };
+        let response = response.and_then(|value| {
+            decode_node_info(value).map_err(|err| TransportError::deser_err(err, "anvil_nodeInfo"))
+        });
         match response {
             Ok(node_info) => {
                 self.identified = true;
@@ -188,6 +199,20 @@ impl AnvilNodeInfoProbe {
             }
         }
     }
+}
+
+/// Decodes an `anvil_nodeInfo` response and the blob params that newer Anvil versions add to it.
+///
+/// `WithOtherFields<NodeInfo>` cannot decode it: serde's flatten buffer rejects the `u128` retry
+/// backoff that fork endpoints report.
+fn decode_node_info(mut value: Value) -> serde_json::Result<(NodeInfo, Option<BlobParams>)> {
+    let blob_params = value
+        .as_object_mut()
+        .and_then(|fields| fields.remove("blobParams"))
+        .map(serde_json::from_value::<NodeBlobParams>)
+        .transpose()?
+        .map(BlobParams::from);
+    Ok((serde_json::from_value(value)?, blob_params))
 }
 
 /// One-shot source data for a transaction-hash fork replay.
@@ -209,18 +234,6 @@ const BANNER: &str = r"
     | (_| | | | | |  \ V /  | | | |
      \__,_| |_| |_|   \_/   |_| |_|
 ";
-
-fn fork_source_id(urls: &[String], headers: &[String]) -> B256 {
-    let mut encoded = Vec::new();
-    for parts in [urls, headers] {
-        encoded.extend_from_slice(&(parts.len() as u64).to_be_bytes());
-        for part in parts {
-            encoded.extend_from_slice(&(part.len() as u64).to_be_bytes());
-            encoded.extend_from_slice(part.as_bytes());
-        }
-    }
-    keccak256(encoded)
-}
 
 /// Configurations of the EVM node
 #[derive(Clone, Debug)]
@@ -274,6 +287,9 @@ pub struct NodeConfig {
     pub fork_choice: Option<ForkChoice>,
     /// headers to use with fork RPC endpoints
     pub fork_headers: Vec<String>,
+    /// Fork URLs configured at startup. Unlike `fork_urls`, these do not change when the fork is
+    /// switched over RPC, so only their origins receive `fork_headers` and use MPP.
+    pub trusted_fork_urls: Vec<String>,
     /// specifies chain id for cache to skip fetching from remote in offline-start mode
     pub fork_chain_id: Option<U256>,
     /// Skip `anvil_nodeInfo` / `anvil_metadata` probes against the fork URL.
@@ -359,6 +375,10 @@ pub struct NodeConfig {
     ///
     /// Must be an unlocked signer account. Defaults to the last dev account on Tempo networks.
     pub tempo_fee_payer: Option<Address>,
+    /// Number of block heights in a Tempo consensus epoch.
+    pub tempo_epoch_length: NonZeroU64,
+    /// Optional development consensus seed; otherwise derived from the account mnemonic.
+    pub tempo_consensus_seed: Option<B256>,
     /// Do not print log messages.
     pub silent: bool,
     /// The path where persisted states are cached (used with `max_persisted_states`).
@@ -686,6 +706,7 @@ impl Default for NodeConfig {
             genesis: None,
             fork_request_timeout: REQUEST_TIMEOUT,
             fork_headers: vec![],
+            trusted_fork_urls: vec![],
             fork_request_retries: 5,
             fork_retry_backoff: Duration::from_millis(1_000),
             fork_chain_id: None,
@@ -715,6 +736,8 @@ impl Default for NodeConfig {
             #[cfg(feature = "base")]
             base_activation_admin: None,
             tempo_fee_payer: None,
+            tempo_epoch_length: DEFAULT_TEMPO_EPOCH_LENGTH,
+            tempo_consensus_seed: None,
             silent: false,
             cache_path: None,
             funded_accounts: HashMap::default(),
@@ -1126,6 +1149,7 @@ impl NodeConfig {
             if self.fork_urls != fork_urls {
                 self.fork_endpoint_is_anvil = false;
             }
+            self.trusted_fork_urls = fork_urls.clone();
             self.fork_urls = fork_urls;
         }
         self
@@ -1137,6 +1161,7 @@ impl NodeConfig {
         if self.fork_urls != fork_urls {
             self.fork_endpoint_is_anvil = false;
         }
+        self.trusted_fork_urls = fork_urls.clone();
         self.fork_urls = fork_urls;
         self
     }
@@ -1391,6 +1416,31 @@ impl NodeConfig {
     pub const fn with_tempo_fee_payer(mut self, fee_payer: Option<Address>) -> Self {
         self.tempo_fee_payer = fee_payer;
         self
+    }
+
+    /// Sets the number of block heights in a Tempo consensus epoch.
+    #[must_use]
+    pub const fn with_tempo_epoch_length(mut self, epoch_length: NonZeroU64) -> Self {
+        self.tempo_epoch_length = epoch_length;
+        self
+    }
+
+    /// Overrides the development consensus seed on Tempo networks.
+    #[must_use]
+    pub const fn with_tempo_consensus_seed(mut self, seed: Option<B256>) -> Self {
+        self.tempo_consensus_seed = seed;
+        self
+    }
+
+    /// Returns the explicit seed or derives it from the effective dev-account mnemonic.
+    pub fn tempo_consensus_seed(&self) -> B256 {
+        self.tempo_consensus_seed.unwrap_or_else(|| {
+            let mnemonic = self
+                .account_generator
+                .as_ref()
+                .map_or(DEFAULT_MNEMONIC, |generator| generator.get_phrase());
+            TempoConsensus::default_seed(mnemonic)
+        })
     }
 
     /// Returns the effective account used to sponsor Tempo fee-payer requests.
@@ -1678,14 +1728,66 @@ impl NodeConfig {
     }
 
     fn fork_provider(&self, eth_rpc_url: &str) -> Result<RetryProvider> {
+        self.fork_provider_builder(eth_rpc_url)
+            .build()
+            .wrap_err("failed to establish provider to fork url")
+    }
+
+    /// Returns the fork provider builder for `eth_rpc_url`, which only sends `fork_headers` and
+    /// `MPP_API_KEY`, and only pays MPP challenges, when the URL is trusted.
+    fn fork_provider_builder(&self, eth_rpc_url: &str) -> ProviderBuilder {
+        let trusted = self.is_trusted_fork_url(eth_rpc_url);
         ProviderBuilder::new(eth_rpc_url)
             .timeout(self.fork_request_timeout)
             .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
             .compute_units_per_second(self.compute_units_per_second)
             .max_retry(self.fork_request_retries)
-            .headers(self.fork_headers.clone())
-            .build()
-            .wrap_err("failed to establish provider to fork url")
+            .headers(if trusted { self.fork_headers.clone() } else { Vec::new() })
+            .no_mpp(!trusted)
+    }
+
+    /// Returns whether `url` shares an origin with a configured fork URL. Fork headers,
+    /// `MPP_API_KEY` and MPP payments are only used with such URLs, so a URL chosen over RPC cannot
+    /// receive them.
+    fn is_trusted_fork_url(&self, url: &str) -> bool {
+        // Compare the endpoints the provider actually connects to.
+        let origin =
+            |url: &str| ProviderBuilder::<AnyNetwork>::new(url).url().map(|url| url.origin());
+        let target = origin(url);
+        self.trusted_fork_urls.iter().any(|fork_url| {
+            fork_url == url || matches!((origin(fork_url), &target), (Some(a), Some(b)) if a == *b)
+        })
+    }
+
+    /// Warns when `fork_headers` will not be sent to `url` because it is not a trusted fork URL.
+    pub(crate) fn warn_if_fork_headers_withheld(&self, url: &str) {
+        if !self.silent && !self.fork_headers.is_empty() && !self.is_trusted_fork_url(url) {
+            let _ = foundry_common::sh_warn!(
+                "not sending fork headers to {}: its origin differs from the configured fork URL",
+                redact_url(url)
+            );
+        }
+    }
+
+    /// Identifies the source of a fork cache by its URLs and the credentials sent to them, so
+    /// caches filled with different credentials are not shared.
+    fn fork_source_id(&self, eth_rpc_url: &str) -> B256 {
+        let trusted = self.is_trusted_fork_url(eth_rpc_url);
+        let headers = if trusted { self.fork_headers.as_slice() } else { &[] };
+        let mut encoded = Vec::new();
+        for parts in [self.fork_urls.as_slice(), headers] {
+            encoded.extend_from_slice(&(parts.len() as u64).to_be_bytes());
+            for part in parts {
+                encoded.extend_from_slice(&(part.len() as u64).to_be_bytes());
+                encoded.extend_from_slice(part.as_bytes());
+            }
+        }
+        // Untrusted URLs do not use MPP either. Only they are marked, so trusted
+        // sources keep their existing cache identity.
+        if !trusted {
+            encoded.push(0);
+        }
+        keccak256(encoded)
     }
 
     async fn fork_endpoint_identity(
@@ -1695,7 +1797,7 @@ impl NodeConfig {
         source_chain_id_override: Option<u64>,
         node_info_probe: &mut AnvilNodeInfoProbe,
     ) -> Result<ForkEndpointIdentity> {
-        let Some(node_info) = node_info_probe.request(provider).await? else {
+        let Some((node_info, blob_params)) = node_info_probe.request(provider).await? else {
             let source_chain_id = source_chain_id_override.unwrap_or(fallback_execution_chain_id);
             let explicit_fallback = self.has_explicit_network_selection().then_some(self.networks);
             let network_profile = NetworkConfigs::from_rpc_identity_profile_with_fallback(
@@ -1710,6 +1812,7 @@ impl NodeConfig {
                 network: network_profile.map(|profile| profile.execution_network()),
                 network_profile,
                 hardfork: None,
+                blob_params: None,
                 instance_id: None,
                 source_fork_block_number: None,
                 source_fork_block_hash: None,
@@ -1776,6 +1879,7 @@ impl NodeConfig {
             network: Some(network),
             network_profile: Some(network_profile),
             hardfork: Some(hardfork),
+            blob_params,
             instance_id,
             source_fork_block_number,
             source_fork_block_hash,
@@ -2183,8 +2287,19 @@ latest block number: {latest_block}"
 
         // Blob rules and fee state belong to the selected fork context even when the target block
         // predates Cancun. Always replace both so a reset cannot retain the previous fork's
-        // schedule or excess gas.
-        let blob_params = get_blob_params(source_chain_id, block.header.timestamp());
+        // schedule or excess gas. The source headers' excess blob gas was produced under the source
+        // chain's rules, so prefer its public schedule. For chains without one, use the blob params
+        // an Anvil endpoint reports: it can be a fork that executes a different hardfork than the
+        // blob schedule it inherited, so its hardfork is only a fallback for older versions.
+        let blob_params =
+            source_hardfork(effective_network, source_chain_id, block.header.timestamp())
+                .map(get_blob_params_by_hardfork)
+                .or(fork_identity.blob_params)
+                .unwrap_or_else(|| {
+                    get_blob_params_by_hardfork(
+                        fork_identity.hardfork.unwrap_or(effective_hardfork),
+                    )
+                });
         fees.set_blob_params(blob_params);
         let blob_update_fraction = blob_params.update_fraction as u64;
         let blob_excess_gas = block.header.excess_blob_gas().or_else(|| {
@@ -2248,7 +2363,7 @@ latest block number: {latest_block}"
             eyre::bail!("primary fork endpoint changed while its context was being validated");
         }
 
-        let source_id = fork_source_id(&self.fork_urls, &self.fork_headers);
+        let source_id = self.fork_source_id(&eth_rpc_url);
         let account_fetch_policy = account_fetch_policy_for_source(source_chain_id, target_profile);
         let meta = BlockchainDbMeta::new(cache_block_env, eth_rpc_url.clone())
             .with_fork_identity(block_hash, source_id)
@@ -2261,12 +2376,7 @@ latest block number: {latest_block}"
             if self.fork_urls.len() <= 1 {
                 return self.fork_provider(&eth_rpc_url);
             }
-            ProviderBuilder::new(&eth_rpc_url)
-                .timeout(self.fork_request_timeout)
-                .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
-                .compute_units_per_second(self.compute_units_per_second)
-                .max_retry(self.fork_request_retries)
-                .headers(self.fork_headers.clone())
+            self.fork_provider_builder(&eth_rpc_url)
                 .build_fallback(self.fork_urls.clone())
                 .wrap_err("failed to establish round-robin provider to fork urls")
         };
@@ -2761,13 +2871,29 @@ mod tests {
 
     #[test]
     fn fork_source_identity_includes_all_urls_and_headers() {
-        let urls = ["http://primary".to_string(), "http://fallback".to_string()];
-        let headers = ["Authorization: secret".to_string()];
-        let identity = fork_source_id(&urls, &headers);
+        let urls = vec!["http://primary".to_string(), "http://fallback".to_string()];
+        let headers = vec!["Authorization: secret".to_string()];
+        let config = |urls: Vec<String>, headers: Vec<String>| {
+            NodeConfig::default().with_fork_urls(urls).with_fork_headers(headers)
+        };
+        let identity = config(urls.clone(), headers.clone()).fork_source_id(&urls[0]);
 
-        assert_ne!(identity, fork_source_id(&urls[..1], &headers));
-        assert_ne!(identity, fork_source_id(&urls, &[]));
-        assert_ne!(identity, fork_source_id(&[urls[1].clone(), urls[0].clone()], &headers));
+        assert_ne!(identity, config(urls[..1].to_vec(), headers.clone()).fork_source_id(&urls[0]));
+        assert_ne!(identity, config(urls.clone(), vec![]).fork_source_id(&urls[0]));
+        assert_ne!(
+            identity,
+            config(vec![urls[1].clone(), urls[0].clone()], headers.clone())
+                .fork_source_id(&urls[1])
+        );
+
+        // A URL switched to over RPC receives no credentials, so it must not share the cache of
+        // the same URL configured at startup, with or without headers.
+        let other = "http://other".to_string();
+        let mut switched = config(urls, headers.clone());
+        switched.fork_urls = vec![other.clone()];
+        let switched = switched.fork_source_id(&other);
+        assert_ne!(switched, config(vec![other.clone()], headers).fork_source_id(&other));
+        assert_ne!(switched, config(vec![other.clone()], vec![]).fork_source_id(&other));
     }
 
     #[test]
@@ -2834,6 +2960,7 @@ mod tests {
             network: Some(NetworkVariant::Ethereum),
             network_profile: Some(NetworkConfigs::default()),
             hardfork: None,
+            blob_params: None,
             instance_id: None,
             source_fork_block_number: None,
             source_fork_block_hash: None,
@@ -2878,6 +3005,7 @@ mod tests {
             network: Some(NetworkVariant::Ethereum),
             network_profile: Some(NetworkConfigs::default()),
             hardfork: Some(EthereumHardfork::Prague.into()),
+            blob_params: None,
             instance_id: Some(B256::with_last_byte(1)),
             source_fork_block_number: None,
             source_fork_block_hash: None,
@@ -3038,5 +3166,21 @@ mod tests {
 
         let mode = std::fs::metadata(path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn tempo_consensus_configuration_defaults_and_overrides() {
+        let config = NodeConfig::default();
+        assert_eq!(config.tempo_epoch_length.get(), 21_600);
+        assert_eq!(config.tempo_consensus_seed(), TempoConsensus::default_seed(DEFAULT_MNEMONIC));
+        let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let config =
+            config.with_account_generator(AccountGenerator::new(1).phrase(mnemonic)).unwrap();
+        assert_eq!(config.tempo_consensus_seed(), TempoConsensus::default_seed(mnemonic));
+        let seed = B256::repeat_byte(7);
+        let config =
+            config.with_tempo_epoch_length(NonZeroU64::MIN).with_tempo_consensus_seed(Some(seed));
+        assert_eq!(config.tempo_epoch_length, NonZeroU64::MIN);
+        assert_eq!(config.tempo_consensus_seed(), seed);
     }
 }

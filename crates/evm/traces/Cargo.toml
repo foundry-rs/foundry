@@ -22,6 +22,7 @@ foundry-config.workspace = true
 foundry-evm-core.workspace = true
 foundry-evm-hardforks.workspace = true
 foundry-evm-networks.workspace = true
+foundry-cheatcodes-spec.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
@@ -51,6 +52,7 @@ revm.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 serde.workspace = true
 solar.workspace = true
+soldb-core.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["time", "macros"] }
 tracing.workspace = true
@@ -59,7 +61,6 @@ yansi.workspace = true
 [dev-dependencies]
 ron.workspace = true
 snapbox.workspace = true
-tokio = { workspace = true, features = ["test-util"] }
 
 [features]
 default = ["optimism"]

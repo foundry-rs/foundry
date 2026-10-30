@@ -77,7 +77,6 @@ tempo-primitives.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-tempo-precompiles = { workspace = true, features = ["test-utils"] }
 
 [features]
 default = ["optimism"]

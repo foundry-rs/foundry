@@ -23,6 +23,7 @@ use alloy_signer::SignerSync;
 use anvil::{NodeConfig, spawn};
 use foundry_evm::hardfork::EthereumHardfork;
 use foundry_test_utils::rpc;
+use revm::context_interface::block::BlobExcessGasAndPrice;
 use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::time::timeout;
@@ -1170,4 +1171,39 @@ async fn legacy_blob_call_runs_at_gas_price() {
     let traced =
         api.trace_call(request, [TraceType::Trace].into_iter().collect(), None).await.unwrap();
     assert_eq!(U256::from_be_slice(&traced.output), U256::from(gas_price));
+}
+
+// Receipts and loaded state must use the active fork's blob parameters. At this excess blob gas,
+// Prague's update fraction gives 7 wei while Cancun's would give 19 wei.
+#[tokio::test(flavor = "multi_thread")]
+async fn blob_fees_use_active_blob_params() {
+    let node_config = || NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(node_config()).await;
+    let provider = http_provider(&handle.http_endpoint());
+    let accounts = provider.get_accounts().await.unwrap();
+
+    let blob_update_fraction = u64::try_from(api.backend.blob_params().update_fraction).unwrap();
+    api.backend.fees().set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
+        10_000_000,
+        blob_update_fraction,
+    ));
+
+    let sidecar = SidecarBuilder::<SimpleCoder>::from_slice(b"Hello World").build().unwrap();
+    let tx = TransactionRequest::default()
+        .with_from(accounts[0])
+        .with_to(accounts[1])
+        .with_blob_sidecar_4844(sidecar);
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    assert_eq!(receipt.blob_gas_price, Some(7));
+
+    let (loaded, _handle) = spawn(node_config()).await;
+    loaded.anvil_load_state(api.anvil_dump_state(None).await.unwrap()).await.unwrap();
+    assert_eq!(loaded.blob_base_fee().unwrap(), api.blob_base_fee().unwrap());
 }

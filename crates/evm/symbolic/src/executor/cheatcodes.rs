@@ -216,9 +216,9 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    pub(super) fn deploy_code_cheatcode_if_needed<FEN: FoundryEvmNetwork>(
+    pub(super) fn deploy_code_cheatcode_if_needed(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         completed_paths: &mut usize,
@@ -271,9 +271,9 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    pub(super) fn deploy_code_cheatcode_call<FEN: FoundryEvmNetwork>(
+    pub(super) fn deploy_code_cheatcode_call(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         completed_paths: &mut usize,
@@ -313,9 +313,14 @@ impl SymbolicExecutor {
             CallFrame::new(&mut self.cx, created, created, state.address, zero, false, calldata);
         frame.address_word = created_word.clone();
         frame.caller_word = state.address_word.clone();
+        // Isolation runs a `deployCode` from the test frame as its own transaction.
+        let isolated = state.starts_isolated_transaction(executor);
         let mut child = state.child(frame);
         let pending_expected_creates = std::mem::take(&mut child.expected_creates);
         child.world = failure_world.clone();
+        if isolated {
+            child.world.clear_transient_storage();
+        }
         child.world.mark_current_transaction_created(created);
         child.world.set_nonce(created, 1);
 
@@ -326,9 +331,10 @@ impl SymbolicExecutor {
 
         let mut parents = VecDeque::with_capacity(outcomes.len());
         for outcome in outcomes {
-            match self.join_call_outcome(state, outcome, created)? {
-                JoinedCallOutcome::Rejected => {}
-                JoinedCallOutcome::Failure(parent) => {
+            // Like Forge, a cheatcode CREATE leaves `vm.assumeNoRevert` for the next call.
+            match self.join_call_outcome(executor, state, outcome, created, None)? {
+                JoinedCallOutcome::Failure(parent)
+                | JoinedCallOutcome::Success { parent, unmet_expected_revert: true, .. } => {
                     *state = parent;
                     return Ok(StepOutcome::Failure);
                 }
@@ -353,8 +359,11 @@ impl SymbolicExecutor {
                     )?;
                     parents.push_back(parent);
                 }
-                JoinedCallOutcome::Success { mut parent, child } => {
+                JoinedCallOutcome::Success { mut parent, child, .. } => {
                     parent.world = child.world;
+                    if isolated {
+                        parent.world.restore_transient_storage(&failure_world);
+                    }
                     parent.expected_emit = child.expected_emit;
                     parent.expected_creates = pending_expected_creates.clone();
                     self.observe_expected_create(
@@ -583,9 +592,9 @@ impl SymbolicExecutor {
         CheatcodeOutcome::Continue(Vec::new())
     }
 
-    pub(super) fn handle_foundry_cheatcode<FEN: FoundryEvmNetwork>(
+    pub(super) fn handle_foundry_cheatcode(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         selector: [u8; 4],
         in_offset: &SymExpr,
@@ -627,6 +636,7 @@ impl SymbolicExecutor {
             skip_0Call::SELECTOR | skip_1Call::SELECTOR => self.handle_skip(state, in_offset + 4),
             recordLogsCall::SELECTOR => {
                 state.recorded_logs = Some(Vec::new());
+                state.recorded_logs_generation += 1;
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             recordCall::SELECTOR => {
@@ -714,10 +724,12 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             getRecordedLogsCall::SELECTOR => {
+                state.recorded_logs_generation += 1;
                 let logs = state.recorded_logs.replace(Vec::new()).unwrap_or_default();
                 Ok(CheatcodeOutcome::ContinueData(recorded_logs_return_data(&mut self.cx, logs)))
             }
             getRecordedLogsJsonCall::SELECTOR => {
+                state.recorded_logs_generation += 1;
                 let logs = state.recorded_logs.replace(Vec::new()).unwrap_or_default();
                 Ok(CheatcodeOutcome::ContinueData(recorded_logs_json_return_data(
                     &mut self.cx,
@@ -741,17 +753,26 @@ impl SymbolicExecutor {
                 let mut data = ExpectedRevertData::Any;
                 let mut reverter = None;
                 let mut count = 1;
+                // Only `expectPartialRevert` matches the selector alone.
+                let partial = matches!(
+                    selector,
+                    expectPartialRevert_0Call::SELECTOR | expectPartialRevert_1Call::SELECTOR
+                );
                 for (index, param) in vm_params(selector).into_iter().enumerate() {
                     match param {
                         DynSolType::FixedBytes(4) => {
-                            let selector = read_abi_bytes4_words_arg(
+                            let bytes = read_abi_bytes4_words_arg(
                                 &mut self.cx,
                                 &state.memory,
                                 args_offset,
                                 index,
                             );
-                            data =
-                                ExpectedRevertData::Prefix(SymBytes::exprs(&mut self.cx, selector));
+                            let bytes = SymBytes::exprs(&mut self.cx, bytes);
+                            data = if partial {
+                                ExpectedRevertData::Prefix(bytes)
+                            } else {
+                                ExpectedRevertData::Exact(bytes)
+                            };
                         }
                         DynSolType::Bytes => {
                             let bytes = read_abi_symbolic_dynamic_byte_exprs_arg(
@@ -782,6 +803,10 @@ impl SymbolicExecutor {
                             )?;
                         }
                     }
+                }
+                // Forge reads a zero count as "expect no revert", which is not modeled.
+                if count == 0 {
+                    return Err(SymbolicError::Unsupported("symbolic vm.expectRevert count 0"));
                 }
                 Ok(self.set_expected_revert(state, data, reverter, count))
             }
@@ -1421,7 +1446,7 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(vec![exists]))
             }
             activeForkCall::SELECTOR => {
-                let id = executor.backend().active_fork_id().ok_or(SymbolicError::Unsupported(
+                let id = executor.active_fork_id.ok_or(SymbolicError::Unsupported(
                     "symbolic vm.activeFork requires an active forked executor",
                 ))?;
                 let id = SymExpr::constant(&mut self.cx, id);
@@ -1435,7 +1460,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.selectFork id",
                 )?;
-                if executor.backend().is_active_fork(id) {
+                if executor.active_fork_id == Some(id) {
                     return Ok(CheatcodeOutcome::Continue(Vec::new()));
                 }
                 Err(SymbolicError::Unsupported(
@@ -1445,13 +1470,14 @@ impl SymbolicExecutor {
             rollFork_0Call::SELECTOR | rollFork_2Call::SELECTOR => {
                 let with_id = selector == rollFork_2Call::SELECTOR;
                 let active_fork = !with_id
-                    || executor.backend().is_active_fork(read_abi_constrained_word_arg(
-                        &mut self.cx,
-                        state,
-                        args_offset,
-                        0,
-                        "symbolic vm.rollFork id",
-                    )?);
+                    || executor.active_fork_id
+                        == Some(read_abi_constrained_word_arg(
+                            &mut self.cx,
+                            state,
+                            args_offset,
+                            0,
+                            "symbolic vm.rollFork id",
+                        )?);
                 let block_number = read_abi_constrained_word_arg(
                     &mut self.cx,
                     state,
@@ -1702,12 +1728,7 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(vec![value]))
             }
             isIsolateModeCall::SELECTOR => {
-                let isolate = executor
-                    .inspector()
-                    .cheatcodes
-                    .as_ref()
-                    .is_some_and(|cheats| cheats.core.config.isolate);
-                let isolate = SymExpr::constant(&mut self.cx, U256::from(isolate));
+                let isolate = SymExpr::constant(&mut self.cx, U256::from(executor.isolate));
                 Ok(CheatcodeOutcome::Continue(vec![isolate]))
             }
             isContextCall::SELECTOR => {

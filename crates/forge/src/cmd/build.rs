@@ -121,6 +121,7 @@ impl BuildArgs {
         let format_json = shell::is_json();
 
         let mut output = ProjectCompiler::new()
+            .allow_linked_libraries(config.allow_linked_libraries)
             .external_compilers(&config)
             .files(files)
             .selected_paths(selected_paths)

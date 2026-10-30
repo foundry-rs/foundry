@@ -44,7 +44,6 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
-use foundry_debugger::DebuggerLayout;
 use foundry_evm::{
     backend::Backend,
     core::{
@@ -52,6 +51,7 @@ use foundry_evm::{
         evm::{EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
     },
     executors::ExecutorBuilder,
+    hardforks::ExecutionSpec,
     inspectors::{
         CheatsConfig,
         cheatcodes::{BroadcastableTransactions, Wallets},
@@ -226,6 +226,13 @@ pub struct ScriptArgs {
     )]
     pub resume_retry: bool,
 
+    /// Archives an unfinished previous broadcast of this script and broadcasts it anew.
+    ///
+    /// Without this flag, `--broadcast` refuses to replace a previous broadcast whose operations
+    /// have not all mined or reverted. Finish that broadcast with `--resume` instead.
+    #[arg(long, requires = "broadcast", conflicts_with = "resume")]
+    pub start_fresh: bool,
+
     /// If present, --resume or --verify will be assumed to be a multi chain deployment.
     #[arg(long)]
     pub multi: bool,
@@ -236,11 +243,10 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub debug: bool,
 
-    /// Debugger layout to use.
-    #[arg(long = "debug-layout", requires = "debug", value_enum)]
-    pub debug_layout: Option<DebuggerLayout>,
-
-    /// Dumps all debugger steps to file.
+    /// Writes a SolDB trace and source bundle to a directory.
+    ///
+    /// Read the bundle with SolDB tools, for example:
+    /// `soldb profile --trace-file <PATH>/trace.json --contracts <PATH>/contracts.json`.
     #[arg(
         long,
         requires = "debug",
@@ -394,7 +400,17 @@ impl ScriptArgs {
             // If no sender was explicitly set via --sender, auto-detect it from available signers:
             // use the sole signer's address if there's exactly one, or fall back to the browser
             // wallet address if present.
-            let addresses = script_wallets.addresses();
+            let mut addresses = script_wallets.addresses();
+            if addresses.is_empty() && browser_wallet.is_none() {
+                // A keystore without an `address` field, such as one written by `cast wallet`,
+                // must be unlocked to find its address.
+                addresses = script_wallets.signers().map_err(|err| {
+                    eyre::eyre!("{err}").wrap_err(
+                        "failed to unlock the wallet to find the script sender; pass `--sender`, \
+                         or a keystore password file with `--password-file` or `ETH_PASSWORD`",
+                    )
+                })?;
+            }
             if addresses.len() == 1 {
                 evm_opts.sender = addresses[0];
             } else if let Some(signer) = browser_wallet.as_ref().map(|b| b.address()) {
@@ -404,8 +420,17 @@ impl ScriptArgs {
 
         tempo.resolve_expires();
         config.tracing = args.tracing.resolve(&config.tracing, evm_opts.verbosity);
-        if args.debug && !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
-            config.extra_output.push(ContractOutputSelection::StorageLayout);
+        if args.debug {
+            if !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
+                config.extra_output.push(ContractOutputSelection::StorageLayout);
+            }
+            // Full build infos keep the sources the compiler saw, which dynamic test linking
+            // rewrites in scripts.
+            if let Err(error) = config.enable_debug_build_info() {
+                let _ = sh_warn!(
+                    "the debugger may show source files that differ from the compiled ones: {error:#}"
+                );
+            }
         }
 
         let script_config = ScriptConfig::new(
@@ -624,6 +649,7 @@ impl ScriptArgs {
             let size_limits = pre_simulation.args.contract_size_limits::<FEN>(
                 &pre_simulation.script_config.config,
                 &pre_simulation.script_config.evm_opts,
+                pre_simulation.script_config.hardfork,
             );
             pre_simulation.args.check_contract_sizes(
                 size_limits,
@@ -643,6 +669,16 @@ impl ScriptArgs {
     ) -> Result<Option<BundledState<FEN>>> {
         // Exit early in case user didn't provide any broadcast/verify related flags.
         if !bundled.args.should_broadcast() {
+            if bundled.sequence.sequences().iter().any(|sequence| {
+                sequence
+                    .transactions
+                    .iter()
+                    .any(|tx| tx.tx().from() == Some(Config::DEFAULT_SENDER))
+            }) {
+                sh_warn!(
+                    "Simulated with Foundry's default sender, so addresses and nonces may not match your deployer. Set your own --sender."
+                )?;
+            }
             if !shell::is_json() {
                 if shell::verbosity() >= 4 {
                     sh_println!("\n=== Transactions that will be broadcast ===\n")?;
@@ -712,8 +748,10 @@ impl ScriptArgs {
     ///
     /// Note: We assume that the `sig` is already stripped of its prefix, See [`ScriptArgs`]
     fn get_method_and_calldata(&self, abi: &JsonAbi) -> Result<(Function, Bytes)> {
-        if let Ok(decoded) = hex::decode(&self.sig) {
-            let selector = &decoded[..SELECTOR_LEN];
+        // Hex shorter than a selector cannot be calldata, so it is treated as a function name.
+        if let Ok(decoded) = hex::decode(&self.sig)
+            && let Some(selector) = decoded.get(..SELECTOR_LEN)
+        {
             let func =
                 abi.functions().find(|func| selector == &func.selector()[..]).ok_or_else(|| {
                     eyre::eyre!(
@@ -844,6 +882,7 @@ impl ScriptArgs {
         &self,
         config: &Config,
         evm_opts: &EvmOpts,
+        hardfork: Option<FoundryHardfork>,
     ) -> ContractSizeLimits {
         self.evm
             .env
@@ -858,7 +897,9 @@ impl ScriptArgs {
                     .map(|limits| ContractSizeLimits::new(limits.runtime, limits.initcode))
             })
             .unwrap_or_else(|| {
-                let spec_id: SpecFor<FEN> = config.evm_spec_id();
+                let spec_id = hardfork
+                    .and_then(SpecFor::<FEN>::from_foundry_hardfork)
+                    .unwrap_or_else(|| config.evm_spec_id());
                 ContractSizeLimits::for_spec_id(spec_id.into())
             })
     }
@@ -970,13 +1011,18 @@ impl<N: Network> ScriptResult<N> {
                     }
 
                     let init_code = node.trace.data.clone();
-                    let contract_name = known_contracts
-                        .find_by_creation_code(init_code.as_ref())
-                        .map(|artifact| artifact.0.name.clone());
+                    let artifact = known_contracts.find_by_creation_code_prefix(init_code.as_ref());
+                    let contract_name = artifact
+                        .or_else(|| known_contracts.find_by_creation_code(init_code.as_ref()))
+                        .map(|(id, _)| id.name.clone());
+                    let exact_artifact_match = artifact.is_some_and(|(id, _)| {
+                        !id.source.extension().is_some_and(|ext| ext == "vy")
+                    });
                     Some(AdditionalContract {
                         call_kind: node.trace.kind,
                         address: node.trace.address,
                         contract_name,
+                        exact_artifact_match,
                         init_code,
                         creator_code_addresses,
                     })
@@ -1232,7 +1278,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             self.config.evm_version,
             self.config.hardfork,
             evm_env,
-            ExecutionSpecContext::local_or_fork(fork_chain_id, fork_hardfork),
+            ExecutionSpecContext::local_or_script(fork_chain_id, fork_hardfork),
             None,
         );
     }
@@ -1268,7 +1314,7 @@ async fn prepare_script_source(
 const fn script_trace_requirements(config: &Config, debug: bool) -> TraceRequirements {
     TraceRequirements::none()
         .with_calls(true)
-        .with_debug(debug)
+        .with_debug_recording(debug)
         .with_verbosity(config.tracing.verbosity)
         .with_decode_internal(if config.tracing.decode_internal {
             InternalTraceMode::Full
@@ -1783,6 +1829,7 @@ mod tests {
                     arena,
                     ignored: Default::default(),
                     diagnostics: Default::default(),
+                    debug_steps: None,
                 },
             )],
             ..Default::default()
@@ -1825,6 +1872,7 @@ mod tests {
                     arena,
                     ignored: Default::default(),
                     diagnostics: Default::default(),
+                    debug_steps: None,
                 },
             )],
             ..Default::default()
@@ -1902,6 +1950,33 @@ mod tests {
         let sig = "0x522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266";
         let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--sig", sig]);
         assert_eq!(args.sig, sig);
+    }
+
+    #[test]
+    fn short_hex_sig_is_resolved_as_function_name() {
+        let abi = JsonAbi::parse(["function fade()", "function run()"]).unwrap();
+        let method = |sig: &str| {
+            ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--sig", sig])
+                .get_method_and_calldata(&abi)
+        };
+
+        let fade = abi.function("fade").unwrap()[0].clone();
+        let (func, calldata) = method("fade").unwrap();
+        assert_eq!(func, fade);
+        assert_eq!(calldata, Bytes::from(fade.selector().to_vec()));
+
+        for sig in ["", "0x12"] {
+            assert_eq!(
+                method(sig).unwrap_err().to_string(),
+                format!("Function `{sig}` not found in the ABI")
+            );
+        }
+
+        // Hex with a full selector is still raw calldata.
+        let run = abi.function("run").unwrap()[0].clone();
+        let (func, calldata) = method(&hex::encode(run.selector())).unwrap();
+        assert_eq!(func, run);
+        assert_eq!(calldata, Bytes::from(run.selector().to_vec()));
     }
 
     #[test]
@@ -2528,7 +2603,8 @@ mod tests {
             ScriptArgs::parse_from(["foundry-cli", "script", "script/Test.s.sol:TestScript"]);
         let evm_opts = EvmOpts { networks: NetworkConfigs::with_monad(), ..Default::default() };
 
-        let limits = args.contract_size_limits::<MonadEvmNetwork>(&Config::default(), &evm_opts);
+        let limits =
+            args.contract_size_limits::<MonadEvmNetwork>(&Config::default(), &evm_opts, None);
 
         assert!(limits.runtime > ContractSizeLimits::default().runtime);
         assert!(limits.initcode > ContractSizeLimits::default().initcode);
@@ -2547,7 +2623,7 @@ mod tests {
         let mut config = Config { code_size_limit: Some(128), ..Default::default() };
         let evm_opts = EvmOpts { networks: NetworkConfigs::with_monad(), ..Default::default() };
         assert_eq!(
-            args.contract_size_limits::<MonadEvmNetwork>(&config, &evm_opts,),
+            args.contract_size_limits::<MonadEvmNetwork>(&config, &evm_opts, None),
             ContractSizeLimits::with_runtime_limit(64)
         );
 
@@ -2555,7 +2631,7 @@ mod tests {
             ScriptArgs::parse_from(["foundry-cli", "script", "script/Test.s.sol:TestScript"]);
         config.code_size_limit = Some(128);
         assert_eq!(
-            args.contract_size_limits::<MonadEvmNetwork>(&config, &evm_opts,),
+            args.contract_size_limits::<MonadEvmNetwork>(&config, &evm_opts, None),
             ContractSizeLimits::with_runtime_limit(128)
         );
     }

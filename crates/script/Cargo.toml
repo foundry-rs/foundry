@@ -15,7 +15,7 @@ workspace = true
 
 [dependencies]
 forge-verify.workspace = true
-foundry-cli.workspace = true
+foundry-cli = { workspace = true, features = ["soldeer"] }
 foundry-config.workspace = true
 foundry-common.workspace = true
 foundry-evm.workspace = true

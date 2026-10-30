@@ -45,6 +45,7 @@ libraries = []
 cache = true
 cache_path = "cache"
 dynamic_test_linking = true
+allow_linked_libraries = true
 snapshots = "snapshots"
 gas_snapshot_check = false
 gas_snapshot_emit = true
@@ -332,6 +333,7 @@ fn can_extract_config_values(prj: _, cmd: _) {
         libs: vec!["lib-test".into()],
         cache: true,
         dynamic_test_linking: true,
+        allow_linked_libraries: true,
         cache_path: "test-cache".into(),
         snapshots: "snapshots".into(),
         gas_snapshot_check: false,
@@ -488,6 +490,7 @@ fn can_extract_config_values(prj: _, cmd: _) {
         rpc_endpoints: Default::default(),
         build_info: false,
         build_info_path: None,
+        build_info_without_ast: false,
         fmt: Default::default(),
         lint: Default::default(),
         doc: Default::default(),
@@ -515,6 +518,7 @@ fn can_extract_config_values(prj: _, cmd: _) {
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
         script_execution_protection: true,
+        restrict_inline_config: false,
         _non_exhaustive: (),
     };
     prj.write_config(input.clone());
@@ -2218,6 +2222,7 @@ fn test_default_config(prj: _, cmd: _) {
   "cache": true,
   "cache_path": "cache",
   "dynamic_test_linking": true,
+  "allow_linked_libraries": true,
   "snapshots": "snapshots",
   "gas_snapshot_check": false,
   "gas_snapshot_emit": true,

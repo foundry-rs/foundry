@@ -141,7 +141,11 @@ existing attempt.
 ## Pending reconciliation and receipts
 
 Before sending new work, `BundledState::wait_for_pending` checks each hash in `pending`. Sequences
-from a multichain deployment are checked concurrently. A confirmed success removes the hash from
+from a multichain deployment are checked concurrently. Outside `--batch`, `--resume` first checks
+the sequences in order in `CompiledState::resume`; a failing sequence does not stop the others,
+each result is saved, and the errors are returned together, so this later check usually finds
+nothing pending. In multichain runs, broadcast and reconcile errors name their chain, and the
+sequence number when several sequences share it. A confirmed success removes the hash from
 `pending` and appends its receipt. A revert removes the hash, records it in `reverted` rather than
 `receipts`, which consumers treat as successful, and returns an error. A later `--resume` warns
 about each recorded revert, never resubmits it, continues with the remaining operations, and
@@ -197,6 +201,16 @@ cache file. Complete snapshots are atomically promoted, and a process-lifetime f
 second writer. The public and sensitive JSON files are compatibility exports generated from that
 snapshot; failure between their writes cannot roll authoritative recovery backward.
 
+A new `--broadcast` refuses to replace a previous broadcast that submitted anything, through a
+transaction hash or a saved attempt, and left an operation, on any chain, with neither a receipt nor
+a recorded revert. Without a snapshot, progress written before snapshots existed is checked through
+the broadcast export. A broadcast export written with a snapshot cannot show a submission whose
+response was lost, so when its snapshot is missing, for example in a checkout without `cache/`, it
+blocks while any operation lacks a receipt or recorded revert, even if nothing was sent. With
+`--start-fresh`, it first moves the snapshot, including an interrupted pending commit, and both
+exports to timestamped names. Dry runs never block, and neither do runs that never signed or sent
+anything while their snapshot is present.
+
 Resume obtains the current chain ID for a single-chain run and loads the authoritative snapshot,
 restoring sensitive RPC URLs by stable operation position. Corrupt, inconsistent, or unsupported
 generation-tagged state fails closed. A generationless legacy public/sensitive pair may be imported
@@ -216,8 +230,12 @@ A saved signed attempt that is visible but unmined and has no pending hash is no
 step 2. It needs no signer, but signers for other operations can be requested before it is
 replayed.
 
-The saved RPC is part of the sensitive sequence. Operator handoff therefore also hands off an
-endpoint. Validated endpoint rebinding remains deferred to deployment plans and handoff.
+The saved RPC is part of the sensitive sequence. A single-chain resume uses the `--rpc-url`
+endpoint for Forge-managed reconciliation and submission, after checking that it reports the saved
+chain, without rewriting the saved endpoint. Without `--rpc-url`, it uses the saved endpoint; a
+configured `eth_rpc_url` or `FOUNDRY_ETH_RPC_URL` only selects the chain and sequence.
+Browser-wallet submission stays wallet-controlled, and multichain resume keeps the saved endpoints
+and warns when `--rpc-url` is passed.
 
 ## Tempo and multichain behavior
 
@@ -243,7 +261,8 @@ resolution. Delegated attempts are never replaced automatically.
 Multichain mode stores per-chain sequences in one `MultiChainSequence`. Pending hashes are
 reconciled per chain, while new sequences are broadcast in container order. There is no cross-chain
 atomicity. Recovery must preserve independent per-chain progress and must not infer that one chain's
-completion permits skipping an operation on another.
+completion permits skipping an operation on another. With `--verify`, every sequence is verified
+even after one fails, and the failures are returned together, each naming its chain.
 
 ## Known failure windows
 
@@ -343,12 +362,16 @@ behavior, including:
   membership.
 
 An operation without an attempt is prepared on resume like a new one. Its saved request keeps the
-sender, nonce, destination, value, and input, but fees, gas estimates, Tempo options such as the fee
-token, nonce key, and validity window, and sponsorship can come from the resume invocation.
+sender, nonce, destination, value, input, and any recorded Tempo fee token. When `--batch` rebuilds
+the remaining operations as one transaction, it uses the fee token recorded on the first remaining
+operation. Fees, gas estimates, Tempo options such as the nonce key and validity window, and
+sponsorship can come from the resume invocation, and `--tempo.fee-token` replaces a recorded fee
+token. When the original run was sponsored, the recovery snapshot records the sponsor address, and
+resume refuses to prepare remaining operations unless `--tempo.sponsor` names the same sponsor.
 
 Reconciliation and rebroadcast of identical locally signed bytes do not request a signer. The
 initial recovery implementation fails closed instead of replacing an existing attempt with changed
-fees or validity fields. Replacement workflows are deferred to deployment plans and handoff.
+fees or validity fields. Replacement workflows are not supported.
 
 ### Handoff and compatibility
 
@@ -356,8 +379,9 @@ fees or validity fields. Replacement workflows are deferred to deployment plans 
 - Pre-signed envelopes, saved signed payloads, and saved batch attempts do not require a signer for
   recovery. Other incomplete unsigned requests remain eligible for signer acquisition. Unknown
   delegated outcomes block resume before signer acquisition.
-- The initial recovery implementation retains the saved endpoint. Validated endpoint rebinding is
-  deferred to deployment plans and handoff.
+- A single-chain resume reaches the chain through an explicit `--rpc-url` instead of the saved
+  endpoint, so a handoff does not need the original operator's RPC. Without the flag, it uses the
+  saved endpoint. Multichain resume keeps the saved endpoints.
 - Legacy batch-attempt import validates transaction, hash, pending, receipt, and sensitive-metadata
   associations. If it cannot prove a safe batch state, it fails closed rather than guessing.
 

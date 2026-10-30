@@ -56,13 +56,32 @@ where
             if let Some(notification) = ready!(self.blocks.poll_next_unpin(cx)) {
                 let logs = match notification {
                     ChainNotification::Block(block) => {
-                        let b = self.storage.block(block.hash);
-                        let receipts = self.storage.receipts(block.hash);
-                        if let (Some(receipts), Some(block)) = (receipts, b) {
-                            filter_logs(block, receipts, &self.filter)
-                        } else {
+                        // Rule out nonmatching blocks before requiring data that may be pruned.
+                        if !self.filter.filter_block_range(block.header.number)
+                            || !self.filter.filter_block_hash(block.hash)
+                            || block.header.logs_bloom.is_zero()
+                            || self.filter.filter.as_ref().is_some_and(|filter| {
+                                !filter.matches_bloom(block.header.logs_bloom)
+                            })
+                        {
                             continue;
                         }
+                        let hash = block.hash;
+                        let (Some(block), Some(receipts)) =
+                            (self.storage.block(hash), self.storage.receipts(hash))
+                        else {
+                            tracing::warn!(target: "rpc::ws", ?hash, "Closing logs subscription because block data is unavailable");
+                            return Poll::Ready(None);
+                        };
+                        if block.body.transactions.len() != receipts.len()
+                            || (block.body.transactions.is_empty()
+                                && block.header.transactions_root()
+                                    != alloy_consensus::constants::EMPTY_ROOT_HASH)
+                        {
+                            tracing::warn!(target: "rpc::ws", ?hash, "Closing logs subscription because block data was pruned");
+                            return Poll::Ready(None);
+                        }
+                        filter_logs(block, receipts, &self.filter)
                     }
                     ChainNotification::RemovedLogs(logs) => {
                         filter_removed_logs(&logs, &self.filter)

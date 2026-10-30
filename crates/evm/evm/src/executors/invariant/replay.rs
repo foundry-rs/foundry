@@ -1,6 +1,7 @@
 use super::{call_after_invariant_function, call_invariant_function, execute_tx};
 use crate::executors::{
     EarlyExit, Executor,
+    corpus::persist_campaign_optimization,
     invariant::shrink::{
         CheckSequenceOutcome, ShrinkProgress, shrink_sequence, shrink_sequence_value,
     },
@@ -8,7 +9,7 @@ use crate::executors::{
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{
-    Bytes, I256, Log,
+    Address, Bytes, I256, Log,
     map::{AddressHashMap, HashMap},
 };
 use eyre::Result;
@@ -26,6 +27,8 @@ pub struct ReplayErrorResult {
     pub counterexample_sequence: Vec<BaseCounterExample>,
     pub check_result: Option<CheckSequenceOutcome>,
     pub fork_block_number: Option<u64>,
+    /// Optimization value of the shrunk sequence, which can exceed the campaign best.
+    pub optimization_value: Option<I256>,
 }
 
 /// Replays a call sequence for collecting logs and traces.
@@ -106,13 +109,19 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
         logs.extend(after_invariant_result.logs);
     }
 
-    Ok(ReplayErrorResult { counterexample_sequence, check_result: None, fork_block_number })
+    Ok(ReplayErrorResult {
+        counterexample_sequence,
+        check_result: None,
+        fork_block_number,
+        optimization_value: None,
+    })
 }
 
 /// Replays and shrinks a call sequence, collecting logs and traces.
 ///
 /// For check mode (target_value=None): shrinks to find shortest failing sequence.
 /// For optimization mode (target_value=Some): shrinks to find shortest sequence producing target.
+/// `targets` are the campaign's fuzz targets, used to score optimization candidates.
 #[expect(clippy::too_many_arguments)]
 pub fn replay_error<FEN: FoundryEvmNetwork>(
     config: InvariantConfig,
@@ -122,6 +131,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
     expect_assertion_failure: bool,
     rd: Option<&RevertDecoder>,
     target_value: Option<I256>,
+    targets: &[Address],
     invariant_contract: &InvariantContract<'_>,
     target_invariant: &Function,
     known_contracts: &ContractsByArtifact,
@@ -146,20 +156,22 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
         config.show_solidity,
     );
 
-    let (calls, check_result) = if let Some(target) = target_value {
-        (
-            shrink_sequence_value(
-                &config,
-                invariant_contract,
-                target_invariant,
-                calls,
-                &executor,
-                target,
-                &shrink_progress,
-                early_exit,
-            )?,
-            None,
-        )
+    // Every shrink attempt would append its steps to the shared step table, so only the replay of
+    // the shrunk sequence records them.
+    let recorder = executor.inspector_mut().debug_recorder.take();
+    let (calls, check_result, optimization_value) = if let Some(target) = target_value {
+        let (calls, value) = shrink_sequence_value(
+            &config,
+            invariant_contract,
+            target_invariant,
+            calls,
+            &executor,
+            target,
+            targets,
+            &shrink_progress,
+            early_exit,
+        )?;
+        (calls, None, Some(value))
     } else {
         let shrunk = shrink_sequence(
             &config,
@@ -172,8 +184,9 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
             &shrink_progress,
             early_exit,
         )?;
-        (shrunk.calls, shrunk.result)
+        (shrunk.calls, shrunk.result, None)
     };
+    executor.inspector_mut().debug_recorder = recorder;
 
     if let Some(sequence) = inner_sequence {
         set_up_inner_replay(&mut executor, &sequence);
@@ -194,7 +207,9 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
         config.show_solidity,
     )?;
 
+    persist_campaign_optimization(&config.corpus, optimization_value, &calls);
     replay.check_result = check_result;
+    replay.optimization_value = optimization_value;
     Ok(replay)
 }
 

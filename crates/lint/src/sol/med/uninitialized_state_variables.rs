@@ -147,7 +147,7 @@ impl<'gcx> Visit<'gcx> for Collector<'gcx> {
 
     fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<()> {
         match stmt.kind {
-            StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => {
+            StmtKind::AssemblyBlock(..) | StmtKind::Switch(_) | StmtKind::Err(_) => {
                 ControlFlow::Break(())
             }
             _ => self.walk_stmt(stmt),

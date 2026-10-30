@@ -8,18 +8,54 @@ use async_lsp::{
 };
 use futures::{
     future::{Either, select},
+    io::{AsyncRead, AsyncWrite},
     pin_mut,
 };
 use std::{
+    io,
     path::Path,
+    pin::Pin,
     process::{Child, Command, Stdio},
     sync::mpsc::{self, Receiver, RecvTimeoutError},
+    task::{Context, Poll},
     thread::{self, JoinHandle},
     time::Duration,
 };
-use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+use tokio::io::ReadBuf;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Adapts a tokio I/O type to the `futures` I/O traits.
+struct Compat<T>(T);
+
+impl<T: tokio::io::AsyncRead + Unpin> AsyncRead for Compat<T> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        let mut buf = ReadBuf::new(buf);
+        Pin::new(&mut self.0).poll_read(cx, &mut buf).map_ok(|()| buf.filled().len())
+    }
+}
+
+impl<T: tokio::io::AsyncWrite + Unpin> AsyncWrite for Compat<T> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.0).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_flush(cx)
+    }
+
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_shutdown(cx)
+    }
+}
 
 pub struct LspClient {
     child: Option<Child>,
@@ -75,7 +111,7 @@ impl LspClient {
             runtime.block_on(async move {
                 let stdout = tokio::process::ChildStdout::from_std(stdout).unwrap();
                 let stdin = tokio::process::ChildStdin::from_std(stdin).unwrap();
-                main_loop.run_buffered(stdout.compat(), stdin.compat_write()).await
+                main_loop.run_buffered(Compat(stdout), Compat(stdin)).await
             })
         });
 

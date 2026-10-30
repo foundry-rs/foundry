@@ -77,7 +77,7 @@ fn stmt_outcome(gcx: Gcx<'_>, stmt: &Stmt<'_>) -> Outcome {
         StmtKind::Revert(_) => Outcome::COVERED,
         StmtKind::Block(block)
         | StmtKind::UncheckedBlock(block)
-        | StmtKind::AssemblyBlock(block) => block_outcome(gcx, *block),
+        | StmtKind::AssemblyBlock(block, _) => block_outcome(gcx, *block),
         StmtKind::If(_, then_stmt, else_stmt) => {
             let then_outcome = stmt_outcome(gcx, then_stmt);
             let else_outcome =

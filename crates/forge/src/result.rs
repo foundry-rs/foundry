@@ -1213,6 +1213,7 @@ impl SymbolicCounterexampleCall {
             traces: None,
             show_solidity: false,
             fuzz: Default::default(),
+            fork_block_number: None,
         }
     }
 

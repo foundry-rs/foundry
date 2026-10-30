@@ -10,6 +10,9 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[package.metadata.cargo-shear]
+ignored = ["revm"]
+
 [lints]
 workspace = true
 
@@ -55,6 +58,10 @@ yansi.workspace = true
 tracing.workspace = true
 walkdir.workspace = true
 
+# Unused. Enables `revm/asm-keccak` like forge, cast and anvil so that Cargo reuses builds across
+# package selections.
+revm = { workspace = true, optional = true }
+
 [dev-dependencies]
 anvil.workspace = true
 foundry-test-utils.workspace = true
@@ -67,7 +74,7 @@ rexpect.workspace = true
 
 [features]
 default = ["jemalloc", "asm-keccak", "optimism"]
-asm-keccak = ["alloy-primitives/asm-keccak"]
+asm-keccak = ["alloy-primitives/asm-keccak", "dep:revm", "revm/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
 mimalloc = ["foundry-cli/mimalloc"]
 tracy-allocator = ["foundry-cli/tracy-allocator"]

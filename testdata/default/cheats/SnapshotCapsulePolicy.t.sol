@@ -23,6 +23,12 @@ contract CapsuleHelper is Test {
         }
         revert("helper reverted");
     }
+
+    function restoreAndReturn(uint256 id) external {
+        emit Observed(2);
+        require(vm.revertToState(id), "restore failed");
+        emit Observed(3);
+    }
 }
 
 /// forge-config: default.isolate = true
@@ -70,11 +76,28 @@ contract SnapshotCapsulePolicyTest is Test {
         vm.assertFalse(vm.revertToState(id));
     }
 
-    function testRevertedRestoreRecordedLogsRemainOrdered() public {
+    function testRestoreRecordedLogsRemainOrdered() public {
+        CapsuleHelper helper = new CapsuleHelper();
+        uint256 id = vm.snapshotState();
+        vm.recordLogs();
+        emit Observed(1);
+        helper.restoreAndReturn(id);
+        emit Observed(4);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 4);
+        for (uint256 i; i < 4; i++) {
+            assertEq(logs[i].topics.length, 2);
+            assertEq(logs[i].topics[0], keccak256("Observed(uint256)"));
+            assertEq(uint256(logs[i].topics[1]), i + 1);
+            assertEq(logs[i].emitter, i == 1 || i == 2 ? address(helper) : address(this));
+        }
+    }
+
+    function testRevertedRestoreRecordedLogsDiscarded() public {
         checkLogs(false);
     }
 
-    function testHaltedRestoreRecordedLogsRemainOrdered() public {
+    function testHaltedRestoreRecordedLogsDiscarded() public {
         checkLogs(true);
     }
 
@@ -88,12 +111,12 @@ contract SnapshotCapsulePolicyTest is Test {
         assertEq(data, halt ? bytes("") : abi.encodeWithSignature("Error(string)", "helper reverted"));
         emit Observed(4);
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        assertEq(logs.length, 4);
-        for (uint256 i; i < 4; i++) {
+        assertEq(logs.length, 2);
+        for (uint256 i; i < 2; i++) {
             assertEq(logs[i].topics.length, 2);
             assertEq(logs[i].topics[0], keccak256("Observed(uint256)"));
-            assertEq(uint256(logs[i].topics[1]), i + 1);
-            assertEq(logs[i].emitter, i == 1 || i == 2 ? address(helper) : address(this));
+            assertEq(uint256(logs[i].topics[1]), i == 0 ? 1 : 4);
+            assertEq(logs[i].emitter, address(this));
         }
     }
 }

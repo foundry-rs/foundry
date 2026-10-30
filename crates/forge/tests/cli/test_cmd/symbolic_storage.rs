@@ -448,7 +448,8 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 // admin; because nothing has ever written to `isAdmin`, the solver can satisfy
 // `isAdmin[user] == true`. That candidate does not replay concretely from the
 // default concrete storage value, so Forge must report Incomplete instead of a
-// user-facing counterexample.
+// user-facing counterexample. The same holds when the candidate's concrete
+// replay stops at the `vm.assume` that the symbolic path satisfied.
 #[forgetest_init]
 fn symbolic_sload_unwritten_mapping_default_layout(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_sload_unwritten_mapping_default_layout");
@@ -456,11 +457,22 @@ fn symbolic_sload_unwritten_mapping_default_layout(prj: _, cmd: _) {
     prj.add_test(
         "SymbolicSLoadUnwrittenMapping.t.sol",
         r#"
+interface Vm {
+    function assume(bool condition) external pure;
+}
+
 contract SymbolicSLoadUnwrittenMapping {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+
     mapping(address => bool) isAdmin;
 
     function checkNoUserIsAdmin(address user) public view {
         assert(!isAdmin[user]);
+    }
+
+    function checkAssumedAdminIsUnreachable(address user) public view {
+        vm.assume(isAdmin[user]);
+        assert(false);
     }
 }
 "#,
@@ -469,19 +481,20 @@ contract SymbolicSLoadUnwrittenMapping {
     assert_symbolic(cmd.args([
         "test",
         "--symbolic",
-        "--match-test",
-        "checkNoUserIsAdmin",
+        "--match-contract",
+        "SymbolicSLoadUnwrittenMapping",
     ]))
     .failure()
     .stdout_eq(str![[r#"
 ...
 Failing tests:
-Encountered 1 failing test in test/SymbolicSLoadUnwrittenMapping.t.sol:SymbolicSLoadUnwrittenMapping
+Encountered 2 failing tests in test/SymbolicSLoadUnwrittenMapping.t.sol:SymbolicSLoadUnwrittenMapping
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: rejected by `vm.assume`] checkAssumedAdminIsUnreachable(address) ([METRICS])
 [FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkNoUserIsAdmin(address) ([METRICS])
 
-Encountered a total of 1 failing tests, 0 tests succeeded
+Encountered a total of 2 failing tests, 0 tests succeeded
 
-Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --rerun` to retry only the 2 failed tests
 
 "#]]);
 }

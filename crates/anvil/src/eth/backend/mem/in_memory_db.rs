@@ -262,6 +262,7 @@ impl PersistentStateDb {
                 })
                 .collect(),
             block_hashes: self.block_hashes.iter().map(|(number, hash)| (*number, *hash)).collect(),
+            ..Default::default()
         }
     }
 
@@ -347,7 +348,7 @@ impl MaybeFullDatabase for PersistentStateDb {
     }
 
     fn init_from_state_snapshot(&mut self, snapshot: StateSnapshot) {
-        let StateSnapshot { accounts, mut storage, block_hashes } = snapshot;
+        let StateSnapshot { accounts, mut storage, block_hashes, .. } = snapshot;
         let mut contracts = PersistentMap::new();
         let accounts = accounts
             .into_iter()
@@ -646,12 +647,13 @@ impl MaybeFullDatabase for MemDb {
         Some(&self.inner.cache.accounts)
     }
 
+    // Nothing backs a `MemDb`, so its snapshots do not track account states.
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
-        self.inner.clear_into_state_snapshot()
+        StateSnapshot { account_states: None, ..self.inner.clear_into_state_snapshot() }
     }
 
     fn read_as_state_snapshot(&self) -> StateSnapshot {
-        self.inner.read_as_state_snapshot()
+        StateSnapshot { account_states: None, ..self.inner.read_as_state_snapshot() }
     }
 
     fn clear(&mut self) {

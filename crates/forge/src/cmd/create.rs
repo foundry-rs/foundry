@@ -214,6 +214,7 @@ impl CreateArgs {
         };
 
         let compiler = compile::ProjectCompiler::new()
+            .allow_linked_libraries(config.allow_linked_libraries)
             .external_compilers(&config)
             .quiet(shell::is_json())
             .target_files([target_path.clone()]);

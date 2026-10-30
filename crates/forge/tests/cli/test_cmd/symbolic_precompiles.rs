@@ -747,6 +747,9 @@ contract PrecompileAccounts is Test {
     function setUp() public {
         vm.deal(address(2), 1);
         vm.setNonce(address(3), 1);
+        vm.etch(address(0x1234), hex"602a60005260206000f3");
+        vm.cloneAccount(address(0x1234), address(0x0b));
+        vm.cloneAccount(address(0x1234), address(0x100));
     }
 
     function checkPrecompileAccounts() public {
@@ -755,6 +758,12 @@ contract PrecompileAccounts is Test {
 
     function testPrecompileAccounts() public {
         assertPrecompileAccounts();
+    }
+
+    function checkSymbolicCodehashAfterCodeQuery(address who) public {
+        vm.assume(who == address(1));
+        assert(address(1).code.length == 0);
+        assert(who.codehash == bytes32(0));
     }
 
     function assertPrecompileAccounts() internal {
@@ -773,6 +782,22 @@ contract PrecompileAccounts is Test {
         assert(address(4).codehash == keccak256(""));
         vm.setNonce(address(5), 1);
         assert(address(5).codehash == keccak256(""));
+
+        // Account code remains observable even when calls dispatch to a precompile.
+        address[2] memory targets = [address(0x0b), address(0x100)];
+        for (uint256 i; i < targets.length; ++i) {
+            address target = targets[i];
+            assert(target.code.length == 10);
+            assert(target.codehash == keccak256(hex"602a60005260206000f3"));
+            assert(keccak256(target.code) == keccak256(hex"602a60005260206000f3"));
+        }
+
+        (bool blsOk, bytes memory blsOut) = address(0x0b).staticcall("");
+        assert(!blsOk);
+        assert(blsOut.length == 0);
+        (bool p256Ok, bytes memory p256Out) = address(0x100).staticcall("");
+        assert(p256Ok);
+        assert(p256Out.length == 0);
     }
 }
 "#,
@@ -782,7 +807,7 @@ contract PrecompileAccounts is Test {
         "test",
         "--json",
         "--evm-version",
-        "cancun",
+        "osaka",
         "--match-test",
         "testPrecompileAccounts",
     ])
@@ -806,15 +831,23 @@ contract PrecompileAccounts is Test {
             "--symbolic",
             "--json",
             "--evm-version",
-            "cancun",
+            "osaka",
             "--match-test",
-            "checkPrecompileAccounts",
+            "checkPrecompileAccounts|checkSymbolicCodehashAfterCodeQuery",
         ])
         .assert_json_stdout(str![[r#"
 {
   "test/PrecompileAccounts.t.sol:PrecompileAccounts": {
     "test_results": {
       "checkPrecompileAccounts()": {
+        "status": "Success",
+        "symbolic": {
+          "status": "pass",
+          "...": "{...}"
+        },
+        "...": "{...}"
+      },
+      "checkSymbolicCodehashAfterCodeQuery(address)": {
         "status": "Success",
         "symbolic": {
           "status": "pass",
@@ -867,4 +900,58 @@ contract SymbolicKzgResidual {
         stdout.contains("symbolic KZG point-evaluation precompile residual not modeled"),
         "{stdout}"
     );
+}
+
+#[forgetest_init]
+fn symbolic_precompiles_follow_active_spec(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_precompiles_follow_active_spec because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicOsakaPrecompiles.t.sol",
+        r#"
+contract SymbolicOsakaPrecompiles {
+    function checkBlsAndP256Precompiles(uint256) public {
+        // BLS12-381 G1ADD rejects empty input instead of acting as an empty account.
+        (bool blsOk, bytes memory blsOut) = address(0x0b).staticcall("");
+        assert(!blsOk);
+        assert(blsOut.length == 0);
+
+        // P256VERIFY returns no output for an invalid signature.
+        (bool p256Ok, bytes memory p256Out) = address(0x100).staticcall(new bytes(160));
+        assert(p256Ok);
+        assert(p256Out.length == 0);
+    }
+
+    /// forge-config: default.symbolic.symbolic_call_targets = true
+    function checkSymbolicTargetIncludesBlsPrecompiles(address target) public {
+        // Every address in this range is a precompile or an empty account.
+        if (uint160(target) <= 0x0a || uint160(target) > 0x100) return;
+        (bool ok,) = target.call("");
+        assert(ok);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--evm-version",
+        "osaka",
+        "--match-contract",
+        "SymbolicOsakaPrecompiles",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicOsakaPrecompiles.t.sol:SymbolicOsakaPrecompiles
+[PASS] checkBlsAndP256Precompiles(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicTargetIncludesBlsPrecompiles(address) ([METRICS])
+...
+"#]]);
 }

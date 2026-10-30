@@ -9,6 +9,9 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[package.metadata.cargo-shear]
+ignored = ["syn"]
+
 [lints]
 workspace = true
 
@@ -94,7 +97,10 @@ sha2 = "0.11"
 
 [build-dependencies]
 chrono.workspace = true
-vergen = { workspace = true, features = ["build", "emit_and_set"] }
+smolgen = { workspace = true, features = ["emit_and_set"] }
+# Unused. Enables the same host features as the anvil dependency tree so that Cargo reuses proc
+# macro builds across package selections.
+syn = { version = "3", default-features = false, features = ["fold"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
