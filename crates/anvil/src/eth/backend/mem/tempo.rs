@@ -13,7 +13,8 @@
 //! publication, preventing snapshots, rewinds, resets, imports, or rotations from changing the
 //! prepared height or key schedule. Only initialization before the backend is shared and private
 //! staged copies are exempt; publishing a staged copy still requires the database write lock.
-//! Consensus readers acquire the database read lock before storage.
+//! Readers of canonical consensus state acquire the database read lock before storage.
+//! Subscription registration only needs storage to access the persistent event sender.
 //!
 //! Historical queries can use the trusted fork provider at or below its pinned height. They
 //! snapshot the provider, root, and known canonical hash together with local history, then release
@@ -286,7 +287,6 @@ impl<N: Network> Backend<N> {
     pub async fn tempo_consensus_notifications(
         &self,
     ) -> Result<broadcast::Receiver<Arc<TempoConsensusEvent>>, BlockchainError> {
-        let _db = self.db.read().await;
         let storage = self.blockchain.storage.read();
         Ok(tempo_chain(&storage)?.events.subscribe())
     }
@@ -469,6 +469,7 @@ mod tests {
     use revm::database::AccountState;
     use std::{
         sync::atomic::{AtomicBool, Ordering},
+        task::Poll,
         time::Duration,
     };
     use tokio::{sync::Notify, time::timeout};
@@ -489,13 +490,16 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn tempo_snapshot_waits_for_complete_block_publication() {
         let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
-        let mut events = api.backend.tempo_consensus_notifications().await.unwrap();
         let hook =
             MiningCommitHook { reached: Arc::new(Notify::new()), resume: Arc::new(Notify::new()) };
         *api.backend.mining_commit_hook.lock() = Some(hook.clone());
         let mining_api = api.clone();
         let mining = tokio::spawn(async move { mining_api.mine_one().await });
         timeout(Duration::from_secs(10), hook.reached.notified()).await.unwrap();
+        let mut registration = Box::pin(api.backend.tempo_consensus_notifications());
+        let Poll::Ready(Ok(mut events)) = futures::poll!(registration.as_mut()) else {
+            panic!("subscription registration must not wait for execution");
+        };
         assert_eq!(api.backend.best_number(), 0);
         assert!(consensus(&api).latest().is_none());
         assert!(api.backend.get_block(1).is_none());
