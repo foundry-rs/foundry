@@ -86,6 +86,8 @@ where
                             tracing::warn!(target: "rpc::ws", ?hash, "Closing logs subscription because block data was pruned");
                             return Poll::Ready(None);
                         }
+                        // A block re-mined with a skipped hash is delivered, so its removal is too.
+                        self.skipped.remove(&hash);
                         filter_logs(block, receipts, &self.filter)
                     }
                     ChainNotification::RemovedLogs(logs) => {

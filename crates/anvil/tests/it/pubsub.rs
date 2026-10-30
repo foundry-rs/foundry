@@ -471,8 +471,12 @@ mod backpressure {
 
     impl LogsFixture {
         async fn new() -> Self {
+            Self::with_keeper(Some(1)).await
+        }
+
+        async fn with_keeper(keeper: Option<usize>) -> Self {
             let (api, handle) =
-                spawn(NodeConfig::test().with_transaction_block_keeper(Some(1usize))).await;
+                spawn(NodeConfig::test().with_transaction_block_keeper(keeper)).await;
             let provider = connect_pubsub(&handle.ws_endpoint()).await;
             let sender = handle.dev_wallets().next().unwrap().address();
             let address = EmitLogs::deploy_builder(provider.clone(), "initial".to_owned())
@@ -584,29 +588,38 @@ mod backpressure {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn lagged_logs_subscription_skips_reverted_blocks() {
-        let fixture = LogsFixture::new().await;
+        // Keep receipts so the delivered block's logs can be removed.
+        let fixture = LogsFixture::with_keeper(None).await;
         let api = &fixture.api;
         let mut logs = fixture.logs(Filter::new().address(*fixture.contract.address()));
         let snapshot = api.evm_snapshot().await.unwrap();
-
-        let reverted = fixture.emit("reverted notification").await;
-        assert!(api.evm_revert(snapshot).await.unwrap());
-        assert!(api.storage_info().block(reverted.block_hash.unwrap()).is_none());
-
-        // The reverted log was never delivered, so neither is its removal.
-        let receipt = fixture.emit("live notification").await;
-        let notification = tokio::time::timeout(Duration::from_secs(5), logs.next())
-            .await
-            .expect("live log was not delivered")
-            .expect("subscription ended at the reverted block");
-        assert_eq!(
-            notification,
+        let notification = |log| {
             serde_json::json!({
                 "jsonrpc": "2.0",
                 "method": "eth_subscription",
-                "params": {"subscription": 1, "result": receipt.inner.logs()[0]},
+                "params": {"subscription": 1, "result": log},
             })
-        );
+        };
+        let mut next = async || {
+            tokio::time::timeout(Duration::from_secs(5), logs.next())
+                .await
+                .expect("log was not delivered")
+                .expect("subscription ended at the reverted block")
+        };
+
+        let delivered = fixture.emit("delivered notification").await;
+        let mut delivered = delivered.inner.logs()[0].clone();
+        assert_eq!(next().await, notification(delivered.clone()));
+
+        let skipped = fixture.emit("skipped notification").await;
+        assert!(api.evm_revert(snapshot).await.unwrap());
+        assert!(api.storage_info().block(skipped.block_hash.unwrap()).is_none());
+
+        // Only the delivered log is removed; the skipped block's log was never delivered.
+        delivered.removed = true;
+        assert_eq!(next().await, notification(delivered));
+        let receipt = fixture.emit("live notification").await;
+        assert_eq!(next().await, notification(receipt.inner.logs()[0].clone()));
     }
 
     #[tokio::test(flavor = "multi_thread")]
