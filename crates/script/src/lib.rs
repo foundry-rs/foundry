@@ -63,7 +63,10 @@ use foundry_evm::{
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use foundry_wallets::{MultiWalletOpts, wallet_multi::MultiWallet};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    sync::{Arc, OnceLock},
+};
 
 #[cfg(feature = "base")]
 use foundry_evm::core::evm::BaseEvmNetwork;
@@ -120,6 +123,10 @@ pub struct ScriptArgs {
 
     /// Arguments to pass to the script function.
     pub args: Vec<String>,
+
+    /// Exit code requested by the script with `vm.setExitCode`, shared by all stages of a run.
+    #[arg(skip)]
+    pub exit_code: Arc<OnceLock<u8>>,
 
     /// The name of the contract you want to run.
     #[arg(long, visible_alias = "tc", value_name = "CONTRACT_NAME")]
@@ -477,7 +484,8 @@ impl ScriptArgs {
 
         // Box each branch's future to keep its large async state off `run_script`'s future;
         // otherwise `run_command` trips `clippy::large_stack_frames` by a small margin.
-        match evm_opts.networks.execution_network() {
+        let exit_code = Arc::clone(&self.exit_code);
+        let result = match evm_opts.networks.execution_network() {
             NetworkVariant::Tempo => {
                 let batch = self.batch;
                 Box::pin(async move {
@@ -554,7 +562,14 @@ impl ScriptArgs {
                 ))
                 .await
             }
+        };
+        result?;
+
+        // Applied once the script, any broadcast and verification have succeeded.
+        if let Some(&code) = exit_code.get() {
+            std::process::exit(code.into());
         }
+        Ok(())
     }
 
     /// Prepares the bundled state (compile, simulate, bundle) and returns it
@@ -961,6 +976,9 @@ pub struct ScriptResult<N: Network> {
     pub address: Option<Address>,
     #[serde(skip)]
     pub breakpoints: Breakpoints,
+    /// Exit code requested with `vm.setExitCode`.
+    #[serde(skip)]
+    pub exit_code: Option<u8>,
 }
 
 impl<N: Network> Default for ScriptResult<N> {
@@ -977,6 +995,7 @@ impl<N: Network> Default for ScriptResult<N> {
             exit_reason: Default::default(),
             address: Default::default(),
             breakpoints: Default::default(),
+            exit_code: Default::default(),
         }
     }
 }
@@ -1346,11 +1365,7 @@ mod tests {
         },
     };
     use semver::Version;
-    use std::{
-        fs,
-        num::NonZeroU64,
-        sync::{Arc, LazyLock},
-    };
+    use std::{fs, num::NonZeroU64, sync::LazyLock};
     use tempfile::tempdir;
     use tokio::sync::{Mutex, MutexGuard};
 

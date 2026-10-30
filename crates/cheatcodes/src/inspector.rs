@@ -719,6 +719,9 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// `char -> (address, pc)`
     pub breakpoints: Breakpoints,
 
+    /// Exit code requested with the `setExitCode` cheatcode.
+    pub exit_code: Option<u8>,
+
     /// Ignored traces.
     pub ignored_traces: IgnoredTraces,
 
@@ -839,6 +842,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             gas_snapshots: Default::default(),
             pc: Default::default(),
             breakpoints: Default::default(),
+            exit_code: None,
             ignored_traces: Default::default(),
             storage_load_hooks: Default::default(),
             storage_store_hooks: Default::default(),
