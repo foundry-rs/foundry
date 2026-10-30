@@ -531,3 +531,39 @@ fn calldata_bool(cmd: _) {
         .assert_success()
         .stdout_eq("0x6fae94120000000000000000000000000000000000000000000000000000000000000000\n");
 }
+
+#[casttest]
+fn abi_encode_trailing_flag_hint(cmd: _) {
+    cmd.args(["abi-encode", "f(uint256)", "1", "--packed"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: Could not ABI encode the function and arguments: encode length mismatch: expected 1 types, got 2; `--packed` was read as an argument; put flags before the signature
+
+"#]]);
+}
+
+#[casttest]
+fn calldata_trailing_json_flag_hint(cmd: _) {
+    cmd.args(["calldata", "f(uint256)", "1", "--json"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: encode length mismatch: expected 1 types, got 2; `--json` was read as an argument; put flags before the signature
+
+"#]]);
+}
+
+#[casttest]
+fn abi_encode_event_trailing_json_flag_hint(cmd: _) {
+    cmd.args([
+        "abi-encode-event",
+        "Transfer(address indexed,uint256)",
+        "0x0000000000000000000000000000000000000001",
+        "5",
+        "--json",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: encode length mismatch: expected 2 types, got 3; `--json` was read as an argument; put flags before the signature
+
+"#]]);
+}
