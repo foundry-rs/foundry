@@ -86,7 +86,7 @@ impl EthApi<FoundryNetwork> {
     pub async fn ots_get_transaction_error(&self, hash: B256) -> Result<Bytes> {
         node_info!("ots_getTransactionError");
 
-        if let Some(receipt) = self.backend.mined_transaction_receipt(hash)
+        if let Some(receipt) = self.backend.mined_transaction_receipt(hash)?
             && !receipt.inner.as_ref().status()
         {
             return Ok(receipt.out.unwrap_or_default());

@@ -19,7 +19,7 @@ use tempo_primitives::TEMPO_TX_TYPE_ID;
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpDepositReceipt, OpDepositReceiptWithBloom};
 
 #[cfg(feature = "base")]
-use base_common_consensus::Eip8130Receipt;
+use base_common_consensus::{Eip8130CommittedPhasesError, Eip8130Receipt};
 #[cfg(feature = "base")]
 use base_common_evm::EIP8130_TRANSACTION_TYPE;
 
@@ -68,7 +68,7 @@ impl FoundryReceiptEnvelope<alloy_rpc_types::Log> {
         cumulative_gas_used: u64,
         logs: impl IntoIterator<Item = alloy_rpc_types::Log>,
         tx_type: FoundryTxType,
-        #[cfg(feature = "base")] eip8130_phase_statuses: Vec<u8>,
+        #[cfg(feature = "base")] eip8130_committed_phases: u64,
         #[cfg_attr(not(any(feature = "base", feature = "optimism")), allow(unused_variables))]
         deposit_nonce: Option<u64>,
         #[cfg_attr(not(any(feature = "base", feature = "optimism")), allow(unused_variables))]
@@ -112,7 +112,7 @@ impl FoundryReceiptEnvelope<alloy_rpc_types::Log> {
             }
             #[cfg(feature = "base")]
             FoundryTxType::Eip8130 => Self::Eip8130(ReceiptWithBloom {
-                receipt: Eip8130Receipt::new(inner_receipt, eip8130_phase_statuses),
+                receipt: Eip8130Receipt::new(inner_receipt, eip8130_committed_phases),
                 logs_bloom,
             }),
             FoundryTxType::Celo => Self::Unknown(AnyReceiptEnvelope {
@@ -172,12 +172,15 @@ impl<T> FoundryReceiptEnvelope<T> {
         matches!(self, Self::Eip8130(_))
     }
 
-    /// Returns EIP-8130 per-phase statuses, or an empty slice for other receipt types.
+    /// Returns EIP-8130 per-phase statuses, or an empty vector for other receipt types.
     #[cfg(feature = "base")]
-    pub fn eip8130_phase_statuses(&self) -> &[u8] {
+    pub fn eip8130_phase_statuses(
+        &self,
+        phase_count: usize,
+    ) -> Result<Vec<u8>, Eip8130CommittedPhasesError> {
         match self {
-            Self::Eip8130(receipt) => &receipt.receipt.phase_statuses,
-            _ => &[],
+            Self::Eip8130(receipt) => receipt.receipt.phase_statuses(phase_count),
+            _ => Ok(Vec::new()),
         }
     }
 
@@ -509,7 +512,7 @@ mod tests {
             Vec::new(),
             tx_type,
             #[cfg(feature = "base")]
-            Vec::new(),
+            0,
             None,
             None,
         )
@@ -665,22 +668,25 @@ mod tests {
 
     #[cfg(feature = "base")]
     #[test]
-    fn eip8130_receipt_preserves_phase_statuses_outside_consensus_encoding() {
+    fn eip8130_receipt_preserves_committed_phases_in_consensus_encoding() {
         let receipt = FoundryReceiptEnvelope::<alloy_rpc_types::Log>::from_parts(
             false,
             42_000,
             Vec::new(),
             FoundryTxType::Eip8130,
-            vec![0x01, 0x00],
+            1,
             None,
             None,
         )
         .map_logs(|log| log.inner);
-        assert_eq!(receipt.eip8130_phase_statuses(), &[0x01, 0x00]);
+        assert_eq!(receipt.eip8130_phase_statuses(3).unwrap(), [0x01, 0x00, 0x00]);
+        assert!(receipt.eip8130_phase_statuses(0).is_err());
+        assert!(receipt.eip8130_phase_statuses(1).is_err());
 
         let encoded = receipt.encoded_2718();
         let decoded = FoundryReceiptEnvelope::decode_2718(&mut encoded.as_slice()).unwrap();
-        assert!(decoded.eip8130_phase_statuses().is_empty());
+        assert_eq!(decoded, receipt);
+        assert_eq!(decoded.eip8130_phase_statuses(3).unwrap(), [0x01, 0x00, 0x00]);
         assert_eq!(decoded.encoded_2718(), encoded);
     }
 
@@ -820,7 +826,7 @@ mod tests {
             vec![],
             FoundryTxType::Tempo,
             #[cfg(feature = "base")]
-            Vec::new(),
+            0,
             None,
             None,
         );

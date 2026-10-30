@@ -22,7 +22,7 @@ use base_common_evm::{
     BaseUpgrade, L1BlockInfo,
 };
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types::EIP8130_PRE_ZENITH_RPC_ERROR;
+use base_common_rpc_types::EIP8130_PRE_EVEREST_RPC_ERROR;
 use base_consensus_upgrades::Jovian;
 use base_protocol::{BaseTimeUpdateTx, L1BlockInfoJovian, L1BlockInfoTx};
 use foundry_evm::{backend::DatabaseError, hardfork::FoundryHardfork};
@@ -51,9 +51,9 @@ impl<N: Network> Backend<N> {
         I: Inspector<BaseContext<WrapDatabaseRef<&'db dyn super::DatabaseRef>>>,
     {
         let upgrade = self.base_upgrade_at_timestamp(evm_env.block_env.timestamp.saturating_to());
-        if tx.eip8130.is_some() && upgrade < BaseUpgrade::Zenith {
+        if tx.eip8130.is_some() && upgrade < BaseUpgrade::Everest {
             return Err(BlockchainError::InvalidTransactionRequest(
-                EIP8130_PRE_ZENITH_RPC_ERROR.to_string(),
+                EIP8130_PRE_EVEREST_RPC_ERROR.to_string(),
             ));
         }
         let base_env = EvmEnv::new(

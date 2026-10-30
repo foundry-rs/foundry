@@ -231,7 +231,7 @@ use base_common_consensus::{
 use base_common_evm::{
     BaseContext, BaseEvmFactory, BaseSpecId, BaseTime, BaseTransaction, DEPOSIT_TRANSACTION_TYPE,
     DepositTransactionParts as BaseDepositTransactionParts, EIP8130_TRANSACTION_TYPE,
-    Eip8130PhaseStatuses, L1BlockInfo, ensure_create2_deployer, ensure_eip8130_system_accounts,
+    Eip8130CommittedPhases, L1BlockInfo, ensure_create2_deployer, ensure_eip8130_system_accounts,
 };
 #[cfg(feature = "base")]
 use base_common_genesis::RollupConfig;
@@ -239,7 +239,7 @@ use base_common_genesis::RollupConfig;
 use base_common_precompiles::NonceManagerStorage;
 #[cfg(feature = "base")]
 use base_common_rpc_types::{
-    EIP8130_PRE_ZENITH_RPC_ERROR, Eip8130Nonce, Eip8130ReceiptFields,
+    EIP8130_PRE_EVEREST_RPC_ERROR, Eip8130Nonce, Eip8130ReceiptFields,
     Transaction as BaseRpcTransaction,
 };
 #[cfg(feature = "base")]
@@ -1829,16 +1829,16 @@ impl<N: Network> Backend<N> {
     #[cfg(feature = "base")]
     pub fn ensure_base_eip8130_active_at(&self, timestamp: u64) -> Result<(), BlockchainError> {
         let upgrade = self.base_upgrade_at_timestamp(timestamp);
-        if self.is_base() && upgrade >= BaseUpgrade::Zenith {
+        if self.is_base() && upgrade >= BaseUpgrade::Everest {
             return Ok(());
         }
-        Err(BlockchainError::InvalidTransactionRequest(EIP8130_PRE_ZENITH_RPC_ERROR.to_string()))
+        Err(BlockchainError::InvalidTransactionRequest(EIP8130_PRE_EVEREST_RPC_ERROR.to_string()))
     }
 
     /// Returns an admission error if Base EIP-8130 submissions are not active.
     #[cfg(feature = "base")]
     pub fn ensure_base_eip8130_submission_active(&self) -> Result<(), BlockchainError> {
-        if self.is_base() && self.base_upgrade() >= BaseUpgrade::Zenith {
+        if self.is_base() && self.base_upgrade() >= BaseUpgrade::Everest {
             return Ok(());
         }
         Err(BlockchainError::Eip8130TransactionRejected(EIP8130_REJECTION_MSG.to_string()))
@@ -3742,12 +3742,10 @@ impl<N: Network> Backend<N> {
                 );
                 let tx = request
                     .to_eip8130_simulation_tx(self.chain_id().to(), gas_limit)
-                    .ok_or_else(|| {
-                        BlockchainError::InvalidTransactionRequest(
-                            "invalid EIP-8130 simulation request: missing or conflicting sender, \
-                             oversized authentication data, or invalid payer authenticator"
-                                .to_string(),
-                        )
+                    .map_err(|error| {
+                        BlockchainError::InvalidTransactionRequest(format!(
+                            "invalid EIP-8130 simulation request: {error}"
+                        ))
                     })?;
                 let simulated_envelope = tx
                     .eip8130
@@ -5032,16 +5030,15 @@ impl<N: Network> Backend<N> {
         if upgrade >= BaseUpgrade::Denim {
             ensure_base_time_predeploy(&mut *db, true)?;
         }
-        if upgrade >= BaseUpgrade::Zenith {
-            // Zenith is genesis-only and is not stored by ChainUpgrades.
+        if upgrade >= BaseUpgrade::Everest {
             let mut upgrades = RollupConfig::default();
-            upgrades.set_upgrade_activation_timestamp(BaseUpgrade::Zenith, 0);
+            upgrades.set_upgrade_activation_timestamp(BaseUpgrade::Everest, 0);
             ensure_eip8130_system_accounts(upgrades, 1, &mut db)?;
         }
 
         // Give the installed Base precompiles a sentinel byte so Solidity's `extcodesize`
         // check on high-level calls to functions without return data does not revert in the
-        // caller. `ensure_eip8130_system_accounts` only covers the Zenith nonce manager.
+        // caller. `ensure_eip8130_system_accounts` only covers the Everest nonce manager.
         for address in base_code_sentinel_addresses(upgrade) {
             let mut account = db.basic(address)?.unwrap_or_default();
             if account.code.as_ref().is_none_or(|code| code.is_empty()) {
@@ -8304,7 +8301,7 @@ where
         &self,
         hash: B256,
     ) -> Result<Option<FoundryTxReceipt>, BlockchainError> {
-        if let Some(receipt) = self.mined_transaction_receipt(hash) {
+        if let Some(receipt) = self.mined_transaction_receipt(hash)? {
             return Ok(Some(receipt.inner));
         }
 
@@ -8323,13 +8320,20 @@ where
     }
 
     /// Returns all transaction receipts of the block
-    pub fn mined_block_receipts(&self, id: impl Into<BlockId>) -> Option<Vec<FoundryTxReceipt>> {
+    pub fn mined_block_receipts(
+        &self,
+        id: impl Into<BlockId>,
+    ) -> Result<Option<Vec<FoundryTxReceipt>>, BlockchainError> {
         let storage = self.blockchain.storage.read();
         let hash = match id.into() {
-            BlockId::Hash(hash) => hash.block_hash,
-            BlockId::Number(number) => storage.hash(number, self.slots_in_an_epoch)?,
+            BlockId::Hash(hash) => Some(hash.block_hash),
+            BlockId::Number(number) => storage.hash(number, self.slots_in_an_epoch),
         };
-        let block = storage.blocks.get(&hash)?.clone();
+        let Some((hash, block)) =
+            hash.and_then(|hash| storage.blocks.get(&hash).map(|block| (hash, block.clone())))
+        else {
+            return Ok(None);
+        };
 
         if block.body.transactions.iter().enumerate().any(|(index, transaction)| {
             storage.transactions.get(&transaction.hash()).is_none_or(|transaction| {
@@ -8343,16 +8347,21 @@ where
                 .transactions
                 .into_iter()
                 .map(|transaction| {
-                    self.mined_transaction_receipt(transaction.hash()).map(|receipt| receipt.inner)
+                    self.mined_transaction_receipt(transaction.hash())
+                        .map(|receipt| receipt.map(|receipt| receipt.inner))
+                        .transpose()
                 })
-                .collect();
+                .collect::<Option<Result<Vec<_>, _>>>()
+                .transpose();
         }
 
         let mut receipts = Vec::with_capacity(block.body.transactions.len());
         let mut next_log_index = 0;
 
         for block_transaction in &block.body.transactions {
-            let transaction = storage.transactions.get(&block_transaction.hash())?;
+            let Some(transaction) = storage.transactions.get(&block_transaction.hash()) else {
+                return Ok(None);
+            };
             let log_count = transaction.receipt.logs().len();
             let receipt = self.build_mined_transaction_receipt(
                 &transaction.info,
@@ -8360,37 +8369,43 @@ where
                 transaction.block_hash,
                 &block,
                 next_log_index,
-            );
+            )?;
             receipts.push(receipt.inner);
             next_log_index += log_count;
         }
 
-        Some(receipts)
+        Ok(Some(receipts))
     }
 
     /// Returns the transaction receipt for the given hash
     pub(crate) fn mined_transaction_receipt(
         &self,
         hash: B256,
-    ) -> Option<MinedTransactionReceipt<FoundryNetwork>> {
+    ) -> Result<Option<MinedTransactionReceipt<FoundryNetwork>>, BlockchainError> {
         let storage = self.blockchain.storage.read();
-        let transaction = storage.transactions.get(&hash)?;
+        let Some((transaction, block)) = storage.transactions.get(&hash).and_then(|transaction| {
+            storage.blocks.get(&transaction.block_hash).map(|block| (transaction, block))
+        }) else {
+            return Ok(None);
+        };
 
         let index = transaction.info.transaction_index as usize;
-        let block = storage.blocks.get(&transaction.block_hash)?;
         let mut next_log_index = 0;
         for block_transaction in &block.body.transactions[..index] {
-            next_log_index +=
-                storage.transactions.get(&block_transaction.hash())?.receipt.logs().len();
+            let Some(transaction) = storage.transactions.get(&block_transaction.hash()) else {
+                return Ok(None);
+            };
+            next_log_index += transaction.receipt.logs().len();
         }
 
-        Some(self.build_mined_transaction_receipt(
+        self.build_mined_transaction_receipt(
             &transaction.info,
             transaction.receipt.clone(),
             transaction.block_hash,
             block,
             next_log_index,
-        ))
+        )
+        .map(Some)
     }
 
     fn build_mined_transaction_receipt(
@@ -8400,7 +8415,7 @@ where
         block_hash: B256,
         block: &Block,
         next_log_index: usize,
-    ) -> MinedTransactionReceipt<FoundryNetwork> {
+    ) -> Result<MinedTransactionReceipt<FoundryNetwork>, BlockchainError> {
         let transaction = block.body.transactions[info.transaction_index as usize].clone();
 
         // Cancun specific
@@ -8410,7 +8425,13 @@ where
         let effective_gas_price = transaction.effective_gas_price(block.header.base_fee_per_gas());
 
         #[cfg(feature = "base")]
-        let eip8130_phase_statuses = tx_receipt.eip8130_phase_statuses().to_vec();
+        let eip8130_phase_statuses = if let FoundryTxEnvelope::Eip8130(tx) = transaction.as_ref() {
+            tx_receipt
+                .eip8130_phase_statuses(tx.tx().calls.len())
+                .map_err(|err| BlockchainError::Internal(err.to_string()))?
+        } else {
+            Vec::new()
+        };
         let tx_receipt = tx_receipt.convert_logs_rpc(
             BlockNumHash::new(block.header.number(), block_hash),
             block.header.timestamp(),
@@ -8483,7 +8504,7 @@ where
                 .other
                 .extend(OtherFields::try_from(fields).expect("EIP-8130 receipt fields serialize"));
         }
-        MinedTransactionReceipt { inner, out: info.out.clone() }
+        Ok(MinedTransactionReceipt { inner, out: info.out.clone() })
     }
 
     /// Executes the pending block and returns its transaction receipts.
@@ -8505,7 +8526,7 @@ where
                 block_hash,
                 &block,
                 next_log_index,
-            );
+            )?;
             pending_receipts.push(receipt.inner);
             next_log_index += log_count;
         }
@@ -8518,7 +8539,7 @@ where
         &self,
         number: BlockId,
     ) -> Result<Option<Vec<FoundryTxReceipt>>, BlockchainError> {
-        if let Some(receipts) = self.mined_block_receipts(number) {
+        if let Some(receipts) = self.mined_block_receipts(number)? {
             return Ok(Some(receipts));
         }
 
@@ -9513,6 +9534,8 @@ impl Backend<FoundryNetwork> {
                             &precompile_overrides,
                         ),
                     };
+                    #[cfg(feature = "base")]
+                    let eip8130_committed_phases = Eip8130CommittedPhases::take();
                     let ResultAndState { result, mut state } = match execution_result {
                         Err(BlockchainError::InvalidTransaction(error)) => {
                             return Err(simulate_transaction_error(error));
@@ -9610,6 +9633,8 @@ impl Backend<FoundryNetwork> {
                             &result,
                             canonical_logs.clone(),
                             cumulative_gas_used,
+                            #[cfg(feature = "base")]
+                            eip8130_committed_phases,
                         )
                     };
                     #[cfg(not(any(feature = "base", feature = "optimism")))]
@@ -10186,9 +10211,10 @@ where
                 signed,
                 &signed.encoded_2718(),
                 &IntrinsicGasInput::worst_case(
+                    address,
                     nonce_key_first_use,
-                    IntrinsicGasInput::sender_auto_delegated(&body.account_changes),
-                    body.payer.is_some(),
+                    self.base_upgrade_at_timestamp(evm_env.block_env.timestamp.saturating_to())
+                        >= BaseUpgrade::Zenith,
                 ),
             )
             .map_err(|error| BlockchainError::Eip8130TransactionRejected(error.to_string()))?;
@@ -10222,7 +10248,7 @@ where
                 tx,
                 None,
             );
-            Eip8130PhaseStatuses::clear();
+            Eip8130CommittedPhases::clear();
             match validation {
                 Ok(_) => {}
                 Err(BlockchainError::Eip8130TransactionRejected(reason))
@@ -11200,8 +11226,11 @@ mod tests {
             .unwrap();
 
         let expected = arbitrum::arb_block_number_output(REPLAY_BLOCK);
-        let replayed =
-            replay_api.backend.mined_transaction_receipt(receipt.transaction_hash).unwrap();
+        let replayed = replay_api
+            .backend
+            .mined_transaction_receipt(receipt.transaction_hash)
+            .unwrap()
+            .unwrap();
         assert_eq!(replayed.out.unwrap(), expected);
         assert_eq!(replay_api.block_number().unwrap(), U256::from(REPLAY_BLOCK));
 

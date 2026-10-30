@@ -51,7 +51,7 @@ use tempo_precompiles::{NONCE_PRECOMPILE_ADDRESS, nonce::NonceManager};
 #[cfg(feature = "base")]
 use base_common_consensus::Eip8130Receipt;
 #[cfg(feature = "base")]
-use base_common_evm::Eip8130PhaseStatuses;
+use base_common_evm::Eip8130CommittedPhases;
 
 #[cfg(any(feature = "base", feature = "optimism"))]
 use foundry_evm::hardfork::FoundryHardfork;
@@ -149,14 +149,18 @@ fn append_deposit_requests(
     Ok(())
 }
 
-/// Receipt builder for transaction types that do not require network-specific metadata.
+/// Receipt builder for Anvil transaction types.
 #[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
-pub struct FoundryReceiptBuilder;
+pub struct FoundryReceiptBuilder {
+    #[cfg(feature = "base")]
+    eip8130_committed_phases: u64,
+}
 
 impl FoundryReceiptBuilder {
     #[cfg_attr(not(feature = "base"), allow(clippy::missing_const_for_fn))]
     fn wrap_receipt(
+        &self,
         tx_type: FoundryTxType,
         receipt: ReceiptWithBloom<Receipt>,
     ) -> FoundryReceiptEnvelope {
@@ -174,7 +178,7 @@ impl FoundryReceiptBuilder {
             FoundryTxType::PostExec => FoundryReceiptEnvelope::PostExec(receipt),
             #[cfg(feature = "base")]
             FoundryTxType::Eip8130 => FoundryReceiptEnvelope::Eip8130(ReceiptWithBloom {
-                receipt: Eip8130Receipt::new(receipt.receipt, Eip8130PhaseStatuses::take()),
+                receipt: Eip8130Receipt::new(receipt.receipt, self.eip8130_committed_phases),
                 logs_bloom: receipt.logs_bloom,
             }),
             FoundryTxType::Tempo => FoundryReceiptEnvelope::Tempo(receipt),
@@ -193,11 +197,16 @@ impl FoundryReceiptBuilder {
         result: &ExecutionResult,
         logs: Vec<Log>,
         cumulative_gas_used: u64,
+        #[cfg(feature = "base")] eip8130_committed_phases: u64,
     ) -> FoundryReceiptEnvelope {
         let receipt =
             Receipt { status: Eip658Value::Eip658(result.is_success()), cumulative_gas_used, logs }
                 .with_bloom();
-        Self::wrap_receipt(tx_type, receipt)
+        Self {
+            #[cfg(feature = "base")]
+            eip8130_committed_phases,
+        }
+        .wrap_receipt(tx_type, receipt)
     }
 }
 
@@ -215,19 +224,21 @@ impl ReceiptBuilder for FoundryReceiptBuilder {
             logs: ctx.result.into_logs(),
         }
         .with_bloom();
-        Self::wrap_receipt(ctx.tx_type, receipt)
+        self.wrap_receipt(ctx.tx_type, receipt)
     }
 }
 
 /// Result of executing a transaction in [`AnvilBlockExecutor`].
 ///
-/// Wraps [`EthTxResult`] with the depositor nonce when OP deposit receipts are enabled.
+/// Keeps receipt metadata with [`EthTxResult`] across thread boundaries.
 #[derive(Debug)]
 pub struct AnvilTxResult<H> {
     pub inner: EthTxResult<H, FoundryTxType>,
     /// The sender nonce before a deposit transaction executed, `None` for other transactions.
     #[cfg(any(feature = "base", feature = "optimism"))]
     pub depositor_nonce: Option<u64>,
+    #[cfg(feature = "base")]
+    pub eip8130_committed_phases: u64,
 }
 
 impl<H: Send + 'static> TxResult for AnvilTxResult<H> {
@@ -256,8 +267,6 @@ pub struct AnvilBlockExecutor<E> {
     spec_id: SpecId,
     /// Canonical Ethereum consensus transitions, disabled for other networks.
     ethereum_transitions: Option<EthereumBlockTransitions>,
-    /// Receipt builder.
-    receipt_builder: FoundryReceiptBuilder,
     /// Receipts of executed transactions.
     receipts: Vec<FoundryReceiptEnvelope>,
     /// Total gas used by transactions in this block.
@@ -306,7 +315,6 @@ impl<E> AnvilBlockExecutor<E> {
             parent_hash,
             spec_id,
             ethereum_transitions,
-            receipt_builder: FoundryReceiptBuilder,
             receipts: Vec::new(),
             gas_used: 0,
             blob_gas_used: 0,
@@ -402,11 +410,16 @@ where
             return Err(BlockExecutionError::msg("block blob gas limit exceeded"));
         }
         let result = transact(&mut self.evm, tx_env, transaction_hash)?;
+        #[cfg(feature = "base")]
+        let eip8130_committed_phases =
+            if tx.tx().is_eip8130() { Eip8130CommittedPhases::take() } else { 0 };
 
         Ok(AnvilTxResult {
             inner: EthTxResult { result, blob_gas_used, tx_type: tx.tx().tx_type() },
             #[cfg(any(feature = "base", feature = "optimism"))]
             depositor_nonce,
+            #[cfg(feature = "base")]
+            eip8130_committed_phases,
         })
     }
 }
@@ -476,6 +489,8 @@ where
             inner: EthTxResult { result: ResultAndState { result, state }, blob_gas_used, tx_type },
             #[cfg(any(feature = "base", feature = "optimism"))]
             depositor_nonce,
+            #[cfg(feature = "base")]
+            eip8130_committed_phases,
         } = output;
 
         let gas_used = result.tx_gas_used();
@@ -485,6 +500,10 @@ where
             self.blob_gas_used = self.blob_gas_used.saturating_add(blob_gas_used);
         }
 
+        let receipt_builder = FoundryReceiptBuilder {
+            #[cfg(feature = "base")]
+            eip8130_committed_phases,
+        };
         #[cfg(any(feature = "base", feature = "optimism"))]
         let receipt = if let Some(depositor_nonce) = depositor_nonce {
             optimism::build_mined_deposit_receipt(
@@ -494,7 +513,7 @@ where
                 self.gas_used,
             )
         } else {
-            self.receipt_builder.build_receipt(ReceiptBuilderCtx {
+            receipt_builder.build_receipt(ReceiptBuilderCtx {
                 tx_type,
                 evm: &self.evm,
                 result,
@@ -503,7 +522,7 @@ where
             })
         };
         #[cfg(not(any(feature = "base", feature = "optimism")))]
-        let receipt = self.receipt_builder.build_receipt(ReceiptBuilderCtx {
+        let receipt = receipt_builder.build_receipt(ReceiptBuilderCtx {
             tx_type,
             evm: &self.evm,
             result,

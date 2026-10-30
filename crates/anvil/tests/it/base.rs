@@ -33,7 +33,7 @@ use foundry_common::provider::RetryProvider;
 use foundry_config::Config;
 use foundry_evm::{hardforks::BaseUpgrade, opts::EvmOpts};
 use foundry_evm_networks::NetworkConfigs;
-use foundry_primitives::FoundryTxEnvelope;
+use foundry_primitives::{FoundryTxEnvelope, FoundryTxReceipt};
 use op_alloy_consensus::TxDeposit;
 use std::time::Duration;
 
@@ -776,7 +776,7 @@ async fn base_eip8130_estimate_prices_authentication_scheme() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn base_eip8130_simulation_and_nonce_key_are_rejected_before_zenith() {
+async fn base_eip8130_simulation_and_nonce_key_are_rejected_before_everest() {
     let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
     let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
@@ -798,7 +798,7 @@ async fn base_eip8130_simulation_and_nonce_key_are_rejected_before_zenith() {
         access_list_error.to_string(),
         nonce_error.to_string(),
     ] {
-        assert!(error.contains("not active before the Zenith hard fork"), "{error}");
+        assert!(error.contains("not active before the Everest hard fork"), "{error}");
     }
 }
 
@@ -895,7 +895,7 @@ async fn base_eip8130_debug_trace_transaction_inspects_protocol_calls() {
         .send_raw_transaction(
             &eip8130_envelope_with(
                 &signer,
-                vec![vec![Call { to: target, data: Bytes::new() }]],
+                vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]],
                 Bytes::new(),
             )
             .encoded_2718(),
@@ -1364,13 +1364,14 @@ async fn base_standalone_mines_eip8130_transaction() {
 
     assert!(receipt.status());
     let receipt_json = serde_json::to_value(&receipt).unwrap();
-    assert!(receipt_json.get("phaseStatuses").is_none(), "{receipt_json}");
+    assert_eq!(receipt_json["phaseStatuses"], serde_json::json!([]));
+    assert_eq!(receipt_json["committedPhases"], "0x0");
     assert_eq!(receipt_json["payer"], serde_json::to_value(sender).unwrap());
     let mined = provider.get_transaction_by_hash(receipt.tx_hash()).await.unwrap().unwrap();
     assert_eq!(mined.ty(), 0x79);
     let mined_json = serde_json::to_value(mined).unwrap();
-    assert_eq!(mined_json["tx"]["nonceKey"], "0x0", "{mined_json}");
-    assert!(mined_json["tx"].get("calls").is_some());
+    assert_eq!(mined_json["nonceKey"], "0x0", "{mined_json}");
+    assert_eq!(mined_json["calls"], serde_json::json!([]));
     assert!(mined_json.get("senderAuth").is_some());
     assert!(provider.get_balance(sender).await.unwrap() < before);
 }
@@ -1432,7 +1433,7 @@ async fn base_eip8130_receipt_reports_phase_statuses_and_metadata() {
     api.anvil_set_code(target, Bytes::from_static(&[0x00])).await.unwrap();
     let envelope = eip8130_envelope_with(
         &signer,
-        vec![vec![Call { to: target, data: Bytes::new() }]],
+        vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]],
         Bytes::from_static(&[0xaa]),
     );
 
@@ -1536,8 +1537,8 @@ async fn base_eip8130_receipt_reports_partial_phase_revert() {
     let envelope = eip8130_envelope_with(
         &signer,
         vec![
-            vec![Call { to: success, data: Bytes::new() }],
-            vec![Call { to: reverter, data: Bytes::new() }],
+            vec![Call { to: success, value: U256::ZERO, data: Bytes::new() }],
+            vec![Call { to: reverter, value: U256::ZERO, data: Bytes::new() }],
         ],
         Bytes::new(),
     );
@@ -1573,7 +1574,7 @@ async fn base_eip8130_same_block_receipts_keep_phase_statuses_isolated() {
             &eip8130_envelope_with_channel_calls(
                 &signer,
                 U256::from(20),
-                vec![vec![Call { to: success, data: Bytes::new() }]],
+                vec![vec![Call { to: success, value: U256::ZERO, data: Bytes::new() }]],
             )
             .encoded_2718(),
         )
@@ -1585,8 +1586,8 @@ async fn base_eip8130_same_block_receipts_keep_phase_statuses_isolated() {
                 &signer,
                 U256::from(21),
                 vec![
-                    vec![Call { to: success, data: Bytes::new() }],
-                    vec![Call { to: reverter, data: Bytes::new() }],
+                    vec![Call { to: success, value: U256::ZERO, data: Bytes::new() }],
+                    vec![Call { to: reverter, value: U256::ZERO, data: Bytes::new() }],
                 ],
             )
             .encoded_2718(),
@@ -1622,9 +1623,9 @@ async fn base_beryl_rejects_eip8130_transaction() {
         .await
         .unwrap_err();
 
-    assert!(err.to_string().contains("gated behind Zenith"), "{err}");
+    assert!(err.to_string().contains("gated behind Everest"), "{err}");
     assert!(
-        nonce_error.to_string().contains("not active before the Zenith hard fork"),
+        nonce_error.to_string().contains("not active before the Everest hard fork"),
         "{nonce_error}"
     );
 }
@@ -1644,7 +1645,7 @@ async fn base_eip8130_is_rejected_by_non_base_networks() {
             .await
             .unwrap_err();
 
-        assert!(error.to_string().contains("gated behind Zenith"), "{error}");
+        assert!(error.to_string().contains("gated behind Everest"), "{error}");
     }
 }
 
@@ -2023,4 +2024,60 @@ async fn base_reset_restores_genesis_state() {
     api.anvil_reset(None).await.unwrap();
 
     assert_eq!(read_state().await, genesis);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn base_eip8130_receipt_statuses_roundtrip() {
+    for (fail_at, committed, expected) in [
+        (None, "0x3", serde_json::json!(["0x1", "0x1", "0x1"])),
+        (Some(1), "0x1", serde_json::json!(["0x1", "0x0", "0x0"])),
+        (Some(0), "0x0", serde_json::json!(["0x0", "0x0", "0x0"])),
+    ] {
+        let (api, handle) =
+            spawn(NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Everest.into()))).await;
+        let provider = handle.http_provider();
+        let signer = handle.dev_wallets().next().unwrap().clone();
+        let success = Address::repeat_byte(0xdd);
+        let reverter = Address::repeat_byte(0xee);
+        api.anvil_set_code(success, Bytes::from_static(&[0x00])).await.unwrap();
+        api.anvil_set_code(reverter, Bytes::from_static(&[0x5f, 0x5f, 0xfd])).await.unwrap();
+        let calls = (0..3)
+            .map(|phase| {
+                vec![Call {
+                    to: if Some(phase) == fail_at { reverter } else { success },
+                    value: U256::ZERO,
+                    data: Bytes::new(),
+                }]
+            })
+            .collect();
+        let envelope = eip8130_envelope_with(&signer, calls, Bytes::new());
+        let receipt = provider
+            .send_raw_transaction(&envelope.encoded_2718())
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        let value = serde_json::to_value(&receipt).unwrap();
+        assert_eq!(value["phaseStatuses"], expected);
+        assert_eq!(value["committedPhases"], committed);
+        assert_eq!(receipt.status(), fail_at.is_none());
+        let typed: FoundryTxReceipt = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&typed).unwrap(), value);
+        let converted = FoundryTxReceipt::try_from(receipt.clone()).unwrap();
+        assert_eq!(converted, typed);
+        let fetched =
+            provider.get_transaction_receipt(receipt.transaction_hash()).await.unwrap().unwrap();
+        assert_eq!(serde_json::to_value(fetched).unwrap(), value);
+        let block_receipts = provider
+            .get_block_receipts(receipt.block_hash().unwrap().into())
+            .await
+            .unwrap()
+            .unwrap();
+        let block_receipt = block_receipts
+            .iter()
+            .find(|r| r.transaction_hash() == receipt.transaction_hash())
+            .unwrap();
+        assert_eq!(serde_json::to_value(block_receipt).unwrap(), value);
+    }
 }

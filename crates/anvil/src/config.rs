@@ -3061,7 +3061,7 @@ mod tests {
         config.fork_source_chain_id = Some(NamedChain::Base as u64);
 
         assert_eq!(config.get_chain_id(), 1);
-        assert_eq!(config.get_hardfork(), FoundryHardfork::Base(BaseUpgrade::Beryl));
+        assert_eq!(config.get_hardfork(), FoundryHardfork::Base(BaseUpgrade::Denim));
     }
 
     #[test]

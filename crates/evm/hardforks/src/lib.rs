@@ -822,6 +822,10 @@ mod tests {
             ("op:prague", Err("hardfork namespace 'op' requires the `optimism` feature")),
             #[cfg(feature = "base")]
             ("base:azul", Ok(FoundryHardfork::Base(BaseUpgrade::Azul))),
+            #[cfg(feature = "base")]
+            ("base:everest", Ok(FoundryHardfork::Base(BaseUpgrade::Everest))),
+            #[cfg(feature = "base")]
+            ("base:zenith", Ok(FoundryHardfork::Base(BaseUpgrade::Zenith))),
             #[cfg(not(feature = "base"))]
             ("base:prague", Err("hardfork namespace 'base' requires the `base` feature")),
             #[cfg(feature = "monad")]
@@ -1113,11 +1117,11 @@ mod tests {
             let sepolia_config = UpgradeConfig::BASE_SEPOLIA;
             assert_eq!(
                 FoundryHardfork::from_chain_and_timestamp(8453, u64::MAX),
-                Some(FoundryHardfork::Base(BaseUpgrade::Beryl))
+                Some(FoundryHardfork::Base(BaseUpgrade::Denim))
             );
             assert_eq!(
                 FoundryHardfork::from_chain_and_timestamp(84532, u64::MAX),
-                Some(FoundryHardfork::Base(BaseUpgrade::Beryl))
+                Some(FoundryHardfork::Base(BaseUpgrade::Denim))
             );
             assert_eq!(
                 FoundryHardfork::from_chain_and_timestamp(8453, mainnet_config.base.azul.unwrap()),
@@ -1154,6 +1158,22 @@ mod tests {
                 Some(BaseSpecId::new(BaseUpgrade::Beryl))
             );
             assert_eq!(evm_spec_id_from_str::<BaseSpecId>("tempo:T3"), None);
+        }
+
+        #[test]
+        fn base_mainnet_upgrade_boundaries() {
+            for (timestamp, expected) in [
+                (1_790_791_199, BaseUpgrade::Beryl),
+                (1_790_791_200, BaseUpgrade::Cobalt),
+                (1_793_901_599, BaseUpgrade::Cobalt),
+                (1_793_901_600, BaseUpgrade::Denim),
+            ] {
+                assert_eq!(BaseUpgrade::from_chain_and_timestamp(8453, timestamp), Some(expected));
+                assert_eq!(
+                    FoundryHardfork::from_chain_and_timestamp(8453, timestamp),
+                    Some(FoundryHardfork::Base(expected))
+                );
+            }
         }
     }
 

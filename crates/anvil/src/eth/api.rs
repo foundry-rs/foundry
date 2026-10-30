@@ -4754,7 +4754,7 @@ impl EthApi<FoundryNetwork> {
                     BlockTransactions::Hashes(_) | BlockTransactions::Uncle => unreachable!(),
                 };
                 for tx in block_txs.iter_mut() {
-                    if let Some(receipt) = self.backend.mined_transaction_receipt(tx.tx_hash())
+                    if let Some(receipt) = self.backend.mined_transaction_receipt(tx.tx_hash())?
                         && let Some(output) = receipt.out
                     {
                         // insert revert reason if failure

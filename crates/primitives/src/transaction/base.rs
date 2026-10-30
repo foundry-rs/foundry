@@ -25,30 +25,35 @@ impl FromTxWithEncoded<FoundryTxEnvelope> for BaseTransaction<TxEnv> {
             FoundryTxEnvelope::Legacy(signed) => Self {
                 base: TxEnv::from_recovered_tx(signed, caller),
                 enveloped_tx: Some(encoded),
+                enveloped_tx_fastlz_size: None,
                 deposit: Default::default(),
                 eip8130: None,
             },
             FoundryTxEnvelope::Eip2930(signed) => Self {
                 base: TxEnv::from_recovered_tx(signed, caller),
                 enveloped_tx: Some(encoded),
+                enveloped_tx_fastlz_size: None,
                 deposit: Default::default(),
                 eip8130: None,
             },
             FoundryTxEnvelope::Eip1559(signed) => Self {
                 base: TxEnv::from_recovered_tx(signed, caller),
                 enveloped_tx: Some(encoded),
+                enveloped_tx_fastlz_size: None,
                 deposit: Default::default(),
                 eip8130: None,
             },
             FoundryTxEnvelope::Eip4844(signed) => Self {
                 base: TxEnv::from_recovered_tx(signed, caller),
                 enveloped_tx: Some(encoded),
+                enveloped_tx_fastlz_size: None,
                 deposit: Default::default(),
                 eip8130: None,
             },
             FoundryTxEnvelope::Eip7702(signed) => Self {
                 base: TxEnv::from_recovered_tx(signed, caller),
                 enveloped_tx: Some(encoded),
+                enveloped_tx_fastlz_size: None,
                 deposit: Default::default(),
                 eip8130: None,
             },
@@ -67,6 +72,7 @@ impl FromTxWithEncoded<FoundryTxEnvelope> for BaseTransaction<TxEnv> {
                 Self {
                     base,
                     enveloped_tx: None,
+                    enveloped_tx_fastlz_size: None,
                     deposit: DepositTransactionParts {
                         source_hash: deposit.source_hash,
                         mint: Some(deposit.mint),
@@ -155,6 +161,7 @@ mod tests {
             valid_before: 200,
             calls: vec![vec![Call {
                 to: Address::repeat_byte(3),
+                value: U256::from(42),
                 data: Bytes::from_static(b"call"),
             }]],
             account_changes: vec![AccountChange::Delegation(Delegation {
