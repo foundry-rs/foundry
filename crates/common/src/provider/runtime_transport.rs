@@ -323,7 +323,7 @@ impl RuntimeTransport {
     /// Connects to a WS transport.
     ///
     /// Uses the canonical Alloy MPP WebSocket transport when the endpoint is a
-    /// known MPP service.
+    /// known MPP service and MPP is not disabled.
     /// Otherwise falls back to alloy's plain [`WsConnect`] with zero overhead.
     async fn connect_ws(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let auth = self
@@ -333,7 +333,7 @@ impl RuntimeTransport {
             .transpose()
             .map_err(|e| RuntimeTransportError::InvalidJwt(e.to_string()))?;
 
-        let service = if is_known_mpp_endpoint(&self.url) {
+        let service = if !self.no_mpp && is_known_mpp_endpoint(&self.url) {
             let mut ws = lazy_mpp_ws_connect(&self.url);
             if let Some(auth) = auth {
                 ws = ws.with_auth(auth);
