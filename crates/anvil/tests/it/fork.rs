@@ -36,6 +36,7 @@ use anvil::{
     eth::{EthApi, fees::INITIAL_BASE_FEE},
     spawn, try_spawn,
 };
+use anvil_core::types::{ReorgOptions, TransactionData};
 use axum::{Json, Router, routing::post};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
@@ -493,6 +494,8 @@ async fn test_fork_transaction_hash_replays_before_startup() {
     origin_api.anvil_set_auto_mine(false).await.unwrap();
     let origin_provider = origin_handle.http_provider();
     let sender = origin_handle.dev_wallets().next().unwrap().address();
+    let recipient = Address::repeat_byte(0x42);
+    let root = origin_provider.get_block(0u64.into()).full().await.unwrap().unwrap();
 
     let first = origin_provider
         .send_transaction(WithOtherFields::new(
@@ -506,11 +509,7 @@ async fn test_fork_transaction_hash_replays_before_startup() {
         .unwrap();
     let second = origin_provider
         .send_transaction(WithOtherFields::new(
-            TransactionRequest::default()
-                .from(sender)
-                .to(Address::random())
-                .value(U256::from(2))
-                .nonce(1),
+            TransactionRequest::default().from(sender).to(recipient).value(U256::from(2)).nonce(1),
         ))
         .await
         .unwrap();
@@ -565,7 +564,7 @@ async fn test_fork_transaction_hash_replays_before_startup() {
         !fork_provider.get_transaction_receipt(expected_hashes[2]).await.unwrap().unwrap().status()
     );
 
-    let (prefix_api, _) = spawn(
+    let (prefix_api, prefix_handle) = spawn(
         NodeConfig::test()
             .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
             .with_fork_transaction_hash(Some(expected_hashes[1]))
@@ -585,6 +584,35 @@ async fn test_fork_transaction_hash_replays_before_startup() {
         expected_hashes[..2]
     );
     assert!(prefix_api.backend.mined_transaction_by_hash(expected_hashes[2]).is_none());
+
+    let prefix_provider = prefix_handle.http_provider();
+    assert_eq!(prefix_provider.get_transaction_count(sender).await.unwrap(), 2);
+    assert_eq!(prefix_provider.get_balance(recipient).await.unwrap(), U256::from(2));
+    for hash in &expected_hashes[..2] {
+        assert!(prefix_provider.get_transaction_receipt(*hash).await.unwrap().unwrap().status());
+    }
+
+    prefix_api.anvil_rollback(Some(1)).await.unwrap();
+
+    assert_eq!(prefix_provider.get_block(BlockId::latest()).full().await.unwrap().unwrap(), root);
+    assert_eq!(prefix_provider.get_transaction_count(sender).await.unwrap(), 0);
+    assert_eq!(prefix_provider.get_balance(recipient).await.unwrap(), U256::ZERO);
+    for hash in &expected_hashes[..2] {
+        assert!(prefix_provider.get_transaction_receipt(*hash).await.unwrap().is_none());
+    }
+    let pending = prefix_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(sender).to(recipient).value(U256::ONE),
+        ))
+        .await
+        .unwrap();
+    prefix_api.mine_one().await.unwrap();
+    assert!(pending.get_receipt().await.unwrap().status());
+    assert_eq!(prefix_provider.get_transaction_count(sender).await.unwrap(), 1);
+    assert_eq!(prefix_provider.get_balance(recipient).await.unwrap(), U256::ONE);
+    let replacement = prefix_provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(replacement.header.number, 1);
+    assert_eq!(replacement.header.parent_hash, root.header.hash);
 
     let (pruned_api, _) = spawn(
         NodeConfig::test()
@@ -5353,5 +5381,132 @@ async fn test_fork_blob_params_follow_source() {
         let (nested_api, _nested_handle) =
             spawn(NodeConfig::test().with_eth_rpc_url(Some(middle_handle.http_endpoint()))).await;
         assert_eq!(nested_api.backend.blob_params(), BlobParams::prague(), "chain {chain_id}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_rollback_to_root() {
+    let (source_api, source) = spawn(NodeConfig::test()).await;
+    source_api.mine_one().await.unwrap();
+    let root = source.http_provider().get_block(1.into()).await.unwrap().unwrap();
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_no_mining(true)
+            .with_eth_rpc_url(Some(source.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let recipient = Address::repeat_byte(0x42);
+    let pending = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(sender).to(recipient).value(U256::ONE),
+        ))
+        .await
+        .unwrap();
+    api.mine_one().await.unwrap();
+    let receipt = pending.get_receipt().await.unwrap();
+    assert!(receipt.status());
+    assert_eq!(provider.get_balance(recipient).await.unwrap(), U256::ONE);
+
+    api.anvil_rollback(Some(1)).await.unwrap();
+
+    assert_eq!(provider.get_block(BlockId::latest()).await.unwrap().unwrap(), root);
+    assert_eq!(provider.get_balance(recipient).await.unwrap(), U256::ZERO);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 0);
+    assert!(provider.get_transaction_receipt(receipt.transaction_hash).await.unwrap().is_none());
+    api.mine_one().await.unwrap();
+    let replacement = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(replacement.header.parent_hash, root.header.hash);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_rollback_to_root_restores_fee_and_gas_overrides() {
+    for (case, source_base_fee, config, tx_gas_limit, block_gas_limit) in [
+        (
+            "explicit fee and gas overrides",
+            INITIAL_BASE_FEE,
+            NodeConfig::test().with_gas_limit(Some(100_000_000)),
+            21_000,
+            100_000_000,
+        ),
+        (
+            "disabled block gas limit",
+            0,
+            NodeConfig::test().disable_block_gas_limit(true),
+            60_000_000,
+            u64::MAX,
+        ),
+    ] {
+        let (source_api, source) = spawn(
+            NodeConfig::test()
+                .with_base_fee(Some(source_base_fee))
+                .with_gas_limit(Some(30_000_000)),
+        )
+        .await;
+        source_api.mine_one().await.expect(case);
+        let root = source.http_provider().get_block(1.into()).await.expect(case).expect(case);
+        let (api, handle) = spawn(
+            config
+                .with_no_mining(true)
+                .with_base_fee(Some(0))
+                .with_eth_rpc_url(Some(source.http_endpoint()))
+                .with_fork_block_number(Some(1u64)),
+        )
+        .await;
+        let provider = handle.http_provider();
+        let sender = handle.dev_accounts().next().expect(case);
+        let recipient = Address::repeat_byte(0x43);
+        let tx = || {
+            WithOtherFields::new(
+                TransactionRequest::default()
+                    .from(sender)
+                    .to(recipient)
+                    .gas_price(0)
+                    .gas_limit(tx_gas_limit),
+            )
+        };
+
+        let pending = provider.send_transaction(tx()).await.expect(case);
+        api.mine_one().await.expect(case);
+        let receipt =
+            provider.get_transaction_receipt(*pending.tx_hash()).await.expect(case).expect(case);
+        assert!(receipt.status(), "{case}");
+        let child = provider.get_block(2.into()).await.expect(case).expect(case);
+        assert_eq!(child.header.base_fee_per_gas, Some(0), "{case}");
+        assert_eq!(child.header.gas_limit, block_gas_limit, "{case}");
+
+        api.anvil_set_next_block_base_fee_per_gas(U256::from(123)).await.expect(case);
+        api.anvil_rollback(Some(1)).await.expect(case);
+        api.anvil_rollback(Some(0)).await.expect(case);
+        assert_eq!(
+            provider.get_block(BlockId::latest()).await.expect(case).expect(case),
+            root,
+            "{case}",
+        );
+
+        let pending = provider.send_transaction(tx()).await.expect(case);
+        api.mine_one().await.expect(case);
+        let receipt =
+            provider.get_transaction_receipt(*pending.tx_hash()).await.expect(case).expect(case);
+        assert!(receipt.status(), "{case}");
+        let replacement = provider.get_block(BlockId::latest()).await.expect(case).expect(case);
+        assert_eq!(replacement.header.base_fee_per_gas, Some(0), "{case}");
+        assert_eq!(replacement.header.gas_limit, block_gas_limit, "{case}");
+
+        api.anvil_reorg(ReorgOptions {
+            depth: 1,
+            tx_block_pairs: vec![(TransactionData::JSON(tx()), 0)],
+        })
+        .await
+        .expect(case);
+        let reorged = provider.get_block(BlockId::latest()).await.expect(case).expect(case);
+        assert_eq!(reorged.header.base_fee_per_gas, Some(0), "{case}");
+        assert_eq!(reorged.header.gas_limit, block_gas_limit, "{case}");
+        assert_eq!(reorged.transactions.len(), 1, "{case}");
+        let receipt =
+            provider.get_transaction_receipt(*pending.tx_hash()).await.expect(case).expect(case);
+        assert!(receipt.status(), "{case}");
     }
 }

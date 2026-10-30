@@ -1482,8 +1482,8 @@ contract BroadcastKeys is Script {
         ),
         str![[r#"
 top level: chain, commit, libraries, pending, receipts, recovery_generation, returns, timestamp, transactions
-transaction: additionalContracts, arguments, contractAddress, contractName, function, functionAbi, hash, isFixedGasLimit, transaction, transactionType
-additional contract: address, contractName, creatorCodeAddresses, initCode, transactionType
+transaction: additionalContracts, arguments, contractAddress, contractName, exactArtifactMatch, function, functionAbi, hash, isFixedGasLimit, transaction, transactionType
+additional contract: address, contractName, creatorCodeAddresses, exactArtifactMatch, initCode, transactionType
 
 "#]]
     );
@@ -1902,6 +1902,60 @@ contract RebindResume is Script {
 }
 
 #[forgetest_init]
+async fn resume_without_rpc_url_uses_saved_endpoint(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "SavedResume.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract SavedResumeTarget {}
+
+contract SavedResume is Script {
+    function run() external {
+        vm.startBroadcast();
+        new SavedResumeTarget();
+        new SavedResumeTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (rpc_a, submissions_a) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let (rpc_b, submissions_b) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = handle.dev_accounts().next().unwrap();
+
+    // Simulate through A, then make B the configured RPC for the same chain.
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "SavedResume",
+        "--rpc-url",
+        &rpc_a,
+        "--private-key",
+        private_key,
+    ]);
+    cmd.assert_success();
+    prj.update_config(|config| config.eth_rpc_url = Some(rpc_b));
+
+    // Without `--rpc-url`, the configured RPC selects the chain but the saved endpoint submits.
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "SavedResume",
+        "--private-key",
+        private_key,
+        "--resume",
+    ]);
+    cmd.assert_success();
+
+    assert_eq!(submissions_a.lock().unwrap().len(), 2);
+    assert!(submissions_b.lock().unwrap().is_empty());
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 2);
+}
+
+#[forgetest_init]
 async fn broadcast_reports_submission_without_receipt(prj: _, cmd: _) {
     let script = prj.add_script(
         "InvisibleSubmission.s.sol",
@@ -2105,6 +2159,61 @@ async fn can_resume_script(prj: _, cmd: _) {
         .run(ScriptOutcome::OkBroadcast)
         .assert_nonce_increment(&[(0, 2), (1, 1)])
         .await;
+}
+
+// Resume reports a failed signer-collecting run from `setUp` or `run`, and only fails if signers
+// are still missing.
+#[forgetest_init]
+async fn resume_reports_failed_signer_rerun(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let script = prj.add_script(
+        "ResumeRerun.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract ResumeRerunTarget {}
+
+contract ResumeRerun is Script {
+    uint256 key;
+
+    function setUp() public {
+        key = vm.envUint("RESUME_RERUN_PK");
+    }
+
+    function run() external {
+        vm.startBroadcast(key);
+        new ResumeRerunTarget();
+        vm.stopBroadcast();
+        require(vm.envOr("RESUME_RERUN_GO", false), "resume gate closed");
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc]);
+    cmd.env("RESUME_RERUN_PK", private_key);
+    cmd.env("RESUME_RERUN_GO", "true");
+    cmd.assert_success();
+
+    // `setUp` fails before the signer is reached.
+    cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--resume"]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: No associated wallet for addresses: [0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266]. Unlocked wallets: []
+Resume re-ran the script to collect signers, but it failed: vm.envUint: environment variable "RESUME_RERUN_PK" not found
+
+"#]]);
+
+    // `run` fails after the signer is collected, so resume still broadcasts.
+    cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--resume"]);
+    cmd.env("RESUME_RERUN_PK", private_key);
+    cmd.assert_success().stderr_eq(str![[r#"
+Warning: Resume re-ran the script to collect signers, but it failed: resume gate closed
+
+"#]]);
+    let sender = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 1);
 }
 
 #[forgetest]
@@ -4507,6 +4616,63 @@ contract WalletScript is Script {
     }
 }
 
+// A keystore without an `address` field, as written by `cast wallet new` and `cast wallet import`,
+// is unlocked to find the script sender instead of running as the default sender.
+#[cfg(unix)]
+#[forgetest_init]
+fn keystore_without_address_sets_script_sender(prj: _, cmd: _) {
+    let script = prj.add_source(
+        "SenderScript",
+        r#"
+import {Script} from "forge-std/Script.sol";
+
+contract SenderScript is Script {
+    function run() public {
+        require(msg.sender == 0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2, "unexpected sender");
+        vm.startBroadcast();
+        vm.stopBroadcast();
+    }
+}"#,
+    );
+    let mut keystore: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../cast/tests/fixtures/keystore/UTC--2022-12-20T10-30-43.591916000Z--ec554aeafe75601aaab43bd4621a22284db566c2"
+    ))
+    .unwrap();
+    keystore.as_object_mut().unwrap().remove("address");
+    let keystore_path = prj.root().join("keystore-without-address");
+    fs::write(&keystore_path, keystore.to_string()).unwrap();
+    cmd.args(["build"]).assert_success();
+
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_forge"));
+    command
+        .current_dir(prj.root())
+        .env_remove("CI")
+        .env("NO_COLOR", "1")
+        .env("TERM", "dumb")
+        .arg("script")
+        .arg(&script)
+        .arg("--keystore")
+        .arg(&keystore_path);
+    let mut session = spawn_with_options(
+        command,
+        Options {
+            timeout_ms: Some(30_000),
+            strip_ansi_escape_codes: true,
+            encoding: Encoding::UTF8,
+        },
+    )
+    .unwrap();
+    session.exp_string("Enter keystore password:").unwrap();
+    session.send_line("keystorepassword").unwrap();
+    // `vm.startBroadcast` reuses the unlocked keystore: a second prompt would time out here.
+    session.exp_string("Script ran successfully.").unwrap();
+    let output = session.exp_eof().unwrap();
+    assert!(
+        matches!(session.process.wait().unwrap(), WaitStatus::Exited(_, 0)),
+        "unexpected script exit: {output}"
+    );
+}
+
 #[forgetest_init]
 fn can_remember_keys(prj: _, cmd: _) {
     let script = prj
@@ -6266,6 +6432,7 @@ contract SaltedScript is Script {
         "salted broadcast must be recorded as CREATE2, got: {tx}"
     );
     assert_eq!(tx["contractName"], "Token");
+    assert_eq!(tx["exactArtifactMatch"], true);
     assert_eq!(tx["arguments"][0], "SaltedTok");
 }
 

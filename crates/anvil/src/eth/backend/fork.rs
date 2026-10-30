@@ -42,7 +42,7 @@ use foundry_evm::{
     hardfork::FoundryHardfork,
 };
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
-use foundry_primitives::FoundryTxReceipt;
+use foundry_primitives::{FoundryHeader, FoundryTxReceipt};
 use parking_lot::{
     RawRwLock, RwLock,
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
@@ -760,17 +760,7 @@ impl<N: Network> ClientFork<N> {
         block_id: impl Into<BlockId>,
     ) -> Result<Option<N::BlockResponse>, TransportError> {
         if let Some(block) = self.provider().get_block(block_id.into()).full().await? {
-            let hash = block.header().hash();
-            let block_number = block.header().number();
-            let mut storage = self.storage_write();
-            // also insert all transactions
-            let block_txs = match block.transactions() {
-                BlockTransactions::Full(txs) => txs.to_owned(),
-                _ => vec![],
-            };
-            storage.transactions.extend(block_txs.iter().map(|tx| (tx.tx_hash(), tx.clone())));
-            storage.hashes.insert(block_number, hash);
-            storage.blocks.insert(hash, block.clone());
+            self.cache_block(&block);
             return Ok(Some(block));
         }
 
@@ -787,6 +777,18 @@ impl<N: Network> ClientFork<N> {
             .collect::<Option<Vec<_>>>()?;
         *block.transactions_mut() = BlockTransactions::Full(transactions);
         Some(block)
+    }
+
+    /// Caches a block and its full transactions, if present.
+    fn cache_block(&self, block: &N::BlockResponse) {
+        let hash = block.header().hash();
+        let block_number = block.header().number();
+        let mut storage = self.storage_write();
+        if let BlockTransactions::Full(txs) = block.transactions() {
+            storage.transactions.extend(txs.iter().map(|tx| (tx.tx_hash(), tx.clone())));
+        }
+        storage.hashes.insert(block_number, hash);
+        storage.blocks.insert(hash, block.clone());
     }
 }
 
@@ -889,6 +891,40 @@ impl ClientFork {
         }
         self.storage_write().uncles.insert(block_hash, uncles.clone());
         Ok(uncles.get(index).cloned())
+    }
+
+    /// Returns the pinned fork root's native header, validating it before caching fetched data.
+    pub(crate) async fn root_header(&self) -> Result<Option<FoundryHeader>, BlockchainError> {
+        let (number, hash, provider) = {
+            let config = self.config.read();
+            (config.block_number, config.block_hash, config.provider.clone())
+        };
+        let cached = self.storage_read().blocks.get(&hash).cloned();
+        let was_cached = cached.is_some();
+        let block = if let Some(block) = cached {
+            block
+        } else {
+            // Do not expose an unverified root through the shared block or transaction caches.
+            let Some(block) = provider.get_block(BlockId::hash(hash)).full().await? else {
+                return Ok(None);
+            };
+            block
+        };
+
+        // Native header fields can live at the RPC block level, outside its Ethereum header.
+        let header = serde_json::to_value(&block)
+            .and_then(serde_json::from_value::<FoundryHeader>)
+            .map_err(|error| BlockchainError::Internal(error.to_string()))?;
+        if block.header.hash != hash || header.number() != number || header.hash_slow() != hash {
+            return Err(BlockchainError::Internal(
+                "Fork root header does not match its pinned hash".into(),
+            ));
+        }
+
+        if !was_cached {
+            self.cache_block(&block);
+        }
+        Ok(Some(header))
     }
 }
 

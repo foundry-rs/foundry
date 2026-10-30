@@ -1,0 +1,7 @@
+[profile.default]
+solc = "0.8.33"
+optimizer = true
+isolate = false
+
+[profile.default.symbolic]
+timeout = 10

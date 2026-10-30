@@ -141,7 +141,11 @@ existing attempt.
 ## Pending reconciliation and receipts
 
 Before sending new work, `BundledState::wait_for_pending` checks each hash in `pending`. Sequences
-from a multichain deployment are checked concurrently. A confirmed success removes the hash from
+from a multichain deployment are checked concurrently. Outside `--batch`, `--resume` first checks
+the sequences in order in `CompiledState::resume`; a failing sequence does not stop the others,
+each result is saved, and the errors are returned together, so this later check usually finds
+nothing pending. In multichain runs, broadcast and reconcile errors name their chain, and the
+sequence number when several sequences share it. A confirmed success removes the hash from
 `pending` and appends its receipt. A revert removes the hash, records it in `reverted` rather than
 `receipts`, which consumers treat as successful, and returns an error. A later `--resume` warns
 about each recorded revert, never resubmits it, continues with the remaining operations, and
@@ -225,8 +229,10 @@ replayed.
 
 The saved RPC is part of the sensitive sequence. A single-chain resume uses the `--rpc-url`
 endpoint for Forge-managed reconciliation and submission, after checking that it reports the saved
-chain, without rewriting the saved endpoint. Browser-wallet submission stays wallet-controlled, and
-multichain resume keeps the saved endpoints and warns when `--rpc-url` is passed.
+chain, without rewriting the saved endpoint. Without `--rpc-url`, it uses the saved endpoint; a
+configured `eth_rpc_url` or `FOUNDRY_ETH_RPC_URL` only selects the chain and sequence.
+Browser-wallet submission stays wallet-controlled, and multichain resume keeps the saved endpoints
+and warns when `--rpc-url` is passed.
 
 ## Tempo and multichain behavior
 
@@ -252,7 +258,8 @@ resolution. Delegated attempts are never replaced automatically.
 Multichain mode stores per-chain sequences in one `MultiChainSequence`. Pending hashes are
 reconciled per chain, while new sequences are broadcast in container order. There is no cross-chain
 atomicity. Recovery must preserve independent per-chain progress and must not infer that one chain's
-completion permits skipping an operation on another.
+completion permits skipping an operation on another. With `--verify`, every sequence is verified
+even after one fails, and the failures are returned together, each naming its chain.
 
 ## Known failure windows
 
@@ -369,8 +376,9 @@ fees or validity fields. Replacement workflows are not supported.
 - Pre-signed envelopes, saved signed payloads, and saved batch attempts do not require a signer for
   recovery. Other incomplete unsigned requests remain eligible for signer acquisition. Unknown
   delegated outcomes block resume before signer acquisition.
-- A single-chain resume reaches the chain through `--rpc-url` instead of the saved endpoint, so a
-  handoff does not need the original operator's RPC. Multichain resume keeps the saved endpoints.
+- A single-chain resume reaches the chain through an explicit `--rpc-url` instead of the saved
+  endpoint, so a handoff does not need the original operator's RPC. Without the flag, it uses the
+  saved endpoint. Multichain resume keeps the saved endpoints.
 - Legacy batch-attempt import validates transaction, hash, pending, receipt, and sensitive-metadata
   associations. If it cannot prove a safe batch state, it fails closed rather than guessing.
 

@@ -47,7 +47,7 @@ use commonware_cryptography::{
 use commonware_math::algebra::Random;
 use commonware_utils::{N3f1, TryFromIterator, ordered};
 use rand_chacha::{ChaCha20Rng, rand_core::SeedableRng};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, num::NonZeroU64, sync::Arc};
 use tempo_dkg_onchain_artifacts::OnchainDkgOutcome;
 use tempo_hardfork::TempoHardfork;
@@ -341,7 +341,7 @@ pub struct TempoConsensusIdentity {
 }
 
 /// Certificate data bound to a complete native Tempo header.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct TempoFinalization {
     /// The proposal's epoch.
     pub epoch: u64,

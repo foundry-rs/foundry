@@ -110,7 +110,11 @@ pub struct RunArgs {
     #[arg(long)]
     no_bal: bool,
 
-    /// Whether to replay system transactions.
+    /// Whether to attempt local replay of system transactions.
+    ///
+    /// Without this flag, ordinary block replay leaves out system transactions mined before the
+    /// target and warns about each one. Replay support depends on the selected network. Canonical
+    /// Monad system transactions are replayed regardless of this flag.
     #[arg(long, alias = "sys")]
     replay_system_txes: bool,
 
@@ -416,6 +420,7 @@ impl RunArgs {
             arena: call_frame_to_arena(&frame, root_create_address),
             ignored: Default::default(),
             diagnostics: Default::default(),
+            debug_steps: None,
         };
         let result = TraceResult {
             success: receipt.status(),
@@ -801,6 +806,7 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
         } else {
             let block_number = self.evm_env.block_env.number();
             let replay_system_txes = self.args.replay_system_txes;
+            let mut skipped_system_txes = Vec::new();
             self.for_each_prefix_transaction(target_index, |_, tx| {
                 if !is_system_transaction(tx) || replay_system_txes {
                     let tx_env = self.transaction_env(tx).wrap_err_with(|| {
@@ -812,9 +818,18 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
                         )
                     })?;
                     replay.push((tx.tx_hash(), tx_env));
+                } else {
+                    skipped_system_txes.push(tx.tx_hash());
                 }
                 Ok(())
             })?;
+            if !skipped_system_txes.is_empty() {
+                sh_warn!(
+                    "the replay skips system transactions before the target, so their state \
+                     changes are missing: {skipped_system_txes:?}; `--replay-system-txes` \
+                     attempts local replay where supported; {REMOTE_TRACE_HINT}"
+                )?;
+            }
         }
         let result = self.executor.transact_with_ordinary_block_replay(
             self.evm_env.clone(),

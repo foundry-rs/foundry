@@ -6,7 +6,7 @@ use alloy_consensus::transaction::SignerRecoverable;
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_network::{Network, ReceiptResponse};
 use alloy_primitives::{Address, B256, Bytes};
-use eyre::{ContextCompat, Result, bail};
+use eyre::{ContextCompat, Report, Result, bail, eyre};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cli::utils::Git;
 use foundry_common::{FoundryTransactionBuilder, fmt::UIfmt};
@@ -532,6 +532,20 @@ where
         }
 
         Ok(())
+    }
+
+    /// Prefixes a multichain error with the chain of the sequence at `index`, adding the sequence
+    /// number when another sequence is on the same chain.
+    pub(crate) fn label_error(&self, index: usize, err: Report) -> Report {
+        if !self.is_multi() {
+            return err;
+        }
+        let chain = self.sequences()[index].chain;
+        if self.sequences().iter().filter(|sequence| sequence.chain == chain).count() > 1 {
+            eyre!("chain {chain} (sequence #{}): {err}", index + 1)
+        } else {
+            eyre!("chain {chain}: {err}")
+        }
     }
 }
 

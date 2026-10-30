@@ -118,9 +118,8 @@ pub(super) struct MonadRollbackProfile {
 
 impl MonadRollbackProfile {
     /// Rewinds cfg/spec, gas params, and the retained block's fee environment.
-    pub(super) fn apply_env(&self, env: &mut EvmEnv, common_block: &Block) {
+    pub(super) fn apply_env(&self, env: &mut EvmEnv) {
         env.cfg_env.set_spec_and_mainnet_gas_params(SpecId::from(self.hardfork));
-        env.block_env.basefee = common_block.header.base_fee_per_gas.unwrap_or_default();
         env.block_env.blob_excess_gas_and_price = self.block_blob_excess_gas_and_price;
     }
 }
@@ -371,6 +370,7 @@ impl<N: Network> Backend<N> {
         let timestamp = common_block.header.timestamp();
         let blob_params = get_blob_params(source_chain_id, timestamp);
         let block_base_fee = common_block.header.base_fee_per_gas.unwrap_or_default();
+        let is_fork_root = fork.block_number() == common_block.header.number();
 
         let fees = self.fees.detached();
         fees.set_execution_rules(spec_id, BaseFeeParams::ethereum(), None);
@@ -379,12 +379,26 @@ impl<N: Network> Backend<N> {
         // deriving those values so the zero-base-fee sentinel and Osaka blob target are applied to
         // the correct parent.
         fees.set_base_fee(block_base_fee);
-        let next_block_base_fee = fees.get_next_block_base_fee_from_header(&common_block.header);
-        let next_block_excess_blob_gas = blob_params.next_block_excess_blob_gas_osaka(
-            common_block.header.excess_blob_gas.unwrap_or_default(),
-            common_block.header.blob_gas_used.unwrap_or_default(),
-            block_base_fee,
-        );
+        let (next_block_base_fee, next_block_excess_blob_gas) = if is_fork_root {
+            if let Some(child) = self.get_block(common_block.header.number().saturating_add(1)) {
+                (
+                    child.header.base_fee_per_gas().unwrap_or_default(),
+                    child.header.excess_blob_gas().unwrap_or_default(),
+                )
+            } else {
+                let snapshot = self.fees.snapshot();
+                (snapshot.base_fee, snapshot.blob_excess_gas_and_price.excess_blob_gas)
+            }
+        } else {
+            (
+                fees.get_next_block_base_fee_from_header(&common_block.header),
+                blob_params.next_block_excess_blob_gas_osaka(
+                    common_block.header.excess_blob_gas.unwrap_or_default(),
+                    common_block.header.blob_gas_used.unwrap_or_default(),
+                    block_base_fee,
+                ),
+            )
+        };
         fees.set_base_fee(next_block_base_fee);
         fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
             next_block_excess_blob_gas,
@@ -431,9 +445,9 @@ impl<N: Network> Backend<N> {
         N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
     {
         let profile = self.prepare_monad_rollback_profile(&common_block).await;
-        self.rollback(common_block.clone(), mining_guard).await?;
+        self.rollback(common_block, mining_guard).await?;
         if let Some(profile) = profile {
-            profile.apply_env(&mut self.evm_env.write(), &common_block);
+            profile.apply_env(&mut self.evm_env.write());
             self.publish_monad_rollback_profile(profile);
         }
         Ok(())

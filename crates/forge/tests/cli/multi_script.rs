@@ -1,18 +1,25 @@
 //! Contains various tests related to forge script
 
 use crate::utils::KillOnDrop;
-use alloy_primitives::{Address, B256, hex, keccak256};
+use alloy_primitives::{Address, B256, U256, address, bytes, hex, keccak256};
 use alloy_provider::Provider;
 use anvil::{NodeConfig, spawn};
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
     rpc::{
-        spawn_rpc_proxy_blocking_first_submission, spawn_rpc_proxy_recording_method,
-        spawn_rpc_proxy_rejecting_method_when_enabled,
+        spawn_rpc_proxy_blocking_first_submission, spawn_rpc_proxy_mapping_method,
+        spawn_rpc_proxy_recording_method, spawn_rpc_proxy_rejecting_method_when_enabled,
     },
 };
 use serde_json::Value;
-use std::{collections::HashSet, sync::atomic::Ordering, time::Duration};
+use std::{
+    collections::HashSet,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
@@ -103,9 +110,11 @@ async fn resume_multi_chain_does_not_replay_completed_chain(prj: _, cmd: _) {
         .add_sig("MultiChainBroadcastNoLink", "deploy(string memory,string memory)")
         .args(&[&rpc1, &rpc2])
         .arg("--broadcast");
-    let stderr =
-        String::from_utf8_lossy(&tester.cmd.assert_failure().get_output().stderr).into_owned();
-    assert!(stderr.contains("method is not allowed"), "{stderr}");
+    tester.cmd.assert_failure().stderr_eq(str![[r#"
+Warning: Multi chain deployment is still under development. Use with caution.
+Error: chain 31337 (sequence #2): Failed to send transaction after 4 attempts Err(HTTP error 403 with body: {"jsonrpc":"2.0","id":[..],"error":{"code":-32004,"message":"method is not allowed"}}); HTTP error 403 with body: {"jsonrpc":"2.0","id":[..],"error":{"code":-32004,"message":"method is not allowed"}}
+
+"#]]);
 
     assert_eq!(api1.transaction_count(tester.accounts_pub[0], None).await.unwrap().to::<u32>(), 1);
     assert_eq!(api1.transaction_count(tester.accounts_pub[1], None).await.unwrap().to::<u32>(), 1);
@@ -399,4 +408,95 @@ Warning: Multichain resume submits and checks transactions through the RPC endpo
         .args(&[&handle1.http_endpoint(), &rpc2])
         .args(&["--multi", "--resume"]);
     tester.cmd.assert_success().stderr_eq(str![[r#""#]]);
+}
+
+// A failing chain on `--multi --resume` does not stop later chains from being reconciled, and the
+// error names the failing chain.
+#[forgetest_init]
+async fn multi_resume_reconciles_every_chain_before_failing(prj: _, cmd: _) {
+    let gate = address!("0x000000000000000000000000000000000000bEEF");
+    let script = prj.add_script(
+        "MultiResumeRevert.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract MultiResumeRevert is Script {
+    function run(string memory rpc1, string memory rpc2) external {
+        vm.createSelectFork(rpc1);
+        vm.startBroadcast();
+        (bool success,) = address(0x000000000000000000000000000000000000bEEF).call("");
+        require(success);
+        vm.stopBroadcast();
+
+        vm.createSelectFork(rpc2);
+        vm.startBroadcast();
+        payable(address(0xdEaD)).transfer(1);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api1, handle1) = spawn(NodeConfig::test().with_chain_id(Some(1111u64))).await;
+    let (api2, handle2) = spawn(NodeConfig::test().with_chain_id(Some(2222u64))).await;
+    // Runtime that reverts once storage slot 0 is set.
+    api1.anvil_set_code(gate, bytes!("60005415600b57600080fd5b00")).await.unwrap();
+    api1.anvil_set_auto_mine(false).await.unwrap();
+    api2.anvil_set_auto_mine(false).await.unwrap();
+    // While hidden, chain 1111's transaction looks dropped, so the broadcast moves on to 2222.
+    let hide = Arc::new(AtomicBool::new(true));
+    let rpc1 =
+        spawn_rpc_proxy_mapping_method(handle1.http_endpoint(), "eth_getTransactionByHash", {
+            let hide = hide.clone();
+            move |_, result| if hide.load(Ordering::SeqCst) { Value::Null } else { result }
+        })
+        .await;
+    // Chain 2222's transaction is looked up only once it has been checkpointed.
+    let (rpc2, lookups) =
+        spawn_rpc_proxy_recording_method(handle2.http_endpoint(), "eth_getTransactionByHash").await;
+    let args = [
+        "script",
+        script.to_str().unwrap(),
+        "--sig",
+        "run(string,string)",
+        &rpc1,
+        &rpc2,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--timeout",
+        "1",
+    ];
+    let path = prj.root().join("broadcast/multi/MultiResumeRevert.s.sol-latest/run.json");
+
+    // Interrupt the broadcast once chain 2222's transaction is pending.
+    cmd.forge_fuse().args(args).arg("--broadcast");
+    let child = KillOnDrop::spawn(cmd.cmd());
+    tokio::time::timeout(Duration::from_secs(60), async {
+        while lookups.lock().unwrap().is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("chain 2222's transaction was not checkpointed");
+    child.kill_and_wait();
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert!(sequence["deployments"][0]["pending"].as_array().unwrap().is_empty());
+    let pending = sequence["deployments"][1]["pending"][0].as_str().unwrap();
+    let reverted = sequence["deployments"][0]["transactions"][0]["hash"].as_str().unwrap();
+
+    // Chain 1111's transaction reverts and chain 2222's succeeds.
+    hide.store(false, Ordering::SeqCst);
+    api1.anvil_set_storage_at(gate, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
+    api1.mine_one().await.unwrap();
+    api2.mine_one().await.unwrap();
+
+    cmd.forge_fuse().args(args).args(["--multi", "--resume"]);
+    cmd.assert_failure().stderr_eq(format!("Error: chain 1111: Transaction Failure: {reverted}\n"));
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    let deployments = sequence["deployments"].as_array().unwrap();
+    assert_eq!(deployments[0]["reverted"], serde_json::json!([reverted]));
+    assert!(deployments[1]["pending"].as_array().unwrap().is_empty());
+    let receipts = deployments[1]["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0]["transactionHash"], pending);
+    assert_eq!(receipts[0]["status"], "0x1");
 }

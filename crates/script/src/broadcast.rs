@@ -607,6 +607,8 @@ pub struct BundledState<FEN: FoundryEvmNetwork> {
     pub browser_wallet: Option<BrowserSigner<FEN::Network>>,
     pub build_data: LinkedBuildData,
     pub sequence: ScriptSequenceKind<FEN::Network>,
+    /// Error from the script run that `--resume` performed to collect missing signers.
+    pub resume_script_error: Option<String>,
 }
 
 impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
@@ -650,7 +652,14 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             })
             .collect::<Vec<_>>();
 
-        let errors = join_all(futs).await.into_iter().filter_map(Result::err).collect::<Vec<_>>();
+        let errors = join_all(futs)
+            .await
+            .into_iter()
+            .enumerate()
+            .filter_map(|(sequence_idx, result)| {
+                result.err().map(|err| self.sequence.label_error(sequence_idx, err))
+            })
+            .collect::<Vec<_>>();
 
         self.sequence.save(true, false)?;
 
@@ -762,11 +771,13 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             missing_addresses.dedup();
 
             if !missing_addresses.is_empty() {
-                eyre::bail!(
-                    "No associated wallet for addresses: {:?}. Unlocked wallets: {:?}",
-                    missing_addresses,
-                    signers
+                let mut message = format!(
+                    "No associated wallet for addresses: {missing_addresses:?}. Unlocked wallets: {signers:?}"
                 );
+                if let Some(error) = &self.resume_script_error {
+                    message = format!("{message}\n{}", resume_script_failure(error));
+                }
+                eyre::bail!(message);
             }
 
             let signers = self.script_wallets.into_multi_wallet().into_signers()?;
@@ -775,6 +786,9 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
             SendTransactionsKind::Raw { eth_wallets, browser: self.browser_wallet, access_keys }
         };
+        if let Some(error) = &self.resume_script_error {
+            sh_warn!("{}", resume_script_failure(error))?;
+        }
 
         let tempo_sponsor = if has_unprepared_transactions {
             self.script_config.tempo.sponsor_config().await?.map(Arc::new)
@@ -793,378 +807,393 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         let progress = ScriptProgress::default();
 
         for i in 0..self.sequence.sequences().len() {
-            let sequence_offset = operation_ordinal(self.sequence.sequences(), i, 0);
-            let remaining_indices = remaining_operation_indices(&self.sequence, i);
-            let signed_payloads = (0..self.sequence.sequences()[i].transactions.len())
-                .map(|index| {
-                    self.sequence
-                        .signed_payload(i, index)
-                        .map(|signed| (signed.payload.clone(), signed.hash))
-                })
-                .collect::<Vec<_>>();
-            let rpc_url = self.sequence.rpc_url(i).to_owned();
-            let mut sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
+            // In multichain runs, errors from a sequence are prefixed with its chain.
+            let broadcast_sequence = async {
+                let sequence_offset = operation_ordinal(self.sequence.sequences(), i, 0);
+                let remaining_indices = remaining_operation_indices(&self.sequence, i);
+                let signed_payloads = (0..self.sequence.sequences()[i].transactions.len())
+                    .map(|index| {
+                        self.sequence
+                            .signed_payload(i, index)
+                            .map(|signed| (signed.payload.clone(), signed.hash))
+                    })
+                    .collect::<Vec<_>>();
+                let rpc_url = self.sequence.rpc_url(i).to_owned();
+                let mut sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
-            let provider = Arc::new(
-                ProviderBuilder::from_config_with_url(&self.script_config.config, &rpc_url)?
-                    .build()?,
-            );
-            let unlocked_submission_provider = Arc::new(
-                ProviderBuilder::from_config_with_url(&self.script_config.config, &rpc_url)?
-                    .max_retry(0)
-                    .build()?,
-            );
+                let provider = Arc::new(
+                    ProviderBuilder::from_config_with_url(&self.script_config.config, &rpc_url)?
+                        .build()?,
+                );
+                let unlocked_submission_provider = Arc::new(
+                    ProviderBuilder::from_config_with_url(&self.script_config.config, &rpc_url)?
+                        .max_retry(0)
+                        .build()?,
+                );
 
-            let seq_progress = progress.get_sequence_progress(i, sequence);
+                let seq_progress = progress.get_sequence_progress(i, sequence);
 
-            if !remaining_indices.is_empty() {
-                let is_legacy = Chain::from(sequence.chain).is_legacy() || self.args.legacy;
-                // Make a one-time gas price estimation
-                let all_signed =
-                    remaining_indices.iter().all(|index| signed_payloads[*index].is_some());
-                let (gas_price, eip1559_fees) = match (
-                    all_signed,
-                    is_legacy,
-                    self.args.with_gas_price,
-                    self.args.priority_gas_price,
-                ) {
-                    (true, _, _, _) => (None, None),
-                    (false, true, Some(gas_price), _) => (Some(gas_price.to()), None),
-                    (false, true, None, _) => (Some(provider.get_gas_price().await?), None),
-                    (false, false, Some(max_fee_per_gas), Some(max_priority_fee_per_gas)) => {
-                        let max_fee: u128 = max_fee_per_gas.to();
-                        let max_priority: u128 = max_priority_fee_per_gas.to();
-                        if max_priority > max_fee {
-                            eyre::bail!(
-                                "--priority-gas-price ({max_priority}) cannot be higher than --with-gas-price ({max_fee})"
-                            );
-                        }
-                        (
-                            None,
-                            Some(Eip1559Estimation {
-                                max_fee_per_gas: max_fee,
-                                max_priority_fee_per_gas: max_priority,
-                            }),
-                        )
-                    }
-                    (false, false, _, _) => {
-                        let fees = estimate_eip1559_fees(
-                            &provider,
-                            self.script_config.config.eip1559_fee_estimate,
-                        )
-                        .await
-                        .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
-
-                        // Browser wallets may suggest their own tip; query it best-effort.
-                        let browser_suggested_tip = if matches!(
-                            &send_kind,
-                            SendTransactionsKind::Raw { browser: Some(_), .. }
-                        ) {
-                            provider.get_max_priority_fee_per_gas().await.ok()
-                        } else {
-                            None
-                        };
-
-                        let fees = resolve_broadcast_eip1559_fees(
-                            fees,
-                            self.args.with_gas_price.map(|p| p.to()),
-                            self.args.priority_gas_price.map(|p| p.to()),
-                            browser_suggested_tip,
-                        )?;
-
-                        (None, Some(fees.estimation()))
-                    }
-                };
-
-                // TIP-1106: from T12 the nonce of an expiring nonce transaction is an opaque
-                // discriminator. Each transaction gets its ordinal in the complete script plan,
-                // which is monotonic and stable across `--resume`, so that
-                // otherwise identical transactions keep distinct signing and replay
-                // hashes. Earlier hardforks only accept 0, which is also the
-                // fallback when the hardfork cannot be determined.
-                let tempo_hardfork = if self.script_config.evm_opts.networks.is_tempo() {
-                    active_tempo_hardfork(provider.as_ref()).await.ok()
-                } else {
-                    None
-                };
-                let expiring_nonce_discriminators = self.script_config.tempo.expiring_nonce
-                    && tempo_hardfork.is_some_and(|fork| fork >= TempoHardfork::T12);
-
-                // Iterate through transactions, matching the `from` field with the associated
-                // wallet. Then send the transaction. Panics if we find a unknown `from`
-                let sequence_chain = sequence.chain;
-                let mut transactions = Vec::with_capacity(remaining_indices.len());
-                for index in remaining_indices {
-                    let tx_with_metadata = &sequence.transactions[index];
-                    let is_fixed_gas_limit = tx_with_metadata.is_fixed_gas_limit;
-
-                    let kind = match (&signed_payloads[index], tx_with_metadata.tx().clone()) {
-                        (Some((payload, hash)), _) => {
-                            SendTransactionKind::PreparedRaw(payload.clone(), *hash)
-                        }
-                        (None, TransactionMaybeSigned::Signed { tx, .. }) => {
-                            if tempo_sponsor.is_some() {
+                if !remaining_indices.is_empty() {
+                    let is_legacy = Chain::from(sequence.chain).is_legacy() || self.args.legacy;
+                    // Make a one-time gas price estimation
+                    let all_signed =
+                        remaining_indices.iter().all(|index| signed_payloads[*index].is_some());
+                    let (gas_price, eip1559_fees) = match (
+                        all_signed,
+                        is_legacy,
+                        self.args.with_gas_price,
+                        self.args.priority_gas_price,
+                    ) {
+                        (true, _, _, _) => (None, None),
+                        (false, true, Some(gas_price), _) => (Some(gas_price.to()), None),
+                        (false, true, None, _) => (Some(provider.get_gas_price().await?), None),
+                        (false, false, Some(max_fee_per_gas), Some(max_priority_fee_per_gas)) => {
+                            let max_fee: u128 = max_fee_per_gas.to();
+                            let max_priority: u128 = max_priority_fee_per_gas.to();
+                            if max_priority > max_fee {
                                 eyre::bail!(
-                                    "cannot attach Tempo sponsor signature to an already signed script transaction"
+                                    "--priority-gas-price ({max_priority}) cannot be higher than --with-gas-price ({max_fee})"
                                 );
                             }
-                            SendTransactionKind::Signed(tx)
+                            (
+                                None,
+                                Some(Eip1559Estimation {
+                                    max_fee_per_gas: max_fee,
+                                    max_priority_fee_per_gas: max_priority,
+                                }),
+                            )
                         }
-                        (None, TransactionMaybeSigned::Unsigned(mut tx)) => {
-                            let from = tx.from().expect("No sender for onchain transaction!");
+                        (false, false, _, _) => {
+                            let fees = estimate_eip1559_fees(
+                                &provider,
+                                self.script_config.config.eip1559_fee_estimate,
+                            )
+                            .await
+                            .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
 
-                            tx.set_chain_id(sequence_chain);
-
-                            // Set TxKind::Create explicitly to satisfy `check_reqd_fields` in
-                            // alloy
-                            if tx.kind().is_none() {
-                                tx.set_create();
-                            }
-
-                            if let Some(gas_price) = gas_price {
-                                tx.set_gas_price(gas_price);
+                            // Browser wallets may suggest their own tip; query it best-effort.
+                            let browser_suggested_tip = if matches!(
+                                &send_kind,
+                                SendTransactionsKind::Raw { browser: Some(_), .. }
+                            ) {
+                                provider.get_max_priority_fee_per_gas().await.ok()
                             } else {
-                                let eip1559_fees = eip1559_fees.expect("was set above");
-                                tx.set_max_priority_fee_per_gas(
-                                    eip1559_fees.max_priority_fee_per_gas,
-                                );
-                                tx.set_max_fee_per_gas(eip1559_fees.max_fee_per_gas);
-                            }
+                                None
+                            };
 
-                            // `vm.attachBlob` transactions also need a blob fee.
-                            if tx.blob_sidecar().is_some() && tx.max_fee_per_blob_gas().is_none() {
-                                tx.set_max_fee_per_blob_gas(provider.get_blob_base_fee().await?);
-                            }
+                            let fees = resolve_broadcast_eip1559_fees(
+                                fees,
+                                self.args.with_gas_price.map(|p| p.to()),
+                                self.args.priority_gas_price.map(|p| p.to()),
+                                browser_suggested_tip,
+                            )?;
 
-                            self.script_config.tempo.apply::<FEN::Network>(
-                                &mut tx,
-                                expiring_nonce_discriminators
-                                    .then_some((sequence_offset + index) as u64),
-                            );
-
-                            send_kind.for_sender(sequence_chain, &from, tx)?
+                            (None, Some(fees.estimation()))
                         }
                     };
-                    transactions.push((kind, is_fixed_gas_limit, index));
-                }
 
-                let estimate_via_rpc = has_different_gas_calc(sequence.chain)
-                    || self.script_config.evm_opts.networks.is_tempo()
-                    || self.args.skip_simulation;
+                    // TIP-1106: from T12 the nonce of an expiring nonce transaction is an opaque
+                    // discriminator. Each transaction gets its ordinal in the complete script plan,
+                    // which is monotonic and stable across `--resume`, so that
+                    // otherwise identical transactions keep distinct signing and replay
+                    // hashes. Earlier hardforks only accept 0, which is also the
+                    // fallback when the hardfork cannot be determined.
+                    let tempo_hardfork = if self.script_config.evm_opts.networks.is_tempo() {
+                        active_tempo_hardfork(provider.as_ref()).await.ok()
+                    } else {
+                        None
+                    };
+                    let expiring_nonce_discriminators = self.script_config.tempo.expiring_nonce
+                        && tempo_hardfork.is_some_and(|fork| fork >= TempoHardfork::T12);
 
-                // We only wait for a transaction receipt before sending the next transaction, if
-                // there is more than one signer. There would be no way of assuring
-                // their order otherwise.
-                // Or if the chain does not support batched transactions (eg. Arbitrum).
-                // Or if we need to invoke eth_estimateGas before sending transactions.
-                let sequential_broadcast = should_broadcast_sequentially(
-                    estimate_via_rpc,
-                    self.args.slow,
-                    required_addresses.len(),
-                    ordering_addresses.len(),
-                    has_batch_support(sequence.chain),
-                ) || transactions.iter().any(|(kind, _, _)| {
-                    matches!(
-                        kind,
-                        SendTransactionKind::Browser(..) | SendTransactionKind::Unlocked(..)
-                    )
-                });
+                    // Iterate through transactions, matching the `from` field with the associated
+                    // wallet. Then send the transaction. Panics if we find a unknown `from`
+                    let sequence_chain = sequence.chain;
+                    let mut transactions = Vec::with_capacity(remaining_indices.len());
+                    for index in remaining_indices {
+                        let tx_with_metadata = &sequence.transactions[index];
+                        let is_fixed_gas_limit = tx_with_metadata.is_fixed_gas_limit;
 
-                // We send transactions and wait for receipts in batches of 100, since some networks
-                // cannot handle more than that.
-                let batch_size = if sequential_broadcast { 1 } else { 100 };
+                        let kind = match (&signed_payloads[index], tx_with_metadata.tx().clone()) {
+                            (Some((payload, hash)), _) => {
+                                SendTransactionKind::PreparedRaw(payload.clone(), *hash)
+                            }
+                            (None, TransactionMaybeSigned::Signed { tx, .. }) => {
+                                if tempo_sponsor.is_some() {
+                                    eyre::bail!(
+                                        "cannot attach Tempo sponsor signature to an already signed script transaction"
+                                    );
+                                }
+                                SendTransactionKind::Signed(tx)
+                            }
+                            (None, TransactionMaybeSigned::Unsigned(mut tx)) => {
+                                let from = tx.from().expect("No sender for onchain transaction!");
 
-                for (batch_number, batch) in transactions.chunks(batch_size).enumerate() {
-                    seq_progress.inner.write().set_status(&format!(
-                        "Sending transactions [{} - {}]",
-                        batch_number * batch_size,
-                        batch_number * batch_size + std::cmp::min(batch_size, batch.len()) - 1
-                    ));
+                                tx.set_chain_id(sequence_chain);
 
-                    let mut prepared = Vec::with_capacity(batch.len());
-                    for (kind, is_fixed_gas_limit, index) in batch {
-                        // A pending operation can be confirmed while waiting on an earlier batch.
-                        if is_operation_completed(&self.sequence, i, *index) {
-                            continue;
-                        }
-                        kind.validate_expiring_create_nonce(
-                            &provider,
-                            &self.sequence.sequences()[i].transactions[*index],
+                                // Set TxKind::Create explicitly to satisfy `check_reqd_fields` in
+                                // alloy
+                                if tx.kind().is_none() {
+                                    tx.set_create();
+                                }
+
+                                if let Some(gas_price) = gas_price {
+                                    tx.set_gas_price(gas_price);
+                                } else {
+                                    let eip1559_fees = eip1559_fees.expect("was set above");
+                                    tx.set_max_priority_fee_per_gas(
+                                        eip1559_fees.max_priority_fee_per_gas,
+                                    );
+                                    tx.set_max_fee_per_gas(eip1559_fees.max_fee_per_gas);
+                                }
+
+                                // `vm.attachBlob` transactions also need a blob fee.
+                                if tx.blob_sidecar().is_some()
+                                    && tx.max_fee_per_blob_gas().is_none()
+                                {
+                                    tx.set_max_fee_per_blob_gas(
+                                        provider.get_blob_base_fee().await?,
+                                    );
+                                }
+
+                                self.script_config.tempo.apply::<FEN::Network>(
+                                    &mut tx,
+                                    expiring_nonce_discriminators
+                                        .then_some((sequence_offset + index) as u64),
+                                );
+
+                                send_kind.for_sender(sequence_chain, &from, tx)?
+                            }
+                        };
+                        transactions.push((kind, is_fixed_gas_limit, index));
+                    }
+
+                    let estimate_via_rpc = has_different_gas_calc(sequence.chain)
+                        || self.script_config.evm_opts.networks.is_tempo()
+                        || self.args.skip_simulation;
+
+                    // We only wait for a transaction receipt before sending the next transaction,
+                    // if there is more than one signer. There would be no way of assuring their
+                    // order otherwise.
+                    // Or if the chain does not support batched transactions (eg. Arbitrum).
+                    // Or if we need to invoke eth_estimateGas before sending transactions.
+                    let sequential_broadcast = should_broadcast_sequentially(
+                        estimate_via_rpc,
+                        self.args.slow,
+                        required_addresses.len(),
+                        ordering_addresses.len(),
+                        has_batch_support(sequence.chain),
+                    ) || transactions.iter().any(|(kind, _, _)| {
+                        matches!(
+                            kind,
+                            SendTransactionKind::Browser(..) | SendTransactionKind::Unlocked(..)
                         )
-                        .await?;
-                        let mut kind = kind
-                            .clone()
-                            .prepare_for_durable_send(
+                    });
+
+                    // We send transactions and wait for receipts in batches of 100, since some
+                    // networks cannot handle more than that.
+                    let batch_size = if sequential_broadcast { 1 } else { 100 };
+
+                    for (batch_number, batch) in transactions.chunks(batch_size).enumerate() {
+                        seq_progress.inner.write().set_status(&format!(
+                            "Sending transactions [{} - {}]",
+                            batch_number * batch_size,
+                            batch_number * batch_size + std::cmp::min(batch_size, batch.len()) - 1
+                        ));
+
+                        let mut prepared = Vec::with_capacity(batch.len());
+                        for (kind, is_fixed_gas_limit, index) in batch {
+                            // A pending operation can be confirmed while waiting on an earlier
+                            // batch.
+                            if is_operation_completed(&self.sequence, i, *index) {
+                                continue;
+                            }
+                            kind.validate_expiring_create_nonce(
                                 &provider,
-                                sequential_broadcast,
-                                *is_fixed_gas_limit,
-                                estimate_via_rpc,
-                                self.args.gas_estimate_multiplier,
-                                tempo_sponsor.as_deref(),
+                                &self.sequence.sequences()[i].transactions[*index],
                             )
                             .await?;
-                        if let PreparedTransaction::Raw(payload, hash) = &mut kind {
-                            *hash = self.sequence.persist_signed_payload(
-                                i,
-                                *index,
-                                payload.clone(),
-                                tempo_hardfork.is_none_or(|fork| fork >= TempoHardfork::T1B),
-                            )?;
-                        }
-                        prepared.push((kind, *index));
-                    }
-
-                    let mut buffer = FuturesUnordered::new();
-                    for (kind, index) in prepared {
-                        if let Some(request) = kind.delegated_request() {
-                            kind.validate_delegated_submission()?;
-                            self.sequence.persist_delegated_request(i, index, request.clone())?;
-                        }
-                        let provider = if matches!(kind, PreparedTransaction::Unlocked(_)) {
-                            unlocked_submission_provider.clone()
-                        } else {
-                            provider.clone()
-                        };
-                        let mut pending = async move {
-                            let res = kind.clone().send(provider).await;
-                            (res, kind, 0, None, index)
-                        }
-                        .boxed();
-                        if let Some(result) = pending.as_mut().now_or_never() {
-                            buffer.push(futures::future::ready(result).boxed());
-                        } else {
-                            buffer.push(pending);
-                        }
-                    }
-
-                    'send: while let Some((mut res, kind, attempt, original_res, index)) =
-                        buffer.next().await
-                    {
-                        if res.is_err()
-                            && let PreparedTransaction::Raw(_, hash) = kind
-                            && provider
-                                .get_transaction_by_hash(hash)
-                                .await
-                                .is_ok_and(|transaction| transaction.is_some())
-                        {
-                            res = Ok(hash);
-                        }
-                        if kind.delegated_request().is_some()
-                            && let Err(error) = res
-                        {
-                            if kind.is_definite_non_submission(&error) {
-                                self.sequence.clear_delegated_request(i, index)?;
-                                return Err(error);
+                            let mut kind = kind
+                                .clone()
+                                .prepare_for_durable_send(
+                                    &provider,
+                                    sequential_broadcast,
+                                    *is_fixed_gas_limit,
+                                    estimate_via_rpc,
+                                    self.args.gas_estimate_multiplier,
+                                    tempo_sponsor.as_deref(),
+                                )
+                                .await?;
+                            if let PreparedTransaction::Raw(payload, hash) = &mut kind {
+                                *hash = self.sequence.persist_signed_payload(
+                                    i,
+                                    *index,
+                                    payload.clone(),
+                                    tempo_hardfork.is_none_or(|fork| fork >= TempoHardfork::T1B),
+                                )?;
                             }
-                            self.sequence.persist_delegated_status(
-                                i,
-                                index,
-                                DelegatedStatus::OutcomeUnknown,
-                            )?;
-                            bail!(
-                                "submission outcome for delegated operation {index} is unknown; refusing to risk a duplicate transaction"
-                            );
-                        }
-                        if res.is_err() && attempt <= 3 {
-                            // Try to resubmit the transaction
-                            let provider = provider.clone();
-                            let progress = seq_progress.inner.clone();
-                            buffer.push(Box::pin(async move {
-                                debug!(err=?res, ?attempt, "retrying transaction ");
-                                let attempt = attempt + 1;
-                                progress.write().set_status(&format!(
-                                    "retrying transaction {res:?} (attempt {attempt})"
-                                ));
-                                tokio::time::sleep(Duration::from_millis(1000 * attempt)).await;
-                                let r = kind.clone().send(provider).await;
-                                (r, kind, attempt, original_res.or(Some(res)), index)
-                            }));
-
-                            continue 'send;
+                            prepared.push((kind, *index));
                         }
 
-                        // Preserve the original error if any
-                        let tx_hash = res.wrap_err_with(|| {
-                                if let Some(original_res) = original_res {
-                                    format!(
-                                        "Failed to send transaction after {attempt} attempts {original_res:?}"
-                                    )
-                                } else {
-                                    "Failed to send transaction".to_string()
-                                }
-                            })?;
-                        if let PreparedTransaction::Raw(_, expected) = kind
-                            && expected != tx_hash
+                        let mut buffer = FuturesUnordered::new();
+                        for (kind, index) in prepared {
+                            if let Some(request) = kind.delegated_request() {
+                                kind.validate_delegated_submission()?;
+                                self.sequence.persist_delegated_request(
+                                    i,
+                                    index,
+                                    request.clone(),
+                                )?;
+                            }
+                            let provider = if matches!(kind, PreparedTransaction::Unlocked(_)) {
+                                unlocked_submission_provider.clone()
+                            } else {
+                                provider.clone()
+                            };
+                            let mut pending = async move {
+                                let res = kind.clone().send(provider).await;
+                                (res, kind, 0, None, index)
+                            }
+                            .boxed();
+                            if let Some(result) = pending.as_mut().now_or_never() {
+                                buffer.push(futures::future::ready(result).boxed());
+                            } else {
+                                buffer.push(pending);
+                            }
+                        }
+
+                        'send: while let Some((mut res, kind, attempt, original_res, index)) =
+                            buffer.next().await
                         {
-                            bail!("RPC returned hash {tx_hash} for signed payload {expected}");
+                            if res.is_err()
+                                && let PreparedTransaction::Raw(_, hash) = kind
+                                && provider
+                                    .get_transaction_by_hash(hash)
+                                    .await
+                                    .is_ok_and(|transaction| transaction.is_some())
+                            {
+                                res = Ok(hash);
+                            }
+                            if kind.delegated_request().is_some()
+                                && let Err(error) = res
+                            {
+                                if kind.is_definite_non_submission(&error) {
+                                    self.sequence.clear_delegated_request(i, index)?;
+                                    return Err(error);
+                                }
+                                self.sequence.persist_delegated_status(
+                                    i,
+                                    index,
+                                    DelegatedStatus::OutcomeUnknown,
+                                )?;
+                                bail!(
+                                    "submission outcome for delegated operation {index} is unknown; refusing to risk a duplicate transaction"
+                                );
+                            }
+                            if res.is_err() && attempt <= 3 {
+                                // Try to resubmit the transaction
+                                let provider = provider.clone();
+                                let progress = seq_progress.inner.clone();
+                                buffer.push(Box::pin(async move {
+                                    debug!(err=?res, ?attempt, "retrying transaction ");
+                                    let attempt = attempt + 1;
+                                    progress.write().set_status(&format!(
+                                        "retrying transaction {res:?} (attempt {attempt})"
+                                    ));
+                                    tokio::time::sleep(Duration::from_millis(1000 * attempt)).await;
+                                    let r = kind.clone().send(provider).await;
+                                    (r, kind, attempt, original_res.or(Some(res)), index)
+                                }));
+
+                                continue 'send;
+                            }
+
+                            // Preserve the original error if any
+                            let tx_hash = res.wrap_err_with(|| {
+                                    if let Some(original_res) = original_res {
+                                        format!(
+                                            "Failed to send transaction after {attempt} attempts {original_res:?}"
+                                        )
+                                    } else {
+                                        "Failed to send transaction".to_string()
+                                    }
+                                })?;
+                            if let PreparedTransaction::Raw(_, expected) = kind
+                                && expected != tx_hash
+                            {
+                                bail!("RPC returned hash {tx_hash} for signed payload {expected}");
+                            }
+                            if kind.delegated_request().is_some() {
+                                self.sequence.persist_delegated_status(
+                                    i,
+                                    index,
+                                    DelegatedStatus::Pending { hash: tx_hash },
+                                )?;
+                            }
+                            sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
+                            sequence.add_pending(index, tx_hash);
+
+                            // Checkpoint save
+                            self.sequence.save(true, false)?;
+
+                            seq_progress.inner.write().tx_sent(tx_hash);
                         }
-                        if kind.delegated_request().is_some() {
-                            self.sequence.persist_delegated_status(
-                                i,
-                                index,
-                                DelegatedStatus::Pending { hash: tx_hash },
-                            )?;
-                        }
-                        sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
-                        sequence.add_pending(index, tx_hash);
 
                         // Checkpoint save
                         self.sequence.save(true, false)?;
+                        let (durable_hashes, replayable_hashes) =
+                            self.sequence.submission_hashes(i);
+                        let blocked = blocked_pending(self.sequence.sequences(), i);
+                        sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
-                        seq_progress.inner.write().tx_sent(tx_hash);
+                        let result = progress
+                            .wait_for_pending(
+                                i,
+                                sequence,
+                                &provider,
+                                self.script_config.config.transaction_timeout,
+                                self.args.confirmations,
+                                (&durable_hashes, &replayable_hashes),
+                                &blocked,
+                            )
+                            .await;
+                        // Checkpoint save, including reverts recorded before a failure.
+                        self.sequence.save(true, false)?;
+                        result?;
+                        self.sequence.ensure_delegated_outcomes_known(i)?;
+                        sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
                     }
-
-                    // Checkpoint save
-                    self.sequence.save(true, false)?;
-                    let (durable_hashes, replayable_hashes) = self.sequence.submission_hashes(i);
-                    let blocked = blocked_pending(self.sequence.sequences(), i);
-                    sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
-
-                    let result = progress
-                        .wait_for_pending(
-                            i,
-                            sequence,
-                            &provider,
-                            self.script_config.config.transaction_timeout,
-                            self.args.confirmations,
-                            (&durable_hashes, &replayable_hashes),
-                            &blocked,
-                        )
-                        .await;
-                    // Checkpoint save, including reverts recorded before a failure.
-                    self.sequence.save(true, false)?;
-                    result?;
-                    self.sequence.ensure_delegated_outcomes_known(i)?;
-                    sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
                 }
-            }
 
-            let (total_gas, avg_gas_price, total_paid) = fee_totals(
-                sequence.receipts.iter().map(|r| (r.gas_used(), r.effective_gas_price())),
-            );
-            let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
-            let avg_gas_price = avg_gas_price
-                .and_then(|avg| format_units(avg, 9).ok())
-                .unwrap_or_else(|| "N/A".to_string());
+                let (total_gas, avg_gas_price, total_paid) = fee_totals(
+                    sequence.receipts.iter().map(|r| (r.gas_used(), r.effective_gas_price())),
+                );
+                let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
+                let avg_gas_price = avg_gas_price
+                    .and_then(|avg| format_units(avg, 9).ok())
+                    .unwrap_or_else(|| "N/A".to_string());
 
-            let token_symbol = NamedChain::try_from(sequence.chain)
-                .unwrap_or_default()
-                .native_currency_symbol()
-                .unwrap_or("ETH");
-            // Reverted transactions have no stored receipt, so their fees are not included.
-            let excluded = match sequence.reverted.len() {
-                0 => String::new(),
-                1 => ", excluding 1 reverted transaction".to_string(),
-                n => format!(", excluding {n} reverted transactions"),
+                let token_symbol = NamedChain::try_from(sequence.chain)
+                    .unwrap_or_default()
+                    .native_currency_symbol()
+                    .unwrap_or("ETH");
+                // Reverted transactions have no stored receipt, so their fees are not included.
+                let excluded = match sequence.reverted.len() {
+                    0 => String::new(),
+                    1 => ", excluding 1 reverted transaction".to_string(),
+                    n => format!(", excluding {n} reverted transactions"),
+                };
+                seq_progress.inner.write().set_status(&format!(
+                    "Total Paid: {} {} ({} gas * avg {} gwei{excluded})\n",
+                    paid.trim_end_matches('0'),
+                    token_symbol,
+                    total_gas,
+                    avg_gas_price.trim_end_matches('0').trim_end_matches('.')
+                ));
+                seq_progress.inner.write().finish();
+                Ok::<_, eyre::Report>(())
             };
-            seq_progress.inner.write().set_status(&format!(
-                "Total Paid: {} {} ({} gas * avg {} gwei{excluded})\n",
-                paid.trim_end_matches('0'),
-                token_symbol,
-                total_gas,
-                avg_gas_price.trim_end_matches('0').trim_end_matches('.')
-            ));
-            seq_progress.inner.write().finish();
+            broadcast_sequence.await.map_err(|err| self.sequence.label_error(i, err))?;
         }
 
         // Submitted operations can lack a receipt when the endpoint stopped returning them.
@@ -1539,10 +1568,17 @@ impl BundledState<TempoEvmNetwork> {
                 {
                     BatchSigner::TempoKeychain(Box::new(wallet.with_chain_id(chain_id)))
                 } else {
-                    bail!("No wallet found for sender {}", sender);
+                    let mut message = format!("No wallet found for sender {sender}");
+                    if let Some(error) = &self.resume_script_error {
+                        message = format!("{message}\n{}", resume_script_failure(error));
+                    }
+                    bail!(message);
                 }
             }
         };
+        if let Some(error) = &self.resume_script_error {
+            sh_warn!("{}", resume_script_failure(error))?;
+        }
 
         // CREATE2 deployer must exist on-chain for any rewritten CREATEs.
         let create2_deployer = self.script_config.evm_opts.create2_deployer;
@@ -1941,6 +1977,11 @@ fn fee_totals(receipts: impl IntoIterator<Item = (u64, u128)>) -> (u64, Option<u
             )
         });
     (total_gas, total_gas_price.checked_div(count), total_paid)
+}
+
+/// Describes the failed script run that `--resume` performed to collect missing signers.
+fn resume_script_failure(error: &str) -> String {
+    format!("Resume re-ran the script to collect signers, but it failed: {error}")
 }
 
 #[cfg(test)]

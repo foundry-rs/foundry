@@ -257,7 +257,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         self.extend_debug_bytecodes(&mut debug_bytecodes, constructor_debug_bytecodes);
 
         // Optionally call the `setUp` function
-        let (success, gas_used, labeled_addresses, transactions) = if setup {
+        let (success, returned, exit_reason, gas_used, labeled_addresses, transactions) = if setup {
             let result = match self.executor.setup(Some(self.evm_opts.sender), address, None) {
                 Ok(result) => result,
                 Err(EvmError::Execution(err)) => err.raw,
@@ -265,6 +265,8 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
             };
             let RawCallResult {
                 reverted,
+                result,
+                exit_reason,
                 traces: setup_traces,
                 labels,
                 logs: setup_logs,
@@ -279,16 +281,17 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
             if let Some(txs) = setup_transactions {
                 library_transactions.extend(txs);
             }
-            (!reverted, gas_used, labels, Some(library_transactions))
+            (!reverted, result, exit_reason, gas_used, labels, Some(library_transactions))
         } else {
             self.executor.backend_mut().set_test_contract(address);
-            (true, 0, Default::default(), Some(library_transactions))
+            (true, Bytes::new(), None, 0, Default::default(), Some(library_transactions))
         };
 
         Ok((
             address,
             ScriptResult {
-                returned: Bytes::new(),
+                returned,
+                exit_reason,
                 success,
                 gas_used,
                 labeled_addresses,

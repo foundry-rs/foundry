@@ -807,6 +807,11 @@ impl<N: Network> EthApi<N> {
         self.pool.add_ready_listener()
     }
 
+    /// Returns a ready-transaction stream that ends if its bounded listener overflows.
+    pub(crate) fn new_ready_transaction_subscription(&self) -> Receiver<TxHash> {
+        self.pool.add_ready_subscription_listener()
+    }
+
     /// Returns true if forked
     pub fn is_fork(&self) -> bool {
         self.backend.is_fork()
@@ -1590,16 +1595,7 @@ impl<N: Network> EthApi<N> {
     {
         node_info!("trace_call");
         let block_id = block_id.unwrap_or_default();
-        let block_request = match &block_id {
-            BlockId::Number(BlockNumber::Pending) => {
-                let pending_txs = self.pool.ready_transactions().collect();
-                BlockRequest::Pending(pending_txs)
-            }
-            _ => {
-                let number = self.backend.ensure_block_number(Some(block_id)).await?;
-                BlockRequest::Number(number)
-            }
-        };
+        let block_request = self.trace_block_request(block_id).await?;
         let inner = request.as_ref();
         let fees = FeeDetails::new(
             inner.gas_price,
@@ -1661,7 +1657,7 @@ impl<N: Network> EthApi<N> {
         &self,
         block: BlockNumber,
         trace_types: HashSet<TraceType>,
-    ) -> Result<Option<Vec<TraceResultsWithTransactionHash>>> {
+    ) -> Result<Vec<TraceResultsWithTransactionHash>> {
         node_info!("trace_replayBlockTransactions");
         self.backend.trace_replay_block_transactions(block, trace_types).await
     }
@@ -1676,6 +1672,20 @@ impl<N: Network> EthApi<N> {
     ) -> Result<Option<TraceResultsWithTransactionHash>> {
         node_info!("trace_replayTransaction");
         self.backend.trace_replay_transaction(transaction, trace_types).await
+    }
+
+    /// Returns the block request a trace method executes against.
+    async fn trace_block_request(
+        &self,
+        block_id: BlockId,
+    ) -> Result<BlockRequest<FoundryTxEnvelope>>
+    where
+        N: Network<TxEnvelope = FoundryTxEnvelope>,
+    {
+        if block_id.is_pending() {
+            return Ok(BlockRequest::Pending(self.pool.ready_transactions().collect()));
+        }
+        Ok(BlockRequest::Number(self.backend.ensure_trace_block_number(block_id).await?))
     }
 }
 
@@ -1828,7 +1838,7 @@ impl EthApi<FoundryNetwork> {
             }
             BlockchainError::RecoveryError(error)
         })?;
-        let block_request = self.block_request(block_number).await?;
+        let block_request = self.trace_block_request(block_number.unwrap_or_default()).await?;
 
         self.backend
             .trace_raw_transaction(pending_transaction, trace_types, Some(block_request))
@@ -1844,24 +1854,25 @@ impl EthApi<FoundryNetwork> {
         Ok(())
     }
 
-    /// Returns a locally stored rollback ancestor, or the remote base of a Monad transaction-hash
-    /// fork when that integration is enabled.
+    /// Returns a local rollback ancestor, a Monad replay ancestor, or the pinned fork root.
     async fn rollback_block(&self, number: u64) -> Result<Option<Block>> {
         if let Some(block) = self.backend.get_block(number) {
             return Ok(Some(block));
         }
         #[cfg(feature = "monad")]
+        if self.backend.is_monad()
+            && let Some(block) = self.backend.monad_rollback_block(number).await?
         {
-            if self.backend.is_monad() {
-                self.backend.monad_rollback_block(number).await
-            } else {
-                Ok(None)
-            }
+            return Ok(Some(block));
         }
-        #[cfg(not(feature = "monad"))]
-        {
-            Ok(None)
-        }
+
+        let Some(fork) = self.get_fork().filter(|fork| fork.block_number() == number) else {
+            return Ok(None);
+        };
+        let Some(header) = fork.root_header().await? else { return Ok(None) };
+
+        // Rollback only needs the header; do not publish this placeholder as a complete block.
+        Ok(Some(Block { header, body: Default::default() }))
     }
 
     /// Rewinds through the selected execution family's recovery path.
@@ -2156,7 +2167,8 @@ impl EthApi<FoundryNetwork> {
         // Fork reset and RPC URL replacement take the write lock internally after their fallible
         // remote staging work. Memory reset takes it before staging because it snapshots live
         // state. Identity, snapshot, and chain-rewind methods also lock internally to keep direct
-        // API callers safe without recursively acquiring this fair RwLock.
+        // API callers safe without recursively acquiring this fair RwLock. Consensus queries
+        // snapshot their source under the backend DB lock before any upstream I/O.
         let _lifecycle = if matches!(
             &request,
             EthRequest::Reset(_)
@@ -2167,6 +2179,8 @@ impl EthApi<FoundryNetwork> {
                 | EthRequest::EvmRevert(_)
                 | EthRequest::Reorg(_)
                 | EthRequest::Rollback(_)
+                | EthRequest::ConsensusGetFinalization(_)
+                | EthRequest::ConsensusGetLatest(_)
         ) {
             None
         } else {
@@ -4291,7 +4305,7 @@ impl EthApi<FoundryNetwork> {
         block_number: Option<BlockId>,
     ) -> Result<Vec<TraceResults>> {
         node_info!("trace_callMany");
-        let block_request = self.block_request(block_number).await?;
+        let block_request = self.trace_block_request(block_number.unwrap_or_default()).await?;
 
         self.backend.trace_call_many(calls, Some(block_request)).await
     }
@@ -5014,7 +5028,7 @@ impl EthApi<FoundryNetwork> {
     /// Returns a listener for pending transactions, yielding full transactions
     pub fn full_pending_transactions(&self) -> UnboundedReceiver<AnyRpcTransaction> {
         let (tx, rx) = unbounded_channel();
-        let mut hashes = self.new_ready_transactions();
+        let mut hashes = self.new_ready_transaction_subscription();
 
         let this = self.clone();
 
@@ -5605,13 +5619,14 @@ impl EthApi<FoundryNetwork> {
         self.request_nonce(request.as_ref(), from).await
     }
 
-    /// Returns a locally mined Tempo finalization and its native block.
+    /// Returns a local Tempo finalization or history at or before the pinned fork root.
     ///
     /// Handler for `consensus_getFinalization`; unavailable on non-Tempo networks.
-    /// Genesis and remote fork anchors are unsigned; remote certificates are not forwarded.
-    /// `latest` uses the retained complete body; height queries require a matching stored body.
-    /// Returns JSON-RPC error code 503 if the requested certificate or a complete block matching
-    /// its commitments is unavailable.
+    /// Local signing leaves genesis and fork anchors unsigned. Historical fork queries use the
+    /// upstream committee; `latest` never advances past the pinned root without local mining.
+    /// Local `latest` uses the retained complete body; height queries require a matching stored
+    /// body. Returns JSON-RPC error code 503 if the requested certificate or a complete block
+    /// matching its commitments is unavailable.
     pub async fn consensus_get_finalization(
         &self,
         query: TempoConsensusQuery,
@@ -5621,24 +5636,21 @@ impl EthApi<FoundryNetwork> {
             TempoConsensusQuery::Latest => None,
             TempoConsensusQuery::Height(height) => Some(height),
         };
-        self.backend.tempo_finalization(height).await?.try_into()
+        self.backend.tempo_finalization(height).await
     }
 
-    /// Returns the latest local finalization, with `notarized: null` as on Tempo.
+    /// Returns the latest local or pinned upstream finalization, with `notarized: null` as on
+    /// Tempo.
     ///
     /// Handler for `consensus_getLatest`; unavailable on non-Tempo networks.
-    /// Returns `finalized: null` when the current local signing history has no certificate.
+    /// Returns `finalized: null` for unsigned standalone history. A fork queries its pinned root
+    /// until local mining produces a certificate, preserving upstream errors.
     /// Returns JSON-RPC error code 503 if a certificate exists but its complete block is
     /// unavailable or no longer matches its commitments, including after rollback to a pruned
     /// body.
     pub async fn consensus_get_latest(&self) -> Result<TempoConsensusState> {
         node_info!("consensus_getLatest");
-        let finalized = self
-            .backend
-            .tempo_latest_finalization()
-            .await?
-            .map(TempoCertifiedBlock::try_from)
-            .transpose()?;
+        let finalized = self.backend.tempo_latest_finalization().await?;
         Ok(TempoConsensusState { finalized, notarized: None })
     }
 

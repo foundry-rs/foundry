@@ -136,7 +136,7 @@ impl SymbolicExecutor {
                     rejected_runtime = true;
                 }
             }
-            match self.join_call_outcome(state, outcome, created)? {
+            match self.join_call_outcome(executor, state, outcome, created)? {
                 JoinedCallOutcome::Rejected => {}
                 JoinedCallOutcome::Failure(mut parent) => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
@@ -156,7 +156,7 @@ impl SymbolicExecutor {
                     parent.stack.push(created_word.clone())?;
                     parents.push_back(parent);
                 }
-                JoinedCallOutcome::Success { mut parent, child } => {
+                JoinedCallOutcome::Success { mut parent, child, unmet_expected_revert } => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
                     let runtime = &child.frame.return_data;
                     parent.world = child.world;
@@ -165,12 +165,24 @@ impl SymbolicExecutor {
                     }
                     parent.expected_emit = child.expected_emit;
                     parent.expected_creates = pending_expected_creates.clone();
-                    self.observe_expected_create(&mut parent, state.address, kind, runtime)?;
+                    // Under an unmet `vm.expectRevert`, the caller sees a failed CREATE, but the
+                    // code stays deployed and `expectCreate` does not count it.
+                    if !unmet_expected_revert {
+                        self.observe_expected_create(&mut parent, state.address, kind, runtime)?;
+                    }
                     if !parent.world.is_destroyed(created) {
                         parent.world.install_code(created, runtime.to_code(&mut self.cx)?);
                         parent.world.set_nonce(created, 1);
                     }
-                    parent.stack.push(created_word.clone())?;
+                    if unmet_expected_revert {
+                        parent.return_data = error_string_return_data(
+                            &mut self.cx,
+                            "next call did not revert as expected",
+                        );
+                        parent.stack.push(SymExpr::zero(&mut self.cx))?;
+                    } else {
+                        parent.stack.push(created_word.clone())?;
+                    }
                     parents.push_back(parent);
                 }
                 JoinedCallOutcome::Revert { mut parent, child } => {

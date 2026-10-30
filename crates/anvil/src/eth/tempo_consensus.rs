@@ -7,6 +7,14 @@
 //! Identity rotation takes effect in the epoch after the next block's epoch, allowing its
 //! predecessor's boundary block to announce the new key before it signs. Snapshots restore pending
 //! rotations exactly; rollback restores the retained block's key schedule.
+//!
+//! Locally mined fork blocks commit to a partial trie of the accounts and storage slots cached
+//! when the block was mined, rather than the complete upstream state. Non-pending `eth_getProof`
+//! queries use that immutable trie, including at the current head after development state edits.
+//! Accounts and slots absent from it have exclusion proofs, even if they exist upstream. Later
+//! upstream reads cannot extend an already certified trie. Proof snapshots follow the configured
+//! state-history cache limits; evicted snapshots are unavailable rather than rebuilt from live
+//! state. The latest snapshot is retained even when historical state retention is disabled.
 
 use super::{
     backend::tempo_consensus::TempoFinalization,
@@ -14,11 +22,11 @@ use super::{
 };
 use anvil_core::eth::block::Block;
 use foundry_primitives::{FoundryHeader, FoundryTxEnvelope};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tempo_primitives::TempoTxEnvelope;
 
 /// A finalization certificate and the complete native Tempo block it authenticates.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct TempoCertifiedBlock {
     /// Certificate metadata and bytes for this block.
     #[serde(flatten)]
@@ -50,10 +58,10 @@ impl TryFrom<(TempoFinalization, Block)> for TempoCertifiedBlock {
     }
 }
 
-/// Current local consensus state, matching Tempo's `consensus_getLatest` response.
+/// Current consensus state, matching Tempo's `consensus_getLatest` response.
 #[derive(Clone, Debug, Serialize)]
 pub struct TempoConsensusState {
-    /// Latest locally finalized block, if any.
+    /// Latest local finalization, or the pinned upstream finalization before local mining.
     pub finalized: Option<TempoCertifiedBlock>,
     /// Reserved by Tempo; local mining only produces finalizations.
     pub notarized: Option<TempoCertifiedBlock>,
