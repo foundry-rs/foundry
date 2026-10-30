@@ -52,8 +52,7 @@ impl LazyMppHttpTransport {
         headers: reqwest::header::HeaderMap,
         payments: bool,
     ) -> Self {
-        let provider =
-            LazyAccountsProvider { payments, ..LazyAccountsProvider::new(url.to_string()) };
+        let provider = LazyAccountsProvider::new(url.to_string(), payments);
         Self(
             MppHttpTransport::new(client, url, provider)
                 .with_headers(headers)
@@ -119,8 +118,8 @@ impl Service<RequestPacket> for LazyMppHttpTransport {
 }
 
 /// Build the canonical MPP WebSocket connector with Foundry's lazy Accounts
-/// provider.
-pub(crate) fn lazy_mpp_ws_connect(url: &Url) -> MppWsConnect<LazyAccountsProvider> {
+/// provider. Without `payments`, a challenge closes the connection without paying.
+pub(crate) fn lazy_mpp_ws_connect(url: &Url, payments: bool) -> MppWsConnect<LazyAccountsProvider> {
     let mut origin = url.clone();
     let http_scheme = match origin.scheme() {
         "ws" => Some("http"),
@@ -130,7 +129,7 @@ pub(crate) fn lazy_mpp_ws_connect(url: &Url) -> MppWsConnect<LazyAccountsProvide
     if let Some(http_scheme) = http_scheme {
         let _ = origin.set_scheme(http_scheme);
     }
-    MppWsConnect::new(url.to_string(), LazyAccountsProvider::new(origin.to_string()))
+    MppWsConnect::new(url.to_string(), LazyAccountsProvider::new(origin.to_string(), payments))
 }
 
 /// Lazily resolves a chain-bound MPP Charge provider from Tempo Accounts.
@@ -156,12 +155,12 @@ impl fmt::Debug for LazyAccountsProvider {
 }
 
 impl LazyAccountsProvider {
-    pub(super) fn new(origin: String) -> Self {
+    pub(super) fn new(origin: String, payments: bool) -> Self {
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
             funding_by_challenge: Arc::new(Mutex::new(HashMap::new())),
             origin,
-            payments: true,
+            payments,
         }
     }
 
@@ -573,14 +572,14 @@ mod tests {
 
     #[test]
     fn advertises_sessions_before_charges() {
-        let provider = LazyAccountsProvider::new("https://rpc.example".to_owned());
+        let provider = LazyAccountsProvider::new("https://rpc.example".to_owned(), true);
         assert_eq!(
             provider.accept_payment_header().as_deref(),
             Some("tempo/session, tempo/charge;q=0.5")
         );
 
         // Endpoints without payments must not advertise or accept any challenge.
-        let provider = LazyAccountsProvider { payments: false, ..provider };
+        let provider = LazyAccountsProvider::new("https://rpc.example".to_owned(), false);
         assert_eq!(provider.accept_payment_header(), None);
         assert!(!provider.supports("tempo", "session"));
         assert!(!provider.supports("tempo", "charge"));
@@ -590,6 +589,7 @@ mod tests {
     fn debug_redacts_origin_secrets() {
         let provider = LazyAccountsProvider::new(
             "https://user:password@example.com/rpc?token=secret".to_owned(),
+            true,
         );
         let debug = format!("{provider:?}");
         assert!(!debug.contains("password"));
@@ -604,7 +604,7 @@ mod tests {
         // SAFETY: serialized with every other test that mutates TEMPO_HOME.
         unsafe { env::set_var(crate::tempo::TEMPO_HOME_ENV, directory.path()) };
 
-        let provider = LazyAccountsProvider::new("https://rpc.mpp.tempo.xyz".to_owned());
+        let provider = LazyAccountsProvider::new("https://rpc.mpp.tempo.xyz".to_owned(), true);
         assert!(provider.needs_access_key(&challenge("tempo", "charge"), 42431).await.unwrap());
         assert!(lock_map(&provider.inner).is_empty());
 
@@ -651,7 +651,7 @@ mod tests {
 
     #[test]
     fn funding_contexts_are_selected_by_challenge_id() {
-        let provider = LazyAccountsProvider::new("https://rpc.mpp.tempo.xyz".to_owned());
+        let provider = LazyAccountsProvider::new("https://rpc.mpp.tempo.xyz".to_owned(), true);
         let first = challenge("tempo", "charge");
         let mut second = challenge("tempo", "charge");
         second.id = "second".to_owned();

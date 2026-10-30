@@ -50,8 +50,8 @@ static HTTP_URL_RE: LazyLock<Regex> =
 pub enum InnerTransport {
     /// HTTP transport with lazy MPP 402 handling.
     ///
-    /// For known Tempo endpoints, the MPP layer additionally runs the
-    /// `wallet.tempo.xyz` device-code flow on a 402 when no local access key
+    /// Unless MPP is disabled, for known Tempo endpoints the MPP layer additionally
+    /// runs the `wallet.tempo.xyz` device-code flow on a 402 when no local access key
     /// is configured (see [`crate::tempo::ensure_access_key`]).
     Http(LazyMppHttpTransport),
     /// WebSocket transport
@@ -323,7 +323,7 @@ impl RuntimeTransport {
     /// Connects to a WS transport.
     ///
     /// Uses the canonical Alloy MPP WebSocket transport when the endpoint is a
-    /// known MPP service and MPP is not disabled.
+    /// known MPP service; it only pays challenges when MPP is not disabled.
     /// Otherwise falls back to alloy's plain [`WsConnect`] with zero overhead.
     async fn connect_ws(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let auth = self
@@ -333,8 +333,8 @@ impl RuntimeTransport {
             .transpose()
             .map_err(|e| RuntimeTransportError::InvalidJwt(e.to_string()))?;
 
-        let service = if !self.no_mpp && is_known_mpp_endpoint(&self.url) {
-            let mut ws = lazy_mpp_ws_connect(&self.url);
+        let service = if is_known_mpp_endpoint(&self.url) {
+            let mut ws = lazy_mpp_ws_connect(&self.url, !self.no_mpp);
             if let Some(auth) = auth {
                 ws = ws.with_auth(auth);
             }
