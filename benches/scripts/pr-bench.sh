@@ -4,7 +4,7 @@ set -euo pipefail
 BASE_REF="${BASE_REF:-origin/master}"
 CANDIDATE_REF="${CANDIDATE_REF:-HEAD}"
 BENCHMARKS="${BENCHMARKS:-forge_test}"
-REPOS="${REPOS:-ithacaxyz/account:v0.5.7}"
+REPOS="${REPOS:-morpho-org/morpho-blue:9cf6d5b844625ba108e36d1cf911f5d2faf7c136}"
 RUN_ID="${RUN_ID:-$(date -u +%Y%m%d%H%M%S)}"
 BENCH_ROOT="${BENCH_ROOT:-/tmp/foundry-pr-bench-${RUN_ID}}"
 FOUNDRY_BENCH_LOCAL_BUILD_BINS="${FOUNDRY_BENCH_LOCAL_BUILD_BINS:-forge}"
