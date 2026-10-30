@@ -5,7 +5,6 @@
 //! execution toggles configured by the user. It is converted into the selected network's evm2
 //! environment right before execution, see [`crate::eth::backend::evm`].
 
-use alloy_chains::NamedChain;
 use alloy_consensus::BlockHeader;
 use alloy_eips::{
     eip4844::{BLOB_TX_MIN_BLOB_GASPRICE, fake_exponential},
@@ -13,7 +12,11 @@ use alloy_eips::{
 };
 use alloy_network::{BlockResponse, Network};
 use alloy_primitives::{Address, B256, ChainId, U256};
-use foundry_evm_core::utils::get_blob_base_fee_update_fraction;
+use evm2::{BaseEvmTypes, EvmFeatures, Version};
+use foundry_evm_core::{
+    evm::EvmEnv as CoreEvmEnv,
+    utils::{self, get_blob_base_fee_update_fraction},
+};
 use foundry_evm_networks::NetworkConfigs;
 use serde::{Deserialize, Serialize};
 
@@ -227,26 +230,30 @@ pub fn block_env_from_header(header: &impl BlockHeader) -> BlockEnv {
     }
 }
 
-/// Applies replay normalization for the provided source chain.
-///
-/// This keeps fork-specific transaction validation independent from an execution `CHAINID`
-/// override.
+/// Returns `env` as an Ethereum evm2 environment, for the chain helpers of
+/// [`foundry_evm_core::utils`].
+fn core_env(env: &EvmEnv) -> CoreEvmEnv<BaseEvmTypes> {
+    let spec = env.cfg_env.spec;
+    CoreEvmEnv::new(
+        spec,
+        Version::new(spec),
+        crate::eth::backend::evm::block_env::<BaseEvmTypes>(env),
+    )
+}
+
+/// Applies [`utils::apply_chain_specific_tx_replay_env_changes_for_chain`] to `evm_env`.
 pub fn apply_chain_specific_tx_replay_env_changes_for_chain(
     evm_env: &mut EvmEnv,
     source_chain_id: ChainId,
 ) {
-    if NamedChain::try_from(source_chain_id).is_ok_and(|chain| chain.is_arbitrum()) {
-        // Arbitrum does not enforce the EIP-1559 priority fee ordering constraint.
-        evm_env.cfg_env.disable_priority_fee_check = true;
-    }
+    let mut env = core_env(evm_env);
+    utils::apply_chain_specific_tx_replay_env_changes_for_chain(&mut env, source_chain_id);
+    let cfg = &mut evm_env.cfg_env;
+    cfg.disable_priority_fee_check |= !env.version.feature(EvmFeatures::PRIORITY_FEE_CHECK);
+    cfg.disable_base_fee |= !env.version.feature(EvmFeatures::BASE_FEE_CHECK);
 }
 
-/// Applies block normalization for the provided source chain.
-///
-/// - checks for prevrandao mixhash after merge
-/// - applies chain specifics: on Arbitrum `block.number` is the L1 block
-///
-/// This keeps fork-specific header handling independent from an execution `CHAINID` override.
+/// Applies [`utils::apply_chain_and_block_specific_env_changes_for_chain`] to `evm_env`.
 pub fn apply_chain_and_block_specific_env_changes_for_chain<N: Network>(
     evm_env: &mut EvmEnv,
     block: &N::BlockResponse,
@@ -254,63 +261,24 @@ pub fn apply_chain_and_block_specific_env_changes_for_chain<N: Network>(
     configs: NetworkConfigs,
 ) {
     let header = block.header();
-    // The blob fee market is priced from the header's excess blob gas and the source chain's
-    // blob schedule at the block timestamp. Headers without the field (pre-Cancun blocks and
-    // chains without EIP-4844) keep the default blob environment.
     if let Some(excess_blob_gas) = header.excess_blob_gas() {
         evm_env.block_env.set_blob_excess_gas_and_price(
             excess_blob_gas,
             get_blob_base_fee_update_fraction(source_chain_id, header.timestamp()),
         );
     }
-
+    let mut env = core_env(evm_env);
+    utils::apply_chain_and_block_specific_env_changes_for_chain::<N, _>(
+        &mut env,
+        block,
+        source_chain_id,
+        configs,
+    );
     let block_env = &mut evm_env.block_env;
-    let difficulty_as_prevrandao = Some(B256::from(block_env.difficulty));
-    if let Ok(chain) = NamedChain::try_from(source_chain_id) {
-        match chain {
-            NamedChain::BinanceSmartChain
-            | NamedChain::BinanceSmartChainTestnet
-            | NamedChain::Polygon
-            | NamedChain::PolygonAmoy
-            | NamedChain::Avalanche
-            | NamedChain::AvalancheFuji => {
-                // https://github.com/foundry-rs/foundry/issues/9942
-                // As far as observed from the source code of bnb-chain/bsc, the `difficulty` field
-                // is still in use and returned by the corresponding opcode but `prevrandao`
-                // (`mixHash`) is always zero, even though bsc adopts the newer EVM
-                // specification. Polygon and Avalanche behave the same way.
-                block_env.prevrandao = difficulty_as_prevrandao;
-                return;
-            }
-            c if c.is_arbitrum() => {
-                // On Arbitrum `block.number` is the L1 block which is included in the
-                // `l1BlockNumber` field.
-                if let Some(l1_block_number) = block
-                    .other_fields()
-                    .and_then(|other| other.get("l1BlockNumber").cloned())
-                    .and_then(|l1_block_number| {
-                        serde_json::from_value::<U256>(l1_block_number).ok()
-                    })
-                {
-                    block_env.number = l1_block_number;
-                }
-
-                // `mixHash` carries L1 metadata rather than randomness here, while the
-                // `PREVRANDAO` opcode returns `difficulty` like it does on the chains above.
-                block_env.prevrandao = difficulty_as_prevrandao;
-            }
-            _ => {}
-        }
-    }
-
-    if configs.bypass_prevrandao(source_chain_id) && block_env.prevrandao.is_none() {
-        // Chains without randomness keep the historical DIFFICULTY opcode semantics.
-        // <https://github.com/foundry-rs/foundry/issues/4232>
-        block_env.prevrandao = difficulty_as_prevrandao;
-    }
-
-    // If difficulty is `0` we assume it's past merge.
-    if header.difficulty().is_zero() {
-        block_env.difficulty = block_env.prevrandao.unwrap_or_default().into();
+    block_env.number = env.block.number;
+    block_env.difficulty = env.block.difficulty;
+    let prevrandao = B256::from(env.block.prevrandao);
+    if prevrandao != block_env.prevrandao.unwrap_or_default() {
+        block_env.prevrandao = Some(prevrandao);
     }
 }
