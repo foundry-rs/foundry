@@ -400,12 +400,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         self.bal = None;
     }
 
-    /// Applies an environment change deferred by an in-flight operation. Call before every
-    /// transaction executed on an EVM that was not freshly created.
-    pub fn begin_transaction(&mut self, evm: &mut FoundryEvmFor<'_, FEN>) {
-        self.lifecycle.begin_transaction(evm);
-    }
-
     /// Removes `address` from the running transaction's base warmth, see
     /// [`ExecutionLifecycle::remove_prewarm`].
     pub fn remove_prewarm(&mut self, state: &mut State<'_>, address: &Address) {
@@ -1037,46 +1031,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             None => self.lifecycle.factory().refresh_transaction(evm),
         }
         result
-    }
-
-    /// Builds the EVM a nested transaction of the running one executes on, such as an isolated
-    /// call. See [`ExecutionLifecycle::nested_evm`].
-    pub fn nested_evm<'a>(
-        &self,
-        evm: &mut FoundryEvmFor<'_, FEN>,
-        tx: &Recovered<TxFor<FEN>>,
-        env: Option<EvmEnvFor<FEN>>,
-    ) -> FoundryEvmFor<'a, FEN> {
-        self.lifecycle.nested_evm(evm, tx, env, None)
-    }
-
-    /// Moves the running transaction onto a separate frame EVM. See
-    /// [`ExecutionLifecycle::begin_frame_evm`].
-    ///
-    /// # Safety
-    ///
-    /// See [`ExecutionLifecycle::begin_frame_evm`].
-    pub unsafe fn begin_frame_evm<'a>(
-        &self,
-        evm: &mut FoundryEvmFor<'_, FEN>,
-        env: EvmEnvFor<FEN>,
-    ) -> FoundryEvmFor<'a, FEN> {
-        // SAFETY: Forwarded to the caller.
-        unsafe { self.lifecycle.begin_frame_evm(evm, env) }
-    }
-
-    /// Hands a frame EVM's state back to `evm`. See [`ExecutionLifecycle::end_frame_evm`].
-    ///
-    /// # Safety
-    ///
-    /// See [`ExecutionLifecycle::end_frame_evm`].
-    pub unsafe fn end_frame_evm(
-        &self,
-        evm: &mut FoundryEvmFor<'_, FEN>,
-        frame: FoundryEvmFor<'_, FEN>,
-    ) {
-        // SAFETY: Forwarded to the caller.
-        unsafe { self.lifecycle.end_frame_evm(evm, frame) };
     }
 
     // ---- Running-state operations ----

@@ -532,7 +532,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let mut env = env.unwrap_or_else(|| evm_env(evm));
         env.version.initial_call_depth = depth;
         EvmFactoryFor::<FEN>::default().sync_transaction(evm);
-        let mut child = backend.backend().nested_evm(evm, tx, Some(env));
+        let mut child = backend.backend().lifecycle().nested_evm(evm, tx, Some(env), None);
         let previous = self.enter_inner_context(InnerRoot {
             depth,
             caller: tx.signer(),
@@ -1324,7 +1324,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let epoch = self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch);
         let fork_epoch = self.cheatcodes.as_deref().map(|cheats| cheats.fork_epoch);
         EvmFactoryFor::<FEN>::default().sync_transaction(evm);
-        let mut child = backend.backend().nested_evm(evm, &tx, Some(env));
+        let mut child = backend.backend().lifecycle().nested_evm(evm, &tx, Some(env), None);
         // The nested transaction continues the running one's network extension state, such as
         // Monad's reserve balance context and tracker.
         *child.ext_mut() = evm.ext().clone();
@@ -1473,7 +1473,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             };
             child.commit_source(&executed.pending_state);
             // SAFETY: The nested EVM runs over the lifecycle's owned databases.
-            unsafe { backend.backend().end_frame_evm(evm, child) };
+            unsafe { backend.backend().lifecycle().end_frame_evm(evm, child) };
             if let Some(warmth) = warmth {
                 *evm.state_mut().prewarm_set_mut() = warmth;
             } else if fork_changed && !restored {
@@ -2404,13 +2404,13 @@ impl InspectorStackInner {
     ) -> Result<MessageResultFor<FEN>, ExecutionError> {
         // SAFETY: `evm` runs over the lifecycle's owned databases, and so does the frame EVM,
         // which only lives for this call; its inspector is released before its state moves back.
-        let mut frame = unsafe { backend.backend().begin_frame_evm(evm, env) };
+        let mut frame = unsafe { backend.backend().lifecycle().begin_frame_evm(evm, env) };
         frame.set_inspector(InspectorStackRefMut { cheatcodes, inner: self, backend });
         let result = Host::execute_message(&mut frame, message);
         // SAFETY: See above.
         let frame = unsafe { release_inspector(frame) };
         // SAFETY: See above.
-        unsafe { backend.backend().end_frame_evm(evm, frame) };
+        unsafe { backend.backend().lifecycle().end_frame_evm(evm, frame) };
         result
     }
 
