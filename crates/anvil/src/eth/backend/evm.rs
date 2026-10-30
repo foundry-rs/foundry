@@ -28,10 +28,13 @@ use evm2::{
     Evm, EvmFeatures, EvmTypesHost, Inspector, PrecompileError,
     env::BlockEnv as NetBlockEnv,
     evm::{PendingState, TxResult, TxResultExt, precompile::PrecompileProvider},
-    interpreter::{GasTracker, Interpreter, Message, MessageResult},
+    interpreter::{GasTracker, Message},
     precompiles::{MovePrecompileError, PrecompileId, PrecompileResult},
 };
-use foundry_evm_core::evm::celo_transfer;
+use foundry_evm_core::{
+    evm::celo_transfer,
+    precompiles::{EC_RECOVER, P256_VERIFY},
+};
 use foundry_evm_hardforks::FoundryHardfork;
 use foundry_evm_networks::{
     NetworkConfigs,
@@ -215,11 +218,6 @@ pub trait AnvilEvmNetwork: FoundryEvmNetwork {
         Default::default()
     }
 
-    /// Converts a signed or impersonated Anvil transaction into the network's envelope.
-    fn envelope(tx: &FoundryTxEnvelope) -> Result<TxEnvelopeFor<Self>, BlockchainError> {
-        decode_envelope::<Self>(tx)
-    }
-
     /// Replaces EIP-7702 authorities by authorization index, see [`authority_overrides`].
     fn apply_authority_overrides(_tx: &mut TxFor<Self>, _overrides: &[(usize, Address)]) {}
 
@@ -230,14 +228,6 @@ pub trait AnvilEvmNetwork: FoundryEvmNetwork {
         _context: &TxContext,
     ) {
         evm.ext_mut().for_transaction(tx);
-    }
-
-    /// Returns the network-neutral outcome flags.
-    fn result_ext(ext: &<TypesFor<Self> as EvmTypesHost>::TxResultExt) -> ResultExt {
-        ResultExt {
-            failed_deposit: ext.is_failed_deposit(),
-            eip8130_phase_statuses: ext.eip8130_phase_statuses().map(<[u8]>::to_vec),
-        }
     }
 
     /// Converts a prepared transaction, including its network's RPC simulation identity.
@@ -571,7 +561,7 @@ pub fn build_evm<'a, N: AnvilEvmNetwork>(
     let factory = N::factory(opts);
     let version = version::<N>(&factory, spec, env);
     let net_env = foundry_evm_core::evm::EvmEnv::new(spec, version, block_env::<TypesFor<N>>(env));
-    let db = EvmDb::new(db, env.cfg_env.spec).forked(opts.fork_source_chain_id);
+    let db = EvmDb::new(db, env.cfg_env.spec, opts.fork_source_chain_id);
     let mut evm = factory.new_evm(db, net_env);
     let inner = factory.precompiles(&net_env, evm.ext());
     let mut precompiles = AnvilPrecompiles::new(inner, opts);
@@ -594,7 +584,7 @@ pub fn evm_tx<N: AnvilEvmNetwork>(
     cheats: Option<&CheatsManager>,
 ) -> Result<Recovered<TxFor<N>>, BlockchainError> {
     let tx_ref = tx;
-    let envelope = N::envelope(tx)?;
+    let envelope = decode_envelope::<N>(tx)?;
     let mut tx = N::evm_tx(envelope, sender, payload)
         .map_err(|err| BlockchainError::Message(err.to_string()))?;
     if let Some(cheats) = cheats {
@@ -636,7 +626,7 @@ pub fn execute<N: AnvilEvmNetwork, I: Inspector<TypesFor<N>>>(
         return Err(BlockchainError::ExcessBlobGasNotSet);
     }
     let mut evm = build_evm::<N>(db, env, opts)?;
-    evm.set_inspector(InspectorRef(inspector));
+    evm.set_inspector(inspector);
     transact::<N>(&mut evm, prepared, context, opts.cheats.as_ref())
 }
 
@@ -692,75 +682,12 @@ pub trait MonadInspector {}
 #[cfg(not(feature = "monad"))]
 impl<I> MonadInspector for I {}
 
-/// Lends an inspector to an EVM.
-#[derive(Debug)]
-pub struct InspectorRef<'r, I>(pub &'r mut I);
-
-impl<T: evm2::EvmTypes, I: Inspector<T>> Inspector<T> for InspectorRef<'_, I> {
-    fn initialize_interp(&mut self, interp: &mut Interpreter<'_, '_, T>) {
-        self.0.initialize_interp(interp);
-    }
-
-    fn step(&mut self, interp: &mut Interpreter<'_, '_, T>) {
-        self.0.step(interp);
-    }
-
-    fn step_end(&mut self, interp: &mut Interpreter<'_, '_, T>) {
-        self.0.step_end(interp);
-    }
-
-    fn log(&mut self, log: &alloy_primitives::Log, host: &mut T::Host<'_>) {
-        self.0.log(log, host);
-    }
-
-    fn call(
-        &mut self,
-        interp: &mut Interpreter<'_, '_, T>,
-        message: &mut Message<T>,
-    ) -> Option<MessageResult<T>> {
-        self.0.call(interp, message)
-    }
-
-    fn call_end(
-        &mut self,
-        interp: &mut Interpreter<'_, '_, T>,
-        message: &Message<T>,
-        result: &mut MessageResult<T>,
-    ) {
-        self.0.call_end(interp, message, result);
-    }
-
-    fn create(
-        &mut self,
-        interp: &mut Interpreter<'_, '_, T>,
-        message: &mut Message<T>,
-    ) -> Option<MessageResult<T>> {
-        self.0.create(interp, message)
-    }
-
-    fn create_end(
-        &mut self,
-        interp: &mut Interpreter<'_, '_, T>,
-        message: &Message<T>,
-        result: &mut MessageResult<T>,
-    ) {
-        self.0.create_end(interp, message, result);
-    }
-
-    fn selfdestruct(
-        &mut self,
-        contract: &Address,
-        target: &Address,
-        value: &U256,
-        host: &mut T::Host<'_>,
-    ) {
-        self.0.selfdestruct(contract, target, value, host);
-    }
-}
-
 /// Converts a family result into a network-neutral one.
 pub fn exec_result<N: AnvilEvmNetwork>(result: TxResult<TypesFor<N>>) -> ExecResult {
-    let ext = N::result_ext(&result.ext);
+    let ext = ResultExt {
+        failed_deposit: result.ext.is_failed_deposit(),
+        eip8130_phase_statuses: result.ext.eip8130_phase_statuses().map(<[u8]>::to_vec),
+    };
     result.with_ext(ext)
 }
 
@@ -777,19 +704,8 @@ enum ExtraPrecompile {
     CeloTransfer,
 }
 
-impl fmt::Debug for ExtraPrecompile {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::User(id, _) => f.debug_tuple("User").field(id).finish(),
-            Self::ArbSys(number) => f.debug_tuple("ArbSys").field(number).finish(),
-            Self::P256 { osaka } => f.debug_struct("P256").field("osaka", osaka).finish(),
-            Self::CeloTransfer => f.write_str("CeloTransfer"),
-        }
-    }
-}
-
 /// Wraps a network's precompiles with Anvil's extras, cheat ecrecover and simulation moves.
-pub struct AnvilPrecompiles<'a, T: evm2::EvmTypes> {
+struct AnvilPrecompiles<'a, T: evm2::EvmTypes> {
     inner: Box<dyn PrecompileProvider<T> + 'a>,
     extra: AddressMap<ExtraPrecompile>,
     cheats: Option<CheatsManager>,
@@ -801,18 +717,9 @@ pub struct AnvilPrecompiles<'a, T: evm2::EvmTypes> {
     removed: AddressSet,
 }
 
-impl<T: evm2::EvmTypes> fmt::Debug for AnvilPrecompiles<'_, T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("AnvilPrecompiles")
-            .field("extra", &self.extra)
-            .field("moved_to", &self.moved_to)
-            .finish_non_exhaustive()
-    }
-}
-
 impl<'a, T: evm2::EvmTypes> AnvilPrecompiles<'a, T> {
     /// Wraps `inner` with the extras configured by `opts`.
-    pub fn new(inner: Box<dyn PrecompileProvider<T> + 'a>, opts: &EvmOptions) -> Self {
+    fn new(inner: Box<dyn PrecompileProvider<T> + 'a>, opts: &EvmOptions) -> Self {
         let mut extra = AddressMap::default();
         if opts.celo_transfer {
             extra.insert(CELO_TRANSFER_ADDRESS, ExtraPrecompile::CeloTransfer);
@@ -820,10 +727,10 @@ impl<'a, T: evm2::EvmTypes> AnvilPrecompiles<'a, T> {
         let mut removed = AddressSet::default();
         match opts.bsc_p256 {
             Some(Some(osaka)) => {
-                extra.insert(BSC_P256_ADDRESS, ExtraPrecompile::P256 { osaka });
+                extra.insert(P256_VERIFY, ExtraPrecompile::P256 { osaka });
             }
             Some(None) => {
-                removed.insert(BSC_P256_ADDRESS);
+                removed.insert(P256_VERIFY);
             }
             None => {}
         }
@@ -851,13 +758,6 @@ impl<'a, T: evm2::EvmTypes> AnvilPrecompiles<'a, T> {
             || (!self.removed.contains(address) && self.inner.contains(address))
     }
 }
-
-/// Address of BSC's `P256VERIFY` precompile.
-const BSC_P256_ADDRESS: Address =
-    alloy_primitives::address!("0x0000000000000000000000000000000000000100");
-
-/// Address of the ecrecover precompile.
-const ECRECOVER_ADDRESS: Address = Address::with_last_byte(1);
 
 impl<T: evm2::EvmTypes> PrecompileProvider<T> for AnvilPrecompiles<'_, T> {
     /// Returns the protocol precompile addresses.
@@ -935,7 +835,7 @@ impl<T: evm2::EvmTypes> PrecompileProvider<T> for AnvilPrecompiles<'_, T> {
             None if self.moved_from.contains(&message.call_target) => return None,
             None => message.call_target,
         };
-        if address == ECRECOVER_ADDRESS
+        if address == EC_RECOVER
             && let Some(cheats) = &self.cheats
             && let Some(result) = cheat_ecrecover(cheats, &message.input, gas)
         {

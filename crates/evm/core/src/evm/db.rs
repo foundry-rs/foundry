@@ -44,28 +44,6 @@ pub trait FoundryDatabase: DynDatabase {
     fn set_eip161(&self, _eip161: bool) {}
 }
 
-impl<D: FoundryDatabase + ?Sized> FoundryDatabase for &mut D {
-    fn is_forked_mode(&self) -> bool {
-        (**self).is_forked_mode()
-    }
-
-    fn active_fork_source_chain_id(&self) -> Option<u64> {
-        (**self).active_fork_source_chain_id()
-    }
-
-    fn evict_account(&self, address: &Address) {
-        (**self).evict_account(address);
-    }
-
-    fn evict_storage(&self, address: &Address, slot: &U256) {
-        (**self).evict_storage(address, slot);
-    }
-
-    fn set_eip161(&self, eip161: bool) {
-        (**self).set_eip161(eip161);
-    }
-}
-
 impl FoundryDatabase for EmptyDB {}
 
 impl FoundryDatabase for InMemoryDB {}

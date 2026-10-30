@@ -4,10 +4,11 @@ use crate::{
     Cheatcode, CheatcodesBackend, CheatcodesCore, CheatsConfig, CheatsCtxt, Error, Result,
     Vm::{self, AccountAccess},
     evm::{
-        DealRecord, GasRecord, RecordAccess, append_storage_access, mark_account_accesses_reverted,
+        GasRecord, RecordAccess, append_storage_access, mark_account_accesses_reverted,
         merge_recorded_frame,
         mock::{self, MockCallDataContext, MockCallReturnData},
         prank::Prank,
+        touch_account,
     },
     expected_emit::{self, ExpectedEmitTracker},
     script::Broadcast,
@@ -28,14 +29,13 @@ use alloy_primitives::{
 use alloy_rpc_types::AccessList;
 use alloy_sol_types::{SolCall, SolInterface};
 use evm2::{
-    EvmTypesHost, ExecutionError, TxResultWithState,
+    EvmTypesHost, ExecutionError,
     evm::{State, StateSnapshot},
     interpreter::{
         Gas, GasTracker, Host, InstrStop, Interpreter, MessageExt, MessageKind, MessageResultExt,
         derive_create_destination, op,
     },
 };
-use eyre::WrapErr;
 use foundry_common::{
     FoundryTransactionBuilder, SELECTOR_LEN, TransactionMaybeSigned,
     mapping_slots::{
@@ -49,10 +49,9 @@ use foundry_evm_core::{
     backend::{LocalForkId, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     evm::{
-        BlockEnvFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryEvmFor,
-        FoundryEvmNetwork, InterpreterFor, MessageFor, MessageResultFor, PersistentWrite,
-        SnapshotRestores, SpecFor, TransactionRequestFor, TxFor, TxResultFor, TypesFor, evm_env,
-        release_inspector, restore_access_warmth,
+        BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor,
+        MessageFor, MessageResultFor, PersistentWrite, SnapshotRestores, SpecFor,
+        TransactionRequestFor, TxFor, TxResultFor, restore_access_warmth,
     },
 };
 use foundry_evm_traces::{
@@ -164,189 +163,6 @@ pub(crate) fn exec_create<FEN: FoundryEvmNetwork>(
     Ok(executor.exec_message(ccx.state, ccx.backend, ccx.evm, &mut message)?)
 }
 
-/// [`CheatcodesExecutor`] that runs nested executions with only the [`Cheatcodes`] inspector.
-#[derive(Debug, Default, Clone, Copy)]
-struct TransparentCheatcodesExecutor;
-
-impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesExecutor {
-    fn exec_message(
-        &mut self,
-        cheats: &mut Cheatcodes<FEN>,
-        backend: &mut dyn CheatcodesBackend<FEN>,
-        evm: &mut FoundryEvmFor<'_, FEN>,
-        message: &mut MessageFor<FEN>,
-    ) -> Result<MessageResultFor<FEN>, ExecutionError> {
-        let env = evm_env(evm);
-        // SAFETY: `evm` runs over the lifecycle's owned databases, and so does the frame EVM,
-        // which only lives for this call; its inspector is released before its state moves back.
-        let mut frame = unsafe { backend.backend().begin_frame_evm(evm, env) };
-        frame.set_inspector(CheatcodesInspector { cheats, backend: &mut *backend });
-        let result = Host::execute_message(&mut frame, message);
-        // SAFETY: See above.
-        let frame = unsafe { release_inspector(frame) };
-        // SAFETY: See above.
-        unsafe { backend.backend().end_frame_evm(evm, frame) };
-        result
-    }
-
-    fn nested_transaction(
-        &mut self,
-        cheats: &mut Cheatcodes<FEN>,
-        backend: &mut dyn CheatcodesBackend<FEN>,
-        evm: &mut FoundryEvmFor<'_, FEN>,
-        depth: u16,
-        tx: &Recovered<TxFor<FEN>>,
-        env: Option<EvmEnvFor<FEN>>,
-    ) -> eyre::Result<TxResultFor<FEN>> {
-        EvmFactoryFor::<FEN>::default().sync_transaction(evm);
-        let mut child = backend.backend().nested_evm(evm, tx, env);
-        // The nested transaction's calls do not apply access lists to the running one.
-        let applied_access_list = cheats.applied_access_list.take();
-        child.set_inspector(CheatcodesInspector { cheats: &mut *cheats, backend: &mut *backend });
-        let executed = child.transact(tx).map(|executed| executed.detach());
-        let merged = match executed {
-            Ok(TxResultWithState { result, pending_state, .. }) => {
-                // A failed transaction keeps its nonce increment.
-                foundry_evm_core::evm::merge_untracked_pending_changes_with_warmth(
-                    evm.state_mut(),
-                    &mut child,
-                    pending_state,
-                    // Without the inspector stack, destroyed accounts keep no pre-destruct state.
-                    Default::default(),
-                )
-                .map(|persistent| (result, persistent))
-                .map_err(Into::into)
-            }
-            Err(err) => Err(eyre::eyre!("{err:?}")),
-        };
-        drop(child);
-        cheats.applied_access_list = applied_access_list;
-        let (result, persistent) = merged?;
-        cheats.record_persistent(usize::from(depth).saturating_sub(1), evm.state(), persistent);
-        // The nested transaction's changes are not the running transaction's execution.
-        EvmFactoryFor::<FEN>::default().refresh_transaction(evm);
-        Ok(result)
-    }
-
-    // Without the inspector stack's nested-root handling, replayed transactions run without
-    // cheatcodes, which would take their root frame for a top-level call; only their logs reach
-    // `expectEmit` and `recordLogs`.
-    fn transact(
-        &mut self,
-        cheats: &mut Cheatcodes<FEN>,
-        backend: &mut dyn CheatcodesBackend<FEN>,
-        evm: &mut FoundryEvmFor<'_, FEN>,
-        _depth: u16,
-        fork_id: Option<U256>,
-        transaction: B256,
-    ) -> eyre::Result<TxResultFor<FEN>> {
-        let (prepared, _) = backend.backend().prepare_transact(
-            fork_id,
-            transaction,
-            evm,
-            0,
-            cheats.isolation_env.as_ref(),
-        )?;
-        let executed = prepared
-            .execute(evm, None, false)
-            .wrap_err("backend: failed committing transaction")?;
-        let result = backend.backend_mut().store_executed(evm, executed);
-        result.logs.iter().for_each(|log| cheats.log_hook(log));
-        Ok(result)
-    }
-
-    fn transact_from_tx(
-        &mut self,
-        cheats: &mut Cheatcodes<FEN>,
-        backend: &mut dyn CheatcodesBackend<FEN>,
-        evm: &mut FoundryEvmFor<'_, FEN>,
-        depth: u16,
-        tx: &Recovered<TxFor<FEN>>,
-        env: Option<EvmEnvFor<FEN>>,
-    ) -> eyre::Result<TxResultFor<FEN>> {
-        let (result, persistent) = backend.backend_mut().transact_from_tx(tx, evm, env, None)?;
-        cheats.record_persistent(usize::from(depth).saturating_sub(1), evm.state(), persistent);
-        result.logs.iter().for_each(|log| cheats.log_hook(log));
-        Ok(result)
-    }
-
-    fn console_log(&mut self, _msg: &str) {}
-}
-
-/// The [`Cheatcodes`] inspector together with the backend the execution runs over, as an evm2
-/// inspector on its own.
-///
-/// Nested executions started by cheatcodes are only observed by the cheatcodes. Use the inspector
-/// stack of `foundry-evm` to have them observed by tracing, coverage and other inspectors.
-pub struct CheatcodesInspector<'a, FEN: FoundryEvmNetwork> {
-    /// The cheatcode state.
-    pub cheats: &'a mut Cheatcodes<FEN>,
-    /// The backend the execution runs over.
-    pub backend: &'a mut dyn CheatcodesBackend<FEN>,
-}
-
-impl<FEN: FoundryEvmNetwork> evm2::Inspector<TypesFor<FEN>> for CheatcodesInspector<'_, FEN> {
-    fn initialize_interp(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
-        self.cheats.initialize_interp_hook(interp);
-    }
-
-    fn step(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
-        self.cheats.step_opcode_overrides(interp.opcode());
-        self.cheats.step_hook(interp, self.backend);
-    }
-
-    fn step_end(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
-        self.cheats.step_end_hook(interp, self.backend, &mut TransparentCheatcodesExecutor);
-    }
-
-    fn log(&mut self, log: &Log, _host: &mut FoundryEvmFor<'_, FEN>) {
-        self.cheats.log_hook(log);
-    }
-
-    fn call(
-        &mut self,
-        interp: &mut InterpreterFor<'_, '_, FEN>,
-        message: &mut MessageFor<FEN>,
-    ) -> Option<MessageResultFor<FEN>> {
-        if self.cheats.is_storage_hook_callback(message) {
-            return None;
-        }
-        self.cheats.call_with_executor(
-            interp,
-            message,
-            self.backend,
-            &mut TransparentCheatcodesExecutor,
-            false,
-        )
-    }
-
-    fn call_end(
-        &mut self,
-        interp: &mut InterpreterFor<'_, '_, FEN>,
-        message: &MessageFor<FEN>,
-        result: &mut MessageResultFor<FEN>,
-    ) {
-        self.cheats.call_end_hook(interp, message, result, self.backend);
-    }
-
-    fn create(
-        &mut self,
-        interp: &mut InterpreterFor<'_, '_, FEN>,
-        message: &mut MessageFor<FEN>,
-    ) -> Option<MessageResultFor<FEN>> {
-        self.cheats.create_hook(interp, message, self.backend)
-    }
-
-    fn create_end(
-        &mut self,
-        interp: &mut InterpreterFor<'_, '_, FEN>,
-        message: &MessageFor<FEN>,
-        result: &mut MessageResultFor<FEN>,
-    ) {
-        self.cheats.create_end_hook(interp, message, result, self.backend);
-    }
-}
-
 macro_rules! try_or_return {
     ($e:expr) => {
         match $e {
@@ -390,11 +206,6 @@ pub fn revert_frame<T: EvmTypesHost>(interp: &mut Interpreter<'_, '_, T>, output
 pub(crate) fn transfer_value<E>(message: &MessageExt<E>) -> Option<U256> {
     matches!(message.kind, MessageKind::Call | MessageKind::CallCode | MessageKind::StaticCall)
         .then_some(message.value)
-}
-
-/// Returns whether a message executes in a static context.
-pub(crate) fn is_static<E>(message: &MessageExt<E>) -> bool {
-    message.caller_is_static || message.kind == MessageKind::StaticCall
 }
 
 /// Helps collecting transactions from different forks.
@@ -905,7 +716,6 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub skip_payloads: Vec<Bytes>,
 
     /// All recorded ETH `deal`s.
-    pub eth_deals: Vec<DealRecord>,
 
     /// Writes that survive reverts of the enclosing calls, with the depth of the frame that made
     /// them and the journal length right after them, replayed when that frame or an enclosing one
@@ -1054,7 +864,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             broadcast: Default::default(),
             broadcastable_transactions: Default::default(),
             skip_payloads: Default::default(),
-            eth_deals: Default::default(),
             persistent_writes: Default::default(),
             frame_rollback: Default::default(),
             persistent_write_snapshots: Default::default(),
@@ -1383,7 +1192,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 backend,
                 gas,
                 caller,
-                is_static: is_static(message),
+                is_static: message.is_static(),
                 depth: message.depth.into(),
             },
             executor,
@@ -1412,7 +1221,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 backend,
                 gas,
                 caller,
-                is_static: is_static(message),
+                is_static: message.is_static(),
                 depth: message.depth.into(),
             },
             &message.input,
@@ -1581,10 +1390,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             if let Some(changes) = prank.changes_for(curr_depth, call.caller) {
                 if let Some(new_caller) = changes.caller {
                     // Ensure new caller is loaded, warm and touched
-                    if let Ok(mut account) = interp.host().state_mut().account(&new_caller) {
-                        account.touch();
-                        account.warm();
-                    }
+                    let _ = touch_account(interp.host().state_mut(), new_caller);
                     call.caller = new_caller;
                 }
                 if let Some(new_origin) = changes.origin {
@@ -1666,7 +1472,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 // because we only need the from, to, value, and data. We can later change this
                 // into 1559, in the cli package, relatively easily once we
                 // know the target chain supports EIP-1559.
-                if !is_static(call) {
+                if !call.is_static() {
                     let evm = interp.host();
                     // Reading the nonce warms the broadcaster.
                     let nonce = match evm.state_mut().account(&new_origin) {
@@ -2340,7 +2146,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// Called when a log is emitted.
     pub fn log_hook(&mut self, log: &Log) {
         if !self.expected_emits.is_empty()
-            && let Some(reason) = expect::handle_expect_emit(self, log)
+            && let Some(reason) = crate::expected_emit::observe_log(&mut self.expected_emits, log)
         {
             // The emitting frame reverts once its `LOG` instruction finishes.
             self.pending_emit_failure = Some(reason);
@@ -2675,7 +2481,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if let Some(unmet) = expected_emit::check_call_emits(
             &mut self.expected_emits,
             curr_depth,
-            is_static(call),
+            call.is_static(),
             outcome.is_success(),
         ) {
             set_revert(outcome, unmet.encode(|| self.signatures_identifier()));
@@ -2757,10 +2563,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         {
             if let Some(new_caller) = changes.caller {
                 // Ensure new caller is loaded, warm and touched
-                if let Ok(mut account) = interp.host().state_mut().account(&new_caller) {
-                    account.touch();
-                    account.warm();
-                }
+                let _ = touch_account(interp.host().state_mut(), new_caller);
                 input.caller = new_caller;
                 caller_changed = true;
             }

@@ -3185,8 +3185,7 @@ fn spawn_backend<FEN: FoundryEvmNetwork>(
 ) -> Result<Backend<FEN>> {
     // Configure the hardfork before seeding network state, using the resolved fork.
     let configure_env = |env: &mut _, context| {
-        resolve_execution_spec(
-            &EvmFactoryFor::<FEN>::default(),
+        resolve_execution_spec::<EvmFactoryFor<FEN>>(
             config.evm_version,
             config.hardfork,
             env,

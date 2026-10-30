@@ -1373,7 +1373,6 @@ impl ExecutionSpecContext {
 /// Returns the exact namespaced hardfork, when applicable, so execution and trace decoding can use
 /// the same hardfork.
 pub fn resolve_execution_spec<F: FoundryEvmFactory>(
-    factory: &F,
     evm_version: EvmVersion,
     configured_hardfork: Option<FoundryHardfork>,
     evm_env: &mut EvmEnv<F::Types>,
@@ -1394,7 +1393,7 @@ pub fn resolve_execution_spec<F: FoundryEvmFactory>(
     } else {
         (configured_spec, configured_spec.reported_hardfork())
     };
-    *evm_env = factory.env_with_spec(*evm_env, spec);
+    *evm_env = F::default().env_with_spec(*evm_env, spec);
     hardfork
 }
 
@@ -1830,7 +1829,6 @@ mod tests {
         let mut before = monad_env(activation - 1);
         assert_eq!(
             resolve_execution_spec::<EvmFactoryFor<MonadEvmNetwork>>(
-                &Default::default(),
                 config.evm_version,
                 config.hardfork,
                 &mut before,
@@ -1844,7 +1842,6 @@ mod tests {
         let mut after = monad_env(activation);
         assert_eq!(
             resolve_execution_spec::<EvmFactoryFor<MonadEvmNetwork>>(
-                &Default::default(),
                 config.evm_version,
                 config.hardfork,
                 &mut after,
@@ -1868,7 +1865,6 @@ mod tests {
 
         assert_eq!(
             resolve_execution_spec::<EvmFactoryFor<MonadEvmNetwork>>(
-                &Default::default(),
                 config.evm_version,
                 config.hardfork,
                 &mut env,
@@ -1890,7 +1886,6 @@ mod tests {
 
         assert_eq!(
             resolve_execution_spec::<EvmFactoryFor<MonadEvmNetwork>>(
-                &Default::default(),
                 config.evm_version,
                 config.hardfork,
                 &mut env,
@@ -1910,7 +1905,6 @@ mod tests {
 
         assert_eq!(
             resolve_execution_spec::<EvmFactoryFor<EthEvmNetwork>>(
-                &Default::default(),
                 config.evm_version,
                 config.hardfork,
                 &mut env,
@@ -1925,7 +1919,6 @@ mod tests {
             FoundryHardfork::Ethereum(foundry_evm_hardforks::EthereumHardfork::Frontier);
         assert_eq!(
             resolve_execution_spec::<EvmFactoryFor<EthEvmNetwork>>(
-                &Default::default(),
                 config.evm_version,
                 config.hardfork,
                 &mut env,
@@ -1945,7 +1938,6 @@ mod tests {
             let mut env = env_at::<EthEvmNetwork>(sepolia, timestamp);
             env.spec = evm2::SpecId::LONDON;
             let resolved = resolve_execution_spec::<EvmFactoryFor<EthEvmNetwork>>(
-                &Default::default(),
                 EvmVersion::Prague,
                 None,
                 &mut env,
@@ -2001,7 +1993,6 @@ mod tests {
 
         assert_eq!(
             resolve_execution_spec::<EvmFactoryFor<EthEvmNetwork>>(
-                &Default::default(),
                 config.evm_version,
                 config.hardfork,
                 &mut env,
@@ -2025,7 +2016,6 @@ mod tests {
 
         assert_eq!(
             resolve_execution_spec::<EvmFactoryFor<OpEvmNetwork>>(
-                &Default::default(),
                 config.evm_version,
                 config.hardfork,
                 &mut env,
@@ -2045,7 +2035,6 @@ mod tests {
 
         assert_eq!(
             resolve_execution_spec::<EvmFactoryFor<OpEvmNetwork>>(
-                &Default::default(),
                 config.evm_version,
                 config.hardfork,
                 &mut env,
@@ -2070,7 +2059,6 @@ mod tests {
 
         assert_eq!(
             resolve_execution_spec::<EvmFactoryFor<MonadEvmNetwork>>(
-                &Default::default(),
                 configured.evm_version,
                 configured.hardfork,
                 &mut env,
@@ -2084,7 +2072,6 @@ mod tests {
         configured.hardfork = None;
         assert_eq!(
             resolve_execution_spec::<EvmFactoryFor<MonadEvmNetwork>>(
-                &Default::default(),
                 configured.evm_version,
                 configured.hardfork,
                 &mut env,

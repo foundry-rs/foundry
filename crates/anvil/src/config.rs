@@ -771,7 +771,7 @@ impl NodeConfig {
     /// under EIP-8037, where the cap divides a transaction's gas into regular gas and the state
     /// gas reservoir instead of limiting it.
     pub(crate) fn set_cfg_spec(&self, cfg: &mut CfgEnv, spec: SpecId) {
-        cfg.set_spec_and_mainnet_gas_params(spec);
+        cfg.spec = spec;
         let is_amsterdam = spec >= SpecId::AMSTERDAM;
         cfg.tx_gas_limit_cap = (!self.enable_tx_gas_limit && !is_amsterdam).then_some(u64::MAX);
     }
@@ -1534,7 +1534,7 @@ impl NodeConfig {
     {
         // configure the revm environment
 
-        let mut cfg = CfgEnv::new();
+        let mut cfg = CfgEnv::default();
         self.set_cfg_spec(&mut cfg, self.get_hardfork().into());
 
         cfg.chain_id = self.get_chain_id();

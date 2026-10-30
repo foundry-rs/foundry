@@ -19,8 +19,8 @@
 //!    network state back into the active context. Dropping the EVM instead discards everything it
 //!    did, as for calls.
 //!
-//! [`Backend::inspect_call`] and [`Backend::inspect_commit`] wrap these steps for executions that
-//! need no backend access from their inspector.
+//! [`Backend::inspect_commit`] wraps these steps for executions that need no backend access from
+//! their inspector.
 
 use crate::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER},
@@ -53,7 +53,8 @@ use evm2::{
     EvmFeatures, Inspector,
     bytecode::Bytecode,
     evm::{
-        AccountInfo, Cache, CacheDB, DynDatabase, EmptyDB, PendingState, State, StateSnapshot,
+        AccountInfo, Cache, CacheDB, DbResult, DynDatabase, EmptyDB, PendingState, State,
+        StateSnapshot,
         bal::{Bal, BlockAccessIndex},
     },
 };
@@ -111,19 +112,6 @@ pub enum ForkAccountField {
     Balance,
     Nonce,
     Code,
-}
-
-impl ForkAccountField {
-    fn update(self, target: &mut AccountInfo, refreshed: &AccountInfo) {
-        match self {
-            Self::Balance => target.balance = refreshed.balance,
-            Self::Nonce => target.nonce = refreshed.nonce,
-            Self::Code => {
-                target.code_hash = refreshed.code_hash;
-                target.code = refreshed.code.clone();
-            }
-        }
-    }
 }
 
 /// Block data required to execute or position a fork at a transaction.
@@ -403,12 +391,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         self.bal = None;
     }
 
-    /// Applies an environment change deferred by an in-flight operation. Call before every
-    /// transaction executed on an EVM that was not freshly created.
-    pub fn begin_transaction(&mut self, evm: &mut FoundryEvmFor<'_, FEN>) {
-        self.lifecycle.begin_transaction(evm);
-    }
-
     /// Removes `address` from the running transaction's base warmth, see
     /// [`ExecutionLifecycle::remove_prewarm`].
     pub fn remove_prewarm(&mut self, state: &mut State<'_>, address: &Address) {
@@ -427,19 +409,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         warmth: Vec<(Option<U256>, AddressMap<HashSet<U256>>)>,
     ) {
         self.lifecycle.restore_persistent_warmth(warmth);
-    }
-
-    /// Executes `tx` over the active context with `inspector` and discards its state.
-    pub fn inspect_call<'a>(
-        &self,
-        tx: &Recovered<TxFor<FEN>>,
-        inspector: impl Inspector<TypesFor<FEN>> + 'a,
-    ) -> eyre::Result<TxResultFor<FEN>> {
-        let mut evm: FoundryEvmFor<'a, FEN> = self.create_evm();
-        evm.set_inspector(inspector);
-        evm.ext_mut().for_next_transaction(tx);
-        let executed = evm.transact(tx).map_err(handler_error)?;
-        Ok(executed.result().clone())
     }
 
     /// Executes `tx` over the active context with `inspector` and accepts its state.
@@ -475,7 +444,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     // ---- Accepted state between executions ----
 
     /// Returns an account of the active context's accepted state.
-    pub fn basic(&self, address: Address) -> StateResult<Option<AccountInfo>> {
+    pub fn basic(&self, address: Address) -> DbResult<Option<AccountInfo>> {
         let mut account = self.lifecycle.accepted_db().get_account(&address)?;
         if let Some(account) = &mut account
             && account.code.is_none()
@@ -487,17 +456,17 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     }
 
     /// Returns code of the active context's accepted state.
-    pub fn code_by_hash(&self, code_hash: B256) -> StateResult<Bytecode> {
+    pub fn code_by_hash(&self, code_hash: B256) -> DbResult<Bytecode> {
         self.lifecycle.accepted_db().get_code_by_hash(&code_hash)
     }
 
     /// Returns a storage slot of the active context's accepted state.
-    pub fn storage(&self, address: Address, slot: U256) -> StateResult<U256> {
+    pub fn storage(&self, address: Address, slot: U256) -> DbResult<U256> {
         self.lifecycle.accepted_db().get_storage(&address, &slot)
     }
 
     /// Returns a block hash of the active context.
-    pub fn block_hash(&self, number: U256) -> StateResult<B256> {
+    pub fn block_hash(&self, number: U256) -> DbResult<B256> {
         self.lifecycle.accepted_db().get_block_hash(&number)
     }
 
@@ -584,11 +553,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         self
     }
 
-    /// Returns the caller address.
-    pub const fn caller_address(&self) -> Option<Address> {
-        self.caller
-    }
-
     /// Returns whether a reverted state snapshot recorded a test failure.
     ///
     /// If an error occurs in a restored state snapshot, the test is considered failed.
@@ -599,12 +563,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// Sets the state snapshot failure flag.
     pub const fn set_state_snapshot_failure(&mut self, has_state_snapshot_failure: bool) {
         self.has_state_snapshot_failure = has_state_snapshot_failure;
-    }
-
-    /// Returns whether `address` is a precompile of the active context.
-    pub fn is_existing_precompile(&self, address: &Address) -> bool {
-        let context = self.lifecycle.active();
-        self.lifecycle.factory().precompiles(&context.env, &context.ext.get()).contains(address)
     }
 
     // ---- Persistent accounts and cheatcode access ----
@@ -633,23 +591,10 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         }
     }
 
-    /// Stops all `accounts` from persisting.
-    pub fn remove_persistent_accounts(&mut self, accounts: impl IntoIterator<Item = Address>) {
-        for account in accounts {
-            self.remove_persistent_account(&account);
-        }
-    }
-
     /// Grants `account` cheatcode access. Returns whether it did not have access yet.
     pub fn allow_cheatcode_access(&mut self, account: Address) -> bool {
         trace!(?account, "allow cheatcode access");
         self.cheatcode_access.insert(account)
-    }
-
-    /// Revokes cheatcode access from `account`. Returns whether it had access.
-    pub fn revoke_cheatcode_access(&mut self, account: &Address) -> bool {
-        trace!(?account, "revoke cheatcode access");
-        self.cheatcode_access.remove(account)
     }
 
     /// Returns whether `account` has cheatcode access.
@@ -728,11 +673,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             Some(id) => eyre::bail!("Requested fork `{id}` does not exist"),
             None => eyre::bail!("No fork active"),
         }
-    }
-
-    /// Returns the remote fork identifier of `id`.
-    pub fn ensure_fork_id(&self, id: LocalForkId) -> eyre::Result<&ForkId> {
-        Ok(&self.fork_info(id)?.id)
     }
 
     fn fork_info(&self, id: LocalForkId) -> eyre::Result<&ForkInfo> {
@@ -856,7 +796,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             None
         };
         let db = ForkDb::new(backend, remote.context().source_chain_id);
-        self.lifecycle.roll_fork(evm, Some(id), db, env, phase)?;
+        self.roll_lifecycle_fork(evm, id, db, env, None, phase)?;
         let block = Some(remote.number());
         self.set_fork_info(
             id,
@@ -866,6 +806,30 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             self.retain_cursor(id, position, &cursor, Some(evm));
         }
         Ok(())
+    }
+
+    /// Moves fork `id` onto `db` and `env` in the lifecycle.
+    ///
+    /// As on master, rolling the active fork keeps the test caller's state like a persistent
+    /// account's, so a sender that is not persistent keeps changes such as `vm.deal`.
+    fn roll_lifecycle_fork(
+        &mut self,
+        evm: &mut FoundryEvmFor<'_, FEN>,
+        id: LocalForkId,
+        db: impl BackingDb,
+        env: EvmEnvFor<FEN>,
+        cache: Option<Cache>,
+        phase: ExecutionPhase,
+    ) -> eyre::Result<()> {
+        let active = self.is_active_fork(id);
+        let caller = self
+            .caller
+            .filter(|caller| active && self.lifecycle.forks_mut().add_persistent(*caller));
+        let result = self.lifecycle.roll_fork(evm, Some(id), db, env, cache, phase);
+        if let Some(caller) = caller {
+            self.lifecycle.forks_mut().remove_persistent(&caller);
+        }
+        result
     }
 
     /// Moves fork `id`, or the active fork for `None`, to the state right before `transaction`:
@@ -882,7 +846,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let id = self.ensure_fork(id)?;
         let (db, env, cache, info, cursor, replayed) =
             self.prepare_roll_to_transaction(id, transaction, evm_env(evm).spec)?;
-        self.lifecycle.roll_fork_with(evm, Some(id), db, env, cache, phase)?;
+        self.roll_lifecycle_fork(evm, id, db, env, cache, phase)?;
         self.set_fork_info(id, info);
         if let Some((position, cursor)) = cursor {
             self.retain_cursor(id, position, &cursor, Some(evm));
@@ -1085,46 +1049,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         result
     }
 
-    /// Builds the EVM a nested transaction of the running one executes on, such as an isolated
-    /// call. See [`ExecutionLifecycle::nested_evm`].
-    pub fn nested_evm<'a>(
-        &self,
-        evm: &mut FoundryEvmFor<'_, FEN>,
-        tx: &Recovered<TxFor<FEN>>,
-        env: Option<EvmEnvFor<FEN>>,
-    ) -> FoundryEvmFor<'a, FEN> {
-        self.lifecycle.nested_evm(evm, tx, env, None)
-    }
-
-    /// Moves the running transaction onto a separate frame EVM. See
-    /// [`ExecutionLifecycle::begin_frame_evm`].
-    ///
-    /// # Safety
-    ///
-    /// See [`ExecutionLifecycle::begin_frame_evm`].
-    pub unsafe fn begin_frame_evm<'a>(
-        &self,
-        evm: &mut FoundryEvmFor<'_, FEN>,
-        env: EvmEnvFor<FEN>,
-    ) -> FoundryEvmFor<'a, FEN> {
-        // SAFETY: Forwarded to the caller.
-        unsafe { self.lifecycle.begin_frame_evm(evm, env) }
-    }
-
-    /// Hands a frame EVM's state back to `evm`. See [`ExecutionLifecycle::end_frame_evm`].
-    ///
-    /// # Safety
-    ///
-    /// See [`ExecutionLifecycle::end_frame_evm`].
-    pub unsafe fn end_frame_evm(
-        &self,
-        evm: &mut FoundryEvmFor<'_, FEN>,
-        frame: FoundryEvmFor<'_, FEN>,
-    ) {
-        // SAFETY: Forwarded to the caller.
-        unsafe { self.lifecycle.end_frame_evm(evm, frame) };
-    }
-
     // ---- Running-state operations ----
 
     /// Explains a revert of a call to `callee` in multi-fork mode: whether `callee` has no code on
@@ -1253,13 +1177,17 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let state = evm.state_mut();
         let cache = &mut state.overlay_db_mut().cache;
         if let Some(Some(cached)) = cache.accounts.get_mut(&address) {
-            field.update(cached, &refreshed);
-            cached.code = None;
-            if matches!(field, ForkAccountField::Code)
-                && let Some(code) = &refreshed.code
-            {
-                cache.contracts.insert(refreshed.code_hash, code.clone());
+            match field {
+                ForkAccountField::Balance => cached.balance = refreshed.balance,
+                ForkAccountField::Nonce => cached.nonce = refreshed.nonce,
+                ForkAccountField::Code => {
+                    cached.code_hash = refreshed.code_hash;
+                    if let Some(code) = &refreshed.code {
+                        cache.contracts.insert(refreshed.code_hash, code.clone());
+                    }
+                }
             }
+            cached.code = None;
         }
         let mut account = state.account(&address)?;
         match field {
@@ -1661,9 +1589,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         Ok(mem::take(&mut evm.state_mut().overlay_db_mut().cache))
     }
 }
-
-/// Result of a read of the backend's accepted state.
-pub type StateResult<T> = Result<T, evm2::DatabaseError>;
 
 /// Returns the transactions of `block` and its two ancestors, fetched through `backend`.
 fn block_context<FEN: FoundryEvmNetwork>(

@@ -16,11 +16,7 @@ use foundry_evm_core::{
     abi::console, constants::HARDHAT_CONSOLE_ADDRESS, decode::decode_console_logs,
 };
 use foundry_evm_traces::{CallTraceDecoder, SparsedTraceArena, render_trace_arena_inner};
-use std::{
-    cell::{RefCell, RefMut},
-    rc::Rc,
-    sync::Arc,
-};
+use std::sync::Arc;
 
 /// The [`evm2::Inspector`] used when transacting in the evm
 #[derive(Clone, Debug, Default)]
@@ -468,100 +464,5 @@ impl<T: EvmTypes> Inspector<T> for AnvilInspector {
 pub fn print_logs(logs: &[Log]) {
     for log in decode_console_logs(logs) {
         tracing::info!(target: crate::logging::EVM_CONSOLE_LOG_TARGET, "{}", log);
-    }
-}
-
-/// An inspector shared between an EVM and its owner.
-///
-/// evm2 owns its inspector for the EVM's lifetime; sharing lets a block executor drain the
-/// per-transaction traces between transactions.
-#[derive(Debug, Default)]
-pub struct SharedInspector<I>(Rc<RefCell<I>>);
-
-impl<I> Clone for SharedInspector<I> {
-    fn clone(&self) -> Self {
-        Self(Rc::clone(&self.0))
-    }
-}
-
-impl<I> SharedInspector<I> {
-    /// Shares `inspector`.
-    pub fn new(inspector: I) -> Self {
-        Self(Rc::new(RefCell::new(inspector)))
-    }
-
-    /// Borrows the inspector mutably.
-    pub fn borrow_mut(&self) -> RefMut<'_, I> {
-        self.0.borrow_mut()
-    }
-
-    /// Returns the inspector, cloning it if it is still shared.
-    pub fn into_inner(self) -> I
-    where
-        I: Clone,
-    {
-        Rc::try_unwrap(self.0).map(RefCell::into_inner).unwrap_or_else(|rc| rc.borrow().clone())
-    }
-}
-
-impl<T: EvmTypes, I: Inspector<T>> Inspector<T> for SharedInspector<I> {
-    fn initialize_interp(&mut self, interp: &mut Interpreter<'_, '_, T>) {
-        self.0.borrow_mut().initialize_interp(interp);
-    }
-
-    fn step(&mut self, interp: &mut Interpreter<'_, '_, T>) {
-        self.0.borrow_mut().step(interp);
-    }
-
-    fn step_end(&mut self, interp: &mut Interpreter<'_, '_, T>) {
-        self.0.borrow_mut().step_end(interp);
-    }
-
-    fn log(&mut self, log: &Log, host: &mut T::Host<'_>) {
-        self.0.borrow_mut().log(log, host);
-    }
-
-    fn call(
-        &mut self,
-        interp: &mut Interpreter<'_, '_, T>,
-        message: &mut Message<T>,
-    ) -> Option<MessageResult<T>> {
-        self.0.borrow_mut().call(interp, message)
-    }
-
-    fn call_end(
-        &mut self,
-        interp: &mut Interpreter<'_, '_, T>,
-        message: &Message<T>,
-        result: &mut MessageResult<T>,
-    ) {
-        self.0.borrow_mut().call_end(interp, message, result);
-    }
-
-    fn create(
-        &mut self,
-        interp: &mut Interpreter<'_, '_, T>,
-        message: &mut Message<T>,
-    ) -> Option<MessageResult<T>> {
-        self.0.borrow_mut().create(interp, message)
-    }
-
-    fn create_end(
-        &mut self,
-        interp: &mut Interpreter<'_, '_, T>,
-        message: &Message<T>,
-        result: &mut MessageResult<T>,
-    ) {
-        self.0.borrow_mut().create_end(interp, message, result);
-    }
-
-    fn selfdestruct(
-        &mut self,
-        contract: &Address,
-        target: &Address,
-        value: &U256,
-        host: &mut T::Host<'_>,
-    ) {
-        self.0.borrow_mut().selfdestruct(contract, target, value, host);
     }
 }

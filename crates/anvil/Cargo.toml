@@ -106,6 +106,7 @@ tokio = { workspace = true, features = ["time"] }
 parking_lot.workspace = true
 futures.workspace = true
 async-trait.workspace = true
+auto_impl.workspace = true
 
 # misc
 flate2.workspace = true

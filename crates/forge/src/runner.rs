@@ -5408,7 +5408,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     ) -> EvmFuzzState {
         let literals =
             if invariant { &self.cr.mcr.invariant_literals } else { &self.cr.mcr.fuzz_literals };
-        // Seed from the state `setUp` accepted; see the fuzz gaps in `docs/dev/evm2-migration.md`.
+        // Seed from the state `setUp` accepted.
         let mut db = InMemoryDB::default();
         if let Some(cache) = &self.executor.backend().lifecycle().active().cache {
             db.cache = Cache::clone(cache);

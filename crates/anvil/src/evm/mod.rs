@@ -57,7 +57,7 @@ mod tests {
     fn call(hardfork: EthereumHardfork, factory: Option<Arc<dyn PrecompileFactory>>) -> Bytes {
         let db = CacheDB::new(EmptyDb);
         let mut env = EvmEnv::new(
-            CfgEnv::new_with_spec(FoundryHardfork::Ethereum(hardfork).into()),
+            CfgEnv { spec: FoundryHardfork::Ethereum(hardfork).into(), ..Default::default() },
             Default::default(),
         );
         env.cfg_env.disable_base_fee = true;
