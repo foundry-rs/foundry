@@ -558,21 +558,24 @@ impl SymbolicExecutor {
     ///
     /// A pending `vm.assumeNoRevert` is consumed but never rejects the path, because Forge only
     /// discards the run when the reverted call's error reaches the test frame, which is not
-    /// modeled here.
+    /// modeled here. Like Forge, a revert it consumes leaves `vm.expectRevert` pending.
     #[expect(clippy::too_many_arguments)]
     pub(super) fn finish_codeless_call(
         &mut self,
         executor: &ExecutorView<'_>,
         state: &mut PathState,
-        mut success: bool,
+        status: CallStatus,
         mut return_data: SymReturnData,
         reverter: Address,
         out_offset: SymExpr,
         out_size: &BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
-        state.assume_no_revert_next_call = None;
+        let mut success = status == CallStatus::Success;
+        let assumed_revert =
+            state.assume_no_revert_next_call.take().is_some() && status == CallStatus::Revert;
         // Like Forge, internal `expectRevert` mode keeps waiting after a successful call.
-        if let Some(mut expected) = state.expected_revert.clone()
+        if !assumed_revert
+            && let Some(mut expected) = state.expected_revert.clone()
             && !(success && executor.internal_expect_revert)
         {
             if success {
@@ -954,7 +957,7 @@ impl SymbolicExecutor {
                 return self.finish_codeless_call(
                     executor,
                     state,
-                    !reverts,
+                    if reverts { CallStatus::Revert } else { CallStatus::Success },
                     return_data,
                     transfer_to,
                     out_offset,
@@ -1010,7 +1013,7 @@ impl SymbolicExecutor {
             return self.finish_codeless_call(
                 executor,
                 state,
-                true,
+                CallStatus::Success,
                 return_data,
                 transfer_to,
                 out_offset,
@@ -1295,17 +1298,17 @@ impl SymbolicExecutor {
         } else {
             to
         };
-        let (success, return_data) = match outcome {
+        let (status, return_data) = match outcome {
             Some(return_data) => {
                 self.apply_call_value_transfer(executor, state, kind, to, call_caller, value);
-                (true, return_data)
+                (CallStatus::Success, return_data)
             }
-            None => (false, SymReturnData::empty(&mut self.cx)),
+            None => (CallStatus::ExceptionalHalt, SymReturnData::empty(&mut self.cx)),
         };
         self.finish_codeless_call(
             executor,
             state,
-            success,
+            status,
             return_data,
             reverter,
             out_offset,
@@ -1363,7 +1366,7 @@ impl SymbolicExecutor {
                 self.finish_codeless_call(
                     executor,
                     state,
-                    false,
+                    CallStatus::Revert,
                     return_data,
                     to,
                     out_offset,
@@ -1388,7 +1391,7 @@ impl SymbolicExecutor {
                         match self.finish_codeless_call(
                             executor,
                             &mut failure,
-                            false,
+                            CallStatus::Revert,
                             return_data,
                             to,
                             out_offset,
@@ -1415,7 +1418,7 @@ impl SymbolicExecutor {
                         self.finish_codeless_call(
                             executor,
                             state,
-                            false,
+                            CallStatus::Revert,
                             return_data,
                             to,
                             out_offset,
@@ -1576,7 +1579,7 @@ impl SymbolicExecutor {
                     self.finish_codeless_call(
                         executor,
                         &mut branch,
-                        true,
+                        CallStatus::Success,
                         return_data,
                         reverter,
                         out_offset.clone(),

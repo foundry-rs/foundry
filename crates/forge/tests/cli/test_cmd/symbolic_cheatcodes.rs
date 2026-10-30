@@ -3201,6 +3201,14 @@ contract SymbolicExpectRevertCodeless is Test {
         assertEq(ok, value > 1 ether);
     }
 
+    function checkAssumeNoRevertKeepsExpectRevert() public {
+        vm.mockCallRevert(address(target), abi.encodeCall(CodelessTarget.ping, ()), bytes("m"));
+        vm.assumeNoRevert();
+        vm.expectRevert(bytes("m"));
+        (bool ok,) = address(target).call(abi.encodeCall(CodelessTarget.ping, ()));
+        assertTrue(ok);
+    }
+
     function checkAssumeNoRevertCaughtMock(uint256 x) public {
         vm.mockCallRevert(address(target), abi.encodeCall(CodelessTarget.f, (1)), bytes("mocked"));
         vm.assumeNoRevert();
@@ -3220,8 +3228,9 @@ contract SymbolicExpectRevertCodeless is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 10 tests for test/SymbolicExpectRevertCodeless.t.sol:SymbolicExpectRevertCodeless
+Ran 11 tests for test/SymbolicExpectRevertCodeless.t.sol:SymbolicExpectRevertCodeless
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertCaughtMock(uint256) ([METRICS])
+[FAIL: Error != expected error: assertion failed != m; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertKeepsExpectRevert() ([METRICS])
 [PASS] checkAssumeNoRevertNoCode() ([METRICS])
 [PASS] checkKzgFailure() ([METRICS])
 [PASS] checkMockedRevert() ([METRICS])
@@ -3231,7 +3240,7 @@ Ran 10 tests for test/SymbolicExpectRevertCodeless.t.sol:SymbolicExpectRevertCod
 [PASS] checkPrecompileFailure() ([METRICS])
 [PASS] checkPrecompileSuccess() ([METRICS])
 [PASS] checkValueTransfer(uint256) ([METRICS])
-Suite result: FAILED. 8 passed; 2 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 8 passed; 3 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
