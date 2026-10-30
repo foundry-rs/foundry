@@ -204,8 +204,7 @@ pub(crate) async fn register_virtual_master(
         Some(_) => {}
         None if quiet => {
             if !send_tx.cast_async {
-                let hash = format!("{tx_hash:#x}");
-                cast.receipt(hash, None, send_tx.confirmations, Some(timeout), false).await?;
+                cast.sent_tx_receipt(tx_hash, send_tx.confirmations, timeout).await?;
             }
         }
         None => {
