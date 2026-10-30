@@ -272,19 +272,24 @@ impl RuntimeTransport {
     ) -> Result<reqwest::Client, RuntimeTransportError> {
         let mut client_builder = reqwest::Client::builder()
             .timeout(self.timeout)
-            .danger_accept_invalid_certs(self.accept_invalid_certs)
-            // Custom headers may contain credentials that reqwest does not strip on redirects.
-            .redirect(reqwest::redirect::Policy::custom(|attempt| {
-                if attempt
-                    .previous()
-                    .last()
-                    .is_some_and(|previous| previous.origin() != attempt.url().origin())
-                {
-                    attempt.error("cross-origin RPC redirects are not allowed")
-                } else {
-                    reqwest::redirect::Policy::default().redirect(attempt)
-                }
-            }));
+            .danger_accept_invalid_certs(self.accept_invalid_certs);
+
+        // Custom headers and `x-api-key` may contain credentials that reqwest does not strip on
+        // redirects, so only same-origin redirects are followed when they are sent.
+        if !self.headers.is_empty() || headers.contains_key(HeaderName::from_static("x-api-key")) {
+            client_builder =
+                client_builder.redirect(reqwest::redirect::Policy::custom(|attempt| {
+                    if attempt
+                        .previous()
+                        .last()
+                        .is_some_and(|previous| previous.origin() != attempt.url().origin())
+                    {
+                        attempt.error("cross-origin RPC redirects are not allowed")
+                    } else {
+                        reqwest::redirect::Policy::default().redirect(attempt)
+                    }
+                }));
+        }
 
         // Disable automatic proxy detection if requested. This helps in sandboxed environments
         // (e.g., Cursor IDE sandbox, macOS App Sandbox) where system proxy detection via

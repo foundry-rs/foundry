@@ -1728,6 +1728,14 @@ impl NodeConfig {
     }
 
     fn fork_provider(&self, eth_rpc_url: &str) -> Result<RetryProvider> {
+        self.fork_provider_builder(eth_rpc_url)
+            .build()
+            .wrap_err("failed to establish provider to fork url")
+    }
+
+    /// Returns the fork provider builder for `eth_rpc_url`, which only carries `fork_headers` and
+    /// `MPP_API_KEY` when the URL is trusted.
+    fn fork_provider_builder(&self, eth_rpc_url: &str) -> ProviderBuilder {
         let trusted = self.is_trusted_fork_url(eth_rpc_url);
         ProviderBuilder::new(eth_rpc_url)
             .timeout(self.fork_request_timeout)
@@ -1736,8 +1744,6 @@ impl NodeConfig {
             .max_retry(self.fork_request_retries)
             .headers(if trusted { self.fork_headers.clone() } else { Vec::new() })
             .no_mpp_api_key(!trusted)
-            .build()
-            .wrap_err("failed to establish provider to fork url")
     }
 
     /// Returns whether `url` shares an origin with a configured fork URL. Fork headers and
@@ -2369,12 +2375,7 @@ latest block number: {latest_block}"
             if self.fork_urls.len() <= 1 {
                 return self.fork_provider(&eth_rpc_url);
             }
-            ProviderBuilder::new(&eth_rpc_url)
-                .timeout(self.fork_request_timeout)
-                .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
-                .compute_units_per_second(self.compute_units_per_second)
-                .max_retry(self.fork_request_retries)
-                .headers(self.fork_headers.clone())
+            self.fork_provider_builder(&eth_rpc_url)
                 .build_fallback(self.fork_urls.clone())
                 .wrap_err("failed to establish round-robin provider to fork urls")
         };

@@ -5662,4 +5662,11 @@ async fn test_fork_headers_are_not_sent_to_redirect_origins() {
         );
         assert!(other.lock().unwrap().iter().all(|(_, secret)| secret.is_none()));
     }
+
+    // Without credentials to protect, cross-origin redirects are still followed.
+    let (other_url, _) = spawn_fork_header_recorder(origin.http_endpoint()).await;
+    let (configured_url, _) = spawn_fork_header_recorder(other_url).await;
+    let (api, _handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(configured_url.clone()))).await;
+    api.anvil_set_rpc_url(format!("{configured_url}/redirect")).await.unwrap();
 }
