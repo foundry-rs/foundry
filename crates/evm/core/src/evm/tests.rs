@@ -195,39 +195,17 @@ where
 }
 
 #[test]
-fn eth_lifecycle() {
+fn lifecycle() {
     lifecycle_suite::<EthEvmNetwork>(EthEvmFactory::default(), SpecId::PRAGUE);
-}
-
-#[test]
-fn tempo_lifecycle() {
     lifecycle_suite::<crate::evm::TempoEvmNetwork>(
         tempo_evm::TempoEvmFactory::default(),
         tempo_hardfork::TempoHardfork::default(),
     );
-}
-
-#[cfg(feature = "optimism")]
-#[test]
-fn op_lifecycle() {
-    lifecycle_suite::<crate::evm::OpEvmNetwork>(
-        op_evm2::OpEvmFactory,
-        op_evm2::OpSpecId::default(),
-    );
-}
-
-#[cfg(feature = "monad")]
-#[test]
-fn monad_lifecycle() {
-    lifecycle_suite::<crate::evm::MonadEvmNetwork>(
-        monad_evm2::MonadEvmFactory,
-        monad_evm2::MonadHardfork::default(),
-    );
-}
-
-#[cfg(feature = "base")]
-#[test]
-fn base_lifecycle() {
+    #[cfg(feature = "optimism")]
+    lifecycle_suite::<crate::evm::OpEvmNetwork>(op_evm2::OpEvmFactory, Default::default());
+    #[cfg(feature = "monad")]
+    lifecycle_suite::<crate::evm::MonadEvmNetwork>(monad_evm2::MonadEvmFactory, Default::default());
+    #[cfg(feature = "base")]
     lifecycle_suite::<crate::evm::BaseEvmNetwork>(
         base_evm2::BaseEvmFactory::default(),
         base_evm2::BaseSpecId::new(base_evm2::BaseUpgrade::Beryl),

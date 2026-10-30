@@ -428,30 +428,14 @@ mod tests {
     }
 
     #[test]
-    fn fuzzer_eth() {
+    fn fuzzer_networks() {
         fuzzer_suite::<foundry_evm_core::evm::EthEvmNetwork>();
-    }
-
-    #[test]
-    fn fuzzer_tempo() {
         fuzzer_suite::<foundry_evm_core::evm::TempoEvmNetwork>();
-    }
-
-    #[cfg(feature = "optimism")]
-    #[test]
-    fn fuzzer_op() {
+        #[cfg(feature = "optimism")]
         fuzzer_suite::<foundry_evm_core::evm::OpEvmNetwork>();
-    }
-
-    #[cfg(feature = "base")]
-    #[test]
-    fn fuzzer_base() {
+        #[cfg(feature = "base")]
         fuzzer_suite::<foundry_evm_core::evm::BaseEvmNetwork>();
-    }
-
-    #[cfg(feature = "monad")]
-    #[test]
-    fn fuzzer_monad() {
+        #[cfg(feature = "monad")]
         fuzzer_suite::<foundry_evm_core::evm::MonadEvmNetwork>();
     }
 
