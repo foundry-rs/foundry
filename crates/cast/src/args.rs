@@ -17,8 +17,8 @@ use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
 use alloy_ens::{NameOrAddress, ProviderEnsExt, namehash};
 use alloy_network::{BlockResponse, Ethereum, Network, eip2718::Decodable2718};
 use alloy_primitives::{
-    Address, B256, Bytes, I256, Keccak256, LogData, TxHash, U64, U256, b256, eip191_hash_message,
-    hex, keccak256,
+    Address, B256, Bytes, I256, Keccak256, LogData, Selector, TxHash, U64, U256, b256,
+    eip191_hash_message, hex, keccak256,
     utils::{ParseUnits, Unit},
 };
 use alloy_provider::Provider;
@@ -1168,7 +1168,10 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         // 4Byte
         CastSubcommand::Abi(AbiSubcommand::FourByte { selector }) => {
             let selector = stdin::unwrap_line(selector)?;
-            let sigs = decode_function_selector(selector).await?;
+            let sigs = with_local_first(
+                local_function_signature(selector).await?,
+                decode_function_selector(selector).await,
+            )?;
             if sigs.is_empty() {
                 eyre::bail!("No matching function signatures found for selector `{selector}`");
             }
@@ -1181,7 +1184,11 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let calldata = stdin::unwrap_line(calldata)?;
 
             if calldata.len() == 10 {
-                let sigs = decode_function_selector(calldata.parse()?).await?;
+                let selector = calldata.parse()?;
+                let sigs = with_local_first(
+                    local_function_signature(selector).await?,
+                    decode_function_selector(selector).await,
+                )?;
                 if sigs.is_empty() {
                     eyre::bail!("No matching function signatures found for calldata `{calldata}`");
                 }
@@ -1191,7 +1198,13 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 return Ok(());
             }
 
-            let sigs = decode_calldata(&calldata).await?;
+            let local = match strip_0x(&calldata).get(..8).map(str::parse::<Selector>) {
+                Some(Ok(selector)) => local_function_signature(selector)
+                    .await?
+                    .filter(|sig| abi_decode_calldata(sig, &calldata, true, true).is_ok()),
+                _ => None,
+            };
+            let sigs = with_local_first(local, decode_calldata(&calldata).await)?;
             for (i, sig) in sigs.iter().enumerate() {
                 let _ = sh_println!("{}) \"{sig}\"", i + 1);
             }
@@ -1210,7 +1223,11 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
 
         CastSubcommand::Abi(AbiSubcommand::FourByteEvent { topic }) => {
             let topic = stdin::unwrap_line(topic)?;
-            let sigs = decode_event_topic(topic).await?;
+            let local = SignaturesIdentifier::new(true)?.identify_event(topic).await;
+            let sigs = with_local_first(
+                local.map(|event| event.signature()),
+                decode_event_topic(topic).await,
+            )?;
             if sigs.is_empty() {
                 eyre::bail!("No matching event signatures found for topic `{topic}`");
             }
@@ -1703,6 +1720,26 @@ fn encode_event_topic_preimage(value: &DynSolValue, out: &mut Vec<u8>) {
         for value in values {
             encode_event_topic_preimage(value, out);
         }
+    }
+}
+
+/// Returns the signature of a function selector from the local signatures cache, which
+/// `forge build` and trace decoding populate.
+async fn local_function_signature(selector: Selector) -> Result<Option<String>> {
+    Ok(SignaturesIdentifier::new(true)?.identify_function(selector).await.map(|f| f.signature()))
+}
+
+/// Lists a signature from the local cache first, followed by the other signatures found remotely.
+/// The cached signature alone is used when the remote lookup fails.
+fn with_local_first(local: Option<String>, remote: Result<Vec<String>>) -> Result<Vec<String>> {
+    match (local, remote) {
+        (Some(sig), Ok(mut sigs)) => {
+            sigs.retain(|remote| *remote != sig);
+            sigs.insert(0, sig);
+            Ok(sigs)
+        }
+        (Some(sig), Err(_)) => Ok(vec![sig]),
+        (None, remote) => remote,
     }
 }
 
