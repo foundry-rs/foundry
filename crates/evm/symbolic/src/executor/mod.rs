@@ -1,4 +1,5 @@
 use super::{abi::*, runtime::*, *};
+use foundry_evm::inspectors::cheatcodes::{DUMMY_CALL_OUTPUT, DUMMY_CREATE_ADDRESS};
 
 mod calls;
 mod cheatcodes;
