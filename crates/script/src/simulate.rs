@@ -171,7 +171,15 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                     )?;
                 }
 
-                Ok(builder.build())
+                let mut transaction = builder.build();
+                // Name created contracts after their `vm.label`.
+                if transaction.call_kind.is_any_create() {
+                    transaction.label = transaction
+                        .contract_address
+                        .and_then(|address| self.execution_result.labeled_addresses.get(&address))
+                        .cloned();
+                }
+                Ok(transaction)
             })
             .collect::<Result<VecDeque<_>>>()?;
 

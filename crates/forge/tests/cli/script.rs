@@ -567,6 +567,9 @@ Chain 1
 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
+Deployed contracts (chain 1):
+  GasWaster  0x98E46E7A6Eb3608461294Ab396AD4A49Ffd83186
+
 [SAVED_TRANSACTIONS]
 
 [SAVED_SENSITIVE_VALUES]
@@ -631,6 +634,9 @@ Chain 1
 ==========================
 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+Deployed contracts (chain 1):
+  GasWaster  0x98E46E7A6Eb3608461294Ab396AD4A49Ffd83186
 
 [SAVED_TRANSACTIONS]
 
@@ -824,6 +830,9 @@ SKIPPING ON CHAIN SIMULATION.
 ==========================
 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+Deployed contracts (chain 1):
+  HashChecker  0x98E46E7A6Eb3608461294Ab396AD4A49Ffd83186
 
 [SAVED_TRANSACTIONS]
 
@@ -4106,6 +4115,9 @@ Chain 31337
 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
+Deployed contracts (chain 31337):
+  -  0x4e59b44847b379578588920cA78FbF26c0B4956C
+
 [SAVED_TRANSACTIONS]
 
 [SAVED_SENSITIVE_VALUES]
@@ -5781,6 +5793,11 @@ Chain 31337
 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
+Deployed contracts (chain 31337):
+  Counter  0x5FbDB2315678afecb367f032d93F642f64180aa3
+  Counter  0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+  Counter  0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
+
 [SAVED_TRANSACTIONS]
 
 [SAVED_SENSITIVE_VALUES]
@@ -5904,6 +5921,9 @@ Chain 31337
 ==========================
 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+Deployed contracts (chain 31337):
+  BatchCallDelegation  0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35
 
 [SAVED_TRANSACTIONS]
 
@@ -6042,6 +6062,11 @@ Chain 31337
 ==========================
 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+Deployed contracts (chain 31337):
+  Implementation  0x663F3ad617193148711d28f5334eE4Ed07016602
+  Implementation  0x2E983A1Ba5e8b38AAAeC4B440B9dDcFBf72E15d1
+  Implementation  0x948B3c65b89DF0B4894ABE91E6D02FE579834F8F
 
 [SAVED_TRANSACTIONS]
 
@@ -6367,6 +6392,9 @@ Chain 31337
 ==========================
 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+Deployed contracts (chain 31337):
+  Counter  0x5FbDB2315678afecb367f032d93F642f64180aa3
 
 [SAVED_TRANSACTIONS]
 
@@ -9597,4 +9625,67 @@ async fn script_broadcast_simulates_chain_hardfork_ahead_of_evm_version(prj: _, 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 ...
 "#]]);
+}
+
+// A broadcast lists the contracts it created, named by their `vm.label`, and records the labels in
+// the run file.
+#[forgetest_init]
+async fn broadcast_lists_deployed_contracts_with_labels(prj: _, cmd: _) {
+    let script = prj.add_source(
+        "DeployPools.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract Pool {}
+contract Router {}
+
+contract DeployPools is Script {
+    function run() external {
+        vm.startBroadcast();
+        Pool usdc = new Pool();
+        Pool weth = new Pool();
+        new Router();
+        vm.stopBroadcast();
+        vm.label(address(usdc), "UsdcPool");
+        vm.label(address(weth), "WethPool");
+    }
+}"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.set_current_dir(prj.root());
+    cmd.args([
+        "script",
+        &format!("{}:DeployPools", script.display()),
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "--private-key",
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+Deployed contracts (chain 31337):
+  UsdcPool  Pool    0x5FbDB2315678afecb367f032d93F642f64180aa3
+  WethPool  Pool    0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+  -         Router  0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
+...
+"#]]);
+
+    let run_log = std::fs::read_to_string(
+        prj.root().join("broadcast/DeployPools.s.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    let run: Value = serde_json::from_str(&run_log).unwrap();
+    let labels = run["transactions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tx| tx["label"].as_str().unwrap_or("-").to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(labels, ["UsdcPool", "WethPool", "-"]);
 }
