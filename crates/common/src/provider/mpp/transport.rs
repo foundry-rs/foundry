@@ -147,7 +147,8 @@ impl fmt::Debug for LazyAccountsProvider {
 }
 
 impl LazyAccountsProvider {
-    pub(super) fn new(origin: String) -> Self {
+    /// Create a provider for payments requested by `origin`.
+    pub fn new(origin: String) -> Self {
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
             funding_by_challenge: Arc::new(Mutex::new(HashMap::new())),

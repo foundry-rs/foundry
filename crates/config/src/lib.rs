@@ -45,7 +45,7 @@ use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{
     borrow::Cow,
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     fs, io,
     path::{Component, Path, PathBuf},
     str::FromStr,
@@ -575,6 +575,9 @@ pub struct Config {
     pub build_info: bool,
     /// The path to the `build-info` directory that contains the build info json files.
     pub build_info_path: Option<PathBuf>,
+    /// Whether build infos leave out the AST, set by [`Config::enable_debug_build_info`].
+    #[serde(skip)]
+    pub build_info_without_ast: bool,
     /// Configuration for `forge fmt`
     pub fmt: FormatterConfig,
     /// Configuration for `forge lint`
@@ -666,6 +669,14 @@ pub struct Config {
 
     /// Whether to enable script execution protection.
     pub script_execution_protection: bool,
+
+    /// Whether inline config can only lower the runs, depth, and rejects of fuzz and invariant
+    /// tests and change a few settings that steer them, and must leave every other setting as it
+    /// is. Commands that run generated tests set it, so a test can neither widen its own access,
+    /// write outside the project, nor run unbounded.
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub restrict_inline_config: bool,
 
     /// PRIVATE: This structure may grow, As such, constructing this structure should
     /// _always_ be done using a public constructor or update syntax:
@@ -921,9 +932,94 @@ impl Config {
         config.invariant.corpus_random_sequence_weight_configured =
             invariant_corpus_random_sequence_weight_configured;
         config.invariant.workers_configured = invariant_workers_configured;
+        config.restrict_inline_config = self.restrict_inline_config;
         config.normalize_hardfork_settings()?;
+        if self.restrict_inline_config
+            && let Some(change) = self.restricted_inline_change(&config)
+        {
+            return Err(Error::from(format!("inline config cannot {change} in generated tests")));
+        }
 
         Ok(config)
+    }
+
+    /// Returns what a restricted inline config changed that it must not: a raised bound on the work
+    /// of a test, or any setting outside a few that only steer the fuzzer and invariant runs. An
+    /// allowlist, so a new setting, such as a path that Forge writes to, stays fixed.
+    fn restricted_inline_change(&self, inline: &Self) -> Option<String> {
+        let (fuzz, invariant) = (&inline.fuzz, &inline.invariant);
+        // The fuzzer takes no limit on rejects for zero.
+        let rejects = |rejects: u32| if rejects == 0 { u32::MAX } else { rejects };
+        let caps_raised = |base: &FuzzDictionaryConfig, inline: &FuzzDictionaryConfig| {
+            inline.max_fuzz_dictionary_addresses > base.max_fuzz_dictionary_addresses
+                || inline.max_fuzz_dictionary_values > base.max_fuzz_dictionary_values
+                || inline.max_fuzz_dictionary_literals > base.max_fuzz_dictionary_literals
+        };
+        let raised = [
+            ("fuzz.runs", fuzz.runs > self.fuzz.runs),
+            (
+                "fuzz.max_test_rejects",
+                rejects(fuzz.max_test_rejects) > rejects(self.fuzz.max_test_rejects),
+            ),
+            ("fuzz.dictionary", caps_raised(&self.fuzz.dictionary, &fuzz.dictionary)),
+            (
+                "invariant.dictionary",
+                caps_raised(&self.invariant.dictionary, &invariant.dictionary),
+            ),
+            ("invariant.runs", invariant.runs > self.invariant.runs),
+            ("invariant.depth", invariant.depth > self.invariant.depth),
+            ("invariant.min_depth", invariant.min_depth > self.invariant.min_depth),
+            (
+                "invariant.shrink_run_limit",
+                invariant.shrink_run_limit > self.invariant.shrink_run_limit,
+            ),
+            (
+                "invariant.max_assume_rejects",
+                invariant.max_assume_rejects > self.invariant.max_assume_rejects,
+            ),
+        ];
+        if let Some((key, _)) = raised.into_iter().find(|(_, raised)| *raised) {
+            return Some(format!("raise `{key}`"));
+        }
+        let mut allowed = inline.clone();
+        allowed.fuzz.runs = self.fuzz.runs;
+        allowed.fuzz.max_test_rejects = self.fuzz.max_test_rejects;
+        allowed.fuzz.dictionary = self.fuzz.dictionary;
+        allowed.fuzz.show_logs = self.fuzz.show_logs;
+        allowed.invariant.runs = self.invariant.runs;
+        allowed.invariant.depth = self.invariant.depth;
+        allowed.invariant.min_depth = self.invariant.min_depth;
+        allowed.invariant.depth_mode = self.invariant.depth_mode;
+        allowed.invariant.shrink_run_limit = self.invariant.shrink_run_limit;
+        allowed.invariant.max_assume_rejects = self.invariant.max_assume_rejects;
+        allowed.invariant.call_override = self.invariant.call_override;
+        allowed.invariant.dictionary = self.invariant.dictionary;
+        allowed.invariant.max_time_delay = self.invariant.max_time_delay;
+        allowed.invariant.max_block_delay = self.invariant.max_block_delay;
+        allowed.invariant.check_interval = self.invariant.check_interval;
+        allowed.invariant.show_metrics = self.invariant.show_metrics;
+        allowed.invariant.show_solidity = self.invariant.show_solidity;
+        allowed.allow_internal_expect_revert = self.allow_internal_expect_revert;
+        fn changed_key(base: &serde_json::Value, other: &serde_json::Value) -> Option<String> {
+            match (base, other) {
+                (serde_json::Value::Object(base), serde_json::Value::Object(other)) => {
+                    base.keys().chain(other.keys()).find_map(|key| {
+                        let null = serde_json::Value::Null;
+                        let (a, b) =
+                            (base.get(key).unwrap_or(&null), other.get(key).unwrap_or(&null));
+                        changed_key(a, b).map(|rest| {
+                            if rest.is_empty() { key.clone() } else { format!("{key}.{rest}") }
+                        })
+                    })
+                }
+                _ => (base != other).then(String::new),
+            }
+        }
+        let (Ok(base), Ok(allowed)) = (serde_json::to_value(self), serde_json::to_value(&allowed))
+        else {
+            return Some("change settings that do not serialize".to_string());
+        };
+        Some(format!("change `{}`", changed_key(&base, &allowed)?))
     }
 
     #[doc(hidden)]
@@ -2150,7 +2246,7 @@ impl Config {
         .with_extra_output(self.configured_artifacts_handler().output_selection());
 
         // We're keeping AST in `--build-info` for backwards compatibility with HardHat.
-        if self.ast || self.build_info {
+        if self.ast || (self.build_info && !self.build_info_without_ast) {
             settings = settings.with_ast();
         }
 
@@ -2158,6 +2254,64 @@ impl Config {
             CliSettings { extra_args: self.extra_args.clone(), ..Default::default() };
 
         Ok(SolcSettings { settings, cli_settings })
+    }
+
+    /// Enables build infos for a debug run, which reads the compiled sources from them. Unless
+    /// build infos were already enabled, they leave out the AST, which debug runs do not use.
+    ///
+    /// The compiler cache does not track build infos, so a cached build keeps the ones it wrote
+    /// without the compiler input. Dynamic test linking rewrites test and script sources, which
+    /// only the input holds, so the cache entries of the tests and scripts that such a build info
+    /// built are removed then, and the next build compiles those files again. Other sources
+    /// compile as they are on disk.
+    pub fn enable_debug_build_info(&mut self) -> eyre::Result<()> {
+        if self.build_info {
+            return Ok(());
+        }
+        self.build_info = true;
+        self.build_info_without_ast = true;
+        if !self.dynamic_test_linking {
+            return Ok(());
+        }
+        let paths = self.project_paths::<MultiCompilerLanguage>();
+        let without_input = fs::read_dir(&paths.build_infos)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension().is_some_and(|extension| extension == "json")
+                    && matches!(read_build_info_input::<Present>(path), Ok(None))
+            })
+            .filter_map(|path| Some(path.file_stem()?.to_str()?.to_string()))
+            .collect::<HashSet<_>>();
+        if without_input.is_empty() || !paths.cache.exists() {
+            return Ok(());
+        }
+        let mut cache = serde_json::from_slice::<serde_json::Value>(&fs::read(&paths.cache)?)?;
+        let Some(files) = cache.get_mut("files").and_then(|files| files.as_object_mut()) else {
+            return Ok(());
+        };
+        fn values(value: &serde_json::Value) -> impl Iterator<Item = &serde_json::Value> {
+            value.as_object().into_iter().flat_map(|map| map.values())
+        }
+        let len = files.len();
+        files.retain(|file, entry| {
+            let file = self.root.join(file);
+            // Artifacts are keyed by contract, compiler version, and profile.
+            !((file.starts_with(&self.test) || file.starts_with(&self.script))
+                && values(&entry["artifacts"]).flat_map(values).flat_map(values).any(|artifact| {
+                    artifact["build_id"].as_str().is_some_and(|id| without_input.contains(id))
+                }))
+        });
+        if files.len() == len {
+            return Ok(());
+        }
+        // A new file replaces the cache at once, so an interrupted write leaves no partial cache.
+        let temp = paths.cache.with_extension("json.tmp");
+        fs::write(&temp, serde_json::to_vec(&cache)?)
+            .and_then(|()| fs::rename(&temp, &paths.cache))
+            .wrap_err_with(|| format!("failed to write {}", paths.cache.display()))
     }
 
     /// Returns the configured [VyperSettings] that includes:
@@ -3189,6 +3343,7 @@ impl Default for Config {
             sparse_mode: false,
             build_info: false,
             build_info_path: None,
+            build_info_without_ast: false,
             fmt: Default::default(),
             lint: Default::default(),
             doc: Default::default(),
@@ -3208,6 +3363,7 @@ impl Default for Config {
             networks: Default::default(),
             transaction_timeout: 120,
             additional_compiler_profiles: Default::default(),
+            restrict_inline_config: false,
             compilation_restrictions: Default::default(),
             script_execution_protection: true,
             _non_exhaustive: (),
@@ -6174,6 +6330,24 @@ mod tests {
     }
 
     #[test]
+    fn debug_build_info_leaves_out_the_ast_unless_build_info_is_on() {
+        let requests_ast = |config: &Config| {
+            config.solc_settings().unwrap().settings.output_selection.as_ref()["*"]
+                .get("")
+                .is_some_and(|outputs| outputs.contains(&"ast".to_string()))
+        };
+
+        let mut config = Config::default();
+        config.enable_debug_build_info().unwrap();
+        assert!(config.build_info);
+        assert!(!requests_ast(&config));
+
+        let mut config = Config { build_info: true, ..Config::default() };
+        config.enable_debug_build_info().unwrap();
+        assert!(requests_ast(&config));
+    }
+
+    #[test]
     fn tempo_network_defaults_to_latest_tempo_hardfork() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -7677,6 +7851,31 @@ mod tests {
             assert!(
                 err_msg.contains("does not exist")
                     || err_msg.contains("Failed to resolve inherited config path"),
+                "Error message: {err_msg}"
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_inheritance_from_profile_name_hints_at_default() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    optimizer_runs = 200
+
+                    [profile.ci]
+                    extends = "default"
+                    "#,
+            )?;
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+
+            let err_msg = Config::load().unwrap_err().to_string();
+            assert!(
+                err_msg.contains("every profile already inherits from `[profile.default]`"),
                 "Error message: {err_msg}"
             );
 
@@ -9765,6 +9964,40 @@ mod tests {
         assert_eq!(restriction.restrictions.solc.via_ir, Some(true));
         assert_eq!(fs::read_to_string(artifact).unwrap(), "existing artifact");
         assert_eq!(fs::read_to_string(cache).unwrap(), "existing cache");
+    }
+
+    #[test]
+    fn restricted_inline_config_only_lowers_limits() {
+        let base = Config::default();
+        let change = |edit: fn(&mut Config)| {
+            let mut inline = base.clone();
+            edit(&mut inline);
+            base.restricted_inline_change(&inline)
+        };
+        assert_eq!(change(|c| c.fuzz.max_test_rejects = 1), None);
+        // Zero takes no limit on rejects.
+        assert_eq!(
+            change(|c| c.fuzz.max_test_rejects = 0),
+            Some("raise `fuzz.max_test_rejects`".into())
+        );
+        assert_eq!(change(|c| c.fuzz.dictionary.dictionary_weight = 0), None);
+        assert_eq!(change(|c| c.fuzz.dictionary.max_fuzz_dictionary_values = 1), None);
+        assert_eq!(
+            change(|c| c.fuzz.dictionary.max_fuzz_dictionary_values = usize::MAX),
+            Some("raise `fuzz.dictionary`".into())
+        );
+        assert_eq!(
+            change(|c| c.invariant.dictionary.max_fuzz_dictionary_literals = usize::MAX),
+            Some("raise `invariant.dictionary`".into())
+        );
+        assert_eq!(
+            change(|c| c.fuzz.fail_on_revert = !c.fuzz.fail_on_revert),
+            Some("change `fuzz.fail_on_revert`".into())
+        );
+        assert_eq!(
+            change(|c| c.invariant.fail_on_revert = !c.invariant.fail_on_revert),
+            Some("change `invariant.fail_on_revert`".into())
+        );
     }
 
     #[test]
