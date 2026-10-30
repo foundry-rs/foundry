@@ -3170,11 +3170,10 @@ contract SymbolicExpectRevertCodeless is Test {
         target.ping();
     }
 
-    function checkMockedRevertMismatchCaught() public {
+    function checkMockedRevertMismatch() public {
         vm.mockCallRevert(address(target), abi.encodeCall(CodelessTarget.ping, ()), bytes("actual"));
         vm.expectRevert(bytes("expected"));
-        (bool ok,) = address(target).call(abi.encodeCall(CodelessTarget.ping, ()));
-        assertFalse(ok);
+        target.ping();
     }
 
     function checkPrecompileSuccess() public {
@@ -3226,13 +3225,13 @@ Ran 10 tests for test/SymbolicExpectRevertCodeless.t.sol:SymbolicExpectRevertCod
 [PASS] checkAssumeNoRevertNoCode() ([METRICS])
 [PASS] checkKzgFailure() ([METRICS])
 [PASS] checkMockedRevert() ([METRICS])
-[PASS] checkMockedRevertMismatchCaught() ([METRICS])
+[FAIL: Error != expected error: actual != expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockedRevertMismatch() ([METRICS])
 [PASS] checkMockedSuccess() ([METRICS])
 [PASS] checkNoCode() ([METRICS])
 [PASS] checkPrecompileFailure() ([METRICS])
 [PASS] checkPrecompileSuccess() ([METRICS])
 [PASS] checkValueTransfer(uint256) ([METRICS])
-Suite result: FAILED. 9 passed; 1 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 8 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
