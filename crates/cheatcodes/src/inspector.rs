@@ -8,6 +8,7 @@ use crate::{
         merge_recorded_frame,
         mock::{self, MockCallDataContext, MockCallReturnData},
         prank::Prank,
+        touch_account,
     },
     expected_emit::{self, ExpectedEmitTracker},
     script::Broadcast,
@@ -1389,10 +1390,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             if let Some(changes) = prank.changes_for(curr_depth, call.caller) {
                 if let Some(new_caller) = changes.caller {
                     // Ensure new caller is loaded, warm and touched
-                    if let Ok(mut account) = interp.host().state_mut().account(&new_caller) {
-                        account.touch();
-                        account.warm();
-                    }
+                    let _ = touch_account(interp.host().state_mut(), new_caller);
                     call.caller = new_caller;
                 }
                 if let Some(new_origin) = changes.origin {
@@ -2565,10 +2563,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         {
             if let Some(new_caller) = changes.caller {
                 // Ensure new caller is loaded, warm and touched
-                if let Ok(mut account) = interp.host().state_mut().account(&new_caller) {
-                    account.touch();
-                    account.warm();
-                }
+                let _ = touch_account(interp.host().state_mut(), new_caller);
                 input.caller = new_caller;
                 caller_changed = true;
             }

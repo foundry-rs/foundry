@@ -6603,7 +6603,6 @@ dependencies = [
  "eyre",
  "foundry-common",
  "foundry-compilers",
- "foundry-config",
  "foundry-evm-core",
  "rayon",
  "semver 1.0.28",

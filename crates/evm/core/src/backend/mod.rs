@@ -53,7 +53,8 @@ use evm2::{
     EvmFeatures, Inspector,
     bytecode::Bytecode,
     evm::{
-        AccountInfo, Cache, CacheDB, DynDatabase, EmptyDB, PendingState, State, StateSnapshot,
+        AccountInfo, Cache, CacheDB, DbResult, DynDatabase, EmptyDB, PendingState, State,
+        StateSnapshot,
         bal::{Bal, BlockAccessIndex},
     },
 };
@@ -111,19 +112,6 @@ pub enum ForkAccountField {
     Balance,
     Nonce,
     Code,
-}
-
-impl ForkAccountField {
-    fn update(self, target: &mut AccountInfo, refreshed: &AccountInfo) {
-        match self {
-            Self::Balance => target.balance = refreshed.balance,
-            Self::Nonce => target.nonce = refreshed.nonce,
-            Self::Code => {
-                target.code_hash = refreshed.code_hash;
-                target.code = refreshed.code.clone();
-            }
-        }
-    }
 }
 
 /// Block data required to execute or position a fork at a transaction.
@@ -453,7 +441,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     // ---- Accepted state between executions ----
 
     /// Returns an account of the active context's accepted state.
-    pub fn basic(&self, address: Address) -> StateResult<Option<AccountInfo>> {
+    pub fn basic(&self, address: Address) -> DbResult<Option<AccountInfo>> {
         let mut account = self.lifecycle.accepted_db().get_account(&address)?;
         if let Some(account) = &mut account
             && account.code.is_none()
@@ -465,17 +453,17 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     }
 
     /// Returns code of the active context's accepted state.
-    pub fn code_by_hash(&self, code_hash: B256) -> StateResult<Bytecode> {
+    pub fn code_by_hash(&self, code_hash: B256) -> DbResult<Bytecode> {
         self.lifecycle.accepted_db().get_code_by_hash(&code_hash)
     }
 
     /// Returns a storage slot of the active context's accepted state.
-    pub fn storage(&self, address: Address, slot: U256) -> StateResult<U256> {
+    pub fn storage(&self, address: Address, slot: U256) -> DbResult<U256> {
         self.lifecycle.accepted_db().get_storage(&address, &slot)
     }
 
     /// Returns a block hash of the active context.
-    pub fn block_hash(&self, number: U256) -> StateResult<B256> {
+    pub fn block_hash(&self, number: U256) -> DbResult<B256> {
         self.lifecycle.accepted_db().get_block_hash(&number)
     }
 
@@ -1161,13 +1149,17 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let state = evm.state_mut();
         let cache = &mut state.overlay_db_mut().cache;
         if let Some(Some(cached)) = cache.accounts.get_mut(&address) {
-            field.update(cached, &refreshed);
-            cached.code = None;
-            if matches!(field, ForkAccountField::Code)
-                && let Some(code) = &refreshed.code
-            {
-                cache.contracts.insert(refreshed.code_hash, code.clone());
+            match field {
+                ForkAccountField::Balance => cached.balance = refreshed.balance,
+                ForkAccountField::Nonce => cached.nonce = refreshed.nonce,
+                ForkAccountField::Code => {
+                    cached.code_hash = refreshed.code_hash;
+                    if let Some(code) = &refreshed.code {
+                        cache.contracts.insert(refreshed.code_hash, code.clone());
+                    }
+                }
             }
+            cached.code = None;
         }
         let mut account = state.account(&address)?;
         match field {
@@ -1569,9 +1561,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         Ok(mem::take(&mut evm.state_mut().overlay_db_mut().cache))
     }
 }
-
-/// Result of a read of the backend's accepted state.
-pub type StateResult<T> = Result<T, evm2::DatabaseError>;
 
 /// Returns the transactions of `block` and its two ancestors, fetched through `backend`.
 fn block_context<FEN: FoundryEvmNetwork>(

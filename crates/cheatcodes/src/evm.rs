@@ -852,64 +852,39 @@ impl Cheatcode for etchCall {
 
 impl Cheatcode for resetNonceCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { account } = self;
-        let mut account = ccx.evm.state_mut().account(account)?;
+        let Self { account: address } = *self;
+        let mut account = ccx.evm.state_mut().account(&address)?;
         // Per EIP-161, contract nonces start at 1. EOAs, including EIP-7702 delegated ones, start
         // at 0.
         let code_hash = account.code_hash();
         let is_eoa = code_hash == KECCAK256_EMPTY
             || code_hash.is_zero()
             || account.load_code()?.is_eip7702();
-        let nonce = if is_eoa { 0 } else { 1 };
-        account.touch();
-        account.warm();
-        let previous = account.nonce();
-        account.set_nonce(nonce);
-        let write = PersistentWrite::nonce(&account, previous);
         drop(account);
-        // Nonce cheatcodes survive reverts of the enclosing calls.
-        ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
+        let nonce = if is_eoa { 0 } else { 1 };
         debug!(target: "cheatcodes", nonce, "reset");
-        Ok(Default::default())
+        set_persistent_nonce(ccx, address, nonce)
     }
 }
 
 impl Cheatcode for setNonceCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account, newNonce } = *self;
-        let mut account = ccx.evm.state_mut().account(&account)?;
         // nonce must increment only
-        let current = account.nonce();
+        let current = ccx.evm.state_mut().account(&account)?.nonce();
         ensure!(
             newNonce >= current,
             "new nonce ({newNonce}) must be strictly equal to or higher than the \
              account's current nonce ({current})"
         );
-        account.touch();
-        account.warm();
-        let previous = account.nonce();
-        account.set_nonce(newNonce);
-        let write = PersistentWrite::nonce(&account, previous);
-        drop(account);
-        // Nonce cheatcodes survive reverts of the enclosing calls.
-        ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
-        Ok(Default::default())
+        set_persistent_nonce(ccx, account, newNonce)
     }
 }
 
 impl Cheatcode for setNonceUnsafeCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account, newNonce } = *self;
-        let mut account = ccx.evm.state_mut().account(&account)?;
-        account.touch();
-        account.warm();
-        let previous = account.nonce();
-        account.set_nonce(newNonce);
-        let write = PersistentWrite::nonce(&account, previous);
-        drop(account);
-        // Nonce cheatcodes survive reverts of the enclosing calls.
-        ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
-        Ok(Default::default())
+        set_persistent_nonce(ccx, account, newNonce)
     }
 }
 
@@ -1888,6 +1863,23 @@ pub(super) fn touch_account(state: &mut State<'_>, addr: Address) -> Result<()> 
     account.touch();
     account.warm();
     Ok(())
+}
+
+/// Sets the nonce of `address`, as a write that survives reverts of the enclosing calls.
+fn set_persistent_nonce<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
+    address: Address,
+    nonce: u64,
+) -> Result {
+    let mut account = ccx.evm.state_mut().account(&address)?;
+    account.touch();
+    account.warm();
+    let previous = account.nonce();
+    account.set_nonce(nonce);
+    let write = PersistentWrite::nonce(&account, previous);
+    drop(account);
+    ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
+    Ok(Default::default())
 }
 
 /// Loads the storage slot and marks it warm, as an `SLOAD` or `SSTORE` of it would.

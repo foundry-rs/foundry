@@ -1,7 +1,7 @@
 use super::{
     Cheatcodes, CheatsConfig, ChiselState, CmpOperands, CustomPrintTracer, DebugRecorder,
-    EdgeCovConfig, EdgeCovInspector, EdgeCoverage, Fuzzer, LineCoverageCollector, LogCollector,
-    RevertDiagnostic, ScriptExecutionInspector, TempoLabels, TracingInspector,
+    EdgeCovConfig, EdgeCovInspector, EdgeCovKind, EdgeCoverage, Fuzzer, LineCoverageCollector,
+    LogCollector, RevertDiagnostic, ScriptExecutionInspector, TempoLabels, TracingInspector,
 };
 use alloy_consensus::transaction::Recovered;
 use alloy_network::TransactionBuilder;
@@ -780,9 +780,15 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     /// Derives both the on/off gate and [`EdgeCovConfig`] from `corpus`.
     #[inline]
     pub fn collect_edge_coverage_with_config(&mut self, corpus: &FuzzCorpusConfig) {
-        self.edge_coverage = corpus
-            .collect_evm_edge_coverage()
-            .then(|| EdgeCovInspector::with_config(corpus.into()).into());
+        self.edge_coverage = corpus.collect_evm_edge_coverage().then(|| {
+            let kind = if corpus.evm_edge_coverage_collision_free() {
+                EdgeCovKind::CollisionFree
+            } else {
+                EdgeCovKind::Hash
+            };
+            let include_call_depth = corpus.evm_edge_coverage_include_call_depth();
+            EdgeCovInspector::with_config(EdgeCovConfig::new(kind, include_call_depth)).into()
+        });
         self.refresh_static_step_dispatch();
     }
 

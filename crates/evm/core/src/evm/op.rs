@@ -2,7 +2,7 @@
 
 use super::{
     EvmEnv, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork, FoundryTxResultExt, SendableExt,
-    TxPayload,
+    TxPayload, with_eip7702_delegations,
 };
 use alloy_consensus::transaction::Recovered;
 use alloy_eips::Encodable2718;
@@ -100,11 +100,7 @@ impl FoundryEvmFactory for OpEvmFactory {
     type Types = OpEvmTypes;
 
     fn version(&self, spec: OpSpecId, chain_id: u64) -> Version {
-        let mut version = op_version(spec, chain_id);
-        // Like REVM, existing EIP-7702 delegations resolve on every spec; only authorization
-        // processing is fork-gated, by the transaction registry.
-        version.features.insert(evm2::EvmFeatures::EIP7702);
-        version
+        with_eip7702_delegations(op_version(spec, chain_id))
     }
 
     fn tx_registry(&self, spec: OpSpecId) -> TxRegistry<OpEvmTypes, TxResult<OpEvmTypes>> {

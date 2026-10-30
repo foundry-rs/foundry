@@ -161,6 +161,15 @@ pub(crate) fn unknown_transaction_type(tx: &AnyRpcTransaction, target: &str) -> 
     eyre::eyre!("cannot convert unknown transaction type {:#04x} to {target}", tx.inner.inner.ty())
 }
 
+/// Enables EIP-7702 delegation resolution on `version`.
+///
+/// Like REVM, existing delegations resolve on every spec; only authorization processing is
+/// fork-gated, by the transaction registry.
+pub(crate) fn with_eip7702_delegations(mut version: Version) -> Version {
+    version.features.insert(evm2::EvmFeatures::EIP7702);
+    version
+}
+
 /// Builds Foundry-configured EVMs for one evm2 [`EvmTypesHost`] family.
 ///
 /// Implementors provide configuration (version, registry, precompiles, extension state) and

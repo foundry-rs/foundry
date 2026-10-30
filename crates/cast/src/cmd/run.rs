@@ -185,12 +185,6 @@ struct TargetFetch {
     provider: RetryProvider,
 }
 
-/// Fields only needed by the Monad-specific `execute_monad` path.
-#[cfg(feature = "monad")]
-struct MonadPrepared {
-    provider: RetryProvider,
-}
-
 /// Chain-specific gas limits for transactions replayed by `cast run`.
 enum ReplayGasLimits {
     Unchanged,
@@ -214,8 +208,9 @@ struct PreparedRun<FEN: FoundryEvmNetwork> {
     replay_gas_limits: ReplayGasLimits,
     /// The target's receipt, which the replay is checked against.
     receipt: Option<AnyTransactionReceipt>,
+    /// Provider of the Monad-specific `execute_monad` path.
     #[cfg(feature = "monad")]
-    monad: MonadPrepared,
+    monad_provider: RetryProvider,
 }
 
 impl RunArgs {
@@ -673,7 +668,7 @@ impl RunArgs {
             replay_gas_limits,
             receipt,
             #[cfg(feature = "monad")]
-            monad: MonadPrepared { provider },
+            monad_provider: provider,
         })
     }
 }
@@ -935,7 +930,7 @@ impl PreparedRun<MonadEvmNetwork> {
                 self.evm_env.block.number
             )
         })?;
-        let block_context = BlockContext::<MonadEvmNetwork>::fetch(&self.monad.provider, block)
+        let block_context = BlockContext::<MonadEvmNetwork>::fetch(&self.monad_provider, block)
             .await
             .wrap_err_with(|| {
                 format!(

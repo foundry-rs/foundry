@@ -1140,7 +1140,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
             .into_iter()
             .filter(|address| self.forks.is_persistent(address))
             .collect::<Vec<_>>();
-        let persistent = self.forks.persistent().clone();
+        let persistent = self.forks.persistent.clone();
         let context = self.active_mut();
         context.loaded = loaded;
         context.created.retain(|address| {
