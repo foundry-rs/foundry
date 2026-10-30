@@ -72,13 +72,15 @@ impl<T: EvmTypes> Inspector<T> for Fuzzer {
         }
 
         self.call_depth = self.call_depth.saturating_add(1);
-        self.record_observed_call(
-            message.caller,
-            message.destination,
-            &message.input,
-            message.value,
-            message.kind,
-        );
+        if self.should_record_observed_call(message.kind) {
+            self.observed_calls.push(ObservedCall {
+                depth: self.call_depth - 1,
+                caller: message.caller,
+                target: message.destination,
+                calldata: message.input.clone(),
+                value: (!message.value.is_zero()).then_some(message.value),
+            });
+        }
 
         // We only collect `stack` and `memory` data before and after calls.
         // this will be turned off on the next `step`
@@ -165,26 +167,6 @@ impl Fuzzer {
     /// Returns the buffered sub-calls observed since the last drain.
     pub fn take_observed_calls(&mut self) -> Vec<ObservedCall> {
         std::mem::take(&mut self.observed_calls)
-    }
-
-    /// Buffers a sub-call for invariant sequence analysis, dropping a zero value.
-    fn record_observed_call(
-        &mut self,
-        caller: Address,
-        target: Address,
-        calldata: &Bytes,
-        value: U256,
-        kind: MessageKind,
-    ) {
-        if self.should_record_observed_call(kind) {
-            self.observed_calls.push(ObservedCall {
-                depth: self.call_depth - 1,
-                caller,
-                target,
-                calldata: calldata.clone(),
-                value: (!value.is_zero()).then_some(value),
-            });
-        }
     }
 
     #[inline]
@@ -309,7 +291,7 @@ mod tests {
     use foundry_evm_core::{
         constants::MONAD_CHEATCODE_ADDRESS,
         evm::{
-            EvmEnv, EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork, SpecFor,
+            EthEvmNetwork, EvmEnv, EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork, SpecFor,
             TransactionRequestFor, TypesFor,
         },
     };
@@ -340,8 +322,11 @@ mod tests {
     /// `sstore(0, 1); stop`.
     const REENTRANT_CODE: &[u8] = &[0x60, 0x01, 0x60, 0x00, 0x55, 0x00];
 
-    /// Calls `HANDLER` from `CALLER` with `fuzzer` on `FEN`'s default spec.
-    fn run<FEN: FoundryEvmNetwork>(fuzzer: Fuzzer) -> (Evm<'static, TypesFor<FEN>>, Fuzzer)
+    /// Calls `HANDLER`, running `handler`, from `CALLER` with `fuzzer` on `FEN`'s default spec.
+    fn run<FEN: FoundryEvmNetwork>(
+        fuzzer: Fuzzer,
+        handler: &[u8],
+    ) -> (Evm<'static, TypesFor<FEN>>, Fuzzer)
     where
         TransactionRequestFor<FEN>: Default,
     {
@@ -349,10 +334,11 @@ mod tests {
         let mut db = InMemoryDB::default();
         db.insert_account_info(&CALLER, AccountInfo::default().with_balance(U256::from(1e18)));
         for (address, code) in
-            [(HANDLER, &handler_code()[..]), (VICTIM, VICTIM_CODE), (REENTRANT, REENTRANT_CODE)]
+            [(HANDLER, handler), (VICTIM, VICTIM_CODE), (REENTRANT, REENTRANT_CODE)]
         {
             let code = Bytecode::new_legacy(Bytes::copy_from_slice(code));
-            db.insert_account_info(&address, AccountInfo::default().with_code(code));
+            let account = AccountInfo::default().with_balance(U256::from(7)).with_code(code);
+            db.insert_account_info(&address, account);
         }
         let factory = EvmFactoryFor::<FEN>::default();
         let spec = SpecFor::<FEN>::default();
@@ -383,7 +369,7 @@ mod tests {
     {
         // Observation: the sub-call, the stack after it returns and the mapping slot it writes.
         let fuzzer = Fuzzer::new(16, Some(AddressMap::default())).with_call_recording(true);
-        let (mut evm, mut fuzzer) = run::<FEN>(fuzzer);
+        let (mut evm, mut fuzzer) = run::<FEN>(fuzzer, &handler_code());
         let mapping_slot = keccak256([B256::with_last_byte(7), B256::with_last_byte(1)].concat());
         assert_eq!(slot(&mut evm, VICTIM, mapping_slot.into()), U256::from(2));
         assert_eq!(
@@ -422,14 +408,14 @@ mod tests {
         generator.set_replay(true);
         let mut fuzzer = Fuzzer::new(16, None);
         fuzzer.call_generator = Some(generator);
-        let (mut evm, _) = run::<FEN>(fuzzer);
+        let (mut evm, _) = run::<FEN>(fuzzer, &handler_code());
         assert_eq!(slot(&mut evm, REENTRANT, U256::ZERO), U256::ONE);
         assert_eq!(slot(&mut evm, VICTIM, mapping_slot.into()), U256::ZERO);
     }
 
     #[test]
     fn fuzzer_networks() {
-        fuzzer_suite::<foundry_evm_core::evm::EthEvmNetwork>();
+        fuzzer_suite::<EthEvmNetwork>();
         fuzzer_suite::<foundry_evm_core::evm::TempoEvmNetwork>();
         #[cfg(feature = "optimism")]
         fuzzer_suite::<foundry_evm_core::evm::OpEvmNetwork>();
@@ -437,10 +423,6 @@ mod tests {
         fuzzer_suite::<foundry_evm_core::evm::BaseEvmNetwork>();
         #[cfg(feature = "monad")]
         fuzzer_suite::<foundry_evm_core::evm::MonadEvmNetwork>();
-    }
-
-    fn fuzzer(record_calls: bool) -> Fuzzer {
-        Fuzzer::new(16, None).with_call_recording(record_calls)
     }
 
     #[test]
@@ -455,98 +437,36 @@ mod tests {
 
     #[test]
     fn observed_calls_are_disabled_by_default() {
-        let mut fuzzer = Fuzzer::new(16, None);
-        fuzzer.call_depth = 2;
-
-        fuzzer.record_observed_call(
-            Address::repeat_byte(0xaa),
-            Address::repeat_byte(0x11),
-            &Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
-            U256::ONE,
-            MessageKind::Call,
-        );
-
+        let (_, mut fuzzer) = run::<EthEvmNetwork>(Fuzzer::new(16, None), &handler_code());
         assert!(fuzzer.take_observed_calls().is_empty());
     }
 
     #[test]
-    fn observed_calls_skip_top_level_call() {
-        let mut fuzzer = fuzzer(true);
-        fuzzer.call_depth = 1;
+    fn observed_calls_record_only_valued_subcalls() {
+        // `mstore(0, 0xcafebabe); call(gas(), VICTIM, 7, 28, 4, 0, 0);
+        // delegatecall(gas(), VICTIM, 0, 0, 0, 0); stop`.
+        let mut handler = vec![0x63, 0xca, 0xfe, 0xba, 0xbe, 0x60, 0x00, 0x52];
+        handler.extend([0x60, 0x00, 0x60, 0x00, 0x60, 0x04, 0x60, 0x1c, 0x60, 0x07, 0x73]);
+        handler.extend_from_slice(VICTIM.as_slice());
+        handler.extend([0x5a, 0xf1, 0x50]);
+        handler.extend([0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x73]);
+        handler.extend_from_slice(VICTIM.as_slice());
+        handler.extend([0x5a, 0xf4, 0x50, 0x00]);
 
-        fuzzer.record_observed_call(
-            Address::repeat_byte(0xaa),
-            Address::repeat_byte(0x11),
-            &Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
-            U256::ZERO,
-            MessageKind::Call,
-        );
+        let fuzzer = Fuzzer::new(16, None).with_call_recording(true);
+        let (_, mut fuzzer) = run::<EthEvmNetwork>(fuzzer, &handler);
 
-        assert!(fuzzer.take_observed_calls().is_empty());
-    }
-
-    #[test]
-    fn observed_calls_record_subcall_depth_target_calldata_and_value() {
-        let mut fuzzer = fuzzer(true);
-        let caller = Address::repeat_byte(0x11);
-        let target = Address::repeat_byte(0x22);
-        let calldata = Bytes::from_static(&[0xca, 0xfe, 0xba, 0xbe]);
-        let value = U256::from(7);
-        fuzzer.call_depth = 3;
-
-        fuzzer.record_observed_call(caller, target, &calldata, value, MessageKind::Call);
-
+        // The top-level call and the delegate call are not recorded.
         assert_eq!(
             fuzzer.take_observed_calls(),
-            vec![ObservedCall { depth: 2, caller, target, calldata, value: Some(value) }]
+            [ObservedCall {
+                depth: 1,
+                caller: HANDLER,
+                target: VICTIM,
+                calldata: Bytes::from_static(&[0xca, 0xfe, 0xba, 0xbe]),
+                value: Some(U256::from(7)),
+            }]
         );
-    }
-
-    #[test]
-    fn observed_calls_skip_non_call_schemes() {
-        let mut fuzzer = fuzzer(true);
-        fuzzer.call_depth = 2;
-
-        fuzzer.record_observed_call(
-            Address::repeat_byte(0x11),
-            Address::repeat_byte(0x22),
-            &Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
-            U256::ZERO,
-            MessageKind::DelegateCall,
-        );
-
         assert!(fuzzer.take_observed_calls().is_empty());
-    }
-
-    #[test]
-    fn take_observed_calls_drains_buffer() {
-        let mut fuzzer = fuzzer(true);
-        fuzzer.call_depth = 2;
-        fuzzer.record_observed_call(
-            Address::repeat_byte(0xaa),
-            Address::repeat_byte(0x33),
-            &Bytes::from_static(&[0x12, 0x34, 0x56, 0x78]),
-            U256::ZERO,
-            MessageKind::Call,
-        );
-
-        assert_eq!(fuzzer.take_observed_calls().len(), 1);
-        assert!(fuzzer.take_observed_calls().is_empty());
-    }
-
-    #[test]
-    fn observed_calls_drop_zero_value() {
-        let mut fuzzer = fuzzer(true);
-        fuzzer.call_depth = 2;
-
-        fuzzer.record_observed_call(
-            Address::repeat_byte(0x11),
-            Address::repeat_byte(0x22),
-            &Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
-            U256::ZERO,
-            MessageKind::Call,
-        );
-
-        assert_eq!(fuzzer.take_observed_calls()[0].value, None);
     }
 }
