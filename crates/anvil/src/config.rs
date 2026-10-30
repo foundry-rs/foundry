@@ -235,18 +235,6 @@ const BANNER: &str = r"
      \__,_| |_| |_|   \_/   |_| |_|
 ";
 
-fn fork_source_id(urls: &[String], headers: &[String]) -> B256 {
-    let mut encoded = Vec::new();
-    for parts in [urls, headers] {
-        encoded.extend_from_slice(&(parts.len() as u64).to_be_bytes());
-        for part in parts {
-            encoded.extend_from_slice(&(part.len() as u64).to_be_bytes());
-            encoded.extend_from_slice(part.as_bytes());
-        }
-    }
-    keccak256(encoded)
-}
-
 /// Configurations of the EVM node
 #[derive(Clone, Debug)]
 pub struct NodeConfig {
@@ -299,6 +287,9 @@ pub struct NodeConfig {
     pub fork_choice: Option<ForkChoice>,
     /// headers to use with fork RPC endpoints
     pub fork_headers: Vec<String>,
+    /// Fork URLs configured at startup. Unlike `fork_urls`, these do not change when the fork is
+    /// switched over RPC, so only their origins receive `fork_headers` and use MPP.
+    pub trusted_fork_urls: Vec<String>,
     /// specifies chain id for cache to skip fetching from remote in offline-start mode
     pub fork_chain_id: Option<U256>,
     /// Skip `anvil_nodeInfo` / `anvil_metadata` probes against the fork URL.
@@ -715,6 +706,7 @@ impl Default for NodeConfig {
             genesis: None,
             fork_request_timeout: REQUEST_TIMEOUT,
             fork_headers: vec![],
+            trusted_fork_urls: vec![],
             fork_request_retries: 5,
             fork_retry_backoff: Duration::from_millis(1_000),
             fork_chain_id: None,
@@ -1157,6 +1149,7 @@ impl NodeConfig {
             if self.fork_urls != fork_urls {
                 self.fork_endpoint_is_anvil = false;
             }
+            self.trusted_fork_urls = fork_urls.clone();
             self.fork_urls = fork_urls;
         }
         self
@@ -1168,6 +1161,7 @@ impl NodeConfig {
         if self.fork_urls != fork_urls {
             self.fork_endpoint_is_anvil = false;
         }
+        self.trusted_fork_urls = fork_urls.clone();
         self.fork_urls = fork_urls;
         self
     }
@@ -1734,14 +1728,66 @@ impl NodeConfig {
     }
 
     fn fork_provider(&self, eth_rpc_url: &str) -> Result<RetryProvider> {
+        self.fork_provider_builder(eth_rpc_url)
+            .build()
+            .wrap_err("failed to establish provider to fork url")
+    }
+
+    /// Returns the fork provider builder for `eth_rpc_url`, which only sends `fork_headers` and
+    /// `MPP_API_KEY`, and only pays MPP challenges, when the URL is trusted.
+    fn fork_provider_builder(&self, eth_rpc_url: &str) -> ProviderBuilder {
+        let trusted = self.is_trusted_fork_url(eth_rpc_url);
         ProviderBuilder::new(eth_rpc_url)
             .timeout(self.fork_request_timeout)
             .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
             .compute_units_per_second(self.compute_units_per_second)
             .max_retry(self.fork_request_retries)
-            .headers(self.fork_headers.clone())
-            .build()
-            .wrap_err("failed to establish provider to fork url")
+            .headers(if trusted { self.fork_headers.clone() } else { Vec::new() })
+            .no_mpp(!trusted)
+    }
+
+    /// Returns whether `url` shares an origin with a configured fork URL. Fork headers,
+    /// `MPP_API_KEY` and MPP payments are only used with such URLs, so a URL chosen over RPC cannot
+    /// receive them.
+    fn is_trusted_fork_url(&self, url: &str) -> bool {
+        // Compare the endpoints the provider actually connects to.
+        let origin =
+            |url: &str| ProviderBuilder::<AnyNetwork>::new(url).url().map(|url| url.origin());
+        let target = origin(url);
+        self.trusted_fork_urls.iter().any(|fork_url| {
+            fork_url == url || matches!((origin(fork_url), &target), (Some(a), Some(b)) if a == *b)
+        })
+    }
+
+    /// Warns when `fork_headers` will not be sent to `url` because it is not a trusted fork URL.
+    pub(crate) fn warn_if_fork_headers_withheld(&self, url: &str) {
+        if !self.silent && !self.fork_headers.is_empty() && !self.is_trusted_fork_url(url) {
+            let _ = foundry_common::sh_warn!(
+                "not sending fork headers to {}: its origin differs from the configured fork URL",
+                redact_url(url)
+            );
+        }
+    }
+
+    /// Identifies the source of a fork cache by its URLs and the credentials sent to them, so
+    /// caches filled with different credentials are not shared.
+    fn fork_source_id(&self, eth_rpc_url: &str) -> B256 {
+        let trusted = self.is_trusted_fork_url(eth_rpc_url);
+        let headers = if trusted { self.fork_headers.as_slice() } else { &[] };
+        let mut encoded = Vec::new();
+        for parts in [self.fork_urls.as_slice(), headers] {
+            encoded.extend_from_slice(&(parts.len() as u64).to_be_bytes());
+            for part in parts {
+                encoded.extend_from_slice(&(part.len() as u64).to_be_bytes());
+                encoded.extend_from_slice(part.as_bytes());
+            }
+        }
+        // Untrusted URLs do not use MPP either. Only they are marked, so trusted
+        // sources keep their existing cache identity.
+        if !trusted {
+            encoded.push(0);
+        }
+        keccak256(encoded)
     }
 
     async fn fork_endpoint_identity(
@@ -2317,7 +2363,7 @@ latest block number: {latest_block}"
             eyre::bail!("primary fork endpoint changed while its context was being validated");
         }
 
-        let source_id = fork_source_id(&self.fork_urls, &self.fork_headers);
+        let source_id = self.fork_source_id(&eth_rpc_url);
         let account_fetch_policy = account_fetch_policy_for_source(source_chain_id, target_profile);
         let meta = BlockchainDbMeta::new(cache_block_env, eth_rpc_url.clone())
             .with_fork_identity(block_hash, source_id)
@@ -2330,12 +2376,7 @@ latest block number: {latest_block}"
             if self.fork_urls.len() <= 1 {
                 return self.fork_provider(&eth_rpc_url);
             }
-            ProviderBuilder::new(&eth_rpc_url)
-                .timeout(self.fork_request_timeout)
-                .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
-                .compute_units_per_second(self.compute_units_per_second)
-                .max_retry(self.fork_request_retries)
-                .headers(self.fork_headers.clone())
+            self.fork_provider_builder(&eth_rpc_url)
                 .build_fallback(self.fork_urls.clone())
                 .wrap_err("failed to establish round-robin provider to fork urls")
         };
@@ -2830,13 +2871,29 @@ mod tests {
 
     #[test]
     fn fork_source_identity_includes_all_urls_and_headers() {
-        let urls = ["http://primary".to_string(), "http://fallback".to_string()];
-        let headers = ["Authorization: secret".to_string()];
-        let identity = fork_source_id(&urls, &headers);
+        let urls = vec!["http://primary".to_string(), "http://fallback".to_string()];
+        let headers = vec!["Authorization: secret".to_string()];
+        let config = |urls: Vec<String>, headers: Vec<String>| {
+            NodeConfig::default().with_fork_urls(urls).with_fork_headers(headers)
+        };
+        let identity = config(urls.clone(), headers.clone()).fork_source_id(&urls[0]);
 
-        assert_ne!(identity, fork_source_id(&urls[..1], &headers));
-        assert_ne!(identity, fork_source_id(&urls, &[]));
-        assert_ne!(identity, fork_source_id(&[urls[1].clone(), urls[0].clone()], &headers));
+        assert_ne!(identity, config(urls[..1].to_vec(), headers.clone()).fork_source_id(&urls[0]));
+        assert_ne!(identity, config(urls.clone(), vec![]).fork_source_id(&urls[0]));
+        assert_ne!(
+            identity,
+            config(vec![urls[1].clone(), urls[0].clone()], headers.clone())
+                .fork_source_id(&urls[1])
+        );
+
+        // A URL switched to over RPC receives no credentials, so it must not share the cache of
+        // the same URL configured at startup, with or without headers.
+        let other = "http://other".to_string();
+        let mut switched = config(urls, headers.clone());
+        switched.fork_urls = vec![other.clone()];
+        let switched = switched.fork_source_id(&other);
+        assert_ne!(switched, config(vec![other.clone()], headers).fork_source_id(&other));
+        assert_ne!(switched, config(vec![other.clone()], vec![]).fork_source_id(&other));
     }
 
     #[test]
