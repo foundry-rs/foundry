@@ -3,6 +3,7 @@ use crate::{
     eth::{
         backend::notifications::{ChainNotification, ChainNotifications},
         error::to_rpc_result,
+        tempo_consensus::TempoConsensusEvent,
     },
 };
 use alloy_consensus::{BlockHeader, TxReceipt};
@@ -17,9 +18,10 @@ use serde::Serialize;
 use std::{
     collections::VecDeque,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::{broadcast, mpsc::UnboundedReceiver};
 
 /// Listens for new blocks and matching logs emitted in that block
 pub struct LogsSubscription<N: Network> {
@@ -134,6 +136,10 @@ pub enum EthSubscription<N: Network> {
     FullPendingTransactions(UnboundedReceiver<AnyRpcTransaction>, SubscriptionId),
     Syncing(Option<SubscriptionId>),
     TransactionReceipts(UnboundedReceiver<Vec<FoundryTxReceipt>>, SubscriptionId),
+    TempoConsensus(
+        Pin<Box<dyn Stream<Item = Arc<TempoConsensusEvent>> + Send + Sync>>,
+        SubscriptionId,
+    ),
 }
 
 impl<N: Network> std::fmt::Debug for EthSubscription<N> {
@@ -145,6 +151,7 @@ impl<N: Network> std::fmt::Debug for EthSubscription<N> {
             Self::FullPendingTransactions(..) => f.debug_tuple("FullPendingTransactions").finish(),
             Self::Syncing(_) => f.debug_tuple("Syncing").finish(),
             Self::TransactionReceipts(..) => f.debug_tuple("TransactionReceipts").finish(),
+            Self::TempoConsensus(..) => f.debug_tuple("TempoConsensus").finish(),
         }
     }
 }
@@ -208,7 +215,40 @@ where
                 });
                 Poll::Ready(res)
             }
+            Self::TempoConsensus(events, id) => {
+                let res = ready!(events.poll_next_unpin(cx)).map(|event| {
+                    let params = EthSubscriptionParams {
+                        subscription: id.clone(),
+                        result: to_rpc_result(&*event),
+                    };
+                    EthSubscriptionResponse {
+                        jsonrpc: Version::V2,
+                        method: "consensus_event",
+                        params,
+                    }
+                });
+                Poll::Ready(res)
+            }
         }
+    }
+
+    /// Owns the receiver directly so unsubscribe and disconnect release it without another event.
+    pub fn tempo_consensus(
+        events: broadcast::Receiver<Arc<TempoConsensusEvent>>,
+        id: SubscriptionId,
+    ) -> Self {
+        let events = futures::stream::unfold((events, id.clone()), |(mut events, id)| async move {
+            loop {
+                match events.recv().await {
+                    Ok(event) => return Some((event, (events, id))),
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        warn!(target: "rpc", %id, skipped, "Tempo consensus subscription lagged; recover retained blocks with consensus_getFinalization");
+                    }
+                    Err(broadcast::error::RecvError::Closed) => return None,
+                }
+            }
+        });
+        Self::TempoConsensus(Box::pin(events), id)
     }
 }
 
@@ -291,4 +331,92 @@ pub fn filter_removed_logs(logs: &[Log], filter: &FilteredParams) -> Vec<Log> {
         })
         .cloned()
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::eth::{
+        backend::tempo_consensus::TempoFinalization, tempo_consensus::TempoCertifiedBlock,
+    };
+    use foundry_primitives::FoundryNetwork;
+    use foundry_test_utils::{assert_data_eq, str};
+    use std::{fs, time::Duration};
+    use tokio::time::timeout;
+
+    #[tokio::test]
+    async fn tempo_subscription_wire_format_lag_and_cleanup() {
+        let log = tempfile::NamedTempFile::new().unwrap();
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter("off,rpc=warn")
+            .without_time()
+            .with_ansi(false)
+            .with_writer(Arc::new(log.reopen().unwrap()))
+            .finish();
+        let _subscriber = tracing::subscriber::set_default(subscriber);
+        let events = broadcast::Sender::new(1);
+        let id = SubscriptionId::String("0x1234".to_owned());
+        let mut subscription =
+            EthSubscription::<FoundryNetwork>::tempo_consensus(events.subscribe(), id.clone());
+        assert_eq!(events.receiver_count(), 1);
+
+        let mut latest = None;
+        for view in 1..=2 {
+            let event = Arc::new(TempoConsensusEvent::Finalized {
+                block: TempoCertifiedBlock {
+                    finalization: TempoFinalization {
+                        epoch: 0,
+                        view,
+                        digest: B256::ZERO,
+                        certificate: Default::default(),
+                    },
+                    block: Default::default(),
+                },
+                seen: 1234,
+            });
+            events.send(event.clone()).unwrap();
+            latest = Some(event);
+        }
+
+        let response = timeout(Duration::from_secs(1), subscription.next()).await.unwrap().unwrap();
+        assert_eq!(
+            response,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "consensus_event",
+                "params": { "subscription": id, "result": &**latest.as_ref().unwrap() },
+            }),
+        );
+        assert_data_eq!(
+            fs::read_to_string(log.path()).unwrap(),
+            str![[r#"
+ WARN rpc: Tempo consensus subscription lagged; recover retained blocks with consensus_getFinalization id=0x1234 skipped=1
+
+"#]],
+        );
+        let mut next = subscription.next();
+        assert!(futures::poll!(&mut next).is_pending());
+
+        let mut event = latest.unwrap();
+        let TempoConsensusEvent::Finalized { block, .. } = Arc::make_mut(&mut event);
+        block.finalization.view = 3;
+        events.send(event.clone()).unwrap();
+
+        let response = timeout(Duration::from_secs(1), next).await.unwrap().unwrap();
+        assert_eq!(
+            response,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "consensus_event",
+                "params": { "subscription": id, "result": &*event },
+            }),
+        );
+        drop(subscription);
+        assert_eq!(events.receiver_count(), 0);
+
+        let mut subscription =
+            EthSubscription::<FoundryNetwork>::tempo_consensus(events.subscribe(), id);
+        drop(events);
+        assert!(timeout(Duration::from_secs(1), subscription.next()).await.unwrap().is_none());
+    }
 }

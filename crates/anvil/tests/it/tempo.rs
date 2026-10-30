@@ -8249,3 +8249,5 @@ async fn assert_tempo_consensus_dump_load_preserves_consensus(fork: bool) {
         );
     }
 }
+
+mod subscriptions;
