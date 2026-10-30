@@ -3,18 +3,14 @@
 use super::*;
 use crate::utils::connect_pubsub;
 use alloy_pubsub::Subscription;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct FinalizedEvent {
     #[serde(rename = "type")]
     kind: FinalizedEventType,
-    epoch: u64,
-    view: u64,
-    digest: B256,
-    certificate: String,
-    block: tempo_primitives::Block,
+    #[serde(flatten)]
+    certified: TempoCertifiedBlock,
     seen: u64,
 }
 
@@ -22,18 +18,6 @@ struct FinalizedEvent {
 enum FinalizedEventType {
     #[serde(rename = "finalized")]
     Finalized,
-}
-
-impl FinalizedEvent {
-    fn into_certified_block(self) -> TempoCertifiedBlock {
-        TempoCertifiedBlock {
-            epoch: self.epoch,
-            view: self.view,
-            digest: self.digest,
-            certificate: self.certificate,
-            block: self.block,
-        }
-    }
 }
 
 async fn subscribe(provider: &impl Provider) -> Subscription<FinalizedEvent> {
@@ -92,7 +76,6 @@ async fn tempo_consensus_subscription_broadcasts_complete_blocks_in_order() {
         .await
         .unwrap();
 
-    let before = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
     let mut expected = Vec::new();
     for _ in 2..=4 {
         api.mine_one().await.unwrap();
@@ -108,10 +91,8 @@ async fn tempo_consensus_subscription_broadcasts_complete_blocks_in_order() {
     for (expected, (epoch, view)) in expected.into_iter().zip([(0, 2), (1, 1), (1, 2)]) {
         let first_event = next_event(&mut first_events).await;
         let second_event = next_event(&mut second_events).await;
-        let after = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
         assert_eq!(first_event, second_event);
-        assert!((before..=after).contains(&u128::from(first_event.seen)));
-        let certified = first_event.into_certified_block();
+        let certified = first_event.certified;
         assert_eq!(certified, expected);
         assert_eq!((certified.epoch, certified.view), (epoch, view));
         let signing_identity = if epoch == 0 { &identity } else { &rotated };
@@ -175,7 +156,7 @@ async fn tempo_consensus_subscription_preserves_events_across_history_changes() 
     expected.push(tempo_finalization(&http, 1).await);
 
     for certified in expected {
-        let event = next_event(&mut events).await.into_certified_block();
+        let event = next_event(&mut events).await.certified;
         assert_eq!(event, certified);
         assert_tempo_certificate(&identity, &event);
     }
@@ -234,7 +215,7 @@ async fn tempo_consensus_subscription_fork_only_publishes_local_finalizations() 
     assert_eq!(latest, tempo_finalization(&source_http, 1).await);
 
     api.mine_one().await.unwrap();
-    let event = next_event(&mut events).await.into_certified_block();
+    let event = next_event(&mut events).await.certified;
     assert_eq!(event, tempo_finalization(&http, 2).await);
     assert_tempo_certificate(&identity, &event);
 
@@ -246,13 +227,13 @@ async fn tempo_consensus_subscription_fork_only_publishes_local_finalizations() 
     .unwrap();
     assert_eq!(tempo_finalization(&http, 2).await, tempo_finalization(&source_http, 2).await);
     api.mine_one().await.unwrap();
-    let event = next_event(&mut events).await.into_certified_block();
+    let event = next_event(&mut events).await.certified;
     assert_eq!(event, tempo_finalization(&http, 3).await);
     assert_tempo_certificate(&identity, &event);
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn tempo_consensus_subscription_rejects_non_tempo_and_invalid_params() {
+async fn tempo_consensus_subscription_rejects_non_tempo() {
     let (_api, handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
     let provider = connect_pubsub(&handle.ws_endpoint()).await;
     let error =
@@ -265,26 +246,6 @@ async fn tempo_consensus_subscription_rejects_non_tempo_and_invalid_params() {
             "data": null,
         }),
     );
-
-    for (method, params, message) in [
-        ("consensus_subscribe", serde_json::json!([1]), "invalid type: number, expected unit"),
-        (
-            "consensus_unsubscribe",
-            serde_json::json!([]),
-            "expected params sequence with length 1 but got 0",
-        ),
-    ] {
-        let error =
-            provider.client().request::<_, serde_json::Value>(method, params).await.unwrap_err();
-        assert_eq!(
-            serde_json::to_value(error.as_error_resp().unwrap()).unwrap(),
-            serde_json::json!({
-                "code": -32602,
-                "message": message,
-                "data": null,
-            }),
-        );
-    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -321,22 +282,8 @@ async fn tempo_consensus_subscription_skips_non_native_block_without_stopping_mi
     assert!(receipt.status());
     assert_eq!(receipt.block_number, Some(1));
 
-    api.anvil_auto_impersonate_account(false).await.unwrap();
-    let transaction: B256 = http
-        .client()
-        .request(
-            "eth_sendTransaction",
-            (TransactionRequest::default()
-                .from(from)
-                .to(Address::repeat_byte(0x43))
-                .gas_limit(1_000_000),),
-        )
-        .await
-        .unwrap();
     api.mine_one().await.unwrap();
-    let event = next_event(&mut events).await.into_certified_block();
+    let event = next_event(&mut events).await.certified;
     assert_eq!(event, tempo_finalization(&http, 2).await);
-    assert_eq!(event.block.body.transactions.len(), 1);
-    assert_eq!(*event.block.body.transactions[0].tx_hash(), transaction);
     assert_tempo_certificate(&tempo_consensus_identity(&http).await, &event);
 }

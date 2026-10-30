@@ -1239,13 +1239,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tempo_pending_finalization_retains_committed_head_after_reanchor() {
+    async fn tempo_pending_finalization_survives_reanchor_and_includes_late_subscribers() {
         let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
         api.mine_one().await.unwrap();
         let expected = api.backend.tempo_finalization(None).await.unwrap();
         let mut chain = api.backend.blockchain.storage.read().tempo.clone().unwrap();
-        let mut events = chain.events.subscribe();
+        assert!(chain.pending_finalization().unwrap().is_none());
+        let mut existing = chain.events.subscribe();
         let pending = chain.pending_finalization().unwrap().unwrap();
+        let mut late = api.backend.tempo_consensus_notifications().await.unwrap();
 
         chain.reanchor(1);
         assert!(chain.pending_finalization().unwrap().is_none());
@@ -1253,30 +1255,13 @@ mod tests {
         pending.send().unwrap();
         let after = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
 
-        let event = events.try_recv().unwrap();
-        let TempoConsensusEvent::Finalized { block, seen: observed } = &*event;
-        assert_eq!(block.finalization, expected.finalization);
-        assert_eq!(block.block, expected.block);
-        assert!((before..=after).contains(&u128::from(*observed)));
-        assert!(matches!(events.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
-    }
-
-    #[tokio::test]
-    async fn tempo_pending_finalization_includes_subscribers_joining_before_delivery() {
-        let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
-        api.mine_one().await.unwrap();
-        let chain = api.backend.blockchain.storage.read().tempo.clone().unwrap();
-        assert!(chain.pending_finalization().unwrap().is_none());
-        let mut existing = chain.events.subscribe();
-        let pending = chain.pending_finalization().unwrap().unwrap();
-        let mut late = api.backend.tempo_consensus_notifications().await.unwrap();
-
-        pending.send().unwrap();
-
-        for event in [existing.try_recv().unwrap(), late.try_recv().unwrap()] {
-            let TempoConsensusEvent::Finalized { block, .. } = &*event;
-            assert_eq!(block.block.header.number(), 1);
-            assert_eq!(&block.finalization, chain.consensus.latest().unwrap().1);
+        for events in [&mut existing, &mut late] {
+            let event = events.try_recv().unwrap();
+            let TempoConsensusEvent::Finalized { block, seen } = &*event;
+            assert_eq!(block.finalization, expected.finalization);
+            assert_eq!(block.block, expected.block);
+            assert!((before..=after).contains(&u128::from(*seen)));
+            assert!(matches!(events.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
         }
     }
 
