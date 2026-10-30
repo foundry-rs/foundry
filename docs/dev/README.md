@@ -38,8 +38,8 @@ use forking must contain `fork` in their name. Forge and Cast CLI tests live und
 
 - [Cheatcodes](./cheatcodes.md) explains cheatcode generation, dispatch, and implementation.
 - [Debugging](./debugging.md) collects contributor debugging techniques.
-- [Editor integrations](../../editors/README.md) covers the VS Code Development Host,
-  independent client builds, local packaging and Zed installation.
+- [Editor integrations](../../editors/README.md) covers the VS Code Development Host
+  and the `forge lsp` launcher.
 - [External compiler adapters](./external-compiler-adapters.md) defines the executable protocol,
   cache contract, and artifact integration for compiler-native EVM projects.
 - [Lint rules](./lintrules.md) covers the lint registry, UI fixtures, and documentation contract.
