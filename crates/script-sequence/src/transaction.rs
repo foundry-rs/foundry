@@ -40,6 +40,9 @@ pub struct TransactionWithMetadata<N: Network> {
     pub exact_artifact_match: bool,
     #[serde(default = "default_address")]
     pub contract_address: Option<Address>,
+    /// The `vm.label` of the contract this transaction creates, if the script set one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     #[serde(default = "default_string")]
     pub function: Option<String>,
     pub function_abi: Option<String>,
@@ -77,6 +80,7 @@ impl<N: Network> TransactionWithMetadata<N> {
             contract_name: Default::default(),
             exact_artifact_match: Default::default(),
             contract_address: Default::default(),
+            label: Default::default(),
             function: Default::default(),
             function_abi: Default::default(),
             display_function: Default::default(),
