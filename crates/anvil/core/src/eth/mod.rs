@@ -2443,6 +2443,8 @@ true}]}"#;
 
         for request in [
             serde_json::json!({ "method": "consensus_subscribe", "params": [1] }),
+            serde_json::json!({ "method": "consensus_subscribe", "params": ["finalized"] }),
+            serde_json::json!({ "method": "consensus_subscribe", "params": { "type": "finalized" } }),
             serde_json::json!({ "method": "consensus_unsubscribe", "params": [] }),
             serde_json::json!({ "method": "consensus_unsubscribe", "params": ["0x1", "0x2"] }),
         ] {

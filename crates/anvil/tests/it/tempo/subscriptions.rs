@@ -236,18 +236,24 @@ async fn tempo_consensus_subscription_rejects_non_tempo_and_invalid_params() {
         }),
     );
 
-    let (_api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
-    let provider = connect_pubsub(&handle.ws_endpoint()).await;
-    for (method, params) in [
-        ("consensus_subscribe", serde_json::json!([1])),
-        ("consensus_subscribe", serde_json::json!(["finalized"])),
-        ("consensus_subscribe", serde_json::json!({"type": "finalized"})),
-        ("consensus_unsubscribe", serde_json::json!([])),
-        ("consensus_unsubscribe", serde_json::json!(["0x1", "0x2"])),
+    for (method, params, message) in [
+        ("consensus_subscribe", serde_json::json!([1]), "invalid type: number, expected unit"),
+        (
+            "consensus_unsubscribe",
+            serde_json::json!([]),
+            "expected params sequence with length 1 but got 0",
+        ),
     ] {
         let error =
             provider.client().request::<_, serde_json::Value>(method, params).await.unwrap_err();
-        assert_eq!(error.as_error_resp().unwrap().code, -32602);
+        assert_eq!(
+            serde_json::to_value(error.as_error_resp().unwrap()).unwrap(),
+            serde_json::json!({
+                "code": -32602,
+                "message": message,
+                "data": null,
+            }),
+        );
     }
 }
 
