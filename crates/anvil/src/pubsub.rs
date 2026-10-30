@@ -394,6 +394,23 @@ mod tests {
 
 "#]],
         );
+        let mut next = subscription.next();
+        assert!(futures::poll!(&mut next).is_pending());
+
+        let mut event = latest.unwrap();
+        let TempoConsensusEvent::Finalized { block, .. } = Arc::make_mut(&mut event);
+        block.finalization.view = 3;
+        events.send(event.clone()).unwrap();
+
+        let response = timeout(Duration::from_secs(1), next).await.unwrap().unwrap();
+        assert_eq!(
+            response,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "consensus_event",
+                "params": { "subscription": id, "result": &*event },
+            }),
+        );
         drop(subscription);
         assert_eq!(events.receiver_count(), 0);
 
