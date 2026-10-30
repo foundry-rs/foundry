@@ -3,9 +3,10 @@
 //! Missing arguments take the values of the function's `@custom:defaults` NatSpec tag, a list of
 //! `name=value` pairs, e.g. `/// @custom:defaults capacity=1000000000000000000 rate=1000`.
 
+use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Function, JsonAbi};
 use eyre::{Result, bail, eyre};
-use foundry_common::abi::encode_function_args;
+use foundry_common::abi::coerce_value;
 use std::{collections::BTreeMap, fmt::Write};
 
 /// NatSpec of one function: `@param` descriptions and `@custom:defaults` values.
@@ -92,8 +93,15 @@ pub(crate) fn method_and_calldata(
         0 => Err(eyre!("{}", errors.join("\n\n"))),
         1 => {
             let (func, values) = fitting.remove(0);
-            let data = encode_function_args(func, &values)?;
-            Ok((func.clone(), data))
+            // Same parsing as positional arguments, with errors naming the argument.
+            let values = std::iter::zip(&func.inputs, &values)
+                .map(|(input, value)| {
+                    let ty = input.selector_type();
+                    coerce_value(&ty, value)
+                        .map_err(|err| eyre!("argument `{}` ({ty}): {err}", input.name))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok((func.clone(), func.abi_encode_input(&values)?))
         }
         _ => bail!(
             "the arguments fit several functions: {}; pass the full signature with --sig",
@@ -146,6 +154,7 @@ fn ordered_values(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_common::abi::encode_function_args;
 
     fn abi(sigs: &[&str]) -> JsonAbi {
         let sigs = sigs.iter().map(|sig| format!("function {sig}")).collect::<Vec<_>>();
@@ -203,6 +212,73 @@ mod tests {
         assert_eq!(func.signature(), "run(string,uint256)");
         let (func, _) = method_and_calldata("run", &abi, None, &args(&["chain=a"])).unwrap();
         assert_eq!(func.signature(), "run(string)");
+    }
+
+    #[test]
+    fn arrays_structs_and_other_types() {
+        // `Lane` is a struct, i.e. a tuple parameter; `lanes` an array of structs.
+        let abi: JsonAbi = serde_json::from_str(
+            r#"[{"type":"function","name":"run","stateMutability":"nonpayable","outputs":[],
+            "inputs":[
+              {"name":"recipients","type":"address[]"},
+              {"name":"lane","type":"tuple","internalType":"struct Lane","components":[
+                {"name":"selector","type":"uint64"},{"name":"pool","type":"address"}]},
+              {"name":"lanes","type":"tuple[]","internalType":"struct Lane[]","components":[
+                {"name":"selector","type":"uint64"},{"name":"pool","type":"address"}]},
+              {"name":"data","type":"bytes"},
+              {"name":"enabled","type":"bool"},
+              {"name":"label","type":"string"}]}]"#,
+        )
+        .unwrap();
+        let meta = serde_json::json!({ "output": { "devdoc": { "methods": {
+            "run(address[],(uint64,address),(uint64,address)[],bytes,bool,string)": {
+                "custom:defaults": r#"enabled=true label="two words" lanes=[(1,0x0000000000000000000000000000000000000002)]"#,
+            }
+        } } } })
+        .to_string();
+        let (func, data) = method_and_calldata(
+            "run",
+            &abi,
+            Some(&meta),
+            &args(&[
+                "recipients=[0x0000000000000000000000000000000000000001,0x0000000000000000000000000000000000000002]",
+                "lane=(16015286601757825753,0x0000000000000000000000000000000000000003)",
+                "data=0xdeadbeef",
+            ]),
+        )
+        .unwrap();
+
+        // Same calldata as the positional arguments in declaration order.
+        let positional = encode_function_args(
+            func_ref(&abi, "run"),
+            [
+                "[0x0000000000000000000000000000000000000001,0x0000000000000000000000000000000000000002]",
+                "(16015286601757825753,0x0000000000000000000000000000000000000003)",
+                "[(1,0x0000000000000000000000000000000000000002)]",
+                "0xdeadbeef",
+                "true",
+                "two words",
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            func.signature(),
+            "run(address[],(uint64,address),(uint64,address)[],bytes,bool,string)"
+        );
+        assert_eq!(data, positional);
+    }
+
+    #[test]
+    fn invalid_values_name_the_argument() {
+        let abi = abi(&["run(uint256[3] amounts, uint8 small)"]);
+        let err = method_and_calldata("run", &abi, None, &args(&["amounts=[1,2,3]", "small=256"]))
+            .unwrap_err()
+            .to_string();
+        assert!(err.starts_with("argument `small` (uint8): "), "{err}");
+        let err = method_and_calldata("run", &abi, None, &args(&["amounts=[1,2]", "small=1"]))
+            .unwrap_err()
+            .to_string();
+        assert!(err.starts_with("argument `amounts` (uint256[3]): "), "{err}");
     }
 
     #[test]

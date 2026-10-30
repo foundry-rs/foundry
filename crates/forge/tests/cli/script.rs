@@ -9648,3 +9648,158 @@ error: the argument '[ARGS]...' cannot be used with '--arg <NAME=VALUE>'
 ...
 "#]]);
 }
+
+// `--arg` handles every kind of parameter an external function takes, as given values and as
+// `@custom:defaults`; the script checks each value it receives.
+#[forgetest_init]
+fn script_named_arguments_all_types(prj: _, cmd: _) {
+    let script = prj.add_source(
+        "AllTypes.s.sol",
+        r#"
+interface IPool { function id() external view returns (uint256); }
+contract Pool is IPool { function id() external pure returns (uint256) { return 1; } }
+
+type Price is uint256;
+enum Mode { Off, Lock, Burn }
+struct Limit { uint128 capacity; uint128 rate; }
+struct Lane { uint64 selector; address pool; Limit limit; bytes32[] tags; }
+
+contract AllTypes {
+    function eq(bytes memory a, bytes memory b) internal pure returns (bool) { return keccak256(a) == keccak256(b); }
+
+    function scalars(uint8 u8, uint64 u64, uint256 u256, int8 i8, int256 i256, address addr, bool flag, bytes1 b1, bytes4 b4, bytes32 b32) external pure {
+        require(u8 == 255, "u8");
+        require(u64 == 16015286601757825753, "u64");
+        require(u256 == type(uint256).max, "u256");
+        require(i8 == -128, "i8");
+        require(i256 == -1e30, "i256");
+        require(addr == 0x00000000000000000000000000000000DeaDBeef, "addr");
+        require(!flag, "flag");
+        require(b1 == 0xab, "b1");
+        require(b4 == 0xdeadbeef, "b4");
+        require(b32 == keccak256("x"), "b32");
+    }
+
+    function dynamics(bytes memory data, bytes memory empty, string memory text, string memory emptyText, Mode mode, Price price, IPool pool, Pool poolContract) external pure {
+        require(eq(data, hex"00ff00"), "data");
+        require(empty.length == 0, "empty");
+        require(eq(bytes(text), bytes("comma, space and [brackets]")), "text");
+        require(bytes(emptyText).length == 0, "emptyText");
+        require(mode == Mode.Burn, "mode");
+        require(Price.unwrap(price) == 1e18, "price");
+        require(address(pool) == address(0x1234), "pool");
+        require(address(poolContract) == address(0x5678), "poolContract");
+    }
+
+    function arrays(uint256[3] memory fixedArr, address[] memory dyn, uint8[][] memory nested, string[] memory strs, bool[2][] memory fixedInDyn, uint256[] memory emptyArr) external pure {
+        require(fixedArr[0] == 1 && fixedArr[1] == 2 && fixedArr[2] == 3, "fixedArr");
+        require(dyn.length == 2 && dyn[1] == address(2), "dyn");
+        require(nested.length == 2 && nested[0].length == 2 && nested[1][0] == 3, "nested");
+        require(strs.length == 2 && eq(bytes(strs[1]), bytes("b c")), "strs");
+        require(fixedInDyn.length == 2 && fixedInDyn[1][0] && !fixedInDyn[1][1], "fixedInDyn");
+        require(emptyArr.length == 0, "emptyArr");
+    }
+
+    function structs(Limit memory limit, Lane memory lane, Lane[] memory lanes) external pure {
+        require(limit.capacity == 5 && limit.rate == 6, "limit");
+        bytes32[] memory tags = new bytes32[](1);
+        tags[0] = bytes32(uint256(9));
+        Lane memory expected = Lane(7, address(0xbeef), Limit(1, 2), tags);
+        require(eq(abi.encode(lane), abi.encode(expected)), "lane");
+        require(lanes.length == 2 && lanes[1].selector == 8 && lanes[1].tags.length == 0, "lanes");
+    }
+
+    function callbacks(function (uint256) external returns (uint256) callback) external pure {
+        require(callback.address == address(0x1234), "fn address");
+        require(callback.selector == bytes4(0xdeadbeef), "fn selector");
+    }
+
+    /// @custom:defaults mode=1 text="two words, quoted" lane="(7,0x000000000000000000000000000000000000beef,(1,2),[0x0000000000000000000000000000000000000000000000000000000000000009])" nested=[[1,2],[3]]
+    function defaults(Mode mode, string memory text, Lane memory lane, uint8[][] memory nested, uint256 given) external pure {
+        require(mode == Mode.Lock, "mode");
+        require(eq(bytes(text), bytes("two words, quoted")), "text");
+        require(lane.selector == 7 && lane.limit.rate == 2 && lane.tags.length == 1, "lane");
+        require(nested.length == 2 && nested[1][0] == 3, "nested");
+        require(given == 42, "given");
+    }
+}"#,
+    );
+    let target = format!("{}:AllTypes", script.display());
+    let addr = |n: &str| format!("0x{n:0>40}");
+    let b32 = "0x7521d1cadbcfa91eec65aa16715b94ffc1c9654ba57ea2ef1a2127bca1127a83";
+    let lane = format!("lane=(7,{},(1,2),[0x{:0>64}])", addr("beef"), "9");
+    let runs: Vec<(&str, Vec<String>)> = vec![
+        (
+            "scalars",
+            vec![
+                "u8=255".into(),
+                "u64=16015286601757825753".into(),
+                format!("u256={}", alloy_primitives::U256::MAX),
+                "i8=-128".into(),
+                "i256=-1000000000000000000000000000000".into(),
+                format!("addr={}", addr("DeaDBeef")),
+                "flag=false".into(),
+                "b1=0xab".into(),
+                "b4=0xdeadbeef".into(),
+                format!("b32={b32}"),
+            ],
+        ),
+        (
+            "dynamics",
+            vec![
+                "data=0x00ff00".into(),
+                "empty=0x".into(),
+                "text=comma, space and [brackets]".into(),
+                "emptyText=".into(),
+                "mode=2".into(),
+                "price=1000000000000000000".into(),
+                format!("pool={}", addr("1234")),
+                format!("poolContract={}", addr("5678")),
+            ],
+        ),
+        (
+            "arrays",
+            vec![
+                "fixedArr=[1,2,3]".into(),
+                format!("dyn=[{},{}]", addr("1"), addr("2")),
+                "nested=[[1,2],[3]]".into(),
+                r#"strs=["a","b c"]"#.into(),
+                "fixedInDyn=[[false,false],[true,false]]".into(),
+                "emptyArr=[]".into(),
+            ],
+        ),
+        (
+            "structs",
+            vec![
+                "limit=(5,6)".into(),
+                lane,
+                format!("lanes=[(1,{},(1,1),[]),(8,{},(2,2),[])]", addr("1"), addr("2")),
+            ],
+        ),
+        ("callbacks", vec![format!("callback={}deadbeef", addr("1234"))]),
+        ("defaults", vec!["given=42".into()]),
+    ];
+    for (sig, args) in runs {
+        cmd.forge_fuse().args(["script", &target, "--sig", sig]);
+        for arg in &args {
+            cmd.args(["--arg", arg]);
+        }
+        cmd.assert_success();
+    }
+
+    // A wrong value reaches the script; an invalid one is rejected, naming the argument.
+    cmd.forge_fuse()
+        .args(["script", &target, "--sig", "defaults", "--arg", "given=42", "--arg", "mode=2"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: script failed: mode
+
+"#]]);
+    cmd.forge_fuse()
+        .args(["script", &target, "--sig", "callbacks", "--arg", "callback=0x1234"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: argument `callback` (function): [..]
+...
+"#]]);
+}
