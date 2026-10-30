@@ -129,20 +129,12 @@ impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
         }
         let executed = executor.transact(&tx).map_err(transaction_error)?;
         let Some((id, persistent)) = inactive else {
-            if untracked {
-                // As on master, which committed the transaction to the database, accounts and
-                // slots the running transaction has not loaded start from its writes.
-                let unloaded = unloaded_changes(evm.state(), executed.account_changes());
-                evm.state_mut().commit_source(&unloaded);
-            }
-            let mut persistent = Vec::new();
-            merge_changes(
-                evm.state_mut(),
-                executed.account_changes(),
-                |_| true,
-                untracked.then_some(&mut persistent),
-                None,
-            )?;
+            let persistent = if untracked {
+                merge_untracked_nested_changes(evm.state_mut(), &executed)?
+            } else {
+                merge_changes(evm.state_mut(), executed.account_changes(), |_| true, None, None)?;
+                Vec::new()
+            };
             let result = executed.result().clone();
             return Ok(ExecutedNested { result, context: None, cursor, persistent });
         };
@@ -229,10 +221,7 @@ pub struct DestructedAccount {
 /// with their state before the transaction ends and destroys them, such as at the end of the root
 /// frame of `executeTransaction`'s transaction.
 pub fn destructed_accounts(state: &mut State<'_>) -> DbResult<AddressMap<DestructedAccount>> {
-    let loaded = state
-        .loaded_accounts()
-        .map(|(address, slots)| (*address, slots.copied().collect::<Vec<_>>()))
-        .collect::<Vec<_>>();
+    let loaded = loaded_slots(state);
     let mut destructed = AddressMap::default();
     for (address, keys) in loaded {
         let code = {
@@ -1055,10 +1044,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
             }
         }
         let state = evm.state_mut();
-        let loaded = state
-            .loaded_accounts()
-            .map(|(address, slots)| (*address, slots.copied().collect::<Vec<_>>()))
-            .collect::<Vec<_>>();
+        let loaded = loaded_slots(state);
         let warm = warm_accounts(state);
         let context = self.active_mut();
         for (address, slots) in loaded {
@@ -1448,10 +1434,7 @@ pub fn warm_set(state: &mut State<'_>) -> PrewarmSet {
 /// Cools every account and slot the running transaction in `state` loaded, without journaling.
 /// Pre-warmed ones stay effectively warm.
 pub fn cool_loaded(state: &mut State<'_>) {
-    let loaded = state
-        .loaded_accounts()
-        .map(|(address, slots)| (*address, slots.copied().collect::<Vec<_>>()))
-        .collect::<Vec<_>>();
+    let loaded = loaded_slots(state);
     for (address, slots) in loaded {
         state.set_account_warm(&address, false);
         for key in slots {
@@ -1490,10 +1473,7 @@ pub fn restore_access_warmth(state: &mut State<'_>, checkpoint: &StateCheckpoint
 /// Returns the accounts the running transaction in `state` loaded and that are warm, with their
 /// warm slots.
 pub fn warm_accounts(state: &mut State<'_>) -> AddressMap<HashSet<U256>> {
-    let loaded = state
-        .loaded_accounts()
-        .map(|(address, slots)| (*address, slots.copied().collect::<Vec<_>>()))
-        .collect::<Vec<_>>();
+    let loaded = loaded_slots(state);
     let mut warm = AddressMap::default();
     for (address, slots) in loaded {
         if !state.account(&address).is_ok_and(|account| account.is_warm()) {
@@ -1706,4 +1686,9 @@ fn apply_account(
         }
     }
     Ok(())
+}
+
+/// Returns the accounts `state` loaded with their loaded slots.
+fn loaded_slots(state: &State<'_>) -> Vec<(Address, Vec<U256>)> {
+    state.loaded_accounts().map(|(address, slots)| (*address, slots.copied().collect())).collect()
 }

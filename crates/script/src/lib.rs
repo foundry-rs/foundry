@@ -1285,8 +1285,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
         self.source_chain_id = fork_chain_id;
-        self.hardfork = resolve_execution_spec(
-            &EvmFactoryFor::<FEN>::default(),
+        self.hardfork = resolve_execution_spec::<EvmFactoryFor<FEN>>(
             self.config.evm_version,
             self.config.hardfork,
             evm_env,

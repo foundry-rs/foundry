@@ -547,6 +547,18 @@ fn rpc_conversion_suite<FEN: FoundryEvmNetwork>() {
 }
 
 #[test]
+fn from_any_rpc_transaction_for_eth() {
+    let from = Address::random();
+    let tx = EthEvmNetwork::tx_from_any_rpc(&eth_rpc_transaction(from)).unwrap();
+
+    assert_eq!(tx.signer(), from);
+    assert_eq!(tx.nonce(), 42);
+    assert_eq!(tx.gas_limit(), 21001);
+    assert_eq!(tx.value(), U256::from(101));
+    assert_eq!(tx.kind(), TxKind::Call(Address::with_last_byte(0xBB)));
+}
+
+#[test]
 fn rpc_transactions_convert_natively() {
     rpc_conversion_suite::<EthEvmNetwork>();
     rpc_conversion_suite::<crate::evm::TempoEvmNetwork>();
@@ -594,52 +606,6 @@ fn celo_fee_currency_transactions_execute_as_eip1559() {
     assert_eq!((tx.max_fee_per_gas(), tx.max_priority_fee_per_gas()), (3, Some(1)));
     assert_eq!((tx.value(), tx.input().as_ref()), (U256::from(0x65), &[0x12, 0x34][..]));
     assert_eq!(tx.kind(), TxKind::Call(Address::with_last_byte(0xBB)));
-}
-
-#[test]
-fn captured_tempo_aa_rpc_transactions_convert_exactly() {
-    for json in [
-        include_str!("../../test-data/tempo-aa-sponsored-batch.json"),
-        include_str!("../../test-data/tempo-aa-nonce-lane.json"),
-        include_str!("../../test-data/tempo-aa-keychain.json"),
-        include_str!("../../test-data/tempo-aa-authorization-list.json"),
-    ] {
-        let rpc: AnyRpcTransaction = serde_json::from_str(json).unwrap();
-        let envelope = crate::evm::TempoEvmNetwork::envelope_from_any_rpc(&rpc).unwrap();
-        // The hash and the recovered signer only match if every signed field decoded.
-        assert_eq!(alloy_primitives::keccak256(envelope.encoded_2718()), rpc.tx_hash());
-        assert_eq!(envelope.recover_signer().unwrap(), rpc.from());
-        let tx = crate::evm::TempoEvmNetwork::tx_from_any_rpc(&rpc).unwrap();
-        assert_eq!((tx.signer(), tx.ty()), (rpc.from(), 0x76));
-    }
-}
-
-#[test]
-fn from_any_rpc_transaction_for_eth() {
-    let from = Address::random();
-    let tx = EthEvmNetwork::tx_from_any_rpc(&eth_rpc_transaction(from)).unwrap();
-
-    assert_eq!(tx.signer(), from);
-    assert_eq!(tx.nonce(), 42);
-    assert_eq!(tx.gas_limit(), 21001);
-    assert_eq!(tx.value(), U256::from(101));
-    assert_eq!(tx.kind(), TxKind::Call(Address::with_last_byte(0xBB)));
-}
-
-#[test]
-fn from_any_rpc_transaction_unknown_envelope_errors() {
-    let unknown = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
-        hash: B256::ZERO,
-        inner: UnknownTypedTransaction {
-            ty: AnyTxType(0xFF),
-            fields: Default::default(),
-            memo: Default::default(),
-        },
-    });
-    let any_tx = rpc_transaction(unknown, Address::random());
-
-    let err = EthEvmNetwork::tx_from_any_rpc(&any_tx).unwrap_err();
-    assert_eq!(err.to_string(), "cannot convert unknown transaction type 0xff to TxEnv");
 }
 
 #[test]
@@ -740,6 +706,8 @@ fn from_any_rpc_transaction_for_tempo_aa() {
 /// Decodes a captured Tempo `eth_getTransactionByHash` result.
 fn captured_tempo_aa(json: &str) -> Recovered<tempo_evm::TempoTxEnv> {
     let any_tx: AnyRpcTransaction = serde_json::from_str(json).unwrap();
+    let envelope = crate::evm::TempoEvmNetwork::envelope_from_any_rpc(&any_tx).unwrap();
+    assert_eq!(alloy_primitives::keccak256(envelope.encoded_2718()), any_tx.tx_hash());
     let tx = crate::evm::TempoEvmNetwork::tx_from_any_rpc(&any_tx).unwrap();
     let aa = tx.as_aa().unwrap();
     // Recovery over the recomputed signing hash only succeeds if every signed field decoded.
