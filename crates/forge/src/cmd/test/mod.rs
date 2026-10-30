@@ -2194,6 +2194,8 @@ impl TestArgs {
             .set_debug(self.debug)
             .set_decode_internal(execution.decode_internal)
             .set_record_all_steps(self.evm_profile.is_some())
+            // Steps would also be serialized, so JSON output keeps backtraces without locations.
+            .set_backtrace_steps(!shell::is_json() && self.json_file.is_none())
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
             .enable_isolation(evm_opts.isolate)
