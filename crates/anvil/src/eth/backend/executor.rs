@@ -17,7 +17,7 @@ use crate::{
     },
     mem::inspector::{AnvilInspector, InspectorTxConfig, SharedInspector},
 };
-use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom, Transaction, TransactionEnvelope};
+use alloy_consensus::{Eip658Value, Receipt, Transaction, TransactionEnvelope};
 use alloy_eips::{
     eip6110::DEPOSIT_REQUEST_TYPE,
     eip7002::WITHDRAWAL_REQUEST_TYPE,
@@ -88,63 +88,48 @@ pub struct BlockExecutionResult {
     pub blob_gas_used: u64,
 }
 
-/// Receipt builder for transaction types that do not require network-specific metadata.
-#[derive(Debug, Default, Clone, Copy)]
-#[non_exhaustive]
-pub struct FoundryReceiptBuilder;
-
-impl FoundryReceiptBuilder {
-    fn wrap_receipt(
-        tx_type: FoundryTxType,
-        receipt: ReceiptWithBloom<Receipt>,
-        eip8130_phase_statuses: Option<Vec<u8>>,
-    ) -> FoundryReceiptEnvelope {
-        #[cfg(not(feature = "base"))]
-        let _ = eip8130_phase_statuses;
-        match tx_type {
-            FoundryTxType::Legacy => FoundryReceiptEnvelope::Legacy(receipt),
-            FoundryTxType::Eip2930 => FoundryReceiptEnvelope::Eip2930(receipt),
-            FoundryTxType::Eip1559 => FoundryReceiptEnvelope::Eip1559(receipt),
-            FoundryTxType::Eip4844 => FoundryReceiptEnvelope::Eip4844(receipt),
-            FoundryTxType::Eip7702 => FoundryReceiptEnvelope::Eip7702(receipt),
-            #[cfg(any(feature = "base", feature = "optimism"))]
-            FoundryTxType::Deposit => {
-                panic!("deposit receipts require fork-specific metadata")
-            }
-            #[cfg(feature = "optimism")]
-            FoundryTxType::PostExec => FoundryReceiptEnvelope::PostExec(receipt),
-            #[cfg(feature = "base")]
-            FoundryTxType::Eip8130 => FoundryReceiptEnvelope::Eip8130(ReceiptWithBloom {
+/// Builds the receipt of a transaction type that does not require network-specific metadata.
+///
+/// `eip8130_phase_statuses` are the per-phase statuses of a Base EIP-8130 transaction, and are
+/// ignored for other transaction types.
+pub(crate) fn build_receipt(
+    tx_type: FoundryTxType,
+    success: bool,
+    logs: Vec<Log>,
+    cumulative_gas_used: u64,
+    eip8130_phase_statuses: Option<Vec<u8>>,
+) -> FoundryReceiptEnvelope {
+    #[cfg(not(feature = "base"))]
+    let _ = eip8130_phase_statuses;
+    let receipt =
+        Receipt { status: Eip658Value::Eip658(success), cumulative_gas_used, logs }.with_bloom();
+    match tx_type {
+        FoundryTxType::Legacy => FoundryReceiptEnvelope::Legacy(receipt),
+        FoundryTxType::Eip2930 => FoundryReceiptEnvelope::Eip2930(receipt),
+        FoundryTxType::Eip1559 => FoundryReceiptEnvelope::Eip1559(receipt),
+        FoundryTxType::Eip4844 => FoundryReceiptEnvelope::Eip4844(receipt),
+        FoundryTxType::Eip7702 => FoundryReceiptEnvelope::Eip7702(receipt),
+        #[cfg(any(feature = "base", feature = "optimism"))]
+        FoundryTxType::Deposit => {
+            panic!("deposit receipts require fork-specific metadata")
+        }
+        #[cfg(feature = "optimism")]
+        FoundryTxType::PostExec => FoundryReceiptEnvelope::PostExec(receipt),
+        #[cfg(feature = "base")]
+        FoundryTxType::Eip8130 => {
+            FoundryReceiptEnvelope::Eip8130(alloy_consensus::ReceiptWithBloom {
                 receipt: base_common_consensus::Eip8130Receipt::new(
                     receipt.receipt,
                     eip8130_phase_statuses.unwrap_or_default(),
                 ),
                 logs_bloom: receipt.logs_bloom,
-            }),
-            FoundryTxType::Tempo => FoundryReceiptEnvelope::Tempo(receipt),
-            FoundryTxType::Celo => {
-                FoundryReceiptEnvelope::Unknown(alloy_network::AnyReceiptEnvelope {
-                    inner: receipt,
-                    r#type: foundry_primitives::CIP64_TX_TYPE,
-                })
-            }
+            })
         }
-    }
-
-    /// Builds a typed receipt.
-    ///
-    /// `eip8130_phase_statuses` are the per-phase statuses of a Base EIP-8130 transaction, and are
-    /// ignored for other transaction types.
-    pub(crate) fn build_receipt(
-        tx_type: FoundryTxType,
-        success: bool,
-        logs: Vec<Log>,
-        cumulative_gas_used: u64,
-        eip8130_phase_statuses: Option<Vec<u8>>,
-    ) -> FoundryReceiptEnvelope {
-        let receipt = Receipt { status: Eip658Value::Eip658(success), cumulative_gas_used, logs }
-            .with_bloom();
-        Self::wrap_receipt(tx_type, receipt, eip8130_phase_statuses)
+        FoundryTxType::Tempo => FoundryReceiptEnvelope::Tempo(receipt),
+        FoundryTxType::Celo => FoundryReceiptEnvelope::Unknown(alloy_network::AnyReceiptEnvelope {
+            inner: receipt,
+            r#type: foundry_primitives::CIP64_TX_TYPE,
+        }),
     }
 }
 
@@ -414,7 +399,7 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
                 self.gas_used,
             )
         } else {
-            FoundryReceiptBuilder::build_receipt(
+            build_receipt(
                 tx.tx_type(),
                 result.status,
                 result.logs.clone(),
@@ -423,7 +408,7 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
             )
         };
         #[cfg(not(any(feature = "base", feature = "optimism")))]
-        let receipt = FoundryReceiptBuilder::build_receipt(
+        let receipt = build_receipt(
             tx.tx_type(),
             result.status,
             result.logs.clone(),

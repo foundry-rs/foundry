@@ -9,7 +9,7 @@ use crate::{
             db::{
                 AccountState, BLOCKHASH_HISTORY, BlockchainDb, CacheDB, DatabaseRef, Db, DbAccount,
                 EmptyDb, EvmDb, MaybeFullDatabase, RevertStateSnapshotAction, SerializableState,
-                StateDb,
+                StateDb, apply_block_overrides, apply_state_overrides,
             },
             env::{
                 BlobExcessGasAndPrice, BlockEnv, CfgEnv, EvmEnv, SpecId,
@@ -22,8 +22,7 @@ use crate::{
             },
             executor::{
                 AnvilBlockExecutor, BlockExecutionKind, BlockExecutionResult,
-                EthereumBlockTransitions, ExecutedPoolTransactions, FoundryReceiptBuilder,
-                PoolTxGasConfig,
+                EthereumBlockTransitions, ExecutedPoolTransactions, PoolTxGasConfig, build_receipt,
             },
             fork::{ClientFork, ForkEndpointIdentity},
             genesis::GenesisConfig,
@@ -3074,7 +3073,7 @@ impl<N: Network> Backend<N> {
         #[cfg(not(feature = "base"))]
         let is_eip8130 = false;
         let cap_by_balance = !tx.is_tempo() && !is_deposit(tx) && !is_eip8130;
-        let min_gas = if prepared.evm_env.cfg_env.enable_amsterdam_eip2780() {
+        let min_gas = if prepared.evm_env.cfg_env.spec >= SpecId::AMSTERDAM {
             EIP2780_TX_BASE_COST
         } else {
             MIN_TRANSACTION_GAS as u64
@@ -5199,7 +5198,7 @@ impl<N: Network> Backend<N> {
         let genesis_base_fee =
             if preserve_live_base_fee { staged_fees.base_fee() } else { local_base_fee };
 
-        let mut staged_cfg = CfgEnv::new();
+        let mut staged_cfg = CfgEnv::default();
         staged_config.set_cfg_spec(&mut staged_cfg, local_spec);
         staged_cfg.chain_id = local_chain_id;
         staged_cfg.limit_contract_code_size = staged_config.code_size_limit;
@@ -6541,10 +6540,10 @@ where
             let outcome = {
                 let mut cache_db = CacheDB::new(state);
                 if let Some(state_overrides) = overrides.state {
-                    cache_db.apply_state_overrides(state_overrides)?;
+                    apply_state_overrides(state_overrides, &mut cache_db)?;
                 }
                 if let Some(block_overrides) = overrides.block {
-                    cache_db.apply_block_overrides(*block_overrides, &mut block);
+                    apply_block_overrides(*block_overrides, &mut cache_db, &mut block);
                 }
                 self.call_with_state_and_context(
                     &cache_db,
@@ -6734,10 +6733,10 @@ where
             .unwrap_or_else(|| self.hardfork());
 
         if let Some(state_overrides) = state_overrides {
-            cache_db.apply_state_overrides(state_overrides)?;
+            apply_state_overrides(state_overrides, &mut cache_db)?;
         }
         if let Some(block_overrides) = block_overrides {
-            cache_db.apply_block_overrides(block_overrides, &mut block);
+            apply_block_overrides(block_overrides, &mut cache_db, &mut block);
         }
 
         if let Some(tracer) = tracer {
@@ -8689,14 +8688,14 @@ impl Backend<FoundryNetwork> {
             |state, mut block_env, mut monad_context| {
                 let mut cache_db = CacheDB::new(&*state);
                 if let Some(state_override) = state_override {
-                    cache_db.apply_state_overrides(state_override)?;
+                    apply_state_overrides(state_override, &mut cache_db)?;
                 }
 
                 let mut results = Vec::with_capacity(bundles.len());
                 for bundle in bundles {
                     let Bundle { transactions, block_override } = bundle;
                     if let Some(block_override) = block_override {
-                        cache_db.apply_block_overrides(block_override, &mut block_env);
+                        apply_block_overrides(block_override, &mut cache_db, &mut block_env);
                     }
 
                     let mut bundle_results = Vec::with_capacity(transactions.len());
@@ -8871,7 +8870,7 @@ impl Backend<FoundryNetwork> {
                     .unwrap_or_default();
 
                 if let Some(block_overrides) = block_overrides {
-                    cache_db.apply_block_overrides(block_overrides, &mut block_env);
+                    apply_block_overrides(block_overrides, &mut cache_db, &mut block_env);
                 }
                 // Simulation overrides and RPC results use L2 numbers, while Arbitrum
                 // execution reads the corresponding L1 number through NUMBER.
@@ -8910,7 +8909,7 @@ impl Backend<FoundryNetwork> {
                         &cache_db.cache.accounts,
                         state_overrides.keys().copied(),
                     );
-                    cache_db.apply_state_overrides(state_overrides)?;
+                    apply_state_overrides(state_overrides, &mut cache_db)?;
                     preserve_deleted_storage(&mut cache_db.cache.accounts, previously_deleted);
                 }
 
@@ -9220,7 +9219,7 @@ impl Backend<FoundryNetwork> {
                             cumulative_gas_used,
                         )
                     } else {
-                        FoundryReceiptBuilder::build_receipt(
+                        build_receipt(
                             tx.as_ref().tx_type(),
                             result.status,
                             canonical_logs.clone(),
@@ -9229,7 +9228,7 @@ impl Backend<FoundryNetwork> {
                         )
                     };
                     #[cfg(not(any(feature = "base", feature = "optimism")))]
-                    let receipt = FoundryReceiptBuilder::build_receipt(
+                    let receipt = build_receipt(
                         tx.as_ref().tx_type(),
                         result.status,
                         canonical_logs.clone(),
@@ -10069,7 +10068,7 @@ where
         if !self.disable_pool_balance_checks {
             // Gas limit validation. Under EIP-2780 a transaction's intrinsic gas starts at a lower
             // base, which execution then checks in full.
-            let min_gas = if evm_env.cfg_env.enable_amsterdam_eip2780() {
+            let min_gas = if evm_env.cfg_env.spec >= SpecId::AMSTERDAM {
                 EIP2780_TX_BASE_COST
             } else {
                 MIN_TRANSACTION_GAS as u64

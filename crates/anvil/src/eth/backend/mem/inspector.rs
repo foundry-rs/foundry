@@ -494,14 +494,6 @@ impl<I> SharedInspector<I> {
     pub fn borrow_mut(&self) -> RefMut<'_, I> {
         self.0.borrow_mut()
     }
-
-    /// Returns the inspector, cloning it if it is still shared.
-    pub fn into_inner(self) -> I
-    where
-        I: Clone,
-    {
-        Rc::try_unwrap(self.0).map(RefCell::into_inner).unwrap_or_else(|rc| rc.borrow().clone())
-    }
 }
 
 impl<T: EvmTypes, I: Inspector<T>> Inspector<T> for SharedInspector<I> {

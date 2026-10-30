@@ -35,18 +35,13 @@ impl BlobExcessGasAndPrice {
     pub fn new(excess_blob_gas: u64, blob_base_fee_update_fraction: u64) -> Self {
         Self {
             excess_blob_gas,
-            blob_gasprice: calc_blob_gasprice(excess_blob_gas, blob_base_fee_update_fraction),
+            blob_gasprice: fake_exponential(
+                BLOB_TX_MIN_BLOB_GASPRICE,
+                excess_blob_gas as u128,
+                blob_base_fee_update_fraction as u128,
+            ),
         }
     }
-}
-
-/// Returns the blob gas price for `excess_blob_gas`, as defined by EIP-4844.
-pub fn calc_blob_gasprice(excess_blob_gas: u64, blob_base_fee_update_fraction: u64) -> u128 {
-    fake_exponential(
-        BLOB_TX_MIN_BLOB_GASPRICE,
-        excess_blob_gas as u128,
-        blob_base_fee_update_fraction as u128,
-    )
 }
 
 /// The block environment of the next block or of a replayed block.
@@ -174,26 +169,6 @@ impl Default for CfgEnv {
 }
 
 impl CfgEnv {
-    /// Creates a default configuration.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Creates a default configuration for `spec`.
-    pub fn new_with_spec(spec: SpecId) -> Self {
-        Self { spec, ..Default::default() }
-    }
-
-    /// Sets the spec.
-    pub const fn set_spec_and_mainnet_gas_params(&mut self, spec: SpecId) {
-        self.spec = spec;
-    }
-
-    /// Returns whether EIP-2780's reduced intrinsic transaction gas applies.
-    pub fn enable_amsterdam_eip2780(&self) -> bool {
-        self.spec >= SpecId::AMSTERDAM
-    }
-
     /// Returns the effective per-transaction gas limit cap.
     pub fn tx_gas_limit_cap(&self) -> u64 {
         self.tx_gas_limit_cap.unwrap_or(evm2::Version::new(self.spec).tx_gas_limit_cap)

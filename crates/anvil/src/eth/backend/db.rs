@@ -479,21 +479,6 @@ impl<ExtDB: DatabaseRef> CacheDB<ExtDB> {
     }
 }
 
-impl<ExtDB: DatabaseRef> CacheDB<ExtDB> {
-    /// Applies `eth_call` state overrides, see [`apply_state_overrides`].
-    pub fn apply_state_overrides(
-        &mut self,
-        overrides: impl IntoIterator<Item = (Address, AccountOverride)>,
-    ) -> Result<(), crate::eth::error::BlockchainError> {
-        apply_state_overrides(overrides, self)
-    }
-
-    /// Applies `eth_call` block overrides to `block_env` and overrides block hashes.
-    pub fn apply_block_overrides(&mut self, overrides: BlockOverrides, block_env: &mut BlockEnv) {
-        apply_block_overrides(overrides, self, block_env);
-    }
-}
-
 /// Applies `eth_call` state overrides to `db`.
 ///
 /// `state` replaces the account's storage and `stateDiff` updates individual slots. Precompile
