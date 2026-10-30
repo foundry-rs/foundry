@@ -1071,15 +1071,12 @@ impl ExpectedRevert {
             ExpectedRevertData::Exact(data) => {
                 // Like Forge, also accept the expected bytes as the message of canonical
                 // `Error(string)` or `CheatcodeError(string)` revert data.
-                let len = data.len();
+                let message = SymbolicAbiValue::String { bytes: data.clone() };
+                let message = encode_sequence(cx, [&message]);
                 let mut candidates = vec![data.clone()];
                 for selector in [Revert::SELECTOR, Vm::CheatcodeError::SELECTOR] {
-                    let mut head = selector.to_vec();
-                    head.extend(U256::from(32).to_be_bytes::<32>());
-                    head.extend(U256::from(len).to_be_bytes::<32>());
-                    let head = SymBytes::concrete(cx, head);
-                    let padding = SymBytes::concrete(cx, vec![0; len.next_multiple_of(32) - len]);
-                    candidates.push(SymBytes::concat(cx, [head, data.clone(), padding]));
+                    let selector = SymBytes::concrete(cx, selector.to_vec());
+                    candidates.push(SymBytes::concat(cx, [selector, message.clone()]));
                 }
                 let mut matches = Vec::new();
                 for candidate in candidates {
