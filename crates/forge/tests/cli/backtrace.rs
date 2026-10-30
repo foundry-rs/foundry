@@ -692,3 +692,79 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
+
+// Dynamic test linking compiles rewritten tests, so test-file locations must be mapped back to
+// the files on disk.
+#[forgetest]
+fn test_backtrace_dynamic_test_linking(prj: _, cmd: _) {
+    prj.add_source(
+        "Vault.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Vault {
+    error Locked(uint256 until);
+
+    uint256 public total;
+
+    constructor(uint256 initial) {
+        total = initial;
+    }
+
+    function withdraw(uint256 until) external pure {
+        revert Locked(until);
+    }
+
+    function share(uint256 parts) external view returns (uint256) {
+        return total / parts;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "Vault.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import {Vault} from "../src/Vault.sol";
+
+contract VaultTest {
+    Vault vault;
+
+    function setUp() public {
+        vault = new Vault(1);
+    }
+
+    function test_CustomErrorUncaught() public {
+        uint256 x = 1;
+        x += 1;
+        vault.withdraw(x);
+    }
+
+    function test_DivByZero() public view {
+        uint256 parts = 0;
+        vault.share(parts);
+    }
+}
+"#,
+    );
+
+    let backtraces = str![[r#"
+...
+Backtrace:
+  at Vault.withdraw (src/Vault.sol:15:16)
+  at VaultTest.test_CustomErrorUncaught (test/Vault.t.sol:17:9)
+...
+Backtrace:
+  at Vault.share
+  at VaultTest.test_DivByZero (test/Vault.t.sol:22:9)
+...
+"#]];
+    cmd.args(["test", "-vvvvv"]).assert_failure().stdout_eq(backtraces.clone());
+
+    // Cached builds keep the preprocessor edits.
+    cmd.forge_fuse().args(["test", "-vvvvv"]).assert_failure().stdout_eq(backtraces);
+}
