@@ -58,7 +58,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceContext, TraceRequirements},
 };
-use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant, arbitrum};
 use futures::{StreamExt, TryFutureExt};
 use revm::{
     DatabaseRef,
@@ -113,8 +113,9 @@ pub struct RunArgs {
     /// Whether to attempt local replay of system transactions.
     ///
     /// Without this flag, ordinary block replay leaves out system transactions mined before the
-    /// target and warns about each one. Replay support depends on the selected network. Canonical
-    /// Monad system transactions are replayed regardless of this flag.
+    /// target and warns about each one; ArbOS internal transactions on Arbitrum are left out
+    /// without a warning. Replay support depends on the selected network. Canonical Monad system
+    /// transactions are replayed regardless of this flag.
     #[arg(long, alias = "sys")]
     replay_system_txes: bool,
 
@@ -806,6 +807,10 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
         } else {
             let block_number = self.evm_env.block_env.number();
             let replay_system_txes = self.args.replay_system_txes;
+            // Every Arbitrum block opens with an ArbOS internal transaction. Replay takes the block
+            // numbers, base fee, and L1 gas these transactions account for from the header, block,
+            // and receipts, and cannot execute them locally, so the warning is skipped for them.
+            let is_arbitrum = arbitrum::is_arbitrum_chain(self.trace_context.chain().id());
             let mut skipped_system_txes = Vec::new();
             self.for_each_prefix_transaction(target_index, |_, tx| {
                 if !is_system_transaction(tx) || replay_system_txes {
@@ -818,7 +823,9 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
                         )
                     })?;
                     replay.push((tx.tx_hash(), tx_env));
-                } else {
+                } else if !(is_arbitrum
+                    && tx.transaction_type() == Some(arbitrum::ARBITRUM_INTERNAL_TX_TYPE))
+                {
                     skipped_system_txes.push(tx.tx_hash());
                 }
                 Ok(())
