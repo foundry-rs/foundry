@@ -14,7 +14,7 @@ use evm2::{
     TxResultWithState,
     ethereum::intrinsic_and_floor_gas,
     evm::{DbResult, PendingState, PrewarmSet, State},
-    interpreter::{GasTracker, Host, InstrStop, MessageKind, op},
+    interpreter::{GasTracker, Host, InstrStop, MessageKind},
     registry::HandlerError,
 };
 use eyre::WrapErr;
@@ -487,6 +487,12 @@ pub struct InspectorStackInner {
     early_exit_test_gate: Option<EarlyExitTestGate>,
     static_step_dispatch: OpcodeStepDispatch,
     has_static_step_end_inspectors: bool,
+    /// The opcodes the cheatcodes step, see [`Cheatcodes::steps`]. Refreshed where evm2 reads the
+    /// inspector config again, when a frame starts and when a message returns into it, since only
+    /// cheatcode calls change it.
+    cheat_steps: OpcodeSet,
+    /// Whether the cheatcodes stepped the running instruction.
+    cheat_stepped: bool,
 }
 
 /// Mutable references to both parts of [InspectorStack] and the backend the execution runs over,
@@ -1651,7 +1657,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             self.cheatcodes.as_deref().is_some_and(Cheatcodes::is_storage_hook_active);
 
         #[cfg(test)]
-        if interp.opcode() == op::JUMPDEST
+        if interp.opcode() == evm2::interpreter::op::JUMPDEST
             && let Some(gate) = &self.inner.early_exit_test_gate
             && interp.pc() == gate.target_pc
             && !gate.notified.swap(true, std::sync::atomic::Ordering::Relaxed)
@@ -1710,18 +1716,15 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             }
         }
 
+        // Other inspectors may step instructions the cheatcodes do not.
+        let cheat_stepped = self.inner.cheat_steps.contains(interp.opcode());
+        self.inner.cheat_stepped = cheat_stepped;
         if let Some((cheats, backend, _)) = self.cheats_and_backend() {
-            if cheats.has_opcode_overrides() {
-                cheats.step_opcode_overrides(interp.opcode());
-            }
-            if cheats.has_step_hooks() {
-                let opcode = interp.opcode();
-                if !cheats.has_recording_accesses_only_step_hook()
-                    || matches!(opcode, op::SLOAD | op::SSTORE)
-                {
-                    crate::utils::cold_path();
-                    cheats.step_hook(interp, backend);
-                }
+            if cheat_stepped {
+                crate::utils::cold_path();
+                cheats.step_hook(interp, backend);
+            } else {
+                cheats.pc = interp.pc();
             }
         }
 
@@ -1758,12 +1761,26 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             Inspector::<TypesFor<FEN>>::step_end(&mut **fuzzer, interp);
         }
 
-        if let Some((cheats, backend, inner)) = self.cheats_and_backend()
-            && cheats.has_step_end_hooks()
+        if self.inner.cheat_stepped
+            && let Some((cheats, backend, inner)) = self.cheats_and_backend()
         {
             crate::utils::cold_path();
             cheats.step_end_hook(interp, backend, inner);
         }
+    }
+
+    /// Reads the opcodes the cheatcodes step again.
+    fn refresh_cheat_steps(&mut self) {
+        self.inner.cheat_steps =
+            self.cheatcodes.as_deref().map_or(OpcodeSet::EMPTY, Cheatcodes::steps);
+    }
+
+    /// Refreshes the cheatcodes' opcodes after a message returns. The message's frames overwrote
+    /// whether the cheatcodes stepped the instruction that made it, so that instruction's
+    /// `step_end` runs the cheatcode hook whenever they step any instruction.
+    fn restore_cheat_stepped(&mut self) {
+        self.refresh_cheat_steps();
+        self.inner.cheat_stepped = self.inner.cheat_steps != OpcodeSet::EMPTY;
     }
 
     /// Rewrites a CREATE frame into a call to the CREATE2 factory if the cheatcodes request it.
@@ -1883,26 +1900,17 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         let every_opcode = inner.execution_cancellation.is_some()
             || inner.static_step_dispatch != OpcodeStepDispatch::None
             || inner.has_static_step_end_inspectors
-            || inner.fuzzer.as_ref().is_some_and(|fuzzer| fuzzer.mapping_slots.is_some())
-            || self.cheatcodes.as_deref().is_some_and(|cheats| {
-                // A log that fails `expectEmit` reverts its frame in that `LOG`'s `step_end`.
-                !cheats.expected_emits.is_empty()
-                    || cheats.is_storage_hook_active()
-                    || cheats.has_step_hooks()
-                    || cheats.has_step_end_hooks()
-            });
+            || inner.fuzzer.as_ref().is_some_and(|fuzzer| fuzzer.mapping_slots.is_some());
         let steps = if every_opcode {
             OpcodeSet::ALL
-        } else if self.cheatcodes.as_deref().is_some_and(Cheatcodes::has_opcode_overrides) {
-            // Origin and gas price overrides only rewrite what these instructions push.
-            [op::ORIGIN, op::GASPRICE].into_iter().collect()
         } else {
-            OpcodeSet::EMPTY
+            self.cheatcodes.as_deref().map_or(OpcodeSet::EMPTY, Cheatcodes::steps)
         };
         InspectorConfig::new().with_steps(steps)
     }
 
     fn initialize_interp(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
+        self.refresh_cheat_steps();
         let depth = interp.message().depth;
         if let Some(cheats) = self.cheatcodes.as_deref_mut()
             && let Some(checkpoint) = interp.host().frame_checkpoint()
@@ -2105,6 +2113,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         message: &MessageFor<FEN>,
         result: &mut MessageResultFor<FEN>,
     ) {
+        self.restore_cheat_stepped();
         // A frame handed off to a frame EVM already ran its end hooks there.
         if mem::take(&mut self.inner.env_handoff_ended) {
             return;
@@ -2234,6 +2243,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         message: &MessageFor<FEN>,
         result: &mut MessageResultFor<FEN>,
     ) {
+        self.restore_cheat_stepped();
         // A frame handed off to a frame EVM already ran its end hooks there.
         if mem::take(&mut self.inner.env_handoff_ended) {
             return;
