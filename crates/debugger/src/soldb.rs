@@ -902,6 +902,7 @@ mod tests {
             state_gas_reservoir: None,
             state_gas_spent: 0,
             storage_change: None,
+            storage_slot: None,
             status: (op == OpCode::STOP).then_some(InstrStop::Stop),
             immediate_bytes: None,
             decoded: None,

@@ -976,6 +976,7 @@ mod tests {
                     had_value: Some(U256::ONE),
                     reason: StorageChangeReason::SSTORE,
                 })),
+                storage_slot: None,
                 status: Some(InstrStop::Stop),
                 immediate_bytes: None,
                 decoded: None,

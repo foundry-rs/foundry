@@ -10,7 +10,8 @@ use alloy_primitives::{
     map::{AddressHashMap, AddressMap, AddressSet, HashSet},
 };
 use evm2::{
-    EvmFeatures, ExecutedTx, ExecutionError, Inspector, TxResultWithState,
+    EvmFeatures, ExecutedTx, ExecutionError, Inspector, InspectorConfig, OpcodeSet,
+    TxResultWithState,
     ethereum::intrinsic_and_floor_gas,
     evm::{DbResult, PendingState, PrewarmSet, State},
     interpreter::{GasTracker, Host, InstrStop, MessageKind, op},
@@ -30,9 +31,9 @@ use foundry_evm_core::{
         BlockEnvFor, DestructedAccount, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested,
         FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor,
         MessageFor, MessageResultFor, PersistentWrite, PreparedTx, SnapshotRestores,
-        TransactionRequestFor, TxEnvFor, TxFor, TxResultFor, TypesFor, cool_loaded,
-        destructed_accounts, evm_env, merge_pending_changes,
-        merge_untracked_pending_changes_with_warmth, release_inspector, warm_accounts, warm_set,
+        TransactionRequestFor, TxFor, TxResultFor, TypesFor, cool_loaded, destructed_accounts,
+        evm_env, merge_pending_changes, merge_untracked_pending_changes_with_warmth,
+        release_inspector, warm_accounts, warm_set,
     },
     precompiles::P256_VERIFY,
     utils::tx_warm_addresses,
@@ -356,6 +357,9 @@ struct InnerRoot {
     depth: u16,
     /// Sender of the nested transaction.
     caller: Address,
+    /// Origin the nested transaction reads instead of its sender, such as the running
+    /// transaction's origin for an isolated call.
+    origin: Option<Address>,
     /// Whether the root frame is a new call observed by the inspectors, such as a replayed
     /// transaction's, rather than a duplicate of the surrounding frame.
     observe: bool,
@@ -502,7 +506,6 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         cheats: &mut Cheatcodes<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
-        tx_env: &TxEnvFor<FEN>,
         message: &mut MessageFor<FEN>,
     ) -> Result<MessageResultFor<FEN>, ExecutionError> {
         let previous = self.synthetic_create_depth;
@@ -511,7 +514,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         // so isolate it as well.
         self.synthetic_create_depth = (message.depth == 2).then_some(2);
         let env = evm_env(evm);
-        let result = self.execute_on_frame_evm(Some(cheats), backend, evm, env, tx_env, message);
+        let result = self.execute_on_frame_evm(Some(cheats), backend, evm, env, message);
         self.synthetic_create_depth = previous;
         // Drop redirects left behind if nested execution aborted before their frames ended.
         self.pending_create2_redirects.truncate(create2_redirects);
@@ -531,8 +534,12 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         env.version.initial_call_depth = depth;
         EvmFactoryFor::<FEN>::default().sync_transaction(evm);
         let mut child = backend.backend().nested_evm(evm, tx, Some(env));
-        let previous =
-            self.enter_inner_context(InnerRoot { depth, caller: tx.signer(), observe: false });
+        let previous = self.enter_inner_context(InnerRoot {
+            depth,
+            caller: tx.signer(),
+            origin: None,
+            observe: false,
+        });
         // `ORIGIN` reads the nested transaction's signer, not the origin of an isolated call the
         // transaction runs in.
         let origin_override = cheats.origin_override.take();
@@ -1171,7 +1178,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         if pending.is_none() && requested.is_none() {
             return None;
         }
-        let tx_env = interp.tx_env();
         let evm = interp.host();
         let running = evm_env(evm);
         // Same precedence as the next transaction's environment: `vm.setEvmVersion` overrides
@@ -1184,8 +1190,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let mut env = EvmFactoryFor::<FEN>::default().env_with_spec(running, spec);
         env.version.chain_id = chain_id;
         let cheatcodes = self.cheatcodes.as_deref_mut();
-        let result =
-            self.inner.execute_on_frame_evm(cheatcodes, backend, evm, env, tx_env, message);
+        let result = self.inner.execute_on_frame_evm(cheatcodes, backend, evm, env, message);
         match result {
             Ok(result) => {
                 // evm2 runs the end hooks right after this hook returns a result.
@@ -1222,7 +1227,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         } else {
             precharged_state.min(account_creation_state_gas::<FEN>(interp, message))
         };
-        let tx_origin = interp.tx_env().origin;
+        let tx_origin = interp.host().tx_env().origin;
         let is_create = matches!(message.kind, MessageKind::Create | MessageKind::Create2);
         let kind = if is_create { TxKind::Create } else { TxKind::Call(message.destination) };
         let evm = interp.host();
@@ -1343,13 +1348,16 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             }
         }
 
-        // Cheatcodes route environment changes through their opcode overrides while isolated,
-        // the root frame reads the running transaction's origin, and fork revert diagnostics
-        // compare against the nested transaction's target.
+        // The nested transaction reads the running transaction's origin, cheatcodes route
+        // environment changes through their opcode overrides while isolated, and fork revert
+        // diagnostics compare against the nested transaction's target.
+        let origin = self
+            .cheatcodes
+            .as_deref()
+            .and_then(|cheats| cheats.origin_override)
+            .unwrap_or(tx_origin);
         let previous_cheats = self.cheatcodes.as_deref_mut().map(|cheats| {
-            let previous = cheats.origin_override;
-            let origin = previous.unwrap_or(tx_origin);
-            cheats.origin_override = (origin != message.caller).then_some(origin);
+            let previous = cheats.origin_override.take();
             cheats.in_isolation_context = true;
             cheats.isolation_env = Some(outer_env);
             let root_call_target = mem::replace(
@@ -1365,6 +1373,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let previous_inner = self.inner.enter_inner_context(InnerRoot {
             depth: message.depth,
             caller: message.caller,
+            origin: (origin != message.caller).then_some(origin),
             observe: false,
         });
         let create2_redirects = self.inner.pending_create2_redirects.len();
@@ -1620,6 +1629,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             return false;
         };
         warm_arbitrum_system_contract::<FEN>(interp);
+        if let Some(origin) = root.origin {
+            interp.host().tx_env_mut().origin = origin;
+        }
         if !root.observe
             && !matches!(message.kind, MessageKind::Create | MessageKind::Create2)
             && let Some(cheatcodes) = self.cheatcodes.as_deref()
@@ -1699,8 +1711,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
 
         if let Some((cheats, backend, _)) = self.cheats_and_backend() {
-            // `vm.breakpoint` records this pc, so keep it current even when the step hook is off.
-            cheats.pc = interp.pc();
             if cheats.has_opcode_overrides() {
                 cheats.step_opcode_overrides(interp.opcode());
             }
@@ -1863,6 +1873,35 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'_, FEN> {
+    #[inline]
+    fn inspector_config(&self) -> InspectorConfig {
+        let inner = &*self.inner;
+        #[cfg(test)]
+        if inner.early_exit_test_gate.is_some() {
+            return InspectorConfig::new();
+        }
+        let every_opcode = inner.execution_cancellation.is_some()
+            || inner.static_step_dispatch != OpcodeStepDispatch::None
+            || inner.has_static_step_end_inspectors
+            || inner.fuzzer.as_ref().is_some_and(|fuzzer| fuzzer.mapping_slots.is_some())
+            || self.cheatcodes.as_deref().is_some_and(|cheats| {
+                // A log that fails `expectEmit` reverts its frame in that `LOG`'s `step_end`.
+                !cheats.expected_emits.is_empty()
+                    || cheats.is_storage_hook_active()
+                    || cheats.has_step_hooks()
+                    || cheats.has_step_end_hooks()
+            });
+        let steps = if every_opcode {
+            OpcodeSet::ALL
+        } else if self.cheatcodes.as_deref().is_some_and(Cheatcodes::has_opcode_overrides) {
+            // Origin and gas price overrides only rewrite what these instructions push.
+            [op::ORIGIN, op::GASPRICE].into_iter().collect()
+        } else {
+            OpcodeSet::EMPTY
+        };
+        InspectorConfig::new().with_steps(steps)
+    }
+
     fn initialize_interp(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
         let depth = interp.message().depth;
         if let Some(cheats) = self.cheatcodes.as_deref_mut()
@@ -2389,7 +2428,6 @@ impl InspectorStackInner {
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
         env: EvmEnvFor<FEN>,
-        tx_env: &TxEnvFor<FEN>,
         message: &mut MessageFor<FEN>,
     ) -> Result<MessageResultFor<FEN>, ExecutionError> {
         // SAFETY: `evm` runs over the lifecycle's owned databases, and so does the frame EVM,
@@ -2400,7 +2438,7 @@ impl InspectorStackInner {
             inner: self,
             backend: Some(backend),
         });
-        let result = Host::execute_message(&mut frame, tx_env, message);
+        let result = Host::execute_message(&mut frame, message);
         // SAFETY: See above.
         let frame = unsafe { release_inspector(frame) };
         // SAFETY: See above.
@@ -2444,7 +2482,8 @@ impl InspectorStackInner {
         untracked: bool,
     ) -> eyre::Result<ExecutedNested<TypesFor<FEN>>> {
         let caller = prepared.tx().signer();
-        let previous = self.enter_inner_context(InnerRoot { depth, caller, observe: true });
+        let previous =
+            self.enter_inner_context(InnerRoot { depth, caller, origin: None, observe: true });
         // The replay reads its own transaction environment, not the surrounding execution's.
         let origin_override = cheats.origin_override.take();
         let gas_price = cheats.gas_price.take();

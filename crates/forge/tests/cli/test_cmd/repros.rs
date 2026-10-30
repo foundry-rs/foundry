@@ -1393,12 +1393,60 @@ Ran 1 test suite [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 "#]]);
 }
 
-// A configured gas price must not leave `vm.breakpoint` with a stale pc.
+// A log that fails `expectEmit` reverts its frame even when no call follows it.
 #[forgetest_init]
-fn breakpoint_pc_with_configured_gas_price(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.gas_price = Some(10_000_000_000);
-    });
+fn expect_emit_fails_on_log_without_following_call(prj: _, cmd: _) {
+    prj.add_test(
+        "ExpectEmitLog.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract ExpectEmitLogTest is Test {
+    event E();
+    event Anonymous() anonymous;
+
+    function test_unexpected_count() public {
+        vm.expectEmit(0);
+        emit E();
+        emit E();
+    }
+
+    function test_topicless_anonymous() public {
+        vm.expectEmit();
+        emit Anonymous();
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--mc", "ExpectEmitLogTest"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/ExpectEmitLog.t.sol:ExpectEmitLogTest
+[FAIL: use vm.expectEmitAnonymous to match anonymous events] test_topicless_anonymous() ([GAS])
+[FAIL: log emitted but expected 0 times] test_unexpected_count() ([GAS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
+
+Failing tests:
+Encountered 2 failing tests in test/ExpectEmitLog.t.sol:ExpectEmitLogTest
+[FAIL: use vm.expectEmitAnonymous to match anonymous events] test_topicless_anonymous() ([GAS])
+[FAIL: log emitted but expected 0 times] test_unexpected_count() ([GAS])
+
+Encountered a total of 2 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 2 failed tests
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+"#]]);
+}
+
+// `vm.breakpoint` records its calling instruction, also in frames that run without steps.
+#[forgetest_init]
+fn breakpoint_records_calling_pc(prj: _, cmd: _) {
     prj.add_test(
         "BreakpointPc.t.sol",
         r#"

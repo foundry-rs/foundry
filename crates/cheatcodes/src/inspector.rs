@@ -51,8 +51,8 @@ use foundry_evm_core::{
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryEvmFor,
         FoundryEvmNetwork, InterpreterFor, MessageFor, MessageResultFor, PersistentWrite,
-        SnapshotRestores, SpecFor, TransactionRequestFor, TxEnvFor, TxFor, TxResultFor, TypesFor,
-        evm_env, release_inspector, restore_access_warmth,
+        SnapshotRestores, SpecFor, TransactionRequestFor, TxFor, TxResultFor, TypesFor, evm_env,
+        release_inspector, restore_access_warmth,
     },
 };
 use foundry_evm_traces::{
@@ -86,7 +86,6 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
         cheats: &mut Cheatcodes<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
-        tx_env: &TxEnvFor<FEN>,
         message: &mut MessageFor<FEN>,
     ) -> Result<MessageResultFor<FEN>, ExecutionError>;
 
@@ -162,7 +161,7 @@ pub(crate) fn exec_create<FEN: FoundryEvmNetwork>(
         nonce,
     );
     message.call_target = message.destination;
-    Ok(executor.exec_message(ccx.state, ccx.backend, ccx.evm, ccx.tx_env, &mut message)?)
+    Ok(executor.exec_message(ccx.state, ccx.backend, ccx.evm, &mut message)?)
 }
 
 /// [`CheatcodesExecutor`] that runs nested executions with only the [`Cheatcodes`] inspector.
@@ -175,7 +174,6 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         cheats: &mut Cheatcodes<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
-        tx_env: &TxEnvFor<FEN>,
         message: &mut MessageFor<FEN>,
     ) -> Result<MessageResultFor<FEN>, ExecutionError> {
         let env = evm_env(evm);
@@ -183,7 +181,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         // which only lives for this call; its inspector is released before its state moves back.
         let mut frame = unsafe { backend.backend().begin_frame_evm(evm, env) };
         frame.set_inspector(CheatcodesInspector { cheats, backend: &mut *backend });
-        let result = Host::execute_message(&mut frame, tx_env, message);
+        let result = Host::execute_message(&mut frame, message);
         // SAFETY: See above.
         let frame = unsafe { release_inspector(frame) };
         // SAFETY: See above.
@@ -1377,14 +1375,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // but only if the backend is in forking mode
         backend.backend().ensure_cheatcode_access_forking_mode(&caller)?;
 
-        let tx_env = interp.tx_env();
         apply_dispatch(
             &decoded,
             &mut CheatsCtxt {
                 state: self,
                 evm: interp.host(),
                 backend,
-                tx_env,
                 gas,
                 caller,
                 is_static: is_static(message),
@@ -1409,13 +1405,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // but only if the backend is in forking mode
         backend.backend().ensure_cheatcode_access_forking_mode(&caller)?;
 
-        let tx_env = interp.tx_env();
         crate::monad::apply_monad_cheatcode(
             &mut CheatsCtxt {
                 state: self,
                 evm: interp.host(),
                 backend,
-                tx_env,
                 gas,
                 caller,
                 is_static: is_static(message),
@@ -1480,7 +1474,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         executor: &mut dyn CheatcodesExecutor<FEN>,
         isolate_call: bool,
     ) -> Option<MessageResultFor<FEN>> {
-        let tx_origin = interp.tx_env().origin;
+        let tx_origin = interp.host().tx_env().origin;
         let curr_depth = usize::from(call.depth);
         self.start_created_accounts_frame(
             curr_depth == 0,
@@ -1519,6 +1513,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // Cheatcodes return the gas they did not spend, as `message_result` does.
         let mut gas = GasTracker::new(call.gas_limit);
         if target == CHEATCODE_ADDRESS {
+            // `vm.breakpoint` records the calling instruction, which frames running without
+            // inspector steps do not track.
+            self.pc = interp.pc();
             let (stop, output) =
                 match self.apply_cheatcode(interp, call, backend, &mut gas, executor) {
                     Ok(retdata) => (InstrStop::Return, retdata.into()),
@@ -2475,7 +2472,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         #[cfg(feature = "monad")]
         let cheatcode_call = cheatcode_call
             || crate::monad::is_monad_cheatcode_call(self.extra_cheatcode_addresses, target);
-        let tx_origin = interp.tx_env().origin;
+        let tx_origin = interp.host().tx_env().origin;
 
         self.finish_created_accounts_frame(
             outcome.is_success(),
@@ -2731,7 +2728,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         input: &mut MessageFor<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
     ) -> Option<MessageResultFor<FEN>> {
-        let tx_origin = interp.tx_env().origin;
+        let tx_origin = interp.host().tx_env().origin;
         let curr_depth = usize::from(input.depth);
         self.start_created_accounts_frame(
             curr_depth == 0,
@@ -2859,7 +2856,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         .get(backend.backend().active_fork_id())
                         .and_then(|overrides| overrides.chain_id)
                         .map(U256::from)
-                        .unwrap_or(interp.tx_env().chain_id),
+                        .unwrap_or(interp.host().tx_env().chain_id),
                 },
                 accessor: input.caller,
                 account: address,
@@ -2896,7 +2893,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             self.deploy_code_caller_depth(curr_depth),
             &outcome.gas,
         );
-        let tx_origin = interp.tx_env().origin;
+        let tx_origin = interp.host().tx_env().origin;
 
         self.finish_created_accounts_frame(
             outcome.is_success(),
@@ -3385,7 +3382,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             }
         };
 
-        let tx_env = interp.tx_env();
         let depth = interp.message().depth.saturating_add(1);
         let gas_limit = interp.gas().remaining();
         let evm = interp.host();
@@ -3420,7 +3416,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             callback_target: hook.callback_target,
             callback_input: input,
         });
-        let result = executor.exec_message(self, backend, evm, tx_env, &mut message);
+        let result = executor.exec_message(self, backend, evm, &mut message);
         self.active_storage_hook = None;
         self.restore_storage_hook_inspector_state(inspector_state);
         // The callback is instrumentation: accesses it warmed stay cold for the hooked frame.
@@ -3468,7 +3464,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             .get(fork_id)
             .and_then(|overrides| overrides.chain_id)
             .map(U256::from)
-            .unwrap_or(interp.tx_env().chain_id);
+            .unwrap_or(interp.host().tx_env().chain_id);
         let fork_id = fork_id.unwrap_or_default();
         let depth = curr_depth as u64;
         match opcode {
