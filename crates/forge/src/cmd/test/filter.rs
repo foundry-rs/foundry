@@ -15,6 +15,19 @@ pub struct RerunFailure {
     pub test: String,
 }
 
+impl RerunFailure {
+    /// Whether the failure is the suite's `setUp` or constructor, which run before any test: any
+    /// test of the suite reruns it.
+    pub fn is_suite_failure(&self) -> bool {
+        is_suite_failure(&self.test)
+    }
+}
+
+/// Returns `true` for the failure names of a suite's `setUp` and constructor.
+pub(crate) fn is_suite_failure(name: &str) -> bool {
+    matches!(name, "setUp" | "constructor")
+}
+
 /// Persisted `forge test --rerun` failures.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RerunFailures {
@@ -270,7 +283,7 @@ impl TestFilter for ProjectPathsAwareFilter {
         let name = signature.split('(').next().unwrap_or(&signature);
         failures.iter().any(|failure| {
             self.matches_rerun_contract(&failure.contract, contract_id)
-                && (failure.test == signature || failure.test == name)
+                && (failure.test == signature || failure.test == name || failure.is_suite_failure())
         })
     }
 }

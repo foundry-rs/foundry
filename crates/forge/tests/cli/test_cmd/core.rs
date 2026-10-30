@@ -658,20 +658,58 @@ contract HealthyContract is Test {
 
     cmd.args(["test", "-j1"]).assert_failure();
 
-    // With no replayable failures recorded, `--rerun` falls back to a regular run instead of
-    // selecting zero tests.
+    // The failed `setUp()` is recorded, so `--rerun` runs only its suite again.
     cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure().stdout_eq(str![[r#"
 No files changed, compilation skipped
-
-Ran 1 test for test/RerunSetupFail.t.sol:HealthyContract
-[PASS] testC() ([GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test for test/RerunSetupFail.t.sol:OnlySetupFails
 [FAIL: assertion failed] setUp() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
-Ran 2 test suites [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+...
+"#]]);
+}
+
+// A failed `setUp()` is rerun along with the failed tests of other suites.
+#[forgetest_init]
+fn rerun_includes_setup_failure_next_to_test_failures(prj: _, cmd: _) {
+    prj.add_test(
+        "RerunMixed.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SetupFails is Test {
+    function setUp() public {
+        assertTrue(false);
+    }
+
+    function testA() public {}
+}
+
+contract TestFails is Test {
+    function testB() public {
+        assertTrue(false);
+    }
+
+    function testC() public {}
+}
+"#,
+    );
+
+    cmd.args(["test", "-j1"]).assert_failure();
+    cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/RerunMixed.t.sol:SetupFails
+[FAIL: assertion failed] setUp() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/RerunMixed.t.sol:TestFails
+[FAIL: assertion failed] testB() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 2 test suites [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
 ...
 "#]]);
 }

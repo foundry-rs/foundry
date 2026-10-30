@@ -3435,13 +3435,19 @@ fn last_run_failures(config: &Config) -> LastRunFailures {
         if failures.failures.is_empty() {
             return LastRunFailures { test_pattern: None, failures: None };
         }
-        let test_pattern = failures
-            .failures
-            .iter()
-            .map(|failure| regex::escape(&failure.test))
-            .collect::<Vec<_>>()
-            .join("|");
-        let test_pattern = Regex::new(&test_pattern).ok();
+        // A failed `setUp()` reruns every test of its suite, which a name pattern cannot express;
+        // the contract-aware rerun filter selects the tests on its own.
+        let test_pattern = if failures.failures.iter().any(RerunFailure::is_suite_failure) {
+            None
+        } else {
+            let pattern = failures
+                .failures
+                .iter()
+                .map(|failure| regex::escape(&failure.test))
+                .collect::<Vec<_>>()
+                .join("|");
+            Regex::new(&pattern).ok()
+        };
         return LastRunFailures { test_pattern, failures: Some(failures.failures) };
     }
 
@@ -3487,7 +3493,9 @@ fn rerun_filter_matches<'a>(
     let predicate_failures =
         test_result.invariant_failures.iter().filter_map(|failure| failure.predicate_name());
     let has_predicate_failures = predicate_failures.clone().next().is_some();
-    let fallback = test_name.is_any_test().then(|| test_name.split('(').next()).flatten();
+    // A failed `setUp()` or constructor is recorded by name so that `--rerun` runs its suite again.
+    let name = test_name.split('(').next().unwrap_or(test_name);
+    let fallback = (test_name.is_any_test() || filter::is_suite_failure(name)).then_some(name);
     predicate_failures
         .chain(fallback.into_iter().filter(move |_| !has_predicate_failures))
         .map(str::to_owned)
