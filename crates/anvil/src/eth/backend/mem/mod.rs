@@ -141,7 +141,7 @@ use foundry_evm::{
         get_blob_params_by_hardfork,
     },
 };
-use foundry_evm_networks::{NetworkConfigs, apply_bsc_p256_precompile, arbitrum};
+use foundry_evm_networks::{NetworkConfigs, apply_bsc_p256_precompile, arbitrum, arc};
 use foundry_primitives::{
     FoundryHeader, FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest,
     FoundryTxEnvelope, FoundryTxReceipt, TempoTransactionRequest,
@@ -1669,11 +1669,17 @@ impl<N: Network> Backend<N> {
         let chain_id = self.protocol_chain_id();
         let timestamp = self.evm_env.read().block_env.timestamp.saturating_to();
         apply_bsc_p256_precompile(&mut precompiles, chain_id, timestamp);
+        arc::apply_precompiles(&mut precompiles, chain_id);
 
         let mut precompiles_map = BTreeMap::<String, Address>::default();
-        for address in precompiles.addresses() {
-            let precompile = precompiles.get(address).expect("precompile address must resolve");
-            precompiles_map.insert(precompile.precompile_id().name().to_string(), *address);
+        for address in precompiles
+            .addresses()
+            .copied()
+            .chain([arc::NATIVE_COIN_AUTHORITY, arc::NATIVE_COIN_CONTROL])
+        {
+            if let Some(precompile) = precompiles.get(&address) {
+                precompiles_map.insert(precompile.precompile_id().name().to_string(), address);
+            }
         }
 
         // Extend with configured network precompiles.
@@ -2732,6 +2738,7 @@ impl<N: Network> Backend<N> {
             self.protocol_chain_id(),
             evm_env.block_env.timestamp.saturating_to(),
         );
+        arc::apply_precompiles(precompiles, self.protocol_chain_id());
 
         if let Some(factory) = &self.precompile_factory {
             factory.install(precompiles);
