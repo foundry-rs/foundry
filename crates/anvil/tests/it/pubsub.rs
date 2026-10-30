@@ -489,6 +489,7 @@ mod backpressure {
                 storage: self.api.storage_info(),
                 filter: FilteredParams::new(Some(filter)),
                 queued: Default::default(),
+                skipped: Default::default(),
                 id: SubscriptionId::Number(1),
             }))
         }
@@ -588,22 +589,22 @@ mod backpressure {
         let mut logs = fixture.logs(Filter::new().address(*fixture.contract.address()));
         let snapshot = api.evm_snapshot().await.unwrap();
 
-        let receipt = fixture.emit("reverted notification").await;
+        let reverted = fixture.emit("reverted notification").await;
         assert!(api.evm_revert(snapshot).await.unwrap());
-        assert!(api.storage_info().block(receipt.block_hash.unwrap()).is_none());
+        assert!(api.storage_info().block(reverted.block_hash.unwrap()).is_none());
 
-        let mut log = receipt.inner.logs()[0].clone();
-        log.removed = true;
+        // The reverted log was never delivered, so neither is its removal.
+        let receipt = fixture.emit("live notification").await;
         let notification = tokio::time::timeout(Duration::from_secs(5), logs.next())
             .await
-            .expect("removed log was not delivered")
+            .expect("live log was not delivered")
             .expect("subscription ended at the reverted block");
         assert_eq!(
             notification,
             serde_json::json!({
                 "jsonrpc": "2.0",
                 "method": "eth_subscription",
-                "params": {"subscription": 1, "result": log},
+                "params": {"subscription": 1, "result": receipt.inner.logs()[0]},
             })
         );
     }
