@@ -7964,3 +7964,40 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
 }
+
+// Rolling the active fork keeps the state of a non-default test sender, which is not persistent
+// by default, as the caller of the test.
+#[forgetest_init]
+fn fork_roll_keeps_sender_state(prj: _, cmd: _) {
+    let endpoint = rpc::next_http_archive_rpc_url();
+    prj.add_test(
+        "ForkRollSender.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForkRollSenderTest is Test {
+    function test_rollKeepsSenderBalance() public {
+        vm.createSelectFork("<url>", 21_000_000);
+        vm.deal(msg.sender, 123 ether);
+        vm.rollFork(21_000_001);
+        assertEq(msg.sender.balance, 123 ether);
+    }
+}
+   "#
+        .replace("<url>", &endpoint),
+    );
+
+    cmd.args([
+        "test",
+        "--mt",
+        "test_rollKeepsSenderBalance",
+        "--sender",
+        "0x000000000000000000000000000000000000Ab0B",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+[PASS] test_rollKeepsSenderBalance() ([GAS])
+...
+"#]]);
+}

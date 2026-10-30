@@ -143,6 +143,8 @@ pub struct Backend<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     lifecycle: ExecutionLifecycle<EvmFactoryFor<FEN>>,
     /// Accounts allowed to execute cheatcodes.
     cheatcode_access: AddressSet,
+    /// Caller of the test.
+    caller: Option<Address>,
     /// Whether a reverted state snapshot recorded a test failure.
     has_state_snapshot_failure: bool,
     /// Block number the active fork reports instead of its own.
@@ -245,6 +247,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             forks,
             lifecycle,
             cheatcode_access: AddressSet::default(),
+            caller: None,
             has_state_snapshot_failure: false,
             fork_block_number_override: None,
             bal: None,
@@ -545,6 +548,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// Sets the caller address and grants it cheatcode access.
     pub fn set_caller(&mut self, account: Address) -> &mut Self {
         trace!(?account, "setting caller account");
+        self.caller = Some(account);
         self.cheatcode_access.insert(account);
         self
     }
@@ -792,7 +796,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             None
         };
         let db = ForkDb::new(backend, remote.context().source_chain_id);
-        self.lifecycle.roll_fork(evm, Some(id), db, env, None, phase)?;
+        self.roll_lifecycle_fork(evm, id, db, env, None, phase)?;
         let block = Some(remote.number());
         self.set_fork_info(
             id,
@@ -802,6 +806,30 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             self.retain_cursor(id, position, &cursor, Some(evm));
         }
         Ok(())
+    }
+
+    /// Moves fork `id` onto `db` and `env` in the lifecycle.
+    ///
+    /// As on master, rolling the active fork keeps the test caller's state like a persistent
+    /// account's, so a sender that is not persistent keeps changes such as `vm.deal`.
+    fn roll_lifecycle_fork(
+        &mut self,
+        evm: &mut FoundryEvmFor<'_, FEN>,
+        id: LocalForkId,
+        db: impl BackingDb,
+        env: EvmEnvFor<FEN>,
+        cache: Option<Cache>,
+        phase: ExecutionPhase,
+    ) -> eyre::Result<()> {
+        let active = self.is_active_fork(id);
+        let caller = self
+            .caller
+            .filter(|caller| active && self.lifecycle.forks_mut().add_persistent(*caller));
+        let result = self.lifecycle.roll_fork(evm, Some(id), db, env, cache, phase);
+        if let Some(caller) = caller {
+            self.lifecycle.forks_mut().remove_persistent(&caller);
+        }
+        result
     }
 
     /// Moves fork `id`, or the active fork for `None`, to the state right before `transaction`:
@@ -818,7 +846,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let id = self.ensure_fork(id)?;
         let (db, env, cache, info, cursor, replayed) =
             self.prepare_roll_to_transaction(id, transaction, evm_env(evm).spec)?;
-        self.lifecycle.roll_fork(evm, Some(id), db, env, cache, phase)?;
+        self.roll_lifecycle_fork(evm, id, db, env, cache, phase)?;
         self.set_fork_info(id, info);
         if let Some((position, cursor)) = cursor {
             self.retain_cursor(id, position, &cursor, Some(evm));
