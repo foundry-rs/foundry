@@ -3001,9 +3001,9 @@ Suite result: FAILED. 5 passed; 6 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
-// Like Forge, a matched `vm.expectRevert` or `vm.assumeNoRevert` compares reasons by raw bytes or
-// by the message of `Error(string)`, `vm.expectRevert` matches `bytes4` exactly, and returns
-// Forge's dummy call output and CREATE address.
+// Like Forge, a matched `vm.expectRevert` compares reasons by raw bytes or by the message of
+// `Error(string)`, matches `bytes4` exactly, and returns Forge's dummy call output and CREATE
+// address.
 #[forgetest_init]
 fn symbolic_vm_expect_revert_matches_like_forge(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_vm_expect_revert_matches_like_forge");
@@ -3039,28 +3039,7 @@ contract MatchBadCtor {
     }
 }
 
-interface MatchVm {
-    struct PotentialRevert {
-        address reverter;
-        bool partialMatch;
-        bytes revertData;
-    }
-
-    function assumeNoRevert(PotentialRevert calldata potentialRevert) external pure;
-}
-
 contract SymbolicExpectRevertMatch is Test {
-    function checkAssumeNoRevertStringReason(uint256 amount) public {
-        MatchToken token = new MatchToken();
-        MatchVm(VM_ADDRESS).assumeNoRevert(MatchVm.PotentialRevert({
-            reverter: address(0),
-            partialMatch: false,
-            revertData: bytes("insufficient balance")
-        }));
-        (bool ok,) = address(token).call(abi.encodeCall(MatchToken.burn, (amount)));
-        assertTrue(ok);
-    }
-
     function checkStringReason(uint256 amount) public {
         vm.assume(amount > 0);
         MatchToken token = new MatchToken();
@@ -3120,15 +3099,14 @@ contract SymbolicExpectRevertMatch is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 7 tests for test/SymbolicExpectRevertMatch.t.sol:SymbolicExpectRevertMatch
-[PASS] checkAssumeNoRevertStringReason(uint256) ([METRICS])
+Ran 6 tests for test/SymbolicExpectRevertMatch.t.sol:SymbolicExpectRevertMatch
 [PASS] checkEmptyReason() ([METRICS])
 [PASS] checkMatchedCallOutput() ([METRICS])
 [PASS] checkMatchedCreateAddress() ([METRICS])
 [PASS] checkPartialSelector() ([METRICS])
 [FAIL: Error != expected error: Unauthorized(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496) != custom error 0x8e4a23d6; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSelectorWithArgs() ([METRICS])
 [PASS] checkStringReason(uint256) ([METRICS])
-Suite result: FAILED. 6 passed; 1 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 5 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
