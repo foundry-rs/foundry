@@ -918,9 +918,8 @@ impl SymbolicExecutor {
         // call fails. Concrete Forge answers a mocked call before isolating it.
         let isolated =
             matches!(kind, CallKind::Call) && state.starts_isolated_transaction(executor);
-        let transfer_to = if matches!(kind, CallKind::Call) { to } else { state.address };
-        // Like Forge's `CallInputs::transfer_to`, the account a codeless call reverts as.
-        let reverter = if matches!(kind, CallKind::DelegateCall | CallKind::CallCode) {
+        // Like Forge's `CallInputs::transfer_to`, also the account a codeless call reverts as.
+        let transfer_to = if matches!(kind, CallKind::DelegateCall | CallKind::CallCode) {
             state.address
         } else {
             to
@@ -957,7 +956,7 @@ impl SymbolicExecutor {
                     state,
                     !reverts,
                     return_data,
-                    reverter,
+                    transfer_to,
                     out_offset,
                     &out_size,
                 );
@@ -1013,7 +1012,7 @@ impl SymbolicExecutor {
                 state,
                 true,
                 return_data,
-                reverter,
+                transfer_to,
                 out_offset,
                 &out_size,
             );
