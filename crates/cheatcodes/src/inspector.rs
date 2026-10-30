@@ -29,7 +29,7 @@ use alloy_primitives::{
 use alloy_rpc_types::AccessList;
 use alloy_sol_types::{SolCall, SolInterface};
 use evm2::{
-    EvmTypesHost, ExecutionError,
+    EvmTypesHost, ExecutionError, OpcodeSet,
     evm::{State, StateSnapshot},
     interpreter::{
         Gas, GasTracker, Host, InstrStop, Interpreter, MessageExt, MessageKind, MessageResultExt,
@@ -1829,65 +1829,48 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         })
     }
 
-    #[inline(always)]
-    pub fn has_step_hooks(&self) -> bool {
-        self.broadcast.is_some()
+    /// Returns the opcodes for which [`Self::step_hook`] and [`Self::step_end_hook`] must run.
+    ///
+    /// This is the only place that decides which instructions the cheatcodes step: the inspector
+    /// asks the EVM for these opcodes, and skips the hooks for every other instruction.
+    pub fn steps(&self) -> OpcodeSet {
+        if self.is_storage_hook_active()
+            || self.has_storage_hooks()
+            || self.broadcast.is_some()
             || self.gas_metering.paused
             || self.gas_metering.reset
-            || self.recording_accesses
+            || self.gas_metering.touched
+            || self.gas_metering.recording
             || self.recorded_account_diffs_stack.is_some()
             || !self.allowed_mem_writes.is_empty()
             || self.core.mapping_slots.is_some()
-            || self.gas_metering.recording
-            || self.has_active_env_overrides()
-            || self.has_storage_hooks()
-    }
-
-    /// Whether `ORIGIN` or `GASPRICE` reads an overridden value; only those instructions need
-    /// [`Self::step_opcode_overrides`].
-    #[inline(always)]
-    pub const fn has_opcode_overrides(&self) -> bool {
-        self.origin_override.is_some() || self.gas_price.is_some()
-    }
-
-    /// Marks an `ORIGIN` or `GASPRICE` instruction whose pushed value `step_end` overrides.
-    #[inline(always)]
-    pub const fn step_opcode_overrides(&mut self, opcode: u8) {
-        self.pending_origin_override = opcode == op::ORIGIN && self.origin_override.is_some();
-        self.pending_gas_price = opcode == op::GASPRICE && self.gas_price.is_some();
-    }
-
-    #[inline(always)]
-    pub const fn has_step_end_hooks(&self) -> bool {
-        self.gas_metering.paused
-            || self.gas_metering.touched
             || self.core.arbitrary_storage.is_some()
-            || self.core.mapping_slots.is_some()
-            || self.has_active_env_overrides()
-            || self.pending_origin_override
-            || self.pending_gas_price
-            || self.pending_emit_failure.is_some()
-            || self.has_storage_hooks()
             || self.deploy_code_depth.is_some()
+        {
+            return OpcodeSet::ALL;
+        }
+        let mut steps = OpcodeSet::EMPTY;
+        // A log that fails `expectEmit` reverts its frame in the `step_end` of the instruction
+        // that emitted it.
+        if !self.expected_emits.is_empty() || self.pending_emit_failure.is_some() {
+            steps = steps.union(LOG_EMITTING_OPCODES);
+        }
+        if self.recording_accesses {
+            steps = steps.union(opcodes([op::SLOAD, op::SSTORE]));
+        }
+        // Origin and gas price overrides rewrite what these instructions push.
+        if self.origin_override.is_some() || self.gas_price.is_some() {
+            steps = steps.union(opcodes([op::ORIGIN, op::GASPRICE]));
+        }
+        if self.has_active_env_overrides() {
+            steps = steps.union(opcodes([op::BASEFEE, op::GASPRICE, op::CHAINID, op::BLOBHASH]));
+        }
+        steps
     }
 
     #[inline(always)]
     pub fn has_log_hooks(&self) -> bool {
         !self.expected_emits.is_empty() || self.core.recorded_logs.is_some()
-    }
-
-    #[inline(always)]
-    pub fn has_recording_accesses_only_step_hook(&self) -> bool {
-        self.recording_accesses
-            && self.broadcast.is_none()
-            && !self.gas_metering.paused
-            && !self.gas_metering.reset
-            && self.recorded_account_diffs_stack.is_none()
-            && self.allowed_mem_writes.is_empty()
-            && self.core.mapping_slots.is_none()
-            && !self.has_storage_hooks()
-            && !self.gas_metering.recording
-            && !self.has_active_env_overrides()
     }
 
     #[inline(always)]
@@ -1914,7 +1897,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
     }
 
-    /// Called before each instruction executes.
+    /// Called before each instruction in [`Self::steps`] executes.
     ///
     /// Kept out of line: it runs only while a cheatcode needs per-instruction work, and inlining
     /// it into the inspector's per-instruction hook enlarges that hook's frame for every opcode.
@@ -1926,12 +1909,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) {
         self.pc = interp.pc();
 
-        if !self.has_step_hooks() {
-            return;
-        }
-
         let depth = usize::from(interp.message().depth) + 1;
         let opcode = interp.opcode();
+
+        // Marks an `ORIGIN` or `GASPRICE` instruction whose pushed value `step_end` overrides.
+        self.pending_origin_override = opcode == op::ORIGIN && self.origin_override.is_some();
+        self.pending_gas_price = opcode == op::GASPRICE && self.gas_price.is_some();
 
         if self.broadcast.is_some() {
             self.set_gas_limit_type(interp);
@@ -2045,7 +2028,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
     }
 
-    /// Called after each instruction executes.
+    /// Called after each instruction in [`Self::steps`] executes.
     ///
     /// Kept out of line for the same reason as [`Self::step_hook`].
     #[inline(never)]
@@ -2055,10 +2038,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         backend: &mut dyn CheatcodesBackend<FEN>,
         executor: &mut dyn CheatcodesExecutor<FEN>,
     ) {
-        if !self.has_step_end_hooks() {
-            return;
-        }
-
         // `deployCode`: keep the constructor's output, which it reports if depositing it fails.
         if let Some(depth) = self.deploy_code_depth
             && usize::from(interp.message().depth) == depth + 1
@@ -3628,6 +3607,34 @@ fn disallowed_mem_write<T: EvmTypesHost>(
     revert_frame(interpreter, revert_string.as_bytes());
 }
 
+/// The instructions during which the running frame can emit a log: `LOG*`, and the message and
+/// self-destruct instructions, such as for logs of precompiles and value transfers.
+const LOG_EMITTING_OPCODES: OpcodeSet = opcodes([
+    op::LOG0,
+    op::LOG1,
+    op::LOG2,
+    op::LOG3,
+    op::LOG4,
+    op::CALL,
+    op::CALLCODE,
+    op::DELEGATECALL,
+    op::STATICCALL,
+    op::CREATE,
+    op::CREATE2,
+    op::SELFDESTRUCT,
+]);
+
+/// Returns the set of `ops`.
+const fn opcodes<const N: usize>(ops: [u8; N]) -> OpcodeSet {
+    let mut set = OpcodeSet::EMPTY;
+    let mut i = 0;
+    while i < N {
+        set.insert(ops[i]);
+        i += 1;
+    }
+    set
+}
+
 /// Returns true if the kind of account access is a call.
 const fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
     matches!(
@@ -3823,8 +3830,7 @@ mod tests {
     #[test]
     fn default_cheatcodes_have_no_opcode_hooks() {
         let cheats = Cheatcodes::<EthEvmNetwork>::new(Arc::default());
-        assert!(!cheats.has_step_hooks());
-        assert!(!cheats.has_step_end_hooks());
+        assert_eq!(cheats.steps(), OpcodeSet::EMPTY);
         assert!(!cheats.has_log_hooks());
     }
 
@@ -3833,41 +3839,51 @@ mod tests {
         let mut cheats = Cheatcodes::<EthEvmNetwork>::new(Arc::default());
 
         cheats.recording_accesses = true;
-        assert!(cheats.has_step_hooks());
-        assert!(!cheats.has_step_end_hooks());
-        assert!(cheats.has_recording_accesses_only_step_hook());
+        assert_eq!(cheats.steps(), [op::SLOAD, op::SSTORE].into_iter().collect());
 
         cheats.recording_accesses = false;
         cheats.gas_metering.touched = true;
-        assert!(!cheats.has_step_hooks());
-        assert!(cheats.has_step_end_hooks());
-        assert!(!cheats.has_recording_accesses_only_step_hook());
+        assert_eq!(cheats.steps(), OpcodeSet::ALL);
 
         cheats.gas_metering.touched = false;
         cheats.register_storage_load_hook(Address::ZERO, Address::ZERO, [0; 4]);
-        assert!(cheats.has_step_hooks());
-        assert!(cheats.has_step_end_hooks());
-        assert!(!cheats.has_recording_accesses_only_step_hook());
+        assert_eq!(cheats.steps(), OpcodeSet::ALL);
     }
 
     #[test]
-    fn mixed_step_hooks_disable_record_access_fast_path() {
+    fn combined_cheatcodes_step_every_opcode_any_needs() {
         let mut cheats = Cheatcodes::<EthEvmNetwork>::new(Arc::default());
         cheats.recording_accesses = true;
+        cheats.gas_price = Some(1);
+        cheats.env_overrides.update(None, |o| o.chain_id = Some(1));
+        assert_eq!(
+            cheats.steps(),
+            [
+                op::SLOAD,
+                op::SSTORE,
+                op::ORIGIN,
+                op::GASPRICE,
+                op::BASEFEE,
+                op::CHAINID,
+                op::BLOBHASH
+            ]
+            .into_iter()
+            .collect()
+        );
 
         cheats.gas_metering.reset = true;
-        assert!(!cheats.has_recording_accesses_only_step_hook());
-
-        cheats.gas_metering.reset = false;
-        cheats.env_overrides.update(None, |o| o.basefee = Some(1));
-        assert!(!cheats.has_recording_accesses_only_step_hook());
+        assert_eq!(cheats.steps(), OpcodeSet::ALL);
     }
 
     #[test]
     fn env_override_hook_predicates() {
         fn assert_hooks(cheats: &Cheatcodes, active: bool, case: &str) {
-            assert_eq!(cheats.has_step_hooks(), active, "step hooks: {case}");
-            assert_eq!(cheats.has_step_end_hooks(), active, "step_end hooks: {case}");
+            let steps = if active {
+                [op::BASEFEE, op::GASPRICE, op::CHAINID, op::BLOBHASH].into_iter().collect()
+            } else {
+                OpcodeSet::EMPTY
+            };
+            assert_eq!(cheats.steps(), steps, "{case}");
         }
 
         let mut cheats = Cheatcodes::<EthEvmNetwork>::new(Arc::default());
@@ -3972,12 +3988,12 @@ mod tests {
         let mut cheats = cheats(false, None);
         let target = Address::repeat_byte(0x11);
         let slot = U256::from(7);
-        assert!(!cheats.has_step_end_hooks());
+        assert_eq!(cheats.steps(), OpcodeSet::EMPTY);
 
         Vm::setArbitraryStorage_1Call { target, overwrite: true }
             .apply_context(&mut cheats.core)
             .unwrap();
-        assert!(cheats.has_step_end_hooks());
+        assert_eq!(cheats.steps(), OpcodeSet::ALL);
         assert!(cheats.has_arbitrary_storage(&target));
         assert!(cheats.should_overwrite_arbitrary_storage(&target, slot));
 
