@@ -527,7 +527,7 @@ impl SymbolicExecutor {
         &mut self,
         state: &mut PathState,
         expected: &ExpectedRevert,
-        reverter: Address,
+        reverter: Option<Address>,
         return_data: &SymReturnData,
     ) -> Result<bool, SymbolicError> {
         let Some(condition) = expected.match_condition(&mut self.cx, reverter, return_data) else {
@@ -565,7 +565,7 @@ impl SymbolicExecutor {
 
         let conditions = filters
             .iter()
-            .filter_map(|filter| filter.match_condition(&mut self.cx, reverter, return_data))
+            .filter_map(|filter| filter.match_condition(&mut self.cx, Some(reverter), return_data))
             .collect::<Vec<_>>();
         if conditions.is_empty() {
             return Ok(false);
@@ -820,6 +820,7 @@ impl SymbolicExecutor {
                     CheatcodeOutcome::Continue(ret) => SymReturnData::from_words(&mut self.cx, ret),
                     CheatcodeOutcome::ContinueData(ret) => ret,
                     CheatcodeOutcome::Revert(ret) => {
+                        state.first_failed_callee.get_or_insert(CHEATCODE_ADDRESS);
                         state.return_data = ret;
                         state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
                         state.stack.push(SymExpr::zero(&mut self.cx))?;
@@ -874,6 +875,12 @@ impl SymbolicExecutor {
         let isolated =
             matches!(kind, CallKind::Call) && state.starts_isolated_transaction(executor);
         let transfer_to = if matches!(kind, CallKind::Call) { to } else { state.address };
+        // Like Forge's `CallInputs::transfer_to`, the account a codeless call reverts as.
+        let reverter = if matches!(kind, CallKind::DelegateCall | CallKind::CallCode) {
+            state.address
+        } else {
+            to
+        };
         if matches!(kind, CallKind::Call | CallKind::CallCode) {
             let call_caller = call_context.as_ref().expect("value calls have a call context").0;
             if isolated && !self.has_call_mock(state, code_address, &value, &call_input)? {
@@ -898,6 +905,9 @@ impl SymbolicExecutor {
                 self.take_call_mock(state, code_address, concrete_value, &call_input)?
             {
                 let (return_data, reverts) = mock.into_parts();
+                if reverts {
+                    state.record_codeless_failure(reverter);
+                }
                 state.return_data = return_data;
                 if !reverts && let Some((call_caller, _, _)) = call_context {
                     self.apply_call_value_transfer(executor, state, kind, to, call_caller, value);
@@ -948,6 +958,7 @@ impl SymbolicExecutor {
                     state.stack.push(SymExpr::one(&mut self.cx))?;
                 }
                 None => {
+                    state.record_codeless_failure(reverter);
                     state.return_data = SymReturnData::empty(&mut self.cx);
                     state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
                     state.stack.push(SymExpr::zero(&mut self.cx))?;
@@ -1046,7 +1057,9 @@ impl SymbolicExecutor {
 
         let mut parents = VecDeque::with_capacity(outcomes.len());
         for outcome in outcomes {
-            match self.join_call_outcome(executor, state, outcome, to)? {
+            let failed_callee =
+                (!matches!(outcome.status, CallStatus::Success)).then_some(outcome.state.address);
+            match self.join_call_outcome(executor, state, outcome, failed_callee)? {
                 JoinedCallOutcome::Rejected => {}
                 JoinedCallOutcome::Failure(parent) => {
                     *state = parent;
@@ -1243,6 +1256,12 @@ impl SymbolicExecutor {
                 state.stack.push(SymExpr::one(&mut self.cx))?;
             }
             None => {
+                let reverter = if matches!(kind, CallKind::DelegateCall | CallKind::CallCode) {
+                    state.address
+                } else {
+                    to
+                };
+                state.record_codeless_failure(reverter);
                 state.return_data = SymReturnData::empty(&mut self.cx);
                 state.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;
                 state.stack.push(SymExpr::zero(&mut self.cx))?;
@@ -1297,6 +1316,7 @@ impl SymbolicExecutor {
         match can_transfer.as_const() {
             Some(true) => Ok(true),
             Some(false) => {
+                state.record_codeless_failure(to);
                 state.return_data = SymReturnData::empty(&mut self.cx);
                 state.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;
                 state.stack.push(SymExpr::zero(&mut self.cx))?;
@@ -1315,6 +1335,7 @@ impl SymbolicExecutor {
                     (true, true) => {
                         let mut failure = state.clone();
                         failure.constraints = failure_constraints;
+                        failure.record_codeless_failure(to);
                         failure.return_data = SymReturnData::empty(&mut self.cx);
                         failure.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;
                         failure.stack.push(SymExpr::zero(&mut self.cx))?;
@@ -1329,6 +1350,7 @@ impl SymbolicExecutor {
                     }
                     (false, true) => {
                         state.constraints = failure_constraints;
+                        state.record_codeless_failure(to);
                         state.return_data = SymReturnData::empty(&mut self.cx);
                         state.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;
                         state.stack.push(SymExpr::zero(&mut self.cx))?;

@@ -32,6 +32,9 @@ pub(crate) struct PathState {
     needs_feasibility_check: bool,
     pub(crate) loop_jumps: HashMap<usize, u32>,
     pub(crate) expected_revert: Option<ExpectedRevert>,
+    /// Account of the first call, or reverting CREATE, that failed in or below this frame since
+    /// it was entered or since its last `vm.expectRevert`, which Forge reports as the reverter.
+    pub(crate) first_failed_callee: Option<Address>,
     pub(crate) assume_no_revert_next_call: Option<AssumeNoRevert>,
     pub(crate) expected_emit: Option<ExpectedEmit>,
     pub(crate) expected_calls: Vec<ExpectedCall>,
@@ -104,6 +107,7 @@ impl PathState {
             needs_feasibility_check: false,
             loop_jumps: HashMap::default(),
             expected_revert: None,
+            first_failed_callee: None,
             assume_no_revert_next_call: None,
             expected_emit: None,
             expected_calls: Vec::new(),
@@ -146,6 +150,7 @@ impl PathState {
         child.prank = SymbolicPrank::default();
         child.loop_jumps.clear();
         child.expected_revert = None;
+        child.first_failed_callee = None;
         child.assume_no_revert_next_call = None;
         child
     }
@@ -330,6 +335,15 @@ impl PathState {
         }
     }
 
+    /// Records the account of a failed call that ran no code as a reverter, unless a
+    /// `vm.expectRevert` is pending in this frame: Forge consumes it at this call, so this failure
+    /// must not become the reverter of a later call.
+    pub(crate) fn record_codeless_failure(&mut self, callee: Address) {
+        if self.expected_revert.is_none() {
+            self.first_failed_callee.get_or_insert(callee);
+        }
+    }
+
     pub(crate) fn take_reverted_top_level_effects(&mut self, mut reverted: Self) {
         let recorded_logs_len = self.recorded_logs.as_ref().map_or(0, Vec::len);
         let recorded_logs_generation = self.recorded_logs_generation;
@@ -340,6 +354,7 @@ impl PathState {
         self.discard_failed_call_logs(recorded_logs_len, recorded_logs_generation);
         self.access_record = reverted.access_record;
         self.expected_revert = reverted.expected_revert;
+        self.first_failed_callee = reverted.first_failed_callee;
         self.assume_no_revert_next_call = reverted.assume_no_revert_next_call;
         self.expected_emit = reverted.expected_emit;
         self.expected_calls = reverted.expected_calls;
@@ -1026,12 +1041,14 @@ impl AccessRecord {
 pub(crate) struct ExpectedRevert {
     data: ExpectedRevertData,
     reverter: Option<SymExpr>,
+    count: u64,
     remaining: u64,
 }
 
 impl ExpectedRevert {
-    pub(crate) fn new(data: ExpectedRevertData, reverter: Option<SymExpr>, remaining: u64) -> Self {
-        Self { data, reverter, remaining: remaining.max(1) }
+    pub(crate) fn new(data: ExpectedRevertData, reverter: Option<SymExpr>, count: u64) -> Self {
+        let count = count.max(1);
+        Self { data, reverter, count, remaining: count }
     }
 
     pub(crate) const fn consume_one(&mut self) -> bool {
@@ -1039,14 +1056,34 @@ impl ExpectedRevert {
         self.remaining == 0
     }
 
+    /// Returns whether Forge checks a reverter for a revert expected more than once, where it
+    /// reports the last failing call, which is the call itself unless it is a CREATE.
+    pub(crate) const fn repeats_with_reverter(&self) -> bool {
+        self.count > 1 && self.reverter.is_some()
+    }
+
+    /// Returns the reverter that Forge reports for a failed call: the call itself, `callee`, for
+    /// a revert expected more than once, otherwise the first call that failed since
+    /// `vm.expectRevert`.
+    pub(crate) const fn reverted_by(
+        &self,
+        callee: Option<Address>,
+        first_failed_callee: Option<Address>,
+    ) -> Option<Address> {
+        if self.count > 1 { callee } else { first_failed_callee }
+    }
+
     pub(crate) fn match_condition(
         &self,
         cx: &mut SymCx,
-        reverter: Address,
+        reverter: Option<Address>,
         return_data: &SymReturnData,
     ) -> Option<SymBoolExpr> {
         let mut conditions = Vec::new();
-        if let Some(expected_reverter) = &self.reverter {
+        // Like Forge, skip the reverter check when no failing call or reverting CREATE was seen.
+        if let Some(expected_reverter) = &self.reverter
+            && let Some(reverter) = reverter
+        {
             conditions.push(expected_reverter.address_match_condition(cx, reverter));
         }
         match &self.data {
