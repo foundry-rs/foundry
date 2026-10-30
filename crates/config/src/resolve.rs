@@ -16,12 +16,19 @@ pub struct UnresolvedEnvVarError {
     pub var: String,
     /// the `env::var` error
     pub source: VarError,
+    /// The config key whose value references the var, like `rpc_endpoints.sepolia`
+    pub key: Option<String>,
 }
 
 impl UnresolvedEnvVarError {
     /// Tries to resolve a value
     pub fn try_resolve(&self) -> Result<String, Self> {
-        interpolate(&self.unresolved)
+        interpolate(&self.unresolved).map_err(|err| Self { key: self.key.clone(), ..err })
+    }
+
+    /// Sets the config key whose value references the var.
+    pub fn with_key(self, key: impl Into<String>) -> Self {
+        Self { key: Some(key.into()), ..self }
     }
 }
 
@@ -32,7 +39,11 @@ impl fmt::Display for UnresolvedEnvVarError {
         f.write_str(match self.source {
             VarError::NotPresent => "not found",
             VarError::NotUnicode(_) => "is not valid unicode",
-        })
+        })?;
+        if let Some(key) = &self.key {
+            write!(f, " (used by `{key}`)")?;
+        }
+        Ok(())
     }
 }
 
@@ -53,6 +64,7 @@ pub fn interpolate(input: &str) -> Result<String, UnresolvedEnvVarError> {
             unresolved: input.to_string(),
             var: var.to_string(),
             source,
+            key: None,
         })?;
 
         res = res.replacen(&caps["outer"], &value, 1);

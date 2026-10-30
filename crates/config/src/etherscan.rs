@@ -230,9 +230,13 @@ impl EtherscanConfig {
         alias: Option<&str>,
     ) -> Result<ResolvedEtherscanConfig, EtherscanConfigError> {
         let Self { chain, mut url, key } = self;
+        let with_key = |err: UnresolvedEnvVarError| match alias {
+            Some(alias) => err.with_key(format!("etherscan.{alias}")),
+            None => err,
+        };
 
         if let Some(url) = &mut url {
-            *url = interpolate(url)?;
+            *url = interpolate(url).map_err(with_key)?;
         }
 
         let (chain, alias) = match (chain, alias) {
@@ -255,7 +259,7 @@ impl EtherscanConfig {
             (Some(chain), Some(alias)) => (Some(chain), Some(alias.into())),
             (None, None) => (None, None),
         };
-        let key = key.resolve()?;
+        let key = key.resolve().map_err(with_key)?;
 
         match (chain, url) {
             (Some(chain), Some(api_url)) => Ok(ResolvedEtherscanConfig {

@@ -37,9 +37,29 @@ impl RpcEndpoints {
     }
 
     /// Returns all (alias -> rpc_endpoint) pairs
+    ///
+    /// Unresolved env vars name the `rpc_endpoints.<alias>` key that references them.
     pub fn resolved(self) -> ResolvedRpcEndpoints {
         ResolvedRpcEndpoints {
-            endpoints: self.endpoints.into_iter().map(|(name, e)| (name, e.resolve())).collect(),
+            endpoints: self
+                .endpoints
+                .into_iter()
+                .map(|(name, e)| {
+                    let key = format!("rpc_endpoints.{name}");
+                    let with_key = |res: Result<String, UnresolvedEnvVarError>| {
+                        res.map_err(|err| err.with_key(&key))
+                    };
+                    let ResolvedRpcEndpoint { endpoint, extra_endpoints, auth, config } =
+                        e.resolve();
+                    let resolved = ResolvedRpcEndpoint {
+                        endpoint: with_key(endpoint),
+                        extra_endpoints: extra_endpoints.into_iter().map(with_key).collect(),
+                        auth: auth.map(with_key),
+                        config,
+                    };
+                    (name, resolved)
+                })
+                .collect(),
         }
     }
 }
