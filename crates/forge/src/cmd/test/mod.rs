@@ -1116,6 +1116,17 @@ pub struct TestArgs {
     // TODO: evaluate if we can relax the conflict with replay_symbolic_artifact
     #[arg(long, conflicts_with_all = ["mutate", "replay_symbolic_artifact"])]
     pub brutalize: bool,
+
+    /// Make every cheatcode that opens a network connection fail. `forge properties` sets it for
+    /// generated tests.
+    #[arg(long, hide = true)]
+    pub no_network: bool,
+
+    /// Let inline config only lower fuzz and invariant runs, depth, and rejects and change a few
+    /// settings that steer them. `forge properties` and `forge exploit` set it for generated
+    /// tests.
+    #[arg(long, hide = true)]
+    pub restrict_inline_config: bool,
 }
 
 impl TestArgs {
@@ -1650,9 +1661,12 @@ impl TestArgs {
 
     async fn compile_project(&mut self) -> Result<CompiledTestProject> {
         // Merge all configs.
-        let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
+        let (mut config, mut evm_opts) = self.load_config_and_evm_opts()?;
+        evm_opts.no_network = self.no_network;
 
         self.install_missing_dependencies(&mut config)?;
+        // After the install, which can reload the config.
+        config.restrict_inline_config = self.restrict_inline_config;
         let brutalized_workspace =
             if self.brutalize { Some(self.brutalize_workspace(&mut config)?) } else { None };
         let should_mutate = self.mutate.is_some();
