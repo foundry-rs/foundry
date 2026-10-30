@@ -577,41 +577,18 @@ impl SymbolicExecutor {
         {
             if success {
                 state.expected_revert = None;
-                success = false;
                 return_data =
                     error_string_return_data(&mut self.cx, "next call did not revert as expected");
-            } else if self.expected_revert_matches(state, &expected, reverter, &return_data)? {
+            } else {
+                if !self.expected_revert_matches(state, &expected, reverter, &return_data)? {
+                    return Ok(StepOutcome::Failure);
+                }
                 let done = expected.consume_one();
                 state.expected_revert = (!done).then_some(expected);
-                success = true;
                 return_data =
                     SymReturnData::from_concrete_bytes(&mut self.cx, DUMMY_CALL_OUTPUT.to_vec());
-            } else {
-                // Like Forge, a mismatch only fails this call, so a low-level caller can catch it
-                // and read Forge's diagnostic. That diagnostic is only modeled for concrete,
-                // non-empty revert data, which only a mock revert carries: Forge formats symbolic
-                // data into the message, and empty data may come from a halt whose diagnostic
-                // depends on the halt reason. A possible match also leaves the data symbolic.
-                let data = return_data
-                    .read_concrete(&mut self.cx, "revert data")
-                    .ok()
-                    .filter(|data| !data.is_empty())
-                    .and_then(|data| {
-                        expected.mismatch_data(
-                            &mut self.cx,
-                            reverter,
-                            data,
-                            &executor.available_artifacts,
-                        )
-                    });
-                let Some(data) = data else {
-                    return Err(SymbolicError::Unsupported(
-                        "symbolic vm.expectRevert mismatch data",
-                    ));
-                };
-                state.expected_revert = None;
-                return_data = SymReturnData::from_concrete_bytes(&mut self.cx, data.into());
             }
+            success = !success;
         }
         state.return_data = return_data;
         state.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;

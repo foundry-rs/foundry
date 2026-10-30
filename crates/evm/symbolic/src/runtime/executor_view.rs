@@ -1,5 +1,4 @@
 use super::*;
-use foundry_common::ContractsByArtifact;
 use foundry_evm::core::backend::DatabaseError;
 
 /// Network-independent, read-only view of a concrete Foundry executor.
@@ -26,8 +25,6 @@ pub struct ExecutorView<'a> {
     pub(crate) storage_load_hooks: Vec<(Address, SymbolicStorageHook)>,
     pub(crate) storage_store_hooks: Vec<(Address, SymbolicStorageHook)>,
     pub(crate) mapping_storage_store_hooks: Vec<((Address, U256), SymbolicStorageHook)>,
-    /// Artifacts that Forge uses to decode `vm.expectRevert` mismatches.
-    pub(crate) available_artifacts: Option<ContractsByArtifact>,
 }
 
 /// Block environment values exposed to symbolic execution.
@@ -127,8 +124,6 @@ impl<'a> ExecutorView<'a> {
                     )
                 })
                 .collect(),
-            available_artifacts: cheats
-                .and_then(|cheats| cheats.core.config.available_artifacts.clone()),
         }
     }
 }

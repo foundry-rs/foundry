@@ -3123,8 +3123,6 @@ fn symbolic_vm_expect_revert_applies_to_codeless_calls(prj: _, cmd: _) {
 import "forge-std/Test.sol";
 
 contract CodelessTarget {
-    error Custom(uint256);
-
     function ping() external {}
 
     function f(uint256) external pure returns (uint256) {
@@ -3178,24 +3176,6 @@ contract SymbolicExpectRevertCodeless is Test {
         target.ping();
     }
 
-    function checkMockedRevertMismatchCaught() public {
-        bytes memory actual = abi.encodeWithSelector(CodelessTarget.Custom.selector, 5);
-        vm.mockCallRevert(address(target), abi.encodeCall(CodelessTarget.ping, ()), actual);
-        vm.expectRevert(abi.encodeWithSelector(CodelessTarget.Custom.selector, 6));
-        (bool ok, bytes memory data) = address(target).call(abi.encodeCall(CodelessTarget.ping, ()));
-        assertFalse(ok);
-        assertEq(
-            data,
-            abi.encodeWithSignature("CheatcodeError(string)", "Error != expected error: Custom(5) != Custom(6)")
-        );
-    }
-
-    function checkMockedRevertSymbolicMismatchCaught(uint256 x) public {
-        vm.mockCallRevert(address(target), abi.encodeCall(CodelessTarget.ping, ()), abi.encode(uint256(7)));
-        vm.expectRevert(abi.encode(x));
-        address(target).call(abi.encodeCall(CodelessTarget.ping, ()));
-    }
-
     function checkPrecompileSuccess() public {
         vm.expectRevert();
         (bool ok,) = address(4).call("x");
@@ -3240,20 +3220,18 @@ contract SymbolicExpectRevertCodeless is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 12 tests for test/SymbolicExpectRevertCodeless.t.sol:SymbolicExpectRevertCodeless
+Ran 10 tests for test/SymbolicExpectRevertCodeless.t.sol:SymbolicExpectRevertCodeless
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertCaughtMock(uint256) ([METRICS])
 [PASS] checkAssumeNoRevertNoCode() ([METRICS])
 [PASS] checkKzgFailure() ([METRICS])
 [PASS] checkMockedRevert() ([METRICS])
 [FAIL: Error != expected error: actual != expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockedRevertMismatch() ([METRICS])
-[PASS] checkMockedRevertMismatchCaught() ([METRICS])
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectRevert mismatch data] checkMockedRevertSymbolicMismatchCaught(uint256) ([METRICS])
 [PASS] checkMockedSuccess() ([METRICS])
 [PASS] checkNoCode() ([METRICS])
 [PASS] checkPrecompileFailure() ([METRICS])
 [PASS] checkPrecompileSuccess() ([METRICS])
 [PASS] checkValueTransfer(uint256) ([METRICS])
-Suite result: FAILED. 9 passed; 3 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 8 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

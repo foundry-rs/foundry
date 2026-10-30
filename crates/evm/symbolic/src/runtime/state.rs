@@ -1,10 +1,6 @@
 use super::*;
 use alloy_sol_types::{Revert, SolError};
-use foundry_common::ContractsByArtifact;
-use foundry_evm::{
-    inspectors::cheatcodes::expect_revert_mismatch_data,
-    revm::context_interface::cfg::gas::CALL_STIPEND,
-};
+use foundry_evm::revm::context_interface::cfg::gas::CALL_STIPEND;
 
 const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
 
@@ -1100,38 +1096,6 @@ impl ExpectedRevert {
             }
         }
         Some(SymBoolExpr::and(cx, conditions))
-    }
-
-    /// Returns the revert data that Forge gives the caller when a revert with `return_data` from
-    /// `reverter` does not match, or `None` when it matches or the expectation is symbolic.
-    pub(crate) fn mismatch_data(
-        &self,
-        cx: &mut SymCx,
-        reverter: Address,
-        return_data: Vec<u8>,
-        known_contracts: &Option<ContractsByArtifact>,
-    ) -> Option<Bytes> {
-        let expected_reverter = match &self.reverter {
-            Some(expected_reverter) => Some(word_to_address(expected_reverter.as_const()?)),
-            None => None,
-        };
-        let (reason, partial_match) = match &self.data {
-            ExpectedRevertData::Any => (None, false),
-            ExpectedRevertData::Prefix(prefix) => {
-                (Some(prefix.concrete_bytes(cx, "expected revert data").ok()?), true)
-            }
-            ExpectedRevertData::Exact(data) => {
-                (Some(data.concrete_bytes(cx, "expected revert data").ok()?), false)
-            }
-        };
-        expect_revert_mismatch_data(
-            reason.as_deref(),
-            partial_match,
-            expected_reverter,
-            reverter,
-            &return_data.into(),
-            known_contracts,
-        )
     }
 }
 
