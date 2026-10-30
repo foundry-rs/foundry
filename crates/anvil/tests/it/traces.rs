@@ -1680,14 +1680,14 @@ async fn test_debug_trace_transaction_struct_logs_with_steps_tracing() {
             .into_iter()
             .map(|log| (log.pc, log.op.into_owned(), log.stack.unwrap(), log.memory))
             .collect::<Vec<_>>();
-        let empty = memory.then(Vec::new);
+        // Like geth, struct logs leave out memory that is still empty.
         let stored = memory.then(|| vec![word.clone()]);
         assert_eq!(
             steps,
             [
-                (0, "PUSH1".to_string(), vec![], empty.clone()),
-                (2, "PUSH1".to_string(), vec![U256::from(0x2a)], empty.clone()),
-                (4, "MSTORE".to_string(), vec![U256::from(0x2a), U256::ZERO], empty),
+                (0, "PUSH1".to_string(), vec![], None),
+                (2, "PUSH1".to_string(), vec![U256::from(0x2a)], None),
+                (4, "MSTORE".to_string(), vec![U256::from(0x2a), U256::ZERO], None),
                 (5, "PUSH1".to_string(), vec![], stored.clone()),
                 (7, "PUSH1".to_string(), vec![U256::from(0x20)], stored.clone()),
                 (9, "RETURN".to_string(), vec![U256::from(0x20), U256::ZERO], stored),

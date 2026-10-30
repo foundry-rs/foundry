@@ -202,10 +202,12 @@ impl DebugRecorder {
         } else {
             None
         };
-        // As the tracer, report the charge an out-of-gas step attempted.
-        let gas_cost = interp
-            .failed_charge()
-            .unwrap_or_else(|| step.gas.saturating_sub(interp.gas().remaining()));
+        // As the tracer: the reentrancy sentry halts before any charge.
+        let gas_cost = if interp.result() == Err(InstrStop::ReentrancySentryOOG) {
+            0
+        } else {
+            interp.step_cost()
+        };
         let after = interp.stack();
         let after = after.as_slice();
         // The frame runs another step unless this one ended it; that step starts with the value

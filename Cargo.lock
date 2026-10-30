@@ -1239,7 +1239,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1263,7 +1263,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2684,7 +2684,7 @@ dependencies = [
 [[package]]
 name = "base-evm2"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/evm2-networks?rev=2d57372e021f470cd3b20688b0a389058480c387#2d57372e021f470cd3b20688b0a389058480c387"
+source = "git+https://github.com/foundry-rs/evm2-networks?rev=c966ec176039fd1758b6991c7c9bcf96a1d6c5c1#c966ec176039fd1758b6991c7c9bcf96a1d6c5c1"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -5482,7 +5482,7 @@ dependencies = [
 [[package]]
 name = "evm2"
 version = "0.1.0"
-source = "git+https://github.com/DaniPopes/evm2?rev=41d81b926aacafb5208375a38154971ebcb29635#41d81b926aacafb5208375a38154971ebcb29635"
+source = "git+https://github.com/DaniPopes/evm2?rev=bee42cd84d9b9f9638c1636098957f1013bea2cd#bee42cd84d9b9f9638c1636098957f1013bea2cd"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
@@ -5520,7 +5520,7 @@ dependencies = [
 [[package]]
 name = "evm2-inspectors"
 version = "0.1.0"
-source = "git+https://github.com/DaniPopes/evm2?rev=41d81b926aacafb5208375a38154971ebcb29635#41d81b926aacafb5208375a38154971ebcb29635"
+source = "git+https://github.com/DaniPopes/evm2?rev=bee42cd84d9b9f9638c1636098957f1013bea2cd#bee42cd84d9b9f9638c1636098957f1013bea2cd"
 dependencies = [
  "alloy-consensus",
  "alloy-eip2930",
@@ -5543,7 +5543,7 @@ dependencies = [
 [[package]]
 name = "evm2-macros"
 version = "0.1.0"
-source = "git+https://github.com/DaniPopes/evm2?rev=41d81b926aacafb5208375a38154971ebcb29635#41d81b926aacafb5208375a38154971ebcb29635"
+source = "git+https://github.com/DaniPopes/evm2?rev=bee42cd84d9b9f9638c1636098957f1013bea2cd#bee42cd84d9b9f9638c1636098957f1013bea2cd"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6333,7 +6333,7 @@ dependencies = [
  "foundry-compilers-artifacts",
  "foundry-compilers-core",
  "fs_extra",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "path-slash",
  "rand 0.10.3",
  "rayon",
@@ -8676,7 +8676,7 @@ dependencies = [
 [[package]]
 name = "monad-evm2"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/evm2-networks?rev=2d57372e021f470cd3b20688b0a389058480c387#2d57372e021f470cd3b20688b0a389058480c387"
+source = "git+https://github.com/foundry-rs/evm2-networks?rev=c966ec176039fd1758b6991c7c9bcf96a1d6c5c1#c966ec176039fd1758b6991c7c9bcf96a1d6c5c1"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -9213,7 +9213,7 @@ dependencies = [
 [[package]]
 name = "op-evm2"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/evm2-networks?rev=2d57372e021f470cd3b20688b0a389058480c387#2d57372e021f470cd3b20688b0a389058480c387"
+source = "git+https://github.com/foundry-rs/evm2-networks?rev=c966ec176039fd1758b6991c7c9bcf96a1d6c5c1#c966ec176039fd1758b6991c7c9bcf96a1d6c5c1"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -10076,7 +10076,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -12543,7 +12543,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -12694,7 +12694,7 @@ dependencies = [
  "derive_more",
  "dunce",
  "inturn",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "once_map",
  "rayon",
  "scoped-tls",
@@ -12765,7 +12765,7 @@ dependencies = [
  "alloy-primitives",
  "bitflags 2.13.2",
  "bumpalo",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "memchr",
  "num-bigint 0.5.1",
  "num-rational",
@@ -13316,7 +13316,7 @@ dependencies = [
 [[package]]
 name = "tempo-alloy"
 version = "1.16.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=680082043ca40b6457f615101ca43bf8c1280b66#680082043ca40b6457f615101ca43bf8c1280b66"
+source = "git+https://github.com/tempoxyz/tempo?rev=b4e75a9c22aa4ee9e507bcb29352f71f2802cab0#b4e75a9c22aa4ee9e507bcb29352f71f2802cab0"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -13356,7 +13356,7 @@ dependencies = [
 [[package]]
 name = "tempo-chainspec"
 version = "1.16.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=680082043ca40b6457f615101ca43bf8c1280b66#680082043ca40b6457f615101ca43bf8c1280b66"
+source = "git+https://github.com/tempoxyz/tempo?rev=b4e75a9c22aa4ee9e507bcb29352f71f2802cab0#b4e75a9c22aa4ee9e507bcb29352f71f2802cab0"
 dependencies = [
  "alloy-eips",
  "alloy-genesis",
@@ -13379,7 +13379,7 @@ dependencies = [
 [[package]]
 name = "tempo-contracts"
 version = "1.16.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=680082043ca40b6457f615101ca43bf8c1280b66#680082043ca40b6457f615101ca43bf8c1280b66"
+source = "git+https://github.com/tempoxyz/tempo?rev=b4e75a9c22aa4ee9e507bcb29352f71f2802cab0#b4e75a9c22aa4ee9e507bcb29352f71f2802cab0"
 dependencies = [
  "alloy-contract",
  "alloy-network",
@@ -13396,7 +13396,7 @@ dependencies = [
 [[package]]
 name = "tempo-dkg-onchain-artifacts"
 version = "1.17.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=680082043ca40b6457f615101ca43bf8c1280b66#680082043ca40b6457f615101ca43bf8c1280b66"
+source = "git+https://github.com/tempoxyz/tempo?rev=b4e75a9c22aa4ee9e507bcb29352f71f2802cab0#b4e75a9c22aa4ee9e507bcb29352f71f2802cab0"
 dependencies = [
  "bytes",
  "commonware-codec",
@@ -13407,7 +13407,7 @@ dependencies = [
 [[package]]
 name = "tempo-evm"
 version = "1.17.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=680082043ca40b6457f615101ca43bf8c1280b66#680082043ca40b6457f615101ca43bf8c1280b66"
+source = "git+https://github.com/tempoxyz/tempo?rev=b4e75a9c22aa4ee9e507bcb29352f71f2802cab0#b4e75a9c22aa4ee9e507bcb29352f71f2802cab0"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
@@ -13441,7 +13441,7 @@ dependencies = [
 [[package]]
 name = "tempo-hardfork"
 version = "1.16.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=680082043ca40b6457f615101ca43bf8c1280b66#680082043ca40b6457f615101ca43bf8c1280b66"
+source = "git+https://github.com/tempoxyz/tempo?rev=b4e75a9c22aa4ee9e507bcb29352f71f2802cab0#b4e75a9c22aa4ee9e507bcb29352f71f2802cab0"
 dependencies = [
  "alloy-eips",
  "alloy-hardforks",
@@ -13454,7 +13454,7 @@ dependencies = [
 [[package]]
 name = "tempo-nitro-attestation"
 version = "1.17.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=680082043ca40b6457f615101ca43bf8c1280b66#680082043ca40b6457f615101ca43bf8c1280b66"
+source = "git+https://github.com/tempoxyz/tempo?rev=b4e75a9c22aa4ee9e507bcb29352f71f2802cab0#b4e75a9c22aa4ee9e507bcb29352f71f2802cab0"
 dependencies = [
  "arrayvec",
  "aws-lc-rs",
@@ -13469,7 +13469,7 @@ dependencies = [
 [[package]]
 name = "tempo-precompiles"
 version = "1.17.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=680082043ca40b6457f615101ca43bf8c1280b66#680082043ca40b6457f615101ca43bf8c1280b66"
+source = "git+https://github.com/tempoxyz/tempo?rev=b4e75a9c22aa4ee9e507bcb29352f71f2802cab0#b4e75a9c22aa4ee9e507bcb29352f71f2802cab0"
 dependencies = [
  "alloy",
  "alloy-primitives",
@@ -13495,7 +13495,7 @@ dependencies = [
 [[package]]
 name = "tempo-precompiles-macros"
 version = "1.17.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=680082043ca40b6457f615101ca43bf8c1280b66#680082043ca40b6457f615101ca43bf8c1280b66"
+source = "git+https://github.com/tempoxyz/tempo?rev=b4e75a9c22aa4ee9e507bcb29352f71f2802cab0#b4e75a9c22aa4ee9e507bcb29352f71f2802cab0"
 dependencies = [
  "alloy",
  "proc-macro2",
@@ -13506,7 +13506,7 @@ dependencies = [
 [[package]]
 name = "tempo-primitives"
 version = "1.16.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=680082043ca40b6457f615101ca43bf8c1280b66#680082043ca40b6457f615101ca43bf8c1280b66"
+source = "git+https://github.com/tempoxyz/tempo?rev=b4e75a9c22aa4ee9e507bcb29352f71f2802cab0#b4e75a9c22aa4ee9e507bcb29352f71f2802cab0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",

@@ -907,11 +907,13 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         // SAFETY: `State`'s lifetime only bounds its databases, which the caller guarantees
         // outlive `'a`.
         *frame.state_mut() = unsafe { mem::transmute::<State<'_>, State<'a>>(state) };
+        *frame.tx_env_mut() = mem::take(evm.tx_env_mut());
         self.sync_database_policy(&mut frame);
         frame
     }
 
-    /// Hands the state, block and network extension state of a frame EVM created with
+    /// Hands the state, transaction environment, block and network extension state of a frame EVM
+    /// created with
     /// [`Self::begin_frame_evm`] back to `evm`, restoring `evm`'s empty-account policy on the
     /// active backing database.
     ///
@@ -925,6 +927,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         // SAFETY: `State`'s lifetime only bounds its databases, which the caller guarantees
         // outlive `evm`.
         *evm.state_mut() = unsafe { mem::transmute::<State<'_>, State<'_>>(state) };
+        *evm.tx_env_mut() = mem::take(frame.tx_env_mut());
         *evm.ext_mut() = frame.ext().clone();
         evm.set_block(*frame.block());
         self.sync_database_policy(evm);

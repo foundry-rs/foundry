@@ -597,7 +597,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
 
     if let Some(changes) = prank_changes {
         if let Some(new_origin) = changes.origin {
-            ccx.state.set_origin(ccx.tx_env.origin, new_origin);
+            ccx.state.set_origin(ccx.evm.tx_env().origin, new_origin);
         }
         if let Some(used) = changes.used {
             ccx.state.pranks.insert(depth, used);
@@ -640,7 +640,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
         if broadcast.single_call && depth == broadcast.depth {
             let original_origin = broadcast.original_origin;
             ccx.state.broadcast = None;
-            ccx.state.set_origin(ccx.tx_env.origin, original_origin);
+            ccx.state.set_origin(ccx.evm.tx_env().origin, original_origin);
         }
     }
 
@@ -648,7 +648,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     if let Some(prank) = ccx.state.get_prank(depth).copied()
         && depth == prank.depth
     {
-        ccx.state.set_origin(ccx.tx_env.origin, prank.prank_origin);
+        ccx.state.set_origin(ccx.evm.tx_env().origin, prank.prank_origin);
         if prank.single_call {
             ccx.state.pranks.remove(&depth);
         }

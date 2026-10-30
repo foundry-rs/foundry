@@ -30,9 +30,9 @@ use foundry_evm_core::{
         BlockEnvFor, DestructedAccount, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested,
         FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor,
         MessageFor, MessageResultFor, PersistentWrite, PreparedTx, SnapshotRestores,
-        TransactionRequestFor, TxEnvFor, TxFor, TxResultFor, TypesFor, cool_loaded,
-        destructed_accounts, evm_env, merge_pending_changes,
-        merge_untracked_pending_changes_with_warmth, release_inspector, warm_accounts, warm_set,
+        TransactionRequestFor, TxFor, TxResultFor, TypesFor, cool_loaded, destructed_accounts,
+        evm_env, merge_pending_changes, merge_untracked_pending_changes_with_warmth,
+        release_inspector, warm_accounts, warm_set,
     },
     precompiles::P256_VERIFY,
     utils::tx_warm_addresses,
@@ -502,7 +502,6 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         cheats: &mut Cheatcodes<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
-        tx_env: &TxEnvFor<FEN>,
         message: &mut MessageFor<FEN>,
     ) -> Result<MessageResultFor<FEN>, ExecutionError> {
         let previous = self.synthetic_create_depth;
@@ -511,7 +510,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         // so isolate it as well.
         self.synthetic_create_depth = (message.depth == 2).then_some(2);
         let env = evm_env(evm);
-        let result = self.execute_on_frame_evm(Some(cheats), backend, evm, env, tx_env, message);
+        let result = self.execute_on_frame_evm(Some(cheats), backend, evm, env, message);
         self.synthetic_create_depth = previous;
         // Drop redirects left behind if nested execution aborted before their frames ended.
         self.pending_create2_redirects.truncate(create2_redirects);
@@ -1171,7 +1170,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         if pending.is_none() && requested.is_none() {
             return None;
         }
-        let tx_env = interp.tx_env();
         let evm = interp.host();
         let running = evm_env(evm);
         // Same precedence as the next transaction's environment: `vm.setEvmVersion` overrides
@@ -1184,8 +1182,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let mut env = EvmFactoryFor::<FEN>::default().env_with_spec(running, spec);
         env.version.chain_id = chain_id;
         let cheatcodes = self.cheatcodes.as_deref_mut();
-        let result =
-            self.inner.execute_on_frame_evm(cheatcodes, backend, evm, env, tx_env, message);
+        let result = self.inner.execute_on_frame_evm(cheatcodes, backend, evm, env, message);
         match result {
             Ok(result) => {
                 // evm2 runs the end hooks right after this hook returns a result.
@@ -1222,7 +1219,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         } else {
             precharged_state.min(account_creation_state_gas::<FEN>(interp, message))
         };
-        let tx_origin = interp.tx_env().origin;
+        let tx_origin = interp.host().tx_env().origin;
         let is_create = matches!(message.kind, MessageKind::Create | MessageKind::Create2);
         let kind = if is_create { TxKind::Create } else { TxKind::Call(message.destination) };
         let evm = interp.host();
@@ -2389,7 +2386,6 @@ impl InspectorStackInner {
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
         env: EvmEnvFor<FEN>,
-        tx_env: &TxEnvFor<FEN>,
         message: &mut MessageFor<FEN>,
     ) -> Result<MessageResultFor<FEN>, ExecutionError> {
         // SAFETY: `evm` runs over the lifecycle's owned databases, and so does the frame EVM,
@@ -2400,7 +2396,7 @@ impl InspectorStackInner {
             inner: self,
             backend: Some(backend),
         });
-        let result = Host::execute_message(&mut frame, tx_env, message);
+        let result = Host::execute_message(&mut frame, message);
         // SAFETY: See above.
         let frame = unsafe { release_inspector(frame) };
         // SAFETY: See above.

@@ -67,7 +67,7 @@ impl<T: EvmTypes> Inspector<T> for Fuzzer {
         message: &mut Message<T>,
     ) -> Option<MessageResult<T>> {
         // We don't want to override the very first call made to the test contract.
-        if self.call_generator.is_some() && interp.tx_env().origin != message.caller {
+        if self.call_generator.is_some() && interp.host().tx_env().origin != message.caller {
             self.override_call(interp, message);
         }
 
