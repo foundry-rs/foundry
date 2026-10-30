@@ -552,6 +552,33 @@ impl SymbolicExecutor {
         Ok(true)
     }
 
+    /// Settles pending `vm.assumeNoRevert` and `vm.expectRevert` cheatcodes against a call that
+    /// fails before it runs any code, as the concrete inspector does for one beyond the call
+    /// depth limit.
+    ///
+    /// Breaks with the outcome of a path the failure ends, and otherwise continues with whether
+    /// it was the expected revert, which the call then reports as success.
+    pub(super) fn settle_rejected_call(
+        &mut self,
+        state: &mut PathState,
+        reverter: Address,
+    ) -> Result<ControlFlow<StepOutcome, bool>, SymbolicError> {
+        let return_data = SymReturnData::empty(&mut self.cx);
+        if let Some(assumption) = state.assume_no_revert_next_call.take()
+            && self.assume_no_revert_rejects(state, &assumption, reverter, &return_data)?
+        {
+            return Ok(ControlFlow::Break(StepOutcome::AssumeRejected));
+        }
+        let Some(mut expected) = state.expected_revert.clone() else {
+            return Ok(ControlFlow::Continue(false));
+        };
+        if !self.expected_revert_matches(state, &expected, reverter, &return_data)? {
+            return Ok(ControlFlow::Break(StepOutcome::Failure));
+        }
+        state.expected_revert = (!expected.consume_one()).then_some(expected);
+        Ok(ControlFlow::Continue(true))
+    }
+
     pub(super) fn assume_no_revert_rejects(
         &mut self,
         state: &mut PathState,
@@ -913,6 +940,27 @@ impl SymbolicExecutor {
         }
         let (call_caller, call_caller_word, pranked_origin) =
             call_context.unwrap_or_else(|| state.prank_for_next_call());
+
+        // A call beyond the call depth limit fails before it transfers value or runs
+        // any code, including a precompile.
+        if state.call_depth >= CALL_STACK_LIMIT as usize {
+            let expected = match self.settle_rejected_call(state, to)? {
+                ControlFlow::Continue(expected) => expected,
+                ControlFlow::Break(outcome) => return Ok(outcome),
+            };
+            // Concrete Forge answers a call that met its expected revert with zeroed output.
+            state.return_data = if expected {
+                SymReturnData::from_concrete_bytes(
+                    &mut self.cx,
+                    vec![0; EXPECTED_REVERT_CALL_OUTPUT_LEN],
+                )
+            } else {
+                SymReturnData::empty(&mut self.cx)
+            };
+            state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
+            state.stack.push(SymExpr::constant(&mut self.cx, U256::from(expected)))?;
+            return Ok(StepOutcome::Continue);
+        }
 
         let spec_id = executor.spec_id;
         if is_precompile_for_spec(code_address, spec_id) {
@@ -1451,7 +1499,18 @@ impl SymbolicExecutor {
             if matches!(kind, CallKind::Call) && branch.starts_isolated_transaction(executor) {
                 branch.world.increment_nonce(executor, call_caller)?;
             }
-            if matches!(kind, CallKind::Call | CallKind::CallCode) {
+            if branch.call_depth >= CALL_STACK_LIMIT as usize {
+                // Beyond the call depth limit the call fails before it transfers value. A
+                // pending revert cheatcode would match against a symbolic reverter.
+                if branch.expected_revert.is_some() || branch.assume_no_revert_next_call.is_some() {
+                    return Err(SymbolicError::Unsupported(
+                        "revert cheatcode on a symbolic CALL target beyond the call depth limit",
+                    ));
+                }
+                branch.return_data = SymReturnData::empty(&mut self.cx);
+                branch.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
+                branch.stack.push(SymExpr::zero(&mut self.cx))?;
+            } else if matches!(kind, CallKind::Call | CallKind::CallCode) {
                 let transfer_to = if matches!(kind, CallKind::Call) {
                     branch.world.symbolic_address_slot(target)
                 } else {

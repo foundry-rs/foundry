@@ -509,6 +509,7 @@ soldb-repl = "0.4.5"
 soldb-tui = "0.4.5"
 soldeer-commands = "=0.12.1"
 soldeer-core = { version = "=0.12.1", features = ["serde"] }
+stacker = "0.1"
 strum = "0.28"
 tempfile = "3.23"
 tokio = { version = "1.53.3", features = ["full"] }

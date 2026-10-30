@@ -1,4 +1,5 @@
 use super::*;
+use foundry_evm::revm::interpreter::STACK_LIMIT;
 
 enum MappingStorageProvenance {
     None,
@@ -458,6 +459,18 @@ impl SymbolicExecutor {
         state.pc += 1;
 
         if executor.spec_id < opcode_activation(op) {
+            state.return_data = SymReturnData::empty(&mut self.cx);
+            return Ok(StepOutcome::ExceptionalHalt);
+        }
+
+        // The EVM halts a frame exceptionally before it runs an undefined opcode or one whose
+        // stack inputs or outputs do not fit, so the handlers below never see such a stack.
+        let fits = opcode::OpCode::new(op).is_some_and(|opcode| {
+            let height = state.stack.len();
+            let inputs = opcode.inputs() as usize;
+            height >= inputs && height - inputs + opcode.outputs() as usize <= STACK_LIMIT
+        });
+        if !fits {
             state.return_data = SymReturnData::empty(&mut self.cx);
             return Ok(StepOutcome::ExceptionalHalt);
         }

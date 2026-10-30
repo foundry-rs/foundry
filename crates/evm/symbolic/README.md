@@ -785,7 +785,10 @@ and symbolic storage keys. Supported behavior includes:
   `SIGNEXTEND`, `BYTE`, shifts, and checked wrapping behavior
 - `CALLDATALOAD`, `CALLDATACOPY`, `CODECOPY`, `EXTCODECOPY`,
   `RETURNDATACOPY`, `MCOPY`, `MLOAD`, `MSTORE`, and `MSTORE8`
-- `CALL`, `STATICCALL`, `DELEGATECALL`, `CALLCODE`, `CREATE`, and `CREATE2`
+- `CALL`, `STATICCALL`, `DELEGATECALL`, `CALLCODE`, `CREATE`, and `CREATE2`,
+  including the 1024 call depth limit
+- undefined opcodes and stack underflow and overflow as exceptional halts of the
+  current frame
 - concrete and bounded symbolic call targets over known deployed contracts
 - symbolic calldata and returndata across call frames
 - `SLOAD`, `SSTORE`, `TLOAD`, and `TSTORE` with concrete or symbolic keys
@@ -811,6 +814,7 @@ Known incomplete, bounded, or approximate surfaces include:
 
 | Area | Current behavior |
 |---|---|
+| Call depth limit | Calls and creates beyond the 1024 call depth limit fail, as on a node. Concrete `forge test` replay currently allows one more nested frame, so a counterexample that depends on the exact limit can fail replay and report incomplete. A `vm.deployCode` constructor counts its depth from the calling frame, while concrete `forge test` gives it a fresh depth budget. Reaching the limit nests 1024 frames, which needs a larger `--symbolic-max-paths` and `--symbolic-max-depth` than the defaults. |
 | Gas-dependent behavior | The engine does not use gas to prove properties. A raw `GAS` / `gasleft()` value is tolerated only as the direct gas operand to a CALL-family opcode and is not used to model gas availability. Explicit or computed CALL-family gas caps report incomplete, including the caps emitted by Solidity `send` and `transfer`. Branches on observed gas may be explored through local solver witnesses, but they never produce counterexamples: arithmetic, call targets/values, calldata/returndata, memory/log offsets or sizes, `expectCall` gas matching, or counterexample models derived from observed gas report incomplete. Non-observable gas metering helpers are accepted as no-ops; observable gas read/snapshot helpers such as `lastCallGas`, `lastFrameGas`, `snapshotGasLastCall`, `snapshotGasLastFrame`, and `stopSnapshotGas` report incomplete and should not be used as symbolic properties. |
 | `SELFDESTRUCT` | Pre-Cancun deletion is modeled. Cancun/EIP-6780 is modeled for concrete beneficiaries: contracts created in the current top-level symbolic transaction are deleted, while existing contracts transfer balance and halt without deleting code or storage. Unresolved symbolic Cancun beneficiaries report incomplete. |
 | Symbolic account/code queries | `BALANCE`, `EXTCODESIZE`, `EXTCODEHASH`, and `EXTCODECOPY` on symbolic addresses are scoped to the engine's known symbolic/overlay/code-cache candidates plus the documented empty-account fallback. They do not prove quantified properties over every possible fork/backend account. |
