@@ -1,7 +1,7 @@
 use super::{
-    Cheatcodes, CheatsConfig, ChiselState, CmpOperands, CustomPrintTracer, EdgeCovConfig,
-    EdgeCovInspector, EdgeCoverage, Fuzzer, LineCoverageCollector, LogCollector, RevertDiagnostic,
-    ScriptExecutionInspector, TempoLabels, TracingInspector,
+    Cheatcodes, CheatsConfig, ChiselState, CmpOperands, CustomPrintTracer, DebugRecorder,
+    EdgeCovConfig, EdgeCovInspector, EdgeCoverage, Fuzzer, LineCoverageCollector, LogCollector,
+    RevertDiagnostic, ScriptExecutionInspector, TempoLabels, TracingInspector,
 };
 use alloy_consensus::transaction::Recovered;
 use alloy_network::TransactionBuilder;
@@ -415,6 +415,7 @@ pub struct InspectorStackInner {
     // These are boxed to reduce the size of the struct and slightly improve performance of the
     // `if let Some` checks.
     pub chisel_state: Option<Box<ChiselState>>,
+    pub debug_recorder: Option<Box<DebugRecorder>>,
     pub edge_coverage: Option<Box<EdgeCovInspector>>,
     pub fuzzer: Option<Box<Fuzzer>>,
     pub line_coverage: Option<Box<LineCoverageCollector>>,
@@ -864,6 +865,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         } else {
             self.tracer = None;
         }
+        if requirements.debug_recording() {
+            self.debug_recorder.get_or_insert_with(Default::default);
+        } else {
+            self.debug_recorder = None;
+        }
         self.refresh_static_opcode_dispatch();
     }
 
@@ -911,6 +917,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
             inner:
                 InspectorStackInner {
                     chisel_state,
+                    mut debug_recorder,
                     line_coverage,
                     edge_coverage,
                     log_collector,
@@ -940,7 +947,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
                 })
                 .unwrap_or_default();
 
-            SparsedTraceArena { arena, ignored, diagnostics: trace_diagnostics }
+            SparsedTraceArena {
+                arena,
+                ignored,
+                diagnostics: trace_diagnostics,
+                debug_steps: debug_recorder.as_deref_mut().map(DebugRecorder::finish),
+            }
         });
 
         let (edge_coverage, evm_cmp_values) = edge_coverage
@@ -1053,6 +1065,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             {
                 break 'inspectors;
             }
+            if let Some(recorder) = &mut self.inner.debug_recorder {
+                Inspector::<TypesFor<FEN>>::call_end(&mut **recorder, interp, message, result);
+            }
             if let (Some(cheats), Some(backend)) = (cheats, backend)
                 && changed!(result, stop, cheats.call_end_hook(interp, message, result, backend))
             {
@@ -1116,6 +1131,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 )
             {
                 break 'inspectors;
+            }
+            if let Some(recorder) = &mut self.inner.debug_recorder {
+                Inspector::<TypesFor<FEN>>::create_end(&mut **recorder, interp, message, result);
             }
             if let (Some(cheats), Some(backend)) = (cheats, backend)
                 && changed!(result, stop, cheats.create_end_hook(interp, message, result, backend))
@@ -1673,6 +1691,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                         &mut inner.revert_diag,
                         &mut inner.script_execution_inspector,
                         &mut inner.tracer,
+                        &mut inner.debug_recorder,
                     ],
                     |inspector| Inspector::<TypesFor<FEN>>::step(&mut **inspector, interp),
                 );
@@ -1695,6 +1714,15 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 }
             }
         }
+
+        // evm2 skips `step_end` if an inspector halted the frame in `step`. A recorder makes the
+        // dispatch general, so other dispatches skip the check.
+        if matches!(self.inner.static_step_dispatch, OpcodeStepDispatch::General)
+            && let Some(recorder) = self.inner.debug_recorder.as_deref_mut()
+            && interp.result().is_err()
+        {
+            recorder.end_step_not_run(interp);
+        }
     }
 
     #[inline(always)]
@@ -1708,6 +1736,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                     &mut inner.printer,
                     &mut inner.revert_diag,
                     &mut inner.tracer,
+                    &mut inner.debug_recorder,
                 ],
                 |inspector| Inspector::<TypesFor<FEN>>::step_end(&mut **inspector, interp),
             );
@@ -1938,6 +1967,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
                 return output;
             }
         }
+        if let Some(recorder) = self.inner.debug_recorder.as_deref_mut() {
+            Inspector::<TypesFor<FEN>>::call(recorder, interp, message);
+        }
 
         let inner = &mut *self.inner;
         call_inspectors!(
@@ -2103,6 +2135,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
             if output.is_some() {
                 return output;
             }
+        }
+        if let Some(recorder) = self.inner.debug_recorder.as_deref_mut() {
+            Inspector::<TypesFor<FEN>>::create(recorder, interp, message);
         }
 
         if let Some(line_coverage) = &mut self.inner.line_coverage
@@ -2316,6 +2351,7 @@ impl InspectorStackInner {
             && self.revert_diag.is_none()
             && self.script_execution_inspector.is_none()
             && self.tracer.is_none()
+            && self.debug_recorder.is_none()
         {
             if self.fuzzer.is_some() {
                 OpcodeStepDispatch::FuzzerOnly
@@ -2332,7 +2368,8 @@ impl InspectorStackInner {
         self.has_static_step_end_inspectors = self.chisel_state.is_some()
             || self.printer.is_some()
             || self.revert_diag.is_some()
-            || self.tracer.is_some();
+            || self.tracer.is_some()
+            || self.debug_recorder.is_some();
     }
 
     /// Derive the next `--batch` CREATE2 salt and advance the per-batch counter.

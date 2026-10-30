@@ -16,6 +16,9 @@ pub use custom_printer::CustomPrintTracer;
 mod chisel_state;
 pub use chisel_state::ChiselState;
 
+mod debug_recorder;
+pub use debug_recorder::DebugRecorder;
+
 mod logs;
 pub use logs::LogCollector;
 

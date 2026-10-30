@@ -509,7 +509,10 @@ impl FuzzDictionary {
         targets: &TargetedContracts,
         mapping_slots: Option<&AddressMap<MappingSlots>>,
     ) {
-        for changes in state_changes {
+        // Sort accounts before inserting to ensure deterministic dictionary.
+        let mut accounts = state_changes.into_iter().collect::<Vec<_>>();
+        accounts.sort_unstable_by_key(|changes| changes.address);
+        for changes in accounts {
             let address = &changes.address;
             if is_history_storage_address(address) {
                 continue;
@@ -539,6 +542,9 @@ impl FuzzDictionary {
                     mapping_slots.is_some_and(|m| m.contains_key(address))
                 );
                 let mapping_slots = mapping_slots.and_then(|m| m.get(address));
+                // Sort storage values before inserting to ensure deterministic dictionary.
+                let mut storage = storage.iter().collect::<Vec<_>>();
+                storage.sort_unstable_by_key(|(slot, _)| **slot);
                 for (slot, value) in storage {
                     let value = value.value.current;
                     let slot_info = slot_identifier_key.and_then(|key| {
@@ -1155,5 +1161,41 @@ mod tests {
             assert!(dict.persistent_values.contains(&persistent));
             assert!(dict.sample_values[&DynSolType::Uint(8)].contains(&persistent));
         });
+    }
+
+    #[test]
+    fn new_state_values_are_inserted_in_sorted_order() {
+        // Account `i` holds slots `i * 0x100 + j` with values `i * 0x10000 + j * 0x10`, so no
+        // address, slot, or value (+/- 1) collides with another.
+        let entry =
+            |i: u64, j: u64| (U256::from(i * 0x100 + j), U256::from(i * 0x10000 + j * 0x10));
+        let address = |i: u64| Address::repeat_byte(i as u8 * 0x11);
+
+        let mut state = evm2::evm::PendingState::default();
+        for i in [3, 1, 4, 2] {
+            state.insert_account(address(i), None, Some(AccountInfo::default()));
+            for j in [3, 1, 2] {
+                let (slot, value) = entry(i, j);
+                state.insert_storage(address(i), slot, U256::ZERO, value);
+            }
+        }
+
+        let mut dictionary = FuzzDictionary::default();
+        dictionary.insert_new_state_values(
+            state.account_changes(),
+            &TargetedContracts::new(),
+            None,
+        );
+
+        let mut expected = vec![B256::ZERO];
+        for i in 1..=4 {
+            expected.push(address(i).into_word());
+            for j in 1..=3 {
+                let (slot, value) = entry(i, j);
+                expected
+                    .extend([slot, value, value - U256::ONE, value + U256::ONE].map(B256::from));
+            }
+        }
+        assert_eq!(dictionary.state_values.as_slice(), expected.as_slice());
     }
 }

@@ -1,4 +1,6 @@
+mod recording;
 mod sources;
+
 use crate::{CallTraceNode, CallTraceStep, DecodedInternalCall, DecodedTraceStep};
 use alloy_dyn_abi::{
     DynSolType, DynSolValue, Specifier,
@@ -8,7 +10,10 @@ use alloy_primitives::U256;
 use evm2::interpreter::opcode::OpCode;
 use foundry_common::fmt::format_token;
 use foundry_compilers::artifacts::sourcemap::{Jump, SourceElement};
-pub use sources::{ArtifactData, ContractSources, DebugSourceScope, DebugVariable, SourceData};
+pub use recording::{
+    DebugRecording, DebugStepSink, RecordedFrame, StepConverter, StepStorage, quantity,
+};
+pub use sources::{ArtifactData, ContractSources, SourceData};
 
 #[derive(Clone, Debug)]
 pub struct DebugTraceIdentifier {

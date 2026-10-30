@@ -418,6 +418,7 @@ impl RunArgs {
             arena: call_frame_to_arena(&frame, root_create_address),
             ignored: Default::default(),
             diagnostics: Default::default(),
+            debug_steps: None,
         };
         let result = TraceResult {
             success: receipt.status(),

@@ -17,10 +17,10 @@ use super::{
 ///
 /// 8192 bytes was arbitrarily chosen because it is long enough for return values up to 256 words in
 /// size.
-static DUMMY_CALL_OUTPUT: Bytes = Bytes::from_static(&[0u8; 8192]);
+pub static DUMMY_CALL_OUTPUT: Bytes = Bytes::from_static(&[0u8; 8192]);
 
 /// Same reasoning as [DUMMY_CALL_OUTPUT], but for creates.
-const DUMMY_CREATE_ADDRESS: Address = Address::with_last_byte(1);
+pub const DUMMY_CREATE_ADDRESS: Address = Address::with_last_byte(1);
 
 /// Common parameters for expected or assumed reverts. Allows for code reuse.
 pub(crate) trait RevertParameters {

@@ -1062,7 +1062,10 @@ impl SymbolicExecutor {
                 JoinedCallOutcome::ExpectedRevert { mut parent, child } => {
                     parent.expected_creates = child.expected_creates;
                     parent.world = original_world.clone();
-                    parent.return_data = SymReturnData::empty(&mut self.cx);
+                    parent.return_data = SymReturnData::from_concrete_bytes(
+                        &mut self.cx,
+                        DUMMY_CALL_OUTPUT.to_vec(),
+                    );
                     parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
                     parent.stack.push(SymExpr::one(&mut self.cx))?;
                     parents.push_back(parent);

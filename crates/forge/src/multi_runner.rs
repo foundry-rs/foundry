@@ -601,7 +601,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
 
     fn trace_requirements(&self) -> TraceRequirements {
         TraceRequirements::none()
-            .with_debug(self.debug)
+            .with_debug_recording(self.debug)
             .with_decode_internal(self.decode_internal)
             .with_all_steps(self.record_all_steps)
             .with_verbosity(self.config.tracing.verbosity.max(self.evm_opts.verbosity))

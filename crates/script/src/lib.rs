@@ -45,7 +45,6 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
-use foundry_debugger::DebuggerLayout;
 use foundry_evm::{
     backend::Backend,
     core::{
@@ -247,11 +246,10 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub debug: bool,
 
-    /// Debugger layout to use.
-    #[arg(long = "debug-layout", requires = "debug", value_enum)]
-    pub debug_layout: Option<DebuggerLayout>,
-
-    /// Dumps all debugger steps to file.
+    /// Writes a SolDB trace and source bundle to a directory.
+    ///
+    /// Read the bundle with SolDB tools, for example:
+    /// `soldb profile --trace-file <PATH>/trace.json --contracts <PATH>/contracts.json`.
     #[arg(
         long,
         requires = "debug",
@@ -425,8 +423,17 @@ impl ScriptArgs {
 
         tempo.resolve_expires();
         config.tracing = args.tracing.resolve(&config.tracing, evm_opts.verbosity);
-        if args.debug && !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
-            config.extra_output.push(ContractOutputSelection::StorageLayout);
+        if args.debug {
+            if !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
+                config.extra_output.push(ContractOutputSelection::StorageLayout);
+            }
+            // Full build infos keep the sources the compiler saw, which dynamic test linking
+            // rewrites in scripts.
+            if let Err(error) = config.enable_debug_build_info() {
+                let _ = sh_warn!(
+                    "the debugger may show source files that differ from the compiled ones: {error:#}"
+                );
+            }
         }
 
         let script_config = ScriptConfig::new(
@@ -1319,7 +1326,7 @@ async fn prepare_script_source(
 const fn script_trace_requirements(config: &Config, debug: bool) -> TraceRequirements {
     TraceRequirements::none()
         .with_calls(true)
-        .with_debug(debug)
+        .with_debug_recording(debug)
         .with_verbosity(config.tracing.verbosity)
         .with_decode_internal(if config.tracing.decode_internal {
             InternalTraceMode::Full
@@ -1835,6 +1842,7 @@ mod tests {
                     arena,
                     ignored: Default::default(),
                     diagnostics: Default::default(),
+                    debug_steps: None,
                 },
             )],
             ..Default::default()
@@ -1877,6 +1885,7 @@ mod tests {
                     arena,
                     ignored: Default::default(),
                     diagnostics: Default::default(),
+                    debug_steps: None,
                 },
             )],
             ..Default::default()

@@ -68,7 +68,7 @@ use foundry_config::{
     filter::GlobMatcher,
     fs_permissions::FsAccessPermission,
 };
-use foundry_debugger::{Debugger, DebuggerLayout};
+use foundry_debugger::DebuggerBuilder;
 use foundry_evm::{
     backend::Backend,
     core::evm::{EthEvmNetwork, EvmFactoryFor, FoundryEvmNetwork, TempoEvmNetwork},
@@ -513,10 +513,6 @@ pub struct TestArgs {
     #[arg(long, conflicts_with_all = ["flamegraph", "flamechart", "evm_profile", "decode_internal", "rerun"])]
     debug: bool,
 
-    /// Debugger layout to use.
-    #[arg(long = "debug-layout", requires = "debug", value_enum)]
-    debug_layout: Option<DebuggerLayout>,
-
     /// Generate a flamegraph for a single test. Implies `--decode-internal`.
     ///
     /// A flame graph is used to visualize which functions or operations within the smart contract
@@ -564,7 +560,10 @@ pub struct TestArgs {
     #[command(flatten)]
     tracing: TracingArgs,
 
-    /// Dumps all debugger steps to file.
+    /// Writes a SolDB trace and source bundle to a directory.
+    ///
+    /// Read the bundle with SolDB tools, for example:
+    /// `soldb profile --trace-file <PATH>/trace.json --contracts <PATH>/contracts.json`.
     #[arg(
         long,
         requires = "debug",
@@ -1118,6 +1117,17 @@ pub struct TestArgs {
     // TODO: evaluate if we can relax the conflict with replay_symbolic_artifact
     #[arg(long, conflicts_with_all = ["mutate", "replay_symbolic_artifact"])]
     pub brutalize: bool,
+
+    /// Make every cheatcode that opens a network connection fail. `forge properties` sets it for
+    /// generated tests.
+    #[arg(long, hide = true)]
+    pub no_network: bool,
+
+    /// Let inline config only lower fuzz and invariant runs, depth, and rejects and change a few
+    /// settings that steer them. `forge properties` and `forge exploit` set it for generated
+    /// tests.
+    #[arg(long, hide = true)]
+    pub restrict_inline_config: bool,
 }
 
 impl TestArgs {
@@ -1227,8 +1237,17 @@ impl TestArgs {
                 None => config.cache_path.join(AUTO_FUZZ_FAILURE_DIR).join(AUTO_CORPUS_DIR),
             });
         }
-        if self.debug && !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
-            config.extra_output.push(ContractOutputSelection::StorageLayout);
+        if self.debug {
+            if !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
+                config.extra_output.push(ContractOutputSelection::StorageLayout);
+            }
+            // Full build infos keep the sources the compiler saw, which dynamic test linking
+            // rewrites in test files.
+            if let Err(error) = config.enable_debug_build_info() {
+                let _ = sh_warn!(
+                    "the debugger may show source files that differ from the compiled ones: {error:#}"
+                );
+            }
         }
     }
 
@@ -1643,9 +1662,12 @@ impl TestArgs {
 
     async fn compile_project(&mut self) -> Result<CompiledTestProject> {
         // Merge all configs.
-        let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
+        let (mut config, mut evm_opts) = self.load_config_and_evm_opts()?;
+        evm_opts.no_network = self.no_network;
 
         self.install_missing_dependencies(&mut config)?;
+        // After the install, which can reload the config.
+        config.restrict_inline_config = self.restrict_inline_config;
         let brutalized_workspace =
             if self.brutalize { Some(self.brutalize_workspace(&mut config)?) } else { None };
         let should_mutate = self.mutate.is_some();
@@ -1876,6 +1898,7 @@ impl TestArgs {
         config.networks = evm_opts.networks;
         let verbosity = evm_opts.verbosity;
 
+        let build_info_dir = config.project_paths::<MultiCompilerLanguage>().build_infos;
         // Box each network's run so the dispatch arms' locals stay off this frame.
         dispatch_network!(&evm_opts, |Net| {
             Box::pin(async {
@@ -1956,47 +1979,24 @@ impl TestArgs {
                     // Get first non-empty suite result. We will have only one such entry.
                     let (_, _, test_result) =
                         outcome.remove_first().ok_or_eyre("no tests were executed")?;
-                    let sources = ContractSources::from_project_output(
+                    let mut sources = ContractSources::from_project_output(
                         output,
                         project_root,
                         Some(&libraries),
                     )?;
+                    sources.insert_compiled_sources(&build_info_dir);
 
-                    // Prefer execution traces for normal debug runs, but when execution never
-                    // starts (for example if `setUp()` reverts), fall back to available
-                    // setup/deployment traces.
-                    let mut traces = test_result
-                        .traces
-                        .iter()
-                        .filter(|(kind, _)| kind.is_execution())
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    if traces.is_empty() {
-                        traces = test_result.traces.clone();
-                    }
-                    if let Some(decoder) = &outcome.last_run_decoder {
-                        for (_, arena) in &mut traces {
-                            decode_trace_arena(arena, decoder).await;
-                        }
-                    }
-
-                    let mut builder = Debugger::builder()
-                        .traces(traces)
+                    let mut builder = DebuggerBuilder::new()
+                        .traces(test_result.traces)
                         .sources(sources)
-                        .breakpoints(test_result.breakpoints)
-                        .layout(self.debug_layout.unwrap_or_default());
+                        .breakpoints(test_result.breakpoints);
                     if let Some(decoder) = &outcome.last_run_decoder {
                         builder = builder.decoder(decoder);
                     }
                     if let Some(known_contracts) = &outcome.known_contracts {
                         builder = builder.known_contracts(known_contracts);
                     }
-                    let mut debugger = builder.build();
-                    if let Some(dump_path) = &self.dump {
-                        debugger.dump_to_file(dump_path)?;
-                    } else {
-                        debugger.try_run_tui()?;
-                    }
+                    builder.run(self.dump.as_deref())?;
                 }
 
                 // All tests have been run once before reaching this point
@@ -2507,7 +2507,7 @@ impl TestArgs {
             builder =
                 builder.with_signature_identifier(SignaturesIdentifier::from_config(&config)?);
         }
-        // The debugger resolves frame identities before decoding internal calls.
+        // SolDB decodes internal calls from compiler sources.
         if decode_internal && !self.debug {
             let sources =
                 ContractSources::from_project_output(output, &config.root, Some(&libraries))?;
@@ -3952,6 +3952,7 @@ mod tests {
         args.apply_test_config_overrides(&mut config);
 
         assert_eq!(config.extra_output, vec![ContractOutputSelection::StorageLayout]);
+        assert!(config.build_info);
     }
 
     #[test]

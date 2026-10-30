@@ -1,4 +1,5 @@
 use super::*;
+use alloy_sol_types::{Revert, SolError};
 use evm2::interpreter::gas::CALL_STIPEND;
 
 const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
@@ -1068,16 +1069,27 @@ impl ExpectedRevert {
                 }));
             }
             ExpectedRevertData::Exact(data) => {
-                if return_data.len() < data.len() {
+                // Like Forge, also accept the expected bytes as the message of canonical
+                // `Error(string)` or `CheatcodeError(string)` revert data.
+                let message = SymbolicAbiValue::String { bytes: data.clone() };
+                let message = encode_sequence(cx, [&message]);
+                let mut candidates = vec![data.clone()];
+                for selector in [Revert::SELECTOR, Vm::CheatcodeError::SELECTOR] {
+                    let selector = SymBytes::concrete(cx, selector.to_vec());
+                    candidates.push(SymBytes::concat(cx, [selector, message.clone()]));
+                }
+                let mut matches = Vec::new();
+                for candidate in candidates {
+                    if let Some(bytes_match) = return_data.bytes.prefix_condition(cx, &candidate) {
+                        let len = SymExpr::constant(cx, U256::from(candidate.len()));
+                        let len_match = SymBoolExpr::eq(cx, return_data.len_word.clone(), len);
+                        matches.push(SymBoolExpr::and(cx, vec![len_match, bytes_match]));
+                    }
+                }
+                if matches.is_empty() {
                     return None;
                 }
-                let len = SymExpr::constant(cx, U256::from(data.len()));
-                conditions.push(SymBoolExpr::eq(cx, return_data.len_word.clone(), len));
-                conditions.extend((0..data.len()).map(|offset| {
-                    let expected = data.byte(cx, offset);
-                    let actual = return_data.byte(cx, offset);
-                    SymBoolExpr::eq(cx, actual, expected)
-                }));
+                conditions.push(SymBoolExpr::or(cx, matches));
             }
         }
         Some(SymBoolExpr::and(cx, conditions))

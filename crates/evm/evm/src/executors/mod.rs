@@ -290,8 +290,11 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             let initial_balance = self.get_balance(creator)?;
             self.set_balance(creator, U256::MAX)?;
 
-            let res =
-                self.deploy(creator, DEFAULT_CREATE2_DEPLOYER_CODE.into(), U256::ZERO, None)?;
+            // The deployer is test harness state, so the debugger does not step through it.
+            let recorder = self.inspector_mut().debug_recorder.take();
+            let res = self.deploy(creator, DEFAULT_CREATE2_DEPLOYER_CODE.into(), U256::ZERO, None);
+            self.inspector_mut().debug_recorder = recorder;
+            let res = res?;
             trace!(create2=?res.address, "deployed local create2 deployer");
 
             self.set_balance(creator, initial_balance)?;

@@ -76,7 +76,10 @@ mod string;
 mod tempo;
 
 mod test;
-pub use test::expect::ExpectedCallTracker;
+pub use test::{
+    expect::ExpectedCallTracker,
+    revert_handlers::{DUMMY_CALL_OUTPUT, DUMMY_CREATE_ADDRESS},
+};
 
 mod toml;
 

@@ -119,6 +119,11 @@ pub struct EvmOpts {
     /// Enables the FFI cheatcode.
     pub ffi: bool,
 
+    /// Makes every cheatcode that opens a network connection fail. Only callers set it; config
+    /// cannot.
+    #[serde(skip)]
+    pub no_network: bool,
+
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
     pub always_use_create_2_factory: bool,
 
@@ -339,6 +344,7 @@ impl Default for EvmOpts {
             initial_balance: U256::default(),
             sender: Address::default(),
             ffi: false,
+            no_network: false,
             always_use_create_2_factory: false,
             verbosity: 0,
             memory_limit: 0,

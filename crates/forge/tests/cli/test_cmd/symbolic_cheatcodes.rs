@@ -590,13 +590,13 @@ contract SymbolicExpectRevert is Test {
     }
 
     function checkExpectRevert(uint256) public {
-        vm.expectRevert(SymbolicExpectedReverter.Custom.selector);
+        vm.expectPartialRevert(SymbolicExpectedReverter.Custom.selector);
         helper.failWithCustom(7);
 
         vm.expectRevert(abi.encodeWithSelector(SymbolicExpectedReverter.Custom.selector, uint256(9)));
         helper.failWithCustom(9);
 
-        vm.expectRevert(bytes4(0x4e487b71));
+        vm.expectPartialRevert(bytes4(0x4e487b71));
         helper.failPanic();
     }
 }
@@ -2997,6 +2997,116 @@ Ran 11 tests for test/SymbolicExpectRevertUnmet.t.sol:SymbolicExpectRevertUnmet
 [FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnmetSymbolicSuffix(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkWrongReasonPayload() ([METRICS])
 Suite result: FAILED. 5 passed; 6 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// Like Forge, a matched `vm.expectRevert` compares reasons by raw bytes or by the message of
+// `Error(string)`, matches `bytes4` exactly, and returns Forge's dummy call output and CREATE
+// address.
+#[forgetest_init]
+fn symbolic_vm_expect_revert_matches_like_forge(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_expect_revert_matches_like_forge");
+
+    prj.add_test(
+        "SymbolicExpectRevertMatch.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract MatchToken {
+    error Unauthorized(address caller);
+
+    mapping(address => uint256) public balanceOf;
+
+    function burn(uint256 amount) external returns (bool) {
+        require(balanceOf[msg.sender] >= amount, "insufficient balance");
+        balanceOf[msg.sender] -= amount;
+        return true;
+    }
+
+    function deny() external view {
+        revert Unauthorized(msg.sender);
+    }
+
+    function failEmpty() external pure {
+        revert("");
+    }
+}
+
+contract MatchBadCtor {
+    constructor() {
+        revert("nope");
+    }
+}
+
+contract SymbolicExpectRevertMatch is Test {
+    function checkStringReason(uint256 amount) public {
+        vm.assume(amount > 0);
+        MatchToken token = new MatchToken();
+        vm.expectRevert("insufficient balance");
+        bool ok = token.burn(amount);
+        assertFalse(ok);
+    }
+
+    function checkEmptyReason() public {
+        MatchToken token = new MatchToken();
+        vm.expectRevert(bytes(""));
+        token.failEmpty();
+    }
+
+    function checkSelectorWithArgs() public {
+        MatchToken token = new MatchToken();
+        vm.expectRevert(MatchToken.Unauthorized.selector);
+        token.deny();
+    }
+
+    function checkPartialSelector() public {
+        MatchToken token = new MatchToken();
+        vm.expectPartialRevert(MatchToken.Unauthorized.selector);
+        token.deny();
+    }
+
+    function checkMatchedCallOutput() public {
+        MatchToken token = new MatchToken();
+        vm.expectRevert();
+        (bool ok, bytes memory data) = address(token).call(abi.encodeCall(MatchToken.burn, (1)));
+        assertTrue(ok);
+        assertEq(data.length, 8192);
+    }
+
+    function checkMatchedCreateAddress() public {
+        bytes memory code = type(MatchBadCtor).creationCode;
+        vm.expectRevert();
+        address created;
+        uint256 size;
+        assembly {
+            created := create(0, add(code, 32), mload(code))
+            size := returndatasize()
+        }
+        assertEq(created, address(1));
+        assertEq(size, 0);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicExpectRevertMatch",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 6 tests for test/SymbolicExpectRevertMatch.t.sol:SymbolicExpectRevertMatch
+[PASS] checkEmptyReason() ([METRICS])
+[PASS] checkMatchedCallOutput() ([METRICS])
+[PASS] checkMatchedCreateAddress() ([METRICS])
+[PASS] checkPartialSelector() ([METRICS])
+[FAIL: Error != expected error: Unauthorized(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496) != custom error 0x8e4a23d6; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSelectorWithArgs() ([METRICS])
+[PASS] checkStringReason(uint256) ([METRICS])
+Suite result: FAILED. 5 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
