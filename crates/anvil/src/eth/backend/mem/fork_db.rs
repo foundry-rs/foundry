@@ -77,26 +77,11 @@ fn remote_state_snapshot(remote: &RemoteState) -> StateSnapshot {
     }
 }
 
-/// Copies the fork cache's state.
-fn clone_remote_state(remote: &RemoteState) -> RemoteState {
-    RemoteState {
-        accounts: parking_lot::RwLock::new(remote.accounts.read().clone()),
-        storage: parking_lot::RwLock::new(remote.storage.read().clone()),
-        block_hashes: parking_lot::RwLock::new(remote.block_hashes.read().clone()),
-    }
-}
-
 /// A local snapshot of a [`ForkedDatabase`]: its local changes and the fork cache's contents.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct ForkDbLocalSnapshot<N: Network> {
     local: CacheDB<RemoteDb<N>>,
     remote: RemoteState,
-}
-
-impl<N: Network> Clone for ForkDbLocalSnapshot<N> {
-    fn clone(&self) -> Self {
-        Self { local: self.local.clone(), remote: clone_remote_state(&self.remote) }
-    }
 }
 
 /// State forked off another client.
@@ -167,7 +152,7 @@ impl<N: Network> ForkedDatabase<N> {
     pub fn insert_state_snapshot(&self) -> U256 {
         let state_snapshot = ForkDbLocalSnapshot {
             local: self.cache_db.clone(),
-            remote: clone_remote_state(self.db.db()),
+            remote: RemoteState::clone(self.db.db()),
         };
         let id = self.state_snapshots.lock().insert(state_snapshot);
         trace!(target: "backend::forkdb", "Created new snapshot {}", id);

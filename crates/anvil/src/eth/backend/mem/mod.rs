@@ -887,7 +887,7 @@ fn parity_trace_results(
         &executed.result,
         &executed.state,
         trace_types,
-        &mut EvmDb::new(db, spec),
+        &mut EvmDb::new(db, spec, None),
     )?)
 }
 
@@ -907,7 +907,7 @@ fn geth_prestate_traces(
     Ok(inspector.into_geth_builder().geth_prestate_traces(
         &detached,
         config,
-        &mut EvmDb::new(db, spec),
+        &mut EvmDb::new(db, spec, None),
     )?)
 }
 
@@ -940,7 +940,7 @@ where
             &result,
             &tx,
             &block_env::<TypesFor<E>>(env),
-            &mut EvmDb::new(db, *env.spec_id()),
+            &mut EvmDb::new(db, *env.spec_id(), None),
         )
         .map(GethTrace::JS)
         .map_err(|err| BlockchainError::Message(err.to_string()))

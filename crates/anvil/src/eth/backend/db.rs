@@ -298,24 +298,6 @@ impl<T: DatabaseRef + ?Sized> DatabaseRef for &T {
     }
 }
 
-impl<T: DatabaseRef + ?Sized> DatabaseRef for &mut T {
-    fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
-        (**self).basic_ref(address)
-    }
-
-    fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
-        (**self).code_by_hash_ref(code_hash)
-    }
-
-    fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
-        (**self).storage_ref(address, index)
-    }
-
-    fn block_hash_ref(&self, number: u64) -> DatabaseResult<B256> {
-        (**self).block_hash_ref(number)
-    }
-}
-
 impl<T: DatabaseRef + ?Sized> DatabaseRef for Box<T> {
     fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
         (**self).basic_ref(address)
@@ -448,18 +430,6 @@ impl<ExtDB: DatabaseRef> CacheDB<ExtDB> {
         Ok(())
     }
 
-    /// Replaces all storage of `address`.
-    pub fn replace_account_storage(
-        &mut self,
-        address: Address,
-        storage: U256Map<U256>,
-    ) -> DatabaseResult<()> {
-        let account = self.load_account(address)?;
-        account.account_state = AccountState::StorageCleared;
-        account.storage = storage;
-        Ok(())
-    }
-
     /// Applies state changes accumulated by evm2 to the cache.
     ///
     /// Changed accounts are loaded from the backing database first, so an account whose storage
@@ -511,13 +481,14 @@ pub fn apply_state_overrides<ExtDB: DatabaseRef>(
                 )));
             }
             (Some(state), None) => {
-                let storage = state
+                let account = db.load_account(address)?;
+                account.account_state = AccountState::StorageCleared;
+                account.storage = state
                     .into_iter()
                     .map(|(slot, value)| {
                         (U256::from_be_bytes(slot.0), U256::from_be_bytes(value.0))
                     })
                     .collect();
-                db.replace_account_storage(address, storage)?;
             }
             (None, Some(state_diff)) => {
                 for (slot, value) in state_diff {
@@ -685,15 +656,9 @@ pub struct EvmDb<'a> {
 }
 
 impl<'a> EvmDb<'a> {
-    /// Reads `db` for execution at `spec`.
-    pub fn new(db: &'a dyn DatabaseRef, spec: SpecId) -> Self {
-        Self { db, spec, forked: None }
-    }
-
-    /// Marks the database as a fork of `source_chain_id`.
-    pub const fn forked(mut self, source_chain_id: Option<u64>) -> Self {
-        self.forked = source_chain_id;
-        self
+    /// Reads `db` for execution at `spec`, as a fork of `forked` if set.
+    pub fn new(db: &'a dyn DatabaseRef, spec: SpecId, forked: Option<u64>) -> Self {
+        Self { db, spec, forked }
     }
 }
 
@@ -1095,10 +1060,6 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
 }
 
 impl MaybeFullDatabase for EmptyDb {
-    fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
-        None
-    }
-
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
         Some(AddressMap::default())
     }
@@ -1206,14 +1167,7 @@ pub struct LegacyBlockEnv {
     pub basefee: Option<StringOrU64>,
     pub difficulty: Option<StringOrU64>,
     pub prevrandao: Option<B256>,
-    pub blob_excess_gas_and_price: Option<LegacyBlobExcessGasAndPrice>,
-}
-
-/// Legacy blob excess gas and price structure from before v1.3.
-#[derive(Debug, Deserialize)]
-pub struct LegacyBlobExcessGasAndPrice {
-    pub excess_blob_gas: u64,
-    pub blob_gasprice: u128,
+    pub blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
 }
 
 /// Legacy string or u64 type from before v1.3.
@@ -1254,15 +1208,9 @@ impl TryFrom<LegacyBlockEnv> for BlockEnv {
             difficulty: legacy.difficulty.and_then(|v| v.to_u256()).unwrap_or(U256::ZERO),
             prevrandao: legacy.prevrandao.or(Some(B256::ZERO)),
             slot_num: 0,
-            blob_excess_gas_and_price: legacy
-                .blob_excess_gas_and_price
-                .map(|v| BlobExcessGasAndPrice {
-                    excess_blob_gas: v.excess_blob_gas,
-                    blob_gasprice: v.blob_gasprice,
-                })
-                .or_else(|| {
-                    Some(BlobExcessGasAndPrice::new(0, BLOB_GASPRICE_UPDATE_FRACTION_PECTRA as u64))
-                }),
+            blob_excess_gas_and_price: legacy.blob_excess_gas_and_price.or_else(|| {
+                Some(BlobExcessGasAndPrice::new(0, BLOB_GASPRICE_UPDATE_FRACTION_PECTRA as u64))
+            }),
         })
     }
 }

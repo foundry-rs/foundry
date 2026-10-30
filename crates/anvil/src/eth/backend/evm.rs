@@ -561,7 +561,7 @@ pub fn build_evm<'a, N: AnvilEvmNetwork>(
     let factory = N::factory(opts);
     let version = version::<N>(&factory, spec, env);
     let net_env = foundry_evm_core::evm::EvmEnv::new(spec, version, block_env::<TypesFor<N>>(env));
-    let db = EvmDb::new(db, env.cfg_env.spec).forked(opts.fork_source_chain_id);
+    let db = EvmDb::new(db, env.cfg_env.spec, opts.fork_source_chain_id);
     let mut evm = factory.new_evm(db, net_env);
     let inner = factory.precompiles(&net_env, evm.ext());
     let mut precompiles = AnvilPrecompiles::new(inner, opts);
