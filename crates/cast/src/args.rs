@@ -1639,13 +1639,25 @@ fn get_selector(signature: &str, optimize: usize) -> Result<(String, String)> {
         eyre::bail!("invalid function signature");
     };
 
-    let num_threads = rayon::current_num_threads();
+    find_optimized_selector(name, params, optimize, 0)
+}
+
+/// Searches nonces from `first_nonce` up to `u32::MAX` for a name whose selector has exactly
+/// `optimize` leading zero bytes.
+fn find_optimized_selector(
+    name: &str,
+    params: &str,
+    optimize: usize,
+    first_nonce: u32,
+) -> Result<(String, String)> {
+    let num_threads = rayon::current_num_threads() as u32;
     let found = AtomicBool::new(false);
 
     // Each thread walks its own residue class of nonces until one of them finds a match.
-    (0..num_threads as u32)
+    (0..num_threads)
         .into_par_iter()
-        .find_map_any(|mut nonce| {
+        .find_map_any(|offset| {
+            let mut nonce = first_nonce.checked_add(offset)?;
             while nonce < u32::MAX && !found.load(Ordering::Relaxed) {
                 let input = format!("{name}{nonce}({params}");
                 let selector = &keccak256(input.as_bytes())[..4];
@@ -1653,7 +1665,7 @@ fn get_selector(signature: &str, optimize: usize) -> Result<(String, String)> {
                     found.store(true, Ordering::Relaxed);
                     return Some((hex::encode_prefixed(selector), input));
                 }
-                nonce += num_threads as u32;
+                nonce = nonce.checked_add(num_threads)?;
             }
             None
         })
@@ -1726,6 +1738,15 @@ fn with_local_first(local: Option<String>, remote: Result<Vec<String>>) -> Resul
 mod tests {
     use super::*;
     use alloy_sol_types::{EventTopic, sol_data};
+
+    #[test]
+    fn optimized_selector_search_terminates_without_a_match() {
+        // Four leading zero bytes will not show up in the last thousand nonces, and the search must
+        // report that instead of wrapping the nonce around and starting over.
+        let err = find_optimized_selector("transfer", "address,uint256)", 4, u32::MAX - 1000)
+            .unwrap_err();
+        assert_eq!(err.to_string(), "No selector found");
+    }
 
     /// Compares [`super::encode_event_topic`] against alloy's static [`EventTopic`]
     /// implementation, which `sol!`-generated events use to compute indexed topics.
