@@ -231,7 +231,7 @@ impl ScriptProgress {
         let futs = pending
             .iter()
             .filter(|hash| !blocked_hashes.contains(hash))
-            .map(|&tx| check_tx_status(provider, tx, timeout, confirmations));
+            .map(|&tx| check_tx_status(provider, tx, timeout, confirmations, &self.multi));
         let mut tasks = Some(futures::stream::iter(futs).buffer_unordered(10));
         let mut polled = Vec::with_capacity(count);
         let mut unpolled = None;
