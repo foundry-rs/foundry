@@ -6038,6 +6038,7 @@ dependencies = [
  "parking_lot",
  "proptest",
  "rand 0.9.5",
+ "reqwest 0.13.5",
  "revm",
  "semver 1.0.28",
  "serde",

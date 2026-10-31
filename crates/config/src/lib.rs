@@ -418,6 +418,9 @@ pub struct Config {
     pub eip1559_fee_estimate: Eip1559FeeEstimatePreset,
     /// Sets a timeout in seconds for vm.prompt cheatcodes
     pub prompt_timeout: u64,
+    /// URL prefixes that `vm.httpRequest` and `vm.httpGet` may call. Empty by default, which
+    /// disables them. A host starting with `*.` matches its subdomains.
+    pub http_allowlist: Vec<String>,
     /// The address which will be executing all tests
     pub sender: Address,
     /// The tx.origin value during EVM execution
@@ -3282,6 +3285,7 @@ impl Default for Config {
             live_logs: false,
             allow_internal_expect_revert: false,
             prompt_timeout: 120,
+            http_allowlist: vec![],
             sender: Self::DEFAULT_SENDER,
             tx_origin: Self::DEFAULT_SENDER,
             initial_balance: U256::from((1u128 << 96) - 1),

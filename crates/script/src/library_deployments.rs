@@ -28,6 +28,8 @@ const RERUN_UNSAFE_CHEATCODE_SIGNATURES: &[&str] = &[
     "rpc(string,string,string)",
     "rpcJson(string,string)",
     "rpcJson(string,string,string)",
+    "httpRequest((string,string,string[],bytes))",
+    "httpGet(string)",
     "sleep(uint256)",
     "prompt(string)",
     "promptSecret(string)",
@@ -154,6 +156,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             || self.args.batch
             || self.args.slow
             || self.script_config.config.ffi
+            || !self.script_config.config.http_allowlist.is_empty()
             || self.script_config.config.live_logs
             || shell::is_json()
             || shell::verbosity() > 3
