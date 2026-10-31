@@ -309,16 +309,20 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
     }
 
     /// Applies canonical Ethereum block-start transitions in consensus order.
+    ///
+    /// A failing block-start system call does not invalidate the block (EIP-2935, EIP-4788).
     pub(crate) fn apply_pre_execution_changes(&mut self) -> Result<(), BlockchainError> {
         let Some(transitions) = self.ethereum_transitions else { return Ok(()) };
         if transitions.hardfork >= EthereumHardfork::Prague {
-            self.system_call(HISTORY_STORAGE_ADDRESS, Bytes::from(self.parent_hash))?;
+            let tx = SystemTx::new(HISTORY_STORAGE_ADDRESS, Bytes::from(self.parent_hash));
+            let _ = self.evm.system_call(tx)?.commit_to(&mut self.state);
         }
         if transitions.hardfork >= EthereumHardfork::Cancun {
             let root = transitions.parent_beacon_block_root.ok_or_else(|| {
                 BlockchainError::Message("missing parent beacon block root".to_string())
             })?;
-            self.system_call(BEACON_ROOTS_ADDRESS, Bytes::from(root))?;
+            let tx = SystemTx::new(BEACON_ROOTS_ADDRESS, Bytes::from(root));
+            let _ = self.evm.system_call(tx)?.commit_to(&mut self.state);
         }
         Ok(())
     }

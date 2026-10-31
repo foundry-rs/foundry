@@ -290,6 +290,19 @@ async fn eip2935_not_deployed_before_prague() {
     assert!(code.is_empty(), "EIP-2935 contract should NOT be deployed before Prague");
 }
 
+// Failing EIP-2935 and EIP-4788 system calls do not invalidate the block.
+#[tokio::test(flavor = "multi_thread")]
+async fn failing_block_start_system_calls_do_not_stop_mining() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, _handle) = spawn(node_config).await;
+    // The history contract reverts and the beacon roots contract loops until out of gas.
+    api.anvil_set_code(HISTORY_STORAGE_ADDRESS, bytes!("5f5ffd")).await.unwrap();
+    api.anvil_set_code(BEACON_ROOTS_ADDRESS, bytes!("5b5f56")).await.unwrap();
+
+    api.mine_one().await.unwrap();
+    assert_eq!(api.backend.best_number(), 1);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn eip2935_local_block_replay_applies_pre_execution_changes() {
     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
