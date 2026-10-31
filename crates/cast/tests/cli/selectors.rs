@@ -297,6 +297,30 @@ MyUniqueEventWithinLocalProject(uint256,address)
 "#]]);
 }
 
+// Events with a struct parameter are cached in a form `cast decode-event` can parse back.
+#[forgetest_init]
+fn flaky_struct_event_decode_with_cache(prj: _, cmd: _) {
+    prj.add_source(
+        "LocalStructEventContract",
+        r#"
+contract LocalStructEventContract {
+    struct Order { address who; uint256 amount; }
+    event MyUniqueStructEventWithinLocalProject(Order order);
+}
+   "#,
+    );
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    cmd.cast_fuse()
+        .args(["decode-event", "0x8230d1a1e87386c5af1fb9804c3d8fd63c22ba426ff297e2d2d1ccb59d63f48d0000000000000000000000000000000000000000000000000000000000d0004f000000000000000000000000000000000000000000000000000000000000004e"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+MyUniqueStructEventWithinLocalProject((address,uint256))
+(0x0000000000000000000000000000000000D0004F, 78)
+
+"#]]);
+}
+
 // `cast 4byte`, `4byte-calldata` and `4byte-event` find signatures in the local cache that
 // `forge build` populates, like `decode-error` and `decode-event`. Cached library signatures such
 // as `f(LocalFourByteLib.E)` are printed as stored, not as their parsed `f(uint8)` form.
