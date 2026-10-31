@@ -492,6 +492,45 @@ fn wallet_address_keystore_from_stdin() {
     );
 }
 
+// Without a terminal, a command that would prompt for the keystore password says how to pass it.
+#[cfg(unix)]
+#[casttest]
+fn wallet_import_without_terminal_names_password_flag(prj: _, cmd: _) {
+    use std::os::unix::process::CommandExt;
+
+    // `TestCommand` cannot detach from the terminal, so run the binary directly.
+    let _ = cmd;
+    let mut cmd = prj.cast_bin();
+    cmd.current_dir(prj.root())
+        .args([
+            "wallet",
+            "import",
+            "noTerminal",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "-k",
+            "keystore",
+        ])
+        .env_remove("CAST_UNSAFE_PASSWORD")
+        .stdin(std::process::Stdio::null());
+    // Leave the controlling terminal, so the prompt cannot open `/dev/tty`.
+    // SAFETY: `setsid` is async-signal-safe.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success(), "import succeeded without a password: {stderr}");
+    assert!(
+        stderr.contains("pass it with `--unsafe-password` or `CAST_UNSAFE_PASSWORD`"),
+        "missing password hint: {stderr}"
+    );
+}
+
 // Tests that `cast wallet remove` can successfully remove a keystore file and validates password.
 #[casttest]
 fn wallet_remove_keystore_with_unsafe_password(prj: _, cmd: _) {

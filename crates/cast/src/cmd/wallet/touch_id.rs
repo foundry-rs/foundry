@@ -148,7 +148,12 @@ fn enroll(
         }
     };
 
-    let password = password_or_prompt(unsafe_password, "Enter password: ")?;
+    let password = password_or_prompt(
+        unsafe_password,
+        "Enter password: ",
+        "--unsafe-password",
+        "CAST_UNSAFE_PASSWORD",
+    )?;
     PrivateKeySigner::decrypt_keystore(&keystore_path, &password)
         .map_err(|_| eyre::eyre!("Invalid password - Touch ID enrollment cancelled"))?;
 

@@ -679,7 +679,12 @@ flag to set your key via:
                     );
                 };
 
-                let password = password_or_prompt(unsafe_password, "Enter password: ")?;
+                let password = password_or_prompt(
+                    unsafe_password,
+                    "Enter password: ",
+                    "--unsafe-password",
+                    "CAST_UNSAFE_PASSWORD",
+                )?;
                 let (wallet, _) = PrivateKeySigner::encrypt_keystore(
                     dir,
                     &mut thread_rng(),
@@ -724,7 +729,12 @@ flag to set your key via:
             }
             Self::Remove { name, dir, unsafe_password } => {
                 let keystore_path = existing_keystore_path(&name, dir)?;
-                let password = password_or_prompt(unsafe_password, "Enter password: ")?;
+                let password = password_or_prompt(
+                    unsafe_password,
+                    "Enter password: ",
+                    "--unsafe-password",
+                    "CAST_UNSAFE_PASSWORD",
+                )?;
                 if PrivateKeySigner::decrypt_keystore(&keystore_path, password).is_err() {
                     eyre::bail!("Invalid password - wallet removal cancelled");
                 }
@@ -786,7 +796,12 @@ flag to set your key via:
             }
             Self::DecryptKeystore { account_name, keystore_dir, unsafe_password } => {
                 let keypath = existing_keystore_path(&account_name, keystore_dir)?;
-                let password = password_or_prompt(unsafe_password, "Enter password: ")?;
+                let password = password_or_prompt(
+                    unsafe_password,
+                    "Enter password: ",
+                    "--unsafe-password",
+                    "CAST_UNSAFE_PASSWORD",
+                )?;
                 let wallet = PrivateKeySigner::decrypt_keystore(keypath, password)?;
 
                 let private_key = B256::from_slice(&wallet.credential().to_bytes());
@@ -838,13 +853,22 @@ flag to set your key via:
                     .then(|| foundry_wallets::touch_id::policy(&keypath))
                     .transpose()?;
 
-                let current_password =
-                    password_or_prompt(unsafe_password, "Enter current password: ")?;
+                let current_password = password_or_prompt(
+                    unsafe_password,
+                    "Enter current password: ",
+                    "--unsafe-password",
+                    "CAST_UNSAFE_PASSWORD",
+                )?;
                 // decrypt the keystore to verify the current password and get the private key
                 let wallet = PrivateKeySigner::decrypt_keystore(&keypath, current_password.clone())
                     .map_err(|_| eyre::eyre!("Invalid password - password change cancelled"))?;
 
-                let new_password = password_or_prompt(unsafe_new_password, "Enter new password: ")?;
+                let new_password = password_or_prompt(
+                    unsafe_new_password,
+                    "Enter new password: ",
+                    "--unsafe-new-password",
+                    "CAST_UNSAFE_NEW_PASSWORD",
+                )?;
                 if current_password == new_password {
                     eyre::bail!("New password cannot be the same as the current password");
                 }
@@ -922,7 +946,12 @@ fn new_keystores(
     force: bool,
     touch_id: bool,
 ) -> Result<Vec<Value>> {
-    let password = password_or_prompt(unsafe_password, "Enter secret: ")?;
+    let password = password_or_prompt(
+        unsafe_password,
+        "Enter secret: ",
+        "--unsafe-password",
+        "CAST_PASSWORD",
+    )?;
     let names = (0..number)
         .map(|i| account_name.map(|name| indexed_account_name(name, number, i)))
         .collect::<Vec<_>>();
@@ -1045,10 +1074,21 @@ fn hex_str_to_bytes(s: &str) -> Result<Vec<u8>> {
 }
 
 /// Returns `password` when given, otherwise prompts for it on the terminal.
-fn password_or_prompt(password: Option<String>, prompt: &str) -> Result<String> {
+///
+/// The error names `flag` and `env`, which pass the password without a terminal.
+fn password_or_prompt(
+    password: Option<String>,
+    prompt: &str,
+    flag: &str,
+    env: &str,
+) -> Result<String> {
     match password {
         Some(password) => Ok(password),
-        None => Ok(rpassword::prompt_password(prompt)?),
+        None => rpassword::prompt_password(prompt).wrap_err_with(|| {
+            format!(
+                "could not read the password from the terminal; pass it with `{flag}` or `{env}`"
+            )
+        }),
     }
 }
 
