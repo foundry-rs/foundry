@@ -1026,17 +1026,24 @@ impl AccessRecord {
 pub(crate) struct ExpectedRevert {
     data: ExpectedRevertData,
     reverter: Option<SymExpr>,
+    count: u64,
     remaining: u64,
 }
 
 impl ExpectedRevert {
-    pub(crate) fn new(data: ExpectedRevertData, reverter: Option<SymExpr>, remaining: u64) -> Self {
-        Self { data, reverter, remaining: remaining.max(1) }
+    pub(crate) fn new(data: ExpectedRevertData, reverter: Option<SymExpr>, count: u64) -> Self {
+        let count = count.max(1);
+        Self { data, reverter, count, remaining: count }
     }
 
     pub(crate) const fn consume_one(&mut self) -> bool {
         self.remaining = self.remaining.saturating_sub(1);
         self.remaining == 0
+    }
+
+    /// Returns whether at least one expected revert has already matched.
+    pub(crate) const fn matched_any(&self) -> bool {
+        self.remaining < self.count
     }
 
     pub(crate) fn match_condition(
