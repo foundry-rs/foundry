@@ -17,7 +17,9 @@ use anvil_core::eth::{
     block::Block,
     transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
-use evm2::evm::{BlockStateAccumulator, DbResult, DynDatabase};
+use evm2::evm::{
+    AccountChangeRef, BlockStateAccumulator, DbResult, DynDatabase, StateChangeSink, StorageChange,
+};
 use foundry_common::errors::FsPathError;
 use foundry_evm_core::evm::{FoundryDatabase, existing_account};
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
@@ -29,6 +31,7 @@ use serde::{
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
+    convert::Infallible,
     fmt::{self, Debug},
     fs::File,
     io::BufReader,
@@ -523,10 +526,74 @@ pub fn apply_block_overrides<ExtDB>(
     }
 }
 
+/// Records transaction changes in a [`BlockStateAccumulator`] for [`commit_changes`].
+///
+/// [`EvmDb`] loads an empty account as absent even when Anvil holds storage for it, such as storage
+/// set on an empty address. evm2 records an account absent before the block as created, with no
+/// storage, so an account evm2 did not create, or created and deleted, is recorded with an
+/// existing empty original instead. A creation over an existing account discards its storage, which
+/// evm2 does not report as a wipe.
+pub(crate) struct BlockChanges<'a> {
+    block: &'a mut BlockStateAccumulator,
+    /// The current account's slots, which evm2 visits before the account itself.
+    storage: Vec<StorageChange>,
+}
+
+impl<'a> BlockChanges<'a> {
+    pub(crate) fn new(block: &'a mut BlockStateAccumulator) -> Self {
+        Self { block, storage: Vec::new() }
+    }
+
+    fn flush_storage(&mut self) -> Result<(), Infallible> {
+        for change in self.storage.drain(..) {
+            self.block.storage(change)?;
+        }
+        Ok(())
+    }
+}
+
+impl StateChangeSink for BlockChanges<'_> {
+    type Error = Infallible;
+
+    fn bytecode(&mut self, code_hash: B256, code: &Bytecode) -> Result<(), Self::Error> {
+        self.block.bytecode(code_hash, code)
+    }
+
+    fn account(&mut self, change: AccountChangeRef<'_>) -> Result<(), Self::Error> {
+        if change.created && change.original.is_some() {
+            self.block.storage_wipe(change.address)?;
+        }
+        self.flush_storage()?;
+        let empty = AccountInfo::default();
+        if change.original.is_none() && !(change.created && change.current.is_some()) {
+            return self.block.account(AccountChangeRef { original: Some(&empty), ..change });
+        }
+        self.block.account(change)
+    }
+
+    fn storage_wipe(&mut self, address: Address) -> Result<(), Self::Error> {
+        self.block.storage_wipe(address)
+    }
+
+    fn storage(&mut self, change: StorageChange) -> Result<(), Self::Error> {
+        self.storage.push(change);
+        Ok(())
+    }
+
+    fn account_read(
+        &mut self,
+        _address: Address,
+        _info: Option<&AccountInfo>,
+    ) -> Result<(), Self::Error> {
+        self.flush_storage()
+    }
+}
+
 /// Applies evm2 state changes to a [`Cache`].
 ///
 /// A created or deleted account starts from empty storage: evm2 drops the storage wipe marker of
 /// accounts that did not exist before the block, so it is applied here before storage writes.
+/// Changes recorded through [`BlockChanges`] only have no original account when it was created.
 pub(crate) fn commit_changes(cache: &mut Cache, changes: &BlockStateAccumulator) {
     fn wipe(account: &mut DbAccount) {
         account.storage.clear();
@@ -562,8 +629,13 @@ pub(crate) fn commit_changes(cache: &mut Cache, changes: &BlockStateAccumulator)
                     cache.contracts.entry(info.code_hash).or_insert(code);
                 }
                 account.info = info;
-                if account.account_state == AccountState::None {
-                    account.account_state = AccountState::Touched;
+                match account.account_state {
+                    AccountState::None => account.account_state = AccountState::Touched,
+                    // A revived account has no storage left.
+                    AccountState::NotExisting => {
+                        account.account_state = AccountState::StorageCleared
+                    }
+                    _ => {}
                 }
             }
             None => *account = DbAccount::new_not_existing(),
