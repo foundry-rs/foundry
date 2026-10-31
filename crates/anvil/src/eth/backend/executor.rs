@@ -297,7 +297,10 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
     fn system_call(&mut self, address: Address, data: Bytes) -> Result<Bytes, BlockchainError> {
         let result = self.evm.system_call(SystemTx::new(address, data))?.commit_to(&mut self.state);
         if result.stop.is_revert() {
-            return Err(InvalidTransactionError::Revert(Some(result.output)).into());
+            return Err(BlockchainError::Message(format!(
+                "system call to {address} failed: execution reverted: {}",
+                result.output
+            )));
         }
         if !result.status {
             return Err(BlockchainError::Message(format!(
