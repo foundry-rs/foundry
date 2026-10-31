@@ -151,7 +151,9 @@ sequence number when several sequences share it. A confirmed success removes the
 about each recorded revert, never resubmits it, continues with the remaining operations, and
 replaces the final success message with a warning listing the reverts. Receipt-watcher timeouts
 keep retrying without consuming the retry budget while the selected RPC still returns the
-transaction, so ordinary polling is unbounded; Tempo batches use `transaction_timeout`. If that
+transaction, so ordinary polling is unbounded; Tempo batches use `transaction_timeout`. Outside
+`--batch`, each polled hash prints one warning naming it after its first such timeout, and waiting
+continues. If that
 endpoint returns no transaction, the durable attempt remains the source of identity: signed bytes
 may be replayed; delegated attempts with a known hash remain checkpointed for a later plain
 `--resume`, while unknown outcomes remain blocked until explicitly resolved. Removing a hash from

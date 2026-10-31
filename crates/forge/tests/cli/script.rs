@@ -1202,9 +1202,12 @@ contract InvisibleSubmission is Script {
         .expect("forge did not finish");
         let output = child.kill_and_wait();
         assert!(output.status.success());
+        // Successors that time out before the first one is found dropped warn that they are
+        // still waited on.
         assert_data_eq!(
             String::from_utf8(output.stderr).unwrap(),
             str![[r#"
+...
 Warning: Some transactions were discarded by the RPC node. Use `--resume` to retry these transactions.
 ...
 "#]]
@@ -1384,12 +1387,13 @@ contract UnpolledReceipts is Script {
             .iter()
             .map(|receipt| receipt["transactionHash"].clone())
             .collect::<Vec<_>>();
+        // Transactions still waited on when a receipt timeout elapses warn about it first.
         if revert {
             assert!(!output.status.success());
-            assert_eq!(
+            assert_data_eq!(
                 stderr,
                 format!(
-                    "Error: Transaction Failure: {}\nTransaction Failure: {}\n\nAdd `--resume` to your command to try and continue broadcasting the transactions. This will attempt to resend transactions that were discarded by the RPC.\n",
+                    "...\nError: Transaction Failure: {}\nTransaction Failure: {}\n\nAdd `--resume` to your command to try and continue broadcasting the transactions. This will attempt to resend transactions that were discarded by the RPC.\n",
                     hashes[10].as_str().unwrap(),
                     hashes[11].as_str().unwrap()
                 )
@@ -1400,6 +1404,7 @@ contract UnpolledReceipts is Script {
             assert_data_eq!(
                 stderr,
                 str![[r#"
+...
 Warning: Some transactions were discarded by the RPC node. Use `--resume` to retry these transactions.
 ...
 "#]]
@@ -1410,6 +1415,95 @@ Warning: Some transactions were discarded by the RPC node. Use `--resume` to ret
         // The invisible transactions are removed so that resume can replay them.
         assert!(sequence["pending"].as_array().unwrap().is_empty());
     }
+}
+
+// Each transaction that stays pending past the receipt timeout is named once, without aborting,
+// resubmitting, or changing the eventual result.
+#[forgetest_init]
+async fn broadcast_warns_once_while_waiting_for_receipt(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "WaitingReceipt.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract WaitingReceipt is Script {
+    function run() external {
+        vm.startBroadcast();
+        payable(address(0xBEEF)).transfer(1);
+        payable(address(0xBEEF)).transfer(1);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    // Each receipt timeout is followed by a lookup that finds the transaction still pending.
+    let lookups = Arc::new(AtomicUsize::new(0));
+    let rpc = spawn_rpc_proxy_mapping_method(handle.http_endpoint(), "eth_getTransactionByHash", {
+        let lookups = lookups.clone();
+        move |_, result| {
+            if !result.is_null() {
+                lookups.fetch_add(1, Ordering::SeqCst);
+            }
+            result
+        }
+    })
+    .await;
+    let (rpc, submissions) = spawn_rpc_proxy_recording_method(rpc, "eth_sendRawTransaction").await;
+    prj.update_config(|config| config.transaction_timeout = 1);
+
+    cmd.arg("script").arg(&script).args([
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+    ]);
+    let mut child = KillOnDrop::spawn(cmd.cmd().env("RUST_LOG", "off"));
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while lookups.load(Ordering::SeqCst) < 6 {
+            assert!(child.is_running(), "a receipt timeout stopped the broadcast");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not keep waiting after receipt timeouts");
+    assert!(child.is_running());
+    assert_eq!(submissions.lock().unwrap().len(), 2);
+
+    api.mine_one().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while child.is_running() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not finish after the transaction mined");
+    let output = child.kill_and_wait();
+    assert!(output.status.success());
+    let sequence: Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/WaitingReceipt.s.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    assert_eq!(sequence["receipts"].as_array().unwrap().len(), 2);
+    let mut warnings =
+        String::from_utf8(output.stderr).unwrap().lines().map(str::to_owned).collect::<Vec<_>>();
+    warnings.sort();
+    let mut expected = sequence["transactions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tx| {
+            format!(
+                "Warning: Transaction {} is still known to the RPC endpoint; continuing to wait for its receipt and requested confirmations.",
+                tx["hash"].as_str().unwrap()
+            )
+        })
+        .collect::<Vec<_>>();
+    expected.sort();
+    assert_eq!(warnings, expected);
+    assert_eq!(submissions.lock().unwrap().len(), 2);
 }
 
 // Other tools parse broadcast files, so renaming or removing a key breaks them. A new key only
