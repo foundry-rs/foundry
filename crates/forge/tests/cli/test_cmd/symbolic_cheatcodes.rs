@@ -3111,6 +3111,107 @@ Suite result: FAILED. 5 passed; 1 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
+// Like Forge, a CREATE that fails before its frame runs consumes a pending `vm.expectRevert` with
+// a depth error, so a later revert cannot match it.
+#[forgetest_init]
+fn symbolic_vm_expect_revert_create_failing_before_frame(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_expect_revert_create_failing_before_frame");
+
+    prj.add_test(
+        "SymbolicExpectRevertCreateFailure.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract PayableChild {
+    constructor() payable {}
+}
+
+contract Boom {
+    function boom() external pure {
+        revert("boom");
+    }
+}
+
+contract SymbolicExpectRevertCreateFailure is Test {
+    Boom target;
+
+    function setUp() public {
+        target = new Boom();
+        vm.deal(address(this), 0);
+    }
+
+    function checkBalanceFailurePayload() public {
+        vm.expectRevert();
+        try new PayableChild{value: 1}() {
+            fail();
+        } catch (bytes memory err) {
+            assertEq(
+                err,
+                abi.encodeWithSignature(
+                    "CheatcodeError(string)",
+                    "call didn't revert at a lower depth than cheatcode call depth"
+                )
+            );
+        }
+    }
+
+    function checkBalanceFailureConsumesCount() public {
+        vm.expectRevert(2);
+        try new PayableChild{value: 1}() {} catch {}
+        (bool ok,) = address(target).call(abi.encodeCall(Boom.boom, ()));
+        assertTrue(ok);
+    }
+
+    function checkSymbolicValueCaught(uint256 value) public {
+        vm.expectRevert();
+        try new PayableChild{value: value}() {} catch {}
+    }
+
+    function checkSymbolicValueUncaught(uint256 value) public {
+        vm.assume(value > 0);
+        vm.expectRevert();
+        new PayableChild{value: value}();
+    }
+
+    function checkCollisionConsumesExpectation() public {
+        new PayableChild{salt: bytes32(uint256(1))}();
+        vm.expectRevert();
+        try new PayableChild{salt: bytes32(uint256(1))}() {} catch {}
+        (bool ok,) = address(target).call(abi.encodeCall(Boom.boom, ()));
+        assertTrue(ok);
+    }
+
+    function checkPartlyMatchedCount() public {
+        vm.expectRevert(2);
+        (bool ok,) = address(target).call(abi.encodeCall(Boom.boom, ()));
+        assertTrue(ok);
+        try new PayableChild{value: 1}() {} catch {}
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicExpectRevertCreateFailure",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 6 tests for test/SymbolicExpectRevertCreateFailure.t.sol:SymbolicExpectRevertCreateFailure
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkBalanceFailureConsumesCount() ([METRICS])
+[PASS] checkBalanceFailurePayload() ([METRICS])
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCollisionConsumesExpectation() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectRevert on CREATE that fails before running] checkPartlyMatchedCount() ([METRICS])
+[PASS] checkSymbolicValueCaught(uint256) ([METRICS])
+[FAIL: call didn't revert at a lower depth than cheatcode call depth; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicValueUncaught(uint256) ([METRICS])
+Suite result: FAILED. 2 passed; 4 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
 #[forgetest_init]
 fn symbolic_vm_expect_emit_matches_external_logs(prj: _, cmd: _) {
     if !z3_available() {
