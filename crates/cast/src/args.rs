@@ -482,10 +482,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     eyre::bail!("No matching event signature found for selector `{selector}`");
                 };
                 let _ = sh_println!("{}", event.signature());
+                // Keep the indexed flags of a cached signature: indexed parameters are not in DATA.
                 let data = data.get(64..).unwrap_or_default();
-                get_event(&event.signature())?
-                    .decode_log_parts(core::iter::once(selector), &hex::decode(data)?)?
-                    .body
+                abi_decode_event_data(&event, &hex::decode(data)?)?
             };
             print_tokens(&decoded_values)?;
         }
