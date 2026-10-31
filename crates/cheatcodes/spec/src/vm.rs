@@ -228,6 +228,28 @@ interface Vm {
         uint256 privateKey;
     }
 
+    /// An HTTP request made with `httpRequest`.
+    struct HttpRequest {
+        /// The method, such as `GET` or `POST`.
+        string method;
+        /// The URL. It must start with an entry of `http_allowlist`.
+        string url;
+        /// The request headers, each as `Name: value`.
+        string[] headers;
+        /// The request body.
+        bytes body;
+    }
+
+    /// The response to `httpRequest` or `httpGet`.
+    struct HttpResponse {
+        /// The status code.
+        uint256 status;
+        /// The response headers, each as `Name: value`.
+        string[] headers;
+        /// The response body.
+        bytes body;
+    }
+
     /// The result of a `tryFfi` call.
     struct FfiResult {
         /// The exit code of the call.
@@ -2325,6 +2347,19 @@ interface Vm {
     /// The most recent deployment is the first element, and the oldest is the last.
     #[cheatcode(group = Filesystem)]
     function getDeployments(string calldata contractName, uint64 chainId) external view returns (address[] memory deployedAddresses);
+
+    // -------- HTTP --------
+
+    /// Sends an HTTP request and returns the response, whatever its status.
+    /// The URL must start with an entry of `http_allowlist` in `foundry.toml`, which is empty by
+    /// default. Reverts on network errors and timeouts.
+    #[cheatcode(group = Filesystem)]
+    function httpRequest(HttpRequest calldata request) external returns (HttpResponse memory response);
+
+    /// Sends an HTTP GET request to `url` and returns the response, whatever its status.
+    /// The URL must start with an entry of `http_allowlist` in `foundry.toml`.
+    #[cheatcode(group = Filesystem)]
+    function httpGet(string calldata url) external returns (HttpResponse memory response);
 
     // -------- Foreign Function Interface --------
 

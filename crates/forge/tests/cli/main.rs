@@ -23,6 +23,7 @@ mod doc;
 mod eip712;
 mod exploit;
 mod failure_assertions;
+mod http;
 mod inline_config;
 mod install;
 mod lsp;

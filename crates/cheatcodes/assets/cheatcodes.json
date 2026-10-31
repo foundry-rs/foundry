@@ -395,6 +395,53 @@
       ]
     },
     {
+      "name": "HttpRequest",
+      "description": "An HTTP request made with `httpRequest`.",
+      "fields": [
+        {
+          "name": "method",
+          "ty": "string",
+          "description": "The method, such as `GET` or `POST`."
+        },
+        {
+          "name": "url",
+          "ty": "string",
+          "description": "The URL. It must start with an entry of `http_allowlist`."
+        },
+        {
+          "name": "headers",
+          "ty": "string[]",
+          "description": "The request headers, each as `Name: value`."
+        },
+        {
+          "name": "body",
+          "ty": "bytes",
+          "description": "The request body."
+        }
+      ]
+    },
+    {
+      "name": "HttpResponse",
+      "description": "The response to `httpRequest` or `httpGet`.",
+      "fields": [
+        {
+          "name": "status",
+          "ty": "uint256",
+          "description": "The status code."
+        },
+        {
+          "name": "headers",
+          "ty": "string[]",
+          "description": "The response headers, each as `Name: value`."
+        },
+        {
+          "name": "body",
+          "ty": "bytes",
+          "description": "The response body."
+        }
+      ]
+    },
+    {
       "name": "FfiResult",
       "description": "The result of a `tryFfi` call.",
       "fields": [
@@ -7128,6 +7175,46 @@
         ]
       },
       "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "httpGet",
+        "description": "Sends an HTTP GET request to `url` and returns the response, whatever its status.\nThe URL must start with an entry of `http_allowlist` in `foundry.toml`.",
+        "declaration": "function httpGet(string calldata url) external returns (HttpResponse memory response);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "httpGet(string)",
+        "selector": "0x52792547",
+        "selectorBytes": [
+          82,
+          121,
+          37,
+          71
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "httpRequest",
+        "description": "Sends an HTTP request and returns the response, whatever its status.\nThe URL must start with an entry of `http_allowlist` in `foundry.toml`, which is empty by\ndefault. Reverts on network errors and timeouts.",
+        "declaration": "function httpRequest(HttpRequest calldata request) external returns (HttpResponse memory response);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "httpRequest((string,string,string[],bytes))",
+        "selector": "0x03ff4ec7",
+        "selectorBytes": [
+          3,
+          255,
+          78,
+          199
+        ]
+      },
+      "group": "filesystem",
       "status": "stable",
       "safety": "safe"
     },

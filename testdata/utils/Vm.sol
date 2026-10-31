@@ -18,6 +18,8 @@ interface Vm {
     struct DirEntry { string errorMessage; string path; uint64 depth; bool isDir; bool isSymlink; }
     struct FsMetadata { bool isDir; bool isSymlink; uint256 length; bool readOnly; uint256 modified; uint256 accessed; uint256 created; }
     struct Wallet { address addr; uint256 publicKeyX; uint256 publicKeyY; uint256 privateKey; }
+    struct HttpRequest { string method; string url; string[] headers; bytes body; }
+    struct HttpResponse { uint256 status; string[] headers; bytes body; }
     struct FfiResult { int32 exitCode; bytes stdout; bytes stderr; }
     struct ChainInfo { uint256 forkId; uint256 chainId; }
     struct Chain { string name; uint256 chainId; string chainAlias; string rpcUrl; }
@@ -348,6 +350,8 @@ interface Vm {
     function getStorageAccesses() external view returns (StorageAccess[] memory storageAccesses);
     function getStorageSlots(address target, string calldata variableName) external view returns (uint256[] memory slots);
     function getWallets() external view returns (address[] memory wallets);
+    function httpGet(string calldata url) external returns (HttpResponse memory response);
+    function httpRequest(HttpRequest calldata request) external returns (HttpResponse memory response);
     function indexOf(string calldata input, string calldata key) external pure returns (uint256);
     function interceptInitcode() external;
     function isContext(ForgeContext context) external view returns (bool result);
