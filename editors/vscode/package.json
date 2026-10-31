@@ -235,7 +235,7 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "vscode-languageclient": "^10.1.2"
+    "vscode-languageclient": "^11.0.0"
   },
   "overrides": {
     "brace-expansion": "^5.0.12"
