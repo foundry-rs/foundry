@@ -1408,11 +1408,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 mock::find_mock_returns(mocks, &call.input, transfer_value(call))
             && let Some(return_data) = return_data_queue.front().map(|x| x.to_owned())
         {
-            if let Some(value) = transfer_value(call)
-                && !return_data.reverts
-            {
+            if let Some(value) = transfer_value(call) {
+                let checkpoint = interp.host().state().checkpoint();
                 let state = interp.host().state_mut();
                 match state.transfer(&call.caller, &call.destination, &value) {
+                    // A reverting mock checks the balance but keeps no transfer.
+                    Ok(true) if return_data.reverts => {
+                        let evm = interp.host();
+                        let features = evm.version().features;
+                        evm.state_mut().rollback(checkpoint, features);
+                    }
                     Ok(true) => {}
                     Ok(false) => {
                         return Some(message_result(call, InstrStop::OutOfFunds, Bytes::new()));
