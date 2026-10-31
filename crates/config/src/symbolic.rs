@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 /// Storage modelling mode for symbolic tests.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum SymbolicStorageLayout {
     /// Model Solidity storage layout precisely where the symbolic executor knows the layout shape.
@@ -18,6 +19,7 @@ pub enum SymbolicStorageLayout {
 
 /// Pending symbolic path exploration order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum SymbolicExplorationOrder {
     /// Explore pending paths in first-in, first-out order.
@@ -29,6 +31,7 @@ pub enum SymbolicExplorationOrder {
 
 /// Configuration for symbolic testing.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct SymbolicConfig {
     /// Whether symbolic tests are enabled.
     pub enabled: bool,

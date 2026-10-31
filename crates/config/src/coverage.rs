@@ -10,6 +10,7 @@ use std::path::PathBuf;
 /// Used both as a CLI value (`--report <kind>`) and as a TOML configuration
 /// value under `[profile.<name>.coverage] report = ["..."]`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum CoverageReportKind {
     #[default]
@@ -29,6 +30,7 @@ pub enum CoverageReportKind {
 /// Fields here mirror the CLI flags accepted by `forge coverage`. CLI flags
 /// take precedence over configuration values when both are provided.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct CoverageConfig {
     /// The report kinds to generate. Defaults to `["summary"]`.
     #[serde(default = "default_report_kinds")]
@@ -39,6 +41,7 @@ pub struct CoverageConfig {
     /// Defaults to `1` (parsed as `1.0.0`). See `forge coverage --help` for the
     /// supported variants and their differences.
     #[serde(default = "default_lcov_version", deserialize_with = "deserialize_lcov_version")]
+    #[cfg_attr(feature = "schema", schemars(with = "String"))]
     pub lcov_version: Version,
 
     /// Whether to enable `viaIR` with minimum optimization. Useful as a

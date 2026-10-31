@@ -5,12 +5,14 @@ use serde::{Deserialize, Serialize};
 
 /// Configuration for trace rendering.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(default)]
 pub struct TracingConfig {
     /// Verbosity to use for trace rendering.
     pub verbosity: u8,
     /// Address labels to use in traces.
     #[serde(default, skip_serializing_if = "AddressHashMap::is_empty")]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::labels"))]
     pub labels: AddressHashMap<String>,
     /// Whether to disable labels in traces.
     pub disable_labels: bool,

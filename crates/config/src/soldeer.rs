@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 /// Soldeer dependencies config structure when it's defined as a map
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct MapDependency {
     /// The version of the dependency
     pub version: String,
@@ -36,6 +37,7 @@ pub struct MapDependency {
 
 /// Type for Soldeer configs, under dependencies tag in the foundry.toml
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct SoldeerDependencyConfig(pub BTreeMap<String, SoldeerDependencyValue>);
 
 impl AsRef<Self> for SoldeerDependencyConfig {
@@ -49,6 +51,7 @@ impl AsRef<Self> for SoldeerDependencyConfig {
 /// or
 /// `dep = "1.1"`
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(untagged)]
 pub enum SoldeerDependencyValue {
     Map(MapDependency),

@@ -7,12 +7,15 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct VyperConfig {
     /// Vyper optimization mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::vyper_optimize"))]
     pub optimize: Option<VyperOptimizationMode>,
     /// Vyper numeric optimization level.
     #[serde(default, alias = "optLevel", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::vyper_optimize"))]
     pub opt_level: Option<VyperOptimizationLevel>,
     /// The Vyper instance to use if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -31,5 +34,6 @@ pub struct VyperConfig {
     pub enable_decimals: Option<bool>,
     /// Fine-grained Venom optimizer settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::open_table"))]
     pub venom: Option<VyperVenomSettings>,
 }

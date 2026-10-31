@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 /// Contains for fuzz testing
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct FuzzConfig {
     /// The number of test cases that must execute for each property test
     #[serde(deserialize_with = "deserialize_fuzz_runs")]
@@ -21,6 +22,7 @@ pub struct FuzzConfig {
     /// encountered during usage of `vm.assume` cheatcode.
     pub max_test_rejects: u32,
     /// Optional seed for the fuzzing RNG algorithm
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::uint256"))]
     pub seed: Option<U256>,
     /// The fuzz dictionary configuration
     #[serde(flatten)]
@@ -66,9 +68,11 @@ impl FuzzConfig {
 
 /// Contains for fuzz testing
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct FuzzDictionaryConfig {
     /// The weight of the dictionary
     #[serde(deserialize_with = "crate::deserialize_stringified_percent")]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::percent"))]
     pub dictionary_weight: u32,
     /// The flag indicating whether to include values from storage
     pub include_storage: bool,
@@ -82,6 +86,7 @@ pub struct FuzzDictionaryConfig {
         deserialize_with = "crate::deserialize_usize_or_max",
         serialize_with = "crate::serialize_usize_or_max"
     )]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::usize_or_max"))]
     pub max_fuzz_dictionary_addresses: usize,
     /// How many values to record at most.
     /// Once the fuzzer exceeds this limit, it will start evicting random entries
@@ -90,6 +95,7 @@ pub struct FuzzDictionaryConfig {
         deserialize_with = "crate::deserialize_usize_or_max",
         serialize_with = "crate::serialize_usize_or_max"
     )]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::usize_or_max"))]
     pub max_fuzz_dictionary_values: usize,
     /// How many literal values to seed from the AST, at most.
     ///
@@ -98,6 +104,7 @@ pub struct FuzzDictionaryConfig {
         deserialize_with = "crate::deserialize_usize_or_max",
         serialize_with = "crate::serialize_usize_or_max"
     )]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::usize_or_max"))]
     pub max_fuzz_dictionary_literals: usize,
 }
 
@@ -117,6 +124,7 @@ impl Default for FuzzDictionaryConfig {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct FuzzCorpusConfig {
     // Path to corpus directory, enabled coverage guided fuzzing mode.
     // If not set then sequences producing new coverage are not persisted and mutated.
@@ -148,9 +156,11 @@ pub struct FuzzCorpusConfig {
     /// Percent chance of generating fresh transaction input instead of continuing from corpus
     /// input during coverage-guided campaigns.
     #[serde(deserialize_with = "crate::deserialize_stringified_percent")]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::percent"))]
     pub corpus_random_sequence_weight: u32,
     /// Percent chance that generated payable calls carry non-zero `msg.value`.
     #[serde(deserialize_with = "crate::deserialize_stringified_percent")]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::percent"))]
     pub payable_value_weight: u32,
     /// Weights for coverage-guided corpus mutation strategies.
     #[serde(flatten)]
@@ -257,6 +267,7 @@ impl Default for FuzzCorpusConfig {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct FuzzCorpusMutationWeights {
     /// Weight for splicing two corpus sequences.
     pub mutation_weight_splice: u32,

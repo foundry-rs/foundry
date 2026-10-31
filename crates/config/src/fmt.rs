@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// Contains the config and rule set
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct FormatterConfig {
     /// Maximum line length where formatter will try to wrap the line
     pub line_length: usize,
@@ -50,6 +51,7 @@ pub struct FormatterConfig {
 
 /// Style of integer types.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum IntTypes {
     /// Use the type defined in the source code.
@@ -63,6 +65,7 @@ pub enum IntTypes {
 
 /// Style of underscores in number literals
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum NumberUnderscore {
     /// Use the underscores defined in the source code
@@ -97,6 +100,7 @@ impl NumberUnderscore {
 
 /// Style of underscores in hex literals
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum HexUnderscore {
     /// Use the underscores defined in the source code
@@ -110,6 +114,7 @@ pub enum HexUnderscore {
 
 /// Style of doc comments
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum DocCommentStyle {
     /// Preserve the source code style
@@ -123,6 +128,7 @@ pub enum DocCommentStyle {
 
 /// Style of string quotes
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum QuoteStyle {
     /// Use quotation mark defined in the source code.
@@ -147,6 +153,7 @@ impl QuoteStyle {
 
 /// Style of single line blocks in statements
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum SingleLineBlockStyle {
     /// Preserve the original style
@@ -160,6 +167,7 @@ pub enum SingleLineBlockStyle {
 
 /// Style of function header in case it doesn't fit
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum MultilineFuncHeaderStyle {
     /// Always write function parameters multiline.
@@ -192,6 +200,7 @@ impl MultilineFuncHeaderStyle {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum NamespaceImportStyle {
     /// prefer plain imports: `import "source" as name;`
@@ -206,6 +215,7 @@ pub enum NamespaceImportStyle {
 /// Style that determines if a broken list, should keep its elements together on their own line,
 /// before breaking individually.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum PreferCompact {
     /// All elements are preferred consistent.
@@ -239,6 +249,7 @@ impl PreferCompact {
 
 /// Style of indent
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum IndentStyle {
     #[default]

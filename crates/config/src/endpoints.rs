@@ -10,6 +10,7 @@ use std::{
 
 /// Container type for API endpoints, like various RPC endpoints
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(transparent)]
 pub struct RpcEndpoints {
     endpoints: BTreeMap<String, RpcEndpoint>,

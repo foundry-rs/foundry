@@ -1,0 +1,3179 @@
+{
+  "$defs": {
+    "BindJsonConfig": {
+      "additionalProperties": false,
+      "description": "Contains the config for `forge bind-json`",
+      "properties": {
+        "exclude": {
+          "default": [],
+          "description": "Globs to ignore",
+          "items": {
+            "$ref": "#/$defs/GlobMatcher"
+          },
+          "type": "array"
+        },
+        "include": {
+          "default": [],
+          "description": "Globs to include.\n\nIf provided, only the files matching the globs will be included. Otherwise, defaults to\nincluding all project files.",
+          "items": {
+            "$ref": "#/$defs/GlobMatcher"
+          },
+          "type": "array"
+        },
+        "out": {
+          "default": "utils/JsonBindings.sol",
+          "description": "Path for the generated bindings file.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "CachedChains": {
+      "anyOf": [
+        {
+          "enum": [
+            "all",
+            "none"
+          ],
+          "type": "string"
+        },
+        {
+          "items": {
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "type": "array"
+        }
+      ]
+    },
+    "CachedEndpoints": {
+      "description": "`all`, `remote`, or a regex that endpoint URLs must match.",
+      "type": "string"
+    },
+    "CompilationRestrictions": {
+      "additionalProperties": false,
+      "description": "Restrictions for compilation of given paths.\n\nOnly purpose of this type is to accept user input to later construct\n`RestrictionsWithVersion<MultiCompilerRestrictions>`.",
+      "properties": {
+        "bytecode_hash": {
+          "description": "The hash method of the metadata hash appended to the bytecode.",
+          "enum": [
+            "Ipfs",
+            "Bzzr1",
+            "None"
+          ],
+          "type": "string"
+        },
+        "evm_version": {
+          "description": "The EVM version to compile for.",
+          "enum": [
+            "homestead",
+            "tangerinewhistle",
+            "tangerineWhistle",
+            "spuriousdragon",
+            "spuriousDragon",
+            "byzantium",
+            "constantinople",
+            "petersburg",
+            "istanbul",
+            "berlin",
+            "london",
+            "paris",
+            "shanghai",
+            "cancun",
+            "prague",
+            "osaka",
+            "amsterdam"
+          ],
+          "type": "string"
+        },
+        "max_evm_version": {
+          "description": "The EVM version to compile for.",
+          "enum": [
+            "homestead",
+            "tangerinewhistle",
+            "tangerineWhistle",
+            "spuriousdragon",
+            "spuriousDragon",
+            "byzantium",
+            "constantinople",
+            "petersburg",
+            "istanbul",
+            "berlin",
+            "london",
+            "paris",
+            "shanghai",
+            "cancun",
+            "prague",
+            "osaka",
+            "amsterdam"
+          ],
+          "type": "string"
+        },
+        "max_optimizer_runs": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_evm_version": {
+          "description": "The EVM version to compile for.",
+          "enum": [
+            "homestead",
+            "tangerinewhistle",
+            "tangerineWhistle",
+            "spuriousdragon",
+            "spuriousDragon",
+            "byzantium",
+            "constantinople",
+            "petersburg",
+            "istanbul",
+            "berlin",
+            "london",
+            "paris",
+            "shanghai",
+            "cancun",
+            "prague",
+            "osaka",
+            "amsterdam"
+          ],
+          "type": "string"
+        },
+        "min_optimizer_runs": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "optimizer_runs": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "paths": {
+          "$ref": "#/$defs/GlobMatcher"
+        },
+        "version": {
+          "description": "A semver version requirement, such as `>=0.8.20` or `=0.8.28`.",
+          "type": "string"
+        },
+        "via_ir": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "Config": {
+      "additionalProperties": false,
+      "description": "The settings of a profile.",
+      "patternProperties": {
+        "[A-Z-]": {}
+      },
+      "properties": {
+        "additional_compiler_profiles": {
+          "default": [],
+          "description": "Additional settings profiles to use when compiling.",
+          "items": {
+            "$ref": "#/$defs/SettingsOverrides"
+          },
+          "type": "array"
+        },
+        "allow_internal_expect_revert": {
+          "default": false,
+          "description": "Whether to allow `expectRevert` for internal functions.",
+          "type": "boolean"
+        },
+        "allow_linked_libraries": {
+          "default": true,
+          "description": "Whether compiled contracts may depend on externally linked Solidity libraries.\n\nDefaults to `true`. Internal libraries and dynamic test linking remain available when\ndisabled. Configured library addresses are withheld from solc so actual dependencies\nremain visible in its link references.",
+          "type": "boolean"
+        },
+        "allow_paths": {
+          "default": [],
+          "description": "Additional paths passed to `solc --allow-paths`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "always_use_create_2_factory": {
+          "default": false,
+          "description": "Use the create 2 factory in all cases including tests and non-broadcasting scripts.",
+          "type": "boolean"
+        },
+        "assertions_revert": {
+          "default": true,
+          "description": "Whether failed assertions should revert.\n\nNote that this only applies to native (cheatcode) assertions, invoked on Vm contract.",
+          "type": "boolean"
+        },
+        "ast": {
+          "default": false,
+          "description": "Whether to include the AST as JSON in the compiler output.",
+          "type": "boolean"
+        },
+        "auto_detect_remappings": {
+          "default": true,
+          "description": "Whether to autodetect remappings.",
+          "type": "boolean"
+        },
+        "auto_detect_solc": {
+          "default": true,
+          "description": "Whether to autodetect the solc compiler version to use.",
+          "type": "boolean"
+        },
+        "bind_json": {
+          "$ref": "#/$defs/BindJsonConfig",
+          "description": "Configuration for `forge bind-json`"
+        },
+        "block_base_fee_per_gas": {
+          "default": 0,
+          "description": "The base fee in a block.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "block_coinbase": {
+          "default": "0x0000000000000000000000000000000000000000",
+          "description": "The `block.coinbase` value during EVM execution.",
+          "pattern": "^(0x)?[0-9a-fA-F]{40}$",
+          "type": "string"
+        },
+        "block_difficulty": {
+          "default": 0,
+          "description": "The `block.difficulty` value during EVM execution.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "block_gas_limit": {
+          "$ref": "#/$defs/GasLimit",
+          "description": "The `block.gaslimit` value during EVM execution."
+        },
+        "block_number": {
+          "default": 1,
+          "description": "the block.number value during EVM execution",
+          "type": [
+            "integer",
+            "string"
+          ]
+        },
+        "block_prevrandao": {
+          "default": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "description": "Before merge the `block.max_hash`, after merge it is `block.prevrandao`.",
+          "pattern": "^(0x)?[0-9a-fA-F]{64}$",
+          "type": "string"
+        },
+        "block_timestamp": {
+          "default": 1,
+          "description": "The `block.timestamp` value during EVM execution.",
+          "type": [
+            "integer",
+            "string"
+          ]
+        },
+        "broadcast": {
+          "default": "broadcast",
+          "description": "The path to store broadcast logs at.",
+          "type": "string"
+        },
+        "build_info": {
+          "default": false,
+          "description": "Generates additional build info json files for every new build, containing the\n`CompilerInput` and `CompilerOutput`.",
+          "type": "boolean"
+        },
+        "build_info_path": {
+          "description": "The path to the `build-info` directory that contains the build info json files.",
+          "type": "string"
+        },
+        "bypass_prevrandao": {
+          "default": false,
+          "description": "Whether to bypass prevrandao.",
+          "type": "boolean"
+        },
+        "bytecode_hash": {
+          "anyOf": [
+            {
+              "enum": [
+                "ipfs",
+                "bzzr1",
+                "none"
+              ]
+            },
+            {
+              "pattern": "^(?:[iI][pP][fF][sS]|[bB][zZ][zZ][rR]1|[nN][oO][nN][eE])$"
+            }
+          ],
+          "default": "ipfs",
+          "description": "The hash method used for the metadata hash appended to the bytecode.\n\nDefaults to [BytecodeHash::Ipfs], matching solc. The hash depends on the source contents,\nsource paths, and compiler settings. Set to [BytecodeHash::None] to omit the hash without\ndisabling the CBOR metadata trailer.\nSee: <https://docs.soliditylang.org/en/latest/metadata.html>",
+          "type": "string"
+        },
+        "cache": {
+          "default": true,
+          "description": "Whether to enable the build cache.",
+          "type": "boolean"
+        },
+        "cache_path": {
+          "default": "cache",
+          "description": "The path to the cache store.",
+          "type": "string"
+        },
+        "cancun": {
+          "deprecated": true,
+          "description": "Deprecated: use `evm_version = Cancun`.",
+          "type": "boolean"
+        },
+        "cbor_metadata": {
+          "default": true,
+          "description": "Whether to append CBOR-encoded metadata to the bytecode. Defaults to `true`.\n\nIf this is `false` and the `bytecode_hash` option above is not `None` solc will issue a\nwarning.",
+          "type": "boolean"
+        },
+        "celo": {
+          "default": false,
+          "description": "Enable Celo network features.",
+          "type": "boolean"
+        },
+        "chain": {
+          "description": "Alias of `chain_id`.",
+          "type": [
+            "integer",
+            "string"
+          ]
+        },
+        "chain_id": {
+          "description": "The chain name or EIP-155 chain ID.",
+          "type": [
+            "integer",
+            "string"
+          ]
+        },
+        "code_size_limit": {
+          "description": "EIP-170: Contract code size limit in bytes. Useful to increase this because of tests.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "compilation_restrictions": {
+          "default": [],
+          "description": "Restrictions on compilation of certain files.",
+          "items": {
+            "$ref": "#/$defs/CompilationRestrictions"
+          },
+          "type": "array"
+        },
+        "coverage": {
+          "$ref": "#/$defs/CoverageConfig",
+          "description": "Configuration for `forge coverage`"
+        },
+        "create2_deployer": {
+          "default": "0x4e59b44847b379578588920ca78fbf26c0b4956c",
+          "description": "The CREATE2 deployer address to use.",
+          "pattern": "^(0x)?[0-9a-fA-F]{40}$",
+          "type": "string"
+        },
+        "create2_library_salt": {
+          "default": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "description": "CREATE2 salt to use for the library deployment in scripts.",
+          "pattern": "^(0x)?[0-9a-fA-F]{64}$",
+          "type": "string"
+        },
+        "decode_external_storage": {
+          "default": false,
+          "description": "Whether to decode the storage layouts of contracts outside the local project in state\ndiffs, by compiling the verified source a block explorer has for them.\n\nResolved layouts are cached under the explorer cache directory; `forge cache clean`\nclears them.",
+          "type": "boolean"
+        },
+        "deny": {
+          "$ref": "#/$defs/DenyLevel",
+          "description": "Diagnostic level (minimum) at which the process should finish with a non-zero exit."
+        },
+        "deny_warnings": {
+          "deprecated": true,
+          "description": "Deprecated: use `deny = warnings`.",
+          "type": "boolean"
+        },
+        "dependencies": {
+          "$ref": "#/$defs/SoldeerDependencyConfig",
+          "description": "Soldeer dependencies"
+        },
+        "disable_block_gas_limit": {
+          "default": false,
+          "description": "Whether to disable the block gas limit checks.",
+          "type": "boolean"
+        },
+        "doc": {
+          "$ref": "#/$defs/DocConfig",
+          "description": "Configuration for `forge doc`"
+        },
+        "dynamic_test_linking": {
+          "default": true,
+          "description": "Whether to dynamically link tests.",
+          "type": "boolean"
+        },
+        "eip1559_fee_estimate": {
+          "$ref": "#/$defs/Eip1559FeeEstimatePreset",
+          "default": "market",
+          "description": "Controls how EIP-1559 fees are estimated for `forge script` broadcasts\n(`low` / `market` / `aggressive`). Defaults to `market`, which preserves\nthe historical behavior (`base_fee * 2 + 20th-percentile priority fee`)."
+        },
+        "enable_tx_gas_limit": {
+          "default": false,
+          "description": "Whether to enable the tx gas limit checks as imposed by Osaka (EIP-7825).",
+          "type": "boolean"
+        },
+        "eth_rpc_accept_invalid_certs": {
+          "default": false,
+          "description": "Whether to accept invalid certificates for the rpc server.",
+          "type": "boolean"
+        },
+        "eth_rpc_curl": {
+          "default": false,
+          "description": "Print the equivalent curl command instead of making the RPC request.",
+          "type": "boolean"
+        },
+        "eth_rpc_headers": {
+          "description": "Headers that should be used for any rpc calls\n\n# Example\n\nrpc_headers = [\"x-custom-header:value\", \"x-another-header:another-value\"]\n\nYou can also the ETH_RPC_HEADERS env variable like so:\n`ETH_RPC_HEADERS=\"x-custom-header:value x-another-header:another-value\"`",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "eth_rpc_jwt": {
+          "description": "JWT secret that should be used for any rpc calls",
+          "type": "string"
+        },
+        "eth_rpc_no_proxy": {
+          "default": false,
+          "description": "Whether to disable automatic proxy detection for the rpc server.\n\nThis can help in sandboxed environments (e.g., Cursor IDE sandbox, macOS App Sandbox)\nwhere system proxy detection via SCDynamicStore causes crashes.",
+          "type": "boolean"
+        },
+        "eth_rpc_timeout": {
+          "description": "Timeout that should be used for any rpc calls",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "eth_rpc_url": {
+          "description": "url of the rpc server that should be used for any rpc calls",
+          "type": "string"
+        },
+        "etherscan": {
+          "$ref": "#/$defs/EtherscanConfigs",
+          "description": "Multiple etherscan api configs and their aliases"
+        },
+        "etherscan_api_key": {
+          "description": "etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table",
+          "type": "string"
+        },
+        "evm_version": {
+          "anyOf": [
+            {
+              "enum": [
+                "homestead",
+                "tangerinewhistle",
+                "spuriousdragon",
+                "byzantium",
+                "constantinople",
+                "petersburg",
+                "istanbul",
+                "berlin",
+                "london",
+                "paris",
+                "shanghai",
+                "cancun",
+                "prague",
+                "osaka",
+                "amsterdam"
+              ]
+            },
+            {
+              "pattern": "^(?:[hH][oO][mM][eE][sS][tT][eE][aA][dD]|[tT][aA][nN][gG][eE][rR][iI][nN][eE][wW][hH][iI][sS][tT][lL][eE]|[sS][pP][uU][rR][iI][oO][uU][sS][dD][rR][aA][gG][oO][nN]|[bB][yY][zZ][aA][nN][tT][iI][uU][mM]|[cC][oO][nN][sS][tT][aA][nN][tT][iI][nN][oO][pP][lL][eE]|[pP][eE][tT][eE][rR][sS][bB][uU][rR][gG]|[iI][sS][tT][aA][nN][bB][uU][lL]|[bB][eE][rR][lL][iI][nN]|[lL][oO][nN][dD][oO][nN]|[pP][aA][rR][iI][sS]|[sS][hH][aA][nN][gG][hH][aA][iI]|[cC][aA][nN][cC][uU][nN]|[pP][rR][aA][gG][uU][eE]|[oO][sS][aA][kK][aA]|[aA][mM][sS][tT][eE][rR][dD][aA][mM])$"
+            }
+          ],
+          "default": "osaka",
+          "description": "The EVM version to use when building contracts.",
+          "type": "string"
+        },
+        "experimental": {
+          "default": false,
+          "description": "Whether to enable Solidity's experimental mode.\n\nThis passes `--experimental` to solc, which is required by Solidity 0.8.35+ for\nexperimental features.",
+          "type": "boolean"
+        },
+        "extends": {
+          "$ref": "#/$defs/Extends",
+          "description": "Configuration for extending from another foundry.toml (base) file.\n\nCan be either a string path or an object with path and strategy.\nBase files cannot extend (inherit) other files."
+        },
+        "external_compilers": {
+          "description": "Explicitly configured external compiler adapters.",
+          "items": {
+            "$ref": "#/$defs/ExternalCompiler"
+          },
+          "type": "array"
+        },
+        "extra_args": {
+          "description": "Optional additional CLI arguments to pass to `solc` binary.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "extra_output": {
+          "default": [],
+          "description": "Additional output selection for all contracts, such as \"ir\", \"devdoc\", \"storageLayout\",\netc.\n\nSee the [Solc Compiler Api](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-api) for more information.\n\nThe following values are always set because they're required by `forge`:\n```json\n{\n  \"*\": [\n      \"abi\",\n      \"evm.bytecode\",\n      \"evm.deployedBytecode\",\n      \"evm.methodIdentifiers\"\n    ]\n}\n```",
+          "items": {
+            "examples": [
+              "abi",
+              "devdoc",
+              "userdoc",
+              "metadata",
+              "ir",
+              "irOptimized",
+              "storageLayout",
+              "evm.assembly",
+              "evm.bytecode",
+              "evm.deployedBytecode",
+              "evm.gasEstimates",
+              "evm.methodIdentifiers"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "extra_output_files": {
+          "default": [],
+          "description": "If set, a separate JSON file will be emitted for every contract depending on the\nselection, eg. `extra_output_files = [\"metadata\"]` will create a `metadata.json` for\neach contract in the project.\n\nSee [Contract Metadata](https://docs.soliditylang.org/en/latest/metadata.html) for more information.\n\nThe difference between `extra_output = [\"metadata\"]` and\n`extra_output_files = [\"metadata\"]` is that the former will include the\ncontract's metadata in the contract's json artifact, whereas the latter will emit the\noutput selection as separate files.",
+          "items": {
+            "examples": [
+              "abi",
+              "devdoc",
+              "userdoc",
+              "metadata",
+              "ir",
+              "irOptimized",
+              "storageLayout",
+              "evm.assembly",
+              "evm.bytecode",
+              "evm.deployedBytecode",
+              "evm.gasEstimates",
+              "evm.methodIdentifiers"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "ffi": {
+          "default": false,
+          "description": "Whether to allow ffi cheatcodes in test",
+          "type": "boolean"
+        },
+        "fmt": {
+          "$ref": "#/$defs/FormatterConfig",
+          "description": "Configuration for `forge fmt`"
+        },
+        "force": {
+          "default": false,
+          "description": "Whether to forcefully clean all project artifacts before running commands.",
+          "type": "boolean"
+        },
+        "fork_block_number": {
+          "description": "pins the block number for the state fork",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "fork_prefetch": {
+          "default": false,
+          "description": "Prefetches a new fork block's remote cache from the keys of an older cached block.\n\nDefaults to `false`. When a fork starts on a block with an empty disk cache, the accounts\nand storage slots in the cache of the newest older block on the same chain are fetched\nagain at the new block in the background. This helps forks of `latest`, which start\ncold on each new head. Values come from the fork block and never replace cached values,\nso results do not change; unused keys cost extra RPC requests. Requires storage caching.",
+          "type": "boolean"
+        },
+        "fork_state_by_number": {
+          "default": false,
+          "description": "Fetch fork state by block number for RPCs that cannot serve it by hash.",
+          "type": "boolean"
+        },
+        "fs_permissions": {
+          "$ref": "#/$defs/FsPermissions",
+          "description": "Configures the permissions of cheat codes that touch the file system.\n\nThis includes what operations can be executed (read, write)"
+        },
+        "fuzz": {
+          "$ref": "#/$defs/FuzzConfig",
+          "description": "Configuration for fuzz testing"
+        },
+        "gas_limit": {
+          "$ref": "#/$defs/GasLimit",
+          "description": "Block gas limit."
+        },
+        "gas_price": {
+          "description": "`tx.gasprice` value during EVM execution.\n\nThis is an Option, so we can determine in fork mode whether to use the config's gas price\n(if set by user) or the remote client's gas price.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "gas_reports": {
+          "default": [
+            "*"
+          ],
+          "description": "List of contracts to generate gas reports for.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "gas_reports_ignore": {
+          "default": [],
+          "description": "List of contracts to ignore for gas reports.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "gas_reports_include_tests": {
+          "default": false,
+          "description": "Whether to include gas reports for tests.",
+          "type": "boolean"
+        },
+        "gas_snapshot_check": {
+          "default": false,
+          "description": "Whether to check for differences against previously stored gas snapshots.",
+          "type": "boolean"
+        },
+        "gas_snapshot_emit": {
+          "default": true,
+          "description": "Whether to emit gas snapshots to disk.",
+          "type": "boolean"
+        },
+        "hardfork": {
+          "description": "The runtime hardfork to use when executing tests and scripts.",
+          "type": "string"
+        },
+        "ignored_error_codes": {
+          "default": [
+            "license",
+            "code-size",
+            "init-code-size",
+            "transient-storage",
+            "transfer-deprecated",
+            "natspec-memory-safe-assembly-deprecated"
+          ],
+          "description": "List of solidity error codes to always silence in the compiler output.",
+          "items": {
+            "$ref": "#/$defs/SolidityErrorCode"
+          },
+          "type": "array"
+        },
+        "ignored_error_codes_from": {
+          "default": [],
+          "description": "List of (path prefix, solidity error codes) to silence in the compiler output.",
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "$ref": "#/$defs/SolidityErrorCode"
+                },
+                "type": "array"
+              }
+            ],
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "ignored_warnings_from": {
+          "default": [],
+          "description": "List of file paths to ignore.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "include_paths": {
+          "default": [],
+          "description": "Additional paths passed to `solc --include-path`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "initial_balance": {
+          "default": "0xffffffffffffffffffffffff",
+          "description": "the initial balance of each deployed test contract",
+          "type": [
+            "integer",
+            "string"
+          ]
+        },
+        "invariant": {
+          "$ref": "#/$defs/InvariantConfig",
+          "description": "Configuration for invariant testing"
+        },
+        "isolate": {
+          "default": true,
+          "description": "Whether to enable call isolation.\n\nUseful for more correct gas accounting and EVM behavior in general.",
+          "type": "boolean"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "deprecated": true,
+          "description": "Deprecated: use `[tracing.labels]`.",
+          "propertyNames": {
+            "pattern": "^(0x)?[0-9a-fA-F]{40}$"
+          },
+          "type": "object"
+        },
+        "legacy_assertions": {
+          "default": false,
+          "description": "Whether `failed()` should be invoked to check if the test have failed.",
+          "type": "boolean"
+        },
+        "libraries": {
+          "default": [],
+          "description": "Library addresses to link.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "libs": {
+          "default": [
+            "lib"
+          ],
+          "description": "Paths to all library folders, such as `lib`, or `node_modules`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "lint": {
+          "$ref": "#/$defs/LinterConfig",
+          "description": "Configuration for `forge lint`"
+        },
+        "live_logs": {
+          "default": false,
+          "description": "Whether to show `console.log` outputs in realtime during script/test execution",
+          "type": "boolean"
+        },
+        "match_contract": {
+          "$ref": "#/$defs/RegexWrapper",
+          "description": "Only run tests in contracts matching the specified regex pattern."
+        },
+        "match_path": {
+          "description": "Only run tests in source files matching the specified glob pattern.",
+          "type": "string"
+        },
+        "match_test": {
+          "$ref": "#/$defs/RegexWrapper",
+          "description": "Only run test functions matching the specified regex pattern."
+        },
+        "memory_limit": {
+          "default": 134217728,
+          "description": "The memory limit per EVM execution in bytes.\nIf this limit is exceeded, a `MemoryLimitOOG` result is thrown.\n\nThe default is 128MiB.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "model_checker": {
+          "description": "Model checker settings.",
+          "type": "object"
+        },
+        "monad": {
+          "deprecated": true,
+          "description": "Deprecated: use `network = \"monad\"`.",
+          "type": "boolean"
+        },
+        "mutation": {
+          "$ref": "#/$defs/MutationConfig",
+          "description": "Configuration for mutation testing"
+        },
+        "mutation_dir": {
+          "default": "cache/mutation",
+          "description": "Path where mutation tests are cached, to resume running them",
+          "type": "string"
+        },
+        "names": {
+          "default": false,
+          "description": "Whether to print the names of the compiled contracts.",
+          "type": "boolean"
+        },
+        "network": {
+          "description": "Enable the features of a network family.",
+          "enum": [
+            "ethereum",
+            "base",
+            "optimism",
+            "tempo",
+            "monad"
+          ],
+          "type": "string"
+        },
+        "no_fork_bal": {
+          "default": false,
+          "description": "Disables parent-block BAL cache prewarming for transaction-hash forks.\n\nDefaults to `false`. Independent of disk storage caching; preceding transactions are\nstill replayed when prewarming is enabled.\n\nEach fork retains the value set at creation, including for subsequent transaction-hash\nrolls. Contract-level inline configuration applies to forks created in `setUp`.\nFunction-level inline configuration applies to forks created in that test, but does not\nchange forks already created by `setUp`.",
+          "type": "boolean"
+        },
+        "no_match_contract": {
+          "$ref": "#/$defs/RegexWrapper",
+          "description": "Only run tests in contracts that do not match the specified regex pattern."
+        },
+        "no_match_coverage": {
+          "$ref": "#/$defs/RegexWrapper",
+          "description": "Only show coverage for files that do not match the specified regex pattern."
+        },
+        "no_match_path": {
+          "description": "Only run tests in source files that do not match the specified glob pattern.",
+          "type": "string"
+        },
+        "no_match_test": {
+          "$ref": "#/$defs/RegexWrapper",
+          "description": "Only run test functions that do not match the specified regex pattern."
+        },
+        "no_rpc_rate_limit": {
+          "default": false,
+          "description": "Disables rate limiting entirely. This overrides any settings made in\n`compute_units_per_second`",
+          "type": "boolean"
+        },
+        "no_storage_caching": {
+          "default": false,
+          "description": "Disables storage caching entirely. This overrides any settings made in\n`rpc_storage_caching`",
+          "type": "boolean"
+        },
+        "offline": {
+          "default": false,
+          "description": "Offline mode, if set, network access (downloading solc) is disallowed.\n\nRelationship with `auto_detect_solc`:\n   - if `auto_detect_solc = true` and `offline = true`, the required solc version(s) will\n     be auto detected but if the solc version is not installed, it will _not_ try to\n     install it",
+          "type": "boolean"
+        },
+        "optimism": {
+          "deprecated": true,
+          "description": "Deprecated: use `network = \"optimism\"`.",
+          "type": "boolean"
+        },
+        "optimizer": {
+          "description": "Whether to activate optimizer",
+          "type": "boolean"
+        },
+        "optimizer_details": {
+          "description": "Switch optimizer components on or off in detail.\nThe \"enabled\" switch above provides two defaults which can be\ntweaked here. If \"details\" is given, \"enabled\" can be omitted.",
+          "type": "object"
+        },
+        "optimizer_runs": {
+          "description": "The number of runs specifies roughly how often each opcode of the deployed code will be\nexecuted across the life-time of the contract. This means it is a trade-off parameter\nbetween code size (deploy cost) and code execution cost (cost after deployment).\nAn `optimizer_runs` parameter of `1` will produce short but expensive code. In contrast, a\nlarger `optimizer_runs` parameter will produce longer but more gas efficient code. The\nmaximum value of the parameter is `2**32-1`.\n\nA common misconception is that this parameter specifies the number of iterations of the\noptimizer. This is not true: The optimizer will always run as many times as it can\nstill improve the code.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "out": {
+          "default": "out",
+          "description": "Path to the artifacts directory.",
+          "type": "string"
+        },
+        "prompt_timeout": {
+          "default": 120,
+          "description": "Sets a timeout in seconds for vm.prompt cheatcodes",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "remappings": {
+          "default": [],
+          "description": "Remappings to use for this repo",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "revert_strings": {
+          "description": "How to treat revert (and require) reason strings.",
+          "enum": [
+            "default",
+            "strip",
+            "debug",
+            "verboseDebug",
+            "verbosedebug"
+          ],
+          "type": "string"
+        },
+        "rpc_endpoints": {
+          "$ref": "#/$defs/RpcEndpoints",
+          "description": "Multiple rpc endpoints and their aliases"
+        },
+        "rpc_storage_caching": {
+          "$ref": "#/$defs/StorageCachingConfig",
+          "description": "RPC storage caching settings determines what chains and endpoints to cache"
+        },
+        "script": {
+          "default": "script",
+          "description": "Path of the scripts directory.",
+          "type": "string"
+        },
+        "script_execution_protection": {
+          "default": true,
+          "description": "Whether to enable script execution protection.",
+          "type": "boolean"
+        },
+        "sender": {
+          "default": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
+          "description": "The address which will be executing all tests",
+          "pattern": "^(0x)?[0-9a-fA-F]{40}$",
+          "type": "string"
+        },
+        "show_progress": {
+          "default": false,
+          "description": "Whether to show test execution progress.",
+          "type": "boolean"
+        },
+        "sizes": {
+          "default": false,
+          "description": "Whether to print the sizes of the compiled contracts.",
+          "type": "boolean"
+        },
+        "skip": {
+          "default": [],
+          "description": "Glob patterns for file paths to skip when building and executing contracts.",
+          "items": {
+            "$ref": "#/$defs/GlobMatcher"
+          },
+          "type": "array"
+        },
+        "snapshots": {
+          "default": "snapshots",
+          "description": "Where the gas snapshots are stored.",
+          "type": "string"
+        },
+        "solc": {
+          "$ref": "#/$defs/SolcReq",
+          "description": "The solc version to use, such as `0.8.30`, or the path to a solc binary. When set, `auto_detect_solc` is ignored."
+        },
+        "solc_version": {
+          "$ref": "#/$defs/SolcReq",
+          "description": "Alias of `solc`."
+        },
+        "soldeer": {
+          "description": "Soldeer custom configs",
+          "type": "object"
+        },
+        "sparse_mode": {
+          "default": false,
+          "description": "Whether to compile in sparse mode, which selects only the contracts and files that the command needs in solc's output.",
+          "type": "boolean"
+        },
+        "src": {
+          "default": "src",
+          "description": "Path of the sources directory.\n\nDefaults to `src`.",
+          "type": "string"
+        },
+        "symbolic": {
+          "$ref": "#/$defs/SymbolicConfig",
+          "description": "Configuration for symbolic testing"
+        },
+        "tempo": {
+          "deprecated": true,
+          "description": "Deprecated: use `network = \"tempo\"`.",
+          "type": "boolean"
+        },
+        "test": {
+          "default": "test",
+          "description": "Path of the tests directory.",
+          "type": "string"
+        },
+        "test_failures_file": {
+          "default": "cache/test-failures",
+          "description": "Path where last test run failures are recorded.",
+          "type": "string"
+        },
+        "threads": {
+          "description": "Max concurrent threads to use.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tracing": {
+          "$ref": "#/$defs/TracingConfig",
+          "description": "Configuration for trace rendering."
+        },
+        "transaction_timeout": {
+          "default": 120,
+          "description": "Timeout for transactions in seconds.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tx_origin": {
+          "default": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
+          "description": "The tx.origin value during EVM execution",
+          "pattern": "^(0x)?[0-9a-fA-F]{40}$",
+          "type": "string"
+        },
+        "unchecked_cheatcode_artifacts": {
+          "default": false,
+          "description": "Whether to enable safety checks for `vm.getCode` and `vm.getDeployedCode` invocations.\nIf disabled, it is possible to access artifacts which were not recompiled or cached.",
+          "type": "boolean"
+        },
+        "use_literal_content": {
+          "default": false,
+          "description": "Whether to store the referenced sources in the metadata as literal data.",
+          "type": "boolean"
+        },
+        "verbosity": {
+          "default": 0,
+          "description": "Verbosity to use for global output.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "via_ir": {
+          "default": false,
+          "description": "If set to true, changes compilation pipeline to go through the Yul intermediate\nrepresentation.",
+          "type": "boolean"
+        },
+        "via_ssa_cfg": {
+          "default": false,
+          "description": "Whether to turn on SSA CFG-based code generation via the IR.\nThis is an experimental feature (as of 0.8.35) that requires `experimental` to be enabled.\nEnabling this option will also enable `via_ir` if it is not already enabled.",
+          "type": "boolean"
+        },
+        "vyper": {
+          "$ref": "#/$defs/VyperConfig",
+          "description": "Configuration for Vyper compiler"
+        }
+      },
+      "type": "object"
+    },
+    "ContractException": {
+      "description": "Contract types that can be exempted from the multi-contract-file lint.",
+      "enum": [
+        "interface",
+        "library",
+        "abstract_contract"
+      ],
+      "type": "string"
+    },
+    "CoverageConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for `forge coverage`, exposed under `[coverage]` and\n`[profile.<name>.coverage]` in `foundry.toml`.\n\nFields here mirror the CLI flags accepted by `forge coverage`. CLI flags\ntake precedence over configuration values when both are provided.",
+      "properties": {
+        "exclude_tests": {
+          "default": false,
+          "description": "Whether to exclude tests from the coverage report.",
+          "type": "boolean"
+        },
+        "include_libs": {
+          "default": false,
+          "description": "Whether to include library dependencies in the coverage report.",
+          "type": "boolean"
+        },
+        "ir_minimum": {
+          "default": false,
+          "description": "Whether to enable `viaIR` with minimum optimization. Useful as a\nworkaround for \"stack too deep\" errors at the cost of source map\naccuracy.",
+          "type": "boolean"
+        },
+        "lcov_version": {
+          "default": "1.0.0",
+          "description": "The version of the LCOV \"tracefile\" format to use.\n\nDefaults to `1` (parsed as `1.0.0`). See `forge coverage --help` for the\nsupported variants and their differences.",
+          "type": "string"
+        },
+        "report": {
+          "default": [
+            "summary"
+          ],
+          "description": "The report kinds to generate. Defaults to `[\"summary\"]`.",
+          "items": {
+            "$ref": "#/$defs/CoverageReportKind"
+          },
+          "type": "array"
+        },
+        "report_file": {
+          "description": "Path to write the coverage report to (relative to the project root). If\nunset, the report is written to the project root.",
+          "type": "string"
+        },
+        "skip_files": {
+          "default": [],
+          "description": "Glob patterns of source files to exclude from the coverage report.\n\nPatterns are matched against project-root-relative paths using the\n`globset` crate's `Glob` semantics (`**`, `*`, `?`, character classes).\nA file is skipped if any pattern matches.\n\nExample:\n```toml\n[profile.default.coverage]\nskip_files = [\"test/**\", \"script/**\", \"src/mocks/**\"]\n```",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "CoverageReportKind": {
+      "description": "Coverage report kinds that can be generated by `forge coverage`.\n\nUsed both as a CLI value (`--report <kind>`) and as a TOML configuration\nvalue under `[profile.<name>.coverage] report = [\"...\"]`.",
+      "oneOf": [
+        {
+          "enum": [
+            "summary",
+            "lcov",
+            "debug",
+            "bytecode"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "attribution",
+          "description": "JSON report mapping each test to the source items it covers.",
+          "type": "string"
+        },
+        {
+          "const": "gaps",
+          "description": "JSON report listing uncovered source items with their location and context.",
+          "type": "string"
+        }
+      ]
+    },
+    "DenyLevel": {
+      "anyOf": [
+        {
+          "anyOf": [
+            {
+              "enum": [
+                "never",
+                "warnings",
+                "notes",
+                "warning",
+                "w",
+                "note",
+                "n",
+                "false",
+                "f"
+              ]
+            },
+            {
+              "pattern": "^(?:[nN][eE][vV][eE][rR]|[wW][aA][rR][nN][iI][nN][gG][sS]|[nN][oO][tT][eE][sS]|[wW][aA][rR][nN][iI][nN][gG]|[wW]|[nN][oO][tT][eE]|[nN]|[fF][aA][lL][sS][eE]|[fF])$"
+            }
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Deprecated: `true` means `warnings`.",
+          "type": "boolean"
+        }
+      ]
+    },
+    "DocCommentStyle": {
+      "description": "Style of doc comments",
+      "oneOf": [
+        {
+          "const": "preserve",
+          "description": "Preserve the source code style",
+          "type": "string"
+        },
+        {
+          "const": "line",
+          "description": "Use single-line style (`///`)",
+          "type": "string"
+        },
+        {
+          "const": "block",
+          "description": "Use block style (`/** .. */`)",
+          "type": "string"
+        }
+      ]
+    },
+    "DocConfig": {
+      "additionalProperties": false,
+      "description": "Contains the config for parsing and rendering docs",
+      "properties": {
+        "book": {
+          "default": "book.toml",
+          "description": "Path to user provided `book.toml`.",
+          "type": "string"
+        },
+        "commit": {
+          "description": "The Git commit hash, tag, or branch used for source links.",
+          "type": "string"
+        },
+        "homepage": {
+          "default": "README.md",
+          "description": "Path to user provided welcome markdown.\n\nIf none is provided, it defaults to `README.md`.",
+          "type": "string"
+        },
+        "ignore": {
+          "default": [],
+          "description": "Globs to ignore",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "out": {
+          "default": "docs",
+          "description": "Doc output path.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The path to source code (e.g. `tree/main/packages/contracts`).\nUseful for monorepos or for projects with source code located in specific directories.",
+          "type": "string"
+        },
+        "repository": {
+          "description": "The repository url.",
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "description": "The documentation title.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Eip1559FeeEstimatePreset": {
+      "description": "Controls how EIP-1559 fees are estimated, analogous to wallet UIs that offer\n\"low\" / \"market\" / \"aggressive\" gas options.\n\nUsed both as a CLI value (`--estimate <preset>`) and as a TOML\nconfiguration value (`eip1559_fee_estimate = \"market\"`).\n\nThe estimate controls two parameters:\n- the `eth_feeHistory` reward percentile used to derive the priority fee, and\n- the multiplier applied to the base fee when building `maxFeePerGas`.",
+      "oneOf": [
+        {
+          "const": "low",
+          "description": "Lower priority-fee percentile (10th) and a tighter base-fee buffer\n(`base_fee * 1.5`). This only lowers the tip estimate and the max-fee cap,\nnot the base fee that is actually paid, and risks the transaction stalling\nif the base fee rises.",
+          "type": "string"
+        },
+        {
+          "const": "market",
+          "description": "Default: `base_fee * 2` plus a 20th-percentile priority fee.",
+          "type": "string"
+        },
+        {
+          "const": "aggressive",
+          "description": "Higher priority-fee percentile (50th) to bid a larger tip for faster\ninclusion.",
+          "type": "string"
+        }
+      ]
+    },
+    "EtherscanApiKey": {
+      "description": "An API key, or `${ENV_VAR}` to read it from the environment.",
+      "type": "string"
+    },
+    "EtherscanConfig": {
+      "additionalProperties": false,
+      "description": "Represents all info required to create an etherscan client",
+      "properties": {
+        "chain": {
+          "description": "The chain name or EIP-155 chain ID used to derive the API URL.",
+          "type": [
+            "integer",
+            "string"
+          ]
+        },
+        "key": {
+          "$ref": "#/$defs/EtherscanApiKey",
+          "description": "The etherscan API KEY that's required to make requests"
+        },
+        "url": {
+          "description": "Etherscan API URL",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "EtherscanConfigs": {
+      "additionalProperties": {
+        "$ref": "#/$defs/EtherscanConfig"
+      },
+      "description": "Container type for Etherscan API keys and URLs.",
+      "type": "object"
+    },
+    "ExtendConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "strategy": {
+          "$ref": "#/$defs/ExtendStrategy"
+        }
+      },
+      "type": "object"
+    },
+    "ExtendStrategy": {
+      "description": "Strategy for extending configuration from a base file.",
+      "oneOf": [
+        {
+          "const": "extend-arrays",
+          "description": "Uses `admerge` figment strategy.\nArrays are concatenated (base elements + local elements).\nOther values are replaced (local values override base values).",
+          "type": "string"
+        },
+        {
+          "const": "replace-arrays",
+          "description": "Uses `merge` figment strategy.\nArrays are replaced entirely (local arrays replace base arrays).\nOther values are replaced (local values override base values).",
+          "type": "string"
+        },
+        {
+          "const": "no-collision",
+          "description": "Throws an error if any of the keys in the inherited toml file are also in `foundry.toml`.",
+          "type": "string"
+        }
+      ]
+    },
+    "Extends": {
+      "anyOf": [
+        {
+          "description": "Simple string path to base file",
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/ExtendConfig",
+          "description": "Detailed configuration with path and strategy"
+        }
+      ],
+      "description": "Configuration for extending from a base file.\n\nSupports two formats:\n- String: `extends = \"base.toml\"`\n- Object: `extends = { path = \"base.toml\", strategy = \"no-collision\" }`"
+    },
+    "ExternalCompiler": {
+      "additionalProperties": false,
+      "description": "Configuration for an external compiler adapter executable.",
+      "properties": {
+        "args": {
+          "description": "Arguments passed to the adapter executable.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "command": {
+          "description": "Absolute or project-relative adapter executable path.",
+          "type": "string"
+        },
+        "id": {
+          "description": "Stable user-defined identifier used to namespace cache and artifact entries.",
+          "type": "string"
+        },
+        "roots": {
+          "description": "Compiler-native project roots, relative to the Foundry project root.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "settings": {
+          "additionalProperties": true,
+          "description": "Opaque adapter-specific settings.",
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "FormatterConfig": {
+      "additionalProperties": false,
+      "description": "Contains the config and rule set",
+      "properties": {
+        "bracket_spacing": {
+          "default": false,
+          "description": "Print spaces between brackets",
+          "type": "boolean"
+        },
+        "contract_new_lines": {
+          "default": false,
+          "description": "Add new line at start and end of contract declarations",
+          "type": "boolean"
+        },
+        "docs_style": {
+          "$ref": "#/$defs/DocCommentStyle",
+          "description": "Style of doc comments"
+        },
+        "hex_underscore": {
+          "$ref": "#/$defs/HexUnderscore",
+          "description": "Style of underscores in hex literals"
+        },
+        "ignore": {
+          "default": [],
+          "description": "Globs to ignore",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "int_types": {
+          "$ref": "#/$defs/IntTypes",
+          "description": "Style of uint/int256 types"
+        },
+        "line_length": {
+          "default": 120,
+          "description": "Maximum line length where formatter will try to wrap the line",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "multiline_func_header": {
+          "$ref": "#/$defs/MultilineFuncHeaderStyle",
+          "description": "Style of multiline function header in case it doesn't fit"
+        },
+        "namespace_import_style": {
+          "$ref": "#/$defs/NamespaceImportStyle",
+          "description": "Choose between `import \"a\" as name` and `import * as name from \"a\"`"
+        },
+        "number_underscore": {
+          "$ref": "#/$defs/NumberUnderscore",
+          "description": "Style of underscores in number literals"
+        },
+        "override_spacing": {
+          "default": false,
+          "description": "Print space in state variable, function and modifier `override` attribute",
+          "type": "boolean"
+        },
+        "pow_no_space": {
+          "default": false,
+          "description": "Whether to suppress spaces around the power operator (`**`).",
+          "type": "boolean"
+        },
+        "prefer_compact": {
+          "$ref": "#/$defs/PreferCompact",
+          "description": "Style that determines if a broken list, should keep its elements together on their own\nline, before breaking individually."
+        },
+        "quote_style": {
+          "$ref": "#/$defs/QuoteStyle",
+          "description": "Style of quotation marks"
+        },
+        "single_line_imports": {
+          "default": false,
+          "description": "Keep single imports on a single line even if they exceed line length.",
+          "type": "boolean"
+        },
+        "single_line_statement_blocks": {
+          "$ref": "#/$defs/SingleLineBlockStyle",
+          "description": "Style of single line blocks in statements"
+        },
+        "sort_imports": {
+          "default": false,
+          "description": "Sort import statements alphabetically in groups (a group is separated by a newline).",
+          "type": "boolean"
+        },
+        "style": {
+          "$ref": "#/$defs/IndentStyle",
+          "description": "Style of indent"
+        },
+        "tab_width": {
+          "default": 4,
+          "description": "Number of spaces per indentation level. Ignored if style is Tab",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "wrap_comments": {
+          "default": false,
+          "description": "Wrap comments on `line_length` reached",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "FsAccessPermission": {
+      "anyOf": [
+        {
+          "enum": [
+            "read",
+            "write",
+            "read-write",
+            "readwrite",
+            "none",
+            "true",
+            "false"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "`true` means `read-write`.",
+          "type": "boolean"
+        }
+      ]
+    },
+    "FsPermissions": {
+      "description": "Configures file system access\n\nE.g. for cheat codes (`vm.writeFile`)",
+      "items": {
+        "$ref": "#/$defs/PathPermission"
+      },
+      "type": "array"
+    },
+    "FuzzConfig": {
+      "additionalProperties": false,
+      "description": "Contains for fuzz testing",
+      "properties": {
+        "corpus_dir": {
+          "type": "string"
+        },
+        "corpus_gzip": {
+          "default": true,
+          "type": "boolean"
+        },
+        "corpus_min_mutations": {
+          "default": 5,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "corpus_min_size": {
+          "default": 0,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "corpus_random_sequence_weight": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "A number from 0 to 100.",
+              "type": "string"
+            }
+          ],
+          "default": 10,
+          "description": "Percent chance of generating fresh transaction input instead of continuing from corpus\ninput during coverage-guided campaigns."
+        },
+        "dictionary_weight": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "A number from 0 to 100.",
+              "type": "string"
+            }
+          ],
+          "default": 40,
+          "description": "The weight of the dictionary"
+        },
+        "evm_edge_coverage_collision_free": {
+          "default": true,
+          "description": "Whether EVM edge coverage should use collision-free dense IDs.",
+          "type": "boolean"
+        },
+        "evm_edge_coverage_include_call_depth": {
+          "default": false,
+          "description": "Whether EVM edge coverage IDs should include call-frame depth.",
+          "type": "boolean"
+        },
+        "fail_on_revert": {
+          "default": true,
+          "description": "Fails the fuzzed test if a revert occurs.",
+          "type": "boolean"
+        },
+        "failure_persist_dir": {
+          "default": "cache/fuzz",
+          "description": "Path where fuzz failures are recorded and replayed.",
+          "type": "string"
+        },
+        "frontier_dir": {
+          "type": "string"
+        },
+        "frontier_limit": {
+          "default": 256,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "gas_report_samples": {
+          "default": 256,
+          "description": "Number of runs to execute and include in the gas report.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "include_push_bytes": {
+          "default": true,
+          "description": "The flag indicating whether to include push bytes values",
+          "type": "boolean"
+        },
+        "include_storage": {
+          "default": true,
+          "description": "The flag indicating whether to include values from storage",
+          "type": "boolean"
+        },
+        "max_fuzz_dictionary_addresses": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "`max`, or a decimal number.",
+              "type": "string"
+            }
+          ],
+          "default": 15728640,
+          "description": "How many addresses to record at most.\nOnce the fuzzer exceeds this limit, it will start evicting random entries\n\nThis limit is put in place to prevent memory blowup."
+        },
+        "max_fuzz_dictionary_literals": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "`max`, or a decimal number.",
+              "type": "string"
+            }
+          ],
+          "default": 6553600,
+          "description": "How many literal values to seed from the AST, at most.\n\nThis value is independent from the max amount of addresses and values."
+        },
+        "max_fuzz_dictionary_values": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "`max`, or a decimal number.",
+              "type": "string"
+            }
+          ],
+          "default": 9830400,
+          "description": "How many values to record at most.\nOnce the fuzzer exceeds this limit, it will start evicting random entries\nThe dictionary always retains a zero seed, so the effective minimum is one."
+        },
+        "max_test_rejects": {
+          "default": 65536,
+          "description": "The maximum number of test case rejections allowed,\nencountered during usage of `vm.assume` cheatcode.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mutation_weight_abi": {
+          "default": 1,
+          "description": "Weight for ABI-aware argument mutation.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mutation_weight_cmp": {
+          "default": 1,
+          "description": "Weight for comparison-operand guided argument mutation.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mutation_weight_interleave": {
+          "default": 1,
+          "description": "Weight for interleaving two corpus sequences.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mutation_weight_prefix": {
+          "default": 1,
+          "description": "Weight for replacing a corpus sequence prefix with generated calls.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mutation_weight_repeat": {
+          "default": 1,
+          "description": "Weight for repeating part of a corpus sequence.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mutation_weight_splice": {
+          "default": 1,
+          "description": "Weight for splicing two corpus sequences.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mutation_weight_suffix": {
+          "default": 1,
+          "description": "Weight for replacing a corpus sequence suffix with generated calls.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "payable_value_weight": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "A number from 0 to 100.",
+              "type": "string"
+            }
+          ],
+          "default": 0,
+          "description": "Percent chance that generated payable calls carry non-zero `msg.value`."
+        },
+        "run": {
+          "description": "Optional 1-based fuzz run to execute.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runs": {
+          "default": 256,
+          "description": "The number of test cases that must execute for each property test",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sancov_edges": {
+          "default": false,
+          "description": "Whether to collect edge coverage from native Rust crates compiled with\nSanitizerCoverage instrumentation (e.g. precompile implementations).\nRequires building forge with a `RUSTC_WRAPPER` that injects sancov flags.",
+          "type": "boolean"
+        },
+        "sancov_trace_cmp": {
+          "default": false,
+          "description": "Whether to capture comparison operands from sancov-instrumented crates\nand inject them into the fuzz dictionary. Independent of `sancov_edges`.",
+          "type": "boolean"
+        },
+        "seed": {
+          "description": "Optional seed for the fuzzing RNG algorithm",
+          "type": [
+            "integer",
+            "string"
+          ]
+        },
+        "show_edge_coverage": {
+          "default": false,
+          "description": "Whether to collect and display edge coverage metrics.",
+          "type": "boolean"
+        },
+        "show_logs": {
+          "default": false,
+          "description": "show `console.log` in fuzz test, defaults to `false`",
+          "type": "boolean"
+        },
+        "timeout": {
+          "description": "Optional timeout (in seconds) for each property test",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "worker": {
+          "description": "Optional fuzz worker ID to pair with `run`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "GasLimit": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "description": "`max`, or a decimal number.",
+          "type": "string"
+        }
+      ]
+    },
+    "GlobMatcher": {
+      "description": "A glob pattern.",
+      "type": "string"
+    },
+    "HexUnderscore": {
+      "description": "Style of underscores in hex literals",
+      "oneOf": [
+        {
+          "const": "preserve",
+          "description": "Use the underscores defined in the source code",
+          "type": "string"
+        },
+        {
+          "const": "remove",
+          "description": "Remove all underscores",
+          "type": "string"
+        },
+        {
+          "const": "bytes",
+          "description": "Add underscore as separator between byte boundaries",
+          "type": "string"
+        }
+      ]
+    },
+    "IndentStyle": {
+      "description": "Style of indent",
+      "enum": [
+        "space",
+        "tab"
+      ],
+      "type": "string"
+    },
+    "IntTypes": {
+      "description": "Style of integer types.",
+      "oneOf": [
+        {
+          "const": "preserve",
+          "description": "Use the type defined in the source code.",
+          "type": "string"
+        },
+        {
+          "const": "long",
+          "description": "Print the full length `uint256` or `int256`.",
+          "type": "string"
+        },
+        {
+          "const": "short",
+          "description": "Print the alias `uint` or `int`.",
+          "type": "string"
+        }
+      ]
+    },
+    "InvariantConfig": {
+      "additionalProperties": false,
+      "description": "Contains for invariant testing",
+      "properties": {
+        "call_override": {
+          "default": false,
+          "description": "Allows overriding an unsafe external call when running invariant tests. eg. reentrancy\nchecks",
+          "type": "boolean"
+        },
+        "check_interval": {
+          "default": 1,
+          "description": "Number of calls to execute between invariant assertions.\n\n- `0`: Only assert on the last call of each run (fastest, but may miss exact breaking call)\n- `1` (default): Assert after every call (current behavior, most precise)\n- `N`: Assert every N calls AND always on the last call\n\nExample: `check_interval = 10` means assert after calls 10, 20, 30, ... and the last call.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "corpus_dir": {
+          "type": "string"
+        },
+        "corpus_gzip": {
+          "default": true,
+          "type": "boolean"
+        },
+        "corpus_min_mutations": {
+          "default": 5,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "corpus_min_size": {
+          "default": 0,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "corpus_random_sequence_weight": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "A number from 0 to 100.",
+              "type": "string"
+            }
+          ],
+          "default": 10,
+          "description": "Percent chance of generating fresh transaction input instead of continuing from corpus\ninput during coverage-guided campaigns."
+        },
+        "depth": {
+          "default": 500,
+          "description": "The number of calls executed to attempt to break invariants in one run.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "depth_mode": {
+          "$ref": "#/$defs/InvariantDepthMode",
+          "description": "How to choose the effective depth for each invariant run."
+        },
+        "dictionary_weight": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "A number from 0 to 100.",
+              "type": "string"
+            }
+          ],
+          "default": 80,
+          "description": "The weight of the dictionary"
+        },
+        "evm_edge_coverage_collision_free": {
+          "default": true,
+          "description": "Whether EVM edge coverage should use collision-free dense IDs.",
+          "type": "boolean"
+        },
+        "evm_edge_coverage_include_call_depth": {
+          "default": false,
+          "description": "Whether EVM edge coverage IDs should include call-frame depth.",
+          "type": "boolean"
+        },
+        "fail_on_revert": {
+          "default": false,
+          "description": "Fails the invariant fuzzing if a revert occurs",
+          "type": "boolean"
+        },
+        "failure_persist_dir": {
+          "default": "cache/invariant",
+          "description": "Path where invariant failures are recorded and replayed.",
+          "type": "string"
+        },
+        "frontier_dir": {
+          "type": "string"
+        },
+        "frontier_limit": {
+          "default": 256,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "gas_report_samples": {
+          "default": 256,
+          "description": "Number of runs to execute and include in the gas report.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "include_push_bytes": {
+          "default": true,
+          "description": "The flag indicating whether to include push bytes values",
+          "type": "boolean"
+        },
+        "include_storage": {
+          "default": true,
+          "description": "The flag indicating whether to include values from storage",
+          "type": "boolean"
+        },
+        "max_assume_rejects": {
+          "default": 65536,
+          "description": "The maximum number of rejects via `vm.assume` which can be encountered during a single\ninvariant run.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_block_delay": {
+          "description": "Maximum number of blocks elapsed between generated txs.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_fuzz_dictionary_addresses": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "`max`, or a decimal number.",
+              "type": "string"
+            }
+          ],
+          "default": 15728640,
+          "description": "How many addresses to record at most.\nOnce the fuzzer exceeds this limit, it will start evicting random entries\n\nThis limit is put in place to prevent memory blowup."
+        },
+        "max_fuzz_dictionary_literals": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "`max`, or a decimal number.",
+              "type": "string"
+            }
+          ],
+          "default": 6553600,
+          "description": "How many literal values to seed from the AST, at most.\n\nThis value is independent from the max amount of addresses and values."
+        },
+        "max_fuzz_dictionary_values": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "`max`, or a decimal number.",
+              "type": "string"
+            }
+          ],
+          "default": 9830400,
+          "description": "How many values to record at most.\nOnce the fuzzer exceeds this limit, it will start evicting random entries\nThe dictionary always retains a zero seed, so the effective minimum is one."
+        },
+        "max_time_delay": {
+          "description": "Maximum time (in seconds) between generated txs.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_depth": {
+          "default": 1,
+          "description": "Minimum sampled run depth when `depth_mode = \"random\"`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mutation_weight_abi": {
+          "default": 1,
+          "description": "Weight for ABI-aware argument mutation.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mutation_weight_cmp": {
+          "default": 1,
+          "description": "Weight for comparison-operand guided argument mutation.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mutation_weight_interleave": {
+          "default": 1,
+          "description": "Weight for interleaving two corpus sequences.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mutation_weight_prefix": {
+          "default": 1,
+          "description": "Weight for replacing a corpus sequence prefix with generated calls.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mutation_weight_repeat": {
+          "default": 1,
+          "description": "Weight for repeating part of a corpus sequence.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mutation_weight_splice": {
+          "default": 1,
+          "description": "Weight for splicing two corpus sequences.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mutation_weight_suffix": {
+          "default": 1,
+          "description": "Weight for replacing a corpus sequence suffix with generated calls.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "payable_value_weight": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "A number from 0 to 100.",
+              "type": "string"
+            }
+          ],
+          "default": 15,
+          "description": "Percent chance that generated payable calls carry non-zero `msg.value`."
+        },
+        "runs": {
+          "default": 256,
+          "description": "The number of runs that must execute for each invariant test group.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sancov_edges": {
+          "default": false,
+          "description": "Whether to collect edge coverage from native Rust crates compiled with\nSanitizerCoverage instrumentation (e.g. precompile implementations).\nRequires building forge with a `RUSTC_WRAPPER` that injects sancov flags.",
+          "type": "boolean"
+        },
+        "sancov_trace_cmp": {
+          "default": false,
+          "description": "Whether to capture comparison operands from sancov-instrumented crates\nand inject them into the fuzz dictionary. Independent of `sancov_edges`.",
+          "type": "boolean"
+        },
+        "show_edge_coverage": {
+          "default": false,
+          "description": "Whether to collect and display edge coverage metrics.",
+          "type": "boolean"
+        },
+        "show_metrics": {
+          "default": true,
+          "description": "Whether to collect and display fuzzed selectors metrics.",
+          "type": "boolean"
+        },
+        "show_solidity": {
+          "default": false,
+          "description": "Display counterexample as solidity calls.",
+          "type": "boolean"
+        },
+        "shrink_run_limit": {
+          "default": 5000,
+          "description": "The maximum number of attempts to shrink the sequence",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "timeout": {
+          "description": "Optional campaign-global timeout (in seconds) for each invariant test.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "workers": {
+          "$ref": "#/$defs/InvariantWorkers",
+          "description": "Worker selection mode used to shard invariant runs.\n\nDefaults to `auto`, which derives the worker count from `--jobs`. Use a positive integer\nfor an explicit worker count."
+        }
+      },
+      "type": "object"
+    },
+    "InvariantDepthMode": {
+      "description": "Per-run invariant depth selection mode.",
+      "oneOf": [
+        {
+          "const": "fixed",
+          "description": "Execute every invariant run up to the configured `depth`.",
+          "type": "string"
+        },
+        {
+          "const": "random",
+          "description": "Sample every invariant run depth uniformly between `min_depth` and `depth`.",
+          "type": "string"
+        },
+        {
+          "const": "uniform",
+          "description": "Alias of `random`.",
+          "type": "string"
+        }
+      ]
+    },
+    "InvariantWorkers": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "pattern": "^\\s*(?:[aA][uU][tT][oO]|[1-9][0-9]*)\\s*$",
+          "type": "string"
+        }
+      ]
+    },
+    "LintSpecificConfig": {
+      "additionalProperties": false,
+      "description": "Configuration specific to individual lints.",
+      "properties": {
+        "mixed_case_exceptions": {
+          "default": [
+            "ERC",
+            "URI",
+            "ID",
+            "URL",
+            "API",
+            "JSON",
+            "XML",
+            "HTML",
+            "HTTP",
+            "HTTPS"
+          ],
+          "description": "Configurable patterns that should be excluded when performing `mixedCase` and\n`PascalCase` lint checks.\n\nDefaults to [\"ERC\", \"URI\", \"ID\", \"URL\", \"API\", \"JSON\", \"XML\", \"HTML\", \"HTTP\",\n\"HTTPS\"] to allow common names like `rescueERC20`, `ERC721TokenReceiver` or `tokenURI`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "multi_contract_file_exceptions": {
+          "default": [],
+          "description": "Contract types that are allowed to appear multiple times in the same file.\n\nValid values: \"interface\", \"library\", \"abstract_contract\"\n\nDefaults to an empty array (all contract types are flagged when multiple exist).\nNote: Regular contracts cannot be exempted and will always be flagged when multiple exist.",
+          "items": {
+            "$ref": "#/$defs/ContractException"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "LinterConfig": {
+      "additionalProperties": false,
+      "description": "Contains the config and rule set.",
+      "properties": {
+        "exclude_lints": {
+          "default": [],
+          "description": "Deny specific lints based on their ID (e.g. \"mixed-case-function\").",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "ignore": {
+          "default": [],
+          "description": "Globs to ignore.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "lint_on_build": {
+          "default": true,
+          "description": "Whether to run linting during `forge build`.\n\nDefaults to true. Set to false to disable automatic linting during builds.",
+          "type": "boolean"
+        },
+        "lint_specific": {
+          "$ref": "#/$defs/LintSpecificConfig",
+          "description": "Configuration specific to individual lints."
+        },
+        "severity": {
+          "default": [
+            "high",
+            "medium",
+            "low"
+          ],
+          "description": "Specifies which lints to run based on severity.\n\nDefaults to high, medium, and low severity lints.",
+          "items": {
+            "$ref": "#/$defs/Severity"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "MapDependency": {
+      "additionalProperties": false,
+      "description": "Soldeer dependencies config structure when it's defined as a map",
+      "properties": {
+        "branch": {
+          "description": "The branch in case git is used as dependency source",
+          "type": "string"
+        },
+        "git": {
+          "description": "The git URL for the source repo",
+          "type": "string"
+        },
+        "project_root": {
+          "description": "An optional relative path to the project's root within the repository",
+          "type": "string"
+        },
+        "rev": {
+          "description": "The commit in case git is used as dependency source",
+          "type": "string"
+        },
+        "tag": {
+          "description": "The git tag in case git is used as dependency source",
+          "type": "string"
+        },
+        "url": {
+          "description": "The url from where the dependency was retrieved",
+          "type": "string"
+        },
+        "version": {
+          "description": "The version of the dependency",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "MultilineFuncHeaderStyle": {
+      "description": "Style of function header in case it doesn't fit",
+      "oneOf": [
+        {
+          "const": "params_always",
+          "description": "Always write function parameters multiline.",
+          "type": "string"
+        },
+        {
+          "const": "params_first_multi",
+          "description": "Write function parameters multiline first when there is more than one param.",
+          "type": "string"
+        },
+        {
+          "const": "attributes_first",
+          "description": "Write function attributes multiline first.",
+          "type": "string"
+        },
+        {
+          "const": "all",
+          "description": "If function params or attrs are multiline.\nsplit the rest",
+          "type": "string"
+        },
+        {
+          "const": "all_params",
+          "description": "Same as `All` but writes function params multiline even when there is a single param.",
+          "type": "string"
+        },
+        {
+          "const": "params_first",
+          "description": "Alias of `params_always`.",
+          "type": "string"
+        }
+      ]
+    },
+    "MutationConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for mutation testing.",
+      "properties": {
+        "exclude_operators": {
+          "default": [],
+          "description": "Exclude additional operators beyond the defaults.",
+          "items": {
+            "$ref": "#/$defs/MutatorType"
+          },
+          "type": "array"
+        },
+        "include_operators": {
+          "default": [],
+          "description": "Re-enable operators that are excluded by default.",
+          "items": {
+            "$ref": "#/$defs/MutatorType"
+          },
+          "type": "array"
+        },
+        "optimizer_runs": {
+          "description": "Override `optimizer_runs` for mutation testing compile-and-test runs.\n\nThis lets mutation campaigns use a faster compiler profile without\nchanging the project's normal build settings.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "timeout": {
+          "description": "Per-mutant wall-clock timeout, in seconds.\n\nWhen set, each mutant's compile-and-test work is bounded by this\nduration; mutants that exceed it are recorded as `TimedOut`. This is\nthe analog of `invariant.timeout` for mutation campaigns.\n\nNote: enforcement is best-effort. Background work for a timed-out\nmutant may continue briefly until the underlying compile / test loop\nreaches a checkpoint, but the worker slot is freed immediately so\nother mutants can proceed. Cleanup backlog is bounded by the configured\nmutation worker count.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "via_ir": {
+          "description": "Override `via_ir` for mutation testing compile-and-test runs.\n\nThis lets mutation campaigns disable the IR pipeline without changing\nthe project's normal build settings.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "MutatorType": {
+      "description": "Represents each available mutation operator.",
+      "enum": [
+        "assembly",
+        "assignment",
+        "binary-op",
+        "delete-expression",
+        "elim-delegate",
+        "function-body",
+        "require",
+        "unary-op"
+      ],
+      "type": "string"
+    },
+    "NamespaceImportStyle": {
+      "oneOf": [
+        {
+          "const": "prefer_plain",
+          "description": "prefer plain imports: `import \"source\" as name;`",
+          "type": "string"
+        },
+        {
+          "const": "prefer_glob",
+          "description": "prefer glob imports: `import * as name from \"source\";`",
+          "type": "string"
+        },
+        {
+          "const": "preserve",
+          "description": "preserve the original style",
+          "type": "string"
+        }
+      ]
+    },
+    "NumberUnderscore": {
+      "description": "Style of underscores in number literals",
+      "oneOf": [
+        {
+          "const": "preserve",
+          "description": "Use the underscores defined in the source code",
+          "type": "string"
+        },
+        {
+          "const": "remove",
+          "description": "Remove all underscores",
+          "type": "string"
+        },
+        {
+          "const": "thousands",
+          "description": "Add an underscore every thousand, if greater than 9999\ne.g. 1000 -> 1000 and 10000 -> 10_000",
+          "type": "string"
+        }
+      ]
+    },
+    "PathPermission": {
+      "additionalProperties": false,
+      "description": "Represents an access permission to a single path",
+      "properties": {
+        "access": {
+          "$ref": "#/$defs/FsAccessPermission",
+          "description": "Permission level to access the `path`"
+        },
+        "path": {
+          "description": "The targeted path guarded by the permission",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "PreferCompact": {
+      "description": "Style that determines if a broken list, should keep its elements together on their own line,\nbefore breaking individually.",
+      "oneOf": [
+        {
+          "const": "none",
+          "description": "All elements are preferred consistent.",
+          "type": "string"
+        },
+        {
+          "const": "calls",
+          "description": "Calls are preferred compact. Events and errors break consistently.",
+          "type": "string"
+        },
+        {
+          "const": "events",
+          "description": "Events are preferred compact. Calls and errors break consistently.",
+          "type": "string"
+        },
+        {
+          "const": "errors",
+          "description": "Errors are preferred compact. Calls and events break consistently.",
+          "type": "string"
+        },
+        {
+          "const": "events_errors",
+          "description": "Events and errors are preferred compact. Calls break consistently.",
+          "type": "string"
+        },
+        {
+          "const": "all",
+          "description": "All elements are preferred compact.",
+          "type": "string"
+        }
+      ]
+    },
+    "QuoteStyle": {
+      "description": "Style of string quotes",
+      "oneOf": [
+        {
+          "const": "preserve",
+          "description": "Use quotation mark defined in the source code.",
+          "type": "string"
+        },
+        {
+          "const": "double",
+          "description": "Use double quotes where possible.",
+          "type": "string"
+        },
+        {
+          "const": "single",
+          "description": "Use single quotes where possible.",
+          "type": "string"
+        }
+      ]
+    },
+    "RegexWrapper": {
+      "description": "A regular expression, in Rust `regex` syntax.",
+      "type": "string"
+    },
+    "RpcEndpoint": {
+      "anyOf": [
+        {
+          "description": "An RPC URL. `${ENV_VAR}` placeholders are read from the environment.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "auth": {
+              "description": "Value of the `Authorization` header.",
+              "type": "string"
+            },
+            "compute_units_per_second": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "endpoint": {
+              "description": "The RPC URL.",
+              "type": "string"
+            },
+            "endpoints": {
+              "description": "RPC URLs to balance requests across, with failover.",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            "retries": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "retry_backoff": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "url": {
+              "description": "Alias of `endpoint`.",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "RpcEndpoints": {
+      "additionalProperties": {
+        "$ref": "#/$defs/RpcEndpoint"
+      },
+      "description": "Container type for API endpoints, like various RPC endpoints",
+      "type": "object"
+    },
+    "SettingsOverrides": {
+      "additionalProperties": false,
+      "description": "Keeps possible overrides for default settings which users may configure to construct additional\nsettings profile.",
+      "properties": {
+        "bytecode_hash": {
+          "description": "The hash method of the metadata hash appended to the bytecode.",
+          "enum": [
+            "Ipfs",
+            "Bzzr1",
+            "None"
+          ],
+          "type": "string"
+        },
+        "evm_version": {
+          "description": "The EVM version to compile for.",
+          "enum": [
+            "homestead",
+            "tangerinewhistle",
+            "tangerineWhistle",
+            "spuriousdragon",
+            "spuriousDragon",
+            "byzantium",
+            "constantinople",
+            "petersburg",
+            "istanbul",
+            "berlin",
+            "london",
+            "paris",
+            "shanghai",
+            "cancun",
+            "prague",
+            "osaka",
+            "amsterdam"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "optimizer": {
+          "type": "boolean"
+        },
+        "optimizer_runs": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "via_ir": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "Severity": {
+      "anyOf": [
+        {
+          "enum": [
+            "high",
+            "med",
+            "medium",
+            "low",
+            "info",
+            "gas",
+            "code-size",
+            "codesize",
+            "size"
+          ]
+        },
+        {
+          "pattern": "^(?:[hH][iI][gG][hH]|[mM][eE][dD]|[mM][eE][dD][iI][uU][mM]|[lL][oO][wW]|[iI][nN][fF][oO]|[gG][aA][sS]|[cC][oO][dD][eE]-[sS][iI][zZ][eE]|[cC][oO][dD][eE][sS][iI][zZ][eE]|[sS][iI][zZ][eE])$"
+        }
+      ],
+      "description": "A lint severity. Case is ignored.",
+      "type": "string"
+    },
+    "SingleLineBlockStyle": {
+      "description": "Style of single line blocks in statements",
+      "oneOf": [
+        {
+          "const": "preserve",
+          "description": "Preserve the original style",
+          "type": "string"
+        },
+        {
+          "const": "single",
+          "description": "Prefer single line block when possible",
+          "type": "string"
+        },
+        {
+          "const": "multi",
+          "description": "Always use multiline block",
+          "type": "string"
+        }
+      ]
+    },
+    "SolcReq": {
+      "description": "A solc version such as `0.8.28`, or the path to a solc binary.",
+      "type": "string"
+    },
+    "SoldeerDependencyConfig": {
+      "additionalProperties": {
+        "$ref": "#/$defs/SoldeerDependencyValue"
+      },
+      "description": "Type for Soldeer configs, under dependencies tag in the foundry.toml",
+      "type": "object"
+    },
+    "SoldeerDependencyValue": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MapDependency"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "description": "Enum to cover both available formats for defining a dependency\n`dep = { version = \"1.1\", url = \"https://my-dependency\" }`\nor\n`dep = \"1.1\"`"
+    },
+    "SolidityErrorCode": {
+      "anyOf": [
+        {
+          "description": "A solc error code.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "enum": [
+            "license",
+            "func-mutability",
+            "unused-var",
+            "transient-storage",
+            "natspec-memory-safe-assembly-deprecated",
+            "constructor-visibility",
+            "shadowing",
+            "pragma-solidity",
+            "missing-receive-ether",
+            "init-code-size",
+            "too-many-warnings",
+            "code-size",
+            "unused-param",
+            "unreachable",
+            "virtual-interfaces",
+            "unnamed-return",
+            "same-varname",
+            "transfer-deprecated",
+            "unused-return"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "StorageCachingConfig": {
+      "additionalProperties": false,
+      "description": "Settings to configure caching of remote.",
+      "properties": {
+        "chains": {
+          "$ref": "#/$defs/CachedChains",
+          "description": "Chains to cache."
+        },
+        "endpoints": {
+          "$ref": "#/$defs/CachedEndpoints",
+          "description": "Endpoints to cache."
+        }
+      },
+      "type": "object"
+    },
+    "SymbolicConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for symbolic testing.",
+      "properties": {
+        "array_lengths": {
+          "default": [],
+          "description": "Per-dynamic-leaf bounded lengths, applied in ABI traversal order.",
+          "items": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "check_invariant_frontiers": {
+          "default": false,
+          "description": "Whether invariant frontier seeding should first search for a property-breaking call.",
+          "type": "boolean"
+        },
+        "corpus_seed_limit": {
+          "default": 32,
+          "description": "Maximum number of fuzz corpus seeds to import for one symbolic run.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "default_array_lengths": {
+          "description": "Default bounded lengths for dynamic ABI arrays without an explicit length.",
+          "items": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "default_bytes_lengths": {
+          "description": "Default bounded lengths for ABI `bytes` and `string` values without an explicit length.",
+          "items": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "default_dynamic_length": {
+          "default": 2,
+          "description": "Default bounded length for dynamic ABI inputs.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "depth": {
+          "description": "Halmos-compatible execution depth alias. When set, this overrides `max_depth`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dump_smt": {
+          "default": false,
+          "description": "Whether to dump SMT-LIB queries before invoking the configured solver.",
+          "type": "boolean"
+        },
+        "dynamic_lengths": {
+          "additionalProperties": {
+            "items": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "description": "Per-symbolic-input bounded lengths keyed by ABI argument name or generated symbolic name.",
+          "type": "object"
+        },
+        "enabled": {
+          "default": false,
+          "description": "Whether symbolic tests are enabled.",
+          "type": "boolean"
+        },
+        "exploration_order": {
+          "$ref": "#/$defs/SymbolicExplorationOrder",
+          "default": "bfs",
+          "description": "Order used to select the next pending symbolic path."
+        },
+        "frontier_ids": {
+          "description": "Fuzz branch frontier artifact IDs to import. Empty imports by artifact order.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "frontier_limit": {
+          "default": 256,
+          "description": "Maximum number of fuzz branch frontiers to try for one symbolic run.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "frontier_pcs": {
+          "description": "Fuzz branch frontier comparison program counters to import. Empty imports any PC.",
+          "items": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "frontier_selectors": {
+          "description": "Fuzz branch frontier calldata selectors to import. Empty imports any selector.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "invariant_depth": {
+          "default": 10,
+          "description": "Maximum number of calls in a bounded symbolic invariant sequence.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "loop": {
+          "description": "Halmos-compatible loop bound accepted by config and annotations.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_calldata_bytes": {
+          "default": 4096,
+          "description": "Maximum symbolic calldata size in bytes.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_depth": {
+          "default": 10000,
+          "description": "Maximum number of opcodes to execute along a path.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_dynamic_length": {
+          "default": 256,
+          "description": "Maximum permitted bounded length for a dynamic ABI input.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_paths": {
+          "default": 1024,
+          "description": "Maximum number of symbolic paths to explore.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_solver_queries": {
+          "default": 10000,
+          "description": "Maximum number of solver queries.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "seed_corpus": {
+          "default": false,
+          "description": "Whether fuzz tests should be symbolically concretized into fuzz corpus seeds.",
+          "type": "boolean"
+        },
+        "solver": {
+          "default": "z3",
+          "description": "Solver executable to invoke.",
+          "type": "string"
+        },
+        "solver_command": {
+          "description": "Exact solver command to invoke. When set, this overrides `solver`.",
+          "type": "string"
+        },
+        "solver_portfolio": {
+          "description": "Solver names or exact commands to race in parallel. Ignored when `solver_command` is set.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "storage_layout": {
+          "$ref": "#/$defs/SymbolicStorageLayout",
+          "description": "Storage modelling mode used for symbolic storage reads."
+        },
+        "symbolic_call_targets": {
+          "default": false,
+          "description": "Whether symbolic call targets may be expanded over known deployed contracts.",
+          "type": "boolean"
+        },
+        "timeout": {
+          "default": 30,
+          "description": "Optional SMT solver timeout in seconds. Also bounds the stateless deferred hard-arithmetic\nsolver phase and wall-clock symbolic invariant exploration before falling back to fuzzing.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "use_fuzz_corpus": {
+          "default": false,
+          "description": "Whether fuzz corpus seeds should guide symbolic fuzz-test exploration.",
+          "type": "boolean"
+        },
+        "use_fuzz_frontiers": {
+          "default": false,
+          "description": "Whether fuzz branch frontiers should guide targeted symbolic fuzz-test seeding.",
+          "type": "boolean"
+        },
+        "width": {
+          "description": "Halmos-compatible path width alias. When set, this overrides `max_paths`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "SymbolicExplorationOrder": {
+      "description": "Pending symbolic path exploration order.",
+      "oneOf": [
+        {
+          "const": "bfs",
+          "description": "Explore pending paths in first-in, first-out order.",
+          "type": "string"
+        },
+        {
+          "const": "dfs",
+          "description": "Explore pending paths in last-in, first-out order.",
+          "type": "string"
+        }
+      ]
+    },
+    "SymbolicStorageLayout": {
+      "description": "Storage modelling mode for symbolic tests.",
+      "oneOf": [
+        {
+          "const": "solidity",
+          "description": "Model Solidity storage layout precisely where the symbolic executor knows the layout shape.",
+          "type": "string"
+        },
+        {
+          "const": "generic",
+          "description": "Treat every storage read as potentially arbitrary symbolic storage.",
+          "type": "string"
+        },
+        {
+          "const": "zero_init",
+          "description": "Treat unwritten symbolic storage reads as zero.",
+          "type": "string"
+        }
+      ]
+    },
+    "TracingConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for trace rendering.",
+      "properties": {
+        "compact_labels": {
+          "default": false,
+          "description": "Whether to hide addresses in trace parameters when labels are available.",
+          "type": "boolean"
+        },
+        "decode_internal": {
+          "default": false,
+          "description": "Whether to identify internal functions in traces.",
+          "type": "boolean"
+        },
+        "disable_labels": {
+          "default": false,
+          "description": "Whether to disable labels in traces.",
+          "type": "boolean"
+        },
+        "external_identification_timeout": {
+          "default": 5,
+          "description": "Cumulative Sourcify/Etherscan metadata lookup budget, in seconds.\nZero disables all external trace identification, including OpenChain.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Address labels to use in traces.",
+          "propertyNames": {
+            "pattern": "^(0x)?[0-9a-fA-F]{40}$"
+          },
+          "type": "object"
+        },
+        "trace_depth": {
+          "description": "Maximum depth of rendered traces.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "verbosity": {
+          "default": 0,
+          "description": "Verbosity to use for trace rendering.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "VyperConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "debug": {
+          "description": "Compile in debug mode.",
+          "type": "boolean"
+        },
+        "enable_decimals": {
+          "description": "Re-enable the Vyper decimal type.",
+          "type": "boolean"
+        },
+        "experimental_codegen": {
+          "description": "Enables Vyper's experimental code generation pipeline.",
+          "type": "boolean"
+        },
+        "optLevel": {
+          "description": "Alias of `opt_level`.",
+          "enum": [
+            "gas",
+            "codesize",
+            "none",
+            "O1",
+            "O2",
+            "O3",
+            "Os",
+            "o1",
+            "o2",
+            "o3",
+            "os",
+            "1",
+            "2",
+            "3",
+            "s"
+          ],
+          "type": "string"
+        },
+        "opt_level": {
+          "description": "Vyper numeric optimization level.",
+          "enum": [
+            "gas",
+            "codesize",
+            "none",
+            "O1",
+            "O2",
+            "O3",
+            "Os",
+            "o1",
+            "o2",
+            "o3",
+            "os",
+            "1",
+            "2",
+            "3",
+            "s"
+          ],
+          "type": "string"
+        },
+        "optimize": {
+          "description": "Vyper optimization mode.",
+          "enum": [
+            "gas",
+            "codesize",
+            "none",
+            "O1",
+            "O2",
+            "O3",
+            "Os",
+            "o1",
+            "o2",
+            "o3",
+            "os",
+            "1",
+            "2",
+            "3",
+            "s"
+          ],
+          "type": "string"
+        },
+        "path": {
+          "description": "The Vyper instance to use if any.",
+          "type": "string"
+        },
+        "venom": {
+          "description": "Fine-grained Venom optimizer settings.",
+          "type": "object"
+        },
+        "venom_experimental": {
+          "description": "Enables Vyper's Venom pipeline through the `venomExperimental` standard-json setting.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/foundry-rs/foundry/master/crates/config/assets/foundry.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The layout of a `foundry.toml` file.\n\nSettings go in `[profile.<name>]` tables. Profiles inherit from `[profile.default]`, and\n`FOUNDRY_PROFILE` selects the active profile. The standalone sections apply to all profiles.",
+  "properties": {
+    "bind_json": {
+      "$ref": "#/$defs/BindJsonConfig",
+      "description": "Configuration for `forge bind-json`."
+    },
+    "coverage": {
+      "$ref": "#/$defs/CoverageConfig",
+      "description": "Configuration for `forge coverage`."
+    },
+    "dependencies": {
+      "$ref": "#/$defs/SoldeerDependencyConfig",
+      "description": "Soldeer dependencies."
+    },
+    "doc": {
+      "$ref": "#/$defs/DocConfig",
+      "description": "Configuration for `forge doc`."
+    },
+    "etherscan": {
+      "$ref": "#/$defs/EtherscanConfigs",
+      "description": "Block explorer API configurations, keyed by alias."
+    },
+    "external": {
+      "additionalProperties": {
+        "type": "object"
+      },
+      "description": "Configuration read by other tools, keyed by tool name. Forge does not read it.",
+      "type": "object"
+    },
+    "fmt": {
+      "$ref": "#/$defs/FormatterConfig",
+      "description": "Configuration for `forge fmt`."
+    },
+    "fuzz": {
+      "$ref": "#/$defs/FuzzConfig",
+      "description": "Configuration for fuzz tests."
+    },
+    "invariant": {
+      "$ref": "#/$defs/InvariantConfig",
+      "description": "Configuration for invariant tests. Keys not set here fall back to `[fuzz]`."
+    },
+    "labels": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "deprecated": true,
+      "description": "Deprecated: use `[tracing.labels]`.",
+      "propertyNames": {
+        "pattern": "^(0x)?[0-9a-fA-F]{40}$"
+      },
+      "type": "object"
+    },
+    "lint": {
+      "$ref": "#/$defs/LinterConfig",
+      "description": "Configuration for `forge lint`."
+    },
+    "mutation": {
+      "$ref": "#/$defs/MutationConfig",
+      "description": "Configuration for mutation testing."
+    },
+    "profile": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Config"
+      },
+      "description": "Configuration profiles. `[profile.default]` holds the defaults that all other profiles\ninherit; select another profile with `FOUNDRY_PROFILE=<name>`.",
+      "type": "object"
+    },
+    "rpc_endpoints": {
+      "$ref": "#/$defs/RpcEndpoints",
+      "description": "RPC endpoint aliases, usable as `--rpc-url <alias>` and in `vm.createFork(\"<alias>\")`."
+    },
+    "soldeer": {
+      "description": "Soldeer configuration.",
+      "type": "object"
+    },
+    "symbolic": {
+      "$ref": "#/$defs/SymbolicConfig",
+      "description": "Configuration for symbolic tests."
+    },
+    "tracing": {
+      "$ref": "#/$defs/TracingConfig",
+      "description": "Configuration for trace rendering."
+    },
+    "vyper": {
+      "$ref": "#/$defs/VyperConfig",
+      "description": "Configuration for the Vyper compiler."
+    }
+  },
+  "title": "foundry.toml",
+  "type": "object"
+}
