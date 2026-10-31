@@ -540,6 +540,51 @@ Context:
     }
 }
 
+// tests that `cast call --trace` with fees leaves an unfunded sender's balance untouched.
+#[casttest]
+async fn cast_call_trace_fees_do_not_fund_sender(cmd: _) {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let target = "0x0000000000000000000000000000000000001234";
+    // Returns `BALANCE(ORIGIN)`.
+    let override_code = format!("{target}:0x32315f5260205ff3");
+    let args = [
+        "call",
+        target,
+        "--trace",
+        "--rpc-url",
+        &endpoint,
+        "--override-code",
+        &override_code,
+        "--from",
+        "0x00000000000000000000000000000000000000aa",
+        "--legacy",
+        "--gas-price",
+        "3gwei",
+    ];
+
+    cmd.cast_fuse().args(args).assert_success().stdout_eq(str![[r#"
+Traces:
+  [115] 0x0000000000000000000000000000000000001234::fallback()
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000000000
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+
+    cmd.cast_fuse().args(args).args(["--value", "1"]).assert_success().stdout_eq(str![[r#"
+Traces:
+  [0] 0x0000000000000000000000000000000000001234::receive{value: 1}()
+    └─ ← [OutOfFunds] EvmError: OutOfFunds
+
+
+[GAS]
+
+"#]]);
+}
+
 #[cfg(feature = "monad")]
 #[casttest]
 async fn cast_call_trace_monad_fees(cmd: _) {
