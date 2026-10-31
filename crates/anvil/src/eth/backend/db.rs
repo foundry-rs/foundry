@@ -540,7 +540,7 @@ pub(crate) struct BlockChanges<'a> {
 }
 
 impl<'a> BlockChanges<'a> {
-    pub(crate) fn new(block: &'a mut BlockStateAccumulator) -> Self {
+    pub(crate) const fn new(block: &'a mut BlockStateAccumulator) -> Self {
         Self { block, storage: Vec::new() }
     }
 
