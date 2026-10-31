@@ -309,6 +309,10 @@ pub trait CommandUtils {
     /// Returns the command's output if execution is successful, otherwise, throws an error.
     fn exec(&mut self) -> Result<Output>;
 
+    /// Runs the command and returns its output whatever the exit status. Unlike
+    /// [`Command::output`], the error names the program when it cannot be started.
+    fn spawn_output(&mut self) -> Result<Output>;
+
     /// Returns the command's stdout if execution is successful, otherwise, throws an error.
     fn get_stdout_lossy(&mut self) -> Result<String>;
 }
@@ -318,7 +322,7 @@ impl CommandUtils for Command {
     fn exec(&mut self) -> Result<Output> {
         trace!(command=?self, "executing");
 
-        let output = self.output()?;
+        let output = self.spawn_output()?;
 
         trace!(code=?output.status.code(), ?output);
 
@@ -358,6 +362,22 @@ impl CommandUtils for Command {
             }
             Err(eyre::eyre!(err))
         }
+    }
+
+    fn spawn_output(&mut self) -> Result<Output> {
+        self.output().map_err(|err| {
+            let program = self.get_program().to_string_lossy();
+            // A missing working directory is also reported as `NotFound` on Unix.
+            if let Some(dir) = self.get_current_dir().filter(|dir| !dir.is_dir()) {
+                return eyre::eyre!("could not run `{program}`: {} does not exist", dir.display());
+            }
+            if err.kind() == std::io::ErrorKind::NotFound {
+                return eyre::eyre!(
+                    "`{program}` was not found; make sure it is installed and on your PATH"
+                );
+            }
+            eyre::eyre!("could not run `{program}`: {err}")
+        })
     }
 
     #[track_caller]
@@ -523,7 +543,7 @@ impl<'a> Git<'a> {
             .cmd()
             .args(["commit", "-m", msg])
             .args(cfg!(any(test, debug_assertions)).then_some("--no-gpg-sign"))
-            .output()?;
+            .spawn_output()?;
         if !output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -541,8 +561,11 @@ impl<'a> Git<'a> {
         Ok(())
     }
 
-    pub fn is_in_repo(self) -> std::io::Result<bool> {
-        self.cmd().args(["rev-parse", "--is-inside-work-tree"]).status().map(|s| s.success())
+    pub fn is_in_repo(self) -> Result<bool> {
+        self.cmd()
+            .args(["rev-parse", "--is-inside-work-tree"])
+            .spawn_output()
+            .map(|output| output.status.success())
     }
 
     pub fn is_repo_root(self) -> Result<bool> {
@@ -963,7 +986,7 @@ ignore them in the `.gitignore` file."
             .args(["config", "--null", "--file"])
             .arg(gitmodules)
             .args(["--get-regexp", r"^submodule\..*"])
-            .output()?;
+            .spawn_output()?;
         match output.status.code() {
             Some(0) => {
                 let mut names = BTreeSet::new();
@@ -1050,7 +1073,8 @@ ignore them in the `.gitignore` file."
     /// Returns whether local config contains values for the given submodule.
     pub fn has_submodule_config(self, path: &Path) -> Result<bool> {
         let pattern = format!(r"^submodule\.{}\.", regex::escape(&path.to_slash_lossy()));
-        let output = self.cmd().args(["config", "--local", "--get-regexp", &pattern]).output()?;
+        let output =
+            self.cmd().args(["config", "--local", "--get-regexp", &pattern]).spawn_output()?;
         match output.status.code() {
             Some(0) => Ok(true),
             Some(1) => Ok(false),
@@ -1271,6 +1295,23 @@ mod tests {
     use foundry_common::fs;
     use std::{env, fs::File, io::Write};
     use tempfile::tempdir;
+
+    #[test]
+    fn spawn_output_names_the_program() {
+        let err = Command::new("foundry-missing-program").spawn_output().unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "`foundry-missing-program` was not found; make sure it is installed and on your PATH"
+        );
+
+        let dir = tempdir().unwrap();
+        let missing = dir.path().join("missing");
+        let err = Command::new("git").current_dir(&missing).spawn_output().unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!("could not run `git`: {} does not exist", missing.display())
+        );
+    }
 
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
