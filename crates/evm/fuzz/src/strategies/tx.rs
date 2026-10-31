@@ -8,7 +8,7 @@ use crate::{
 };
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, U256, keccak256};
 use eyre::{Result, eyre};
 use foundry_config::InvariantConfig;
 use proptest::{prelude::*, test_runner::TestRunner};
@@ -155,18 +155,24 @@ fn select_sender(
 ) -> BoxedStrategy<Address> {
     if senders.targeted.is_empty() {
         let dictionary_weight = dictionary_weight.min(100);
-        prop_oneof![
+        let sender = prop_oneof![
             100 - dictionary_weight => fuzz_param(&DynSolType::Address),
             dictionary_weight => fuzz_param_from_state(&DynSolType::Address, state),
-        ]
-        .prop_map(move |value| {
-            let mut sender = value.as_address().unwrap();
-            while senders.excluded.contains(&sender) {
-                sender = Address::random();
-            }
-            sender
-        })
-        .boxed()
+        ];
+        // Replacements for excluded senders are drawn from the test runner, so they follow the
+        // fuzz seed like every other generated value.
+        (sender, any::<[u8; 20]>().prop_map(Address::from))
+            .prop_map(move |(value, mut replacement)| {
+                let sender = value.as_address().unwrap();
+                if !senders.excluded.contains(&sender) {
+                    return sender;
+                }
+                while senders.excluded.contains(&replacement) {
+                    replacement = Address::from_word(keccak256(replacement));
+                }
+                replacement
+            })
+            .boxed()
     } else {
         any::<prop::sample::Index>().prop_map(move |index| *index.get(&senders.targeted)).boxed()
     }
@@ -188,6 +194,25 @@ mod tests {
             optional_delay(Some(1)).new_tree(&mut runner).unwrap().current(),
             Some(U256::ZERO)
         );
+    }
+
+    #[test]
+    fn excluded_sender_replacement_follows_runner_seed() {
+        // Only the default excluded sender is in the dictionary, so every sender drawn from it
+        // has to be replaced.
+        let mut state = EvmFuzzState::test();
+        state.collect_values([Address::ZERO.into_word()]);
+        let state = state.into_invariant();
+        let senders = Rc::new(SenderFilters::new(vec![], vec![]));
+        let generate = || {
+            let strategy = select_sender(&state, senders.clone(), 100);
+            let mut runner = TestRunner::deterministic();
+            (0..16).map(|_| strategy.new_tree(&mut runner).unwrap().current()).collect::<Vec<_>>()
+        };
+
+        let first = generate();
+        assert!(first.iter().all(|sender| !senders.excluded.contains(sender)));
+        assert_eq!(first, generate());
     }
 
     #[test]
