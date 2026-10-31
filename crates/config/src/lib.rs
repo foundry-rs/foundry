@@ -8906,6 +8906,54 @@ mod tests {
     }
 
     #[test]
+    fn warns_on_unknown_keys_in_endpoint_entries() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+
+                [profile.default.rpc_endpoints]
+                local = { endpoint = "http://localhost:8545", retriez = 3 }
+
+                [rpc_endpoints]
+                mainnet = "https://eth.example"
+                sepolia = { url = "https://sepolia.example", retries = 2, auth = "token" }
+                optimism = { endpoints = ["https://op.example"], compute_units_per_second = 10 }
+                base = { endpoint = "https://base.example", timeout = 5 }
+
+                [etherscan]
+                mainnet = { key = "KEY", chainId = 1 }
+                sepolia = { key = "KEY", chain = 11155111, url = "https://api.example" }
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            let unknown: Vec<_> = cfg
+                .warnings
+                .iter()
+                .filter_map(|w| match w {
+                    crate::Warning::UnknownSectionKey { key, section, .. } => {
+                        Some((key.as_str(), section.as_str()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                unknown,
+                [
+                    ("retriez", "rpc_endpoints.local"),
+                    ("timeout", "rpc_endpoints.base"),
+                    ("chainId", "etherscan.mainnet"),
+                ],
+                "{:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
     fn no_unknown_key_warning_for_network_field() {
         // Regression test: `network` is a flattened `Option` field of `NetworkConfigs`. It must
         // not trigger an unknown-key warning, regardless of whether it is set.
