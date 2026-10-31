@@ -62,6 +62,7 @@ pub enum EtherscanConfigError {
 
 /// Container type for Etherscan API keys and URLs.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(transparent)]
 pub struct EtherscanConfigs {
     configs: BTreeMap<String, EtherscanConfig>,
@@ -207,9 +208,11 @@ impl DerefMut for ResolvedEtherscanConfigs {
 
 /// Represents all info required to create an etherscan client
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct EtherscanConfig {
     /// The chain name or EIP-155 chain ID used to derive the API URL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::chain"))]
     pub chain: Option<Chain>,
     /// Etherscan API URL
     #[serde(default, skip_serializing_if = "Option::is_none")]

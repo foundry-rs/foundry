@@ -9,6 +9,7 @@ use yansi::Paint;
 
 /// Contains the config and rule set.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct LinterConfig {
     /// Specifies which lints to run based on severity.
     ///
@@ -44,6 +45,7 @@ impl Default for LinterConfig {
 
 /// Contract types that can be exempted from the multi-contract-file lint.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ContractException {
     Interface,
@@ -53,6 +55,7 @@ pub enum ContractException {
 
 /// Configuration specific to individual lints.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(default)]
 pub struct LintSpecificConfig {
     /// Configurable patterns that should be excluded when performing `mixedCase` and

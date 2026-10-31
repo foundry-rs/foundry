@@ -14,6 +14,7 @@ use std::{fmt, str::FromStr};
 /// - the `eth_feeHistory` reward percentile used to derive the priority fee, and
 /// - the multiplier applied to the base fee when building `maxFeePerGas`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum Eip1559FeeEstimatePreset {
     /// Lower priority-fee percentile (10th) and a tighter base-fee buffer

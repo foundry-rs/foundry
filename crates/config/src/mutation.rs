@@ -17,6 +17,7 @@ use strum::IntoEnumIterator;
     strum::EnumString,
     strum::EnumIter,
 )]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]
 pub enum MutatorType {
@@ -44,6 +45,7 @@ impl MutatorType {
 
 /// Configuration for mutation testing.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct MutationConfig {
     /// Re-enable operators that are excluded by default.
     pub include_operators: Vec<MutatorType>,

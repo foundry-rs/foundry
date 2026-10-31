@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 /// Configuration for an external compiler adapter executable.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ExternalCompiler {
     /// Stable user-defined identifier used to namespace cache and artifact entries.
     pub id: String,

@@ -7,6 +7,7 @@ use unit_prefix::NumberPrefix;
 
 /// Settings to configure caching of remote.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct StorageCachingConfig {
     /// Chains to cache.
     pub chains: CachedChains,

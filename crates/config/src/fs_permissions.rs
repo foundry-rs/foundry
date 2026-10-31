@@ -11,6 +11,7 @@ use std::{
 ///
 /// E.g. for cheat codes (`vm.writeFile`)
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(transparent)]
 pub struct FsPermissions {
     /// what kind of access is allowed
@@ -124,6 +125,7 @@ impl FsPermissions {
 
 /// Represents an access permission to a single path
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct PathPermission {
     /// Permission level to access the `path`
     pub access: FsAccessPermission,

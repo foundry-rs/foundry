@@ -12,13 +12,16 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// Keeps possible overrides for default settings which users may configure to construct additional
 /// settings profile.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct SettingsOverrides {
     pub name: String,
     pub via_ir: Option<bool>,
     #[serde(default, with = "serde_helpers::display_from_str_opt")]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::evm_version_exact"))]
     pub evm_version: Option<EvmVersion>,
     pub optimizer: Option<bool>,
     pub optimizer_runs: Option<usize>,
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::bytecode_hash_variant"))]
     pub bytecode_hash: Option<BytecodeHash>,
 }
 
@@ -67,11 +70,14 @@ pub enum RestrictionsError {
 /// Only purpose of this type is to accept user input to later construct
 /// `RestrictionsWithVersion<MultiCompilerRestrictions>`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct CompilationRestrictions {
     pub paths: GlobMatcher,
     #[serde(default, deserialize_with = "deserialize_version_req")]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::version_req"))]
     pub version: Option<VersionReq>,
     pub via_ir: Option<bool>,
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::bytecode_hash_variant"))]
     pub bytecode_hash: Option<BytecodeHash>,
 
     pub min_optimizer_runs: Option<usize>,
@@ -79,10 +85,13 @@ pub struct CompilationRestrictions {
     pub max_optimizer_runs: Option<usize>,
 
     #[serde(default, with = "serde_helpers::display_from_str_opt")]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::evm_version_exact"))]
     pub min_evm_version: Option<EvmVersion>,
     #[serde(default, with = "serde_helpers::display_from_str_opt")]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::evm_version_exact"))]
     pub evm_version: Option<EvmVersion>,
     #[serde(default, with = "serde_helpers::display_from_str_opt")]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::evm_version_exact"))]
     pub max_evm_version: Option<EvmVersion>,
 }
 

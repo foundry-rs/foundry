@@ -51,6 +51,7 @@ which.workspace = true
 yansi.workspace = true
 clap = { version = "4", features = ["derive"] }
 strum = { workspace = true, features = ["derive"] }
+schemars = { version = "1.1", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 path-slash = "0.2"
@@ -61,5 +62,8 @@ similar-asserts.workspace = true
 tempfile.workspace = true
 
 [features]
+schema = [
+    "dep:schemars",
+]
 monad = ["foundry-evm-hardforks/monad", "foundry-evm-networks/monad"]
 base = ["foundry-evm-hardforks/base", "foundry-evm-networks/base"]

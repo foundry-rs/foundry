@@ -94,6 +94,7 @@ fn fixed_workers(workers: usize) -> Result<InvariantWorkers, String> {
 
 /// Per-run invariant depth selection mode.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum InvariantDepthMode {
     /// Execute every invariant run up to the configured `depth`.
@@ -120,6 +121,7 @@ impl FromStr for InvariantDepthMode {
 
 /// Contains for invariant testing
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct InvariantConfig {
     /// The number of runs that must execute for each invariant test group.
     pub runs: u32,
@@ -155,10 +157,12 @@ pub struct InvariantConfig {
     /// Whether `corpus_random_sequence_weight` was supplied by a config provider.
     #[serde(default, skip_serializing)]
     #[doc(hidden)]
+    #[cfg_attr(feature = "schema", schemars(skip))]
     pub corpus_random_sequence_weight_configured: bool,
     /// Whether `workers` was supplied by a config provider.
     #[serde(default, skip_serializing)]
     #[doc(hidden)]
+    #[cfg_attr(feature = "schema", schemars(skip))]
     pub workers_configured: bool,
     /// Path where invariant failures are recorded and replayed.
     pub failure_persist_dir: Option<PathBuf>,
