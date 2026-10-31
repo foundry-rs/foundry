@@ -158,6 +158,8 @@ use foundry_evm_networks::NetworkConfigs;
 
 pub use semver;
 
+pub mod origin;
+
 #[cfg(not(test))]
 static SELECTED_PROFILE: std::sync::OnceLock<Profile> = std::sync::OnceLock::new();
 
@@ -3077,8 +3079,16 @@ impl FigmentProviders {
     }
 }
 
+/// Whether `key` was set by the environment or the command line.
+///
+/// Values from config files are not counted, as before their providers kept their origin: a
+/// value that `[invariant]` inherits from `[fuzz]` must not count as configured. The callers
+/// detect values set in the file itself in other ways.
 fn figment_value_is_configured(figment: &Figment, key: &str) -> bool {
-    figment.find_metadata(key).is_some_and(|metadata| metadata.name.as_ref() != "Foundry Config")
+    figment.find_metadata(key).is_some_and(|metadata| {
+        metadata.name.as_ref() != "Foundry Config"
+            && !matches!(metadata.source, Some(figment::Source::File(_)))
+    })
 }
 
 /// Wrapper type for [`regex::Regex`] that implements [`PartialEq`] and [`serde`] traits.
