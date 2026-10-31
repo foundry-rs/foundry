@@ -214,13 +214,21 @@ impl TomlFileProvider {
                     // - Arrays are concatenated (base elements + local elements)
                     // - Other values are replaced (local values override base values)
                     // - The extends field is preserved in the final configuration
-                    Figment::new().merge(base_provider).admerge(local_provider).data()
+                    Figment::new()
+                        .merge(base_provider)
+                        .admerge(local_provider)
+                        .data()
+                        .and_then(untagged)
                 }
                 extend::ExtendStrategy::ReplaceArrays => {
                     // Using 'merge' strategy:
                     // - Arrays are replaced entirely (local arrays replace base arrays)
                     // - Other values are replaced (local values override base values)
-                    Figment::new().merge(base_provider).merge(local_provider).data()
+                    Figment::new()
+                        .merge(base_provider)
+                        .merge(local_provider)
+                        .data()
+                        .and_then(untagged)
                 }
                 extend::ExtendStrategy::NoCollision => {
                     // Check for key collisions between base and local configs
@@ -256,7 +264,11 @@ impl TomlFileProvider {
                     }
 
                     // Safe to merge the configs without collisions
-                    Figment::new().merge(base_provider).merge(local_provider).data()
+                    Figment::new()
+                        .merge(base_provider)
+                        .merge(local_provider)
+                        .data()
+                        .and_then(untagged)
                 }
             }
         } else {
@@ -928,7 +940,7 @@ impl<P: Provider> Provider for OptionalStrictProfileProvider<P> {
                 profile.clone(),
             ));
         }
-        figment.data().map_err(|err| {
+        figment.data().and_then(untagged).map_err(|err| {
             // figment does tag metadata and tries to map metadata to an error, since we use a new
             // figment in this provider this new figment does not know about the metadata of the
             // provider and can't map the metadata to the error. Therefore we return the root error
@@ -1000,4 +1012,21 @@ impl<P: Provider> Provider for FallbackProfileProvider<P> {
     fn profile(&self) -> Option<Profile> {
         Some(self.profile.clone())
     }
+}
+
+/// Clears the tags that an inner [`Figment`] put on `data`.
+///
+/// A provider that builds its data with its own `Figment` returns values tagged with that
+/// figment's metadata, which the outer figment does not know, so it could not tell where the
+/// values came from. Untagged values get the metadata of the provider that returns them.
+fn untagged(data: Map<Profile, Dict>) -> Result<Map<Profile, Dict>, Error> {
+    data.into_iter()
+        .map(|(profile, dict)| {
+            let dict = dict
+                .into_iter()
+                .map(|(key, value)| Ok((key, Value::serialize(value)?)))
+                .collect::<Result<Dict, Error>>()?;
+            Ok((profile, dict))
+        })
+        .collect()
 }

@@ -3670,3 +3670,56 @@ optimizer_runs = 456
         )
         .stderr_eq(str![""]);
 }
+
+// `forge config --show-origin` names where each value was set.
+#[forgetest]
+fn config_show_origin(prj: _, cmd: _) {
+    prj.create_file(
+        "foundry.toml",
+        r#"
+[profile.default]
+src = "src"
+optimizer_runs = 1
+
+[profile.ci]
+optimizer_runs = 999
+via-ir = true
+
+[fuzz]
+runs = 77
+"#,
+    );
+
+    cmd.env("FOUNDRY_PROFILE", "ci");
+    cmd.env("FOUNDRY_VERBOSITY", "3");
+    let output = cmd
+        .args(["config", "--show-origin", "--evm-version", "cancun"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    for line in [
+        r#"src = "src" # foundry.toml [profile.default]"#,
+        "optimizer_runs = 999 # foundry.toml [profile.ci]",
+        // `optimizer_runs` turns the optimizer on.
+        "optimizer = true # derived",
+        "via_ir = true # foundry.toml [profile.ci]",
+        r#"evm_version = "cancun" # command line"#,
+        "verbosity = 3 # env FOUNDRY_VERBOSITY",
+        "ffi = false # default",
+        "runs = 77 # foundry.toml [fuzz]",
+    ] {
+        assert!(output.lines().any(|l| l == line), "missing `{line}` in:\n{output}");
+    }
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_PROFILE", "ci");
+    let output = cmd
+        .args(["config", "--show-origin", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let origins: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(origins["optimizer_runs"], "foundry.toml [profile.ci]");
+    assert_eq!(origins["invariant.runs"], "foundry.toml [fuzz]");
+    assert_eq!(origins["ffi"], "default");
+}
