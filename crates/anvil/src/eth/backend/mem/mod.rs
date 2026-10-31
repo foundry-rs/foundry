@@ -703,9 +703,36 @@ fn uses_protocol_call_nonce(tx: &FoundryTxEnvelope) -> bool {
     }
 }
 
-/// Describes an exceptional halt.
-fn halt_reason(stop: InstrStop) -> String {
-    format!("{stop:?}")
+/// Describes an exceptional halt with REVM's `HaltReason` messages.
+pub(crate) fn halt_reason(stop: InstrStop) -> String {
+    match stop {
+        InstrStop::OutOfGas => "out of gas",
+        InstrStop::MemoryOOG => "out of gas: memory expansion",
+        InstrStop::MemoryLimitOOG => "out of gas: memory limit exceeded",
+        InstrStop::PrecompileOOG => "out of gas: precompile",
+        InstrStop::InvalidOperandOOG => "out of gas: invalid operand",
+        InstrStop::ReentrancySentryOOG => "out of gas: reentrancy sentry",
+        InstrStop::OpcodeNotFound | InstrStop::InvalidImmediateEncoding => "opcode not found",
+        InstrStop::InvalidFEOpcode => "invalid 0xFE opcode",
+        InstrStop::InvalidJump => "invalid jump destination",
+        InstrStop::NotActivated => "feature or opcode not activated",
+        InstrStop::StackUnderflow => "stack underflow",
+        InstrStop::StackOverflow => "stack overflow",
+        InstrStop::OutOfOffset => "out of offset",
+        InstrStop::CreateCollision => "create collision",
+        InstrStop::PrecompileError => "precompile error",
+        InstrStop::NonceOverflow => "nonce overflow",
+        InstrStop::CreateContractSizeLimit => "create contract size limit",
+        InstrStop::CreateContractStartingWithEF => "create contract starting with 0xEF",
+        InstrStop::CreateInitCodeSizeLimit => "create initcode size limit",
+        InstrStop::StateChangeDuringStaticCall => "state change during static call",
+        InstrStop::CallNotAllowedInsideStatic => "call not allowed inside static call",
+        InstrStop::OutOfFunds => "out of funds",
+        InstrStop::CallTooDeep => "call too deep",
+        InstrStop::FatalExternalError => "fatal external error",
+        stop => return format!("{stop:?}"),
+    }
+    .to_string()
 }
 
 /// Applies a transaction's detached state changes to `db`.

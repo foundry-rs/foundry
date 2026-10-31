@@ -431,7 +431,7 @@ pub fn apply_state_overrides<ExtDB: DatabaseRef>(
         }
         if let Some(code) = account_override.code {
             let code = Bytecode::new_raw_checked(code)
-                .map_err(|err| BlockchainError::Message(err.to_string()))?;
+                .map_err(|err| BlockchainError::StateOverrideError(err.to_string()))?;
             info.code_hash = code.hash_slow();
             info.code = Some(code);
         }
@@ -441,8 +441,8 @@ pub fn apply_state_overrides<ExtDB: DatabaseRef>(
         db.insert_account_info(address, info);
         match (account_override.state, account_override.state_diff) {
             (Some(_), Some(_)) => {
-                return Err(BlockchainError::Message(format!(
-                    "Both 'state' and 'stateDiff' fields are set for account {address}"
+                return Err(BlockchainError::StateOverrideError(format!(
+                    "state and state_diff can't be used together for account {address}"
                 )));
             }
             (Some(state), None) => {
