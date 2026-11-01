@@ -48,6 +48,60 @@ use rexpect::{Encoding, process::wait::WaitStatus, reader::Options, spawn_with_o
 use std::os::unix::process::ExitStatusExt;
 
 #[forgetest]
+fn script_non_interactive_help_covers_confirmations(cmd: _) {
+    cmd.args(["script", "--help"]).assert_success().stderr_eq(str![""]).stdout_eq(str![[r#"
+...
+      --non-interactive
+          Skips script confirmation prompts, including no-code targets and oversized contracts
+...
+"#]]);
+}
+
+#[forgetest]
+async fn script_no_code_target_without_terminal(prj: _, cmd: _) {
+    prj.add_script(
+        "NoCodeTarget.s.sol",
+        r#"
+interface Vm { function startBroadcast() external; }
+
+contract NoCodeTarget {
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        VM.startBroadcast();
+        (bool success,) = address(0xBEEF).call("");
+        require(success);
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let sender = handle.dev_wallets().next().unwrap().address();
+    let rpc = handle.http_endpoint();
+    let args = [
+        "script",
+        "NoCodeTarget",
+        "--rpc-url",
+        rpc.as_str(),
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+    ];
+
+    cmd.args(args).assert_failure().stderr_eq(str![[r#"
+...
+Warning: Script contains a transaction to 0x000000000000000000000000000000000000bEEF which does not contain any code.
+Error: transaction to 0x000000000000000000000000000000000000bEEF has no code; pass --non-interactive to continue without confirmation
+
+"#]]);
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 0);
+
+    cmd.forge_fuse().args(args).arg("--non-interactive").assert_success();
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 1);
+}
+
+#[forgetest]
 fn script_slow_help_explains_presimulation(cmd: _) {
     cmd.args(["script", "--help"]).assert_success().stderr_eq(str![""]).stdout_eq(str![[r#"
 ...
@@ -8632,6 +8686,33 @@ contract DeployLarge is Script {
 }
 "#,
     );
+}
+
+#[forgetest_init]
+async fn script_oversized_contract_without_terminal(prj: _, cmd: _) {
+    write_large_runtime_deploy_script(&prj, 30_000);
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.set_current_dir(prj.root());
+    for var in ["FOUNDRY_CODE_SIZE_LIMIT", "DAPP_CODE_SIZE_LIMIT", "DAPP_TEST_CODE_SIZE_LIMIT"] {
+        cmd.unset_env(var);
+    }
+    cmd.args([
+        "script",
+        "DeployLarge",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+...
+Error: `LargeRuntime` is above the contract size limit ([..] > 24576).
+Error: contract above the code size limit requires confirmation; pass --non-interactive to continue without confirmation
+
+"#]]);
 }
 
 // Tests that `forge script` reports a contract-size violation against the default runtime limit

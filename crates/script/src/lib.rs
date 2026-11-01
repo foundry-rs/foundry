@@ -274,9 +274,7 @@ pub struct ScriptArgs {
     )]
     pub confirmations: u64,
 
-    /// Disables interactive prompts that might appear when deploying big contracts.
-    ///
-    /// For more info on the contract size limit, see EIP-170: <https://eips.ethereum.org/EIPS/eip-170>
+    /// Skips script confirmation prompts, including no-code targets and oversized contracts.
     #[arg(long)]
     pub non_interactive: bool,
 
@@ -868,11 +866,15 @@ impl ScriptArgs {
         }
 
         // Only prompt if we're broadcasting and we've not disabled interactivity.
-        if prompt_user
-            && !self.non_interactive
-            && !Confirm::new().with_prompt("Do you wish to continue?".to_string()).interact()?
-        {
-            eyre::bail!("User canceled the script.");
+        if prompt_user && !self.non_interactive {
+            if !dialoguer::console::Term::stderr().is_term() {
+                eyre::bail!(
+                    "contract above the code size limit requires confirmation; pass --non-interactive to continue without confirmation"
+                );
+            }
+            if !Confirm::new().with_prompt("Do you wish to continue?".to_string()).interact()? {
+                eyre::bail!("User canceled the script.");
+            }
         }
 
         Ok(())
