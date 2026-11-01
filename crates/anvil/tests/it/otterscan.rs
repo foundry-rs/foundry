@@ -456,6 +456,29 @@ async fn ots_search_transactions_after() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn ots_search_transactions_after_same_block_order() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let mut hashes = vec![];
+    for i in 0..3 {
+        let tx =
+            TransactionRequest::default().to(Address::random()).value(U256::from(100)).nonce(i);
+        let tx = WithOtherFields::new(tx);
+        hashes.push(*provider.send_transaction(tx).await.unwrap().tx_hash());
+    }
+    api.evm_mine(None).await.unwrap();
+    hashes.reverse();
+
+    let before = api.ots_search_transactions_before(sender, 0, 10).await.unwrap();
+    let after = api.ots_search_transactions_after(sender, 0, 10).await.unwrap();
+    assert_eq!(before.txs.iter().map(|tx| tx.tx_hash()).collect::<Vec<_>>(), hashes);
+    assert_eq!(after.txs.iter().map(|tx| tx.tx_hash()).collect::<Vec<_>>(), hashes);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn ots_get_transaction_by_sender_and_nonce() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
