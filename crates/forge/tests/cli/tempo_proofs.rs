@@ -18,7 +18,7 @@ mod evidence;
 mod sources;
 
 #[forgetest]
-async fn tempo_proofs(prj: _, cmd: _) {
+async fn tempo_proofs_fork(prj: _, cmd: _) {
     sources::prepare(&prj).await;
     prj.insert_vm();
     prj.add_raw_source(
@@ -47,25 +47,33 @@ async fn tempo_proofs(prj: _, cmd: _) {
     .unwrap();
     let bytecode = store.bytecode.unwrap().into_bytes().unwrap();
     let deployed = store.deployed_bytecode.unwrap().bytecode.unwrap().into_bytes().unwrap();
-    let (_api, handle) = spawn(
-        NodeConfig::test_tempo()
-            .with_no_mining(true)
-            .with_hardfork(Some(TempoHardfork::T14.into()))
-            .with_tempo_epoch_length(NonZeroU64::new(4).unwrap()),
-    )
-    .await;
-    let proof = timeout(
+    let config = NodeConfig::test_tempo()
+        .with_no_mining(true)
+        .with_hardfork(Some(TempoHardfork::T14.into()))
+        .with_tempo_epoch_length(NonZeroU64::new(4).unwrap());
+    let (_api, handle) = spawn(config.clone()).await;
+    let mut proof = timeout(
         Duration::from_secs(60),
-        evidence::collect(&handle.http_provider(), bytecode, deployed),
+        evidence::collect(&handle.http_provider(), bytecode.clone(), deployed.clone()),
     )
     .await
     .expect("collect fresh Tempo HTTP evidence within 60 seconds");
+    proof["fork"] =
+        timeout(Duration::from_secs(60), evidence::collect_fork(config, bytecode, deployed))
+            .await
+            .expect("collect local two-node fork evidence within 60 seconds");
     prj.create_file("fixtures/proofs.json", &serde_json::to_string_pretty(&proof).unwrap());
     cmd.forge_fuse().args(["test", "--offline"]).assert_success().stdout_eq(str![[r#"
 No files changed, compilation skipped
 
-Ran 23 tests for test/TempoProof.t.sol:TempoProofTest
+Ran 29 tests for test/TempoProof.t.sol:TempoProofTest
 [PASS] test_certified_storage_proof() ([GAS])
+[PASS] test_fork_historical_certified_storage_proof() ([GAS])
+[PASS] test_fork_imported_account_certified_storage_proof() ([GAS])
+[PASS] test_fork_reject_mixed_account_proof() ([GAS])
+[PASS] test_fork_reject_mixed_storage_proof() ([GAS])
+[PASS] test_fork_reject_upstream_key() ([GAS])
+[PASS] test_fork_updated_certified_storage_proof() ([GAS])
 [PASS] test_reject_changed_account_proof() ([GAS])
 [PASS] test_reject_changed_epoch() ([GAS])
 [PASS] test_reject_changed_header() ([GAS])
@@ -88,9 +96,9 @@ Ran 23 tests for test/TempoProof.t.sol:TempoProofTest
 [PASS] test_rotation_rejects_unannounced_key() ([GAS])
 [PASS] test_rotation_rejects_unauthenticated_boundary() ([GAS])
 [PASS] test_rotation_rejects_wrong_epoch() ([GAS])
-Suite result: ok. 23 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 29 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 23 tests passed, 0 failed, 0 skipped (23 total tests)
+Ran 1 test suite [ELAPSED]: 29 tests passed, 0 failed, 0 skipped (29 total tests)
 
 "#]]);
 }
