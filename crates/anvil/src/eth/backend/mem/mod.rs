@@ -2,7 +2,9 @@
 use self::{in_memory_db::StateRootDb, state::trie_storage, tempo::TempoChain};
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
-    config::{ForkTransactionReplay, PruneStateHistoryConfig, source_hardfork},
+    config::{
+        DEFAULT_TEMPO_EPOCH_LENGTH, ForkTransactionReplay, PruneStateHistoryConfig, source_hardfork,
+    },
     eth::{
         backend::{
             cheats::{CheatEcrecover, CheatsManager, NextBlockOverrides},
@@ -4740,7 +4742,7 @@ impl<N: Network> Backend<N> {
             } else {
                 TempoConsensus::at_height(
                     cfg.tempo_consensus_seed(),
-                    cfg.tempo_epoch_length,
+                    cfg.tempo_epoch_length.unwrap_or(DEFAULT_TEMPO_EPOCH_LENGTH),
                     blockchain.storage.read().best_number,
                 )
             };
@@ -5639,18 +5641,13 @@ impl<N: Network> Backend<N> {
             live_db.maybe_flush_cache().map_err(BlockchainError::Internal)?;
         }
 
-        let tempo_anchor = self
-            .blockchain
-            .storage
-            .read()
-            .tempo
-            .as_ref()
-            .map(|tempo| {
-                let block =
-                    storage.blocks.get(&storage.best_hash).ok_or(BlockchainError::BlockNotFound)?;
-                tempo.prepare_anchor(&block.header)
-            })
-            .transpose()?;
+        let tempo_anchor = self.blockchain.storage.read().tempo.as_ref().map(|_| {
+            TempoConsensus::at_height(
+                node_config.tempo_consensus_seed(),
+                node_config.tempo_epoch_length.unwrap_or(DEFAULT_TEMPO_EPOCH_LENGTH),
+                storage.best_number,
+            )
+        });
 
         *live_config = node_config;
         *live_db = db;
@@ -11317,6 +11314,7 @@ mod tests {
             instance_id,
             source_fork_block_number: None,
             source_fork_block_hash: None,
+            tempo_epoch_length: None,
         }
     }
 

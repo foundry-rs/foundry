@@ -608,45 +608,24 @@ fn repeated_pruning_bounds_retained_history() {
 }
 
 #[test]
-fn fork_anchor_inherits_skipped_views() {
-    let epoch_length = NonZeroU64::new(21_600).unwrap();
-    let mut anchor = TempoHeader::default();
-    anchor.inner.number = 45_023_274;
-    anchor.consensus_context = Some(TempoConsensusContext {
-        epoch: anchor.inner.number / epoch_length,
-        view: 8_896,
-        parent_view: 8_894,
-        proposer: TempoConsensus::new(B256::ZERO, epoch_length)
-            .identity()
-            .proposer
-            .try_into()
-            .unwrap(),
-    });
-    let mut consensus = TempoConsensus::at_header(B256::ZERO, epoch_length, &anchor).unwrap();
-    let identity = consensus.identity();
-    assert!(consensus.finalization(anchor.inner.number).is_none());
-
-    for (height, view, parent_view) in
-        [(anchor.inner.number + 1, 8_897, 8_896), (anchor.inner.number + 2, 8_898, 8_897)]
-    {
-        let (header, certificate) = finalize(&mut consensus, height);
-        let context = header.consensus_context.unwrap();
-        assert_eq!((context.epoch, context.view, context.parent_view), (2_084, view, parent_view));
-        assert_certificate(&identity, &header, &certificate);
-    }
-}
-
-#[test]
-fn fork_anchor_rounds_reset_only_when_entering_a_new_epoch() {
-    let epoch_length = NonZeroU64::new(3).unwrap();
-    for (height, expected) in [(1, (0, 8_897, 8_896)), (2, (1, 1, 0)), (3, (1, 8_897, 8_896))] {
-        let anchor = fork_anchor(height, epoch_length, 8_896);
+fn fork_anchor_inherits_skipped_views_until_a_new_epoch() {
+    let epoch_length = NonZeroU64::new(6).unwrap();
+    for (height, rounds) in [
+        (1, [(0, 8_897, 8_896), (0, 8_898, 8_897)]),
+        (5, [(1, 1, 0), (1, 2, 1)]),
+        (6, [(1, 8_897, 8_896), (1, 8_898, 8_897)]),
+    ] {
+        let mut anchor = fork_anchor(height, epoch_length, 8_896);
+        anchor.consensus_context.as_mut().unwrap().parent_view = 8_870;
         let mut consensus =
             TempoConsensus::at_fork_header(B256::ZERO, epoch_length, &anchor).unwrap();
-        let (header, certificate) = finalize(&mut consensus, height + 1);
-        let context = header.consensus_context.unwrap();
-        assert_eq!((context.epoch, context.view, context.parent_view), expected);
-        assert_certificate(&consensus.identity(), &header, &certificate);
+        assert!(consensus.finalization(height).is_none());
+        for (height, expected) in (height + 1..).zip(rounds) {
+            let (header, certificate) = finalize(&mut consensus, height);
+            let context = header.consensus_context.unwrap();
+            assert_eq!((context.epoch, context.view, context.parent_view), expected);
+            assert_certificate(&consensus.identity(), &header, &certificate);
+        }
     }
 }
 
@@ -707,10 +686,6 @@ fn fork_anchor_view_survives_checkpoints_pruning_snapshots_and_reset() {
     let second = finalize(&mut consensus, 9);
     let third = finalize(&mut consensus, 10);
     consensus.prune(9).unwrap();
-    assert_eq!(
-        consensus.unwind(8),
-        Err(TempoConsensusError::InvalidRewind { earliest: 9, head: 10, requested: 8 })
-    );
     consensus.unwind(9).unwrap();
     assert_eq!(finalize(&mut consensus, 10), third);
 

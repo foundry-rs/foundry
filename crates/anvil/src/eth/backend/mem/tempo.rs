@@ -41,11 +41,14 @@ use super::{
 };
 use crate::{
     NodeConfig,
+    config::DEFAULT_TEMPO_EPOCH_LENGTH,
     eth::{
         backend::{
             db::MaybeFullDatabase,
             fork::ClientFork,
-            tempo_consensus::{TempoConsensus, TempoConsensusIdentity, TempoFinalization},
+            tempo_consensus::{
+                TempoConsensus, TempoConsensusError, TempoConsensusIdentity, TempoFinalization,
+            },
         },
         error::BlockchainError,
         tempo_consensus::TempoCertifiedBlock,
@@ -220,10 +223,23 @@ impl TempoChain {
         };
         TempoConsensus::at_fork_header(
             config.tempo_consensus_seed(),
-            config.tempo_epoch_length,
+            config
+                .tempo_epoch_length
+                .or(fork.config.read().endpoint_identity.tempo_epoch_length)
+                .unwrap_or(DEFAULT_TEMPO_EPOCH_LENGTH),
             header,
         )
-        .map_err(|error| BlockchainError::Internal(error.to_string()))
+        .map_err(|error| {
+            let message = if matches!(error, TempoConsensusError::InvalidAnchorEpoch { .. }) {
+                format!(
+                    "{error}; set --tempo.epoch-length to match the fork source \
+                     (default: 21600 when source metadata is unavailable)"
+                )
+            } else {
+                error.to_string()
+            };
+            BlockchainError::Internal(message)
+        })
     }
 
     /// Keeps the known parent round when a replay prefix starts an unsigned local segment.
