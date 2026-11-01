@@ -8,6 +8,8 @@ T3/T4 epoch boundaries. It checks byte-identical re-encoding, header and body
 commitments, and both signatures. Wrong identities and changes to the digest,
 parent view, epoch, view or either signature must fail verification. Raw header
 bytes, Ethereum block hashes and consensus digests must identify the same block.
+Fork checks inherit skipped views from a native root in a nonzero epoch and verify
+that the next epoch restarts at view one with parent view zero.
 
 Rotation checks begin with one trusted identity, authenticate the boundary block,
 and decode its DKG outcome to obtain the next epoch's key. The next certificate
