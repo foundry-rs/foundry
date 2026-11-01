@@ -590,13 +590,13 @@ contract SymbolicExpectRevert is Test {
     }
 
     function checkExpectRevert(uint256) public {
-        vm.expectRevert(SymbolicExpectedReverter.Custom.selector);
+        vm.expectPartialRevert(SymbolicExpectedReverter.Custom.selector);
         helper.failWithCustom(7);
 
         vm.expectRevert(abi.encodeWithSelector(SymbolicExpectedReverter.Custom.selector, uint256(9)));
         helper.failWithCustom(9);
 
-        vm.expectRevert(bytes4(0x4e487b71));
+        vm.expectPartialRevert(bytes4(0x4e487b71));
         helper.failPanic();
     }
 }
@@ -681,8 +681,8 @@ contract SymbolicAssumeNoRevert is Test {
 
     function checkAssumeNoRevertPrunes(uint256 x) public {
         vm.assumeNoRevert();
-        (bool ok,) = address(target).call(abi.encodeWithSelector(target.maybeRevert.selector, x));
-        assertTrue(ok);
+        target.maybeRevert(x);
+        assertTrue(x != 7);
     }
 }
 "#,
@@ -3001,6 +3001,116 @@ Suite result: FAILED. 5 passed; 6 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
+// Like Forge, a matched `vm.expectRevert` compares reasons by raw bytes or by the message of
+// `Error(string)`, matches `bytes4` exactly, and returns Forge's dummy call output and CREATE
+// address.
+#[forgetest_init]
+fn symbolic_vm_expect_revert_matches_like_forge(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_expect_revert_matches_like_forge");
+
+    prj.add_test(
+        "SymbolicExpectRevertMatch.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract MatchToken {
+    error Unauthorized(address caller);
+
+    mapping(address => uint256) public balanceOf;
+
+    function burn(uint256 amount) external returns (bool) {
+        require(balanceOf[msg.sender] >= amount, "insufficient balance");
+        balanceOf[msg.sender] -= amount;
+        return true;
+    }
+
+    function deny() external view {
+        revert Unauthorized(msg.sender);
+    }
+
+    function failEmpty() external pure {
+        revert("");
+    }
+}
+
+contract MatchBadCtor {
+    constructor() {
+        revert("nope");
+    }
+}
+
+contract SymbolicExpectRevertMatch is Test {
+    function checkStringReason(uint256 amount) public {
+        vm.assume(amount > 0);
+        MatchToken token = new MatchToken();
+        vm.expectRevert("insufficient balance");
+        bool ok = token.burn(amount);
+        assertFalse(ok);
+    }
+
+    function checkEmptyReason() public {
+        MatchToken token = new MatchToken();
+        vm.expectRevert(bytes(""));
+        token.failEmpty();
+    }
+
+    function checkSelectorWithArgs() public {
+        MatchToken token = new MatchToken();
+        vm.expectRevert(MatchToken.Unauthorized.selector);
+        token.deny();
+    }
+
+    function checkPartialSelector() public {
+        MatchToken token = new MatchToken();
+        vm.expectPartialRevert(MatchToken.Unauthorized.selector);
+        token.deny();
+    }
+
+    function checkMatchedCallOutput() public {
+        MatchToken token = new MatchToken();
+        vm.expectRevert();
+        (bool ok, bytes memory data) = address(token).call(abi.encodeCall(MatchToken.burn, (1)));
+        assertTrue(ok);
+        assertEq(data.length, 8192);
+    }
+
+    function checkMatchedCreateAddress() public {
+        bytes memory code = type(MatchBadCtor).creationCode;
+        vm.expectRevert();
+        address created;
+        uint256 size;
+        assembly {
+            created := create(0, add(code, 32), mload(code))
+            size := returndatasize()
+        }
+        assertEq(created, address(1));
+        assertEq(size, 0);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicExpectRevertMatch",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 6 tests for test/SymbolicExpectRevertMatch.t.sol:SymbolicExpectRevertMatch
+[PASS] checkEmptyReason() ([METRICS])
+[PASS] checkMatchedCallOutput() ([METRICS])
+[PASS] checkMatchedCreateAddress() ([METRICS])
+[PASS] checkPartialSelector() ([METRICS])
+[FAIL: Error != expected error: Unauthorized(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496) != custom error 0x8e4a23d6; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSelectorWithArgs() ([METRICS])
+[PASS] checkStringReason(uint256) ([METRICS])
+Suite result: FAILED. 5 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
 #[forgetest_init]
 fn symbolic_vm_expect_emit_matches_external_logs(prj: _, cmd: _) {
     if !z3_available() {
@@ -4506,6 +4616,7 @@ fn symbolic_vm_assume_no_revert_filters_revert_matches(prj: _, cmd: _) {
         );
         return;
     }
+    prj.update_config(|config| config.invariant.runs = 0);
 
     prj.add_test(
         "SymbolicAssumeNoRevertFilters.t.sol",
@@ -4536,6 +4647,16 @@ contract SymbolicAssumeNoRevertFilterTarget {
         if (x == 7) revert Expected(x);
         if (x == 9) revert Other(x);
     }
+
+    function anyExpected(uint256 x) external pure {
+        revert Expected(x);
+    }
+}
+
+contract SymbolicAssumeNoRevertRevertingCreate {
+    constructor(uint256 x) {
+        if (x == 7) revert Expected(7);
+    }
 }
 
 contract SymbolicAssumeNoRevertOtherTarget {
@@ -4561,8 +4682,8 @@ contract SymbolicAssumeNoRevertFilters is Test {
             revertData: abi.encodeWithSelector(Expected.selector, uint256(7))
         }));
 
-        (bool ok,) = address(target).call(abi.encodeWithSelector(target.onlyExpected.selector, x));
-        assertTrue(ok);
+        target.onlyExpected(x);
+        assertTrue(x != 7);
     }
 
     function checkAssumeNoRevertArrayFilterPrunes(uint256 x) public {
@@ -4579,8 +4700,52 @@ contract SymbolicAssumeNoRevertFilters is Test {
         });
         symbolicVm.assumeNoRevert(filters);
 
-        (bool ok,) = address(target).call(abi.encodeWithSelector(target.twoReverts.selector, x));
+        target.twoReverts(x);
+        assertTrue(x != 7 && x != 9);
+    }
+
+    function checkAssumeNoRevertCaughtFails(uint256 x) public {
+        vm.assumeNoRevert();
+        (bool ok,) = address(target).call(abi.encodeWithSelector(target.onlyExpected.selector, x));
         assertTrue(ok);
+    }
+
+    function checkAssumeNoRevertFilteredCaughtFails(uint256 x) public {
+        symbolicVm.assumeNoRevert(SymbolicVm.PotentialRevert({
+            reverter: address(target),
+            partialMatch: false,
+            revertData: abi.encodeWithSelector(Expected.selector, uint256(7))
+        }));
+
+        (bool ok,) = address(target).call(abi.encodeWithSelector(target.onlyExpected.selector, x));
+        assertTrue(ok);
+    }
+
+    function checkAssumeNoRevertCaughtReturnsMagic(uint256 x) public {
+        vm.assumeNoRevert();
+        (bool ok, bytes memory data) =
+            address(target).call(abi.encodeWithSelector(target.onlyExpected.selector, x));
+        assertTrue(ok || keccak256(data) == keccak256("FOUNDRY::ASSUME"));
+    }
+
+    function checkAssumeNoRevertSkipsCreate(uint256 x) public {
+        vm.assumeNoRevert();
+        try new SymbolicAssumeNoRevertRevertingCreate(x) {} catch (bytes memory data) {
+            assertTrue(keccak256(data) == keccak256(abi.encodeWithSelector(Expected.selector, uint256(7))));
+        }
+        (bool ok, bytes memory callData) =
+            address(target).call(abi.encodeWithSelector(target.onlyExpected.selector, x));
+        assertTrue(ok || keccak256(callData) == keccak256("FOUNDRY::ASSUME"));
+    }
+
+    function checkAssumeNoRevertAmbiguousMatchIncomplete(uint256 x) public {
+        symbolicVm.assumeNoRevert(SymbolicVm.PotentialRevert({
+            reverter: address(target),
+            partialMatch: false,
+            revertData: abi.encodeWithSelector(Expected.selector, uint256(7))
+        }));
+
+        target.anyExpected(x);
     }
 
     function checkAssumeNoRevertWrongDataFails(uint256 x) public {
@@ -4591,8 +4756,9 @@ contract SymbolicAssumeNoRevertFilters is Test {
             revertData: abi.encodeWithSelector(Other.selector, uint256(8))
         }));
 
-        (bool ok,) = address(target).call(abi.encodeWithSelector(target.twoReverts.selector, x));
-        assertTrue(ok);
+        (bool ok, bytes memory data) =
+            address(target).call(abi.encodeWithSelector(target.twoReverts.selector, x));
+        assertTrue(ok || keccak256(data) == keccak256("FOUNDRY::ASSUME"));
     }
 
     function checkAssumeNoRevertWrongReverterFails(uint256 x) public {
@@ -4607,6 +4773,32 @@ contract SymbolicAssumeNoRevertFilters is Test {
         assertTrue(ok);
     }
 }
+
+contract SymbolicAssumeNoRevertHandler {
+    uint256 public value;
+
+    function set(uint256 x) external {
+        value = x;
+    }
+}
+
+contract SymbolicAssumeNoRevertPredicate is Test {
+    SymbolicAssumeNoRevertFilterTarget target;
+    SymbolicAssumeNoRevertHandler handler;
+
+    function setUp() public {
+        target = new SymbolicAssumeNoRevertFilterTarget();
+        handler = new SymbolicAssumeNoRevertHandler();
+        targetContract(address(handler));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_assumeNoRevertInPredicateBreaks() public view {
+        uint256 value = handler.value();
+        vm.assumeNoRevert();
+        target.onlyExpected(value);
+    }
+}
 "#,
     );
 
@@ -4614,15 +4806,17 @@ contract SymbolicAssumeNoRevertFilters is Test {
         "test",
         "--symbolic",
         "--match-test",
-        "checkAssumeNoRevert.*Prunes",
+        "^checkAssumeNoRevert(.*Prunes|CaughtReturnsMagic|SkipsCreate)\\(",
     ]))
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicAssumeNoRevertFilters.t.sol:SymbolicAssumeNoRevertFilters
+Ran 4 tests for test/SymbolicAssumeNoRevertFilters.t.sol:SymbolicAssumeNoRevertFilters
 [PASS] checkAssumeNoRevertArrayFilterPrunes(uint256) ([METRICS])
+[PASS] checkAssumeNoRevertCaughtReturnsMagic(uint256) ([METRICS])
 [PASS] checkAssumeNoRevertExactFilterPrunes(uint256) ([METRICS])
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+[PASS] checkAssumeNoRevertSkipsCreate(uint256) ([METRICS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -4635,16 +4829,18 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
         "test",
         "--symbolic",
         "--match-test",
-        "^(checkAssumeNoRevertWrongDataFails|checkAssumeNoRevertWrongReverterFails)\\(",
+        "^checkAssumeNoRevert(Caught|FilteredCaught|WrongData|WrongReverter)Fails\\(",
     ]))
     .failure()
     .stdout_eq(
         str![[r#"
 ...
-Ran 2 tests for test/SymbolicAssumeNoRevertFilters.t.sol:SymbolicAssumeNoRevertFilters
+Ran 4 tests for test/SymbolicAssumeNoRevertFilters.t.sol:SymbolicAssumeNoRevertFilters
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertCaughtFails(uint256) ([METRICS])
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertFilteredCaughtFails(uint256) ([METRICS])
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertWrongDataFails(uint256) ([METRICS])
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertWrongReverterFails(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
 "#]]
         .unordered(),
@@ -4654,6 +4850,33 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
     for reason in ["symbolic vm.assumeNoRevert", "symbolic Foundry cheatcode"] {
         assert!(!stdout.contains(reason), "{stdout}");
     }
+
+    // Like Forge, an invariant predicate that reverts with `FOUNDRY::ASSUME` is broken, and an
+    // ambiguous symbolic match is reported as incomplete instead of being narrowed.
+    assert_symbolic_witness(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(invariant_assumeNoRevertInPredicateBreaks|checkAssumeNoRevertAmbiguousMatchIncomplete)\\(",
+    ]))
+    .failure()
+    .stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/SymbolicAssumeNoRevertFilters.t.sol:SymbolicAssumeNoRevertFilters
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: ambiguous symbolic vm.assumeNoRevert match] checkAssumeNoRevertAmbiguousMatchIncomplete(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicAssumeNoRevertFilters.t.sol:SymbolicAssumeNoRevertPredicate
+[FAIL: FOUNDRY::ASSUME]
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=set(uint256) [ARGS]
+ invariant_assumeNoRevertInPredicateBreaks() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]
+        .unordered(),
+    );
 }
 
 // The `vm.prank(address, bool delegateCall)` overload diverges from concrete
