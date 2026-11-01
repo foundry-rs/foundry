@@ -498,7 +498,9 @@ impl PropertiesArgs {
             }
             run += 1;
         };
-        let cache_root = config.cache_path.join("properties");
+        // Per-run cache, same number as the reserved generated-test dirs, so concurrent CLI
+        // invocations on one project do not share or wipe each other's prompts, logs, or usage.
+        let cache_root = config.cache_path.join("properties").join(format!("run-{run}"));
         let verifier_command = self
             .verifier_command
             .as_ref()
@@ -607,10 +609,9 @@ impl Campaign<'_> {
             self.args.target.clone()
         };
         let inputs = AgentInputs { agent_command, targets, context };
-        // The prompts, logs, usage, verdicts, and test copies of an earlier run go.
-        if self.cache_root.exists() {
-            fs::remove_dir_all(&self.cache_root)?;
-        }
+        // This campaign's cache is freshly reserved with the run number; do not clear the parent
+        // `cache/properties` root, or a concurrent campaign loses its live prompt/usage files.
+        fs::create_dir_all(&self.cache_root)?;
         // Agents work in copies of the project, but the copies link the entries of dependency
         // directories. A shared file that changes while they run taints the run.
         let fingerprint = project_fingerprint(self.config, &self.sandbox.dependencies());
@@ -721,12 +722,10 @@ impl Campaign<'_> {
         // unless a written file of its agent imports it or it imports one, so every written test
         // compiles against the files that it ran with. Nothing is kept when files that the
         // workspaces share with the project changed while the agents ran.
-        let normalize =
-            |content: &str| COMMENT.replace_all(content, "").split_whitespace().collect::<String>();
         let mut seen = collect_tests(&self.config.root, &self.generated_tests, 0, &mut vec![])
             .unwrap_or_default()
             .iter()
-            .map(|file| normalize(&file.content))
+            .map(|file| normalize_test_content(&file.content))
             .collect::<HashSet<_>>();
         let mut held_back = Vec::new();
         let mut kept = Vec::new();
@@ -749,8 +748,10 @@ impl Campaign<'_> {
             let imports = |file: &TestFile, other: &TestFile| {
                 session.imports.get(&file.path).is_some_and(|i| i.contains(&other.path))
             };
-            let mut write =
-                files.iter().map(|file| seen.insert(normalize(&file.content))).collect::<Vec<_>>();
+            let mut write = files
+                .iter()
+                .map(|file| seen.insert(normalize_test_content(&file.content)))
+                .collect::<Vec<_>>();
             while let Some(index) = (0..files.len()).find(|&i| {
                 !write[i]
                     && files.iter().zip(&write).any(|(other, written)| {
@@ -839,7 +840,14 @@ impl Campaign<'_> {
             "duplicates": duplicates,
             "usage": usage,
         });
-        fs::write(&report_path, serde_json::to_vec_pretty(&report)?)?;
+        let report_bytes = serde_json::to_vec_pretty(&report)?;
+        fs::write(&report_path, &report_bytes)?;
+        // Convenience pointer for tools that still look at `cache/properties/report.json`. Last
+        // finished campaign on the project wins; each run keeps its own copy under `run-<n>/`.
+        if let Some(properties_root) = self.cache_root.parent() {
+            fs::create_dir_all(properties_root)?;
+            fs::write(properties_root.join("report.json"), &report_bytes)?;
+        }
 
         // Agents can reach the project's dependencies through their copies, so a change can come
         // from an agent, and no result of the run can be trusted.
@@ -1523,6 +1531,115 @@ fn collect_tests(
     }
     files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(files)
+}
+
+/// Normalizes generated Solidity for duplicate detection: strip comments outside string literals,
+/// keep string contents byte-for-byte (including whitespace and `//` inside URLs), and drop
+/// insignificant whitespace only in non-string code so comment-only differences still collapse.
+fn normalize_test_content(source: &str) -> String {
+    #[derive(Clone, Copy)]
+    enum State {
+        Code,
+        LineComment,
+        BlockComment,
+        String { quote: u8 },
+        HexString,
+    }
+
+    let bytes = source.as_bytes();
+    let mut out = String::with_capacity(source.len());
+    let mut state = State::Code;
+    let mut i = 0;
+    let mut code_buf = String::new();
+
+    let flush_code = |buf: &mut String, out: &mut String| {
+        if buf.is_empty() {
+            return;
+        }
+        out.extend(buf.split_whitespace());
+        buf.clear();
+    };
+
+    while i < bytes.len() {
+        let b = bytes[i];
+        match state {
+            State::Code => {
+                if b == b'/' && i + 1 < bytes.len() {
+                    match bytes[i + 1] {
+                        b'/' => {
+                            flush_code(&mut code_buf, &mut out);
+                            state = State::LineComment;
+                            i += 2;
+                            continue;
+                        }
+                        b'*' => {
+                            flush_code(&mut code_buf, &mut out);
+                            state = State::BlockComment;
+                            i += 2;
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+                if b == b'"' || b == b'\'' {
+                    flush_code(&mut code_buf, &mut out);
+                    out.push(b as char);
+                    state = State::String { quote: b };
+                    i += 1;
+                    continue;
+                }
+                if (b == b'h' || b == b'H')
+                    && i + 1 < bytes.len()
+                    && bytes[i + 1] == b'"'
+                    && (i == 0 || !bytes[i - 1].is_ascii_alphanumeric() && bytes[i - 1] != b'_')
+                {
+                    flush_code(&mut code_buf, &mut out);
+                    out.push(b as char);
+                    out.push('"');
+                    state = State::HexString;
+                    i += 2;
+                    continue;
+                }
+                code_buf.push(b as char);
+                i += 1;
+            }
+            State::LineComment => {
+                if b == b'\n' {
+                    state = State::Code;
+                }
+                i += 1;
+            }
+            State::BlockComment => {
+                if b == b'*' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+                    state = State::Code;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            State::String { quote } => {
+                out.push(b as char);
+                if b == b'\\' && i + 1 < bytes.len() {
+                    out.push(bytes[i + 1] as char);
+                    i += 2;
+                    continue;
+                }
+                if b == quote {
+                    state = State::Code;
+                }
+                i += 1;
+            }
+            State::HexString => {
+                out.push(b as char);
+                if b == b'"' {
+                    state = State::Code;
+                }
+                i += 1;
+            }
+        }
+    }
+    flush_code(&mut code_buf, &mut out);
+    out
 }
 
 /// Returns the comment right above a test function, without comment markers, as one line. The
@@ -2210,5 +2327,35 @@ contract OtherTest {
             let error = collect_tests(workspace.path(), linked, 2, &mut rejected).unwrap_err();
             assert!(error.to_string().contains("is not a directory"), "{error}");
         }
+    }
+
+    #[test]
+    fn normalize_test_content_keeps_string_literals_and_strips_comments() {
+        let with_space = r#"
+            // Fixture case.
+            contract EchoSpecTest {
+              function testEcho() public pure {
+                require(keccak256(bytes(Echo.echo("a b"))) == keccak256(bytes("a b")), "echo changed");
+              }
+            }
+        "#;
+        let without_space = r#"
+            // Other fixture.
+            contract EchoSpecTest {
+              function testEcho() public pure {
+                require(keccak256(bytes(Echo.echo("ab"))) == keccak256(bytes("ab")), "echo changed");
+              }
+            }
+        "#;
+        let url_one = r#"require(Echo.echo("https://one.example") == "https://one.example");"#;
+        let url_two = r#"require(Echo.echo("https://two.example") == "https://two.example");"#;
+        let comment_only_a = "contract T { function testA() public pure { /* note */ require(true); } }";
+        let comment_only_b = "contract T { function testA() public pure { require(true); // note\n } }";
+
+        assert_ne!(normalize_test_content(with_space), normalize_test_content(without_space));
+        assert_ne!(normalize_test_content(url_one), normalize_test_content(url_two));
+        assert_eq!(normalize_test_content(comment_only_a), normalize_test_content(comment_only_b));
+        // `//` inside a string must not start a line comment.
+        assert!(normalize_test_content(url_one).contains("https://one.example"));
     }
 }
