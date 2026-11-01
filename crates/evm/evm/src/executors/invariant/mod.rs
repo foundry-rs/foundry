@@ -20,7 +20,7 @@ use crate::{
 use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, Bytes, FixedBytes, I256, KECCAK256_EMPTY, Selector, U256,
-    map::{AddressMap, AddressSet, HashMap},
+    map::{AddressSet, HashMap},
 };
 use alloy_sol_types::{SolCall, sol};
 use campaign::{
@@ -1208,11 +1208,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 .unwrap_or_default();
                             handler =
                                 Some((current_tx.call_details.target, Selector::from(sel_bytes)));
-                            if let Some(fuzzer) =
-                                current_run.executor.inspector_mut().fuzzer.as_mut()
-                            {
-                                invariant_test.fuzz_state.collect_fuzzer_values(fuzzer);
-                            }
                             call_cmp_values = call_result.evm_cmp_values.take().unwrap_or_default();
                             let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
                             if config.show_metrics {
@@ -1310,19 +1305,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 handler.take().expect("feedback precedes campaign checks");
                             let state_changeset = std::mem::take(&mut result.state_changeset);
                             if !result.reverted {
-                                let mapping_slots = current_run
-                                    .executor
-                                    .inspector()
-                                    .fuzzer
-                                    .as_ref()
-                                    .and_then(|fuzzer| fuzzer.mapping_slots.as_ref());
                                 collect_data(
                                     &invariant_test,
                                     &state_changeset,
                                     current_run.inputs.last().expect("checked above"),
                                     &result,
                                     run_depth,
-                                    mapping_slots,
                                 );
                             }
 
@@ -1792,20 +1780,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             fuzz_fixtures.clone(),
         );
 
-        // If any of the targeted contracts have the storage layout enabled then we can sample
-        // mapping values. To accomplish, we need to record the mapping storage slots and keys.
-        let mapping_slots = targeted_contracts
-            .targets()
-            .iter()
-            .any(|(_, t)| t.storage_layout.is_some())
-            .then(AddressMap::default);
-
         // Set up fuzzer WITHOUT call_generator initially.
         // We defer call_override until after the initial invariant check to avoid
         // injecting random calls during setup which would break the invariant assertion.
         let extra_cheatcode_addresses = executor.inspector().extra_cheatcode_addresses();
         executor.inspector_mut().set_fuzzer(
-            Fuzzer::new(config.dictionary.max_fuzz_dictionary_values, mapping_slots)
+            Fuzzer::default()
                 .with_extra_cheatcode_addresses(extra_cheatcode_addresses)
                 .with_call_recording(config.corpus.is_coverage_guided()),
         );
@@ -1828,7 +1808,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &mut failures,
         )?;
         if let Some(fuzzer) = executor.inspector_mut().fuzzer.as_mut() {
-            fuzz_state.collect_fuzzer_values(fuzzer);
             let _ = fuzzer.take_observed_calls();
         }
         let generator = foundry_evm_fuzz::sequence::SequenceGenerator::invariant_with_fixtures(
@@ -2273,7 +2252,6 @@ fn collect_data<FEN: FoundryEvmNetwork>(
     tx: &BasicTxDetails,
     call_result: &RawCallResult<FEN>,
     run_depth: u32,
-    mapping_slots: Option<&AddressMap<foundry_common::mapping_slots::MappingSlots>>,
 ) {
     // Collect values from fuzzed call result and add them to fuzz dictionary.
     invariant_test.fuzz_state.collect_values_from_call(
@@ -2287,7 +2265,6 @@ fn collect_data<FEN: FoundryEvmNetwork>(
                 || changes.current.is_some_and(|info| info.code_hash != KECCAK256_EMPTY)
         }),
         run_depth,
-        mapping_slots,
     );
 
     // Inject typed sancov trace-cmp operands into the fuzz dictionary.
