@@ -1450,8 +1450,14 @@ async fn manual_mining_rpcs_preserve_controls_on_failure() {
                 )
                 .await
         };
-        let error = result.unwrap_err().to_string();
-        assert!(error.contains("execution reverted"), "{method}: {error}");
+        let error = result.unwrap_err();
+        let error = error.as_error_resp().unwrap();
+        assert_eq!(error.code, -32603, "{method}");
+        assert_eq!(
+            error.message,
+            "failed to apply withdrawal requests contract call: execution reverted: 0x",
+            "{method}"
+        );
         assert_eq!(api.backend.best_number(), 0, "{method}");
 
         api.anvil_set_code(withdrawals, Bytes::new()).await.unwrap();
