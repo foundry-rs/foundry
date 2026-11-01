@@ -456,7 +456,9 @@ mod tests {
         },
         spawn,
     };
+    use alloy_network::Ethereum;
     use alloy_primitives::keccak256;
+    use alloy_provider::builder;
     use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking};
     use alloy_serde::WithOtherFields;
     use alloy_trie::{Nibbles, TrieAccount, proof::verify_proof};
@@ -1256,6 +1258,26 @@ mod tests {
             assert!((before..=after).contains(&u128::from(*seen)));
             assert!(matches!(events.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn tempo_alloy_unsubscribe_drops_idle_receiver() {
+        let (api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+        let events = api.backend.blockchain.storage.read().tempo.as_ref().unwrap().events.clone();
+        let provider = builder::<Ethereum>().connect(&handle.ws_endpoint()).await.unwrap();
+        let consensus =
+            provider.subscribe_to::<serde_json::Value>("consensus_subscribe").await.unwrap();
+        let mut heads = provider.subscribe_blocks().await.unwrap();
+        assert_eq!(events.receiver_count(), 1);
+
+        provider.unsubscribe(*consensus.local_id()).unwrap();
+        timeout(Duration::from_secs(5), events.closed()).await.unwrap();
+        assert_eq!(events.receiver_count(), 0);
+        assert_eq!(provider.get_block_number().await.unwrap(), 0);
+
+        api.mine_one().await.unwrap();
+        let head = timeout(Duration::from_secs(5), heads.recv()).await.unwrap().unwrap();
+        assert_eq!(head.number, 1);
     }
 
     fn tempo_fork_config(config: NodeConfig, source: &crate::NodeHandle) -> NodeConfig {

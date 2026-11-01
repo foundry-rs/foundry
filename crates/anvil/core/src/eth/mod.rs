@@ -978,7 +978,10 @@ pub enum EthPubSub {
     #[serde(rename = "eth_subscribe")]
     EthSubscribe(SubscriptionKind, #[serde(default)] Box<SubscriptionParams>),
 
-    /// Unsubscribe from an eth subscription
+    /// Cancels an Ethereum subscription on the current connection.
+    ///
+    /// If no Ethereum subscription matches, cancels a Tempo consensus subscription with the same
+    /// ID. This fallback supports clients such as Alloy that always use `eth_unsubscribe`.
     #[serde(rename = "eth_unsubscribe", with = "sequence")]
     EthUnSubscribe(SubscriptionId),
 

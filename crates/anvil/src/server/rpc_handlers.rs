@@ -68,7 +68,10 @@ impl PubSubEthRpcHandler {
         match pubsub {
             EthPubSub::EthUnSubscribe(id) => {
                 trace!(target: "rpc::ws", "canceling subscription {:?}", id);
-                let canceled = cx.remove_subscription(&PubSubSubscriptionId::Eth(id)).is_some();
+                let canceled = cx
+                    .remove_subscription(&PubSubSubscriptionId::Eth(id.clone()))
+                    .or_else(|| cx.remove_subscription(&PubSubSubscriptionId::Consensus(id)))
+                    .is_some();
                 ResponseResult::success(canceled)
             }
             EthPubSub::EthSubscribe(kind, raw_params) => {
@@ -210,7 +213,7 @@ fn log_request_error(method: &str, id: &Id, params: &serde_json::Value, error: &
     node_info!(method, ?id, %params, error = %error, "RPC request failed");
 }
 
-/// Namespaced connection-local keys preserve each subscription API's cancellation scope.
+/// Connection-local keys distinguish Ethereum and Tempo consensus subscriptions.
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub enum PubSubSubscriptionId {
     /// An Ethereum subscription.
@@ -292,6 +295,20 @@ mod tests {
             ResponseResult::success(false),
         );
         assert!(context.remove_subscription(&PubSubSubscriptionId::Eth(id.clone())).is_some());
+
+        let mut subscription = EthSubscription::tempo_consensus(events.subscribe(), id.clone());
+        assert!(futures::poll!(subscription.next()).is_pending());
+        context.add_subscription(PubSubSubscriptionId::Consensus(id.clone()), subscription);
+        assert_eq!(events.receiver_count(), 1);
+        assert_eq!(
+            handler.on_pub_sub(EthPubSub::EthUnSubscribe(id.clone()), context.clone()).await,
+            ResponseResult::success(true),
+        );
+        assert_eq!(events.receiver_count(), 0);
+        assert_eq!(
+            handler.on_pub_sub(EthPubSub::EthUnSubscribe(id.clone()), context.clone()).await,
+            ResponseResult::success(false),
+        );
 
         let mut subscription = EthSubscription::tempo_consensus(events.subscribe(), id.clone());
         assert!(futures::poll!(subscription.next()).is_pending());

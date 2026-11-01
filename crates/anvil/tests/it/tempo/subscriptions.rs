@@ -169,11 +169,13 @@ async fn tempo_consensus_subscription_unsubscribe_is_scoped() {
     let provider = connect_pubsub(&handle.ws_endpoint()).await;
     let other = connect_pubsub(&handle.ws_endpoint()).await;
     let consensus: String = provider.client().request("consensus_subscribe", ()).await.unwrap();
+    let consensus_fallback: String =
+        provider.client().request("consensus_subscribe", ()).await.unwrap();
     let heads = provider.subscribe_blocks().await.unwrap();
     let heads_id = *heads.local_id();
     let mut heads = heads.into_stream();
 
-    assert!(!provider.client().request::<_, bool>("eth_unsubscribe", (&consensus,)).await.unwrap());
+    assert!(!other.client().request::<_, bool>("eth_unsubscribe", (&consensus,)).await.unwrap());
     assert!(
         !other.client().request::<_, bool>("consensus_unsubscribe", (&consensus,)).await.unwrap()
     );
@@ -184,6 +186,20 @@ async fn tempo_consensus_subscription_unsubscribe_is_scoped() {
         !provider
             .client()
             .request::<_, bool>("consensus_unsubscribe", (&consensus,))
+            .await
+            .unwrap()
+    );
+    assert!(
+        provider
+            .client()
+            .request::<_, bool>("eth_unsubscribe", (&consensus_fallback,))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !provider
+            .client()
+            .request::<_, bool>("eth_unsubscribe", (&consensus_fallback,))
             .await
             .unwrap()
     );
