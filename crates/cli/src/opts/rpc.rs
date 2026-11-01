@@ -66,19 +66,24 @@ impl figment::Provider for RpcOpts {
 impl RpcOpts {
     /// Returns the RPC endpoint.
     pub fn url<'a>(&'a self, config: Option<&'a Config>) -> Result<Option<Cow<'a, str>>> {
-        self.url_with_env(config, std::env::var("ETH_RPC_URL").ok())
+        // `ETH_RPC_URL` from the environment, or else from the secret store.
+        self.url_with_env(config, || {
+            std::env::var("ETH_RPC_URL")
+                .ok()
+                .or_else(|| foundry_config::resolve::secret("ETH_RPC_URL"))
+        })
     }
 
     fn url_with_env<'a>(
         &'a self,
         config: Option<&'a Config>,
-        env_url: Option<String>,
+        env_url: impl FnOnce() -> Option<String>,
     ) -> Result<Option<Cow<'a, str>>> {
         if self.flashbots {
             Ok(Some(Cow::Borrowed(FLASHBOTS_URL)))
         } else if let Some(url) = self.common.rpc_url.as_deref() {
             Ok(Some(Cow::Borrowed(url)))
-        } else if let Some(url) = env_url {
+        } else if let Some(url) = env_url() {
             Ok(Some(Cow::Owned(url)))
         } else {
             self.common.url(config)
@@ -252,7 +257,7 @@ mod tests {
     fn rpc_url_resolves_eth_rpc_url_env() {
         let args = RpcOpts::default();
         let url = args
-            .url_with_env(None, Some("http://127.0.0.1:8545".to_string()))
+            .url_with_env(None, || Some("http://127.0.0.1:8545".to_string()))
             .expect("url")
             .expect("url");
 
@@ -269,7 +274,7 @@ mod tests {
             ..Default::default()
         };
         let url = args
-            .url_with_env(None, Some("http://127.0.0.1:8545".to_string()))
+            .url_with_env(None, || Some("http://127.0.0.1:8545".to_string()))
             .expect("url")
             .expect("url");
 

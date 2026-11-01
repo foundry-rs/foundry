@@ -36,7 +36,7 @@ impl Cheatcode for setEnvCall {
 impl Cheatcode for resolveEnvCall {
     fn apply_context_free(&self) -> Result {
         let Self { input } = self;
-        let resolved = foundry_config::resolve::interpolate(input)
+        let resolved = foundry_config::resolve::interpolate_env_only(input)
             .map_err(|e| fmt_err!("failed to resolve env var: {e}"))?;
         Ok(resolved.abi_encode())
     }
