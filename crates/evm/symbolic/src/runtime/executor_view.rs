@@ -17,6 +17,8 @@ pub struct ExecutorView<'a> {
     pub(crate) block: ExecutorBlock,
     pub(crate) gas_price: u128,
     pub(crate) isolate: bool,
+    /// Whether `vm.expectRevert` may be satisfied by an internal call below the next call.
+    pub(crate) internal_expect_revert: bool,
     pub(crate) blob_hashes: Vec<B256>,
     pub(crate) arbitrary_storage_targets: Vec<(Address, bool)>,
     pub(crate) arbitrary_storage_copies: Vec<(Address, Address)>,
@@ -72,6 +74,8 @@ impl<'a> ExecutorView<'a> {
                 .and_then(|cheats| cheats.gas_price)
                 .unwrap_or_else(|| executor.tx_env().gas_price()),
             isolate: cheats.is_some_and(|cheats| cheats.core.config.isolate),
+            internal_expect_revert: cheats
+                .is_some_and(|cheats| cheats.core.config.internal_expect_revert),
             blob_hashes: executor.tx_env().blob_versioned_hashes().to_vec(),
             arbitrary_storage_targets: cheats
                 .into_iter()

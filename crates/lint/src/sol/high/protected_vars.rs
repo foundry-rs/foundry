@@ -609,7 +609,7 @@ impl<'gcx> EntryAnalyzer<'gcx> {
                 false
             }
             StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => self.analyze_block(block),
-            StmtKind::AssemblyBlock(block) => {
+            StmtKind::AssemblyBlock(block, _) => {
                 self.assembly_depth += 1;
                 let continues = self.analyze_block(block);
                 self.assembly_depth -= 1;

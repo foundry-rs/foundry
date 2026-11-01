@@ -123,7 +123,9 @@ use chrono::Datelike;
 use eyre::{Context, Result};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use foundry_evm::{
-    backend::{BlockchainDb, DatabaseError, DatabaseResult, RevertStateSnapshotAction},
+    backend::{
+        BlockchainDb, DatabaseError, DatabaseResult, EmptyDBWrapper, RevertStateSnapshotAction,
+    },
     constants::{DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE},
     core::precompiles::EC_RECOVER,
     decode::RevertDecoder,
@@ -1292,7 +1294,10 @@ impl<N: Network> Backend<N> {
 
     /// Updates memory limits that should be more strict when auto-mine is enabled
     pub(crate) fn update_interval_mine_block_time(&self, block_time: Duration) {
-        self.states.write().update_interval_mine_block_time(block_time)
+        self.states.write().update_interval_mine_block_time(block_time);
+        if let Some(states) = self.tempo_proof_states() {
+            states.write().update_interval_mine_block_time(block_time);
+        }
     }
 
     /// Returns the `TimeManager` responsible for timestamps
@@ -1993,8 +1998,21 @@ impl<N: Network> Backend<N> {
         let num = self.best_number();
         let hash = self.best_hash();
         let id = db.snapshot_state();
+        let proof_state = self.tempo_proof_states().and_then(|states| {
+            // Explicit snapshots keep the sealed head independently of bounded proof history.
+            // Live execution may already contain unmined development edits.
+            let states = states.upgradable_read();
+            if let Some(state) = states.get_state(&hash) {
+                return state.maybe_as_full_db().cloned().map(Arc::new);
+            }
+            let mut states = RwLockUpgradableReadGuard::upgrade(states);
+            states
+                .get_on_disk_state(&hash)
+                .and_then(|state| state.maybe_as_full_db().cloned())
+                .map(Arc::new)
+        });
         if let Some(tempo) = &mut self.blockchain.storage.write().tempo {
-            tempo.snapshot(id);
+            tempo.snapshot(id, proof_state);
         }
         trace!(target: "backend", "creating snapshot {} at {}", id, num);
         self.active_state_snapshots.lock().insert(
@@ -2642,6 +2660,37 @@ impl<N: Network> Backend<N> {
         } else {
             Ok(requested)
         }
+    }
+
+    /// Returns the number of the block a trace method executes against.
+    ///
+    /// Unlike [`Self::ensure_block_number`], this reports every block that is not part of this
+    /// chain as [`BlockchainError::BlockNotFound`]: a number past the head or below the genesis
+    /// number, and a hash of a block that is neither stored locally nor the fork block or an
+    /// upstream block below it.
+    pub async fn ensure_trace_block_number(
+        &self,
+        block_id: BlockId,
+    ) -> Result<u64, BlockchainError> {
+        let number = match self.ensure_block_number(Some(block_id)).await {
+            Err(BlockchainError::BlockOutOfRange(_, _)) => {
+                return Err(BlockchainError::BlockNotFound);
+            }
+            result => result?,
+        };
+        let known = match block_id {
+            BlockId::Hash(hash) => {
+                self.get_block_by_hash(hash.block_hash).is_some()
+                    || self.get_fork().is_some_and(|fork| {
+                        fork.predates_fork(number) || hash.block_hash == fork.block_hash()
+                    })
+            }
+            BlockId::Number(_) => {
+                self.get_block(number).is_some()
+                    || self.get_fork().is_some_and(|fork| fork.predates_fork_inclusive(number))
+            }
+        };
+        if known { Ok(number) } else { Err(BlockchainError::BlockNotFound) }
     }
 
     /// Returns the timestamp represented by a block request.
@@ -4023,7 +4072,7 @@ impl<N: Network> Backend<N> {
 
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
-            if fork.predates_fork(number) {
+            if fork.predates_fork_inclusive(number) {
                 return Ok(fork
                     .transaction_by_block_number_and_index(number, index.into())
                     .await?);
@@ -4210,13 +4259,12 @@ impl<N: Network> Backend<N> {
         .await
     }
 
-    /// Replays all transactions in a block and returns the requested traces for each transaction,
-    /// or `None` if the block is unknown.
+    /// Replays all transactions in a block and returns the requested traces for each transaction.
     pub async fn trace_replay_block_transactions(
         &self,
         block: BlockNumber,
         trace_types: HashSet<TraceType>,
-    ) -> Result<Option<Vec<TraceResultsWithTransactionHash>>, BlockchainError> {
+    ) -> Result<Vec<TraceResultsWithTransactionHash>, BlockchainError> {
         ensure_mined_trace_block(block)?;
         let block_number = self.convert_block_number(Some(block));
 
@@ -4224,19 +4272,17 @@ impl<N: Network> Backend<N> {
         if let Some(results) =
             self.mined_parity_trace_replay_block_transactions(block_number, &trace_types)?
         {
-            return Ok(Some(results));
+            return Ok(results);
         }
 
         // Fallback to fork if block predates fork
         if let Some(fork) = self.get_fork()
             && fork.predates_fork_inclusive(block_number)
         {
-            return Ok(Some(
-                fork.trace_replay_block_transactions(block_number, trace_types).await?,
-            ));
+            return Ok(fork.trace_replay_block_transactions(block_number, trace_types).await?);
         }
 
-        Ok(None)
+        Err(BlockchainError::BlockNotFound)
     }
 
     /// Replays a mined transaction and returns the requested traces, or `None` if the transaction
@@ -4651,24 +4697,29 @@ impl<N: Network> Backend<N> {
             genesis.timestamp
         };
 
-        let mut states = if prune_state_history_config.is_config_enabled() {
-            // if prune state history is enabled, configure the state cache only for memory
-            prune_state_history_config
-                .max_memory_history
-                .map(|limit| InMemoryBlockStates::new(limit, 0))
-                .unwrap_or_default()
-                .memory_only()
-        } else if max_persisted_states.is_some() {
-            max_persisted_states
-                .map(|limit| InMemoryBlockStates::new(DEFAULT_HISTORY_LIMIT, limit))
-                .unwrap_or_default()
-        } else {
-            Default::default()
-        };
+        let new_states = || {
+            let mut states = if prune_state_history_config.is_config_enabled() {
+                // if prune state history is enabled, configure the state cache only for memory
+                prune_state_history_config
+                    .max_memory_history
+                    .map(|limit| InMemoryBlockStates::new(limit, 0))
+                    .unwrap_or_default()
+                    .memory_only()
+            } else if max_persisted_states.is_some() {
+                max_persisted_states
+                    .map(|limit| InMemoryBlockStates::new(DEFAULT_HISTORY_LIMIT, limit))
+                    .unwrap_or_default()
+            } else {
+                Default::default()
+            };
 
-        if let Some(cache_path) = cache_path {
-            states = states.disk_path(cache_path);
-        }
+            if let Some(cache_path) = &cache_path {
+                states = states.disk_path(cache_path.clone());
+            }
+
+            states
+        };
+        let states = new_states();
 
         let (slots_in_an_epoch, precompile_factory, disable_pool_balance_checks, hardfork) = {
             let cfg = node_config.read().await;
@@ -4682,11 +4733,20 @@ impl<N: Network> Backend<N> {
         if networks.is_tempo() {
             let cfg = node_config.read().await;
             let mut storage = blockchain.storage.write();
-            storage.tempo = Some(TempoChain::new(
+            let mut tempo = TempoChain::new(
                 cfg.tempo_consensus_seed(),
                 cfg.tempo_epoch_length,
                 storage.best_number,
-            ));
+            );
+            let mut proof_states = new_states();
+            if prune_state_history_config.is_state_history_supported() {
+                // Execution history counts past states; proof history also retains the head.
+                proof_states = proof_states.with_current_state();
+            } else {
+                proof_states.set_cache_limit(1);
+            }
+            tempo.proof_states = Arc::new(RwLock::new(proof_states));
+            storage.tempo = Some(tempo);
         }
         let startup_cache_lease = if fork.read().is_some() {
             let db = db.read().await;
@@ -5139,6 +5199,7 @@ impl<N: Network> Backend<N> {
         if rpc_url_was_provided {
             staged_config.fork_chain_id = None;
         }
+        staged_config.warn_if_fork_headers_withheld(target_rpc_url);
         let configured_endpoint_is_anvil = staged_config.fork_endpoint_is_anvil
             && staged_config.fork_urls.contains(target_rpc_url);
         let cached_endpoint_is_anvil = previous_source.as_ref().is_some_and(|source| {
@@ -5615,15 +5676,25 @@ impl<N: Network> Backend<N> {
             snapshots.retain(|snapshot_id, _| *snapshot_id < id);
         }
         // Revert the storage that's newer than the snapshot.
-        let removed_blocks = {
+        let (removed_blocks, proof_state) = {
             let mut storage = self.blockchain.storage.write();
-            if let Some(tempo) = &mut storage.tempo {
-                tempo.restore(id, num);
-            }
-            storage.unwind_to(num, hash)
+            let proof_state = storage.tempo.as_mut().and_then(|tempo| {
+                tempo.restore(id, num).map(|state| (Arc::clone(&tempo.proof_states), state))
+            });
+            (storage.unwind_to(num, hash), proof_state)
         };
+        if let Some((states, accounts)) = proof_state {
+            let mut state = CacheDB::<EmptyDBWrapper>::new(Default::default());
+            state.cache.accounts = (*accounts).clone();
+            let mut states = states.write();
+            states.remove_block_states(&[hash]);
+            states.insert(hash, StateDb::new(state));
+        }
         let removed_hashes: Vec<_> = removed_blocks.iter().map(|b| b.header.hash_slow()).collect();
         self.states.write().remove_block_states(&removed_hashes);
+        if let Some(states) = self.tempo_proof_states() {
+            states.write().remove_block_states(&removed_hashes);
+        }
         if !removed_logs.is_empty() {
             self.notify_on_removed_logs(removed_logs);
         }
@@ -5648,6 +5719,10 @@ impl<N: Network> Backend<N> {
         }
         self.fees.restore(fees);
         Ok(true)
+    }
+
+    fn tempo_proof_states(&self) -> Option<Arc<RwLock<InMemoryBlockStates>>> {
+        self.blockchain.storage.read().tempo.as_ref().map(|tempo| Arc::clone(&tempo.proof_states))
     }
 }
 
@@ -6450,7 +6525,37 @@ where
                 if let Some(hook) = self.mining_state_root_hook.lock().as_ref() {
                     hook();
                 }
-                let state_root = db.maybe_state_root().unwrap_or_default();
+                let proof_state = (matches!(block_info.block.header, FoundryHeader::Tempo(_))
+                    && self.get_fork().is_some())
+                .then(|| {
+                    let mut state = CacheDB::<EmptyDBWrapper>::new(Default::default());
+                    state.cache.accounts = db
+                        .maybe_as_full_db()
+                        .expect("a fork database exposes its cached accounts")
+                        .clone();
+                    state
+                });
+                let state_root = proof_state.as_ref().map_or_else(
+                    || db.maybe_state_root().unwrap_or_default(),
+                    |state| {
+                        let proof_root = Arc::clone(
+                            &self
+                                .blockchain
+                                .storage
+                                .read()
+                                .tempo
+                                .as_ref()
+                                .expect("Tempo chain is initialized")
+                                .proof_root,
+                        );
+                        let (cache, previous) = &mut *proof_root.lock();
+                        // Rehash only the paths that changed since the previous seal.
+                        cache.record_diff(&state.cache.accounts, previous);
+                        let root = cache.root(&state.cache.accounts);
+                        previous.clone_from(&state.cache.accounts);
+                        root
+                    },
+                );
                 match &mut block_info.block.header {
                     FoundryHeader::Tempo(header) => header.inner.state_root = state_root,
                     FoundryHeader::Ethereum(header) => header.state_root = state_root,
@@ -6458,6 +6563,14 @@ where
 
                 // Update the new blockhash in the db itself.
                 let block_hash = block_info.block.header.hash_slow();
+                if let Some(proof_state) = proof_state {
+                    let proof_states =
+                        self.tempo_proof_states().expect("Tempo chain is initialized");
+                    let mut proof_states = proof_states.write();
+                    // Re-mining after a rewind can produce an already cached hash.
+                    proof_states.remove_block_states(&[block_hash]);
+                    proof_states.insert(block_hash, StateDb::new(proof_state));
+                }
                 db.insert_block_hash(U256::from(block_info.block.header.number()), block_hash);
                 self.time.commit_next_timestamp(pending_timestamp);
                 self.cheats.consume_next_block_overrides(&next_block);
@@ -7457,48 +7570,17 @@ where
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
     ) -> Result<AccountProof, BlockchainError> {
         let block_number = block_request.as_ref().map(|r| r.block_number());
+        if !matches!(block_request, Some(BlockRequest::Pending(_))) {
+            let height = self.convert_block_number(block_number);
+            if let Some(proof) = self.prove_tempo_account_at(address, &keys, height).await? {
+                return Ok(proof);
+            }
+        }
 
         self.with_database_at(block_request, |block_db, _| {
             trace!(target: "backend", "get proof for {:?} at {:?}", address, block_number);
             let db = block_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
-            let account = db.get(&address).cloned().unwrap_or_default();
-
-            let mut builder = HashBuilder::default()
-                .with_proof_retainer(ProofRetainer::new(vec![Nibbles::unpack(keccak256(address))]));
-
-            for (key, account) in trie_accounts(db) {
-                builder.add_leaf(key, &account);
-            }
-
-            let _ = builder.root();
-
-            let proof = builder
-                .take_proof_nodes()
-                .into_nodes_sorted()
-                .into_iter()
-                .map(|(_, v)| v)
-                .collect();
-            let (storage_hash, storage_proofs) = prove_storage(&account.storage, &keys);
-
-            let account_proof = AccountProof {
-                address,
-                balance: account.info.balance,
-                nonce: account.info.nonce,
-                code_hash: account.info.code_hash(),
-                storage_hash,
-                account_proof: proof,
-                storage_proof: keys
-                    .into_iter()
-                    .zip(storage_proofs)
-                    .map(|(key, proof)| {
-                        let storage_key: U256 = key.into();
-                        let value = account.storage.get(&storage_key).copied().unwrap_or_default();
-                        StorageProof { key: JsonStorageKey::Hash(key), value, proof }
-                    })
-                    .collect(),
-            };
-
-            Ok(account_proof)
+            Ok(prove_account(db, address, &keys))
         })
         .await?
     }
@@ -7835,6 +7917,9 @@ where
             let removed_hashes: Vec<_> =
                 removed_blocks.iter().map(|b| b.header.hash_slow()).collect();
             self.states.write().remove_block_states(&removed_hashes);
+            if let Some(states) = self.tempo_proof_states() {
+                states.write().remove_block_states(&removed_hashes);
+            }
 
             // Notify all log subscriptions and filters about the removed logs, so they receive
             // them again marked as removed, before any new chain notifications are emitted
@@ -10680,6 +10765,44 @@ pub fn prove_storage(
     }
 
     (root, proofs)
+}
+
+/// Builds an account and storage proof from one fixed local account set.
+fn prove_account(db: &AddressMap<DbAccount>, address: Address, keys: &[B256]) -> AccountProof {
+    let default = DbAccount::default();
+    let account = db.get(&address).unwrap_or(&default);
+
+    let mut builder = HashBuilder::default()
+        .with_proof_retainer(ProofRetainer::new(vec![Nibbles::unpack(keccak256(address))]));
+
+    for (key, account) in trie_accounts(db) {
+        builder.add_leaf(key, &account);
+    }
+
+    let _ = builder.root();
+
+    let proof =
+        builder.take_proof_nodes().into_nodes_sorted().into_iter().map(|(_, v)| v).collect();
+    let (storage_hash, storage_proofs) = prove_storage(&account.storage, keys);
+
+    AccountProof {
+        address,
+        balance: account.info.balance,
+        nonce: account.info.nonce,
+        code_hash: account.info.code_hash(),
+        storage_hash,
+        account_proof: proof,
+        storage_proof: keys
+            .iter()
+            .copied()
+            .zip(storage_proofs)
+            .map(|(key, proof)| {
+                let storage_key: U256 = key.into();
+                let value = account.storage.get(&storage_key).copied().unwrap_or_default();
+                StorageProof { key: JsonStorageKey::Hash(key), value, proof }
+            })
+            .collect(),
+    }
 }
 
 pub fn is_arbitrum(chain_id: u64) -> bool {

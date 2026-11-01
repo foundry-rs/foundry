@@ -1,6 +1,6 @@
-//! # foundry-debugger
+//! Opens Foundry's execution traces in the SolDB debugger.
 //!
-//! Interactive Solidity TUI debugger and debugger data file dumper
+//! [`DebuggerBuilder::run`] starts a SolDB session or writes a SolDB bundle.
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -8,20 +8,7 @@
 #[macro_use]
 extern crate foundry_common;
 
-#[macro_use]
-extern crate tracing;
-
-mod op;
-
 mod builder;
-mod debugger;
-mod dump;
-mod tui;
-
-mod node;
-
-pub use node::DebugNode;
-
 pub use builder::DebuggerBuilder;
-pub use debugger::{Debugger, DebuggerLayout};
-pub use tui::{ExitReason, TUI};
+
+mod soldb;

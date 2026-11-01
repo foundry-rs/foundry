@@ -18,7 +18,7 @@ use foundry_cheatcodes::Wallets;
 use foundry_cli::opts::TempoOpts;
 use foundry_common::{
     ContractData, ContractsByArtifact, ContractsByArtifactBuilder, compile::ProjectCompiler,
-    external_compiler::is_builtin_compiler_source, fs::canonicalize_path,
+    external_compiler::is_builtin_compiler_source, fs::canonicalize_path, namespaced_storage,
     provider::ProviderBuilder,
 };
 use foundry_compilers::{
@@ -28,7 +28,10 @@ use foundry_compilers::{
     info::ContractInfo,
     utils::source_files_iter,
 };
-use foundry_evm::{core::evm::FoundryEvmNetwork, traces::debug::ContractSources};
+use foundry_evm::{
+    core::evm::FoundryEvmNetwork,
+    traces::{CallTraceDecoder, debug::ContractSources},
+};
 use foundry_linking::Linker;
 use foundry_wallets::{MultiWalletOpts, wallet_browser::signer::BrowserSigner};
 use itertools::Itertools;
@@ -162,7 +165,7 @@ impl LinkedBuildData {
     pub fn new(
         libraries: Libraries,
         predeploy_libraries: ScriptPredeployLibraries,
-        build_data: BuildData,
+        mut build_data: BuildData,
     ) -> Result<Self> {
         let sources = ContractSources::from_project_output(
             &build_data.output,
@@ -170,13 +173,15 @@ impl LinkedBuildData {
             Some(&libraries),
         )?;
 
+        let storage_layouts = namespaced_storage::project_storage_layouts(
+            &mut build_data.output,
+            &build_data.project_root,
+        );
         let linked_contracts = build_data.get_linker().get_linked_artifacts(&libraries)?;
         let known_contracts = ContractsByArtifactBuilder::new(
             linked_contracts.iter().map(|(id, artifact)| (id.clone(), artifact.into())),
         )
-        .with_storage_layouts(build_data.output.artifact_ids().filter_map(|(id, artifact)| {
-            artifact.storage_layout.as_ref().map(|layout| (id, layout.clone()))
-        }))
+        .with_storage_layouts(storage_layouts)
         .build();
 
         Ok(Self { build_data, known_contracts, libraries, predeploy_libraries, sources })
@@ -463,7 +468,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             }
         }
 
-        let (args, build_data, script_wallets, browser_wallet, script_config) =
+        let (args, build_data, script_wallets, browser_wallet, script_config, resume_script_error) =
             if self.args.unlocked {
                 (
                     self.args,
@@ -471,6 +476,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     self.script_wallets,
                     self.browser_wallet,
                     self.script_config,
+                    None,
                 )
             } else {
                 let remaining_transactions =
@@ -496,6 +502,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                         self.script_wallets,
                         self.browser_wallet,
                         self.script_config,
+                        None,
                     )
                 } else {
                     // IF we are missing required signers, execute script as we might need to
@@ -506,12 +513,25 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                         .update_tempo_session_sender(&state.args.wallets, state.args.evm.sender)
                         .await?;
                     let executed = state.link().await?.prepare_execution().await?.execute().await?;
+                    // A failed run may still have collected every signer, so broadcast decides
+                    // whether this error is fatal.
+                    let resume_script_error = (!executed.execution_result.success).then(|| {
+                        CallTraceDecoder::new()
+                            .revert_decoder
+                            .clone()
+                            .with_abis(executed.build_data.known_contracts.values().map(|c| &c.abi))
+                            .decode(
+                                &executed.execution_result.returned,
+                                executed.execution_result.exit_reason,
+                            )
+                    });
                     (
                         executed.args,
                         executed.build_data.build_data,
                         executed.script_wallets,
                         executed.browser_wallet,
                         executed.script_config,
+                        resume_script_error,
                     )
                 }
             };
@@ -533,6 +553,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             browser_wallet,
             build_data: linked_build_data,
             sequence,
+            resume_script_error,
         })
     }
 

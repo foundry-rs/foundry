@@ -7,6 +7,14 @@
 //! Identity rotation takes effect in the epoch after the next block's epoch, allowing its
 //! predecessor's boundary block to announce the new key before it signs. Snapshots restore pending
 //! rotations exactly; rollback restores the retained block's key schedule.
+//!
+//! Locally mined fork blocks commit to a partial trie of the accounts and storage slots cached
+//! when the block was mined, rather than the complete upstream state. Non-pending `eth_getProof`
+//! queries use that immutable trie, including at the current head after development state edits.
+//! Accounts and slots absent from it have exclusion proofs, even if they exist upstream. Later
+//! upstream reads cannot extend an already certified trie. Proof snapshots follow the configured
+//! state-history cache limits; evicted snapshots are unavailable rather than rebuilt from live
+//! state. The latest snapshot is retained even when historical state retention is disabled.
 
 use super::{
     backend::tempo_consensus::TempoFinalization,

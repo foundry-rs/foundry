@@ -331,9 +331,10 @@ impl SymbolicExecutor {
 
         let mut parents = VecDeque::with_capacity(outcomes.len());
         for outcome in outcomes {
-            match self.join_call_outcome(state, outcome, created)? {
-                JoinedCallOutcome::Rejected => {}
-                JoinedCallOutcome::Failure(parent) => {
+            // Like Forge, a cheatcode CREATE leaves `vm.assumeNoRevert` for the next call.
+            match self.join_call_outcome(executor, state, outcome, created, None)? {
+                JoinedCallOutcome::Failure(parent)
+                | JoinedCallOutcome::Success { parent, unmet_expected_revert: true, .. } => {
                     *state = parent;
                     return Ok(StepOutcome::Failure);
                 }
@@ -358,7 +359,7 @@ impl SymbolicExecutor {
                     )?;
                     parents.push_back(parent);
                 }
-                JoinedCallOutcome::Success { mut parent, child } => {
+                JoinedCallOutcome::Success { mut parent, child, .. } => {
                     parent.world = child.world;
                     if isolated {
                         parent.world.restore_transient_storage(&failure_world);
@@ -752,17 +753,26 @@ impl SymbolicExecutor {
                 let mut data = ExpectedRevertData::Any;
                 let mut reverter = None;
                 let mut count = 1;
+                // Only `expectPartialRevert` matches the selector alone.
+                let partial = matches!(
+                    selector,
+                    expectPartialRevert_0Call::SELECTOR | expectPartialRevert_1Call::SELECTOR
+                );
                 for (index, param) in vm_params(selector).into_iter().enumerate() {
                     match param {
                         DynSolType::FixedBytes(4) => {
-                            let selector = read_abi_bytes4_words_arg(
+                            let bytes = read_abi_bytes4_words_arg(
                                 &mut self.cx,
                                 &state.memory,
                                 args_offset,
                                 index,
                             );
-                            data =
-                                ExpectedRevertData::Prefix(SymBytes::exprs(&mut self.cx, selector));
+                            let bytes = SymBytes::exprs(&mut self.cx, bytes);
+                            data = if partial {
+                                ExpectedRevertData::Prefix(bytes)
+                            } else {
+                                ExpectedRevertData::Exact(bytes)
+                            };
                         }
                         DynSolType::Bytes => {
                             let bytes = read_abi_symbolic_dynamic_byte_exprs_arg(
@@ -793,6 +803,10 @@ impl SymbolicExecutor {
                             )?;
                         }
                     }
+                }
+                // Forge reads a zero count as "expect no revert", which is not modeled.
+                if count == 0 {
+                    return Err(SymbolicError::Unsupported("symbolic vm.expectRevert count 0"));
                 }
                 Ok(self.set_expected_revert(state, data, reverter, count))
             }

@@ -6,6 +6,7 @@
 //! - Native value transfer rejection
 //! - Basic transaction behavior in Tempo mode
 
+use crate::abi::COUNTER_INIT_CODE;
 use alloy_consensus::{
     BlockHeader, Eip658Value, Receipt, Sealable, TxEip1559, Typed2718,
     proofs::{calculate_receipt_root, calculate_transaction_root},
@@ -23,7 +24,7 @@ use alloy_provider::{
 };
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{
-    Authorization, BlockId, BlockNumberOrTag, TransactionRequest,
+    Authorization, BlockId, BlockNumberOrTag, EIP1186AccountProofResponse, TransactionRequest,
     anvil::Forking,
     trace::{
         geth::{GethDebugTracingOptions, GethTrace},
@@ -34,6 +35,7 @@ use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue, sol};
+use alloy_trie::{Nibbles, TrieAccount, proof::verify_proof};
 use anvil::{NodeConfig, eth::pool::transactions::TransactionOrder, spawn};
 use anvil_core::{eth::block::Block, types::ReorgOptions};
 use axum::{Json, Router, routing::post};
@@ -7984,4 +7986,266 @@ async fn tempo_consensus_cli_seed_and_epoch_length() {
     .await;
     drop(child);
     assert_data_eq!(std::fs::read_to_string(&stderr).unwrap(), expected);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_fork_state_root_verifies_storage_proofs() {
+    let config = NodeConfig::test_tempo().with_no_mining(true);
+    let (source_api, source) = spawn(config.clone()).await;
+    source_api.mine_one().await.unwrap();
+    let (api, handle) = spawn(tempo_fork_config(config, &source)).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let nonce = provider.get_transaction_count(sender).await.unwrap();
+    let contract = sender.create(nonce);
+    let transaction = TransactionRequest::default()
+        .with_from(sender)
+        .with_nonce(nonce)
+        .with_deploy_code(COUNTER_INIT_CODE)
+        .with_gas_limit(10_000_000);
+    let hash: B256 =
+        provider.client().request("eth_sendTransaction", (transaction,)).await.unwrap();
+    api.mine_one().await.unwrap();
+    let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
+    assert!(receipt.status(), "Counter deployment failed: {receipt:?}");
+    assert_eq!(receipt.contract_address, Some(contract));
+
+    let identity = tempo_consensus_identity(&provider).await;
+    let certified = tempo_finalization(&provider, 2).await;
+    assert_tempo_certificate(&identity, &certified);
+    let root = certified.block.header.state_root();
+    assert_ne!(root, B256::ZERO);
+    let block = provider.get_block_by_number(2.into()).await.unwrap().unwrap();
+    assert_eq!(root, block.header.state_root);
+    let proof = provider
+        .get_proof(contract, vec![B256::ZERO, B256::with_last_byte(1)])
+        .number(2)
+        .await
+        .unwrap();
+    assert_eq!(proof.storage_proof[0].value, U256::ONE);
+    assert_eq!(proof.storage_proof[1].value, U256::ZERO);
+    assert_tempo_state_proof(root, &proof);
+}
+
+fn assert_tempo_state_proof(root: B256, proof: &EIP1186AccountProofResponse) {
+    let account = TrieAccount::new(proof.nonce, proof.balance, proof.storage_hash, proof.code_hash);
+    verify_proof(
+        root,
+        Nibbles::unpack(keccak256(proof.address)),
+        Some(alloy_rlp::encode(account)),
+        &proof.account_proof,
+    )
+    .unwrap();
+    for storage in &proof.storage_proof {
+        verify_proof(
+            proof.storage_hash,
+            Nibbles::unpack(keccak256(storage.key.as_b256())),
+            (!storage.value.is_zero()).then(|| alloy_rlp::encode(storage.value)),
+            &storage.proof,
+        )
+        .unwrap();
+    }
+}
+
+fn tempo_fork_config(config: NodeConfig, source: &anvil::NodeHandle) -> NodeConfig {
+    config.with_eth_rpc_url(Some(source.http_endpoint())).with_fork_block_number(Some(1u64))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_fork_state_root_survives_late_reads_and_writes() {
+    let config = NodeConfig::test_tempo().with_no_mining(true);
+    let (source_api, source) = spawn(config.clone()).await;
+    let remote = Address::repeat_byte(0x51);
+    source_api.anvil_set_balance(remote, U256::from(42)).await.unwrap();
+    source_api.anvil_set_code(remote, bytes!("60005460005260206000f3")).await.unwrap();
+    source_api.anvil_set_storage_at(remote, U256::ZERO, B256::with_last_byte(7)).await.unwrap();
+    source_api.mine_one().await.unwrap();
+    let (api, handle) =
+        spawn(tempo_fork_config(config.with_no_storage_caching(true), &source)).await;
+    let provider = handle.http_provider();
+    let local = Address::repeat_byte(0x52);
+    api.anvil_set_code(local, bytes!("00")).await.unwrap();
+    api.anvil_set_storage_at(local, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
+    api.mine_one().await.unwrap();
+    let certified = tempo_finalization(&provider, 2).await;
+    let root = certified.block.header.state_root();
+    let original = provider.get_proof(local, vec![B256::ZERO]).number(2).await.unwrap();
+    assert_eq!(original.storage_proof[0].value, U256::ONE);
+    assert_tempo_state_proof(root, &original);
+
+    // The sealed partial trie excludes upstream accounts that were not cached at mining time.
+    let absent = provider.get_proof(remote, vec![B256::ZERO]).number(2).await.unwrap();
+    assert!(absent.is_empty());
+    assert_eq!(absent.storage_proof[0].value, U256::ZERO);
+    verify_proof(root, Nibbles::unpack(keccak256(remote)), None, &absent.account_proof).unwrap();
+    let snapshot: U256 = provider.client().request("evm_snapshot", ()).await.unwrap();
+
+    assert_eq!(provider.get_balance(remote).await.unwrap(), U256::from(42));
+    assert_eq!(provider.get_storage_at(remote, U256::ZERO).await.unwrap(), U256::from(7));
+    let output = provider.call(TransactionRequest::default().to(remote).into()).await.unwrap();
+    assert_eq!(U256::from_be_slice(&output), U256::from(7));
+    assert_eq!(provider.get_proof(remote, vec![B256::ZERO]).number(2).await.unwrap(), absent);
+    assert_eq!(provider.get_proof(local, vec![B256::ZERO]).number(2).await.unwrap(), original);
+
+    // Edits belong to the next block, even while the certified height remains the live head.
+    api.anvil_set_storage_at(local, U256::ZERO, B256::with_last_byte(2)).await.unwrap();
+    assert_eq!(provider.get_proof(local, vec![B256::ZERO]).number(2).await.unwrap(), original);
+    assert_eq!(provider.get_proof(local, vec![B256::ZERO]).await.unwrap(), original);
+    assert_eq!(tempo_finalization(&provider, 2).await, certified);
+
+    api.mine_one().await.unwrap();
+    let next = tempo_finalization(&provider, 3).await;
+    let updated = provider.get_proof(local, vec![B256::ZERO]).number(3).await.unwrap();
+    assert_eq!(updated.storage_proof[0].value, U256::from(2));
+    assert_tempo_state_proof(next.block.header.state_root(), &updated);
+    assert_ne!(next.block.header.state_root(), root);
+    assert_eq!(provider.get_proof(local, vec![B256::ZERO]).number(2).await.unwrap(), original);
+    assert_eq!(provider.get_proof(remote, vec![B256::ZERO]).number(2).await.unwrap(), absent);
+    assert_eq!(tempo_finalization(&provider, 2).await, certified);
+
+    assert!(provider.client().request::<_, bool>("evm_revert", (snapshot,)).await.unwrap());
+    assert_eq!(tempo_finalization(&provider, 2).await, certified);
+    assert_eq!(provider.get_proof(local, vec![B256::ZERO]).number(2).await.unwrap(), original);
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(source.http_endpoint()),
+        block_number: Some(1),
+    }))
+    .await
+    .unwrap();
+    api.anvil_set_code(local, bytes!("00")).await.unwrap();
+    api.anvil_set_storage_at(local, U256::ZERO, B256::with_last_byte(9)).await.unwrap();
+    api.mine_one().await.unwrap();
+    let reset = tempo_finalization(&provider, 2).await;
+    let proof = provider.get_proof(local, vec![B256::ZERO]).number(2).await.unwrap();
+    assert_eq!(proof.storage_proof[0].value, U256::from(9));
+    assert_tempo_state_proof(reset.block.header.state_root(), &proof);
+    assert_ne!(reset.digest, certified.digest);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_fork_state_root_respects_history_pruning() {
+    let config = NodeConfig::test_tempo().with_no_mining(true);
+    let (source_api, source) = spawn(config.clone()).await;
+    source_api.mine_one().await.unwrap();
+
+    for history in [Some(None), Some(Some(1))] {
+        let (api, handle) =
+            spawn(tempo_fork_config(config.clone().set_pruned_history(history), &source)).await;
+        let provider = handle.http_provider();
+        let local = Address::repeat_byte(0x53);
+        api.anvil_set_code(local, bytes!("00")).await.unwrap();
+        api.anvil_set_storage_at(local, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
+        api.mine_one().await.unwrap();
+        let certified = tempo_finalization(&provider, 2).await;
+        let original = provider.get_proof(local, vec![B256::ZERO]).number(2).await.unwrap();
+        assert_tempo_state_proof(certified.block.header.state_root(), &original);
+
+        api.anvil_set_storage_at(local, U256::ZERO, B256::with_last_byte(2)).await.unwrap();
+        assert_eq!(provider.get_proof(local, vec![B256::ZERO]).await.unwrap(), original);
+        api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
+        let latest = tempo_finalization(&provider, 4).await;
+        let proof = provider.get_proof(local, vec![B256::ZERO]).await.unwrap();
+        assert_eq!(proof.storage_proof[0].value, U256::from(2));
+        assert_tempo_state_proof(latest.block.header.state_root(), &proof);
+        assert_eq!(tempo_finalization(&provider, 2).await, certified);
+        let error = provider.get_proof(local, vec![B256::ZERO]).number(2).await.unwrap_err();
+        assert_eq!(
+            serde_json::to_value(error.as_error_resp().unwrap()).unwrap(),
+            serde_json::json!({ "code": -32603, "message": "Required data unavailable", "data": null }),
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_fork_state_root_survives_rollback() {
+    let config = NodeConfig::test_tempo().with_no_mining(true);
+    let (source_api, source) = spawn(config.clone()).await;
+    source_api.mine_one().await.unwrap();
+    let (api, handle) =
+        spawn(tempo_fork_config(config.set_pruned_history(Some(Some(1))), &source)).await;
+    let provider = handle.http_provider();
+    let local = Address::repeat_byte(0x54);
+    api.anvil_set_code(local, bytes!("00")).await.unwrap();
+    api.anvil_set_storage_at(local, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
+    api.mine_one().await.unwrap();
+    let certified = tempo_finalization(&provider, 2).await;
+    let original = provider.get_proof(local, vec![B256::ZERO]).number(2).await.unwrap();
+    assert_eq!(original.storage_proof[0].value, U256::ONE);
+    assert_tempo_state_proof(certified.block.header.state_root(), &original);
+
+    for value in [2, 3] {
+        api.anvil_set_storage_at(local, U256::ZERO, B256::with_last_byte(value)).await.unwrap();
+        api.mine_one().await.unwrap();
+        api.anvil_rollback(Some(1)).await.unwrap();
+        assert_eq!(provider.get_block_number().await.unwrap(), 2);
+        assert_eq!(tempo_finalization(&provider, 2).await, certified);
+        assert_eq!(provider.get_proof(local, vec![B256::ZERO]).await.unwrap(), original);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_dump_load_preserves_consensus() {
+    assert_tempo_consensus_dump_load_preserves_consensus(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_fork_dump_load_preserves_consensus() {
+    assert_tempo_consensus_dump_load_preserves_consensus(true).await;
+}
+
+async fn assert_tempo_consensus_dump_load_preserves_consensus(fork: bool) {
+    let config = NodeConfig::test_tempo()
+        .with_no_mining(true)
+        .with_tempo_epoch_length(NonZeroU64::new(3).unwrap());
+    let source = if fork {
+        let (api, handle) = spawn(config.clone()).await;
+        api.mine_one().await.unwrap();
+        Some(handle)
+    } else {
+        None
+    };
+    let config =
+        if let Some(source) = &source { tempo_fork_config(config, source) } else { config };
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+    let account = Address::repeat_byte(0x55);
+    api.anvil_set_code(account, bytes!("00")).await.unwrap();
+    api.anvil_set_storage_at(account, U256::ZERO, B256::with_last_byte(7)).await.unwrap();
+    api.mine_one().await.unwrap();
+    let height = provider.get_block_number().await.unwrap();
+    let original = tempo_finalization(&provider, height).await;
+    let proof = provider.get_proof(account, vec![B256::ZERO]).number(height).await.unwrap();
+    assert_eq!(proof.storage_proof[0].value, U256::from(7));
+    assert_tempo_state_proof(original.block.header.state_root(), &proof);
+    let initial = tempo_consensus_identity(&provider).await;
+    let rotated = tempo_rotate_identity(&provider).await;
+    assert_ne!(rotated.identity, initial.identity);
+
+    for activated in [false, true] {
+        if activated {
+            let activation_height = rotated.from_epoch * rotated.epoch_length;
+            api.anvil_mine(Some(U256::from(activation_height - height)), None).await.unwrap();
+        }
+        let identity = if activated { &rotated } else { &initial };
+        let current_height = provider.get_block_number().await.unwrap();
+        let current = tempo_finalization(&provider, current_height).await;
+        assert_tempo_certificate(identity, &current);
+        assert_eq!(tempo_consensus_identity(&provider).await, *identity);
+
+        let saved: Bytes = provider.client().request("anvil_dumpState", ()).await.unwrap();
+        assert!(provider.client().request::<_, bool>("anvil_loadState", (saved,)).await.unwrap());
+
+        assert_eq!(provider.get_block_number().await.unwrap(), current_height);
+        assert_eq!(tempo_finalization(&provider, height).await, original);
+        assert_eq!(tempo_finalization(&provider, current_height).await, current);
+        let latest: TempoConsensusState =
+            provider.client().request("consensus_getLatest", ()).await.unwrap();
+        assert_eq!(latest.finalized.as_ref(), Some(&current));
+        assert!(latest.notarized.is_none());
+        assert_eq!(tempo_consensus_identity(&provider).await, *identity);
+        assert_eq!(
+            provider.get_proof(account, vec![B256::ZERO]).number(height).await.unwrap(),
+            proof
+        );
+    }
 }
