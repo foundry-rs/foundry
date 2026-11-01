@@ -5680,7 +5680,12 @@ impl<N: Network> Backend<N> {
             let proof_state = storage.tempo.as_mut().and_then(|tempo| {
                 tempo.restore(id, num).map(|state| (Arc::clone(&tempo.proof_states), state))
             });
-            (storage.unwind_to(num, hash), proof_state)
+            let removed_blocks = storage.unwind_to(num, hash);
+            // Queue the removed logs before readers can observe the unwound blocks as missing.
+            if !removed_logs.is_empty() {
+                self.notify_on_removed_logs(removed_logs);
+            }
+            (removed_blocks, proof_state)
         };
         if let Some((states, accounts)) = proof_state {
             let mut state = CacheDB::<EmptyDBWrapper>::new(Default::default());
@@ -5693,9 +5698,6 @@ impl<N: Network> Backend<N> {
         self.states.write().remove_block_states(&removed_hashes);
         if let Some(states) = self.tempo_proof_states() {
             states.write().remove_block_states(&removed_hashes);
-        }
-        if !removed_logs.is_empty() {
-            self.notify_on_removed_logs(removed_logs);
         }
 
         self.time.restore(time);
@@ -7909,7 +7911,14 @@ where
                 if let Some(hook) = self.rollback_unwind_hook.lock().as_ref() {
                     hook();
                 }
-                storage.unwind_to(common_block.header.number(), hash)
+                let removed_blocks = storage.unwind_to(common_block.header.number(), hash);
+                // Notify all log subscriptions and filters about the removed logs, so they
+                // receive them again marked as removed, before any new chain notifications are
+                // emitted and before readers can observe the unwound blocks as missing.
+                if !removed_logs.is_empty() {
+                    self.notify_on_removed_logs(removed_logs);
+                }
+                removed_blocks
             };
 
             // Clean up in-memory and on-disk states for removed blocks
@@ -7918,12 +7927,6 @@ where
             self.states.write().remove_block_states(&removed_hashes);
             if let Some(states) = self.tempo_proof_states() {
                 states.write().remove_block_states(&removed_hashes);
-            }
-
-            // Notify all log subscriptions and filters about the removed logs, so they receive
-            // them again marked as removed, before any new chain notifications are emitted
-            if !removed_logs.is_empty() {
-                self.notify_on_removed_logs(removed_logs);
             }
 
             // Set environment back to common block

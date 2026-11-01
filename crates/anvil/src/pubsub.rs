@@ -55,7 +55,12 @@ where
                 return Poll::Ready(Some(EthSubscriptionResponse::new(params)));
             }
 
-            if let Some(notification) = ready!(self.blocks.poll_next_unpin(cx)) {
+            let Poll::Ready(notification) = self.blocks.poll_next_unpin(cx) else {
+                // Unwinds queue their removed logs before dropping blocks, so none can follow.
+                self.skipped.clear();
+                return Poll::Pending;
+            };
+            if let Some(notification) = notification {
                 let logs = match notification {
                     ChainNotification::Block(block) => {
                         // Rule out nonmatching blocks before requiring data that may be pruned.
@@ -92,14 +97,9 @@ where
                     }
                     ChainNotification::RemovedLogs(logs) => {
                         let mut removed = filter_removed_logs(&logs, &self.filter);
-                        if !self.skipped.is_empty() {
-                            removed.retain(|log| {
-                                !log.block_hash.is_some_and(|hash| self.skipped.contains(&hash))
-                            });
-                            for hash in logs.iter().filter_map(|log| log.block_hash) {
-                                self.skipped.remove(&hash);
-                            }
-                        }
+                        removed.retain(|log| {
+                            !log.block_hash.is_some_and(|hash| self.skipped.contains(&hash))
+                        });
                         removed
                     }
                 };

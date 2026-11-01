@@ -623,6 +623,21 @@ mod backpressure {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn lagged_logs_subscription_forgets_reset_blocks() {
+        let fixture = LogsFixture::new().await;
+        let mut logs = fixture.logs(Filter::new().address(*fixture.contract.address()));
+
+        fixture.emit("reset notification").await;
+        fixture.api.anvil_reset(None).await.unwrap();
+
+        // Resets emit no removed logs, so draining must forget the skipped block.
+        let mut cx = Context::from_waker(Waker::noop());
+        assert_eq!(logs.poll_next_unpin(&mut cx), Poll::Pending);
+        let EthSubscription::Logs(logs) = logs else { unreachable!() };
+        assert!(logs.skipped.is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn lagged_logs_subscription_skips_pruned_zero_bloom_blocks() {
         let fixture = LogsFixture::new().await;
         let api = &fixture.api;
