@@ -1455,7 +1455,7 @@ async fn manual_mining_rpcs_preserve_controls_on_failure() {
         assert_eq!(error.code, -32603, "{method}");
         assert_eq!(
             error.message,
-            "system call to 0x00000961Ef480Eb55e80D19ad83579A64c007002 failed: execution reverted: 0x",
+            "failed to apply withdrawal requests contract call: execution reverted: 0x",
             "{method}"
         );
         assert_eq!(api.backend.best_number(), 0, "{method}");

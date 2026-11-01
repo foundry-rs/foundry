@@ -298,13 +298,15 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
         let result = self.evm.system_call(SystemTx::new(address, data))?.commit_to(&mut self.state);
         if result.stop.is_revert() {
             return Err(BlockchainError::Message(format!(
-                "system call to {address} failed: execution reverted: {}",
+                "failed to apply {} contract call: execution reverted: {}",
+                system_contract_name(address),
                 result.output
             )));
         }
         if !result.status {
             return Err(BlockchainError::Message(format!(
-                "system call to {address} failed: {:?}",
+                "failed to apply {} contract call: execution halted: {:?}",
+                system_contract_name(address),
                 result.stop
             )));
         }
@@ -721,6 +723,19 @@ pub(crate) const fn block_blob_gas_limit(
     max_blob_gas_per_block: u64,
 ) -> u64 {
     if optimism_jovian { block_gas_limit } else { max_blob_gas_per_block }
+}
+
+/// Returns the system contract name used in alloy-evm's `BlockValidationError` messages.
+fn system_contract_name(address: Address) -> &'static str {
+    match address {
+        HISTORY_STORAGE_ADDRESS => "blockhash",
+        BEACON_ROOTS_ADDRESS => "beacon root",
+        WITHDRAWAL_REQUEST_ADDRESS => "withdrawal requests",
+        CONSOLIDATION_REQUEST_ADDRESS => "consolidation requests",
+        BUILDER_DEPOSIT_REQUEST_ADDRESS => "builder deposit requests",
+        BUILDER_EXIT_REQUEST_ADDRESS => "builder exit requests",
+        _ => unreachable!("unknown system contract {address}"),
+    }
 }
 
 #[cfg(test)]
