@@ -26,6 +26,7 @@ alloy-primitives = { workspace = true, features = [
     "arbitrary",
     "rlp",
 ] }
+alloy-sol-types.workspace = true
 
 # Base
 base-common-precompiles = { workspace = true, optional = true, features = ["std"] }

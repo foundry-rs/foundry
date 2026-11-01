@@ -6585,6 +6585,7 @@ dependencies = [
  "alloy-evm",
  "alloy-op-hardforks",
  "alloy-primitives",
+ "alloy-sol-types",
  "base-common-precompiles",
  "clap",
  "foundry-evm-hardforks",
