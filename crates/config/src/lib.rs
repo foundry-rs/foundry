@@ -4319,7 +4319,12 @@ mod tests {
 
             let config = Config::load().unwrap();
 
-            assert!(config.etherscan.clone().resolved().has_unresolved());
+            let unresolved = config.etherscan.clone().resolved();
+            assert!(unresolved.has_unresolved());
+            assert_eq!(
+                unresolved["moonbeam"].as_ref().unwrap_err().to_string(),
+                "environment variable `_CONFIG_ETHERSCAN_MOONBEAM` not found (used by `etherscan.moonbeam`)"
+            );
 
             jail.set_env("_CONFIG_ETHERSCAN_MOONBEAM", "123456789");
 
@@ -4726,10 +4731,19 @@ mod tests {
 
             assert_eq!(config.get_rpc_url().unwrap().unwrap(), "https://example.com/");
 
-            assert!(config.rpc_endpoints.clone().resolved().has_unresolved());
+            let unresolved = config.rpc_endpoints.clone().resolved();
+            assert!(unresolved.has_unresolved());
+            assert_eq!(
+                unresolved["mainnet_3"].url().unwrap_err().to_string(),
+                "environment variable `_CONFIG_API_KEY1` not found (used by `rpc_endpoints.mainnet_3`)"
+            );
 
             jail.set_env("_CONFIG_MAINNET", "https://eth-mainnet.alchemyapi.io/v2/123455");
             jail.set_env("_CONFIG_API_KEY1", "123456");
+            assert_eq!(
+                unresolved["mainnet_3"].clone().try_resolve().url().unwrap_err().to_string(),
+                "environment variable `_CONFIG_API_KEY2` not found (used by `rpc_endpoints.mainnet_3`)"
+            );
             jail.set_env("_CONFIG_API_KEY2", "98765");
 
             let endpoints = config.rpc_endpoints.resolved();
