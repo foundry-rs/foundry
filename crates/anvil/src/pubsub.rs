@@ -8,7 +8,7 @@ use crate::{
 };
 use alloy_consensus::{BlockHeader, TxReceipt};
 use alloy_network::{AnyRpcTransaction, Network};
-use alloy_primitives::{B256, TxHash};
+use alloy_primitives::{B256, TxHash, map::B256Set};
 use alloy_rpc_types::{FilteredParams, Log, Transaction, pubsub::SubscriptionResult};
 use anvil_core::eth::{block::Block, subscription::SubscriptionId};
 use anvil_rpc::{request::Version, response::ResponseResult};
@@ -29,6 +29,8 @@ pub struct LogsSubscription<N: Network> {
     pub storage: StorageInfo<N>,
     pub filter: FilteredParams,
     pub queued: VecDeque<Log>,
+    /// Blocks skipped because they were unwound before their logs were delivered.
+    pub skipped: B256Set,
     pub id: SubscriptionId,
 }
 
@@ -55,7 +57,12 @@ where
                 return Poll::Ready(Some(EthSubscriptionResponse::new(params)));
             }
 
-            if let Some(notification) = ready!(self.blocks.poll_next_unpin(cx)) {
+            let Poll::Ready(notification) = self.blocks.poll_next_unpin(cx) else {
+                // Unwinds queue their removed logs before dropping blocks, so none can follow.
+                self.skipped.clear();
+                return Poll::Pending;
+            };
+            if let Some(notification) = notification {
                 let logs = match notification {
                     ChainNotification::Block(block) => {
                         // Rule out nonmatching blocks before requiring data that may be pruned.
@@ -72,8 +79,11 @@ where
                         let (Some(block), Some(receipts)) =
                             (self.storage.block(hash), self.storage.receipts(hash))
                         else {
-                            tracing::warn!(target: "rpc::ws", ?hash, "Closing logs subscription because block data is unavailable");
-                            return Poll::Ready(None);
+                            // Pruning keeps headers, so the block was unwound or dropped by a
+                            // reset. Its logs were never delivered, so its removed logs are
+                            // dropped too.
+                            self.skipped.insert(hash);
+                            continue;
                         };
                         if block.body.transactions.len() != receipts.len()
                             || (block.body.transactions.is_empty()
@@ -83,10 +93,16 @@ where
                             tracing::warn!(target: "rpc::ws", ?hash, "Closing logs subscription because block data was pruned");
                             return Poll::Ready(None);
                         }
+                        // A block re-mined with a skipped hash is delivered, so its removal is too.
+                        self.skipped.remove(&hash);
                         filter_logs(block, receipts, &self.filter)
                     }
                     ChainNotification::RemovedLogs(logs) => {
-                        filter_removed_logs(&logs, &self.filter)
+                        let mut removed = filter_removed_logs(&logs, &self.filter);
+                        removed.retain(|log| {
+                            !log.block_hash.is_some_and(|hash| self.skipped.contains(&hash))
+                        });
+                        removed
                     }
                 };
                 if logs.is_empty() {
