@@ -6118,7 +6118,7 @@ Traces:
 
 Backtrace:
   at VM.assertEq
-  at SuppressTracesTest.test_increment_failure
+  at SuppressTracesTest.test_increment_failure (lib/forge-std/src/StdAssertions.sol:121:13)
 
 [PASS] test_increment_success() ([GAS])
 Logs:
@@ -7151,7 +7151,7 @@ Traces:
 
 Backtrace:
   at NonContractCallRevertTest.call_non_contract
-  at NonContractCallRevertTest.test_revert_data_exact_diagnostic
+  at NonContractCallRevertTest.test_revert_data_exact_diagnostic (test/NonContractCallRevertTest.t.sol:41:9)
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
