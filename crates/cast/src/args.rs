@@ -370,12 +370,14 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
 
                 let func = get_func(&sig)?;
                 let encoded = encode_function_args_packed(&func, &args).map_err(|e| {
+                    let e = with_trailing_flag_hint(e, func.inputs.len(), &args);
                     eyre::eyre!("Could not ABI encode the function and arguments: {e}")
                 })?;
                 hex::encode_prefixed(encoded)
             } else {
                 let func = get_func(&sig)?;
                 let encoded = encode_function_args(&func, &args).map_err(|e| {
+                    let e = with_trailing_flag_hint(e, func.inputs.len(), &args);
                     eyre::eyre!("Could not ABI encode the function and arguments: {e}")
                 })?;
                 hex::encode_prefixed(&encoded[4..])
@@ -385,11 +387,12 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Abi(AbiSubcommand::AbiEncodeEvent { sig, args }) => {
             let event = get_event(&sig)?;
             if event.inputs.len() != args.len() {
-                eyre::bail!(
+                let err = eyre::eyre!(
                     "encode length mismatch: expected {} types, got {}",
                     event.inputs.len(),
                     args.len(),
                 );
+                return Err(with_trailing_flag_hint(err, event.inputs.len(), &args));
             }
 
             let types = event
@@ -441,16 +444,21 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_tokens(&abi_decode_calldata(&sig, &raw_hex, true, true)?)?;
         }
         CastSubcommand::Abi(AbiSubcommand::CalldataEncode { sig, args, file }) => {
-            let args = match file {
-                Some(file_path) => fs::read_to_string(file_path)?
-                    .lines()
-                    .map(str::trim)
-                    .filter(|line| !line.is_empty())
-                    .map(String::from)
-                    .collect(),
-                None => args,
+            let func = get_func(&sig)?;
+            let encoded = match file {
+                Some(file_path) => {
+                    let args = fs::read_to_string(file_path)?
+                        .lines()
+                        .map(str::trim)
+                        .filter(|line| !line.is_empty())
+                        .map(String::from)
+                        .collect::<Vec<_>>();
+                    encode_function_args(&func, &args)?
+                }
+                None => encode_function_args(&func, &args)
+                    .map_err(|e| with_trailing_flag_hint(e, func.inputs.len(), &args))?,
             };
-            print_scalar(hex::encode_prefixed(encode_function_args(&get_func(&sig)?, &args)?))?;
+            print_scalar(hex::encode_prefixed(encoded))?;
         }
         CastSubcommand::Abi(AbiSubcommand::DecodeString { data }) => {
             print_tokens(&abi_decode_calldata("Any(string)", &data, true, true)?)?;
@@ -1672,6 +1680,19 @@ fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
 }
 
+/// Points out a flag that was read as an extra ABI argument.
+///
+/// The variadic ABI arguments accept hyphen values so that negative numbers work, which also
+/// captures flags written after the arguments.
+fn with_trailing_flag_hint(err: eyre::Report, expected: usize, args: &[String]) -> eyre::Report {
+    match args.get(expected..).and_then(|extra| extra.iter().find(|arg| arg.starts_with("--"))) {
+        Some(flag) => {
+            eyre::eyre!("{err}; `{flag}` was read as an argument; put flags before the signature")
+        }
+        None => err,
+    }
+}
+
 /// Encodes the topic of an indexed event parameter.
 ///
 /// Value types are encoded as their 32-byte word. Reference types are hashed over the special
@@ -1817,5 +1838,25 @@ mod tests {
             )
             .0,
         );
+    }
+
+    #[test]
+    fn trailing_flag_hint() {
+        let hint = |expected, args: &[&str]| {
+            let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+            with_trailing_flag_hint(eyre::eyre!("encode length mismatch"), expected, &args)
+                .to_string()
+        };
+
+        // A flag after the expected arguments is named in the error.
+        assert_eq!(
+            hint(1, &["1", "--packed"]),
+            "encode length mismatch; `--packed` was read as an argument; put flags before the signature"
+        );
+        // Only the extra trailing arguments are checked.
+        assert_eq!(hint(1, &["--x", "2"]), "encode length mismatch");
+        // Too few arguments never mention flags, even when one starts with `--`.
+        assert_eq!(hint(2, &["--packed"]), "encode length mismatch");
+        assert_eq!(hint(1, &[]), "encode length mismatch");
     }
 }
