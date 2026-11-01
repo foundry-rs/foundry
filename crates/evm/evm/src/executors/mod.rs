@@ -1236,7 +1236,7 @@ fn execute<FEN: FoundryEvmNetwork>(
 }
 
 /// Returns the default environment of `FEN`.
-fn default_env<FEN: FoundryEvmNetwork>() -> EvmEnvFor<FEN> {
+pub(crate) fn default_env<FEN: FoundryEvmNetwork>() -> EvmEnvFor<FEN> {
     let spec = SpecFor::<FEN>::default();
     let chain_id = foundry_common::DEV_CHAIN_ID;
     EvmEnv::new(spec, EvmFactoryFor::<FEN>::default().version(spec, chain_id), Default::default())
@@ -2537,6 +2537,32 @@ mod tests {
         assert!(!result.reverted);
         assert_eq!(result.exit_reason, Some(InstrStop::Stop));
         assert!(result.gas_used < GAS_LIMIT, "execution ran out of gas instead of timing out");
+    }
+
+    #[test]
+    fn campaign_deadline_interrupts_call_recursion_without_jumps() {
+        let mut executor = eth_executor(ExecutorBuilder::default().gas_limit(1 << 24));
+        let cancellation = EvmExecutionCancellation::campaign(
+            EarlyExit::new(false),
+            Arc::new(AtomicBool::new(false)),
+            Some(Instant::now()),
+        );
+        executor.inspector_mut().set_execution_cancellation(cancellation);
+
+        let target = Address::repeat_byte(0x11);
+        // PUSH0 x5; ADDRESS; GAS; CALL; STOP calls itself until it runs out of gas.
+        executor
+            .set_code(
+                target,
+                Bytecode::new_raw(Bytes::from_static(&[
+                    0x5f, 0x5f, 0x5f, 0x5f, 0x5f, 0x30, 0x5a, 0xf1, 0x00,
+                ])),
+            )
+            .unwrap();
+
+        let result = executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert!(result.execution_cancelled);
+        assert_eq!(result.exit_reason, Some(InstrStop::Stop));
     }
 
     #[test]
