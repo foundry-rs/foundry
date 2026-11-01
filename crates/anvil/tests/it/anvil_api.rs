@@ -10,7 +10,9 @@ use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_eips::{eip2718::Decodable2718, eip4788::BEACON_ROOTS_ADDRESS};
 use alloy_genesis::{ChainConfig, Genesis};
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TxSignerSync};
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256, fixed_bytes, keccak256};
+use alloy_primitives::{
+    Address, B256, Bytes, TxKind, U256, address, b256, bytes, fixed_bytes, keccak256,
+};
 use alloy_provider::{Provider, ext::TxPoolApi};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, TransactionRequest,
@@ -565,6 +567,61 @@ async fn test_can_set_storage_bsc_fork() {
 
     let balance = busd_contract.balanceOf(Address::ZERO).call().await.unwrap();
     assert_eq!(balance, U256::from(12345u64));
+}
+
+// Storage set on an empty account survives until the account is created.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_storage_on_empty_account_kept_until_creation() {
+    // Shanghai still deletes accounts on `SELFDESTRUCT`.
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Shanghai.into()))).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let one = B256::with_last_byte(1);
+    let send = async |tx: TransactionRequest| {
+        let tx = WithOtherFields::new(tx.from(from));
+        let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+        assert!(receipt.status());
+    };
+
+    // A value transfer keeps the storage.
+    let funded = Address::random();
+    api.anvil_set_storage_at(funded, U256::ZERO, one).await.unwrap();
+    send(TransactionRequest::default().to(funded).value(U256::ONE)).await;
+    assert_eq!(api.storage_at(funded, U256::ZERO, None).await.unwrap(), one);
+
+    // A contract created at a funded address discards its storage. The factory deploys its
+    // calldata with `CREATE2` and salt zero, and the init code deploys `STOP`.
+    let factory = Address::random();
+    api.anvil_set_code(factory, bytes!("365f5f375f365f5ff500")).await.unwrap();
+    let init_code = bytes!("6001600c60003960016000f300");
+    let created = factory.create2(B256::ZERO, keccak256(&init_code));
+    api.anvil_set_storage_at(created, U256::ZERO, one).await.unwrap();
+    api.anvil_set_balance(created, U256::ONE).await.unwrap();
+    send(TransactionRequest::default().to(factory).input(init_code.into()).gas_limit(100_000))
+        .await;
+    assert_eq!(api.get_code(created, None).await.unwrap(), bytes!("00"));
+    assert_eq!(api.storage_at(created, U256::ZERO, None).await.unwrap(), B256::ZERO);
+
+    // A contract created and destroyed in the same transaction also discards the storage. The
+    // init code runs `SELFDESTRUCT(CALLER)`.
+    let init_code = bytes!("33ff");
+    let destroyed = factory.create2(B256::ZERO, keccak256(&init_code));
+    api.anvil_set_storage_at(destroyed, U256::ZERO, one).await.unwrap();
+    send(TransactionRequest::default().to(factory).input(init_code.into()).gas_limit(100_000))
+        .await;
+    assert_eq!(api.get_code(destroyed, None).await.unwrap(), bytes!(""));
+    assert_eq!(api.storage_at(destroyed, U256::ZERO, None).await.unwrap(), B256::ZERO);
+
+    // A value transfer revives a deleted account without its storage. `SELFDESTRUCT(CALLER)`
+    // deletes the account.
+    let deleted = Address::random();
+    api.anvil_set_code(deleted, bytes!("33ff")).await.unwrap();
+    api.anvil_set_storage_at(deleted, U256::ZERO, one).await.unwrap();
+    send(TransactionRequest::default().to(deleted)).await;
+    send(TransactionRequest::default().to(deleted).value(U256::ONE)).await;
+    assert_eq!(api.balance(deleted, None).await.unwrap(), U256::ONE);
+    assert_eq!(api.storage_at(deleted, U256::ZERO, None).await.unwrap(), B256::ZERO);
 }
 
 #[tokio::test(flavor = "multi_thread")]

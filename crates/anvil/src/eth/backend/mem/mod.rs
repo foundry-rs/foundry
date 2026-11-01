@@ -7,9 +7,9 @@ use crate::{
         backend::{
             cheats::{CheatsManager, NextBlockOverrides},
             db::{
-                AccountState, BLOCKHASH_HISTORY, BlockchainDb, CacheDB, DatabaseRef, Db, DbAccount,
-                EmptyDb, EvmDb, MaybeFullDatabase, RevertStateSnapshotAction, SerializableState,
-                StateDb, apply_block_overrides, apply_state_overrides,
+                AccountState, BLOCKHASH_HISTORY, BlockChanges, BlockchainDb, CacheDB, DatabaseRef,
+                Db, DbAccount, EmptyDb, EvmDb, MaybeFullDatabase, RevertStateSnapshotAction,
+                SerializableState, StateDb, apply_block_overrides, apply_state_overrides,
             },
             env::{
                 BlobExcessGasAndPrice, BlockEnv, CfgEnv, EvmEnv, SpecId,
@@ -711,7 +711,7 @@ fn halt_reason(stop: InstrStop) -> String {
 /// Applies a transaction's detached state changes to `db`.
 fn commit_pending<DB: DatabaseRef>(db: &mut CacheDB<DB>, state: &PendingState) {
     let mut changes = BlockStateAccumulator::new();
-    let Ok(()) = state.visit(&mut changes);
+    let Ok(()) = state.visit(&mut BlockChanges::new(&mut changes));
     db.commit(&changes);
 }
 

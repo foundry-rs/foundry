@@ -8,6 +8,7 @@ use crate::{
     eth::{
         backend::{
             cheats::CheatsManager,
+            db::BlockChanges,
             evm::{
                 AnvilEvmNetwork, ExecResult, TxContext, TxPayload, TypesFor, evm_tx, exec_result,
             },
@@ -295,7 +296,10 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
     }
 
     fn system_call(&mut self, address: Address, data: Bytes) -> Result<Bytes, BlockchainError> {
-        let result = self.evm.system_call(SystemTx::new(address, data))?.commit_to(&mut self.state);
+        let Ok(result) = self
+            .evm
+            .system_call(SystemTx::new(address, data))?
+            .commit_with(&mut BlockChanges::new(&mut self.state));
         if result.stop.is_revert() {
             return Err(InvalidTransactionError::Revert(Some(result.output)).into());
         }
@@ -374,7 +378,10 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
                 .set_bal_index(BlockAccessIndex::new(self.receipts.len() as u64 + 1));
         }
         let result = match self.evm.transact_with_inspector(&evm_tx, &mut self.inspector) {
-            Ok(executed) => exec_result::<N>(executed.commit_to(&mut self.state)),
+            Ok(executed) => {
+                let Ok(result) = executed.commit_with(&mut BlockChanges::new(&mut self.state));
+                exec_result::<N>(result)
+            }
             Err(err) => {
                 self.inspector.discard_transaction(inspector_config);
                 return Err(err.into());
