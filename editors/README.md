@@ -45,8 +45,8 @@ different editors. Bundled extension assets are cached by content under
 `~/.foundry/cache/lsp/extensions`. No extension store installation or standalone
 Solar binary is required.
 
-- [VS Code: install, configure, build and package](vscode/README.md).
-- [Zed: configure, build and install locally](zed/README.md).
+- [VS Code: install and configure](vscode/README.md).
+- [Zed: install and configure](zed/README.md).
 
 Check `forge lsp --help` for `--vscode` to confirm launcher support. If it is
 unavailable, upgrade Foundry (`foundryup`, or a newer/nightly build if necessary).
@@ -119,8 +119,7 @@ ID is `forge-lsp`. In particular, `solar.copySelector`, `solar.showReferences`
 and `solar.showTypeHierarchy` remain registered by the VS Code client.
 
 Executable settings require explicit migration; the old Solar path is never
-silently treated as Forge. See each client's README for exact settings and
-error handling.
+silently treated as Forge. See each client's README for the migration steps.
 
 ## Remaining work outside Foundry
 
