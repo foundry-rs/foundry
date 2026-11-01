@@ -7,7 +7,11 @@ use alloy_provider::{
 use eyre::{Result, eyre};
 use forge_script_sequence::ScriptSequence;
 use foundry_common::{retry, retry::RetryError, shell};
-use std::time::Duration;
+use indicatif::MultiProgress;
+use std::{
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 
 /// Marker error type for pending receipts
 #[derive(Debug, thiserror::Error)]
@@ -38,7 +42,9 @@ pub async fn check_tx_status<N: Network>(
     hash: TxHash,
     timeout: u64,
     confirmations: u64,
+    progress: &MultiProgress,
 ) -> (TxHash, Result<TxStatus<N::ReceiptResponse>, eyre::Report>) {
+    let warned = AtomicBool::new(false);
     let result = retry::Retry::new_no_delay(3)
         .run_async_until_break(|| async {
             match PendingTransactionBuilder::new(provider.clone(), hash)
@@ -72,6 +78,15 @@ pub async fn check_tx_status<N: Network>(
                 Err(e) => match provider.get_transaction_by_hash(hash).await {
                     Ok(Some(_)) => match e {
                         PendingTransactionError::TxWatcher(WatchTxError::Timeout) => {
+                            // Waiting is unbounded, so name the transaction once; progress bars
+                            // are hidden outside a terminal and redrawn over plain output in one.
+                            if !warned.swap(true, Ordering::Relaxed) {
+                                progress.suspend(|| {
+                                    let _ = sh_warn!(
+                                        "Transaction {hash} is still known to the RPC endpoint; continuing to wait for its receipt and requested confirmations."
+                                    );
+                                });
+                            }
                             Err(RetryError::Continue(eyre!(
                                 "tx is still known to the node, waiting for receipt"
                             )))
@@ -334,9 +349,11 @@ mod tests {
             }
         });
 
-        let result =
-            tokio::time::timeout(Duration::from_secs(2), check_tx_status(&provider, hash, 0, 1))
-                .await;
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            check_tx_status(&provider, hash, 0, 1, &Default::default()),
+        )
+        .await;
         null_responder.abort();
 
         let (returned_hash, status) = result.expect(
@@ -382,7 +399,7 @@ mod tests {
             asserter.push_failure_msg("lookup unavailable");
         }
 
-        let (_, status) = check_tx_status(&provider, hash, 0, 1).await;
+        let (_, status) = check_tx_status(&provider, hash, 0, 1, &Default::default()).await;
         let err = match status {
             Ok(_) => panic!("transaction lookup errors should not be marked as dropped"),
             Err(err) => err.to_string(),
@@ -405,7 +422,7 @@ mod tests {
         asserter.push_success(&foreign);
         asserter.push_success(&None::<()>);
 
-        let (_, status) = check_tx_status(&provider, hash, 0, 1).await;
+        let (_, status) = check_tx_status(&provider, hash, 0, 1, &Default::default()).await;
 
         assert!(matches!(status.unwrap(), TxStatus::Dropped));
     }
@@ -431,7 +448,7 @@ mod tests {
         // guarantees the test fails fast if the watcher ever hangs again.
         let (returned_hash, status) = tokio::time::timeout(
             CHECK_TX_TIMEOUT,
-            check_tx_status::<Ethereum>(&provider, unknown_hash, 1, 1),
+            check_tx_status::<Ethereum>(&provider, unknown_hash, 1, 1, &Default::default()),
         )
         .await
         .expect("check_tx_status hung on an unknown tx hash");
@@ -471,7 +488,7 @@ mod tests {
         let watcher = tokio::spawn(async move {
             tokio::time::timeout(
                 CHECK_TX_TIMEOUT,
-                check_tx_status::<Ethereum>(&provider, tx_hash, 1, 1),
+                check_tx_status::<Ethereum>(&provider, tx_hash, 1, 1, &Default::default()),
             )
             .await
         });
@@ -513,7 +530,7 @@ mod tests {
         let provider = signer_provider.root().clone();
         let (returned_hash, status) = tokio::time::timeout(
             CHECK_TX_TIMEOUT,
-            check_tx_status::<Ethereum>(&provider, tx_hash, 5, 1),
+            check_tx_status::<Ethereum>(&provider, tx_hash, 5, 1, &Default::default()),
         )
         .await
         .expect("check_tx_status hung on a mined tx");
@@ -542,10 +559,9 @@ mod tests {
         api.mine_one().await.unwrap();
 
         let provider = signer_provider.root().clone();
-        let mut watcher =
-            tokio::spawn(
-                async move { check_tx_status::<Ethereum>(&provider, tx_hash, 5, 3).await },
-            );
+        let mut watcher = tokio::spawn(async move {
+            check_tx_status::<Ethereum>(&provider, tx_hash, 5, 3, &Default::default()).await
+        });
 
         assert!(tokio::time::timeout(Duration::from_millis(500), &mut watcher).await.is_err());
 
