@@ -622,6 +622,25 @@ async fn test_estimate_gas_without_from_with_gas_price_uses_transfer_fast_path()
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas_without_from_with_gas_price_does_not_fund_caller() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let contract = Address::random();
+    // Reverts if `BALANCE(ORIGIN)` is zero.
+    api.anvil_set_code(contract, bytes!("323115600757005b5f5ffd")).await.unwrap();
+
+    let tx =
+        TransactionRequest::default().with_to(contract).with_gas_price(INITIAL_BASE_FEE as u128);
+    let error =
+        api.estimate_gas(WithOtherFields::new(tx), None, Default::default()).await.unwrap_err();
+
+    assert!(matches!(
+        error,
+        BlockchainError::InvalidTransaction(InvalidTransactionError::Revert(Some(data)))
+            if data.is_empty()
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_estimate_gas_fee_token_does_not_skip_funds_check_outside_tempo() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let to = handle.dev_accounts().next().unwrap();
