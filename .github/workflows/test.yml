@@ -195,4 +195,4 @@ jobs:
             args+=(--partition "$NEXTEST_PARTITION")
           fi
           args+=(--no-fail-fast)
-          cargo nextest run --locked --features base,monad --profile ci "${args[@]}"
+          cargo nextest run --locked --features base,monad,foundry-config/schema --profile ci "${args[@]}"

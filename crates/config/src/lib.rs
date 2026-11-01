@@ -158,6 +158,9 @@ use foundry_evm_networks::NetworkConfigs;
 
 pub use semver;
 
+#[cfg(feature = "schema")]
+pub mod schema;
+
 #[cfg(not(test))]
 static SELECTED_PROFILE: std::sync::OnceLock<Profile> = std::sync::OnceLock::new();
 
@@ -193,6 +196,11 @@ static SELECTED_PROFILE: std::sync::OnceLock<Profile> = std::sync::OnceLock::new
 ///
 /// Note that these behaviors differ from those of [`Config::figment()`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(description = "The settings of a profile.")
+)]
 pub struct Config {
     /// The selected profile. **(default: _default_ `default`)**
     ///
@@ -213,6 +221,7 @@ pub struct Config {
     // representation, but will be deserialized from the `Figment` so that forge commands can
     // override it.
     #[serde(default = "root_default", skip_serializing)]
+    #[cfg_attr(feature = "schema", schemars(skip))]
     pub root: PathBuf,
 
     /// Configuration for extending from another foundry.toml (base) file.
@@ -236,6 +245,7 @@ pub struct Config {
     pub libs: Vec<PathBuf>,
     /// Remappings to use for this repo
     #[serde(serialize_with = "remappings_serde::serialize")]
+    #[cfg_attr(feature = "schema", schemars(with = "Vec<String>"))]
     pub remappings: Vec<RelativeRemapping>,
     /// Whether to autodetect remappings.
     pub auto_detect_remappings: bool,
@@ -271,8 +281,10 @@ pub struct Config {
     pub force: bool,
     /// The EVM version to use when building contracts.
     #[serde(with = "from_str_lowercase")]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::evm_version"))]
     pub evm_version: EvmVersion,
     /// The runtime hardfork to use when executing tests and scripts.
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::hardfork"))]
     pub hardfork: Option<FoundryHardfork>,
     /// List of contracts to generate gas reports for.
     pub gas_reports: Vec<String>,
@@ -290,6 +302,13 @@ pub struct Config {
     ///
     /// Avoid using this field directly; call the related `solc` methods instead.
     #[doc(hidden)]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(
+            description = "The solc version to use, such as `0.8.30`, or the path to a solc \
+                                binary. When set, `auto_detect_solc` is ignored."
+        )
+    )]
     pub solc: Option<SolcReq>,
     /// Whether to autodetect the solc compiler version to use.
     pub auto_detect_solc: bool,
@@ -316,8 +335,10 @@ pub struct Config {
     /// Switch optimizer components on or off in detail.
     /// The "enabled" switch above provides two defaults which can be
     /// tweaked here. If "details" is given, "enabled" can be omitted.
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::open_table"))]
     pub optimizer_details: Option<OptimizerDetails>,
     /// Model checker settings.
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::open_table"))]
     pub model_checker: Option<ModelCheckerSettings>,
     /// Verbosity to use for global output.
     pub verbosity: u8,
@@ -376,9 +397,11 @@ pub struct Config {
     pub contract_pattern_inverse: Option<RegexWrapper>,
     /// Only run tests in source files matching the specified glob pattern.
     #[serde(rename = "match_path", with = "from_opt_glob")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<String>"))]
     pub path_pattern: Option<globset::Glob>,
     /// Only run tests in source files that do not match the specified glob pattern.
     #[serde(rename = "no_match_path", with = "from_opt_glob")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<String>"))]
     pub path_pattern_inverse: Option<globset::Glob>,
     /// Only show coverage for files that do not match the specified regex pattern.
     #[serde(rename = "no_match_coverage")]
@@ -419,16 +442,20 @@ pub struct Config {
     /// Sets a timeout in seconds for vm.prompt cheatcodes
     pub prompt_timeout: u64,
     /// The address which will be executing all tests
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::address"))]
     pub sender: Address,
     /// The tx.origin value during EVM execution
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::address"))]
     pub tx_origin: Address,
     /// the initial balance of each deployed test contract
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::uint256"))]
     pub initial_balance: U256,
     /// the block.number value during EVM execution
     #[serde(
         deserialize_with = "crate::deserialize_u64_to_u256",
         serialize_with = "crate::serialize_u64_or_u256"
     )]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::uint256"))]
     pub block_number: U256,
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
@@ -437,6 +464,7 @@ pub struct Config {
     pub fork_state_by_number: bool,
     /// The chain name or EIP-155 chain ID.
     #[serde(rename = "chain_id", alias = "chain")]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::chain"))]
     pub chain: Option<Chain>,
     /// Block gas limit.
     pub gas_limit: GasLimit,
@@ -450,16 +478,19 @@ pub struct Config {
     /// The base fee in a block.
     pub block_base_fee_per_gas: u64,
     /// The `block.coinbase` value during EVM execution.
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::address"))]
     pub block_coinbase: Address,
     /// The `block.timestamp` value during EVM execution.
     #[serde(
         deserialize_with = "crate::deserialize_u64_to_u256",
         serialize_with = "crate::serialize_u64_or_u256"
     )]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::uint256"))]
     pub block_timestamp: U256,
     /// The `block.difficulty` value during EVM execution.
     pub block_difficulty: u64,
     /// Before merge the `block.max_hash`, after merge it is `block.prevrandao`.
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::bytes32"))]
     pub block_prevrandao: B256,
     /// The `block.gaslimit` value during EVM execution.
     pub block_gas_limit: Option<GasLimit>,
@@ -485,6 +516,7 @@ pub struct Config {
     /// }
     /// ```
     #[serde(default)]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::output_selection"))]
     pub extra_output: Vec<ContractOutputSelection>,
     /// If set, a separate JSON file will be emitted for every contract depending on the
     /// selection, eg. `extra_output_files = ["metadata"]` will create a `metadata.json` for
@@ -497,6 +529,7 @@ pub struct Config {
     /// contract's metadata in the contract's json artifact, whereas the latter will emit the
     /// output selection as separate files.
     #[serde(default)]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::output_selection"))]
     pub extra_output_files: Vec<ContractOutputSelection>,
     /// Whether to print the names of the compiled contracts.
     pub names: bool,
@@ -556,6 +589,7 @@ pub struct Config {
     /// disabling the CBOR metadata trailer.
     /// See: <https://docs.soliditylang.org/en/latest/metadata.html>
     #[serde(with = "from_str_lowercase")]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::bytecode_hash"))]
     pub bytecode_hash: BytecodeHash,
     /// Whether to append CBOR-encoded metadata to the bytecode. Defaults to `true`.
     ///
@@ -564,11 +598,17 @@ pub struct Config {
     pub cbor_metadata: bool,
     /// How to treat revert (and require) reason strings.
     #[serde(with = "serde_helpers::display_from_str_opt")]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::revert_strings"))]
     pub revert_strings: Option<RevertStrings>,
     /// Whether to compile in sparse mode
     ///
     /// If this option is enabled, only the required contracts/files will be selected to be
     /// included in solc's output selection, see also [`OutputSelection`].
+    #[cfg_attr(
+        feature = "schema",
+        schemars(description = "Whether to compile in sparse mode, which selects only the \
+                                contracts and files that the command needs in solc's output.")
+    )]
     pub sparse_mode: bool,
     /// Generates additional build info json files for every new build, containing the
     /// `CompilerInput` and `CompilerOutput`.
@@ -602,8 +642,9 @@ pub struct Config {
     /// Whether to enable the tx gas limit checks as imposed by Osaka (EIP-7825).
     pub enable_tx_gas_limit: bool,
 
-    /// Deprecated address-label alias; use [`TracingConfig::labels`].
+    /// Deprecated: use `[tracing.labels]`.
     #[serde(default, skip_serializing_if = "AddressHashMap::is_empty")]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::deprecated_labels"))]
     pub labels: AddressHashMap<String>,
 
     /// Whether to enable safety checks for `vm.getCode` and `vm.getDeployedCode` invocations.
@@ -618,9 +659,11 @@ pub struct Config {
     pub decode_external_storage: bool,
 
     /// CREATE2 salt to use for the library deployment in scripts.
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::bytes32"))]
     pub create2_library_salt: B256,
 
     /// The CREATE2 deployer address to use.
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::address"))]
     pub create2_deployer: Address,
 
     /// Configuration for Vyper compiler
@@ -634,6 +677,7 @@ pub struct Config {
     pub dependencies: Option<SoldeerDependencyConfig>,
 
     /// Soldeer custom configs
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::open_table"))]
     pub soldeer: Option<SoldeerConfig>,
 
     /// Whether failed assertions should revert.
@@ -650,6 +694,7 @@ pub struct Config {
 
     /// Networks with enabled features.
     #[serde(flatten)]
+    #[cfg_attr(feature = "schema", schemars(with = "crate::schema::NetworkKeys"))]
     pub networks: NetworkConfigs,
 
     /// Timeout for transactions in seconds.
@@ -657,6 +702,7 @@ pub struct Config {
 
     /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information.
     #[serde(rename = "__warnings", default, skip_serializing)]
+    #[cfg_attr(feature = "schema", schemars(skip))]
     pub warnings: Vec<Warning>,
 
     /// Additional settings profiles to use when compiling.

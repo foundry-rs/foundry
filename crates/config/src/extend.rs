@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// Strategy for extending configuration from a base file.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum ExtendStrategy {
     /// Uses `admerge` figment strategy.
@@ -27,6 +28,7 @@ pub enum ExtendStrategy {
 /// - String: `extends = "base.toml"`
 /// - Object: `extends = { path = "base.toml", strategy = "no-collision" }`
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(untagged)]
 pub enum Extends {
     /// Simple string path to base file
@@ -36,6 +38,7 @@ pub enum Extends {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ExtendConfig {
     pub path: String,
     #[serde(default)]
