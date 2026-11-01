@@ -36,12 +36,16 @@ contract StateSnapshotTest is Test {
 
         assertEq(store.slot0, 300);
         assertEq(store.slot1, 400);
+        uint256 laterSnapshotId = vm.snapshotState();
 
         vm.revertToStateAndDelete(snapshotId);
         assertEq(store.slot0, 10, "snapshot revert for slot 0 unsuccessful");
         assertEq(store.slot1, 20, "snapshot revert for slot 1 unsuccessful");
         // nothing to revert to anymore
         assert(!vm.revertToState(snapshotId));
+        // later snapshots are kept
+        assert(vm.revertToState(laterSnapshotId));
+        assertEq(store.slot0, 300);
     }
 
     function testStateSnapshotDelete() public {

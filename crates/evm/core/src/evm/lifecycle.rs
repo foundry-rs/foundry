@@ -781,7 +781,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         let snapshot = if action.is_keep() {
             self.snapshots.get(id).cloned()
         } else {
-            self.snapshots.remove(id)
+            self.snapshots.remove_at(id)
         }?;
         self.materialize(evm);
         let LifecycleSnapshot { state, mut forks, env, ext } = snapshot;
