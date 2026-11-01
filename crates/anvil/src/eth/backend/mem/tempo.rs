@@ -498,7 +498,7 @@ mod tests {
         let mining_api = api.clone();
         let mining = tokio::spawn(async move { mining_api.mine_one().await });
         timeout(Duration::from_secs(10), hook.reached.notified()).await.unwrap();
-        let mut registration = Box::pin(api.backend.tempo_consensus_notifications());
+        let mut registration = std::pin::pin!(api.backend.tempo_consensus_notifications());
         let Poll::Ready(Ok(mut events)) = futures::poll!(registration.as_mut()) else {
             panic!("subscription registration must not wait for execution");
         };
