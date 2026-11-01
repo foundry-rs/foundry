@@ -1253,6 +1253,17 @@ impl CallTraceDecoder {
     /// Custom decoding for cheatcode inputs.
     fn decode_cheatcode_inputs(&self, func: &Function, data: &[u8]) -> Option<Vec<String>> {
         match func.name.as_str() {
+            // Headers, bodies, paths and queries may hold credentials: show the method and origin.
+            "httpRequest" | "httpGet" => {
+                let decoded = func.abi_decode_input(data.get(SELECTOR_LEN..)?).ok()?;
+                let (method, url) = match decoded.first()? {
+                    DynSolValue::Tuple(fields) | DynSolValue::CustomStruct { tuple: fields, .. } => {
+                        (fields.first()?.as_str()?, fields.get(1)?.as_str()?)
+                    }
+                    value => ("GET", value.as_str()?),
+                };
+                Some(vec![format!("{} {}", method.to_ascii_uppercase(), url_origin(url))])
+            }
             "expectRevert" => {
                 let decoded = match data.get(SELECTOR_LEN..) {
                     Some(data) => func.abi_decode_input(data).ok(),
@@ -1463,6 +1474,7 @@ impl CallTraceDecoder {
             "parseJson" if self.verbosity < 5 => Some("<encoded JSON value>"),
             "readFile" if self.verbosity < 5 => Some("<file>"),
             "rpcUrl" | "rpcUrls" | "rpcUrlStructs" => Some("<rpc url>"),
+            "httpRequest" | "httpGet" if self.verbosity < 5 => Some("<http response>"),
             _ => None,
         }
         .map(Into::into)
@@ -1896,9 +1908,29 @@ fn constructor_signature(constructor: &Constructor) -> String {
     )
 }
 
+/// Returns `scheme://host[:port]` of `url`, without credentials, path or query.
+fn url_origin(url: &str) -> &str {
+    let Some(scheme_end) = url.find("://").map(|i| i + 3) else { return "<url>" };
+    let authority_end =
+        url[scheme_end..].find(['/', '\\', '?', '#']).map_or(url.len(), |i| scheme_end + i);
+    match url[scheme_end..authority_end].rfind('@') {
+        Some(_) => "<url with credentials>",
+        None => &url[..authority_end],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn url_origin_hides_path_and_credentials() {
+        assert_eq!(url_origin("https://api.example.com/v1/key?k=1"), "https://api.example.com");
+        assert_eq!(url_origin("https://api.example.com\\v1\\key"), "https://api.example.com");
+        assert_eq!(url_origin("http://127.0.0.1:8545?x"), "http://127.0.0.1:8545");
+        assert_eq!(url_origin("https://user:pw@host/"), "<url with credentials>");
+        assert_eq!(url_origin("not a url"), "<url>");
+    }
     use crate::CallKind;
     use alloy_primitives::{address, aliases::U96, bytes, hex};
     use alloy_sol_types::{SolCall, SolError, SolEvent};

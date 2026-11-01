@@ -59,6 +59,8 @@ mod external_storage;
 
 mod fs;
 
+mod http;
+
 mod inspector;
 pub use inspector::CheatcodeAnalysis;
 

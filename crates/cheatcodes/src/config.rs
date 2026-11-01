@@ -21,6 +21,8 @@ use std::{
 pub struct CheatsConfig {
     /// Whether the FFI cheatcode is enabled.
     pub ffi: bool,
+    /// URL prefixes that the HTTP cheatcodes may call.
+    pub http_allowlist: Vec<String>,
     /// Cheatcode selectors rejected before dispatch for restricted executions.
     pub blocked_cheatcodes: Vec<[u8; 4]>,
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
@@ -95,6 +97,7 @@ impl CheatsConfig {
 
         Self {
             ffi: evm_opts.ffi,
+            http_allowlist: config.http_allowlist.clone(),
             blocked_cheatcodes: Vec::new(),
             always_use_create_2_factory: evm_opts.always_use_create_2_factory,
             batch_rewrite_creates,
@@ -247,6 +250,7 @@ impl Default for CheatsConfig {
     fn default() -> Self {
         Self {
             ffi: false,
+            http_allowlist: Vec::new(),
             blocked_cheatcodes: Vec::new(),
             always_use_create_2_factory: false,
             batch_rewrite_creates: false,

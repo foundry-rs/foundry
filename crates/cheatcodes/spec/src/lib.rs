@@ -88,6 +88,8 @@ impl Cheatcodes<'static> {
                 Vm::DirEntry::STRUCT.clone(),
                 Vm::FsMetadata::STRUCT.clone(),
                 Vm::Wallet::STRUCT.clone(),
+                Vm::HttpRequest::STRUCT.clone(),
+                Vm::HttpResponse::STRUCT.clone(),
                 Vm::FfiResult::STRUCT.clone(),
                 Vm::ChainInfo::STRUCT.clone(),
                 Vm::Chain::STRUCT.clone(),

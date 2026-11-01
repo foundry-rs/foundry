@@ -86,6 +86,7 @@ allow_internal_expect_revert = false
 always_use_create_2_factory = false
 eip1559_fee_estimate = "market"
 prompt_timeout = 120
+http_allowlist = []
 sender = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
 tx_origin = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
 initial_balance = "0xffffffffffffffffffffffff"
@@ -432,6 +433,7 @@ fn can_extract_config_values(prj: _, cmd: _) {
         always_use_create_2_factory: false,
         eip1559_fee_estimate: Eip1559FeeEstimatePreset::Market,
         prompt_timeout: 0,
+        http_allowlist: vec!["https://api.example.com/".to_string()],
         sender: address!("00a329c0648769A73afAc7F9381D08FB43dBEA72"),
         tx_origin: address!("00a329c0648769A73afAc7F9F81E08FB43dBEA72"),
         initial_balance: U256::from(0xffffffffffffffffffffffffu128),
@@ -2413,6 +2415,7 @@ fn test_default_config(prj: _, cmd: _) {
   "always_use_create_2_factory": false,
   "eip1559_fee_estimate": "market",
   "prompt_timeout": 120,
+  "http_allowlist": [],
   "sender": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
   "tx_origin": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
   "initial_balance": "0xffffffffffffffffffffffff",
