@@ -1236,7 +1236,7 @@ fn execute<FEN: FoundryEvmNetwork>(
 }
 
 /// Returns the default environment of `FEN`.
-fn default_env<FEN: FoundryEvmNetwork>() -> EvmEnvFor<FEN> {
+pub(crate) fn default_env<FEN: FoundryEvmNetwork>() -> EvmEnvFor<FEN> {
     let spec = SpecFor::<FEN>::default();
     let chain_id = foundry_common::DEV_CHAIN_ID;
     EvmEnv::new(spec, EvmFactoryFor::<FEN>::default().version(spec, chain_id), Default::default())

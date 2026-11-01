@@ -14,7 +14,7 @@ use evm2::{
     TxResultWithState,
     ethereum::intrinsic_and_floor_gas,
     evm::{DbResult, PendingState, PrewarmSet, State},
-    interpreter::{GasTracker, Host, InstrStop, MessageKind, op},
+    interpreter::{GasTracker, Host, InstrStop, MessageKind, op, opcode::OpCode},
     registry::HandlerError,
 };
 use eyre::WrapErr;
@@ -1885,13 +1885,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if inner.early_exit_test_gate.is_some() {
             return InspectorConfig::new();
         }
-        let every_opcode = inner.static_step_dispatch != OpcodeStepDispatch::None
-            || inner.has_static_step_end_inspectors;
-        let mut steps = if every_opcode {
-            OpcodeSet::ALL
-        } else {
-            self.cheatcodes.as_deref().map_or(OpcodeSet::EMPTY, Cheatcodes::steps)
-        };
+        let mut steps = self.cheatcodes.as_deref().map_or(OpcodeSet::EMPTY, Cheatcodes::steps);
         // Cancellation is polled at jumps and calls: every loop runs a jump, and every recursion
         // runs a call or create.
         if inner.execution_cancellation.is_some() {
@@ -1907,6 +1901,33 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
             ] {
                 steps.insert(opcode);
             }
+        }
+        // evm2 reads the config after every call, so the common case without other stepping
+        // inspectors skips the union below.
+        if inner.static_step_dispatch == OpcodeStepDispatch::None
+            && !inner.has_static_step_end_inspectors
+        {
+            return InspectorConfig::new().with_steps(steps);
+        }
+        // Steps the union of the opcodes of every inspector `step_inlined` and `step_end_inlined`
+        // call. An inspector that does not declare its opcodes steps all of them.
+        let inspectors: [Option<&dyn Inspector<TypesFor<FEN>>>; 7] = [
+            inner.chisel_state.as_deref().map(|i| i as _),
+            inner.debug_recorder.as_deref().map(|i| i as _),
+            inner.edge_coverage.as_deref().map(|i| i as _),
+            inner.line_coverage.as_deref().map(|i| i as _),
+            inner.printer.as_deref().map(|i| i as _),
+            inner.revert_diag.as_deref().map(|i| i as _),
+            inner.script_execution_inspector.as_deref().map(|i| i as _),
+        ];
+        if let Some(tracer) = inner.tracer.as_deref() {
+            steps = steps.union(tracer_steps(tracer));
+        }
+        for inspector in inspectors.into_iter().flatten() {
+            if steps == OpcodeSet::ALL {
+                break;
+            }
+            steps = steps.union(inspector.inspector_config().steps);
         }
         InspectorConfig::new().with_steps(steps)
     }
@@ -2657,9 +2678,29 @@ fn handle_arbitrum_system_call<FEN: FoundryEvmNetwork>(
     Some(result)
 }
 
+/// Returns the opcodes the tracer steps, which are the ones it records.
+///
+/// Its step hooks otherwise only halt once a halting byte budget is exceeded, and Foundry sets no
+/// byte budget.
+fn tracer_steps(tracer: &TracingInspector) -> OpcodeSet {
+    let config = tracer.config();
+    if !config.record_steps {
+        return OpcodeSet::EMPTY;
+    }
+    match &config.record_opcodes_filter {
+        Some(filter) => {
+            (0..=u8::MAX).filter(|&op| filter.is_enabled(OpCode::new_or_unknown(op))).collect()
+        }
+        None => OpcodeSet::ALL,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::executors::default_env;
+    use foundry_evm_core::backend::Backend;
+    use foundry_evm_traces::InternalTraceMode;
 
     #[test]
     fn opcode_dispatch_defaults_to_no_static_inspectors() {
@@ -2722,6 +2763,86 @@ mod tests {
         assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::General);
         stack.collect_edge_coverage(false);
         assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
+    }
+
+    #[test]
+    fn inspector_config_unions_the_opcodes_the_hooks_need() {
+        let mut backend = Backend::spawn(None, default_env::<EthEvmNetwork>()).unwrap();
+        let mut stack = InspectorStack::<EthEvmNetwork>::new();
+        let mut steps =
+            |stack: &mut InspectorStack| stack.as_inspector(&mut backend).inspector_config().steps;
+        let set = |opcodes: &[u8]| opcodes.iter().copied().collect::<OpcodeSet>();
+
+        stack.set_cheatcodes(Cheatcodes::new(Default::default()));
+        assert_eq!(steps(&mut stack), OpcodeSet::EMPTY);
+
+        // Without other stepping inspectors, the fuzzer steps nothing and cancellation polls at
+        // jumps and calls.
+        let mut campaign = stack.clone();
+        campaign.set_fuzzer(Fuzzer::new(16, Some(Default::default())));
+        assert_eq!(steps(&mut campaign), OpcodeSet::EMPTY);
+        campaign.set_execution_cancellation(EvmExecutionCancellation::early_exit(EarlyExit::new(
+            false,
+        )));
+        assert_eq!(
+            steps(&mut campaign),
+            set(&[
+                op::JUMP,
+                op::JUMPI,
+                op::CALL,
+                op::CALLCODE,
+                op::DELEGATECALL,
+                op::STATICCALL,
+                op::CREATE,
+                op::CREATE2,
+            ])
+        );
+
+        // Call traces only step for the revert diagnostic.
+        stack.tracing_requirements(TraceRequirements::none().with_calls(true));
+        assert_eq!(steps(&mut stack), set(&[op::REVERT, op::EXTCODESIZE]));
+
+        stack.cheatcodes.as_mut().unwrap().recording_accesses = true;
+        assert_eq!(steps(&mut stack), set(&[op::REVERT, op::EXTCODESIZE, op::SLOAD, op::SSTORE]));
+        stack.cheatcodes.as_mut().unwrap().recording_accesses = false;
+
+        // Internal decoding records only jumps.
+        stack.tracing_requirements(
+            TraceRequirements::none().with_decode_internal(InternalTraceMode::Simple),
+        );
+        assert_eq!(steps(&mut stack), set(&[op::REVERT, op::EXTCODESIZE, op::JUMP, op::JUMPDEST]));
+
+        stack.tracing_requirements(TraceRequirements::none().with_all_steps(true));
+        assert_eq!(steps(&mut stack), OpcodeSet::ALL);
+        stack.tracing_requirements(TraceRequirements::none().with_state_changes(true));
+        assert_eq!(steps(&mut stack), OpcodeSet::ALL);
+
+        // The fuzzer does not step, and cancellation polls at jumps and calls.
+        stack.tracing_requirements(TraceRequirements::none().with_calls(true));
+        stack.set_fuzzer(Fuzzer::new(16, Some(Default::default())));
+        assert_eq!(steps(&mut stack), set(&[op::REVERT, op::EXTCODESIZE]));
+        stack.set_execution_cancellation(EvmExecutionCancellation::early_exit(EarlyExit::new(
+            false,
+        )));
+        assert_eq!(
+            steps(&mut stack),
+            set(&[
+                op::REVERT,
+                op::EXTCODESIZE,
+                op::JUMP,
+                op::JUMPI,
+                op::CALL,
+                op::CALLCODE,
+                op::DELEGATECALL,
+                op::STATICCALL,
+                op::CREATE,
+                op::CREATE2,
+            ])
+        );
+
+        // An inspector without its own config steps every opcode.
+        stack.print(true);
+        assert_eq!(steps(&mut stack), OpcodeSet::ALL);
     }
 
     #[test]
