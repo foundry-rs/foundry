@@ -364,14 +364,6 @@ struct InnerRoot {
     observe: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum OpcodeStepDispatch {
-    #[default]
-    None,
-    FuzzerOnly,
-    General,
-}
-
 /// An inspector that calls multiple inspectors in sequence.
 ///
 /// If a call to an inspector returns a value (indicating a stop or revert) the remaining inspectors
@@ -484,7 +476,7 @@ pub struct InspectorStackInner {
     execution_cancelled: bool,
     #[cfg(test)]
     early_exit_test_gate: Option<EarlyExitTestGate>,
-    static_step_dispatch: OpcodeStepDispatch,
+    has_static_step_inspectors: bool,
     has_static_step_end_inspectors: bool,
     /// The opcodes the cheatcodes step, see [`Cheatcodes::steps`]. Refreshed where evm2 reads the
     /// inspector config again, when a frame starts and when a message returns into it, since only
@@ -750,7 +742,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     #[inline]
     pub fn set_fuzzer(&mut self, fuzzer: Fuzzer) {
         self.fuzzer = Some(fuzzer.into());
-        self.refresh_static_step_dispatch();
     }
 
     /// Set the Chisel inspector.
@@ -1682,38 +1673,29 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
 
         let inner = &mut *self.inner;
-        match inner.static_step_dispatch {
-            OpcodeStepDispatch::None => {}
-            OpcodeStepDispatch::FuzzerOnly => {
-                if !storage_hook_active && let Some(inspector) = &mut inner.fuzzer {
-                    Inspector::<TypesFor<FEN>>::step(&mut **inspector, interp);
-                }
-            }
-            OpcodeStepDispatch::General => {
-                if !storage_hook_active {
-                    call_inspectors!(
-                        [
-                            // These are sorted in definition order.
-                            &mut inner.edge_coverage,
-                            &mut inner.fuzzer,
-                            &mut inner.line_coverage,
-                        ],
-                        |inspector| Inspector::<TypesFor<FEN>>::step(&mut **inspector, interp),
-                    );
-                }
+        if inner.has_static_step_inspectors {
+            if !storage_hook_active {
                 call_inspectors!(
                     [
                         // These are sorted in definition order.
-                        &mut inner.chisel_state,
-                        &mut inner.printer,
-                        &mut inner.revert_diag,
-                        &mut inner.script_execution_inspector,
-                        &mut inner.tracer,
-                        &mut inner.debug_recorder,
+                        &mut inner.edge_coverage,
+                        &mut inner.line_coverage,
                     ],
                     |inspector| Inspector::<TypesFor<FEN>>::step(&mut **inspector, interp),
                 );
             }
+            call_inspectors!(
+                [
+                    // These are sorted in definition order.
+                    &mut inner.chisel_state,
+                    &mut inner.printer,
+                    &mut inner.revert_diag,
+                    &mut inner.script_execution_inspector,
+                    &mut inner.tracer,
+                    &mut inner.debug_recorder,
+                ],
+                |inspector| Inspector::<TypesFor<FEN>>::step(&mut **inspector, interp),
+            );
         }
 
         // Other inspectors may step instructions the cheatcodes do not.
@@ -1728,9 +1710,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             }
         }
 
-        // evm2 skips `step_end` if an inspector halted the frame in `step`. A recorder makes the
-        // dispatch general, so other dispatches skip the check.
-        if matches!(self.inner.static_step_dispatch, OpcodeStepDispatch::General)
+        // evm2 skips `step_end` if an inspector halted the frame in `step`. Only a stack with step
+        // inspectors can hold a recorder, so other stacks skip the check.
+        if self.inner.has_static_step_inspectors
             && let Some(recorder) = self.inner.debug_recorder.as_deref_mut()
             && interp.result().is_err()
         {
@@ -1753,12 +1735,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 ],
                 |inspector| Inspector::<TypesFor<FEN>>::step_end(&mut **inspector, interp),
             );
-        }
-
-        if let Some(fuzzer) = &mut inner.fuzzer
-            && fuzzer.mapping_slots.is_some()
-        {
-            Inspector::<TypesFor<FEN>>::step_end(&mut **fuzzer, interp);
         }
 
         if self.inner.cheat_stepped
@@ -1898,9 +1874,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
             return InspectorConfig::new();
         }
         let every_opcode = inner.execution_cancellation.is_some()
-            || inner.static_step_dispatch != OpcodeStepDispatch::None
-            || inner.has_static_step_end_inspectors
-            || inner.fuzzer.as_ref().is_some_and(|fuzzer| fuzzer.mapping_slots.is_some());
+            || inner.has_static_step_inspectors
+            || inner.has_static_step_end_inspectors;
         let steps = if every_opcode {
             OpcodeSet::ALL
         } else {
@@ -2375,23 +2350,14 @@ impl InspectorStackInner {
 
     #[inline]
     const fn refresh_static_step_dispatch(&mut self) {
-        self.static_step_dispatch = if self.chisel_state.is_none()
-            && self.edge_coverage.is_none()
-            && self.line_coverage.is_none()
-            && self.printer.is_none()
-            && self.revert_diag.is_none()
-            && self.script_execution_inspector.is_none()
-            && self.tracer.is_none()
-            && self.debug_recorder.is_none()
-        {
-            if self.fuzzer.is_some() {
-                OpcodeStepDispatch::FuzzerOnly
-            } else {
-                OpcodeStepDispatch::None
-            }
-        } else {
-            OpcodeStepDispatch::General
-        };
+        self.has_static_step_inspectors = self.chisel_state.is_some()
+            || self.edge_coverage.is_some()
+            || self.line_coverage.is_some()
+            || self.printer.is_some()
+            || self.revert_diag.is_some()
+            || self.script_execution_inspector.is_some()
+            || self.tracer.is_some()
+            || self.debug_recorder.is_some();
     }
 
     #[inline]
@@ -2664,23 +2630,8 @@ mod tests {
     fn opcode_dispatch_defaults_to_no_static_inspectors() {
         let stack = InspectorStackInner::default();
 
-        assert_eq!(stack.static_step_dispatch, OpcodeStepDispatch::None);
+        assert!(!stack.has_static_step_inspectors);
         assert!(!stack.has_static_step_end_inspectors);
-    }
-
-    #[test]
-    fn opcode_dispatch_uses_fuzzer_fast_path_when_fuzzer_is_only_static_step_inspector() {
-        let mut stack = InspectorStack::<EthEvmNetwork>::new();
-        stack.set_fuzzer(Fuzzer::new(16, None));
-
-        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::FuzzerOnly);
-        assert!(!stack.inner.has_static_step_end_inspectors);
-
-        stack.collect_line_coverage(true);
-        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::General);
-
-        stack.collect_line_coverage(false);
-        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::FuzzerOnly);
     }
 
     #[test]
@@ -2688,23 +2639,23 @@ mod tests {
         let mut stack = InspectorStack::<EthEvmNetwork>::new();
 
         stack.print(true);
-        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::General);
+        assert!(stack.inner.has_static_step_inspectors);
         assert!(stack.inner.has_static_step_end_inspectors);
 
         stack.print(false);
-        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
+        assert!(!stack.inner.has_static_step_inspectors);
         assert!(!stack.inner.has_static_step_end_inspectors);
 
         stack.tracing_requirements(TraceRequirements::none().with_calls(true));
-        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::General);
+        assert!(stack.inner.has_static_step_inspectors);
         assert!(stack.inner.has_static_step_end_inspectors);
 
         stack.tracing_requirements(TraceRequirements::none());
-        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
+        assert!(!stack.inner.has_static_step_inspectors);
         assert!(!stack.inner.has_static_step_end_inspectors);
 
         stack.set_chisel(0);
-        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
+        assert!(!stack.inner.has_static_step_inspectors);
         assert!(stack.inner.has_static_step_end_inspectors);
     }
 
@@ -2713,14 +2664,14 @@ mod tests {
         let mut stack = InspectorStack::<EthEvmNetwork>::new();
 
         stack.script(Address::with_last_byte(1));
-        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::General);
+        assert!(stack.inner.has_static_step_inspectors);
         assert!(!stack.inner.has_static_step_end_inspectors);
 
         let mut stack = InspectorStack::<EthEvmNetwork>::new();
         stack.collect_edge_coverage(true);
-        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::General);
+        assert!(stack.inner.has_static_step_inspectors);
         stack.collect_edge_coverage(false);
-        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
+        assert!(!stack.inner.has_static_step_inspectors);
     }
 
     #[test]
