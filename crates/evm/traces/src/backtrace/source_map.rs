@@ -1,9 +1,14 @@
 //! Source map decoding and PC mapping utilities.
 
 use alloy_primitives::Bytes;
-use foundry_compilers::{ProjectCompileOutput, artifacts::sourcemap::SourceMap};
+use foundry_compilers::{
+    ProjectCompileOutput, artifacts::sourcemap::SourceMap, buildinfo::SourceEdit,
+};
 use foundry_evm_core::ic::IcPcMap;
 use std::path::{Path, PathBuf};
+
+/// Source path, content on disk, and preprocessor edits of a build source.
+pub type BuildSource = (PathBuf, String, Vec<SourceEdit>);
 
 /// Source data for a single contract.
 #[derive(Debug, Clone)]
@@ -20,21 +25,21 @@ pub struct PcSourceMapper<'a> {
     ic_pc_map: IcPcMap,
     /// Source data consists of the source_map and the deployed bytecode
     source_data: SourceData,
-    /// Source files i.e source path and content (indexed by source_id)
-    sources: &'a [(PathBuf, String)],
+    /// Source files i.e source path, content, and preprocessor edits (indexed by source_id)
+    sources: &'a [BuildSource],
     /// Cached line offset mappings for each source file.
     line_offsets: Vec<Vec<usize>>,
 }
 
 impl<'a> PcSourceMapper<'a> {
     /// Creates a new PC to source mapper.
-    pub fn new(source_data: SourceData, sources: &'a [(PathBuf, String)]) -> Self {
+    pub fn new(source_data: SourceData, sources: &'a [BuildSource]) -> Self {
         // Build instruction counter to program counter mapping
         let ic_pc_map = IcPcMap::new(source_data.bytecode.as_ref());
 
         // Pre-calculate line offsets for each source file
         let line_offsets =
-            sources.iter().map(|(_, content)| compute_line_offsets(content)).collect();
+            sources.iter().map(|(_, content, _)| compute_line_offsets(content)).collect();
 
         Self { ic_pc_map, source_data, sources, line_offsets }
     }
@@ -56,10 +61,11 @@ impl<'a> PcSourceMapper<'a> {
         }
 
         // Get the source file info
-        let (file_path, content) = &self.sources[source_idx];
+        let (file_path, content, edits) = &self.sources[source_idx];
 
-        // Convert byte offset to line and column
-        let offset = element.offset() as usize;
+        // Convert byte offset to line and column. Offsets refer to the compiled source, which
+        // differs from the file on disk when it was preprocessed.
+        let offset = SourceEdit::original_offset(edits, element.offset() as usize);
 
         // Check if offset is valid for this source file
         if offset >= content.len() {
@@ -135,15 +141,15 @@ pub fn load_build_sources(
     build_id: &str,
     output: &ProjectCompileOutput,
     root: &Path,
-) -> Option<Vec<(PathBuf, String)>> {
+) -> Option<Vec<BuildSource>> {
     let build_ctx = output.builds().find(|(bid, _)| *bid == build_id).map(|(_, ctx)| ctx)?;
 
     // Determine the size needed for sources vector
     // Highest source_id
     let max_source_id = build_ctx.source_id_to_path.keys().max().map_or(0, |id| *id) as usize;
 
-    // Vec of source path and it's content
-    let mut sources = vec![(PathBuf::new(), String::new()); max_source_id + 1];
+    // Vec of source path, content, and preprocessor edits
+    let mut sources = vec![(PathBuf::new(), String::new(), Vec::new()); max_source_id + 1];
 
     // Populate sources at their correct indices
     for (source_id, source_path) in &build_ctx.source_id_to_path {
@@ -161,7 +167,9 @@ pub fn load_build_sources(
         // Convert path to relative PathBuf
         let path_buf = source_path.strip_prefix(root).unwrap_or(source_path).to_path_buf();
 
-        sources[idx] = (path_buf, source_content);
+        let edits = build_ctx.source_edits.get(source_id).cloned().unwrap_or_default();
+
+        sources[idx] = (path_buf, source_content, edits);
     }
 
     Some(sources)
