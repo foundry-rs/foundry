@@ -829,7 +829,7 @@ pub(super) fn resolve_type(
     bail!("type description should be a valid Solidity type or a EIP712 `encodeType` string")
 }
 
-/// Upserts a value into a JSON object based on a dot-separated key.
+/// Upserts a value into a JSON object based on an object-key path.
 ///
 /// This function navigates through a mutable `serde_json::Value` object using a
 /// path-like key. It creates nested JSON objects if they do not exist along the path.
@@ -840,9 +840,9 @@ pub(super) fn resolve_type(
 /// * `data` - A mutable reference to the `serde_json::Value` to be modified.
 /// * `value` - The string representation of the value to upsert. This string is first parsed as
 ///   JSON, and if that fails, it's treated as a plain JSON string.
-/// * `key` - A dot-separated string representing the path to the location for upserting.
+/// * `key` - A path of dot-separated or bracket-quoted object keys.
 pub(super) fn upsert_json_value(data: &mut Value, value: &str, key: &str) -> Result<()> {
-    let parts = split_value_key(key)?;
+    let parts = split_json_value_key(key)?;
 
     // Separate the final key from the path.
     // Traverse the objects, creating intermediary ones if necessary.
@@ -872,6 +872,68 @@ pub(super) fn upsert_json_value(data: &mut Value, value: &str, key: &str) -> Res
     }
 
     Ok(())
+}
+
+/// Parses only literal object keys; JSONPath selectors cannot create missing keys unambiguously.
+fn split_json_value_key(key: &str) -> Result<Vec<String>> {
+    let invalid = || {
+        fmt_err!(
+            "invalid JSON write path '{key}': expected dot-separated keys or quoted bracket keys"
+        )
+    };
+    let mut path =
+        if key == "$" || key.starts_with("$.") || key.starts_with("$[") { &key[1..] } else { key };
+    let mut parts = Vec::new();
+
+    while !path.is_empty() {
+        if let Some(rest) = path.strip_prefix('.') {
+            path = rest;
+            if path.is_empty() || path.starts_with('.') {
+                return Err(invalid());
+            }
+        } else if !parts.is_empty() && !path.starts_with('[') {
+            return Err(invalid());
+        }
+
+        if let Some(quoted) = path.strip_prefix('[') {
+            let Some(quote @ ('\'' | '"')) = quoted.chars().next() else {
+                return Err(invalid());
+            };
+            let quoted = &quoted[quote.len_utf8()..];
+            let mut chars = quoted.char_indices().peekable();
+            let mut segment = String::new();
+            let mut end = None;
+            while let Some((index, ch)) = chars.next() {
+                if ch == '\\' && chars.peek().is_some_and(|(_, next)| *next == quote) {
+                    chars.next();
+                    segment.push(quote);
+                } else if ch == quote {
+                    end = Some(index + ch.len_utf8());
+                    break;
+                } else {
+                    segment.push(ch);
+                }
+            }
+            let Some(end) = end else { return Err(invalid()) };
+            path = quoted[end..].strip_prefix(']').ok_or_else(invalid)?;
+            parts.push(segment);
+        } else {
+            let end = path.find(['.', '[']).unwrap_or(path.len());
+            let segment = &path[..end];
+            if segment.is_empty()
+                || segment.chars().any(|ch| matches!(ch, ']' | '*' | '?' | '\'' | '"'))
+            {
+                return Err(invalid());
+            }
+            parts.push(segment.to_owned());
+            path = &path[end..];
+        }
+    }
+
+    if parts.is_empty() {
+        return Err(fmt_err!("'valueKey' cannot be empty or just '$'"));
+    }
+    Ok(parts)
 }
 
 /// Splits the `valueKey` of a write cheatcode into the object keys leading to the value.
@@ -948,7 +1010,61 @@ mod tests {
     use alloy_primitives::FixedBytes;
     use foundry_common::fmt::{TypeDefMap, serialize_value_as_json};
     use proptest::{arbitrary::any, prop_oneof, strategy::Strategy};
+    use serde_json::json;
     use std::collections::HashSet;
+
+    #[test]
+    fn test_write_json_quoted_object_keys() {
+        let mut data = json!({"a.b": 1, "x": {"0xAb.c": 2}});
+        for (path, number) in [
+            (r#".["a.b"]"#, 3),
+            ("$['a.b']", 4),
+            (r#".x["0xAb.c"]"#, 5),
+            (".x.['0xAb.c']", 6),
+            (".new['child.key'].value", 7),
+            (".parent.child.value", 8),
+            (r#".["a\"b]"]"#, 9),
+            (r#".['a\'b]']"#, 10),
+        ] {
+            upsert_json_value(&mut data, &number.to_string(), path).unwrap();
+            assert_eq!(select(&data, path).unwrap(), vec![&json!(number)], "{path}");
+        }
+
+        assert_eq!(
+            data,
+            json!({
+                "a.b": 4,
+                "x": {"0xAb.c": 6},
+                "new": {"child.key": {"value": 7}},
+                "parent": {"child": {"value": 8}},
+                "a\"b]": 9,
+                "a'b]": 10,
+            })
+        );
+    }
+
+    #[test]
+    fn test_write_json_rejects_unsupported_paths_without_mutation() {
+        for path in [
+            "",
+            "$",
+            ".",
+            ".x[0]",
+            ".x[*]",
+            ".x[?(@.a)]",
+            ".x.*",
+            ".x..y",
+            ".x['unterminated]",
+            ".x['a.b']tail",
+            ".x[foo]",
+            ".x.",
+        ] {
+            let mut data = json!({"x": {"a": 1}});
+            let original = data.clone();
+            assert!(upsert_json_value(&mut data, "2", path).is_err(), "{path}");
+            assert_eq!(data, original, "{path}");
+        }
+    }
 
     #[test]
     fn test_parse_json_comments() {
