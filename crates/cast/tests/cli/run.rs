@@ -880,3 +880,76 @@ async fn cast_run_upstream_tx_through_amsterdam_fork(cmd: _) {
             .stdout_eq(format!("...\nTransaction successfully executed.\nGas used: {gas}\n"));
     }
 }
+
+// Prefix transactions from system senders replay only with `--replay-system-txes`, which the
+// target observes: here a HyperEVM-style system transfer funds the account it reads and stores.
+#[casttest]
+async fn cast_run_replays_system_txes(cmd: _) {
+    let config = NodeConfig::test()
+        .with_base_fee(Some(0))
+        .with_gas_price(Some(0))
+        .with_transaction_order(TransactionOrder::Fifo);
+    let (api, handle) = anvil::spawn(config).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let funded = address!("0x00000000000000000000000000000000000beef1");
+    // SSTORE(0, BALANCE(CALLDATALOAD(4))) and return the balance.
+    let probe = Address::with_last_byte(0xaa);
+    api.anvil_set_code(probe, bytes!("0x600435318060005560005260206000f3")).await.unwrap();
+    api.anvil_set_balance(HYPERLIQUID_SYSTEM_ADDRESS, U256::from(10u128.pow(20))).await.unwrap();
+    api.anvil_impersonate_account(HYPERLIQUID_SYSTEM_ADDRESS).await.unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let system = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(HYPERLIQUID_SYSTEM_ADDRESS)
+                .with_to(funded)
+                .with_value(U256::from(10u128.pow(18)))
+                .with_gas_price(0)
+                .with_gas_limit(21_000)
+                .into(),
+        )
+        .await
+        .unwrap();
+    let target = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(from)
+                .with_to(probe)
+                .with_input([[0u8; 4].as_slice(), funded.into_word().as_slice()].concat())
+                .with_gas_price(0)
+                .with_gas_limit(100_000)
+                .into(),
+        )
+        .await
+        .unwrap();
+    api.mine_one().await.unwrap();
+    let system_tx = *system.tx_hash();
+    assert!(system.get_receipt().await.unwrap().status());
+    let receipt = target.get_receipt().await.unwrap();
+    assert_eq!(receipt.transaction_index, Some(1));
+    assert_eq!(receipt.gas_used, 45_907);
+    let tx_hash = receipt.transaction_hash.to_string();
+    let endpoint = handle.http_endpoint();
+
+    // Without the system transfer the balance is zero, so the store costs less.
+    cmd.args(["run", &tx_hash, "--rpc-url", &endpoint])
+        .with_no_redact()
+        .assert_success()
+        .stdout_eq("...\nTransaction successfully executed.\nGas used: 26007\n")
+        .stderr_eq(format!(
+            "Executing previous transactions from the block.\n\
+             Warning: the replay skips system transactions before the target, so their state changes are missing: [{system_tx}]; `--replay-system-txes` attempts local replay where supported; `--debug-trace-transaction` renders the node's own trace instead\n\
+             Warning: the replay does not match the transaction's receipt: it used 45907 gas on-chain but 26007 in the replay. The chain may apply rules the replay does not model; `--debug-trace-transaction` shows the node's own trace if it exposes the `debug` namespace.\n"
+        ));
+    cmd.cast_fuse()
+        .args(["run", &tx_hash, "--rpc-url", &endpoint, "--replay-system-txes"])
+        .with_no_redact()
+        .assert_success()
+        .stdout_eq("...\nTransaction successfully executed.\nGas used: 45907\n")
+        .stderr_eq(str![[r#"
+Executing previous transactions from the block.
+
+"#]]);
+}

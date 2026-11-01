@@ -6,6 +6,12 @@ use foundry_common::{
 use foundry_config::{Config, figment::Profile};
 use serde::{Deserialize, Serialize};
 
+/// Stack size of the threads that run EVM executions.
+///
+/// evm2 executes every call frame as a native recursion, so a call at the maximum depth of 1024
+/// needs several MiB of stack in debug builds, more than the default 2 MiB.
+const EVM_THREAD_STACK_SIZE: usize = 32 * 1024 * 1024;
+
 /// Global arguments for the CLI.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, Parser)]
 pub struct GlobalArgs {
@@ -90,9 +96,11 @@ impl GlobalArgs {
         }
         shell.set();
 
-        // Initialize the thread pool only if `threads` was requested to avoid unnecessary overhead.
         if self.threads.is_some() {
             self.force_init_thread_pool()?;
+        } else {
+            // The pool may already exist when the CLI runs in-process, which keeps its stack size.
+            let _ = init_thread_pool(0);
         }
 
         // Display a warning message if the current version is not stable.
@@ -138,7 +146,11 @@ impl GlobalArgs {
         {
             builder.worker_threads(threads);
         }
-        builder.enable_all().build().expect("failed to create tokio runtime")
+        builder
+            .thread_stack_size(EVM_THREAD_STACK_SIZE)
+            .enable_all()
+            .build()
+            .expect("failed to create tokio runtime")
     }
 
     /// Creates a new tokio runtime and blocks on the future.
@@ -153,6 +165,7 @@ pub fn init_thread_pool(threads: usize) -> eyre::Result<()> {
     rayon::ThreadPoolBuilder::new()
         .thread_name(|i| format!("foundry-{i}"))
         .num_threads(threads)
+        .stack_size(EVM_THREAD_STACK_SIZE)
         .build_global()?;
     Ok(())
 }

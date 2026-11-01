@@ -11,6 +11,8 @@ extern crate foundry_common;
 #[macro_use]
 extern crate tracing;
 
+use evm2::interpreter::opcode::OpCode;
+use evm2_inspectors::{ColorChoice, tracing::OpcodeFilter};
 use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     shell,
@@ -18,8 +20,6 @@ use foundry_common::{
 use foundry_config::{Chain, Config};
 use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_evm_networks::NetworkConfigs;
-use revm::bytecode::opcode::OpCode;
-use revm_inspectors::tracing::OpcodeFilter;
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
@@ -85,7 +85,7 @@ impl TraceContext {
     }
 }
 
-pub use revm_inspectors::tracing::{
+pub use evm2_inspectors::tracing::{
     CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
     TraceWriter, TracingInspector, TracingInspectorConfig,
     types::{
@@ -509,11 +509,11 @@ fn format_storage_word(value: U256) -> String {
     if value < U256::from(1_000_000u64) { value.to_string() } else { format!("0x{value:x}") }
 }
 
-const fn convert_color_choice(choice: shell::ColorChoice) -> revm_inspectors::ColorChoice {
+const fn convert_color_choice(choice: shell::ColorChoice) -> ColorChoice {
     match choice {
-        shell::ColorChoice::Auto => revm_inspectors::ColorChoice::Auto,
-        shell::ColorChoice::Always => revm_inspectors::ColorChoice::Always,
-        shell::ColorChoice::Never => revm_inspectors::ColorChoice::Never,
+        shell::ColorChoice::Auto => ColorChoice::Auto,
+        shell::ColorChoice::Always => ColorChoice::Always,
+        shell::ColorChoice::Never => ColorChoice::Never,
     }
 }
 
@@ -770,8 +770,93 @@ impl TraceRequirements {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_network::TransactionBuilder;
     use alloy_primitives::Bytes;
-    use revm::interpreter::InstructionResult;
+    use evm2::{
+        bytecode::Bytecode,
+        evm::{AccountInfo, InMemoryDB},
+        interpreter::InstrStop,
+    };
+    use foundry_evm_core::evm::{
+        EvmEnv, EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork, SpecFor, TransactionRequestFor,
+    };
+    use snapbox::{assert_data_eq, str};
+
+    /// Traces a call to a contract whose sub-call reverts without data on `FEN`'s default spec, and
+    /// renders the decoded trace.
+    async fn render_reverting_subcall<FEN: FoundryEvmNetwork>() -> String
+    where
+        TransactionRequestFor<FEN>: Default,
+    {
+        let (caller, target, reverter) = (
+            Address::with_last_byte(0xCA),
+            Address::with_last_byte(0xC0),
+            Address::with_last_byte(0xC1),
+        );
+        // `call(gas(), reverter, 0, 0, 0, 0, 0); stop`.
+        let mut code = [0x60, 0x00].repeat(5);
+        code.push(0x73);
+        code.extend_from_slice(reverter.as_slice());
+        code.extend([0x5a, 0xf1, 0x00]);
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(&caller, AccountInfo::default().with_balance(U256::from(1e18)));
+        for (address, code) in [(target, &code[..]), (reverter, &[0x60, 0x00, 0x60, 0x00, 0xfd])] {
+            let code = Bytecode::new_legacy(Bytes::copy_from_slice(code));
+            db.insert_account_info(&address, AccountInfo::default().with_code(code));
+        }
+        let factory = EvmFactoryFor::<FEN>::default();
+        let spec = SpecFor::<FEN>::default();
+        let env = EvmEnv::new(spec, factory.version(spec, 31337), Default::default());
+        let mut evm = factory.create_evm(db, env);
+        evm.set_inspector(TracingInspector::new(TracingInspectorConfig::default_parity()));
+        let request = TransactionRequestFor::<FEN>::default()
+            .with_from(caller)
+            .with_to(target)
+            .with_nonce(0)
+            .with_chain_id(31337)
+            .with_gas_limit(1_000_000)
+            .with_max_fee_per_gas(0)
+            .with_max_priority_fee_per_gas(0);
+        let tx = FEN::tx_from_request(request).unwrap();
+        assert!(evm.transact(&tx).unwrap().commit().status);
+
+        let mut arena = evm.clear_inspector_as::<TracingInspector>().unwrap().into_traces();
+        decode_trace_arena(&mut arena, &CallTraceDecoder::new().clone()).await;
+        render_trace_arena(&SparsedTraceArena {
+            arena,
+            ignored: Default::default(),
+            diagnostics: Default::default(),
+            debug_steps: None,
+        })
+    }
+
+    async fn tracing_suite<FEN: FoundryEvmNetwork>()
+    where
+        TransactionRequestFor<FEN>: Default,
+    {
+        assert_data_eq!(
+            render_reverting_subcall::<FEN>().await,
+            str![[r#"
+  [..] 0x00000000000000000000000000000000000000C0::fallback()
+    ├─ [..] 0x00000000000000000000000000000000000000C1::fallback()
+    │   └─ ← [Revert] EvmError: Revert
+    └─ ← [Stop]
+
+"#]]
+        );
+    }
+
+    #[tokio::test]
+    async fn tracing() {
+        tracing_suite::<foundry_evm_core::evm::EthEvmNetwork>().await;
+        tracing_suite::<foundry_evm_core::evm::TempoEvmNetwork>().await;
+        #[cfg(feature = "optimism")]
+        tracing_suite::<foundry_evm_core::evm::OpEvmNetwork>().await;
+        #[cfg(feature = "base")]
+        tracing_suite::<foundry_evm_core::evm::BaseEvmNetwork>().await;
+        #[cfg(feature = "monad")]
+        tracing_suite::<foundry_evm_core::evm::MonadEvmNetwork>().await;
+    }
 
     #[test]
     fn trace_context_uses_the_execution_network_hardfork_namespace() {
@@ -875,7 +960,8 @@ mod tests {
                     had_value: Some(U256::ONE),
                     reason: StorageChangeReason::SSTORE,
                 })),
-                status: Some(InstructionResult::Stop),
+                storage_slot: None,
+                status: Some(InstrStop::Stop),
                 immediate_bytes: None,
                 decoded: None,
             }],

@@ -1,7 +1,7 @@
 use alloy_network::Network;
 use alloy_primitives::{Address, B256, Bytes};
+use evm2_inspectors::tracing::types::CallKind;
 use foundry_common::TransactionMaybeSigned;
-use revm_inspectors::tracing::types::CallKind;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

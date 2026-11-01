@@ -1,6 +1,12 @@
 //! Support for forking off another client
 
-use crate::eth::{backend::db::Db, error::BlockchainError};
+use crate::eth::{
+    backend::{
+        db::{BlockchainDb, Db},
+        env::{BlobExcessGasAndPrice, SpecId},
+    },
+    error::BlockchainError,
+};
 use alloy_chains::NamedChain;
 use alloy_consensus::{BlockHeader, TrieAccount};
 use alloy_eips::{eip2930::AccessListResult, eip7840::BlobParams};
@@ -36,18 +42,18 @@ use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
 use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
 use foundry_common::provider::{RetryProvider, is_rpc_method_not_found};
-use foundry_evm::{
-    backend::{AccountFetchPolicy, BlockchainDb, account_fetch_policy_for_source},
+use foundry_evm_core::{
+    backend::account_fetch_policy_for_source,
     fork::{cache_bal, validate_bal},
-    hardfork::FoundryHardfork,
 };
+use foundry_evm_hardforks::FoundryHardfork;
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
+use foundry_fork_db::AccountFetchPolicy;
 use foundry_primitives::{FoundryHeader, FoundryTxReceipt};
 use parking_lot::{
     RawRwLock, RwLock,
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
 };
-use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork::SpecId};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::RwLock as AsyncRwLock;
 

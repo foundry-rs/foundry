@@ -8,23 +8,24 @@ use crate::{
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
 use alloy_network::{AnyNetwork, Network, ReceiptResponse};
-use alloy_primitives::{Bytes, FixedBytes, U256, hex, map::Entry};
+use alloy_primitives::{B256, Bytes, FixedBytes, U256, hex, map::Entry};
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
+use evm2::{
+    EvmFeatures,
+    bytecode::Bytecode,
+    interpreter::{Host, MessageKind, derive_create_destination},
+    version::GasId,
+};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::{contracts::ContractData, fs};
 use foundry_config::fs_permissions::FsAccessKind;
-use foundry_evm_core::{FoundryTransaction, env::FoundryContextExt, evm::FoundryEvmNetwork};
+use foundry_evm_core::evm::{FoundryEvmNetwork, MessageFor};
 use foundry_evm_traces::CallKind;
-use revm::{
-    context::{Cfg, ContextTr, CreateScheme, JournalTr},
-    handler::handle_reservoir_remaining_gas,
-    interpreter::CreateInputs,
-    primitives::hardfork::SpecId,
-};
 use semver::Version;
 use std::{
     io::{BufRead, BufReader},
+    mem,
     path::{Path, PathBuf},
     process::Command,
     sync::mpsc,
@@ -533,56 +534,57 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     let caller = prank_changes.as_ref().and_then(|changes| changes.caller).unwrap_or(ccx.caller);
 
     let value = value.unwrap_or(U256::ZERO);
-    let scheme =
-        if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create };
-    let mut inputs = CreateInputs::new(caller, scheme, value, bytecode.into(), 0, 0);
-    let init_code_len = inputs.init_code().len();
+    let kind = if salt.is_some() { MessageKind::Create2 } else { MessageKind::Create };
+    let salt = salt.map(B256::from).unwrap_or_default();
+    let init_code_len = bytecode.len();
 
     // Charge the caller as the CREATE and CREATE2 opcodes would, before changing any state.
-    let spec = ccx.spec().into();
-    let gas_params = ccx.ecx.cfg().gas_params();
-    let mut cost = if salt.is_some() {
+    let version = ccx.evm_env().version;
+    let gas_params = &version.gas_params;
+    let mut cost = if kind == MessageKind::Create2 {
         gas_params.create2_cost(init_code_len)
     } else {
-        gas_params.create_cost()
+        gas_params.get(GasId::Create)
     };
-    if spec.is_enabled_in(SpecId::SHANGHAI) {
-        if init_code_len > ccx.max_initcode_size() {
+    if version.features.contains(EvmFeatures::EIP3860) {
+        if init_code_len > version.max_initcode_size {
             ccx.gas.spend_all();
             return Err(fmt_err!("initcode size limit exceeded"));
         }
         cost = cost.saturating_add(gas_params.initcode_cost(init_code_len));
     }
     let create_state_gas = gas_params.create_state_gas();
-    if !ccx.gas.record_regular_cost(cost) {
+    if ccx.gas.spend(cost).is_err() {
         ccx.gas.spend_all();
         return Err(fmt_err!("out of gas"));
     }
 
     // EIP-8037: charge the account creation state gas if the creation can proceed and the
     // destination is empty.
-    if ccx.ecx.cfg().is_amsterdam_eip8037_enabled() {
-        let caller_info = &ccx.ecx.journal_mut().load_account(caller)?.data.info;
-        if caller_info.balance >= value && caller_info.nonce != u64::MAX {
-            let created_address = inputs.created_address(caller_info.nonce);
-            if ccx.ecx.journal_mut().load_account(created_address)?.data.info.is_empty() {
-                if !ccx.gas.record_state_cost(create_state_gas) {
+    let mut charged_create_state_gas = false;
+    if version.features.contains(EvmFeatures::EIP8037) {
+        let (balance, nonce) = {
+            let account = ccx.evm.state_mut().account(&caller)?;
+            (account.balance(), account.nonce())
+        };
+        if balance >= value && nonce != u64::MAX {
+            let created_address = derive_create_destination(kind, &caller, &salt, &bytecode, nonce);
+            if ccx.evm.target_is_empty_for_new_account_gas(&created_address, version.features)? {
+                if ccx.gas.spend_state(create_state_gas).is_err() {
                     ccx.gas.spend_all();
                     return Err(fmt_err!("out of gas"));
                 }
-                inputs.set_charged_create_state_gas(true);
+                charged_create_state_gas = true;
             }
         }
     }
 
     let mut gas_limit = ccx.gas.remaining();
-    if spec.is_enabled_in(SpecId::TANGERINE) {
-        gas_limit = ccx.ecx.cfg().gas_params().call_stipend_reduction(gas_limit);
+    if version.features.contains(EvmFeatures::EIP150) {
+        gas_limit = gas_params.call_stipend_reduction(gas_limit);
     }
     // Forward the gas to the create frame; this cannot fail as it does not exceed `remaining`.
-    let _ = ccx.gas.record_regular_cost(gas_limit);
-    inputs.set_gas_limit(gas_limit);
-    inputs.set_reservoir(ccx.gas.reservoir());
+    let _ = ccx.gas.spend(gas_limit);
 
     // Broadcast the synthetic create only if it was requested by the broadcaster at the broadcast
     // depth, as for native creates.
@@ -595,25 +597,50 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
 
     if let Some(changes) = prank_changes {
         if let Some(new_origin) = changes.origin {
-            ccx.ecx.tx_mut().set_caller(new_origin);
+            ccx.state.set_origin(ccx.evm.tx_env().origin, new_origin);
         }
         if let Some(used) = changes.used {
             ccx.state.pranks.insert(depth, used);
         }
     }
 
+    let input = Bytes::from(bytecode);
+    let message = MessageFor::<FEN> {
+        kind,
+        depth: u16::try_from(depth + 1).unwrap_or(u16::MAX),
+        gas_limit,
+        reservoir: ccx.gas.reservoir(),
+        caller,
+        code: Bytecode::new_raw(input.clone()),
+        input,
+        value,
+        salt,
+        ..Default::default()
+    };
     // Restore the outer marker afterwards, as constructors can call `deployCode` too.
     let outer_deploy_code_depth = ccx.state.deploy_code_depth.replace(depth);
-    let outcome = exec_create(executor, inputs, ccx);
+    let outer_create_state_gas = mem::replace(
+        &mut ccx.state.deploy_code_create_state_gas,
+        if charged_create_state_gas { create_state_gas } else { 0 },
+    );
+    let outer_output = ccx.state.deploy_code_output.take();
+    let outcome = exec_create(executor, message, ccx);
     ccx.state.deploy_code_depth = outer_deploy_code_depth;
+    ccx.state.deploy_code_create_state_gas = outer_create_state_gas;
+    // A create that runs isolated as the root of its own nested transaction returns no data from
+    // a failed code deposit, as on master.
+    let returned = mem::replace(&mut ccx.state.deploy_code_output, outer_output)
+        .filter(|(_, isolated)| *isolated == ccx.state.in_isolation_context)
+        .map(|(output, _)| output);
 
     // Clear the flag in case the synthetic create was not broadcast, and end a single-call
     // broadcast at the original depth as native create cleanup would.
     if let Some(broadcast) = &mut ccx.state.broadcast {
         broadcast.deploy_from_code = false;
         if broadcast.single_call && depth == broadcast.depth {
-            ccx.ecx.tx_mut().set_caller(broadcast.original_origin);
+            let original_origin = broadcast.original_origin;
             ccx.state.broadcast = None;
+            ccx.state.set_origin(ccx.evm.tx_env().origin, original_origin);
         }
     }
 
@@ -621,29 +648,28 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     if let Some(prank) = ccx.state.get_prank(depth).copied()
         && depth == prank.depth
     {
-        ccx.ecx.tx_mut().set_caller(prank.prank_origin);
+        ccx.state.set_origin(ccx.evm.tx_env().origin, prank.prank_origin);
         if prank.single_call {
             ccx.state.pranks.remove(&depth);
         }
     }
 
     let mut outcome = outcome?;
-    handle_reservoir_remaining_gas(
-        outcome.result.result,
-        ccx.gas.tracker_mut(),
-        outcome.result.gas.tracker_mut(),
-    );
-    // Refund the upfront state charge if the account was not created, as revm does.
-    let created = outcome.result.result.is_ok() && outcome.address.is_some();
-    if outcome.charged_create_state_gas && !created {
+    // Return the create frame's gas to the caller as the CREATE opcode does. Settling is a no-op
+    // for a result the EVM already settled.
+    outcome.gas.settle_gas(outcome.stop);
+    ccx.gas.merge_child_gas(outcome.gas, outcome.stop);
+    // Refund the upfront state charge if the account was not created, as the CREATE opcode does.
+    if charged_create_state_gas && (outcome.created_address.is_none() || !outcome.is_success()) {
         ccx.gas.refill_reservoir(create_state_gas);
     }
 
-    if !outcome.result.result.is_ok() {
-        return Err(crate::Error::from(outcome.result.output));
+    if !outcome.is_success() {
+        // As on master, a constructor whose returned code could not be deposited reverts with it.
+        return Err(crate::Error::from(returned.unwrap_or(outcome.output)));
     }
 
-    let address = outcome.address.ok_or_else(|| fmt_err!("contract creation failed"))?;
+    let address = outcome.created_address.ok_or_else(|| fmt_err!("contract creation failed"))?;
 
     Ok(address.abi_encode())
 }

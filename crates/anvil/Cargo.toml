@@ -26,16 +26,23 @@ anvil-server = { path = "server" }
 foundry-cli = { workspace = true, optional = true }
 foundry-common.workspace = true
 foundry-config.workspace = true
-foundry-evm.workspace = true
+foundry-evm-core.workspace = true
+foundry-evm-hardforks.workspace = true
 foundry-evm-networks.workspace = true
-alloy-monad-evm = { workspace = true, optional = true }
-monad-revm = { workspace = true, optional = true }
+foundry-evm-traces.workspace = true
+foundry-fork-db.workspace = true
 foundry-primitives = { workspace = true, default-features = false }
-tempo-hardfork.workspace = true
 tempo-primitives.workspace = true
-tempo-precompiles.workspace = true
+
+# evm2
+evm2.workspace = true
+evm2-inspectors.workspace = true
+op-evm2 = { workspace = true, optional = true }
+base-evm2 = { workspace = true, optional = true }
+monad-evm2 = { workspace = true, optional = true }
 tempo-evm.workspace = true
-tempo-revm.workspace = true
+tempo-hardfork.workspace = true
+tempo-precompiles.workspace = true
 
 # Tempo consensus certificate primitives.
 commonware-codec.workspace = true
@@ -48,27 +55,14 @@ tempo-dkg-onchain-artifacts.workspace = true
 
 # Base
 base-common-chains = { workspace = true, optional = true, features = ["std"] }
-base-common-consensus = { workspace = true, optional = true, features = ["evm", "k256", "serde", "std"] }
-base-common-evm = { workspace = true, optional = true, features = [
-    "blst",
-    "c-kzg",
-    "memory_limit",
-    "optional_block_gas_limit",
-    "optional_eip3607",
-    "optional_no_base_fee",
-    "serde",
-    "std",
-] }
+base-common-consensus = { workspace = true, optional = true, features = ["k256", "serde", "std"] }
+base-common-eip8130 = { workspace = true, optional = true, features = ["std"] }
 base-common-genesis = { workspace = true, optional = true, features = ["std"] }
-base-common-precompiles = { workspace = true, optional = true, features = ["std"] }
 base-common-rpc-types = { workspace = true, optional = true, features = ["eip8130", "serde", "std"] }
 base-consensus-upgrades = { workspace = true, optional = true, features = ["std"] }
-base-execution-eip8130 = { workspace = true, optional = true }
 base-protocol = { workspace = true, optional = true, features = ["std"] }
 
 # alloy
-alloy-evm = { workspace = true, features = ["call-util"] }
-alloy-op-evm = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-contract = { workspace = true, features = ["pubsub"] }
@@ -99,16 +93,6 @@ alloy-trie = { workspace = true, features = ["std"] }
 op-alloy-consensus = { workspace = true, features = ["serde"], optional = true }
 op-alloy-rpc-types = { workspace = true, optional = true }
 
-# revm
-revm = { workspace = true, features = [
-    "std",
-    "serde",
-    "memory_limit",
-    "c-kzg",
-] }
-revm-inspectors.workspace = true
-op-revm = { workspace = true, optional = true }
-
 # axum related
 axum.workspace = true
 hyper.workspace = true
@@ -122,6 +106,7 @@ tokio = { workspace = true, features = ["time"] }
 parking_lot.workspace = true
 futures.workspace = true
 async-trait.workspace = true
+auto_impl.workspace = true
 
 # misc
 flate2.workspace = true
@@ -155,49 +140,52 @@ reqwest.workspace = true
 foundry-test-utils.workspace = true
 
 tempo-alloy.workspace = true
+tempo-precompiles = { workspace = true, features = ["rpc"] }
 
 [features]
 default = ["cli", "jemalloc", "asm-keccak", "optimism", "js-tracer"]
 monad = [
-    "dep:alloy-monad-evm",
-    "dep:monad-revm",
+    "dep:monad-evm2",
     "foundry-config/monad",
-    "foundry-evm/monad",
+    "foundry-evm-core/monad",
+    "foundry-evm-hardforks/monad",
     "foundry-evm-networks/monad",
+    "foundry-evm-traces/monad",
     "foundry-cli?/monad",
 ]
 base = [
     "dep:base-common-chains",
     "dep:base-common-consensus",
-    "dep:base-common-evm",
+    "dep:base-common-eip8130",
     "dep:base-common-genesis",
-    "dep:base-common-precompiles",
     "dep:base-common-rpc-types",
     "dep:base-consensus-upgrades",
-    "dep:base-execution-eip8130",
     "dep:base-protocol",
     "dep:op-alloy-consensus",
-    "dep:op-revm",
+    "dep:base-evm2",
     "anvil-core/base",
     "foundry-primitives/base",
     "foundry-common/base",
     "foundry-config/base",
-    "foundry-evm/base",
+    "foundry-evm-core/base",
+    "foundry-evm-hardforks/base",
     "foundry-evm-networks/base",
+    "foundry-evm-traces/base",
     "foundry-cli?/base",
 ]
 optimism = [
     "dep:op-alloy-consensus",
     "dep:op-alloy-rpc-types",
-    "dep:alloy-op-evm",
-    "dep:op-revm",
+    "dep:op-evm2",
     "anvil-core/optimism",
     "foundry-primitives/optimism",
     "foundry-common/optimism",
-    "foundry-evm/optimism",
+    "foundry-evm-core/optimism",
+    "foundry-evm-hardforks/optimism",
+    "foundry-evm-traces/optimism",
     "foundry-cli?/optimism",
 ]
-asm-keccak = ["alloy-primitives/asm-keccak", "revm/asm-keccak"]
+asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["foundry-cli?/jemalloc"]
 mimalloc = ["foundry-cli?/mimalloc"]
 tracy-allocator = ["foundry-cli?/tracy-allocator"]
@@ -211,4 +199,4 @@ cmd = [
     "anvil-server/clap",
     "tokio/signal",
 ]
-js-tracer = ["revm-inspectors/js-tracer"]
+js-tracer = ["evm2-inspectors/js-tracer"]

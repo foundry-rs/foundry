@@ -25,4 +25,21 @@ contract NonceIsolatedTest is Test {
         counter.increment();
         assertEq(vm.getNonce(bob), 4);
     }
+
+    // An underfunded create fails before it increments the creator's nonce, after its transaction
+    // paid the intrinsic gas.
+    function testUnderfundedCreateKeepsNonce() public {
+        uint64 nonce = vm.getNonce(address(this));
+        uint256 value = address(this).balance + 1;
+        address created;
+        uint256 gasUsed = gasleft();
+        assembly {
+            created := create(value, 0, 0)
+        }
+        gasUsed -= gasleft();
+        assertEq(created, address(0));
+        assertEq(vm.getNonce(address(this)), nonce);
+        // The CREATE opcode and the create transaction's intrinsic gas.
+        assertGe(gasUsed, 32_000 + 53_000);
+    }
 }

@@ -1,19 +1,18 @@
 mod recording;
 mod sources;
 
-use crate::CallTraceNode;
+use crate::{CallTraceNode, CallTraceStep, DecodedInternalCall, DecodedTraceStep};
 use alloy_dyn_abi::{
     DynSolType, DynSolValue, Specifier,
     parser::{Parameters, Storage},
 };
 use alloy_primitives::U256;
+use evm2::interpreter::opcode::OpCode;
 use foundry_common::fmt::format_token;
 use foundry_compilers::artifacts::sourcemap::{Jump, SourceElement};
 pub use recording::{
     DebugRecording, DebugStepSink, RecordedFrame, StepConverter, StepStorage, quantity,
 };
-use revm::bytecode::opcode::OpCode;
-use revm_inspectors::tracing::types::{CallTraceStep, DecodedInternalCall, DecodedTraceStep};
 pub use sources::{ArtifactData, ContractSources, SourceData};
 
 #[derive(Clone, Debug)]
@@ -451,13 +450,9 @@ fn memory_range(memory: &[u8], start: usize, len: usize) -> Option<&[u8]> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        decode_from_memory, decode_step_parameters, internal_function_identifier, source_span,
-    };
-    use alloy_dyn_abi::{DynSolType, parser::Parameters};
-    use alloy_primitives::{Bytes, U256};
-    use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
-    use revm_inspectors::tracing::types::CallTraceStep;
+    use super::*;
+    use alloy_primitives::Bytes;
+    use evm2::interpreter::InstrStop;
 
     fn trace_step(stack: Vec<U256>) -> CallTraceStep {
         CallTraceStep {
@@ -475,7 +470,8 @@ mod tests {
             state_gas_reservoir: None,
             state_gas_spent: 0,
             storage_change: None,
-            status: Some(InstructionResult::Stop),
+            storage_slot: None,
+            status: Some(InstrStop::Stop),
             immediate_bytes: None,
             decoded: None,
         }

@@ -1,12 +1,13 @@
 use crate::executors::{Executor, ExecutorBuilder};
 use alloy_primitives::{Address, ChainId, U256, map::HashMap};
 use alloy_rpc_types::state::StateOverride;
+use evm2::bytecode::Bytecode;
 use eyre::{Context, ContextCompat};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{Chain, Config, evm_spec_id};
 use foundry_evm_core::{
     backend::Backend,
-    evm::{EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
+    evm::{EvmEnvFor, EvmFactoryFor, FoundryEvmNetwork, SpecFor, TransactionRequestFor},
     opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
 };
 use foundry_evm_hardforks::FoundryHardfork;
@@ -16,7 +17,6 @@ use foundry_evm_networks::{
     resolved_precompile_labels,
 };
 use foundry_evm_traces::{TraceContext, TraceRequirements};
-use revm::state::Bytecode;
 use std::ops::{Deref, DerefMut};
 
 /// A default executor with tracing enabled
@@ -27,7 +27,7 @@ pub struct TracingExecutor<FEN: FoundryEvmNetwork> {
 /// Fork state and network context used to construct a tracing executor.
 pub struct TracingFork<FEN: FoundryEvmNetwork> {
     pub evm_env: EvmEnvFor<FEN>,
-    pub tx_env: TxEnvFor<FEN>,
+    pub tx: TransactionRequestFor<FEN>,
     fork: Backend<FEN>,
     context: TraceContext,
 }
@@ -68,7 +68,7 @@ impl<FEN: FoundryEvmNetwork> TracingFork<FEN> {
     ) -> eyre::Result<TracingExecutor<FEN>> {
         TracingExecutor::new(
             builder,
-            (self.evm_env, self.tx_env),
+            (self.evm_env, self.tx),
             self.fork,
             None,
             trace_requirements,
@@ -80,11 +80,17 @@ impl<FEN: FoundryEvmNetwork> TracingFork<FEN> {
 
     fn into_parts(
         self,
-    ) -> (EvmEnvFor<FEN>, TxEnvFor<FEN>, Backend<FEN>, Chain, NetworkConfigs, Option<FoundryHardfork>)
-    {
+    ) -> (
+        EvmEnvFor<FEN>,
+        TransactionRequestFor<FEN>,
+        Backend<FEN>,
+        Chain,
+        NetworkConfigs,
+        Option<FoundryHardfork>,
+    ) {
         (
             self.evm_env,
-            self.tx_env,
+            self.tx,
             self.fork,
             self.context.chain(),
             self.context.networks(),
@@ -98,7 +104,7 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         builder: ExecutorBuilder<FEN>,
-        env: (EvmEnvFor<FEN>, TxEnvFor<FEN>),
+        env: (EvmEnvFor<FEN>, TransactionRequestFor<FEN>),
         fork: Backend<FEN>,
         version: Option<EvmVersion>,
         trace_requirements: TraceRequirements,
@@ -136,7 +142,7 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         evm_env: &mut EvmEnvFor<FEN>,
         evm_version: Option<EvmVersion>,
     ) -> Option<FoundryHardfork> {
-        resolve_execution_spec(
+        resolve_execution_spec::<EvmFactoryFor<FEN>>(
             config.evm_version,
             config.hardfork,
             evm_env,
@@ -169,19 +175,18 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         evm_opts.fork_state_by_number = false;
         evm_opts.infer_network_from_fork().await?;
         let networks = evm_opts.networks;
-        let fork = Backend::<FEN>::spawn(evm_opts.get_fork(
-            config,
-            evm_opts.env.chain_id.unwrap_or_default(),
-            None,
-        ))?;
-        let (evm_env, tx_env) = fork.env(&evm_opts).await?;
+        let fork = Backend::<FEN>::spawn_source(
+            evm_opts.get_fork(config, evm_opts.env.chain_id.unwrap_or_default(), None),
+            evm_opts.local_evm_env::<FEN>(),
+        )?;
+        let (evm_env, tx) = fork.env(&evm_opts).await?;
         let fork_context =
-            fork.fork()?.context("fork context is missing for tracing executor")?.context();
+            fork.fork().context("fork context is missing for tracing executor")?.context();
 
         let chain = fork_context.source_chain_id.into();
         Ok(TracingFork {
             evm_env,
-            tx_env,
+            tx,
             fork,
             context: TraceContext::new(chain, networks, fork_context.hardfork),
         })
@@ -193,7 +198,7 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         evm_opts: EvmOpts,
     ) -> eyre::Result<(
         EvmEnvFor<FEN>,
-        TxEnvFor<FEN>,
+        TransactionRequestFor<FEN>,
         Backend<FEN>,
         Chain,
         NetworkConfigs,
@@ -250,15 +255,14 @@ impl<FEN: FoundryEvmNetwork> DerefMut for TracingExecutor<FEN> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_evm::EvmEnv;
+    use alloy_network::TransactionBuilder;
     use alloy_rpc_types::state::AccountOverride;
-    use foundry_evm_core::{FoundryTransaction, evm::EthEvmNetwork};
-    use revm::context::{Transaction, TxEnv};
+    use foundry_evm_core::evm::{EthEvmNetwork, EvmEnv, FoundryEvmFactory};
 
     #[cfg(feature = "base")]
     use foundry_evm_core::evm::BaseEvmNetwork;
     #[cfg(feature = "base")]
-    use foundry_evm_hardforks::{BaseSpecId, BaseUpgrade};
+    use foundry_evm_hardforks::BaseUpgrade;
 
     fn assert_trace_spec_authority<FEN>(
         networks: NetworkConfigs,
@@ -271,8 +275,9 @@ mod tests {
         SpecFor<FEN>: std::fmt::Debug + PartialEq,
     {
         let mut config = Config { networks, hardfork: Some(configured), ..Default::default() };
-        let mut env = EvmEnvFor::<FEN>::default();
-        env.cfg_env.chain_id = 999_999;
+        let spec = SpecFor::<FEN>::default();
+        let factory = EvmFactoryFor::<FEN>::default();
+        let mut env = EvmEnv::new(spec, factory.version(spec, 999_999), Default::default());
         let hardfork = TracingExecutor::<FEN>::resolve_spec_for_chain(
             &config,
             1,
@@ -280,9 +285,9 @@ mod tests {
             &mut env,
             Some(evm_version),
         );
-        assert_eq!(env.cfg_env.spec, expected_spec);
+        assert_eq!(env.spec, expected_spec);
         assert_eq!(hardfork, expected_hardfork);
-        assert_eq!(env.cfg_env.chain_id, 999_999);
+        assert_eq!(env.chain_id(), 999_999);
 
         TracingExecutor::<FEN>::extend_precompile_labels(&mut config, networks, hardfork);
         assert_eq!(config.labels, resolved_precompile_labels(expected_hardfork));
@@ -300,20 +305,21 @@ mod tests {
             NetworkConfigs::default(),
             "ethereum:shanghai".parse().unwrap(),
             EvmVersion::Cancun,
-            revm::primitives::hardfork::SpecId::CANCUN,
+            evm2::SpecId::CANCUN,
             None,
         );
     }
 
     #[test]
     fn trace_spec_tempo_override_reports_executed_hardfork() {
-        let spec = evm_spec_id::<foundry_evm_hardforks::TempoHardfork>(EvmVersion::Cancun);
+        let spec =
+            evm_spec_id::<SpecFor<foundry_evm_core::evm::TempoEvmNetwork>>(EvmVersion::Cancun);
         assert_trace_spec_authority::<foundry_evm_core::evm::TempoEvmNetwork>(
             NetworkConfigs::with_tempo(),
             "tempo:T3".parse().unwrap(),
             EvmVersion::Cancun,
             spec,
-            Some(spec.into()),
+            foundry_evm_hardforks::ExecutionSpec::reported_hardfork(spec),
         );
     }
 
@@ -324,7 +330,7 @@ mod tests {
             NetworkConfigs::with_base(),
             FoundryHardfork::Base(BaseUpgrade::Cobalt),
             EvmVersion::Cancun,
-            BaseSpecId::new(BaseUpgrade::Ecotone),
+            SpecFor::<BaseEvmNetwork>::from(FoundryHardfork::Base(BaseUpgrade::Ecotone)),
             Some(FoundryHardfork::Base(BaseUpgrade::Ecotone)),
         );
     }
@@ -332,14 +338,13 @@ mod tests {
     #[test]
     fn state_override_nonce_does_not_modify_transaction_nonce() {
         let sender = Address::repeat_byte(0x11);
-        let mut tx_env = TxEnv::default();
-        tx_env.set_caller(sender);
-        tx_env.set_nonce(7);
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut evm_env = EvmEnv::default();
-        evm_env.cfg_env.disable_nonce_check = true;
+        let tx = alloy_rpc_types::TransactionRequest::default().from(sender).nonce(7);
+        let factory = EvmFactoryFor::<EthEvmNetwork>::default();
+        let spec = SpecFor::<EthEvmNetwork>::default();
+        let evm_env = EvmEnv::new(spec, factory.version(spec, 1), Default::default());
+        let backend = Backend::<EthEvmNetwork>::spawn(None, evm_env).unwrap();
         let mut executor =
-            ExecutorBuilder::default().build(evm_env, tx_env, backend, NetworkConfigs::default());
+            ExecutorBuilder::default().build(evm_env, tx, backend, NetworkConfigs::default());
         executor.set_gas_limit(1_000_000);
         executor.set_account_nonce(sender, 7).unwrap();
 
@@ -353,11 +358,7 @@ mod tests {
 
         assert_eq!(executor.get_nonce(sender).unwrap(), 100);
         assert_eq!(executor.get_nonce(overridden).unwrap(), 200);
-        assert_eq!(executor.tx_env().caller(), sender);
-        assert_eq!(executor.tx_env().nonce(), 7);
-
-        let result =
-            executor.transact_raw(sender, overridden, Default::default(), U256::ZERO).unwrap();
-        assert_eq!(result.tx_env.nonce(), 7);
+        assert_eq!(executor.tx().from(), Some(sender));
+        assert_eq!(executor.tx().nonce(), Some(7));
     }
 }

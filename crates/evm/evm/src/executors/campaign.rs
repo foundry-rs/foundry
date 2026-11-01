@@ -4,12 +4,10 @@ use super::{Executor, RawCallResult};
 use alloy_primitives::U256;
 use eyre::{Result, eyre};
 use foundry_evm_core::{
-    FoundryBlock,
     constants::MAGIC_ASSUME,
     evm::{BlockEnvFor, FoundryEvmNetwork},
 };
 use foundry_evm_fuzz::BasicTxDetails;
-use revm::context::Block;
 
 /// The small set of execution policies which differ between fuzzing modes.
 #[derive(Clone, Copy, Debug)]
@@ -163,13 +161,13 @@ impl<FEN: FoundryEvmNetwork> BlockSnapshot<FEN> {
 
     fn new(executor: &Executor<FEN>) -> Self {
         Self {
-            env: executor.evm_env().block_env.clone(),
-            cheatcode: executor.inspector().cheatcodes.as_ref().and_then(|c| c.block.clone()),
+            env: executor.evm_env().block,
+            cheatcode: executor.inspector().cheatcodes.as_ref().and_then(|c| c.block),
         }
     }
 
     fn restore(self, executor: &mut Executor<FEN>) {
-        executor.evm_env_mut().block_env = self.env;
+        executor.evm_env_mut().block = self.env;
         if let Some(cheatcodes) = executor.inspector_mut().cheatcodes.as_mut() {
             cheatcodes.block = self.cheatcode;
         }
@@ -242,15 +240,15 @@ pub(super) fn apply_block_delay<FEN: FoundryEvmNetwork>(
         .as_ref()
         .is_some_and(|cheatcodes| cheatcodes.block.is_none());
     let block_env = {
-        let block_env = &mut executor.evm_env_mut().block_env;
-        block_env.set_timestamp(block_env.timestamp() + warp);
-        block_env.set_number(block_env.number() + roll);
-        needs_cheatcode_block.then(|| block_env.clone())
+        let block_env = &mut executor.evm_env_mut().block;
+        block_env.timestamp += warp;
+        block_env.number += roll;
+        needs_cheatcode_block.then_some(*block_env)
     };
     if let Some(cheatcodes) = executor.inspector_mut().cheatcodes.as_mut() {
         if let Some(block) = cheatcodes.block.as_mut() {
-            block.set_timestamp(block.timestamp() + warp);
-            block.set_number(block.number() + roll);
+            block.timestamp += warp;
+            block.number += roll;
         } else {
             cheatcodes.block = Some(block_env.unwrap());
         }

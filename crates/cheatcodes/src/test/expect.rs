@@ -1,20 +1,16 @@
 use std::fmt::{self, Display};
 
 use crate::{
-    Cheatcode, Cheatcodes, CheatcodesCore, CheatsCtxt, Error, Result,
-    Vm::*,
-    expected_emit::{ExpectedEmit, observe_log},
+    Cheatcode, Cheatcodes, CheatcodesCore, CheatsCtxt, Result, Vm::*, expected_emit::ExpectedEmit,
 };
 use alloy_primitives::{
-    Address, Bytes, Log, LogData as RawLog, U256, hex, keccak256,
+    Address, Bytes, LogData as RawLog, U256, hex, keccak256,
     map::{HashMap, hash_map::Entry},
 };
 use alloy_sol_types::{SolCall, SolValue};
+use evm2::interpreter::MessageKind;
 use foundry_evm_core::evm::FoundryEvmNetwork;
 use itertools::Itertools;
-use revm::interpreter::{
-    CallScheme, InstructionResult, Interpreter, InterpreterAction, interpreter_types::LoopControl,
-};
 use tempo_contracts::precompiles::ISignatureVerifier;
 use tempo_precompiles::SIGNATURE_VERIFIER_ADDRESS;
 
@@ -86,13 +82,15 @@ pub enum ExpectedCallScheme {
     StaticCall,
 }
 
-impl From<CallScheme> for ExpectedCallScheme {
-    fn from(scheme: CallScheme) -> Self {
-        match scheme {
-            CallScheme::Call => Self::Call,
-            CallScheme::CallCode => Self::CallCode,
-            CallScheme::DelegateCall => Self::DelegateCall,
-            CallScheme::StaticCall => Self::StaticCall,
+impl From<MessageKind> for ExpectedCallScheme {
+    fn from(kind: MessageKind) -> Self {
+        match kind {
+            MessageKind::Call => Self::Call,
+            MessageKind::CallCode => Self::CallCode,
+            MessageKind::DelegateCall => Self::DelegateCall,
+            MessageKind::StaticCall => Self::StaticCall,
+            // `MessageKind` is non-exhaustive, and create messages never reach the call hooks.
+            _ => Self::Call,
         }
     }
 }
@@ -157,12 +155,13 @@ impl Display for CreateScheme {
     }
 }
 
-impl From<revm::context_interface::CreateScheme> for CreateScheme {
-    fn from(scheme: revm::context_interface::CreateScheme) -> Self {
-        match scheme {
-            revm::context_interface::CreateScheme::Create => Self::Create,
-            revm::context_interface::CreateScheme::Create2 { .. } => Self::Create2,
-            _ => unimplemented!("Unsupported create scheme"),
+impl From<MessageKind> for CreateScheme {
+    fn from(kind: MessageKind) -> Self {
+        match kind {
+            MessageKind::Create => Self::Create,
+            MessageKind::Create2 => Self::Create2,
+            // `MessageKind` is non-exhaustive, and call messages never reach the create hooks.
+            _ => Self::Create,
         }
     }
 }
@@ -919,25 +918,6 @@ fn expect_emit<FEN: FoundryEvmNetwork>(
     }
 
     Ok(Default::default())
-}
-
-/// Applies an `expectEmit` failure for `log` by reverting the current call, when an interpreter
-/// is available.
-///
-/// Without an interpreter, the failure reason is returned to the caller instead.
-pub(crate) fn handle_expect_emit<FEN: FoundryEvmNetwork>(
-    state: &mut Cheatcodes<FEN>,
-    log: &Log,
-    interpreter: Option<&mut Interpreter>,
-) -> Option<&'static str> {
-    let reason = observe_log(&mut state.expected_emits, log)?;
-    let Some(interpreter) = interpreter else { return Some(reason) };
-    interpreter.bytecode.set_action(InterpreterAction::new_return(
-        InstructionResult::Revert,
-        Error::encode(reason),
-        interpreter.gas,
-    ));
-    None
 }
 
 fn expect_create<FEN: FoundryEvmNetwork>(

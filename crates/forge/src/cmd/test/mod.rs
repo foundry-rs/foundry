@@ -28,10 +28,12 @@ use crate::{
     workspace,
 };
 use alloy_json_abi::JsonAbi;
+use alloy_network::TransactionBuilder;
 use alloy_primitives::U256;
 use chrono::Utc;
 use clap::{Parser, ValueEnum, ValueHint};
 use dialoguer::{Select, console::Term};
+use evm2::interpreter::opcode::OpCode;
 use eyre::{Context, OptionExt, Result, bail};
 use foundry_cli::{
     opts::{BuildOpts, EvmArgs, GlobalArgs, TracingArgs},
@@ -69,10 +71,10 @@ use foundry_config::{
 use foundry_debugger::DebuggerBuilder;
 use foundry_evm::{
     backend::Backend,
-    core::evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
+    core::evm::{EthEvmNetwork, EvmFactoryFor, FoundryEvmNetwork, TempoEvmNetwork},
     executors::{ExecutorBuilder, ShowmapDomain},
     fuzz::{BaseCounterExample, BasicTxDetails, CounterExample},
-    opts::EvmOpts,
+    opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
     traces::{
         backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth,
         trace_arena_at_depth,
@@ -83,7 +85,6 @@ use foundry_tui::tui_mode;
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use rand::Rng;
 use regex::Regex;
-use revm::{bytecode::opcode::OpCode, context::Transaction};
 use solar::ast::{ContractKind as SolarContractKind, ItemKind};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -1798,11 +1799,7 @@ impl TestArgs {
             };
             let config = Arc::new(config);
             passes.push(dispatch_network!(&evm_opts, |Net| {
-                let backend = Backend::<Net>::spawn(evm_opts.get_fork(
-                    &config,
-                    evm_opts.env.chain_id.unwrap_or_default(),
-                    None,
-                ))?;
+                let backend = spawn_backend::<Net>(&config, &evm_opts)?;
                 let runner = self
                     .build_runner::<Net>(
                         config,
@@ -1905,11 +1902,7 @@ impl TestArgs {
         // Box each network's run so the dispatch arms' locals stay off this frame.
         dispatch_network!(&evm_opts, |Net| {
             Box::pin(async {
-                let backend = Backend::<Net>::spawn(evm_opts.get_fork(
-                    &config,
-                    evm_opts.env.chain_id.unwrap_or_default(),
-                    None,
-                ))?;
+                let backend = spawn_backend::<Net>(&config, &evm_opts)?;
                 // Retain the baseline inputs for the mutation campaign.
                 let config_for_mutation = config.clone();
                 let evm_opts_for_mutation = evm_opts.clone();
@@ -2186,7 +2179,7 @@ impl TestArgs {
         backend: Backend<FEN>,
         executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<MultiContractRunner<FEN>> {
-        let (evm_env, tx_env) = backend.env(&evm_opts).await?;
+        let (evm_env, tx) = backend.env(&evm_opts).await?;
         let create2_deployer_available =
             backend.can_use_create2_deployer(evm_opts.create2_deployer).await?;
 
@@ -2206,14 +2199,7 @@ impl TestArgs {
             .with_fuzz_input(execution.fuzz_input)
             .with_symbolic_artifact_replay(execution.replay_symbolic_artifact)
             .with_create2_deployer_available(create2_deployer_available)
-            .build::<FEN, MultiCompiler>(
-                output,
-                evm_env,
-                tx_env,
-                evm_opts,
-                backend,
-                executor_builder,
-            )
+            .build::<FEN, MultiCompiler>(output, evm_env, tx, evm_opts, backend, executor_builder)
     }
 
     /// Builds the runner for one network pass and runs its tests.
@@ -2229,11 +2215,7 @@ impl TestArgs {
         let verbosity = evm_opts.verbosity;
         let config = Arc::new(config);
         dispatch_network!(&evm_opts, |Net| {
-            let backend = Backend::<Net>::spawn(evm_opts.get_fork(
-                &config,
-                evm_opts.env.chain_id.unwrap_or_default(),
-                None,
-            ))?;
+            let backend = spawn_backend::<Net>(&config, &evm_opts)?;
             let runner = self
                 .build_runner::<Net>(
                     config.clone(),
@@ -2478,8 +2460,8 @@ impl TestArgs {
 
         let remote_chain = runner
             .backend
-            .is_in_forking_mode()
-            .then(|| runner.tcfg.fork_chain_id.or(runner.tx_env.chain_id()))
+            .is_forked_mode()
+            .then(|| runner.tcfg.fork_chain_id.or(runner.tcfg.tx.chain_id()))
             .flatten()
             .map(Into::into);
         let known_contracts = runner.known_contracts.clone();
@@ -3193,6 +3175,30 @@ impl Provider for TestArgs {
             dict.insert("mutation".to_string(), mutation.into());
         }
         Ok(Map::from([(Config::selected_profile(), dict)]))
+    }
+}
+
+/// Spawns the backend of a test run, starting on the configured fork, if any.
+fn spawn_backend<FEN: FoundryEvmNetwork>(
+    config: &Config,
+    evm_opts: &EvmOpts,
+) -> Result<Backend<FEN>> {
+    // Configure the hardfork before seeding network state, using the resolved fork.
+    let configure_env = |env: &mut _, context| {
+        resolve_execution_spec::<EvmFactoryFor<FEN>>(
+            config.evm_version,
+            config.hardfork,
+            env,
+            context,
+            None,
+        );
+    };
+    if let Some(fork) = evm_opts.get_fork(config, evm_opts.env.chain_id.unwrap_or_default(), None) {
+        Backend::spawn_fork(fork, configure_env)
+    } else {
+        let mut env = evm_opts.local_evm_env::<FEN>();
+        configure_env(&mut env, ExecutionSpecContext::Local);
+        Backend::spawn(None, env)
     }
 }
 

@@ -36,10 +36,13 @@ use alloy_rpc_types::{
 use alloy_rpc_types_eth::AccountInfo;
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolValue, sol};
-use anvil::{NodeConfig, NodeHandle, eth::EthApi, spawn};
-use foundry_evm::hardfork::EthereumHardfork;
+use anvil::{
+    NodeConfig, NodeHandle,
+    eth::{EthApi, backend::env::BlobExcessGasAndPrice},
+    spawn,
+};
+use foundry_evm_hardforks::EthereumHardfork;
 use foundry_primitives::FoundryNetwork;
-use revm::context_interface::block::BlobExcessGasAndPrice;
 use serde_json::{Value, json};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1677,14 +1680,14 @@ async fn test_debug_trace_transaction_struct_logs_with_steps_tracing() {
             .into_iter()
             .map(|log| (log.pc, log.op.into_owned(), log.stack.unwrap(), log.memory))
             .collect::<Vec<_>>();
-        let empty = memory.then(Vec::new);
+        // Like geth, struct logs leave out memory that is still empty.
         let stored = memory.then(|| vec![word.clone()]);
         assert_eq!(
             steps,
             [
-                (0, "PUSH1".to_string(), vec![], empty.clone()),
-                (2, "PUSH1".to_string(), vec![U256::from(0x2a)], empty.clone()),
-                (4, "MSTORE".to_string(), vec![U256::from(0x2a), U256::ZERO], empty),
+                (0, "PUSH1".to_string(), vec![], None),
+                (2, "PUSH1".to_string(), vec![U256::from(0x2a)], None),
+                (4, "MSTORE".to_string(), vec![U256::from(0x2a), U256::ZERO], None),
                 (5, "PUSH1".to_string(), vec![], stored.clone()),
                 (7, "PUSH1".to_string(), vec![U256::from(0x20)], stored.clone()),
                 (9, "RETURN".to_string(), vec![U256::from(0x20), U256::ZERO], stored),
@@ -2868,6 +2871,68 @@ fault: function(log) {}
         .unwrap_or_default();
 
     assert_eq!(actual, expected);
+}
+
+// The JS tracer must report steps like geth's struct logger: a call step before its child's steps,
+// with the forwarded gas in its cost, and depth starting at 1.
+#[cfg(feature = "js-tracer")]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_transaction_js_tracer_matches_struct_logs() {
+    let node_config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Prague.into()))
+        .with_steps_tracing(true);
+    let (api, handle) = spawn(node_config).await;
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let deployer: EthereumWallet = wallets[0].clone().into();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), deployer);
+
+    let multicall_contract = Multicall::deploy(&provider).await.unwrap();
+    let simple_storage_contract =
+        SimpleStorage::deploy(&provider, "init value".to_string()).await.unwrap();
+    let set_value = simple_storage_contract.setValue("bar".to_string());
+    let receipt = multicall_contract
+        .aggregate(vec![Multicall::Call {
+            target: *simple_storage_contract.address(),
+            callData: set_value.calldata().to_owned(),
+        }])
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let hash = receipt.transaction_hash;
+
+    let js_tracer_code = r#"
+{
+    steps: [],
+    step: function(log) {
+        this.steps.push([log.getPC(), log.op.toString(), log.getDepth(), log.getGas(), log.getCost()]);
+    },
+    fault: function(log) {},
+    result: function() { return this.steps; }
+}
+"#;
+    let js_trace = api
+        .debug_trace_transaction(hash, GethDebugTracingOptions::js_tracer(js_tracer_code))
+        .await
+        .unwrap()
+        .try_into_json_value()
+        .unwrap();
+    let js_steps = serde_json::from_value::<Vec<(u64, String, u64, u64, u64)>>(js_trace).unwrap();
+
+    let trace = api.debug_trace_transaction(hash, Default::default()).await.unwrap();
+    let GethTrace::Default(frame) = trace else { unreachable!("expected default trace") };
+    let struct_logs = frame
+        .struct_logs
+        .into_iter()
+        .map(|log| (log.pc, log.op.into_owned(), log.depth, log.gas, log.gas_cost))
+        .collect::<Vec<_>>();
+
+    let (call_idx, call) = js_steps.iter().enumerate().find(|(_, step)| step.1 == "CALL").unwrap();
+    assert_eq!(call.2, 1);
+    assert_eq!(js_steps[call_idx + 1].2, 2, "the child's steps must follow the CALL step");
+    assert_eq!(js_steps, struct_logs);
 }
 
 #[tokio::test(flavor = "multi_thread")]

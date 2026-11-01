@@ -14,7 +14,6 @@ use crate::{
     sequence::get_commit_hash,
 };
 use alloy_chains::{Chain, NamedChain};
-use alloy_evm::revm::context::Block;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, U256, map::HashMap, utils::format_units};
 use alloy_provider::Provider;
@@ -28,7 +27,7 @@ use foundry_common::{
     tempo::known_fee_token_symbol,
 };
 use foundry_evm::{
-    core::{FoundryBlock, evm::FoundryEvmNetwork},
+    core::evm::FoundryEvmNetwork,
     traces::{
         CallTraceDecoder, Traces, debug::ContractSources, decode_trace_arena, prune_trace_depth,
         render_trace_arena_inner,
@@ -222,8 +221,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
 
                 // Simulate mining the transaction if the user passes `--slow`.
                 if self.args.slow {
-                    let block_number = runner.executor.evm_env().block_env.number() + U256::ONE;
-                    runner.executor.evm_env_mut().block_env.set_number(block_number);
+                    runner.executor.evm_env_mut().block.number += U256::ONE;
                 }
 
                 let is_noop_tx = if let Some(to) = to {
@@ -465,8 +463,8 @@ mod tests {
 
         let monad_eight = contexts.get(&monad_eight_rpc).unwrap();
         let monad_eight_runner = &monad_eight.runner;
-        assert_eq!(monad_eight_runner.executor.evm_env().cfg_env.chain_id, 42);
-        assert_eq!(monad_eight_runner.executor.evm_env().block_env.number(), U256::ZERO);
+        assert_eq!(monad_eight_runner.executor.evm_env().chain_id(), 42);
+        assert_eq!(monad_eight_runner.executor.evm_env().block.number, U256::ZERO);
         assert_eq!(monad_eight_runner.evm_opts.fork_block_number, Some(0));
         assert!(!monad_eight_runner.evm_opts.fork_block_number_is_inferred);
         assert_eq!(monad_eight_runner.evm_opts.networks, NetworkConfigs::with_monad());
@@ -477,8 +475,8 @@ mod tests {
 
         let monad_nine = contexts.get(&monad_nine_rpc).unwrap();
         let monad_nine_runner = &monad_nine.runner;
-        assert_eq!(monad_nine_runner.executor.evm_env().cfg_env.chain_id, 42);
-        assert_eq!(monad_nine_runner.executor.evm_env().block_env.number(), U256::ZERO);
+        assert_eq!(monad_nine_runner.executor.evm_env().chain_id(), 42);
+        assert_eq!(monad_nine_runner.executor.evm_env().block.number, U256::ZERO);
         assert_eq!(monad_nine_runner.evm_opts.fork_block_number, Some(0));
         assert!(!monad_nine_runner.evm_opts.fork_block_number_is_inferred);
         assert_eq!(monad_nine_runner.evm_opts.networks, NetworkConfigs::with_monad());

@@ -2,9 +2,11 @@
 
 use crate::{
     eth::backend::db::{
-        BLOCKHASH_HISTORY, Db, MaybeForkedDatabase, MaybeFullDatabase, SerializableAccountRecord,
-        SerializableBlock, SerializableHistoricalStates, SerializableState,
-        SerializableTransaction, StateDb, cache_block_hash,
+        AccountInfo, AccountState, BLOCKHASH_HISTORY, BlockEnv, BlockchainDb, Bytecode, CacheDB,
+        DatabaseRef, DatabaseResult, Db, DbAccount, EmptyDb, MaybeForkedDatabase,
+        MaybeFullDatabase, RevertStateSnapshotAction, SerializableAccountRecord, SerializableBlock,
+        SerializableHistoricalStates, SerializableState, SerializableTransaction, StateDb,
+        StateSnapshot, StateSnapshots, cache_block_hash,
     },
     mem::state::{StateRootCache, state_root},
 };
@@ -13,21 +15,37 @@ use alloy_primitives::{
     map::{AddressMap, B256Map, HashSet},
 };
 use alloy_rpc_types::BlockId;
-use foundry_evm::backend::{BlockchainDb, DatabaseError, DatabaseResult, StateSnapshot};
+use evm2::evm::BlockStateAccumulator;
 use imbl::HashMap as PersistentMap;
 use parking_lot::Mutex;
-use revm::{
-    Database, DatabaseCommit,
-    bytecode::Bytecode,
-    context::BlockEnv,
-    database::{AccountState, DatabaseRef, DbAccount},
-    state::{Account, AccountInfo},
-};
 use std::sync::OnceLock;
 
-// reexport for convenience
-pub use foundry_evm::backend::MemDb;
-use foundry_evm::backend::RevertStateSnapshotAction;
+/// In-memory local state with numbered snapshots.
+#[derive(Clone, Debug, Default)]
+pub struct MemDb {
+    /// The state.
+    pub inner: CacheDB<EmptyDb>,
+    /// Snapshots of the state.
+    pub state_snapshots: StateSnapshots<CacheDB<EmptyDb>>,
+}
+
+impl DatabaseRef for MemDb {
+    fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
+        self.inner.basic_ref(address)
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
+        self.inner.code_by_hash_ref(code_hash)
+    }
+
+    fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
+        self.inner.storage_ref(address, index)
+    }
+
+    fn block_hash_ref(&self, number: u64) -> DatabaseResult<B256> {
+        self.inner.block_hash_ref(number)
+    }
+}
 
 /// An in-memory database that incrementally maintains Anvil's mined-block state root.
 #[derive(Debug, Default)]
@@ -84,18 +102,19 @@ struct DirtyHistoricalAccount {
 }
 
 impl HistoricalStateCache {
-    fn record_changes(&mut self, changes: &AddressMap<Account>) {
+    fn record_changes(&mut self, changes: &BlockStateAccumulator) {
         if self.disabled {
             return;
         }
-        for (address, account) in changes {
-            if !account.is_touched() {
-                continue;
-            }
-
-            let dirty = self.dirty.entry(*address).or_default();
-            dirty.reset_storage |= account.is_created() || account.is_selfdestructed();
-            dirty.storage.extend(account.changed_storage_slots().map(|(slot, _)| *slot));
+        for (address, delta) in changes.accounts() {
+            let dirty = self.dirty.entry(address).or_default();
+            dirty.reset_storage |= delta.original.is_none() || delta.current.is_none();
+        }
+        for address in changes.storage_wipes() {
+            self.dirty.entry(address).or_default().reset_storage = true;
+        }
+        for (key, _) in changes.storage() {
+            self.dirty.entry(key.address()).or_default().storage.insert(key.key());
         }
     }
 
@@ -178,7 +197,7 @@ impl HistoricalStateCache {
 
             let info = account_info_with_code(&account.info, &db.inner.cache.contracts);
             if let Some(code) = &info.code {
-                state.contracts.insert(info.code_hash(), code.clone());
+                state.contracts.insert(info.code_hash, code.clone());
             }
             state.accounts.insert(
                 address,
@@ -291,14 +310,12 @@ impl PersistentStateDb {
 fn account_info_with_code(info: &AccountInfo, contracts: &B256Map<Bytecode>) -> AccountInfo {
     let mut info = info.clone();
     if info.code.is_none() {
-        info.code = contracts.get(&info.code_hash()).cloned();
+        info.code = contracts.get(&info.code_hash).cloned();
     }
     info
 }
 
 impl DatabaseRef for PersistentStateDb {
-    type Error = DatabaseError;
-
     fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
         Ok(match self.accounts.get(&address) {
             Some(account) if account.account_state == AccountState::NotExisting => None,
@@ -354,7 +371,7 @@ impl MaybeFullDatabase for PersistentStateDb {
             .into_iter()
             .map(|(address, info)| {
                 if let Some(code) = &info.code {
-                    contracts.insert(info.code_hash(), code.clone());
+                    contracts.insert(info.code_hash, code.clone());
                 }
                 let storage = storage
                     .remove(&address)
@@ -370,58 +387,30 @@ impl MaybeFullDatabase for PersistentStateDb {
 }
 
 impl DatabaseRef for StateRootDb {
-    type Error = DatabaseError;
-
-    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+    fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
         self.inner.basic_ref(address)
     }
 
-    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+    fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
         self.inner.code_by_hash_ref(code_hash)
     }
 
-    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+    fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
         self.inner.storage_ref(address, index)
     }
 
-    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
+    fn block_hash_ref(&self, number: u64) -> DatabaseResult<B256> {
         self.inner.block_hash_ref(number)
     }
 }
 
-impl Database for StateRootDb {
-    type Error = DatabaseError;
-
-    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        self.state_root.get_mut().record_account(address);
-        self.history.get_mut().record_account(address);
-        self.inner.basic(address)
-    }
-
-    fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
-        self.inner.code_by_hash(code_hash)
-    }
-
-    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        self.state_root.get_mut().record_storage(address, index);
-        self.history.get_mut().record_storage(address, index);
-        self.inner.storage(address, index)
-    }
-
-    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
-        self.inner.block_hash(number)
-    }
-}
-
-impl DatabaseCommit for StateRootDb {
-    fn commit(&mut self, changes: revm::state::EvmState) {
-        self.state_root.get_mut().record_changes(&changes);
-        self.history.get_mut().record_changes(&changes);
-        self.inner.commit(changes);
-    }
-}
-
 impl Db for StateRootDb {
+    fn commit(&mut self, changes: &BlockStateAccumulator) {
+        self.state_root.get_mut().record_changes(changes);
+        self.history.get_mut().record_changes(changes);
+        Db::commit(&mut self.inner, changes);
+    }
+
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
         self.state_root.get_mut().record_account(address);
         self.history.get_mut().record_account(address);
@@ -546,6 +535,10 @@ impl MaybeForkedDatabase for StateRootDb {
 }
 
 impl Db for MemDb {
+    fn commit(&mut self, changes: &BlockStateAccumulator) {
+        self.inner.commit(changes);
+    }
+
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
         self.inner.insert_account_info(address, account)
     }
@@ -576,11 +569,12 @@ impl Db for MemDb {
             .accounts
             .clone()
             .into_iter()
+            .filter(|(_, v)| v.account_state != AccountState::NotExisting)
             .map(|(k, v)| -> DatabaseResult<_> {
                 let code = if let Some(code) = v.info.code {
                     code
                 } else {
-                    self.inner.code_by_hash_ref(v.info.code_hash())?
+                    self.inner.code_by_hash_ref(v.info.code_hash)?
                 };
                 Ok((
                     k,
@@ -638,7 +632,7 @@ impl Db for MemDb {
     }
 
     fn current_state(&self) -> StateDb {
-        StateDb::new(Self { inner: self.inner.clone(), ..Default::default() })
+        StateDb::new(Self { inner: self.inner.clone(), state_snapshots: Default::default() })
     }
 }
 
@@ -647,13 +641,17 @@ impl MaybeFullDatabase for MemDb {
         Some(&self.inner.cache.accounts)
     }
 
+    fn maybe_as_full_db_mut(&mut self) -> Option<&mut AddressMap<DbAccount>> {
+        Some(&mut self.inner.cache.accounts)
+    }
+
     // Nothing backs a `MemDb`, so its snapshots do not track account states.
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
-        StateSnapshot { account_states: None, ..self.inner.clear_into_state_snapshot() }
+        self.inner.clear_into_state_snapshot().into_standalone()
     }
 
     fn read_as_state_snapshot(&self) -> StateSnapshot {
-        StateSnapshot { account_states: None, ..self.inner.read_as_state_snapshot() }
+        self.inner.read_as_state_snapshot().into_standalone()
     }
 
     fn clear(&mut self) {
@@ -682,8 +680,8 @@ impl MaybeForkedDatabase for MemDb {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::eth::backend::db::KECCAK_EMPTY;
     use alloy_primitives::{Bytes, address};
-    use revm::primitives::KECCAK_EMPTY;
     use std::collections::BTreeMap;
 
     // verifies that all substantial aspects of a loaded account remain the same after an account
@@ -702,7 +700,7 @@ mod tests {
                 code_hash: KECCAK_EMPTY,
                 code: Some(contract_code.clone()),
                 nonce: 1234,
-                account_id: None,
+                ..Default::default()
             },
         );
         dump_db.set_storage_at(test_addr, U256::from(1234567).into(), U256::ONE.into()).unwrap();
@@ -720,7 +718,7 @@ mod tests {
         let loaded_account = load_db.basic_ref(test_addr).unwrap().unwrap();
 
         assert_eq!(loaded_account.balance, U256::from(123456));
-        assert_eq!(load_db.code_by_hash_ref(loaded_account.code_hash()).unwrap(), contract_code);
+        assert_eq!(load_db.code_by_hash_ref(loaded_account.code_hash).unwrap(), contract_code);
         assert_eq!(loaded_account.nonce, 1234);
         assert_eq!(load_db.storage_ref(test_addr, U256::from(1234567)).unwrap(), U256::ONE);
     }
@@ -743,7 +741,7 @@ mod tests {
                 code_hash: KECCAK_EMPTY,
                 code: Some(contract_code.clone()),
                 nonce: 1234,
-                account_id: None,
+                ..Default::default()
             },
         );
 
@@ -783,7 +781,7 @@ mod tests {
         assert_eq!(loaded_account2.nonce, 1);
 
         assert_eq!(loaded_account.balance, U256::from(100100));
-        assert_eq!(db.code_by_hash_ref(loaded_account.code_hash()).unwrap(), contract_code);
+        assert_eq!(db.code_by_hash_ref(loaded_account.code_hash).unwrap(), contract_code);
         assert_eq!(loaded_account.nonce, 1234);
         assert_eq!(db.storage_ref(test_addr, U256::from(1234567)).unwrap(), U256::ONE);
         assert_eq!(db.storage_ref(test_addr, U256::from(1234568)).unwrap(), U256::from(5));
@@ -795,7 +793,7 @@ mod tests {
         let deleted = Address::with_last_byte(1);
         let mut db = StateRootDb::default();
         db.insert_account(address, AccountInfo::default());
-        db.insert_account(deleted, AccountInfo::from_balance(U256::ONE));
+        db.insert_account(deleted, AccountInfo::default().with_balance(U256::ONE));
 
         assert_eq!(db.maybe_state_root(), Some(state_root(&db.inner.inner.cache.accounts)));
 
@@ -912,7 +910,7 @@ mod tests {
         let address = address!("0000000000000000000000000000000000002935");
         let slot = U256::ONE;
         let mut db = StateRootDb::default();
-        db.insert_account(address, AccountInfo::from_balance(U256::ONE));
+        db.insert_account(address, AccountInfo::default().with_balance(U256::ONE));
 
         let first = db.current_state();
         assert!(first.is_persistent());
@@ -938,7 +936,7 @@ mod tests {
         assert_eq!(live_account, Some(AccountInfo::default()));
         assert_eq!(historical.basic_ref(missing).unwrap(), live_account);
 
-        db.insert_account(deleted, AccountInfo::from_balance(U256::ONE));
+        db.insert_account(deleted, AccountInfo::default().with_balance(U256::ONE));
         db.inner.inner.cache.accounts.get_mut(&deleted).unwrap().account_state =
             AccountState::NotExisting;
         db.history.get_mut().record_account(deleted);
@@ -948,7 +946,7 @@ mod tests {
         assert!(!historical.read_as_state_snapshot().accounts.contains_key(&deleted));
 
         let mut fresh = StateRootDb::default();
-        fresh.insert_account(deleted, AccountInfo::from_balance(U256::ONE));
+        fresh.insert_account(deleted, AccountInfo::default().with_balance(U256::ONE));
         fresh.inner.inner.cache.accounts.get_mut(&deleted).unwrap().account_state =
             AccountState::NotExisting;
         let historical = fresh.current_state();
@@ -962,10 +960,10 @@ mod tests {
         let slot = U256::ONE;
         let mut db = StateRootDb::new(false);
 
-        db.insert_account(address, AccountInfo::from_balance(U256::ONE));
+        db.insert_account(address, AccountInfo::default().with_balance(U256::ONE));
         db.set_storage_at(address, slot.into(), B256::with_last_byte(2)).unwrap();
-        db.basic(address).unwrap();
-        db.storage(address, slot).unwrap();
+        db.basic_ref(address).unwrap();
+        db.storage_ref(address, slot).unwrap();
         db.maybe_state_root().unwrap();
 
         assert!(db.history.get_mut().dirty.is_empty());

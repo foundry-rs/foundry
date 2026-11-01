@@ -733,9 +733,9 @@ mod tests {
     use alloy_dyn_abi::DynSolValue;
     use alloy_json_abi::JsonAbi;
     use alloy_primitives::{Address, Bytes, I256};
+    use evm2::evm::InMemoryDB;
     use foundry_config::FuzzDictionaryConfig;
     use proptest::{prelude::Just, strategy::Strategy};
-    use revm::database::InMemoryDB;
     use std::path::PathBuf;
 
     fn sentinel(runner: &mut TestRunner) -> u64 {

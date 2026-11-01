@@ -30,6 +30,10 @@ use alloy_primitives::{
     Address, B256, Bytes, I256, Selector, U256, address, hex, keccak256,
     map::{Entry, HashMap, HashSet},
 };
+use evm2::{
+    evm::{Cache, InMemoryDB},
+    interpreter::op as opcode,
+};
 use eyre::Result;
 use foundry_common::{
     LIBRARY_DEPLOYER, TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress,
@@ -41,7 +45,7 @@ use foundry_config::{
 };
 use foundry_evm::{
     constants::{CALLER, MAGIC_ASSUME},
-    core::{backend::DatabaseExt, evm::FoundryEvmNetwork},
+    core::evm::FoundryEvmNetwork,
     decode::{RevertDecoder, SkipReason},
     executors::{
         CallResult, DynamicTargetCtx, EvmError, Executor, ITest, InvariantReplayOptions,
@@ -66,7 +70,6 @@ use foundry_evm::{
         strategies::EvmFuzzState,
     },
     inspectors::{CmpOperands, EdgeCovConfig, EdgeCovKind, cheatcodes::Vm::AccountAccess},
-    revm::{bytecode::opcode, primitives::hardfork::SpecId},
     traces::{TraceKind, TraceRequirements, load_contracts},
 };
 use foundry_evm_networks::NetworkVariant;
@@ -494,6 +497,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         name: &'a str,
         contract: &'a TestContract,
         executor: Executor<FEN>,
+        tcfg: Cow<'a, TestRunnerConfig<FEN>>,
         span: Span,
         mcr: &'a MultiContractRunner<FEN>,
         context: ContractRunnerContext<'a>,
@@ -505,7 +509,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             progress: context.progress,
             tokio_handle: context.tokio_handle,
             span,
-            tcfg: Cow::Borrowed(&mcr.tcfg),
+            tcfg,
             mcr,
             num_invariant_campaign_anchors: context.num_invariant_campaign_anchors,
         }
@@ -737,12 +741,15 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
     /// Configures this runner with the inline configuration for the contract.
     fn apply_contract_inline_config(&mut self) -> Result<()> {
         if self.inline_config.contains_contract(self.name) {
-            let new_config = Arc::new(self.inline_config(None)?);
-            self.tcfg.to_mut().reconfigure_with(new_config);
+            // The multi-contract runner already resolved it, unless it failed to.
+            if matches!(self.tcfg, Cow::Borrowed(_)) {
+                let new_config = Arc::new(self.inline_config(None)?);
+                self.tcfg.to_mut().reconfigure_with(new_config);
+            }
             let prev_tracer = self.executor.inspector_mut().tracer.take();
             self.tcfg.configure_executor(&mut self.executor);
             // Don't set tracer here.
-            self.executor.inspector_mut().tracer = prev_tracer;
+            self.executor.inspector_mut().set_tracer(prev_tracer);
         }
         Ok(())
     }
@@ -956,7 +963,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         debug!("finished setting up in {:?}", setup_time.elapsed());
 
         if let Some(prev_tracer) = prev_tracer {
-            self.executor.inspector_mut().tracer = prev_tracer;
+            self.executor.inspector_mut().set_tracer(prev_tracer);
         }
 
         if setup.reason.is_some() {
@@ -1398,7 +1405,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return Err(format!("vm.skip during concrete replay: {reason}"));
         }
 
-        let reason = (raw.reverted || raw.exit_reason.is_some_and(|reason| !reason.is_ok()))
+        let reason = (raw.reverted || raw.exit_reason.is_some_and(|reason| !reason.is_success()))
             .then(|| self.revert_decoder().decode(&raw.result, raw.exit_reason));
         if reason.as_deref() != Some(expected_reason) {
             return Err(format!(
@@ -5236,8 +5243,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 address,
                 &ITest::beforeTestSetupCall { testSelector: func.selector() },
             ) {
-                let spec_id: SpecId = self.executor.spec_id().into();
-                debug!(?calldata, spec=%spec_id, "applying before_test_setup");
+                debug!(?calldata, spec=?self.executor.spec_id(), "applying before_test_setup");
                 // Apply before test configured calldata.
                 let Ok(call_result) = self.executor.to_mut().transact_raw(
                     self.tcfg.sender,
@@ -5402,12 +5408,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     ) -> EvmFuzzState {
         let literals =
             if invariant { &self.cr.mcr.invariant_literals } else { &self.cr.mcr.fuzz_literals };
-        if let Some(db) = self.executor.backend().active_fork_db() {
-            EvmFuzzState::new(&self.setup.deployed_libs, db, config, Some(literals))
-        } else {
-            let db = self.executor.backend().mem_db();
-            EvmFuzzState::new(&self.setup.deployed_libs, db, config, Some(literals))
+        // Seed from the state `setUp` accepted.
+        let mut db = InMemoryDB::default();
+        if let Some(cache) = &self.executor.backend().lifecycle().active().cache {
+            db.cache = Cache::clone(cache);
         }
+        EvmFuzzState::new(&self.setup.deployed_libs, &db, config, Some(literals))
     }
 }
 

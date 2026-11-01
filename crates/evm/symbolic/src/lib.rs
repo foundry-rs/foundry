@@ -4,6 +4,7 @@
 
 use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
+use alloy_network::TransactionBuilder;
 use alloy_primitives::{
     Address, B256, Bytes, I256, Keccak256, U256, hex, keccak256,
     map::{HashMap, HashSet, IndexSet},
@@ -15,19 +16,23 @@ use alloy_signer_local::{
 };
 use alloy_sol_types::SolCall;
 use base64::prelude::*;
+use evm2::{
+    EvmFeatures, SpecId,
+    bytecode::{Bytecode, JumpTable},
+    constants::EIP7702_BYTECODE_LEN,
+    interpreter::{GasTracker, op as opcode},
+    precompiles::{
+        Precompiles, blake2, bls12_381, bn254, hash, identity, kzg_point_evaluation, modexp,
+        secp256k1, secp256r1,
+    },
+};
 use foundry_cheatcodes_spec::{SymbolicVm, Vm};
+use foundry_common::FoundryTransactionBuilder;
 use foundry_config::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
 use foundry_evm::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
-    core::{backend::DatabaseExt, evm::FoundryEvmNetwork},
+    core::evm::FoundryEvmNetwork,
     executors::Executor,
-    revm::{
-        bytecode::{Bytecode, JumpTable, eip7702::EIP7702_BYTECODE_LEN, opcode},
-        context::{Block, Cfg, Transaction},
-        database::DatabaseRef,
-        precompile::{PrecompileSpecId, Precompiles, kzg_point_evaluation},
-        primitives::hardfork::SpecId,
-    },
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -398,7 +403,7 @@ pub struct SymbolicStats {
 
 /// SMT-LIB-backed symbolic executor.
 ///
-/// This executor is intentionally separate from the concrete revm executor used by
+/// This executor is intentionally separate from the concrete evm2 executor used by
 /// Foundry. It consumes bytecode and state from an existing [`Executor`], explores
 /// symbolic branches, and returns either a proof result, a counterexample candidate,
 /// or an incomplete result.

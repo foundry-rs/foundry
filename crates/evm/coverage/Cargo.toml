@@ -19,12 +19,15 @@ foundry-compilers.workspace = true
 foundry-evm-core.workspace = true
 
 alloy-primitives.workspace = true
+evm2.workspace = true
 eyre.workspace = true
-revm.workspace = true
 semver.workspace = true
 tracing.workspace = true
 rayon.workspace = true
 solar.workspace = true
+
+[dev-dependencies]
+alloy-network.workspace = true
 
 [features]
 default = ["optimism"]

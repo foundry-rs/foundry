@@ -1412,7 +1412,7 @@ impl SymbolicExecutor {
         out_size: BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
         let mut candidates = state.world.symbolic_call_targets(&mut self.cx, executor)?;
-        candidates.extend(active_precompiles(executor.spec_id).addresses().copied());
+        candidates.extend(active_precompiles(executor.spec_id).as_map().addresses());
         candidates.sort();
         candidates.dedup();
         if candidates.is_empty() {
@@ -1740,6 +1740,15 @@ const KZG_PROOF_OFFSET: usize = 144;
 const KZG_BLS_MODULUS: [u8; 32] =
     hex!("73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001");
 
+/// Versioned hash version for KZG commitments.
+const KZG_VERSIONED_HASH_VERSION: u8 = 0x01;
+
+/// `U256(FIELD_ELEMENTS_PER_BLOB).to_be_bytes() ++ BLS_MODULUS.to_bytes32()`.
+const KZG_RETURN_VALUE: [u8; 64] = hex!(
+    "0000000000000000000000000000000000000000000000000000000000001000"
+    "73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001"
+);
+
 const KZG_SUCCESS_INPUT: [u8; KZG_POINT_EVALUATION_INPUT_LEN] = hex!(
     "01e798154708fe7789429634053cbf9f99b619f9f084048927333fce637f549b"
     "73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000000"
@@ -1754,7 +1763,7 @@ const KZG_ONE_COMMITMENT: [u8; 48] = [0x01; 48];
 const KZG_RESIDUAL_REASON: &str = "symbolic KZG point-evaluation precompile residual not modeled";
 
 fn kzg_success_return_data(cx: &mut SymCx) -> SymReturnData {
-    SymReturnData::from_concrete_bytes(cx, kzg_point_evaluation::RETURN_VALUE.to_vec())
+    SymReturnData::from_concrete_bytes(cx, KZG_RETURN_VALUE.to_vec())
 }
 
 fn kzg_constrained_outcome(
@@ -1774,12 +1783,12 @@ fn kzg_constrained_outcome(
     }
 
     if let Some(input) = constrained_bytes_at(cx, state, input, 0, input_len) {
-        return execute_precompile(cx, kzg_point_evaluation::ADDRESS, &input, SpecId::CANCUN)
+        return execute_precompile(cx, Address::with_last_byte(10), &input, SpecId::CANCUN)
             .map(Some);
     }
 
     if constrained_byte(cx, state, &input[0])
-        .is_some_and(|version| version != kzg_point_evaluation::VERSIONED_HASH_VERSION_KZG)
+        .is_some_and(|version| version != KZG_VERSIONED_HASH_VERSION)
     {
         return Ok(Some(None));
     }
@@ -1795,7 +1804,7 @@ fn kzg_constrained_outcome(
     }
 
     if let Some(commitment) = constrained_bytes_at(cx, state, input, KZG_COMMITMENT_OFFSET, 48) {
-        let expected_hash = kzg_point_evaluation::kzg_to_versioned_hash(&commitment);
+        let expected_hash = kzg_to_versioned_hash(&commitment);
         for (idx, expected) in expected_hash.into_iter().enumerate() {
             if constrained_byte(cx, state, &input[idx]).is_some_and(|actual| actual != expected) {
                 return Ok(Some(None));
@@ -1824,8 +1833,7 @@ fn kzg_failure_witness_condition(
 ) -> SymBoolExpr {
     let len_192 = expr_eq_condition(cx, input_len, KZG_POINT_EVALUATION_INPUT_LEN);
     let len_ne_192 = expr_ne_condition(cx, input_len, KZG_POINT_EVALUATION_INPUT_LEN);
-    let bad_version =
-        byte_ne_condition(cx, input, 0, kzg_point_evaluation::VERSIONED_HASH_VERSION_KZG);
+    let bad_version = byte_ne_condition(cx, input, 0, KZG_VERSIONED_HASH_VERSION);
     let bad_z = bytes_eq_condition(cx, input, KZG_Z_OFFSET, &KZG_BLS_MODULUS);
     let bad_y = bytes_eq_condition(cx, input, KZG_Y_OFFSET, &KZG_BLS_MODULUS);
     let bad_proof = bytes_eq_condition(cx, input, KZG_PROOF_OFFSET, &KZG_INVALID_PROOF);
@@ -1838,7 +1846,7 @@ fn kzg_failure_witness_condition(
     ];
 
     if let Some(commitment) = constrained_bytes_at(cx, state, input, KZG_COMMITMENT_OFFSET, 48) {
-        let expected_hash = kzg_point_evaluation::kzg_to_versioned_hash(&commitment);
+        let expected_hash = kzg_to_versioned_hash(&commitment);
         let mismatch = kzg_versioned_hash_mismatch_condition(cx, input, &expected_hash);
         conditions.push(SymBoolExpr::and(cx, vec![len_192.clone(), mismatch]));
     }
@@ -1850,7 +1858,7 @@ fn kzg_failure_witness_condition(
     conditions.push(SymBoolExpr::and(cx, vec![len_192.clone(), commitment_eq, hash_byte_mismatch]));
 
     for commitment in [&KZG_ZERO_COMMITMENT, &KZG_ONE_COMMITMENT] {
-        let expected_hash = kzg_point_evaluation::kzg_to_versioned_hash(commitment);
+        let expected_hash = kzg_to_versioned_hash(commitment);
         let commitment_eq = bytes_eq_condition(cx, input, KZG_COMMITMENT_OFFSET, commitment);
         let mismatch = kzg_versioned_hash_mismatch_condition(cx, input, &expected_hash);
         conditions.push(SymBoolExpr::and(cx, vec![len_192.clone(), commitment_eq, mismatch]));
@@ -1952,4 +1960,11 @@ fn ensure_expr_not_gasleft(expr: &SymExpr) -> Result<(), SymbolicError> {
     } else {
         Ok(())
     }
+}
+
+/// Returns `KZG_VERSIONED_HASH_VERSION ++ sha256(commitment)[1..]`.
+fn kzg_to_versioned_hash(commitment: &[u8]) -> [u8; 32] {
+    let mut hash = evm2::precompiles::crypto().sha256(commitment);
+    hash[0] = KZG_VERSIONED_HASH_VERSION;
+    hash
 }

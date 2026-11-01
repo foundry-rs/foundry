@@ -1,21 +1,17 @@
 //! Implementations of [`Scripting`](spec::Group::Scripting) cheatcodes.
 
-use crate::{Cheatcode, CheatcodesCore, CheatsCtxt, Result, Vm::*, evm::journaled_account};
+use crate::{Cheatcode, CheatcodesCore, CheatsCtxt, Result, Vm::*, evm::touch_account};
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
-use alloy_primitives::{Address, B256, U256};
+use alloy_eips::eip7702::SignedAuthorization;
+use alloy_primitives::{Address, B256, KECCAK256_EMPTY, U256};
 use alloy_rpc_types::Authorization;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
+use evm2::{SpecId, bytecode::Bytecode};
 use foundry_evm_core::evm::FoundryEvmNetwork;
 use foundry_wallets::{WalletSigner, wallet_multi::MultiWallet};
 use parking_lot::Mutex;
-use revm::{
-    bytecode::Bytecode,
-    context::{ContextTr, JournalTr},
-    context_interface::transaction::SignedAuthorization,
-    primitives::{KECCAK_EMPTY, hardfork::SpecId},
-};
 use std::sync::Arc;
 
 impl Cheatcode for broadcast_0Call {
@@ -128,8 +124,9 @@ fn sign_delegation<FEN: FoundryEvmNetwork>(
         nonce
     } else {
         let account_nonce = {
-            let authority_acc = ccx.ecx.journal_mut().load_account(signer.address())?;
-            authority_acc.info.nonce
+            let mut account = ccx.evm.state_mut().account(&signer.address())?;
+            account.warm();
+            account.nonce()
         };
         // Calculate next nonce considering existing active delegations
         next_delegation_nonce(
@@ -199,8 +196,9 @@ fn write_delegation<FEN: FoundryEvmNetwork>(
     );
     let authority = auth.recover_authority().map_err(|e| format!("{e}"))?;
     let account_nonce = {
-        let authority_acc = ccx.ecx.journal_mut().load_account(authority)?;
-        authority_acc.info.nonce
+        let mut account = ccx.evm.state_mut().account(&authority)?;
+        account.warm();
+        account.nonce()
     };
 
     let expected_nonce = next_delegation_nonce(
@@ -218,13 +216,13 @@ fn write_delegation<FEN: FoundryEvmNetwork>(
         .into());
     }
 
+    let mut account = ccx.evm.state_mut().account(&authority)?;
     if auth.address.is_zero() {
         // Set empty code if the delegation address of authority is 0x.
         // See https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7702.md#behavior.
-        ccx.ecx.journal_mut().set_code_with_hash(authority, Bytecode::default(), KECCAK_EMPTY);
+        account.set_code(KECCAK256_EMPTY, Bytecode::default());
     } else {
-        let bytecode = Bytecode::new_eip7702(*auth.address());
-        ccx.ecx.journal_mut().set_code(authority, bytecode);
+        account.set_code_slow(Bytecode::new_eip7702(*auth.address()));
     }
     Ok(())
 }
@@ -390,7 +388,7 @@ fn broadcast<FEN: FoundryEvmNetwork>(
     }
     let new_origin = new_origin.unwrap_or(ccx.tx_caller());
     // Ensure new origin is loaded and touched.
-    let _ = journaled_account(ccx.ecx, new_origin)?;
+    touch_account(ccx.evm.state_mut(), new_origin)?;
 
     let broadcast = Broadcast {
         new_origin,

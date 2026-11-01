@@ -4,14 +4,13 @@
 //! concurrently active pairs at once.
 
 use super::{CreateFork, Fork, bal};
-use crate::{FoundryBlock, opts::ForkContext};
+use crate::{evm::EthEvmNetwork, opts::ForkContext};
 use alloy_eips::{BlockNumHash, eip7928::BlockAccessList};
-use alloy_evm::EvmEnv;
-use alloy_network::{AnyNetwork, Network};
+use alloy_network::AnyNetwork;
 use alloy_primitives::map::HashMap;
 use foundry_config::Config;
 use foundry_fork_db::{
-    BackendHandler, BlockchainDb, ForkBlock, ForkBlockEnv, SharedBackend, cache::BlockchainDbMeta,
+    BackendHandler, BlockchainDb, ForkBlock, SharedBackend, cache::BlockchainDbMeta,
 };
 use futures::{
     FutureExt, StreamExt,
@@ -19,7 +18,7 @@ use futures::{
     stream::Fuse,
     task::{Context, Poll},
 };
-use revm::primitives::hardfork::SpecId;
+use revm::context::BlockEnv;
 use std::{
     fmt::{self, Write},
     pin::Pin,
@@ -105,14 +104,12 @@ impl<T: Into<String>> From<T> for ForkId {
     }
 }
 
-/// Backend, environment, and identity returned after creating or rolling a fork.
-pub struct ForkResult<N: Network, SPEC, BLOCK: ForkBlockEnv> {
+/// Backend and identity returned after creating or rolling a fork.
+pub struct ForkResult {
     /// Identifier assigned to the fork.
     pub id: ForkId,
     /// Backend pinned to the resolved fork block.
-    pub backend: SharedBackend<N, BLOCK>,
-    /// EVM environment reconstructed from the resolved fork block.
-    pub env: EvmEnv<SPEC, BLOCK>,
+    pub backend: SharedBackend<AnyNetwork, BlockEnv>,
     /// Exact source and block identity used to construct the backend.
     pub fork: Fork,
 }
@@ -121,19 +118,14 @@ pub struct ForkResult<N: Network, SPEC, BLOCK: ForkBlockEnv> {
 /// Can send requests to the `MultiForkHandler` to create forks.
 #[derive(Clone, Debug)]
 #[must_use]
-pub struct MultiFork<N: Network, SPEC, BLOCK: ForkBlockEnv> {
+pub struct MultiFork {
     /// Channel to send `Request`s to the handler.
-    handler: Sender<Request<N, SPEC, BLOCK>>,
+    handler: Sender<Request>,
     /// Ensures that all rpc resources get flushed properly.
-    _shutdown: Arc<ShutDownMultiFork<N, SPEC, BLOCK>>,
+    _shutdown: Arc<ShutDownMultiFork>,
 }
 
-impl<
-    N: Network,
-    SPEC: Into<SpecId> + Default + Copy + Unpin + Send + 'static,
-    BLOCK: FoundryBlock + ForkBlockEnv + Default + Unpin,
-> MultiFork<N, SPEC, BLOCK>
-{
+impl MultiFork {
     /// Creates a new pair and spawns the `MultiForkHandler` on a background thread.
     pub fn spawn() -> Self {
         Self::spawn_with_forks(HashMap::default(), None)
@@ -150,8 +142,8 @@ impl<
     }
 
     fn spawn_with_forks(
-        forks: HashMap<ForkId, CreatedFork<N, SPEC, BLOCK>>,
-        parent: Option<Arc<ShutDownMultiFork<N, SPEC, BLOCK>>>,
+        forks: HashMap<ForkId, CreatedFork>,
+        parent: Option<Arc<ShutDownMultiFork>>,
     ) -> Self {
         trace!(target: "fork::multi", "spawning multifork");
         let (mut fork, mut handler) = Self::new();
@@ -193,7 +185,7 @@ impl<
     ///
     /// Use [`spawn`](Self::spawn) instead.
     #[doc(hidden)]
-    pub fn new() -> (Self, MultiForkHandler<N, SPEC, BLOCK>) {
+    pub fn new() -> (Self, MultiForkHandler) {
         let (handler, handler_rx) = channel(1);
         let _shutdown =
             Arc::new(ShutDownMultiFork { handler: Some(handler.clone()), _parent: None });
@@ -203,7 +195,7 @@ impl<
     /// Returns a fork backend.
     ///
     /// If no matching fork backend exists it will be created.
-    pub fn create_fork(&self, fork: CreateFork) -> eyre::Result<ForkResult<N, SPEC, BLOCK>> {
+    pub fn create_fork(&self, fork: CreateFork) -> eyre::Result<ForkResult> {
         trace!("Creating new fork, url={}, block={:?}", fork.url, fork.evm_opts.fork_block_number);
         let (sender, rx) = oneshot_channel();
         let req = Request::CreateFork(Box::new(fork), sender);
@@ -214,21 +206,12 @@ impl<
     /// Rolls the block of the fork.
     ///
     /// If no matching fork backend exists it will be created.
-    pub fn roll_fork(&self, fork: ForkId, block: u64) -> eyre::Result<ForkResult<N, SPEC, BLOCK>> {
+    pub fn roll_fork(&self, fork: ForkId, block: u64) -> eyre::Result<ForkResult> {
         trace!(?fork, ?block, "rolling fork");
         let (sender, rx) = oneshot_channel();
         let req = Request::RollFork(fork, block, sender);
         self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
         rx.recv()?
-    }
-
-    /// Rolls a fork to an already resolved exact block.
-    pub fn roll_fork_exact(
-        &self,
-        fork: ForkId,
-        block: BlockNumHash,
-    ) -> eyre::Result<ForkResult<N, SPEC, BLOCK>> {
-        self.roll_fork_exact_with_bal(fork, block, false)
     }
 
     /// Rolls to an exact parent block, optionally warming its cache before transaction replay.
@@ -237,7 +220,7 @@ impl<
         fork: ForkId,
         block: BlockNumHash,
         prewarm_bal: bool,
-    ) -> eyre::Result<ForkResult<N, SPEC, BLOCK>> {
+    ) -> eyre::Result<ForkResult> {
         trace!(?fork, ?block, "rolling fork to exact block");
         let (sender, rx) = oneshot_channel();
         let req = Request::RollForkExact(fork, block, prewarm_bal, sender);
@@ -245,19 +228,13 @@ impl<
         rx.recv()?
     }
 
-    /// Returns the `EvmEnv` of the given fork, if any.
-    pub fn get_evm_env(&self, fork: ForkId) -> eyre::Result<Option<EvmEnv<SPEC, BLOCK>>> {
-        trace!(?fork, "getting env config");
-        let (sender, rx) = oneshot_channel();
-        let req = Request::GetEvmEnv(fork, sender);
-        self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
-        Ok(rx.recv()?)
-    }
-
     /// Returns the corresponding fork if it exists.
     ///
     /// Returns `None` if no matching fork backend is available.
-    pub fn get_fork(&self, id: impl Into<ForkId>) -> eyre::Result<Option<SharedBackend<N, BLOCK>>> {
+    pub fn get_fork(
+        &self,
+        id: impl Into<ForkId>,
+    ) -> eyre::Result<Option<SharedBackend<AnyNetwork, BlockEnv>>> {
         let id = id.into();
         trace!(?id, "get fork backend");
         let (sender, rx) = oneshot_channel();
@@ -297,36 +274,33 @@ impl<
     }
 }
 
-type CreateFuture<SPEC, BLOCK> = Pin<
+type CreateFuture = Pin<
     Box<
         dyn Future<
                 Output = eyre::Result<(
                     ForkId,
                     CreateFork,
                     Fork,
-                    EvmEnv<SPEC, BLOCK>,
+                    BlockEnv,
                     Option<BlockAccessList>,
                 )>,
             > + Send,
     >,
 >;
-type CreateSender<N, SPEC, BLOCK> = OneshotSender<eyre::Result<ForkResult<N, SPEC, BLOCK>>>;
-type GetEvmEnvSender<SPEC, BLOCK> = OneshotSender<Option<EvmEnv<SPEC, BLOCK>>>;
+type CreateSender = OneshotSender<eyre::Result<ForkResult>>;
 
 /// Request that's send to the handler.
 #[derive(Debug)]
-enum Request<N: Network, SPEC, BLOCK: ForkBlockEnv> {
-    CloneForks(OneshotSender<HashMap<ForkId, CreatedFork<N, SPEC, BLOCK>>>),
+enum Request {
+    CloneForks(OneshotSender<HashMap<ForkId, CreatedFork>>),
     /// Creates a new ForkBackend.
-    CreateFork(Box<CreateFork>, CreateSender<N, SPEC, BLOCK>),
+    CreateFork(Box<CreateFork>, CreateSender),
     /// Returns the Fork backend for the `ForkId` if it exists.
-    GetFork(ForkId, OneshotSender<Option<SharedBackend<N, BLOCK>>>),
+    GetFork(ForkId, OneshotSender<Option<SharedBackend<AnyNetwork, BlockEnv>>>),
     /// Adjusts the block that's being forked, by creating a new fork at the new block.
-    RollFork(ForkId, u64, CreateSender<N, SPEC, BLOCK>),
+    RollFork(ForkId, u64, CreateSender),
     /// Adjusts the fork to an already resolved exact block.
-    RollForkExact(ForkId, BlockNumHash, bool, CreateSender<N, SPEC, BLOCK>),
-    /// Returns the environment of the fork.
-    GetEvmEnv(ForkId, GetEvmEnvSender<SPEC, BLOCK>),
+    RollForkExact(ForkId, BlockNumHash, bool, CreateSender),
     /// Shutdowns the entire `MultiForkHandler`, see `ShutDownMultiFork`
     ShutDown(OneshotSender<()>),
     /// Returns the Fork Url for the `ForkId` if it exists.
@@ -336,37 +310,37 @@ enum Request<N: Network, SPEC, BLOCK: ForkBlockEnv> {
     GetForkOptions(ForkId, OneshotSender<Option<CreateFork>>),
 }
 
-enum ForkTask<N: Network, SPEC, BLOCK: ForkBlockEnv> {
+enum ForkTask {
     /// Contains the future that will establish a new fork.
     Create {
-        future: CreateFuture<SPEC, BLOCK>,
+        future: CreateFuture,
         id: ForkId,
         prewarm_bal: bool,
         no_fork_bal: bool,
-        sender: CreateSender<N, SPEC, BLOCK>,
-        additional_senders: Vec<CreateSender<N, SPEC, BLOCK>>,
+        sender: CreateSender,
+        additional_senders: Vec<CreateSender>,
     },
 }
 
 /// The type that manages connections in the background.
 #[must_use = "futures do nothing unless polled"]
-pub struct MultiForkHandler<N: Network, SPEC, BLOCK: ForkBlockEnv> {
+pub struct MultiForkHandler {
     /// Incoming requests from the `MultiFork`.
-    incoming: Fuse<Receiver<Request<N, SPEC, BLOCK>>>,
+    incoming: Fuse<Receiver<Request>>,
 
     /// All active handlers.
     ///
     /// It's expected that this list will be rather small (<10).
-    handlers: Vec<(ForkId, BackendHandler<N, BLOCK>)>,
+    handlers: Vec<(ForkId, BackendHandler<AnyNetwork, BlockEnv>)>,
 
     // tasks currently in progress
-    pending_tasks: Vec<ForkTask<N, SPEC, BLOCK>>,
+    pending_tasks: Vec<ForkTask>,
 
     /// All _unique_ forkids mapped to their corresponding backend.
     ///
     /// Note: The backend can be shared by multiple ForkIds if the target the same provider and
     /// block number.
-    forks: HashMap<ForkId, CreatedFork<N, SPEC, BLOCK>>,
+    forks: HashMap<ForkId, CreatedFork>,
 
     /// Optional periodic interval to flush rpc cache.
     flush_cache_interval: Option<tokio::time::Interval>,
@@ -375,13 +349,8 @@ pub struct MultiForkHandler<N: Network, SPEC, BLOCK: ForkBlockEnv> {
     prefetches: Vec<super::prefetch::Prefetch>,
 }
 
-impl<
-    N: Network,
-    SPEC: Into<SpecId> + Default + Copy + Send + 'static,
-    BLOCK: FoundryBlock + ForkBlockEnv + Default,
-> MultiForkHandler<N, SPEC, BLOCK>
-{
-    fn new(incoming: Receiver<Request<N, SPEC, BLOCK>>) -> Self {
+impl MultiForkHandler {
+    fn new(incoming: Receiver<Request>) -> Self {
         Self {
             incoming: incoming.fuse(),
             handlers: Default::default(),
@@ -405,7 +374,7 @@ impl<
         id: &ForkId,
         prewarm_bal: bool,
         no_fork_bal: bool,
-    ) -> Option<&mut Vec<CreateSender<N, SPEC, BLOCK>>> {
+    ) -> Option<&mut Vec<CreateSender>> {
         for ForkTask::Create {
             id: in_progress,
             prewarm_bal: pending_prewarm,
@@ -424,7 +393,7 @@ impl<
         None
     }
 
-    fn create_fork(&mut self, fork: CreateFork, sender: CreateSender<N, SPEC, BLOCK>) {
+    fn create_fork(&mut self, fork: CreateFork, sender: CreateSender) {
         self.create_fork_with_identity(fork, None, false, None, sender);
     }
 
@@ -434,7 +403,7 @@ impl<
         expected_identity: Option<ForkContext>,
         prewarm_bal: bool,
         exact_block: Option<(Fork, BlockNumHash)>,
-        sender: CreateSender<N, SPEC, BLOCK>,
+        sender: CreateSender,
     ) {
         let no_fork_bal = fork.evm_opts.no_fork_bal;
         let prewarm_bal = prewarm_bal && !no_fork_bal;
@@ -474,16 +443,15 @@ impl<
     fn insert_new_fork(
         &mut self,
         fork_id: ForkId,
-        fork: CreatedFork<N, SPEC, BLOCK>,
-        sender: CreateSender<N, SPEC, BLOCK>,
-        additional_senders: Vec<CreateSender<N, SPEC, BLOCK>>,
+        fork: CreatedFork,
+        sender: CreateSender,
+        additional_senders: Vec<CreateSender>,
     ) {
         self.forks.insert(fork_id.clone(), fork.clone());
         let resolved = fork.fork.clone();
         let _ = sender.send(Ok(ForkResult {
             id: fork_id.clone(),
             backend: fork.backend.clone(),
-            env: fork.evm_env.clone(),
             fork: resolved.clone(),
         }));
 
@@ -494,13 +462,12 @@ impl<
             let _ = sender.send(Ok(ForkResult {
                 id: next_fork_id,
                 backend: fork.backend.clone(),
-                env: fork.evm_env.clone(),
                 fork: resolved.clone(),
             }));
         }
     }
 
-    fn on_request(&mut self, req: Request<N, SPEC, BLOCK>) {
+    fn on_request(&mut self, req: Request) {
         match req {
             Request::CloneForks(sender) => {
                 let _ = sender.send(self.forks.clone());
@@ -542,9 +509,6 @@ impl<
                         sender.send(Err(eyre::eyre!("No matching fork exists for {}", fork_id)));
                 }
             }
-            Request::GetEvmEnv(fork_id, sender) => {
-                let _ = sender.send(self.forks.get(&fork_id).map(|fork| fork.evm_env.clone()));
-            }
             Request::ShutDown(sender) => {
                 trace!(target: "fork::multi", "received shutdown signal");
                 // We're emptying all fork backends, this way we ensure all caches get flushed.
@@ -574,12 +538,7 @@ impl<
 
 // Drives all handler to completion.
 // This future will finish once all underlying BackendHandler are completed.
-impl<
-    N: Network,
-    SPEC: Into<SpecId> + Default + Copy + Unpin + Send + 'static,
-    BLOCK: FoundryBlock + ForkBlockEnv + Default + Unpin,
-> Future for MultiForkHandler<N, SPEC, BLOCK>
-{
+impl Future for MultiForkHandler {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -611,7 +570,7 @@ impl<
                     additional_senders,
                 } => {
                     if let Poll::Ready(resp) = future.poll_unpin(cx) {
-                        let resp = resp.and_then(|(fork_id, opts, resolved, evm_env, mut bal)| {
+                        let resp = resp.and_then(|(fork_id, opts, resolved, block_env, mut bal)| {
                             let (fork_id, fork) = if let Some(mut cached) =
                                 this.forks.get(&fork_id).cloned()
                             {
@@ -631,12 +590,11 @@ impl<
                                     block: cached.fork.block,
                                     ..resolved
                                 };
-                                cached.evm_env = evm_env;
                                 (cached.inc_senders(fork_id), cached)
                             } else {
                                 // Only a new backend loads the disk cache.
                                 let (backend, handler) =
-                                    create_backend(&opts, &resolved, &evm_env.block_env)?;
+                                    create_backend(&opts, &resolved, &block_env)?;
                                 // Only a fork of `latest` starts cold on each new head; rolls and
                                 // pinned blocks do not prefetch. Prefetching reads older cache
                                 // files, so it follows the disk caching settings.
@@ -651,7 +609,7 @@ impl<
                                         .extend(super::prefetch::spawn(&resolved, &backend));
                                 }
                                 this.handlers.push((fork_id.clone(), handler));
-                                (fork_id, CreatedFork::new(opts, resolved, evm_env, backend))
+                                (fork_id, CreatedFork::new(opts, resolved, backend))
                             };
                             Ok((fork_id, fork, bal))
                         });
@@ -737,15 +695,13 @@ impl<
 
 /// Tracks the created Fork
 #[derive(Debug, Clone)]
-struct CreatedFork<N: Network, SPEC, BLOCK: ForkBlockEnv> {
+struct CreatedFork {
     /// How the fork was initially created.
     opts: CreateFork,
     /// The immutable remote fork owned by this backend.
     fork: Fork,
-    /// The resolved EVM environment (fetched from the provider).
-    evm_env: EvmEnv<SPEC, BLOCK>,
     /// Copy of the sender.
-    backend: SharedBackend<N, BLOCK>,
+    backend: SharedBackend<AnyNetwork, BlockEnv>,
     /// How many consumers there are, since a `SharedBacked` can be used by multiple
     /// consumers.
     num_senders: Arc<AtomicUsize>,
@@ -753,17 +709,11 @@ struct CreatedFork<N: Network, SPEC, BLOCK: ForkBlockEnv> {
     bal_prewarmed: Arc<AtomicBool>,
 }
 
-impl<N: Network, SPEC, BLOCK: ForkBlockEnv> CreatedFork<N, SPEC, BLOCK> {
-    pub fn new(
-        opts: CreateFork,
-        fork: Fork,
-        evm_env: EvmEnv<SPEC, BLOCK>,
-        backend: SharedBackend<N, BLOCK>,
-    ) -> Self {
+impl CreatedFork {
+    pub fn new(opts: CreateFork, fork: Fork, backend: SharedBackend<AnyNetwork, BlockEnv>) -> Self {
         Self {
             opts,
             fork,
-            evm_env,
             backend,
             num_senders: Arc::new(AtomicUsize::new(1)),
             bal_prewarmed: Arc::default(),
@@ -788,13 +738,13 @@ impl<N: Network, SPEC, BLOCK: ForkBlockEnv> CreatedFork<N, SPEC, BLOCK> {
 /// This type intentionally does not implement `Clone` since it's intended that there's only once
 /// instance.
 #[derive(Debug)]
-struct ShutDownMultiFork<N: Network, SPEC, BLOCK: ForkBlockEnv> {
-    handler: Option<Sender<Request<N, SPEC, BLOCK>>>,
+struct ShutDownMultiFork {
+    handler: Option<Sender<Request>>,
     // Keep shared backend handlers alive until this registry has shut down.
     _parent: Option<Arc<Self>>,
 }
 
-impl<N: Network, SPEC, BLOCK: ForkBlockEnv> Drop for ShutDownMultiFork<N, SPEC, BLOCK> {
+impl Drop for ShutDownMultiFork {
     fn drop(&mut self) {
         trace!(target: "fork::multi", "initiating shutdown");
         let (sender, rx) = oneshot_channel();
@@ -812,15 +762,12 @@ impl<N: Network, SPEC, BLOCK: ForkBlockEnv> Drop for ShutDownMultiFork<N, SPEC, 
 ///
 /// This resolves the fork block and environment through the endpoint. The handler creates the
 /// backend with [`create_backend`] only if no backend exists for the fork ID.
-async fn create_fork<
-    SPEC: Into<SpecId> + Default + Copy + Send,
-    BLOCK: FoundryBlock + ForkBlockEnv + Default,
->(
+async fn create_fork(
     mut fork: CreateFork,
     expected_identity: Option<ForkContext>,
     prewarm_bal: bool,
     exact_block: Option<(Fork, BlockNumHash)>,
-) -> eyre::Result<(ForkId, CreateFork, Fork, EvmEnv<SPEC, BLOCK>, Option<BlockAccessList>)> {
+) -> eyre::Result<(ForkId, CreateFork, Fork, BlockEnv, Option<BlockAccessList>)> {
     // Ensure evm_opts reflects the fork URL (may differ from the resolved CreateFork url when
     // created via cheatcodes, where evm_opts is cloned from the base config).
     let execution_networks = fork.evm_opts.networks;
@@ -865,7 +812,7 @@ async fn create_fork<
     };
     let any_provider = resolved.provider::<AnyNetwork>();
     let fork_context = resolved.context();
-    let evm_env = fork.evm_opts.fork_env_from_block::<SPEC, BLOCK, AnyNetwork>(
+    let evm_env = fork.evm_opts.fork_env_from_block::<EthEvmNetwork, AnyNetwork>(
         fork.evm_opts.chain_id_override().unwrap_or(fork_context.execution_chain_id),
         fork_context.source_chain_id,
         &resolved.block,
@@ -892,17 +839,17 @@ async fn create_fork<
     };
     let fork_id = ForkId::resolved(&fork.url, &resolved);
 
-    Ok((fork_id, fork, resolved, evm_env, bal))
+    Ok((fork_id, fork, resolved, cache_block_env(&evm_env.block), bal))
 }
 
 /// Creates the backend of a resolved fork.
 ///
 /// This loads the disk cache of the fork block, so it only runs for a new fork ID.
-fn create_backend<N: Network, BLOCK: FoundryBlock + ForkBlockEnv>(
+fn create_backend(
     fork: &CreateFork,
     resolved: &Fork,
-    block_env: &BLOCK,
-) -> eyre::Result<(SharedBackend<N, BLOCK>, BackendHandler<N, BLOCK>)> {
+    block_env: &BlockEnv,
+) -> eyre::Result<(SharedBackend<AnyNetwork, BlockEnv>, BackendHandler<AnyNetwork, BlockEnv>)> {
     let fork_context = resolved.context();
     let number = resolved.number();
     let account_fetch_policy = crate::backend::account_fetch_policy_for_source(
@@ -921,10 +868,10 @@ fn create_backend<N: Network, BLOCK: FoundryBlock + ForkBlockEnv>(
         None
     };
 
-    let provider = resolved.provider::<N>();
+    let provider = resolved.provider::<AnyNetwork>();
     let db = BlockchainDb::new(meta, cache_path);
     let anchor = ForkBlock::with_rpc_number(
-        block_env.number().saturating_to(),
+        block_env.number.saturating_to(),
         resolved.number(),
         resolved.hash(),
     );
@@ -932,6 +879,23 @@ fn create_backend<N: Network, BLOCK: FoundryBlock + ForkBlockEnv>(
         SharedBackend::new_with_anchor_by_number(provider, db, anchor)
     } else {
         SharedBackend::new_with_anchor(provider, db, anchor)
+    }
+}
+
+/// Returns the block environment recorded in the fork cache's metadata.
+///
+/// The disk cache keeps REVM's block environment layout, so existing caches stay valid.
+fn cache_block_env(block: &evm2::env::BlockEnv) -> BlockEnv {
+    BlockEnv {
+        number: block.number,
+        beneficiary: block.beneficiary,
+        timestamp: block.timestamp,
+        gas_limit: block.gas_limit.saturating_to(),
+        basefee: block.basefee.saturating_to(),
+        difficulty: block.difficulty,
+        prevrandao: Some(block.prevrandao.into()),
+        slot_num: block.slot_num.saturating_to(),
+        ..Default::default()
     }
 }
 
@@ -952,7 +916,6 @@ mod tests {
         spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_recording_method,
     };
     use futures::{channel::oneshot, task::noop_waker_ref};
-    use revm::context::{BlockEnv, TxEnv};
     use std::sync::mpsc::{Receiver as OneshotReceiver, TryRecvError};
 
     fn context(block_number: u64) -> ForkContext {
@@ -1005,60 +968,6 @@ mod tests {
         assert_eq!(ForkId::resolved(url, &first), ForkId::exact(url, &numbered, first.block()));
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn fork_state_by_number_does_not_load_or_overwrite_hash_cache() {
-        let chain_id = u64::from_be_bytes(B256::random()[..8].try_into().unwrap());
-        let (_api, handle) = anvil::spawn(
-            anvil::NodeConfig::test().with_chain_id(Some(chain_id)).with_no_mining(true),
-        )
-        .await;
-        let opts = EvmOpts {
-            fork_url: Some(handle.http_endpoint()),
-            fork_block_number: Some(0),
-            ..Default::default()
-        };
-        let resolved = opts.prepare_fork().await.unwrap().unwrap();
-        let (env, _) = opts.env_at_fork::<SpecId, BlockEnv, TxEnv>(Some(&resolved)).await.unwrap();
-        let path = Config::foundry_block_cache_dir(chain_id, resolved.number()).unwrap();
-        assert!(!path.exists());
-        let meta = BlockchainDbMeta::new(env.block_env, handle.http_endpoint())
-            .with_fork_identity(resolved.hash(), resolved.source_id());
-        let cached = BlockchainDb::new(meta.clone(), Some(path.clone()));
-        let address = Address::with_last_byte(0x42);
-        cached.storage().write().entry(address).or_default().insert(U256::ZERO, U256::from(42));
-        cached.cache().flush();
-        assert!(path.exists());
-
-        for state_by_number in [true, false] {
-            let fork = CreateFork {
-                url: handle.http_endpoint(),
-                enable_caching: true,
-                evm_opts: EvmOpts { fork_state_by_number: state_by_number, ..opts.clone() },
-            };
-            let (_, fork, fork_state, evm_env, _) =
-                create_fork::<SpecId, BlockEnv>(fork, None, false, None).await.unwrap();
-            let (backend, handler) =
-                create_backend::<AnyNetwork, _>(&fork, &fork_state, &evm_env.block_env).unwrap();
-            assert_eq!(backend.data().storage.read().contains_key(&address), !state_by_number);
-            if state_by_number {
-                backend
-                    .data()
-                    .storage
-                    .write()
-                    .entry(address)
-                    .or_default()
-                    .insert(U256::ZERO, U256::from(99));
-            }
-            backend.flush_cache();
-            drop(backend);
-            drop(handler);
-            let reloaded = BlockchainDb::new(meta.clone(), Some(path.clone()));
-            assert_eq!(reloaded.storage().read()[&address][&U256::ZERO], U256::from(42));
-        }
-        std::fs::remove_file(&path).unwrap();
-        std::fs::remove_dir(path.parent().unwrap()).unwrap();
-    }
-
     #[test]
     fn account_fetch_policy_follows_source_identity() {
         assert_eq!(
@@ -1093,8 +1002,7 @@ mod tests {
             context(1),
         );
         let (_, receiver) = channel(1);
-        let mut handler =
-            MultiForkHandler::<AnyNetwork, SpecId, revm::context::BlockEnv>::new(receiver);
+        let mut handler = MultiForkHandler::new(receiver);
         let mut fork = CreateFork {
             enable_caching: false,
             url: url.to_string(),
@@ -1156,8 +1064,7 @@ mod tests {
         let create = |resolved: Fork| {
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
                 .connect_mocked_client(Asserter::new());
-            let env = EvmEnv::<SpecId>::default();
-            let meta = BlockchainDbMeta::new(env.block_env.clone(), url.to_string())
+            let meta = BlockchainDbMeta::new(BlockEnv::default(), url.to_string())
                 .with_fork_identity(resolved.hash(), resolved.source_id());
             let (backend, handler) = SharedBackend::new_with_anchor(
                 provider,
@@ -1170,7 +1077,7 @@ mod tests {
                 url: url.to_string(),
                 evm_opts: Default::default(),
             };
-            (CreatedFork::new(opts, resolved, env, backend), handler)
+            (CreatedFork::new(opts, resolved, backend), handler)
         };
 
         for profile in [NetworkConfigs::default(), NetworkConfigs::with_ethereum()] {
@@ -1196,11 +1103,11 @@ mod tests {
                 id.clone(),
                 cached.opts.clone(),
                 candidate,
-                cached.evm_env.clone(),
+                BlockEnv::default(),
                 Some(bal),
             )));
             let (_incoming, receiver) = channel(1);
-            let mut manager = MultiForkHandler::<AnyNetwork, SpecId, BlockEnv>::new(receiver);
+            let mut manager = MultiForkHandler::new(receiver);
             manager.forks.insert(id.clone(), cached);
             manager.handlers.push((id.clone(), cached_handler));
             let (sender, receiver) = oneshot_channel();
@@ -1229,6 +1136,79 @@ mod tests {
             );
             assert!(manager.forks[&id].bal_prewarmed.load(Ordering::Relaxed));
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_state_by_number_does_not_load_or_overwrite_hash_cache() {
+        let chain_id = u64::from_be_bytes(B256::random()[..8].try_into().unwrap());
+        let (_api, handle) = anvil::spawn(
+            anvil::NodeConfig::test().with_chain_id(Some(chain_id)).with_no_mining(true),
+        )
+        .await;
+        let opts = EvmOpts {
+            fork_url: Some(handle.http_endpoint()),
+            fork_block_number: Some(0),
+            ..Default::default()
+        };
+        let resolved = opts.prepare_fork().await.unwrap().unwrap();
+        let (env, _) = opts.env_at_fork::<EthEvmNetwork>(Some(&resolved)).await.unwrap();
+        let path = Config::foundry_block_cache_dir(chain_id, resolved.number()).unwrap();
+        assert!(!path.exists());
+        let meta = BlockchainDbMeta::new(cache_block_env(&env.block), handle.http_endpoint())
+            .with_fork_identity(resolved.hash(), resolved.source_id());
+        let cached = BlockchainDb::new(meta.clone(), Some(path.clone()));
+        let address = Address::with_last_byte(0x42);
+        cached.storage().write().entry(address).or_default().insert(U256::ZERO, U256::from(42));
+        cached.cache().flush();
+        assert!(path.exists());
+
+        for state_by_number in [true, false] {
+            let fork = CreateFork {
+                url: handle.http_endpoint(),
+                enable_caching: true,
+                evm_opts: EvmOpts { fork_state_by_number: state_by_number, ..opts.clone() },
+            };
+            let (_, fork, fork_state, block_env, _) =
+                create_fork(fork, None, false, None).await.unwrap();
+            let (backend, handler) = create_backend(&fork, &fork_state, &block_env).unwrap();
+            assert_eq!(backend.data().storage.read().contains_key(&address), !state_by_number);
+            if state_by_number {
+                backend
+                    .data()
+                    .storage
+                    .write()
+                    .entry(address)
+                    .or_default()
+                    .insert(U256::ZERO, U256::from(99));
+            }
+            backend.flush_cache();
+            drop(backend);
+            drop(handler);
+            let reloaded = BlockchainDb::new(meta.clone(), Some(path.clone()));
+            assert_eq!(reloaded.storage().read()[&address][&U256::ZERO], U256::from(42));
+        }
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(path.parent().unwrap()).unwrap();
+    }
+
+    async fn complete_fork(
+        manager: &mut MultiForkHandler,
+        receiver: OneshotReceiver<eyre::Result<ForkResult>>,
+    ) -> ForkResult {
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            futures::future::poll_fn(|cx| {
+                assert!(manager.poll_unpin(cx).is_pending());
+                match receiver.try_recv() {
+                    Ok(result) => Poll::Ready(result),
+                    Err(TryRecvError::Empty) => Poll::Pending,
+                    Err(error) => panic!("fork response channel closed: {error}"),
+                }
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap()
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1268,7 +1248,7 @@ mod tests {
             spawn_rpc_proxy_recording_method(endpoint, "eth_getBlockAccessList").await;
         let (endpoint, probes) = spawn_rpc_proxy_recording_method(endpoint, "anvil_nodeInfo").await;
         let (_incoming, receiver) = channel(1);
-        let mut manager = MultiForkHandler::<AnyNetwork, SpecId, BlockEnv>::new(receiver);
+        let mut manager = MultiForkHandler::new(receiver);
         let mut first = None;
         let mut probe_counts = Vec::new();
         let other_headers = ["X-Test-Source: other".to_string()];
@@ -1371,7 +1351,7 @@ mod tests {
 
         for disabled_first in [false, true] {
             let (_incoming, receiver) = channel(1);
-            let mut manager = MultiForkHandler::<AnyNetwork, SpecId, BlockEnv>::new(receiver);
+            let mut manager = MultiForkHandler::new(receiver);
             bal_requests.lock().unwrap().clear();
             let mut requests = [false, true].map(|no_fork_bal| {
                 let fork = CreateFork {
@@ -1441,23 +1421,50 @@ mod tests {
         }
     }
 
-    async fn complete_fork(
-        manager: &mut MultiForkHandler<AnyNetwork, SpecId, BlockEnv>,
-        receiver: OneshotReceiver<eyre::Result<ForkResult<AnyNetwork, SpecId, BlockEnv>>>,
-    ) -> ForkResult<AnyNetwork, SpecId, BlockEnv> {
-        tokio::time::timeout(
-            Duration::from_secs(10),
-            futures::future::poll_fn(|cx| {
-                assert!(manager.poll_unpin(cx).is_pending());
-                match receiver.try_recv() {
-                    Ok(result) => Poll::Ready(result),
-                    Err(TryRecvError::Empty) => Poll::Pending,
-                    Err(error) => panic!("fork response channel closed: {error}"),
-                }
-            }),
+    #[tokio::test(flavor = "multi_thread")]
+    async fn can_read_write_cache() {
+        use alloy_chains::NamedChain;
+        use foundry_common::provider::get_http_provider;
+        use foundry_config::Config;
+
+        let endpoint = &*foundry_test_utils::rpc::next_http_rpc_endpoint();
+        let provider = get_http_provider(endpoint);
+
+        let block_num = provider.get_block_number().await.unwrap();
+
+        let mut evm_opts = Config::figment().extract::<EvmOpts>().unwrap();
+        evm_opts.fork_url = Some(endpoint.to_string());
+        evm_opts.fork_block_number = Some(block_num);
+
+        let backend = crate::backend::Backend::<EthEvmNetwork>::spawn(
+            evm_opts.get_fork(&Config::default(), NamedChain::Mainnet as u64, None),
+            evm_opts.local_evm_env::<EthEvmNetwork>(),
         )
-        .await
-        .unwrap()
-        .unwrap()
+        .unwrap();
+        let fork = backend.fork().unwrap();
+        let fork_hash = fork.hash();
+        let source_id = fork.source_id();
+        let (evm_env, _) = backend.env(&evm_opts).await.unwrap();
+
+        // some rng contract from etherscan
+        let address = alloy_primitives::address!("0x63091244180ae240c87d1f528f5f269134cb07b3");
+
+        let num_slots = 5;
+        let _account = backend.basic(address);
+        for idx in 0..num_slots {
+            let _ = backend.storage(address, U256::from(idx));
+        }
+        drop(backend);
+
+        let meta = BlockchainDbMeta::new(cache_block_env(&evm_env.block), endpoint.to_string())
+            .with_fork_identity(fork_hash, source_id);
+
+        let db = BlockchainDb::new(
+            meta,
+            Some(Config::foundry_block_cache_dir(NamedChain::Mainnet, block_num).unwrap()),
+        );
+        assert!(db.accounts().read().contains_key(&address));
+        assert!(db.storage().read().contains_key(&address));
+        assert_eq!(db.storage().read().get(&address).unwrap().len(), num_slots as usize);
     }
 }

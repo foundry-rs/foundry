@@ -722,19 +722,16 @@ fn derive_wallets<W: Wordlist>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{FixedBytes, LogData, hex::FromHex};
+    use alloy_primitives::{Bytes, FixedBytes, LogData, hex::FromHex};
     use alloy_sol_types::SolCall;
+    use evm2::evm::{AccountInfo, StateCheckpoint};
     use k256::elliptic_curve::Curve;
     use p256::ecdsa::signature::hazmat::PrehashVerifier;
-    use revm::{
-        context::journaled_state::JournalCheckpoint,
-        state::{AccountInfo, Bytecode},
-    };
-    use tempo_contracts::precompiles::{IAccountKeychain, ISignatureVerifier};
+    use tempo_contracts::precompiles::ISignatureVerifier;
     use tempo_hardfork::TempoHardfork;
     use tempo_precompiles::{
         Precompile,
-        account_keychain::{AccountKeychain, KeyRestrictions, SignatureType},
+        account_keychain::{AccountKeychain, IAccountKeychain, KeyRestrictions, SignatureType},
         error::Result as PrecompileResult,
         signature_verifier::SignatureVerifier,
         storage::{PrecompileStorageProvider, StorageCtx, hashmap::HashMapStorageProvider},
@@ -749,13 +746,13 @@ mod tests {
 
     impl TimestampedStorage {
         fn new(chain_id: u64, spec: TempoHardfork, timestamp: u64) -> Self {
-            let mut block_env = TempoBlockEnv::default();
-            block_env.inner.timestamp = U256::from(timestamp);
+            let block_env =
+                TempoBlockEnv { timestamp: U256::from(timestamp), ..Default::default() };
             Self { inner: HashMapStorageProvider::new_with_spec(chain_id, spec), block_env }
         }
 
         fn set_timestamp(&mut self, timestamp: u64) {
-            self.block_env.inner.timestamp = U256::from(timestamp);
+            self.block_env.timestamp = U256::from(timestamp);
         }
     }
 
@@ -768,7 +765,7 @@ mod tests {
             &self.block_env
         }
 
-        fn set_code(&mut self, address: Address, code: Bytecode) -> PrecompileResult<()> {
+        fn set_code(&mut self, address: Address, code: Bytes) -> PrecompileResult<()> {
             self.inner.set_code(address, code)
         }
 
@@ -778,10 +775,6 @@ mod tests {
             f: &mut dyn FnMut(&AccountInfo),
         ) -> PrecompileResult<()> {
             self.inner.with_account_info(address, f)
-        }
-
-        fn account_code(&mut self, address: Address) -> PrecompileResult<(B256, Bytecode)> {
-            self.inner.account_code(address)
         }
 
         fn sload(&mut self, address: Address, key: U256) -> PrecompileResult<U256> {
@@ -848,15 +841,15 @@ mod tests {
             self.inner.is_static()
         }
 
-        fn checkpoint(&mut self) -> JournalCheckpoint {
+        fn checkpoint(&mut self) -> StateCheckpoint {
             self.inner.checkpoint()
         }
 
-        fn checkpoint_commit(&mut self, checkpoint: JournalCheckpoint) {
+        fn checkpoint_commit(&mut self, checkpoint: StateCheckpoint) {
             self.inner.checkpoint_commit(checkpoint)
         }
 
-        fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) {
+        fn checkpoint_revert(&mut self, checkpoint: StateCheckpoint) {
             self.inner.checkpoint_revert(checkpoint)
         }
 
@@ -1120,8 +1113,7 @@ mod tests {
                 .abi_encode();
 
         let output = SignatureVerifier::new().call(&calldata, Address::ZERO).unwrap();
-        assert!(!output.is_revert(), "verifyKeychain reverted: {:?}", output.bytes);
-        ISignatureVerifier::verifyKeychainCall::abi_decode_returns(&output.bytes).unwrap()
+        ISignatureVerifier::verifyKeychainCall::abi_decode_returns(output.bytes()).unwrap()
     }
 
     fn verify_keychain_admin(account: Address, hash: B256, signature: Vec<u8>) -> bool {
@@ -1133,8 +1125,7 @@ mod tests {
         .abi_encode();
 
         let output = SignatureVerifier::new().call(&calldata, Address::ZERO).unwrap();
-        assert!(!output.is_revert(), "verifyKeychainAdmin reverted: {:?}", output.bytes);
-        ISignatureVerifier::verifyKeychainAdminCall::abi_decode_returns(&output.bytes).unwrap()
+        ISignatureVerifier::verifyKeychainAdminCall::abi_decode_returns(output.bytes()).unwrap()
     }
 
     fn assert_keychain_signature_reverts(account: Address, hash: B256, signature: Vec<u8>) {
@@ -1142,8 +1133,11 @@ mod tests {
             ISignatureVerifier::verifyKeychainCall { account, hash, signature: signature.into() }
                 .abi_encode();
 
-        let output = SignatureVerifier::new().call(&calldata, Address::ZERO).unwrap();
-        assert!(output.is_revert(), "malformed keychain signature should revert");
+        let output = SignatureVerifier::new().call(&calldata, Address::ZERO);
+        assert!(
+            matches!(output, Err(evm2::precompiles::PrecompileError::Revert(_))),
+            "malformed keychain signature should revert"
+        );
     }
 
     #[test]

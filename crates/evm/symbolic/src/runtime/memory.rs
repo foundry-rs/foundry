@@ -1,5 +1,5 @@
 use super::*;
-use foundry_evm::revm::interpreter::STACK_LIMIT;
+use evm2::constants::STACK_LIMIT;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SymStack(Vec<SymExpr>);

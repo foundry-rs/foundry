@@ -6,7 +6,6 @@
 //! It includes the shared genesis initialization function used by both anvil and forge.
 
 use alloy_primitives::{Address, Bytes, U256};
-use revm::state::Bytecode;
 use tempo_contracts::{
     ARACHNID_CREATE2_FACTORY_ADDRESS, CREATEX_ADDRESS, CreateX, MULTICALL3_ADDRESS, Multicall3,
     PERMIT2_ADDRESS, Permit2, SAFE_DEPLOYER_ADDRESS, SafeDeployer,
@@ -101,9 +100,8 @@ fn initialize_tempo_genesis_inner_with_precompiles(
     let mut ctx = StorageCtx;
 
     // Set sentinel bytecode for precompile addresses
-    let sentinel = Bytecode::new_legacy(Bytes::from_static(SYSTEM_PRECOMPILE_STUB));
     for precompile in precompiles {
-        ctx.set_code(precompile, sentinel.clone())?;
+        ctx.set_code(precompile, Bytes::from_static(SYSTEM_PRECOMPILE_STUB))?;
     }
 
     // Create PathUSD token: 0x20C0000000000000000000000000000000000000
@@ -158,26 +156,11 @@ fn initialize_tempo_genesis_inner_with_precompiles(
     ctx.sstore(VALIDATOR_CONFIG_ADDRESS, validator_config::slots::OWNER, admin.into_word().into())?;
 
     // Set bytecode for standard contracts
-    ctx.set_code(
-        MULTICALL3_ADDRESS,
-        Bytecode::new_legacy(Bytes::from_static(&Multicall3::DEPLOYED_BYTECODE)),
-    )?;
-    ctx.set_code(
-        CREATEX_ADDRESS,
-        Bytecode::new_legacy(Bytes::from_static(&CreateX::DEPLOYED_BYTECODE)),
-    )?;
-    ctx.set_code(
-        SAFE_DEPLOYER_ADDRESS,
-        Bytecode::new_legacy(Bytes::from_static(&SafeDeployer::DEPLOYED_BYTECODE)),
-    )?;
-    ctx.set_code(
-        PERMIT2_ADDRESS,
-        Bytecode::new_legacy(Bytes::from_static(&Permit2::DEPLOYED_BYTECODE)),
-    )?;
-    ctx.set_code(
-        ARACHNID_CREATE2_FACTORY_ADDRESS,
-        Bytecode::new_legacy(ARACHNID_CREATE2_FACTORY_BYTECODE),
-    )?;
+    ctx.set_code(MULTICALL3_ADDRESS, Multicall3::DEPLOYED_BYTECODE.clone())?;
+    ctx.set_code(CREATEX_ADDRESS, CreateX::DEPLOYED_BYTECODE.clone())?;
+    ctx.set_code(SAFE_DEPLOYER_ADDRESS, SafeDeployer::DEPLOYED_BYTECODE.clone())?;
+    ctx.set_code(PERMIT2_ADDRESS, Permit2::DEPLOYED_BYTECODE.clone())?;
+    ctx.set_code(ARACHNID_CREATE2_FACTORY_ADDRESS, ARACHNID_CREATE2_FACTORY_BYTECODE)?;
 
     Ok(())
 }

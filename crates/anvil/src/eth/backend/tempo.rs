@@ -4,21 +4,21 @@
 //! and fee tokens (PathUSD, AlphaUSD, BetaUSD, ThetaUSD) to enable proper
 //! transaction validation.
 //!
-//! This module provides a storage provider adapter for Anvil's `Db` trait and
-//! uses the shared initialization logic from `foundry-evm-core`.
+//! Tempo precompile storage runs on a Tempo evm2 EVM over Anvil's `Db`, using the shared
+//! initialization logic from `foundry-evm-core`; the changed state is written back to the `Db`.
 
+use super::{
+    db::{AccountInfo, DatabaseRef, Db, KECCAK_EMPTY},
+    env::EvmEnv,
+    evm::{EvmOptions, TempoEvmNetwork, build_evm},
+};
+use crate::eth::error::BlockchainError;
 use alloy_primitives::{Address, B256, U256, address};
-use foundry_evm::core::tempo::{
+use foundry_evm_core::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
-    initialize_tempo_genesis_at_hardfork,
+    initialize_tempo_genesis_inner,
 };
-use revm::{
-    DatabaseRef,
-    context::{BlockEnv, journaled_state::JournalCheckpoint},
-    state::{AccountInfo, Bytecode},
-};
-use std::collections::HashMap;
-use tempo_hardfork::TempoHardfork;
+use foundry_evm_hardforks::FoundryHardfork;
 use tempo_precompiles::{
     TIP_FEE_MANAGER_ADDRESS,
     account_keychain::{
@@ -26,201 +26,80 @@ use tempo_precompiles::{
         IAccountKeychain::{KeyRestrictions, SignatureType},
     },
     error::TempoPrecompileError,
-    storage::{PrecompileStorageProvider, StorageCtx},
+    storage::StorageCtx,
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{ITIP20, TIP20Token},
 };
-use tempo_primitives::TempoBlockEnv;
 
-use super::db::Db;
-
-/// Sender address used for genesis initialization.
 const SENDER: Address = address!("0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38");
-/// Admin address used for genesis initialization.
 const ADMIN: Address = address!("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f");
 
-/// Storage provider adapter for Anvil's Db to work with Tempo precompiles.
-pub struct AnvilStorageProvider<'a> {
-    db: &'a mut dyn Db,
-    chain_id: u64,
-    block_env: TempoBlockEnv,
-    gas_used: u64,
-    gas_refunded: i64,
-    reservoir: u64,
-    tip1060_storage_credits_enabled: bool,
-    transient: HashMap<(Address, U256), U256>,
-    hardfork: TempoHardfork,
+/// State changed by a Tempo storage context.
+#[derive(Debug, Default)]
+struct TempoChanges {
+    accounts: Vec<(Address, AccountInfo)>,
+    storage: Vec<(Address, U256, U256)>,
 }
 
-impl<'a> AnvilStorageProvider<'a> {
-    pub fn new(
-        db: &'a mut dyn Db,
-        chain_id: u64,
-        timestamp: U256,
-        block_number: u64,
-        hardfork: TempoHardfork,
-    ) -> Self {
-        Self {
-            db,
-            chain_id,
-            block_env: TempoBlockEnv {
-                inner: BlockEnv {
-                    timestamp,
-                    number: U256::from(block_number),
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            gas_used: 0,
-            gas_refunded: 0,
-            reservoir: 0,
-            tip1060_storage_credits_enabled: hardfork.is_t7(),
-            transient: HashMap::new(),
-            hardfork,
-        }
+/// Runs `f` in a Tempo precompile storage context over `db` at `env`, then writes the state it
+/// changed back to `db`.
+///
+/// The context executes on a Tempo evm2 EVM, so precompile storage follows the same rules as
+/// transactions.
+pub fn with_tempo_storage<R>(
+    db: &mut dyn Db,
+    env: &EvmEnv,
+    hardfork: FoundryHardfork,
+    f: impl FnOnce() -> R,
+) -> Result<R, BlockchainError> {
+    let opts = EvmOptions { hardfork, ..Default::default() };
+    let (result, changes) = {
+        let state: &dyn DatabaseRef = &*db;
+        let mut evm = build_evm::<TempoEvmNetwork>(state, env, &opts)?;
+        let result = StorageCtx::enter_evm(&mut evm, f);
+        evm.state_mut().commit_transaction();
+        let changes = overlay_changes(state, &evm.overlay_db().cache)?;
+        (result, changes)
+    };
+    for (address, info) in changes.accounts {
+        db.insert_account(address, info);
     }
+    for (address, slot, value) in changes.storage {
+        db.set_storage_at(address, B256::from(slot), B256::from(value))?;
+    }
+    Ok(result)
 }
 
-impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
-    fn spec(&self) -> TempoHardfork {
-        self.hardfork
+/// Returns the accounts and slots of `cache` that differ from `db`.
+fn overlay_changes(
+    db: &dyn DatabaseRef,
+    cache: &evm2::evm::Cache,
+) -> Result<TempoChanges, BlockchainError> {
+    let mut changes = TempoChanges::default();
+    for (address, info) in &cache.accounts {
+        let Some(info) = info else { continue };
+        let current = db.basic_ref(*address)?;
+        if current.as_ref().is_some_and(|current| {
+            current.balance == info.balance
+                && current.nonce == info.nonce
+                && current.code_hash == info.code_hash
+        }) {
+            continue;
+        }
+        let mut info = info.clone();
+        if info.code.is_none() && info.code_hash != KECCAK_EMPTY {
+            info.code = cache.contracts.get(&info.code_hash).cloned();
+        }
+        changes.accounts.push((*address, info));
     }
-
-    fn chain_id(&self) -> u64 {
-        self.chain_id
-    }
-
-    fn block_env(&self) -> &TempoBlockEnv {
-        &self.block_env
-    }
-
-    fn set_code(&mut self, address: Address, code: Bytecode) -> Result<(), TempoPrecompileError> {
-        self.db.insert_account(address, AccountInfo::from_bytecode(code));
-        Ok(())
-    }
-
-    fn with_account_info(
-        &mut self,
-        address: Address,
-        f: &mut dyn FnMut(&AccountInfo),
-    ) -> Result<(), TempoPrecompileError> {
-        if let Some(info) =
-            self.db.basic_ref(address).map_err(|e| TempoPrecompileError::Fatal(e.to_string()))?
-        {
-            f(&info);
-            Ok(())
-        } else {
-            Err(TempoPrecompileError::Fatal(format!("account '{address}' not found")))
+    for (address, slots) in &cache.storage {
+        for (slot, value) in &slots.slots {
+            if db.storage_ref(*address, *slot)? != *value {
+                changes.storage.push((*address, *slot, *value));
+            }
         }
     }
-
-    fn account_code(&mut self, address: Address) -> Result<(B256, Bytecode), TempoPrecompileError> {
-        let Some(info) =
-            self.db.basic_ref(address).map_err(|e| TempoPrecompileError::Fatal(e.to_string()))?
-        else {
-            return Ok((B256::ZERO, Bytecode::default()));
-        };
-        let code_hash = info.code_hash();
-        let code = if let Some(code) = info.code {
-            code
-        } else {
-            self.db
-                .code_by_hash_ref(code_hash)
-                .map_err(|e| TempoPrecompileError::Fatal(e.to_string()))?
-        };
-        Ok((code_hash, code))
-    }
-
-    fn sstore(
-        &mut self,
-        address: Address,
-        key: U256,
-        value: U256,
-    ) -> Result<(), TempoPrecompileError> {
-        self.db
-            .set_storage_at(address, B256::from(key), B256::from(value))
-            .map_err(|e| TempoPrecompileError::Fatal(e.to_string()))
-    }
-
-    fn sload(&mut self, address: Address, key: U256) -> Result<U256, TempoPrecompileError> {
-        revm::Database::storage(self.db, address, key)
-            .map_err(|e| TempoPrecompileError::Fatal(e.to_string()))
-    }
-
-    fn tstore(
-        &mut self,
-        address: Address,
-        key: U256,
-        value: U256,
-    ) -> Result<(), TempoPrecompileError> {
-        self.transient.insert((address, key), value);
-        Ok(())
-    }
-
-    fn tload(&mut self, address: Address, key: U256) -> Result<U256, TempoPrecompileError> {
-        Ok(self.transient.get(&(address, key)).copied().unwrap_or(U256::ZERO))
-    }
-
-    fn emit_event(
-        &mut self,
-        _address: Address,
-        _event: alloy_primitives::LogData,
-    ) -> Result<(), TempoPrecompileError> {
-        Ok(())
-    }
-
-    fn deduct_gas(&mut self, gas: u64) -> Result<(), TempoPrecompileError> {
-        self.gas_used = self.gas_used.saturating_add(gas);
-        Ok(())
-    }
-
-    fn gas_used(&self) -> u64 {
-        self.gas_used
-    }
-
-    fn state_gas_used(&self) -> u64 {
-        0
-    }
-
-    fn state_gas_spilled(&self) -> u64 {
-        0
-    }
-
-    fn gas_limit(&self) -> u64 {
-        u64::MAX
-    }
-
-    fn gas_refunded(&self) -> i64 {
-        self.gas_refunded
-    }
-
-    fn reservoir(&self) -> u64 {
-        self.reservoir
-    }
-
-    fn refund_gas(&mut self, gas: i64) {
-        self.gas_refunded = self.gas_refunded.saturating_add(gas);
-    }
-
-    fn is_static(&self) -> bool {
-        false
-    }
-
-    fn checkpoint(&mut self) -> JournalCheckpoint {
-        JournalCheckpoint { log_i: 0, journal_i: 0, selfdestructed_i: 0 }
-    }
-
-    fn checkpoint_commit(&mut self, _checkpoint: JournalCheckpoint) {}
-
-    fn checkpoint_revert(&mut self, _checkpoint: JournalCheckpoint) {}
-
-    fn amsterdam_eip8037_enabled(&self) -> bool {
-        false
-    }
-
-    fn set_tip1060_storage_credits(&mut self, enabled: bool) {
-        self.tip1060_storage_credits_enabled = enabled && self.hardfork.is_t7();
-    }
+    Ok(changes)
 }
 
 /// Initialize Tempo precompiles and fee tokens for Anvil.
@@ -232,24 +111,27 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
 /// send transactions in Tempo mode.
 pub fn initialize_tempo_precompiles(
     db: &mut dyn Db,
-    chain_id: u64,
-    timestamp: u64,
+    env: &EvmEnv,
     test_accounts: &[Address],
-    hardfork: TempoHardfork,
+    hardfork: FoundryHardfork,
+) -> Result<(), BlockchainError> {
+    with_tempo_storage(db, env, hardfork, || initialize_tempo_genesis(test_accounts, hardfork))?
+        .map_err(|err| BlockchainError::Message(format!("failed to initialize Tempo: {err}")))
+}
+
+fn initialize_tempo_genesis(
+    test_accounts: &[Address],
+    hardfork: FoundryHardfork,
 ) -> Result<(), TempoPrecompileError> {
-    let timestamp = U256::from(timestamp);
-
-    let mut storage = AnvilStorageProvider::new(db, chain_id, timestamp, 0, hardfork);
-
     // Initialize base Tempo genesis (precompiles and tokens)
-    initialize_tempo_genesis_at_hardfork(&mut storage, ADMIN, SENDER, hardfork)?;
+    initialize_tempo_genesis_inner(ADMIN, SENDER, hardfork.into())?;
 
     // Mint fee tokens to test accounts
     // u64::MAX per account - safe since u128::MAX can hold ~18 quintillion u64::MAX values
     let mint_amount = U256::from(u64::MAX);
     let tokens = [PATH_USD_ADDRESS, ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, THETA_USD_ADDRESS];
 
-    StorageCtx::enter(&mut storage, || -> Result<(), TempoPrecompileError> {
+    (|| -> Result<(), TempoPrecompileError> {
         // Mint fee tokens to test accounts
         for &token_address in &tokens {
             let mut token = TIP20Token::from_address(token_address)?;
@@ -328,7 +210,5 @@ pub fn initialize_tempo_precompiles(
         }
 
         Ok(())
-    })?;
-
-    Ok(())
+    })()
 }

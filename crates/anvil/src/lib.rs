@@ -44,7 +44,7 @@ use tracing_subscriber::EnvFilter;
 #[cfg(feature = "optimism")]
 use op_alloy_rpc_types as _;
 
-pub use foundry_evm::hardfork::EthereumHardfork;
+pub use foundry_evm_hardforks::EthereumHardfork;
 
 /// contains the background service that drives the node
 mod service;
@@ -58,7 +58,7 @@ mod error;
 /// ethereum related implementations
 pub mod eth;
 /// Evm related abstractions
-mod evm;
+pub mod evm;
 pub use evm::PrecompileFactory;
 
 /// support for polling filters

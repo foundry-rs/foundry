@@ -24,7 +24,6 @@ foundry-evm-networks.workspace = true
 
 alloy-chains.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
-alloy-evm = { workspace = true, features = ["rpc"] }
 alloy-genesis.workspace = true
 alloy-hardforks.workspace = true
 alloy-json-abi.workspace = true
@@ -38,16 +37,13 @@ alloy-provider.workspace = true
 alloy-rpc-client.workspace = true
 alloy-network.workspace = true
 alloy-consensus.workspace = true
-alloy-monad-evm = { workspace = true, optional = true }
 alloy-eips.workspace = true
-alloy-op-evm = { workspace = true, optional = true }
 alloy-rpc-types = { workspace = true, features = ["anvil"] }
 alloy-sol-types.workspace = true
 alloy-rlp.workspace = true
 foundry-fork-db.workspace = true
 
 # Base
-base-common-chains = { workspace = true, optional = true, features = ["std"] }
 base-common-consensus = { workspace = true, optional = true, features = [
     "alloy-compat",
     "evm",
@@ -55,50 +51,30 @@ base-common-consensus = { workspace = true, optional = true, features = [
     "serde",
     "std",
 ] }
-base-common-evm = { workspace = true, optional = true, features = [
-    "blst",
-    "c-kzg",
-    "memory_limit",
-    "optional_block_gas_limit",
-    "optional_eip3607",
-    "optional_no_base_fee",
-    "serde",
-    "std",
-] }
 base-common-network = { workspace = true, optional = true, features = ["serde", "std"] }
-base-common-precompiles = { workspace = true, optional = true, features = ["std"] }
 base-common-rpc-types = { workspace = true, optional = true, features = ["serde", "std"] }
 
-revm = { workspace = true, features = [
-    "std",
-    "serde",
-    "memory_limit",
-    "optional_eip3607",
-    "optional_block_gas_limit",
-    "optional_no_base_fee",
-    "optional_priority_fee_check",
-    "arbitrary",
-    "c-kzg",
-    "blst",
-] }
-revm-inspectors.workspace = true
-monad-revm = { workspace = true, optional = true }
-op-alloy-consensus = { workspace = true, features = ["k256"], optional = true }
+# Persisted fork block metadata only; execution and account storage use evm2.
+revm = { workspace = true, features = ["std", "serde"] }
+parking_lot.workspace = true
+op-alloy-consensus = { workspace = true, features = ["alloy-compat", "k256"], optional = true }
 op-alloy-network = { workspace = true, optional = true }
 op-alloy-rpc-types = { workspace = true, optional = true }
-op-revm = { workspace = true, optional = true }
-tempo-revm.workspace = true
 tempo-alloy.workspace = true
-tempo-hardfork.workspace = true
 tempo-contracts.workspace = true
-tempo-evm.workspace = true
-tempo-precompiles.workspace = true
 
-auto_impl.workspace = true
+# evm2
+evm2.workspace = true
+tempo-evm.workspace = true
+tempo-hardfork.workspace = true
+tempo-precompiles.workspace = true
+op-evm2 = { workspace = true, optional = true }
+base-evm2 = { workspace = true, optional = true }
+monad-evm2 = { workspace = true, optional = true }
+
 eyre.workspace = true
 futures.workspace = true
 itertools.workspace = true
-parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -122,20 +98,15 @@ required-features = ["base"]
 [features]
 default = ["optimism"]
 monad = [
-    "anvil/monad",
-    "dep:alloy-monad-evm",
-    "dep:monad-revm",
+    "dep:monad-evm2",
     "foundry-evm-hardforks/monad",
     "foundry-evm-networks/monad",
 ]
 base = [
-    "anvil/base",
-    "dep:base-common-chains",
     "dep:base-common-consensus",
-    "dep:base-common-evm",
     "dep:base-common-network",
-    "dep:base-common-precompiles",
     "dep:base-common-rpc-types",
+    "dep:base-evm2",
     "foundry-common/base",
     "foundry-config/base",
     "foundry-evm-hardforks/base",
@@ -145,8 +116,7 @@ optimism = [
     "dep:op-alloy-consensus",
     "dep:op-alloy-network",
     "dep:op-alloy-rpc-types",
-    "dep:alloy-op-evm",
-    "dep:op-revm",
+    "dep:op-evm2",
     "foundry-common/optimism",
     "foundry-evm-hardforks/optimism",
     "foundry-evm-networks/optimism",

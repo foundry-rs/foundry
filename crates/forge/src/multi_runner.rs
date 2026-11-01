@@ -6,7 +6,7 @@ use crate::{
     result::{SuiteResult, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind},
     runner::{
         ContractRunnerContext, InvariantCampaignScope, count_runnable_invariant_campaign_anchors,
-        function_matches_network_pass,
+        function_matches_network_pass, inline_config_for,
     },
     symbolic_regression::SYMBOLIC_REGRESSION_MARKER,
 };
@@ -26,7 +26,7 @@ use foundry_compilers::{
 use foundry_config::{Config, FoundryHardfork, InlineConfig};
 use foundry_evm::{
     backend::Backend,
-    core::evm::{EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
+    core::evm::{EvmEnvFor, EvmFactoryFor, FoundryEvmNetwork, SpecFor, TransactionRequestFor},
     decode::RevertDecoder,
     executors::{EarlyExit, Executor, ExecutorBuilder, ReplayObservation, ShowmapDomain},
     fuzz::{
@@ -42,7 +42,7 @@ use foundry_evm_networks::NetworkVariant;
 use foundry_linking::{DetailedLinkOutput, LinkOutput, Linker, LinkerError, Resolver};
 use rayon::prelude::*;
 use std::{
-    borrow::Borrow,
+    borrow::{Borrow, Cow},
     collections::{BTreeMap, BTreeSet},
     ops::{Deref, DerefMut},
     path::PathBuf,
@@ -316,18 +316,50 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
 
         debug!("start executing all tests in contract");
 
+        // Resolve the contract's inline config once, for both its backend and its runner.
+        let tcfg = self.contract_tcfg(&identifier);
+        let db = if tcfg.spec_id != self.tcfg.spec_id && !db.is_forked_mode() {
+            db.clone_empty_with_env(tcfg.evm_env)
+        } else {
+            db.clone()
+        };
+        // Built from the shared config, as before: the runner applies the contract's config before
+        // `setUp` and keeps the shared trace and live-log settings.
         let executor = self.tcfg.executor(
             self.known_contracts.clone(),
             self.analysis.clone(),
             artifact_id,
-            db.clone(),
+            db,
         );
-        let runner = ContractRunner::new(&identifier, contract, executor, span, self, context);
+        let runner =
+            ContractRunner::new(&identifier, contract, executor, tcfg, span, self, context);
         let r = runner.run_tests(filter);
 
         debug!(duration=?r.duration, "executed all tests in contract");
 
         r
+    }
+
+    /// Returns the test configuration for `identifier`'s suite, with its contract-level inline
+    /// config applied. Borrows the shared configuration when the contract has none, or when it
+    /// fails to resolve, so that the runner reports the error during setup.
+    ///
+    /// Only contract-level config selects the backend's hardfork: a function-level hardfork pin
+    /// runs over network state seeded at its contract's hardfork, since `setUp` runs once per
+    /// contract.
+    fn contract_tcfg(&self, identifier: &str) -> Cow<'_, TestRunnerConfig<FEN>> {
+        if !self.tcfg.inline_config.contains_contract(identifier) {
+            return Cow::Borrowed(&self.tcfg);
+        }
+        let Ok(mut config) =
+            inline_config_for(&self.tcfg.config, &self.tcfg.inline_config, identifier, None)
+        else {
+            return Cow::Borrowed(&self.tcfg);
+        };
+        config.networks = config.networks.with_execution_profile(self.tcfg.evm_opts.networks);
+        let mut tcfg = self.tcfg.clone();
+        tcfg.reconfigure_with(Arc::new(config));
+        Cow::Owned(tcfg)
     }
 }
 
@@ -441,8 +473,8 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     pub executor_builder: ExecutorBuilder<FEN>,
     /// EVM environment.
     pub evm_env: EvmEnvFor<FEN>,
-    /// Transaction environment.
-    pub tx_env: TxEnvFor<FEN>,
+    /// Transaction defaults.
+    pub tx: TransactionRequestFor<FEN>,
     /// EVM version.
     pub spec_id: SpecFor<FEN>,
     /// Exact network hardfork selected for the execution environment.
@@ -494,14 +526,14 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
 
         self.sender = config.sender;
         self.evm_opts.networks = config.networks;
-        self.hardfork = resolve_execution_spec(
+        self.hardfork = resolve_execution_spec::<EvmFactoryFor<FEN>>(
             config.evm_version,
             config.hardfork,
             &mut self.evm_env,
             ExecutionSpecContext::local_or_fork(self.fork_chain_id, self.fork_hardfork),
             None,
         );
-        self.spec_id = self.evm_env.cfg_env.spec;
+        self.spec_id = self.evm_env.spec;
         self.isolation = config.isolate;
         // `line_coverage`, `debug`, `decode_internal` and `record_all_steps` are Forge-specific
         // and not present in the config.
@@ -517,9 +549,6 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
     pub fn configure_executor(&self, executor: &mut Executor<FEN>) {
         debug_assert!(
             executor.backend().networks().has_same_execution_profile(&self.evm_opts.networks)
-        );
-        debug_assert!(
-            executor.inspector().networks.has_same_execution_profile(&self.evm_opts.networks)
         );
         let inspector = executor.inspector_mut();
         if let Some(cheatcodes) = inspector.cheatcodes.as_mut() {
@@ -566,7 +595,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             .spec_id(self.spec_id)
             .gas_limit(self.evm_opts.gas_limit())
             .legacy_assertions(self.config.legacy_assertions)
-            .build(self.evm_env.clone(), self.tx_env.clone(), db, self.evm_opts.networks)
+            .build(self.evm_env, self.tx.clone(), db, self.evm_opts.networks)
     }
 
     fn trace_requirements(&self) -> TraceRequirements {
@@ -626,7 +655,7 @@ impl MultiContractRunnerBuilder {
         backend: &Backend<FEN>,
     ) -> bool {
         self.create2_deployer_available.unwrap_or_else(|| {
-            !backend.is_in_forking_mode()
+            !backend.is_forked_mode()
                 && evm_opts.fork_url.is_none()
                 && evm_opts.create2_deployer == foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER
         })
@@ -738,7 +767,7 @@ impl MultiContractRunnerBuilder {
         self,
         output: &ProjectCompileOutput,
         mut evm_env: EvmEnvFor<FEN>,
-        tx_env: TxEnvFor<FEN>,
+        tx: TransactionRequestFor<FEN>,
         evm_opts: EvmOpts,
         backend: Backend<FEN>,
         executor_builder: ExecutorBuilder<FEN>,
@@ -915,17 +944,17 @@ impl MultiContractRunnerBuilder {
             literals(invariant_max_literals)
         };
 
-        let fork_context = backend.fork()?.as_ref().map(|fork| fork.context());
+        let fork_context = backend.fork().map(|fork| fork.context());
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
-        let hardfork = resolve_execution_spec(
+        let hardfork = resolve_execution_spec::<EvmFactoryFor<FEN>>(
             self.config.evm_version,
             self.config.hardfork,
             &mut evm_env,
             ExecutionSpecContext::local_or_fork(fork_chain_id, fork_hardfork),
             None,
         );
-        let spec_id = evm_env.cfg_env.spec;
+        let spec_id = evm_env.spec;
 
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
@@ -944,7 +973,7 @@ impl MultiContractRunnerBuilder {
                 evm_opts,
                 executor_builder,
                 evm_env,
-                tx_env,
+                tx,
                 spec_id,
                 hardfork,
                 fork_chain_id,
@@ -1126,7 +1155,9 @@ mod tests {
         let config = Arc::new(Config::default());
         let builder = MultiContractRunnerBuilder::new(config, Arc::new(InlineConfig::new()));
         let mut evm_opts = EvmOpts::default();
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let backend =
+            Backend::<EthEvmNetwork>::spawn(None, evm_opts.local_evm_env::<EthEvmNetwork>())
+                .unwrap();
         assert!(builder.create2_deployer_available(&evm_opts, &backend));
 
         evm_opts.fork_url = Some("http://localhost:8545".into());

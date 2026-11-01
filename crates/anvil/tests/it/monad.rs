@@ -34,6 +34,7 @@ use alloy_sol_types::{SolCall, SolEvent};
 use anvil::{
     NodeConfig, NodeHandle,
     eth::{
+        backend::env::SpecId,
         error::BlockchainError,
         pool::transactions::{PoolTransaction, TransactionOrder},
     },
@@ -44,14 +45,12 @@ use anvil_core::{
     types::{ReorgOptions, TransactionData},
 };
 use foundry_common::provider::redact_url;
-use foundry_evm::{
-    hardfork::{FoundryHardfork, MonadHardfork},
-    utils::get_blob_params,
-};
+use foundry_evm_core::utils::get_blob_params;
+use foundry_evm_hardforks::{FoundryHardfork, MonadHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryTxEnvelope;
 use foundry_test_utils::rpc::spawn_canonical_monad_system_rpc;
-use monad_revm::{
+use monad_evm2::{
     MONAD_TESTNET_CHAIN_ID,
     staking::{
         constants::SYSTEM_ADDRESS,
@@ -64,7 +63,6 @@ use monad_revm::{
         },
     },
 };
-use revm::primitives::hardfork::SpecId;
 use std::sync::Arc;
 const STAKING_ADDRESS: Address = address!("0x0000000000000000000000000000000000001000");
 const RESERVE_BALANCE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001001");

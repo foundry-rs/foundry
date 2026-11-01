@@ -1,265 +1,117 @@
-use alloy_evm::{EvmEnv, EvmFactory, precompiles::PrecompilesMap};
-use alloy_op_evm::{OpEvm, OpEvmContext, OpEvmFactory, OpTx};
-use foundry_fork_db::DatabaseError;
+//! OP Stack on evm2, using `op-evm2`.
+
+use super::{
+    EvmEnv, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork, FoundryTxResultExt, SendableExt,
+    TxPayload, with_eip7702_delegations,
+};
+use alloy_consensus::transaction::Recovered;
+use alloy_eips::Encodable2718;
+use alloy_network::AnyRpcTransaction;
+use alloy_primitives::{Address, Bytes};
+use evm2::{TxResult, Version, evm::precompile::PrecompileProvider, registry::TxRegistry};
+use op_alloy_consensus::OpTxEnvelope as OpConsensusTxEnvelope;
 use op_alloy_network::Optimism;
-use op_revm::{
-    L1BlockInfo, OpEvm as RevmEvm, OpHaltReason, OpSpecId, OpTransactionError, handler::OpHandler,
-};
-use revm::{
-    context::{
-        BlockEnv, ContextTr, Journal,
-        result::{EVMError, HaltReason, ResultAndState},
-    },
-    handler::{EthFrame, EvmTr, FrameResult, instructions::EthInstructions},
-    inspector::InspectorHandler,
-    interpreter::{FrameInput, InstructionResult, interpreter::EthInterpreter},
+use op_evm2::{
+    OpEvmExt, OpEvmFactory, OpEvmTypes, OpPrecompiles, OpSpecId, OpTxEnvelope, OpTxResultExt,
+    OpTypedTx, TxDeposit, op_tx_registry, op_version,
 };
 
-use crate::{
-    FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryTransaction,
-    backend::{DatabaseExt, JournaledState},
-    evm::{
-        FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm, NestedEvmFor,
-        run_inspected_frame,
-    },
-};
-
+/// OP Stack EVM network.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OpEvmNetwork;
-impl FoundryEvmNetwork for OpEvmNetwork {
-    type Network = Optimism;
-    type EvmFactory = OpEvmFactory;
-}
 
-type OpEvmHandler<'db, I> =
-    OpHandler<OpRevmEvm<'db, I>, EVMError<DatabaseError, OpTransactionError>, EthFrame>;
+// SAFETY: `OpEvmExt` is `Send + Sync`, as asserted below, so clones share only thread-safe state.
+unsafe impl SendableExt for OpEvmExt {}
 
-pub type OpRevmEvm<'db, I> = RevmEvm<
-    OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFactory>>,
-    I,
-    EthInstructions<EthInterpreter, OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFactory>>>,
-    PrecompilesMap,
->;
+const _: fn() = || {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<OpEvmExt>();
+};
 
-impl FoundryChain<OpTx> for L1BlockInfo {
-    fn clear_transaction_fee_cache(&mut self) {
-        self.clear_tx_l1_cost();
+impl FoundryEvmExt<OpTxEnvelope> for OpEvmExt {
+    fn replace_while_executing(&mut self, ext: Self) {
+        // Only the block-level L1 info comes from `ext`; everything else, including the cached L1
+        // cost, describes the running transaction, as when REVM kept this state in its context.
+        let tx_l1_cost = self.l1_block_info.tx_l1_cost;
+        self.l1_block_info = ext.l1_block_info;
+        self.l1_block_info.tx_l1_cost = tx_l1_cost;
     }
 }
 
-impl IntoInstructionResult for OpHaltReason {
-    fn into_instruction_result(self) -> InstructionResult {
-        match self {
-            Self::Base(eth) => eth.into(),
-            Self::FailedDeposit => InstructionResult::Stop,
-        }
+impl FoundryTxResultExt for OpTxResultExt {
+    fn is_failed_deposit(&self) -> bool {
+        self.failed_deposit
+    }
+}
+
+impl FoundryEvmNetwork for OpEvmNetwork {
+    type Network = Optimism;
+    type EvmFactory = OpEvmFactory;
+
+    fn evm_tx(
+        envelope: OpConsensusTxEnvelope,
+        sender: Address,
+        payload: TxPayload,
+    ) -> eyre::Result<Recovered<OpTxEnvelope>> {
+        // The L1 data fee is priced over the signed encoding; simulations of unsigned requests
+        // price it at zero, like `eth_call`.
+        let enveloped = Some(if payload.is_simulated() {
+            Bytes::new()
+        } else {
+            envelope.encoded_2718().into()
+        });
+        let typed = match envelope {
+            OpConsensusTxEnvelope::Legacy(tx) => OpTypedTx::Legacy(tx.strip_signature()),
+            OpConsensusTxEnvelope::Eip2930(tx) => OpTypedTx::Eip2930(tx.strip_signature()),
+            OpConsensusTxEnvelope::Eip1559(tx) => OpTypedTx::Eip1559(tx.strip_signature()),
+            OpConsensusTxEnvelope::Eip7702(tx) => OpTypedTx::Eip7702(
+                evm2::ethereum::LazyTxEip7702::from_recovered_authorizations(tx.strip_signature()),
+            ),
+            OpConsensusTxEnvelope::Deposit(tx) => {
+                let tx = tx.into_inner();
+                return Ok(Recovered::new_unchecked(
+                    OpTxEnvelope::deposit(TxDeposit {
+                        source_hash: tx.source_hash,
+                        from: tx.from,
+                        to: tx.to,
+                        mint: tx.mint,
+                        value: tx.value,
+                        gas_limit: tx.gas_limit,
+                        is_system_transaction: tx.is_system_transaction,
+                        input: tx.input,
+                    }),
+                    sender,
+                ));
+            }
+            OpConsensusTxEnvelope::PostExec(_) => {
+                eyre::bail!("OP post-execution transactions are not supported by op-evm2")
+            }
+        };
+        Ok(Recovered::new_unchecked(OpTxEnvelope::new(typed, enveloped), sender))
+    }
+
+    fn envelope_from_any_rpc(tx: &AnyRpcTransaction) -> eyre::Result<OpConsensusTxEnvelope> {
+        OpConsensusTxEnvelope::try_from(tx.clone())
+            .map_err(|err| super::unknown_transaction_type(tx, "OpTransaction").wrap_err(err))
     }
 }
 
 impl FoundryEvmFactory for OpEvmFactory {
-    type Chain = L1BlockInfo;
-    type FoundryContext<'db> = OpEvmContext<&'db mut dyn DatabaseExt<Self>>;
+    type Types = OpEvmTypes;
 
-    type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
-        OpEvm<&'db mut dyn DatabaseExt<Self>, I, Self::Precompiles>;
+    fn version(&self, spec: OpSpecId, chain_id: u64) -> Version {
+        with_eip7702_delegations(op_version(spec, chain_id))
+    }
 
-    fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
+    fn tx_registry(&self, spec: OpSpecId) -> TxRegistry<OpEvmTypes, TxResult<OpEvmTypes>> {
+        op_tx_registry(spec)
+    }
+
+    fn precompiles(
         &self,
-        db: &'db mut dyn DatabaseExt<Self>,
-        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        inspector: I,
-    ) -> Self::FoundryEvm<'db, I> {
-        let mut op_evm = Self::default().create_evm_with_inspector(db, evm_env, inspector);
-        op_evm.cfg.tx_chain_id_check = true;
-        op_evm
-    }
-
-    fn create_nested_evm_with_inspector<'db, I>(
-        &self,
-        db: &'db mut dyn DatabaseExt<Self>,
-        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        inspector: I,
-    ) -> NestedEvmFor<'db, Self>
-    where
-        I: FoundryInspectorExt<Self::FoundryContext<'db>> + 'db,
-    {
-        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_inner())
-    }
-}
-
-impl<'db, I: FoundryInspectorExt<OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFactory>>>> NestedEvm
-    for OpRevmEvm<'db, I>
-{
-    type Spec = OpSpecId;
-    type Block = BlockEnv;
-    type Tx = OpTx;
-    type Chain = L1BlockInfo;
-    type Journal = Journal<&'db mut dyn DatabaseExt<OpEvmFactory>>;
-
-    fn tx_mut(&mut self) -> &mut Self::Tx {
-        self.ctx_mut().tx_mut()
-    }
-
-    fn journal_inner_mut(&mut self) -> &mut JournaledState {
-        &mut self.ctx().journaled_state.inner
-    }
-
-    fn chain_mut(&mut self) -> &mut Self::Chain {
-        &mut self.ctx_mut().chain
-    }
-
-    fn precompiles_mut(&mut self) -> &mut alloy_evm::precompiles::PrecompilesMap {
-        &mut self.0.precompiles
-    }
-
-    fn journal_mut(&mut self) -> &mut Self::Journal {
-        &mut self.ctx_mut().journaled_state
-    }
-
-    fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
-        run_inspected_frame(self, OpEvmHandler::<I>::new(), frame).map_err(map_op_error)
-    }
-
-    fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState<HaltReason>> {
-        if self.ctx().cfg().disable_fee_charge
-            && tx.enveloped_tx().is_some_and(|enveloped| enveloped.is_empty())
-        {
-            self.ctx_mut().chain_mut().clear_transaction_fee_cache();
-        }
-        self.ctx().set_tx(tx);
-
-        let mut handler = OpEvmHandler::<I>::new();
-        let result = handler.inspect_run(self).map_err(map_op_error)?;
-
-        let result = result.map_haltreason(|h| match h {
-            OpHaltReason::Base(eth) => eth,
-            _ => HaltReason::PrecompileError,
-        });
-
-        Ok(ResultAndState::new(result, self.ctx_ref().journaled_state.inner.state.clone()))
-    }
-
-    fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block> {
-        self.ctx_ref().evm_clone()
-    }
-}
-
-/// Maps an OP [`EVMError`] to the common `EVMError<DatabaseError>` used by [`NestedEvm`].
-fn map_op_error(e: EVMError<DatabaseError, OpTransactionError>) -> EVMError<DatabaseError> {
-    match e {
-        EVMError::Database(db) => EVMError::Database(db),
-        EVMError::Header(h) => EVMError::Header(h),
-        EVMError::Custom(s) => EVMError::Custom(s),
-        EVMError::Transaction(t) => EVMError::Custom(format!("op transaction error: {t}")),
-        EVMError::CustomAny(custom_any_error) => EVMError::CustomAny(custom_any_error),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::backend::Backend;
-    use alloy_primitives::{Address, Bytes, TxKind, U256};
-    use op_revm::constants::L1_FEE_RECIPIENT;
-    use revm::{context::TxEnv, inspector::NoOpInspector, state::AccountInfo};
-
-    #[test]
-    fn constructors_allow_restoring_l1_block_context() {
-        let factory = OpEvmFactory::default();
-        let mut db = Backend::<OpEvmNetwork>::spawn(None).unwrap();
-        let chain = L1BlockInfo {
-            l2_block: Some(U256::from(42)),
-            l1_base_fee: U256::from(123),
-            tx_l1_cost: Some(U256::from(456)),
-            ..Default::default()
-        };
-        {
-            let mut evm = factory.create_foundry_evm_with_inspector(
-                &mut db,
-                EvmEnv::<OpSpecId>::default(),
-                NoOpInspector,
-            );
-            *evm.chain_mut() = chain.clone();
-            assert_eq!(evm.chain().l2_block, chain.l2_block);
-            assert_eq!(evm.chain().l1_base_fee, chain.l1_base_fee);
-            assert_eq!(evm.chain().tx_l1_cost, chain.tx_l1_cost);
-        }
-        let mut evm = factory.create_nested_evm_with_inspector(
-            &mut db,
-            EvmEnv::<OpSpecId>::default(),
-            NoOpInspector,
-        );
-        *evm.chain_mut() = chain.clone();
-        assert_eq!(evm.chain_mut().l2_block, chain.l2_block);
-        assert_eq!(evm.chain_mut().l1_base_fee, chain.l1_base_fee);
-        assert_eq!(evm.chain_mut().tx_l1_cost, chain.tx_l1_cost);
-    }
-
-    #[test]
-    fn nested_execution_uses_restored_l1_block_context() {
-        let caller = Address::with_last_byte(0x42);
-        let recipient = Address::with_last_byte(0x43);
-        let l1_cost = U256::from(456);
-        let mut db = Backend::<OpEvmNetwork>::spawn(None).unwrap();
-        db.insert_account_info(caller, AccountInfo { balance: U256::MAX, ..Default::default() });
-
-        let mut evm_env = EvmEnv::<OpSpecId>::default();
-        evm_env.cfg_env.spec = OpSpecId::REGOLITH;
-        evm_env.cfg_env.disable_fee_charge = false;
-        let mut evm = OpEvmFactory::default().create_nested_evm(&mut db, evm_env);
-        *evm.chain_mut() = L1BlockInfo {
-            l2_block: Some(U256::ZERO),
-            tx_l1_cost: Some(l1_cost),
-            ..Default::default()
-        };
-        let tx = OpTx(op_revm::OpTransaction {
-            base: TxEnv {
-                caller,
-                gas_limit: 21_000,
-                kind: TxKind::Call(recipient),
-                ..Default::default()
-            },
-            enveloped_tx: Some(Default::default()),
-            deposit: Default::default(),
-        });
-
-        let result = evm.transact_raw(tx).unwrap();
-
-        assert!(result.result.is_success());
-        assert_eq!(result.state[&L1_FEE_RECIPIENT].info.balance, l1_cost);
-    }
-
-    #[test]
-    fn nested_execution_skips_cached_l1_cost_when_fees_disabled() {
-        let caller = Address::with_last_byte(0x42);
-        let recipient = Address::with_last_byte(0x43);
-        let mut db = Backend::<OpEvmNetwork>::spawn(None).unwrap();
-        db.insert_account_info(caller, AccountInfo { balance: U256::MAX, ..Default::default() });
-
-        let mut evm_env = EvmEnv::<OpSpecId>::default();
-        evm_env.cfg_env.spec = OpSpecId::REGOLITH;
-        evm_env.cfg_env.disable_fee_charge = true;
-        let mut evm = OpEvmFactory::default().create_nested_evm(&mut db, evm_env);
-        *evm.chain_mut() = L1BlockInfo {
-            l2_block: Some(U256::ZERO),
-            tx_l1_cost: Some(U256::from(456)),
-            ..Default::default()
-        };
-        let tx = OpTx(op_revm::OpTransaction {
-            base: TxEnv {
-                caller,
-                gas_limit: 21_000,
-                kind: TxKind::Call(recipient),
-                ..Default::default()
-            },
-            enveloped_tx: Some(Bytes::new()),
-            deposit: Default::default(),
-        });
-
-        let result = evm.transact_raw(tx).unwrap();
-
-        assert!(result.result.is_success());
-        assert_eq!(result.state[&caller].info.balance, U256::MAX);
-        assert_eq!(result.state[&L1_FEE_RECIPIENT].info.balance, U256::ZERO);
+        env: &EvmEnv<OpEvmTypes>,
+        _ext: &OpEvmExt,
+    ) -> Box<dyn PrecompileProvider<OpEvmTypes>> {
+        Box::new(OpPrecompiles::new(env.spec))
     }
 }

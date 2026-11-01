@@ -269,6 +269,90 @@ Traces:
 "#]]);
 }
 
+// `vm.setEvmVersion` inside a test applies to the calls, creates and executed transactions started
+// after it, isolated or not, and their end hooks, such as `expectRevert`'s, run once.
+#[forgetest_init]
+fn test_set_evm_version_applies_to_new_frames(prj: _, cmd: _) {
+    prj.update_config(|config| config.evm_version = EvmVersion::Prague);
+    prj.add_test(
+        "EvmVersionFrames.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Store {
+    function set() external {}
+}
+
+contract EvmVersionFramesTest is Test {
+    function test_new_frames_use_new_version() public {
+        Store store = new Store();
+        // This test and `Store` are compiled with PUSH0, which istanbul does not activate, so the
+        // test only continues if its own frame keeps its version.
+        vm.setEvmVersion("istanbul");
+        vm.expectRevert(2);
+        store.set{gas: 100_000}();
+        store.set{gas: 100_000}();
+        vm.expectRevert(2);
+        new Store();
+        new Store();
+    }
+
+    function test_executed_transaction_uses_new_version() public {
+        this.executeTransactionAfterVersionChange();
+    }
+
+    function executeTransactionAfterVersionChange() external {
+        vm.setEvmVersion("istanbul");
+        // Legacy create of `PUSH1 1 PUSH0 RETURN`, signed for chain 31337 by the first anvil key.
+        try vm.executeTransaction(
+            hex"f8528080830186a080808460015ff382f4f5a0163754a7df29423d6f8bd4bf6f01698dd1a105fa44d7e97b4b313bd0cfe7da28a02241492692e0f6986a25cb0d03286526b9f6fe9afa7449b8ce382b6a5e058952"
+        ) {
+            revert("istanbul executed PUSH0");
+        } catch (bytes memory reason) {
+            assertEq(reason, abi.encodeWithSignature(
+                "CheatcodeError(string)", "vm.executeTransaction: transaction halted: NotActivated"
+            ));
+        }
+    }
+
+    function test_broadcast_transaction_uses_new_version() public {
+        address sender = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+        vm.deal(sender, 1 ether);
+        vm.fee(1);
+        this.broadcastTransactionAfterVersionChange();
+        assertEq(address(0xbeef).balance, 17);
+        assertEq(sender.balance, 1 ether - 21_016 - 17);
+        assertEq(vm.getNonce(sender), 1);
+    }
+
+    function broadcastTransactionAfterVersionChange() external {
+        vm.setEvmVersion("istanbul");
+        // Legacy transfer of 17 wei with one nonzero calldata byte, signed by the first anvil
+        // key for chain 31337. Its 21,016 gas covers Istanbul's intrinsic cost, not Prague's floor.
+        vm.broadcastRawTransaction(
+            hex"f861800182521894000000000000000000000000000000000000beef110182f4f5a0139546151de151d3d9c6a6d6c11c9534756a590e72203003c0539ad14008a1d2a013b9f73145239d6d8db8697470a4372b90f1d8974ee6d64c99885cea85984fc6"
+        );
+    }
+}
+   "#,
+    );
+
+    for isolate in [false, true] {
+        prj.update_config(|config| config.isolate = isolate);
+        cmd.forge_fuse().args(["test", "--mc", "EvmVersionFramesTest"]).assert_success().stdout_eq(
+            str![[r#"
+...
+Ran 3 tests for test/EvmVersionFrames.t.sol:EvmVersionFramesTest
+[PASS] test_broadcast_transaction_uses_new_version() ([GAS])
+[PASS] test_executed_transaction_uses_new_version() ([GAS])
+[PASS] test_new_frames_use_new_version() ([GAS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]],
+        );
+    }
+}
+
 #[cfg(feature = "monad")]
 #[forgetest_init]
 fn test_set_evm_version_monad_hardfork(prj: _, cmd: _) {
@@ -2255,9 +2339,8 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 fn test_tempo_implicit_approval_t5(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.solc = Some(OTHER_SOLC_VERSION.into());
-        // The precompile registry snapshots `cfg.spec` at EVM construction, so pinning T5
-        // here is what activates the T5 precompiles and selectors. `vm.setEvmVersion` only
-        // flips the cheatcode-visible spec.
+        // Pinning T5 activates the T5 precompiles and selectors for the whole test;
+        // `vm.setEvmVersion` only applies to the calls started after it.
         config.hardfork = Some(FoundryHardfork::Tempo(TempoHardfork::T5));
     });
 
@@ -2277,6 +2360,57 @@ Ran 7 tests for test/TempoImplicitApproval.t.sol:TempoImplicitApprovalTest
 [PASS] test_non_implicit_spender_requires_approve_t5() ([GAS])
 [PASS] test_standard_approve_flow_unchanged_t5() ([GAS])
 Suite result: ok. 7 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// `vm.chainId` inside a test applies to the native precompiles of the calls started after it,
+// including after a call that sets the same chain ID again.
+#[forgetest_init]
+fn test_tempo_chain_id_applies_to_new_frames(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.solc = Some(OTHER_SOLC_VERSION.into());
+    });
+    prj.add_test(
+        "TempoChainId.t.sol",
+        r#"
+pragma solidity >=0.8.20;
+
+import {Test} from "forge-std/Test.sol";
+
+interface ITIP20 {
+    function DOMAIN_SEPARATOR() external view returns (bytes32);
+}
+
+contract TempoChainIdTest is Test {
+    ITIP20 constant PATH_USD = ITIP20(0x20C0000000000000000000000000000000000000);
+
+    function test_domain_separator_follows_chain_id() public {
+        uint256 original = block.chainid;
+        bytes32 originalDomain = PATH_USD.DOMAIN_SEPARATOR();
+
+        vm.chainId(original + 1);
+        bytes32 newDomain = PATH_USD.DOMAIN_SEPARATOR();
+        assertTrue(newDomain != originalDomain, "TIP-20 domain uses the new chain ID");
+
+        this.setChainId(original + 1);
+        assertEq(PATH_USD.DOMAIN_SEPARATOR(), newDomain);
+    }
+
+    function setChainId(uint256 chainId) external {
+        vm.chainId(chainId);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--network", "tempo", "--mc", "TempoChainIdTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/TempoChainId.t.sol:TempoChainIdTest
+[PASS] test_domain_separator_follows_chain_id() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
@@ -2394,5 +2528,144 @@ Ran 1 test for test/AccessListBeforeBerlin.t.sol:AccessListBeforeBerlinTest
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
+    }
+}
+
+// As on master, the reported test gas subtracts the intrinsic gas of the access list
+// `vm.accessList` applied to the test transaction, which its execution never pays, but not of one
+// only a nested transaction's calls applied.
+#[forgetest]
+fn test_access_list_stipend(prj: _, cmd: _) {
+    prj.add_test(
+        "AccessListStipend.t.sol",
+        r#"
+interface Vm {
+    struct AccessListItem {
+        address target;
+        bytes32[] storageKeys;
+    }
+
+    function accessList(AccessListItem[] calldata access) external;
+    function executeTransaction(bytes calldata raw) external returns (bytes memory);
+}
+
+contract Counter {
+    uint256 public number;
+
+    function increment() external {
+        number++;
+    }
+}
+
+contract AccessListStipendTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function test_access_list_stipend() public {
+        Counter counter = new Counter();
+        Vm.AccessListItem[] memory accessList = new Vm.AccessListItem[](1);
+        accessList[0] = Vm.AccessListItem(address(counter), new bytes32[](1));
+        vm.accessList(accessList);
+        counter.increment();
+    }
+
+    function test_nested_transaction_access_list() public {
+        Vm.AccessListItem[] memory accessList = new Vm.AccessListItem[](1);
+        accessList[0] = Vm.AccessListItem(address(this), new bytes32[](1));
+        vm.accessList(accessList);
+        // A contract creation whose initcode calls 0x1234.
+        vm.executeTransaction(hex"f8598080830186a080808b5f5f5f5f5f6112345af10082f4f5a0a179c1ebd288da19ddfa85cb1771c4ae040734caf301e41b5100b9041c775cfea0084528766ecf99513cb32ab48cfb49b61939187b049917c079700ba4c39e8743");
+    }
+}
+"#,
+    );
+
+    for (isolate, gas) in [("--no-isolate", 124392), ("--isolate", 206120)] {
+        cmd.forge_fuse()
+            .args(["test", "--mc", "AccessListStipendTest", isolate])
+            .with_no_redact()
+            .assert_success()
+            .stdout_eq(format!(
+                "...
+Ran 2 tests for test/AccessListStipend.t.sol:AccessListStipendTest
+[PASS] test_access_list_stipend() (gas: {gas})
+[PASS] test_nested_transaction_access_list() (gas: 6201)
+...
+"
+            ));
+    }
+}
+
+// A frame that `vm.setEvmVersion` moves the running transaction onto reads the shared fork
+// database with its own empty-account policy, and the caller gets its policy back on return.
+#[forgetest]
+async fn fork_set_evm_version_frame_uses_its_empty_account_policy(prj: _, cmd: _) {
+    prj.add_test(
+        "EmptyAccountPolicy.t.sol",
+        r#"
+interface Vm {
+    function etch(address target, bytes calldata newRuntimeBytecode) external;
+    function setEvmVersion(string calldata evm) external;
+    function executeTransaction(bytes calldata raw) external returns (bytes memory);
+}
+
+contract EmptyAccountPolicyTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function noop() external {}
+
+    // Runs on Prague: a Homestead frame loads the empty account 0x55aa11 as existing.
+    function test_frame_policy() public {
+        // Homestead runtime returning the gas of a zero-value CALL to 0x55aa11.
+        vm.etch(address(0x777777), hex"5a6000600060006000600073000000000000000000000000000000000055aa116103e8f1505a900360005260206000f3");
+        vm.setEvmVersion("homestead");
+        bool success;
+        uint256 used;
+        assembly {
+            success := call(gas(), 0x777777, 0, 0, 0, 0, 32)
+            used := mload(0)
+        }
+        require(success && used > 0 && used < 25_000, "frame: empty account absent");
+    }
+
+    // Runs on Homestead: after a Prague frame or transaction, empty accounts still exist.
+    function test_caller_policy() public {
+        vm.setEvmVersion("prague");
+        for (uint256 i; i < 2; ++i) {
+            if (i == 0) this.noop();
+            else vm.executeTransaction(hex"f8528080830186a080808460015ff382f4f5a0163754a7df29423d6f8bd4bf6f01698dd1a105fa44d7e97b4b313bd0cfe7da28a02241492692e0f6986a25cb0d03286526b9f6fe9afa7449b8ce382b6a5e058952");
+            uint256 used;
+            assembly {
+                used := gas()
+                pop(call(1000, add(0x55aa22, i), 0, 0, 0, 0, 0))
+                used := sub(used, gas())
+            }
+            require(used < 25_000, "caller: empty account absent");
+        }
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+    for (evm_version, test) in
+        [(EvmVersion::Prague, "test_frame_policy"), (EvmVersion::Homestead, "test_caller_policy")]
+    {
+        for isolate in [false, true] {
+            prj.update_config(|config| {
+                config.evm_version = evm_version;
+                config.isolate = isolate;
+            });
+            cmd.forge_fuse()
+                .args(["test", "--fork-url", &handle.http_endpoint(), "--mt", test])
+                .assert_success()
+                .stdout_eq(format!(
+                    r#"...
+Ran 1 test for test/EmptyAccountPolicy.t.sol:EmptyAccountPolicyTest
+[PASS] {test}() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#
+                ));
+        }
     }
 }

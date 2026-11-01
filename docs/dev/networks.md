@@ -142,8 +142,9 @@ identify a Tempo revision.
 
 `vm.setEvmVersion` selects execution rules using the active network's version mappings; it does
 not change the Solidity compiler target. Existing Ethereum aliases and native Tempo revision names
-remain accepted. On Tempo, runtime changes do not rebuild instructions or precompiles; configure
-`hardfork = "tempo:T7"` (or the required revision) before execution to select a different revision.
+remain accepted. Calls and creates started after a runtime change run with the selected version's
+instructions, gas schedule and precompiles, while the running frame keeps its own; configure
+`hardfork = "tempo:T7"` (or the required revision) to select a revision for whole transactions.
 
 Execution-time gas refreshes pass through the selected `FoundryEvmFactory`. The default delegates
 to the existing context/configuration behavior, preserving downstream `FoundryCfg` implementations
@@ -182,10 +183,12 @@ Their transaction context, environment restoration, and native journal handling 
 an isolated call belongs to its enclosing transaction, while `executeTransaction` runs a fresh one.
 
 Historical replay retains the RPC envelope's system classification after transaction conversion.
-The default nested replay behavior deliberately skips system envelopes unsupported by the selected
-execution family without mutating state. A family that supports protocol system envelopes must
-override that behavior in its concrete nested EVM and test canonical execution, foreign-envelope
-skips, malformed envelopes, and rollback after failed protocol prestate.
+Replay deliberately skips system envelopes unsupported by the selected execution family without
+mutating state. A family that supports protocol system envelopes implements
+`FoundryEvmExt::is_protocol_transaction` and `set_protocol_replay`; only trusted historical
+execution (block prefix and target replay, Anvil forced and mined replays) enables the latter,
+per transaction, and pool admission never does. Test canonical execution, foreign-envelope skips,
+malformed envelopes, and rollback after failed protocol prestate.
 
 ## Tool coverage
 
