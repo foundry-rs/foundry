@@ -58,7 +58,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceContext, TraceRequirements},
 };
-use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant, arbitrum};
 use futures::{StreamExt, TryFutureExt};
 use revm::{
     DatabaseRef,
@@ -113,8 +113,9 @@ pub struct RunArgs {
     /// Whether to attempt local replay of system transactions.
     ///
     /// Without this flag, ordinary block replay leaves out system transactions mined before the
-    /// target and warns about each one. Replay support depends on the selected network. Canonical
-    /// Monad system transactions are replayed regardless of this flag.
+    /// target and warns about each one; ArbOS internal transactions on Arbitrum are left out
+    /// without a warning. Replay support depends on the selected network. Canonical Monad system
+    /// transactions are replayed regardless of this flag.
     #[arg(long, alias = "sys")]
     replay_system_txes: bool,
 
@@ -818,7 +819,10 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
                         )
                     })?;
                     replay.push((tx.tx_hash(), tx_env));
-                } else {
+                } else if tx.transaction_type() != Some(arbitrum::ARBITRUM_INTERNAL_TX_TYPE) {
+                    // ArbOS internal transactions open every Arbitrum block, Orbit chains included,
+                    // and also report batch postings mid-block. They update ArbOS bookkeeping,
+                    // which no flag can replay, so they are left out without a warning.
                     skipped_system_txes.push(tx.tx_hash());
                 }
                 Ok(())
