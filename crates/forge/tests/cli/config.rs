@@ -200,6 +200,7 @@ max_test_rejects = 65536
 dictionary_weight = 40
 include_storage = true
 include_push_bytes = true
+include_view_values = false
 max_fuzz_dictionary_addresses = 15728640
 max_fuzz_dictionary_values = 9830400
 max_fuzz_dictionary_literals = 6553600
@@ -236,6 +237,7 @@ call_override = false
 dictionary_weight = 80
 include_storage = true
 include_push_bytes = true
+include_view_values = false
 max_fuzz_dictionary_addresses = 15728640
 max_fuzz_dictionary_values = 9830400
 max_fuzz_dictionary_literals = 6553600
@@ -2286,6 +2288,7 @@ fn test_default_config(prj: _, cmd: _) {
     "dictionary_weight": 40,
     "include_storage": true,
     "include_push_bytes": true,
+    "include_view_values": false,
     "max_fuzz_dictionary_addresses": 15728640,
     "max_fuzz_dictionary_values": 9830400,
     "max_fuzz_dictionary_literals": 6553600,
@@ -2325,6 +2328,7 @@ fn test_default_config(prj: _, cmd: _) {
     "dictionary_weight": 80,
     "include_storage": true,
     "include_push_bytes": true,
+    "include_view_values": false,
     "max_fuzz_dictionary_addresses": 15728640,
     "max_fuzz_dictionary_values": 9830400,
     "max_fuzz_dictionary_literals": 6553600,
