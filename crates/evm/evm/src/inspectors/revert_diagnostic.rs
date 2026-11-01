@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, KECCAK256_EMPTY, map::HashMap};
 use evm2::{
-    EvmTypes, Inspector,
+    EvmTypes, Inspector, InspectorConfig,
     interpreter::{Interpreter, Message, MessageKind, MessageResult, op},
 };
 use foundry_evm_core::constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS};
@@ -158,6 +158,10 @@ impl RevertDiagnostic {
 }
 
 impl<T: EvmTypes> Inspector<T> for RevertDiagnostic {
+    fn inspector_config(&self) -> InspectorConfig {
+        InspectorConfig::new().with_steps([op::REVERT, op::EXTCODESIZE].into_iter().collect())
+    }
+
     /// Tracks the first call with non-zero calldata that targets a non-contract address. Excludes
     /// precompiles and test addresses.
     fn call(
