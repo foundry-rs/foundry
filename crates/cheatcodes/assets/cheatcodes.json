@@ -11181,6 +11181,26 @@
     },
     {
       "func": {
+        "id": "setExitCode",
+        "description": "Sets the exit code of `forge script`, applied once the script and any broadcast and\nverification have finished. A script that reverts, or a forge error, keeps its own exit code.\nLets a script report an outcome to CI, e.g. `2` when a check finds drift. Only available in\n`forge script`.",
+        "declaration": "function setExitCode(uint8 code) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "setExitCode(uint8)",
+        "selector": "0x4b2bd5f6",
+        "selectorBytes": [
+          75,
+          43,
+          213,
+          246
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "setLogoURI",
         "description": "Sets a TIP-20 token's logo URI directly in storage.\nThis bypasses the token admin check, but still validates the URI against T5 constraints.",
         "declaration": "function setLogoURI(address token, string calldata newLogoURI) external;",

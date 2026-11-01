@@ -2577,6 +2577,14 @@ interface Vm {
     #[cheatcode(group = Scripting)]
     function stopBroadcast() external;
 
+    /// Sets the exit code of `forge script`, applied once the script and any broadcast and
+    /// verification have finished. A script that reverts, or a forge error, keeps its own exit code.
+    ///
+    /// Lets a script report an outcome to CI, e.g. `2` when a check finds drift. Only available in
+    /// `forge script`.
+    #[cheatcode(group = Scripting)]
+    function setExitCode(uint8 code) external;
+
     /// Takes a signed transaction and broadcasts it to the network.
     #[cheatcode(group = Scripting)]
     function broadcastRawTransaction(bytes calldata data) external;
