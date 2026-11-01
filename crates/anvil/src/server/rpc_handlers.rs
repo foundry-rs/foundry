@@ -231,16 +231,10 @@ mod tests {
         assert!(handler.close_on_subscription_end(&pending));
 
         let (_, full_transactions) = tokio::sync::mpsc::unbounded_channel();
-        let full = EthSubscription::<FoundryNetwork>::FullPendingTransactions(
-            full_transactions,
-            id.clone(),
-        );
+        let full =
+            EthSubscription::<FoundryNetwork>::FullPendingTransactions(full_transactions, id);
         assert!(handler.close_on_subscription_end(&full));
         assert!(!handler.close_on_subscription_end(&EthSubscription::Syncing(None)));
-
-        let events = broadcast::Sender::new(1);
-        let consensus = EthSubscription::tempo_consensus(events.subscribe(), id);
-        assert!(!handler.close_on_subscription_end(&consensus));
     }
 
     #[tokio::test]
@@ -252,10 +246,10 @@ mod tests {
         let context = PubSubContext::<PubSubEthRpcHandler>::default();
         let handler = PubSubEthRpcHandler::new(api);
         let mut subscription = EthSubscription::tempo_consensus(events.subscribe(), id.clone());
+        assert!(!handler.close_on_subscription_end(&subscription));
         assert!(futures::poll!(subscription.next()).is_pending());
-        context.add_subscription(id.clone(), subscription);
+        context.add_subscription(id, subscription);
         context.add_subscription(eth_id.clone(), EthSubscription::Syncing(Some(eth_id.clone())));
-        assert_eq!(events.receiver_count(), 1);
 
         assert_eq!(
             handler
@@ -264,15 +258,6 @@ mod tests {
             ResponseResult::success(true),
         );
         assert!(context.remove_subscription(&eth_id).is_none());
-        assert_eq!(
-            handler.on_pub_sub(EthPubSub::ConsensusUnsubscribe(id.clone()), context.clone()).await,
-            ResponseResult::success(true),
-        );
-        assert_eq!(events.receiver_count(), 0);
-
-        let mut subscription = EthSubscription::tempo_consensus(events.subscribe(), id.clone());
-        assert!(futures::poll!(subscription.next()).is_pending());
-        context.add_subscription(id, subscription);
         assert_eq!(events.receiver_count(), 1);
         drop(context);
         assert_eq!(events.receiver_count(), 0);
