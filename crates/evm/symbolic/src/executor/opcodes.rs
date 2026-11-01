@@ -1487,6 +1487,12 @@ impl SymbolicExecutor {
         if state.call_depth != 0 {
             return Ok(StepOutcome::Revert);
         }
+        let data = state.return_data.read_concrete(&mut self.cx, "symbolic revert data");
+        // Like Forge's fuzz and invariant runners, a `vm.assumeNoRevert` rejection that reaches the
+        // top frame discards the run. Invariant predicates still treat it as a revert.
+        if !state.invariant_predicate && data.as_deref().is_ok_and(|data| data == MAGIC_ASSUME) {
+            return Ok(StepOutcome::AssumeRejected);
+        }
         // In `check*`/`prove*` tests, a `CheatcodeError` that reaches the top frame, such as an
         // unmet `vm.expectRevert`, is a failure. Invariant handlers treat it as a revert.
         // Match its selector independently of the memory address and the rest of the payload.
@@ -1498,9 +1504,7 @@ impl SymbolicExecutor {
             state.constraints = constraints;
             return Ok(StepOutcome::Failure);
         }
-        if let Ok(data) = state.return_data.read_concrete(&mut self.cx, "symbolic revert data")
-            && is_assertion_revert(&data)
-        {
+        if data.is_ok_and(|data| is_assertion_revert(&data)) {
             return Ok(StepOutcome::Failure);
         }
         Ok(StepOutcome::Revert)

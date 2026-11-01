@@ -978,9 +978,17 @@ pub enum EthPubSub {
     #[serde(rename = "eth_subscribe")]
     EthSubscribe(SubscriptionKind, #[serde(default)] Box<SubscriptionParams>),
 
-    /// Unsubscribe from an eth subscription
+    /// Cancels a subscription on the current connection.
     #[serde(rename = "eth_unsubscribe", with = "sequence")]
     EthUnSubscribe(SubscriptionId),
+
+    /// Subscribes to locally finalized Tempo blocks.
+    #[serde(rename = "consensus_subscribe", with = "empty_params")]
+    ConsensusSubscribe(()),
+
+    /// Alias for `eth_unsubscribe`.
+    #[serde(rename = "consensus_unsubscribe", with = "sequence")]
+    ConsensusUnsubscribe(SubscriptionId),
 }
 
 /// Container type for either a request or a pub sub
@@ -997,7 +1005,15 @@ impl<'de> serde::Deserialize<'de> for EthRpcCall {
     {
         let value = serde_json::Value::deserialize(deserializer)?;
         match value.get("method").and_then(serde_json::Value::as_str) {
-            Some("eth_subscribe" | "eth_unsubscribe") => serde_json::from_value(value)
+            Some("consensus_subscribe") if value.get("params").is_none() => {
+                Ok(Self::PubSub(EthPubSub::ConsensusSubscribe(())))
+            }
+            Some(
+                "eth_subscribe"
+                | "eth_unsubscribe"
+                | "consensus_subscribe"
+                | "consensus_unsubscribe",
+            ) => serde_json::from_value(value)
                 .map(Self::PubSub)
                 .map_err(<D::Error as serde::de::Error>::custom),
             _ => serde_json::from_value(value)
@@ -2410,6 +2426,29 @@ true}]}"#;
             r#"{"method":"anvil_tempoRotateConsensusIdentity","params":[1]}"#,
         ] {
             assert!(serde_json::from_str::<EthRequest>(request).is_err(), "{request}");
+        }
+    }
+
+    #[test]
+    fn test_tempo_consensus_pubsub_requests() {
+        for request in [
+            serde_json::json!({ "method": "consensus_subscribe", "params": [] }),
+            serde_json::json!({ "method": "consensus_subscribe", "params": null }),
+            serde_json::json!({ "method": "consensus_subscribe" }),
+            serde_json::json!({ "method": "consensus_unsubscribe", "params": ["0x1234"] }),
+        ] {
+            let call = serde_json::from_value::<EthRpcCall>(request).unwrap();
+            assert!(matches!(call, EthRpcCall::PubSub(_)));
+        }
+
+        for request in [
+            serde_json::json!({ "method": "consensus_subscribe", "params": [1] }),
+            serde_json::json!({ "method": "consensus_subscribe", "params": ["finalized"] }),
+            serde_json::json!({ "method": "consensus_subscribe", "params": { "type": "finalized" } }),
+            serde_json::json!({ "method": "consensus_unsubscribe", "params": [] }),
+            serde_json::json!({ "method": "consensus_unsubscribe", "params": ["0x1", "0x2"] }),
+        ] {
+            assert!(serde_json::from_value::<EthRpcCall>(request).is_err());
         }
     }
 }

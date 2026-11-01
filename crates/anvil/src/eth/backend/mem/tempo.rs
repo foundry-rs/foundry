@@ -13,7 +13,8 @@
 //! publication, preventing snapshots, rewinds, resets, imports, or rotations from changing the
 //! prepared height or key schedule. Only initialization before the backend is shared and private
 //! staged copies are exempt; publishing a staged copy still requires the database write lock.
-//! Consensus readers acquire the database read lock before storage.
+//! Readers of canonical consensus state acquire the database read lock before storage.
+//! Subscription registration only needs storage to access the persistent event sender.
 //!
 //! Historical queries can use the trusted fork provider at or below its pinned height. They
 //! snapshot the provider, root, and known canonical hash together with local history, then release
@@ -40,7 +41,7 @@ use crate::eth::{
         tempo_consensus::{TempoConsensus, TempoConsensusIdentity, TempoFinalization},
     },
     error::BlockchainError,
-    tempo_consensus::TempoCertifiedBlock,
+    tempo_consensus::{TempoCertifiedBlock, TempoConsensusEvent},
 };
 use alloy_consensus::{BlockHeader, Sealable, proofs::calculate_transaction_root};
 use alloy_network::Network;
@@ -53,9 +54,15 @@ use alloy_rpc_types::EIP1186AccountProofResponse as AccountProof;
 use anvil_core::eth::block::{Block, canonical_block};
 use anvil_rpc::error::{ErrorCode, RpcError};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
-use std::{fmt, num::NonZeroU64, sync::Arc};
+use std::{
+    fmt,
+    num::NonZeroU64,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use tempo_hardfork::TempoHardfork;
 use tempo_primitives::TempoHeader;
+use tokio::sync::broadcast;
 
 /// Local certificates, key schedule, and consensus snapshots for the current signing history.
 #[derive(Clone)]
@@ -63,20 +70,29 @@ pub(crate) struct TempoChain {
     seed: B256,
     epoch_length: NonZeroU64,
     consensus: TempoConsensus,
-    latest_block: Option<Block>,
+    latest_block: Option<Arc<Block>>,
     snapshots: HashMap<U256, TempoSnapshot>,
     /// Immutable local tries sealed by locally mined fork blocks, with bounded retention.
     pub(super) proof_states: Arc<RwLock<InMemoryBlockStates>>,
     /// Incremental trie of the latest sealed account set, updated by diffing the next seal.
     pub(super) proof_root: Arc<Mutex<(StateRootCache, AddressMap<DbAccount>)>>,
+    /// Live subscribers survive snapshots, imports, rewinds and resets.
+    events: broadcast::Sender<Arc<TempoConsensusEvent>>,
 }
 
 /// Consensus and the sealed head trie retained by an explicit EVM snapshot.
 #[derive(Clone)]
 struct TempoSnapshot {
     consensus: TempoConsensus,
-    latest_block: Option<Block>,
+    latest_block: Option<Arc<Block>>,
     proof_state: Option<Arc<AddressMap<DbAccount>>>,
+}
+
+/// Immutable committed inputs for synchronous notification after releasing the commit guards.
+pub(super) struct PendingFinalization {
+    finalization: TempoFinalization,
+    block: Arc<Block>,
+    events: broadcast::Sender<Arc<TempoConsensusEvent>>,
 }
 
 impl TempoChain {
@@ -89,6 +105,7 @@ impl TempoChain {
             snapshots: Default::default(),
             proof_states: Default::default(),
             proof_root: Default::default(),
+            events: broadcast::Sender::new(128),
         }
     }
 
@@ -143,7 +160,7 @@ impl TempoChain {
                 .map_err(|error| BlockchainError::Internal(error.to_string()))?;
         }
         if !is_current {
-            self.latest_block = self.consensus.latest().map(|_| block.clone());
+            self.latest_block = self.consensus.latest().map(|_| Arc::new(block.clone()));
         }
         Ok(())
     }
@@ -171,7 +188,23 @@ impl TempoChain {
 
     /// Retains the latest complete body independently of historical transaction pruning.
     pub(super) fn publish(&mut self, block: &Block) {
-        self.latest_block = Some(block.clone());
+        self.latest_block = Some(Arc::new(block.clone()));
+    }
+
+    /// Captures notification inputs after canonical state has been committed.
+    pub(super) fn pending_finalization(
+        &self,
+    ) -> Result<Option<PendingFinalization>, BlockchainError> {
+        if self.events.receiver_count() == 0 {
+            return Ok(None);
+        }
+        let Some((_, finalization)) = self.consensus.latest() else { return Ok(None) };
+        let block = self.latest_block.as_ref().ok_or_else(|| consensus_unavailable("block"))?;
+        Ok(Some(PendingFinalization {
+            finalization: finalization.clone(),
+            block: Arc::clone(block),
+            events: self.events.clone(),
+        }))
     }
 }
 
@@ -180,6 +213,24 @@ impl fmt::Debug for TempoChain {
         f.debug_struct("TempoChain")
             .field("identity", &self.consensus.identity())
             .finish_non_exhaustive()
+    }
+}
+
+impl PendingFinalization {
+    /// Validates and publishes the captured block without acquiring canonical state locks.
+    pub(super) fn send(self) -> Result<(), BlockchainError> {
+        let certified = certified_block(&self.finalization, &self.block)?;
+        let block = TempoCertifiedBlock::try_from(certified)?;
+        let seen = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| BlockchainError::Internal(format!("invalid finalization time: {err}")))?
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX);
+        let event = TempoConsensusEvent::Finalized { block, seen };
+        // Receivers may unsubscribe or join between capture and delivery.
+        let _ = self.events.send(Arc::new(event));
+        Ok(())
     }
 }
 
@@ -226,6 +277,17 @@ impl<N: Network> Backend<N> {
             .consensus
             .rotate()
             .map_err(|error| BlockchainError::Internal(error.to_string()))
+    }
+
+    /// Subscribes to local finalizations sent after registration without replaying history.
+    ///
+    /// An event being prepared for existing subscribers may contain a block committed before
+    /// registration. Queried or imported blocks do not emit notifications.
+    pub async fn tempo_consensus_notifications(
+        &self,
+    ) -> Result<broadcast::Receiver<Arc<TempoConsensusEvent>>, BlockchainError> {
+        let storage = self.blockchain.storage.read();
+        Ok(tempo_chain(&storage)?.events.subscribe())
     }
 
     async fn tempo_certified_block(
@@ -393,7 +455,9 @@ mod tests {
         },
         spawn,
     };
+    use alloy_network::Ethereum;
     use alloy_primitives::keccak256;
+    use alloy_provider::builder;
     use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking};
     use alloy_serde::WithOtherFields;
     use alloy_trie::{Nibbles, TrieAccount, proof::verify_proof};
@@ -402,6 +466,7 @@ mod tests {
     use foundry_primitives::{FoundryHeader, FoundryNetwork};
     use std::{
         sync::atomic::{AtomicBool, Ordering},
+        task::Poll,
         time::Duration,
     };
     use tokio::{sync::Notify, time::timeout};
@@ -428,9 +493,14 @@ mod tests {
         let mining_api = api.clone();
         let mining = tokio::spawn(async move { mining_api.mine_one().await });
         timeout(Duration::from_secs(10), hook.reached.notified()).await.unwrap();
+        let mut registration = std::pin::pin!(api.backend.tempo_consensus_notifications());
+        let Poll::Ready(Ok(mut events)) = futures::poll!(registration.as_mut()) else {
+            panic!("subscription registration must not wait for execution");
+        };
         assert_eq!(api.backend.best_number(), 0);
         assert!(consensus(&api).latest().is_none());
         assert!(api.backend.get_block(1).is_none());
+        assert!(matches!(events.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
         let mut snapshot = Box::pin(api.evm_snapshot());
         assert!(futures::poll!(snapshot.as_mut()).is_pending());
         let mut certificate = Box::pin(api.backend.tempo_finalization(None));
@@ -451,6 +521,9 @@ mod tests {
             assert_eq!(certificate.block.header.hash_slow(), certificate.finalization.digest);
             assert_eq!(api.backend.best_hash(), certificate.finalization.digest);
             assert_eq!(latest.unwrap().unwrap().finalization, certificate.finalization);
+            let TempoConsensusEvent::Finalized { block, .. } = &*events.try_recv().unwrap();
+            assert_eq!(block.finalization, certificate.finalization);
+            assert_eq!(block.block, certificate.block);
             identity.unwrap();
             rotation.unwrap();
             snapshot.unwrap()
@@ -1135,6 +1208,52 @@ mod tests {
         );
         assert_eq!(provider.get_proof(address, vec![B256::ZERO]).await.unwrap(), original);
         assert_eq!(provider.get_storage_at(address, U256::ZERO).await.unwrap(), U256::from(9));
+    }
+
+    #[tokio::test]
+    async fn tempo_pending_notifications_survive_reanchor() {
+        let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+        api.mine_one().await.unwrap();
+        let expected = api.backend.tempo_finalization(None).await.unwrap();
+        let mut chain = api.backend.blockchain.storage.read().tempo.clone().unwrap();
+        let mut existing = chain.events.subscribe();
+        let pending = chain.pending_finalization().unwrap().unwrap();
+        let mut late = api.backend.tempo_consensus_notifications().await.unwrap();
+        chain.reanchor(1);
+        assert!(chain.pending_finalization().unwrap().is_none());
+        assert!(matches!(existing.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
+        let before = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
+        pending.send().unwrap();
+        let after = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
+
+        for events in [&mut existing, &mut late] {
+            let event = events.try_recv().unwrap();
+            let TempoConsensusEvent::Finalized { block, seen } = &*event;
+            assert_eq!(block.finalization, expected.finalization);
+            assert_eq!(block.block, expected.block);
+            assert!((before..=after).contains(&u128::from(*seen)));
+            assert!(matches!(events.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn tempo_alloy_unsubscribe_drops_idle_receiver() {
+        let (api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+        let events = api.backend.blockchain.storage.read().tempo.as_ref().unwrap().events.clone();
+        let provider = builder::<Ethereum>().connect(&handle.ws_endpoint()).await.unwrap();
+        let consensus =
+            provider.subscribe_to::<serde_json::Value>("consensus_subscribe").await.unwrap();
+        let mut heads = provider.subscribe_blocks().await.unwrap();
+        assert_eq!(events.receiver_count(), 1);
+
+        provider.unsubscribe(*consensus.local_id()).unwrap();
+        timeout(Duration::from_secs(5), events.closed()).await.unwrap();
+        assert_eq!(events.receiver_count(), 0);
+        assert_eq!(provider.get_block_number().await.unwrap(), 0);
+
+        api.mine_one().await.unwrap();
+        let head = timeout(Duration::from_secs(5), heads.recv()).await.unwrap().unwrap();
+        assert_eq!(head.number, 1);
     }
 
     fn tempo_fork_config(config: NodeConfig, source: &crate::NodeHandle) -> NodeConfig {

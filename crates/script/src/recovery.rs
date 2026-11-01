@@ -7,7 +7,7 @@ use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_network::{Network, ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, TxKind, keccak256};
 use eyre::{ContextCompat, Result, WrapErr, bail};
-use forge_script_sequence::{ScriptSequence, TransactionWithMetadata, now};
+use forge_script_sequence::{DRY_RUN_DIR, ScriptSequence, TransactionWithMetadata, now};
 use foundry_common::{FoundryTransactionBuilder, TransactionMaybeSigned};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -143,7 +143,7 @@ where
                 pending.display()
             );
         }
-        if previous_unfinished::<N>(&lock.path, &paths, data.is_multi()) {
+        if previous_unfinished::<N>(&lock.path, &paths, data.is_multi())? {
             bail!(
                 "the previous broadcast `{}` has unfinished operations; finish it with `{}`, or pass `--start-fresh` to archive it and broadcast anew",
                 paths.0.display(),
@@ -167,7 +167,7 @@ where
         if pending.exists() {
             commit_pending_plan(&pending, &lock.path)?;
         }
-        if !previous_unfinished::<N>(&lock.path, paths, data.is_multi()) {
+        if matches!(previous_unfinished::<N>(&lock.path, paths, data.is_multi()), Ok(false)) {
             return Ok(());
         }
         let timestamp = now().as_millis();
@@ -955,30 +955,20 @@ where
 /// any chain, with neither a receipt nor a recorded revert. Without a recovery snapshot, progress
 /// saved before snapshots existed is read from the broadcast export. An unreadable snapshot counts
 /// as unfinished, as resume would refuse it too; an unreadable export counts as finished.
-fn previous_unfinished<N: Network>(snapshot: &Path, paths: &(PathBuf, PathBuf), multi: bool) -> bool
+///
+/// Errors when a broadcast export written with a snapshot has such an operation but the snapshot
+/// is missing, for example in a checkout without `cache/`: only the snapshot records submission
+/// attempts, so the export cannot show a submission whose response was lost.
+fn previous_unfinished<N: Network>(
+    snapshot: &Path,
+    paths: &(PathBuf, PathBuf),
+    multi: bool,
+) -> Result<bool>
 where
     N::TxEnvelope: for<'de> Deserialize<'de> + Serialize,
 {
-    let (data, attempted) = if snapshot.exists() {
-        let Ok(plan) = load_plan::<N>(snapshot) else { return true };
-        let attempted = plan.deployments.iter().any(|deployment| !deployment.attempts.is_empty());
-        (plan.data, attempted)
-    } else {
-        let data = if multi {
-            foundry_common::fs::read_json_file::<MultiChainSequence<N>>(&paths.0)
-                .map(SequenceData::Multi)
-        } else {
-            foundry_common::fs::read_json_file::<ScriptSequence<N>>(&paths.0)
-                .map(|sequence| SequenceData::Single(Box::new(sequence)))
-        };
-        let Ok(data) = data else { return false };
-        (data, false)
-    };
-    let sequences = data.sequences();
-    let submitted = attempted
-        || sequences.iter().flat_map(|sequence| &sequence.transactions).any(|tx| tx.hash.is_some());
-    submitted
-        && sequences.iter().any(|sequence| {
+    let incomplete = |data: &SequenceData<N>| {
+        data.sequences().iter().any(|sequence| {
             sequence.transactions.iter().any(|tx| {
                 !tx.hash.is_some_and(|hash| {
                     sequence.reverted.contains(&hash)
@@ -989,6 +979,41 @@ where
                 })
             })
         })
+    };
+    let (data, attempted) = if snapshot.exists() {
+        let Ok(plan) = load_plan::<N>(snapshot) else { return Ok(true) };
+        let attempted = plan.deployments.iter().any(|deployment| !deployment.attempts.is_empty());
+        (plan.data, attempted)
+    } else {
+        let data = if multi {
+            foundry_common::fs::read_json_file::<MultiChainSequence<N>>(&paths.0)
+                .map(SequenceData::Multi)
+        } else {
+            foundry_common::fs::read_json_file::<ScriptSequence<N>>(&paths.0)
+                .map(|sequence| SequenceData::Single(Box::new(sequence)))
+        };
+        let Ok(data) = data else { return Ok(false) };
+        // Dry runs never submit. Their exports sit under `DRY_RUN_DIR`, as laid out by
+        // `ScriptSequence::get_paths` and `MultiChainSequence::get_paths`.
+        let dry_run = paths.0.ancestors().nth(if multi { 2 } else { 1 }).and_then(Path::file_name)
+            == Some(DRY_RUN_DIR.as_ref());
+        if data.has_recovery_generation() && !dry_run && incomplete(&data) {
+            bail!(
+                "the recovery snapshot `{}` of the previous broadcast `{}` is missing, so its unfinished operations may already have been sent; restore the snapshot and finish with `{}`, or pass `--start-fresh` after confirming that none of its transactions reached the chain",
+                snapshot.display(),
+                paths.0.display(),
+                if multi { "--multi --resume" } else { "--resume" }
+            );
+        }
+        (data, false)
+    };
+    let submitted = attempted
+        || data
+            .sequences()
+            .iter()
+            .flat_map(|sequence| &sequence.transactions)
+            .any(|tx| tx.hash.is_some());
+    Ok(submitted && incomplete(&data))
 }
 
 fn pending_path(path: &Path) -> PathBuf {
@@ -2116,5 +2141,50 @@ mod tests {
         RecoveryStore::<Ethereum>::archive_unfinished(&sequence(dir.path())).unwrap();
         assert!(!paths.0.exists());
         create().unwrap();
+
+        // An export written with a snapshot cannot show a submission whose response was lost, so
+        // without its snapshot it blocks while any operation is incomplete, even without hashes.
+        std::fs::remove_file(&snapshot).unwrap();
+        let mut export = sequence(dir.path());
+        export.set_recovery_generation(B256::ZERO);
+        export.publish(&paths).unwrap();
+        assert_eq!(
+            create().unwrap_err().to_string(),
+            format!(
+                "the recovery snapshot `{}` of the previous broadcast `{}` is missing, so its unfinished operations may already have been sent; restore the snapshot and finish with `--resume`, or pass `--start-fresh` after confirming that none of its transactions reached the chain",
+                snapshot.display(),
+                paths.0.display()
+            )
+        );
+        RecoveryStore::<Ethereum>::archive_unfinished(&sequence(dir.path())).unwrap();
+        assert!(!paths.0.exists());
+        create().unwrap();
+
+        // A completed export without its snapshot does not block.
+        std::fs::remove_file(&snapshot).unwrap();
+        export.sequences_mut()[0].transactions[0].hash = Some(B256::ZERO);
+        export.sequences_mut()[0].reverted.push(B256::ZERO);
+        export.publish(&paths).unwrap();
+        create().unwrap();
+
+        // Dry runs never submit, so their exports never block, in either layout.
+        let single = sequence(dir.path());
+        let multi = SequenceData::Multi(MultiChainSequence {
+            deployments: single.sequences().to_vec(),
+            path: PathBuf::new(),
+            sensitive_path: PathBuf::new(),
+            timestamp: 0,
+        });
+        for (mut dry_run, export) in
+            [(single, "dry-run/run.json"), (multi, "multi/dry-run/Script.s.sol-latest/run.json")]
+        {
+            let export = dir.path().join(export);
+            let paths = (export.clone(), export.with_file_name("cache.json"));
+            std::fs::create_dir_all(export.parent().unwrap()).unwrap();
+            dry_run.set_recovery_generation(B256::ZERO);
+            dry_run.publish(&paths).unwrap();
+            dry_run.set_paths(paths);
+            RecoveryStore::create(dry_run, false, None).unwrap();
+        }
     }
 }
