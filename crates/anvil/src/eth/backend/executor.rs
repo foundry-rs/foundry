@@ -755,7 +755,8 @@ where
                 executor.commit_transaction(result);
 
                 let (_, inspector, precompiles) = executor.evm_mut().components_mut();
-                let traces = inspector.finish_transaction(inspector_config, precompiles);
+                let (traces, console_logs) =
+                    inspector.finish_transaction(inspector_config, precompiles);
 
                 if gas_config.is_cancun {
                     blob_gas_used = blob_gas_used.saturating_add(declared_blob_gas);
@@ -799,6 +800,7 @@ where
                     out: out.map(Output::into_data),
                     nonce,
                     gas_used,
+                    console_logs,
                 };
 
                 included.push(pool_tx.clone());
