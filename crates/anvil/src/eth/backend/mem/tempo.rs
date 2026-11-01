@@ -1214,47 +1214,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tempo_notifications_skip_unavailable_or_mismatched_heads() {
-        let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
-        api.mine_one().await.unwrap();
-        let mut chain = api.backend.blockchain.storage.read().tempo.clone().unwrap();
-        let block = chain.latest_block.take().unwrap();
-        let mut events = chain.events.subscribe();
-
-        assert!(chain.pending_finalization().is_err());
-        assert!(matches!(events.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
-
-        let mut mismatched = (*block).clone();
-        mismatched.header.set_transactions_root(B256::repeat_byte(0x42));
-        chain.publish(&mismatched);
-        assert!(chain.pending_finalization().unwrap().unwrap().send().is_err());
-        assert!(matches!(events.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
-
-        chain.publish(&block);
-        chain.pending_finalization().unwrap().unwrap().send().unwrap();
-        let event = events.try_recv().unwrap();
-        let TempoConsensusEvent::Finalized { block: certified, .. } = &*event;
-        assert_eq!(certified.block.header.hash_slow(), block.header.hash_slow());
-        assert_eq!(&certified.finalization, chain.consensus.latest().unwrap().1);
-
-        chain.reanchor(1);
-        assert!(chain.pending_finalization().unwrap().is_none());
-        assert!(matches!(events.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
-    }
-
-    #[tokio::test]
-    async fn tempo_pending_finalization_survives_reanchor_and_includes_late_subscribers() {
+    async fn tempo_notifications_validate_heads_and_preserve_pending_events() {
         let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
         api.mine_one().await.unwrap();
         let expected = api.backend.tempo_finalization(None).await.unwrap();
         let mut chain = api.backend.blockchain.storage.read().tempo.clone().unwrap();
         assert!(chain.pending_finalization().unwrap().is_none());
+        let block = chain.latest_block.take().unwrap();
         let mut existing = chain.events.subscribe();
+
+        assert!(chain.pending_finalization().is_err());
+        assert!(matches!(existing.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
+
+        let mut mismatched = (*block).clone();
+        mismatched.header.set_transactions_root(B256::repeat_byte(0x42));
+        chain.publish(&mismatched);
+        assert!(chain.pending_finalization().unwrap().unwrap().send().is_err());
+        assert!(matches!(existing.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
+
+        chain.publish(&block);
+        chain.pending_finalization().unwrap().unwrap().send().unwrap();
+        let event = existing.try_recv().unwrap();
+        let TempoConsensusEvent::Finalized { block: certified, .. } = &*event;
+        assert_eq!(certified.block.header.hash_slow(), block.header.hash_slow());
+        assert_eq!(&certified.finalization, chain.consensus.latest().unwrap().1);
+
         let pending = chain.pending_finalization().unwrap().unwrap();
         let mut late = api.backend.tempo_consensus_notifications().await.unwrap();
-
         chain.reanchor(1);
         assert!(chain.pending_finalization().unwrap().is_none());
+        assert!(matches!(existing.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
         let before = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
         pending.send().unwrap();
         let after = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();

@@ -6,11 +6,11 @@ use alloy_pubsub::Subscription;
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-struct FinalizedEvent {
+pub(super) struct FinalizedEvent {
     #[serde(rename = "type")]
     kind: FinalizedEventType,
     #[serde(flatten)]
-    certified: TempoCertifiedBlock,
+    pub(super) certified: TempoCertifiedBlock,
     seen: u64,
 }
 
@@ -20,14 +20,14 @@ enum FinalizedEventType {
     Finalized,
 }
 
-async fn subscribe(provider: &impl Provider) -> Subscription<FinalizedEvent> {
+pub(super) async fn subscribe(provider: &impl Provider) -> Subscription<FinalizedEvent> {
     let mut request = provider.client().request("consensus_subscribe", ());
     request.set_is_subscription();
     let id = tokio::time::timeout(Duration::from_secs(5), request).await.unwrap().unwrap();
     provider.root().get_subscription(id).await.unwrap()
 }
 
-async fn next_event(subscription: &mut Subscription<FinalizedEvent>) -> FinalizedEvent {
+pub(super) async fn next_event(subscription: &mut Subscription<FinalizedEvent>) -> FinalizedEvent {
     tokio::time::timeout(Duration::from_secs(5), subscription.recv_result())
         .await
         .expect("timed out waiting for a Tempo finalization")
@@ -191,45 +191,6 @@ async fn tempo_consensus_subscription_unsubscribe_is_scoped() {
     let head = tokio::time::timeout(Duration::from_secs(5), heads.next()).await.unwrap().unwrap();
     assert_eq!(head.number, 1);
     provider.unsubscribe(heads_id).unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn tempo_consensus_subscription_fork_only_publishes_local_finalizations() {
-    let config = NodeConfig::test_tempo().with_no_mining(true);
-    let (source_api, source) = spawn(config.clone()).await;
-    source_api.mine_one().await.unwrap();
-    let source_http = source.http_provider();
-    let (api, handle) = spawn(
-        tempo_fork_config(config, &source).with_tempo_consensus_seed(Some(B256::repeat_byte(0x42))),
-    )
-    .await;
-    let http = handle.http_provider();
-    let identity = tempo_consensus_identity(&http).await;
-    assert_ne!(identity, tempo_consensus_identity(&source_http).await);
-    let provider = connect_pubsub(&handle.ws_endpoint()).await;
-    let mut events = subscribe(&provider).await;
-
-    source_api.mine_one().await.unwrap();
-    let latest: TempoCertifiedBlock =
-        http.client().request("consensus_getFinalization", ("latest",)).await.unwrap();
-    assert_eq!(latest, tempo_finalization(&source_http, 1).await);
-
-    api.mine_one().await.unwrap();
-    let event = next_event(&mut events).await.certified;
-    assert_eq!(event, tempo_finalization(&http, 2).await);
-    assert_tempo_certificate(&identity, &event);
-
-    api.anvil_reset(Some(Forking {
-        json_rpc_url: Some(source.http_endpoint()),
-        block_number: Some(2),
-    }))
-    .await
-    .unwrap();
-    assert_eq!(tempo_finalization(&http, 2).await, tempo_finalization(&source_http, 2).await);
-    api.mine_one().await.unwrap();
-    let event = next_event(&mut events).await.certified;
-    assert_eq!(event, tempo_finalization(&http, 3).await);
-    assert_tempo_certificate(&identity, &event);
 }
 
 #[tokio::test(flavor = "multi_thread")]

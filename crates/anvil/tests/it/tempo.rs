@@ -7194,6 +7194,10 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     .await;
     let provider = handle.http_provider();
     let identity = tempo_consensus_identity(&provider).await;
+    assert_ne!(identity, tempo_consensus_identity(&source_provider).await);
+    let ws = crate::utils::connect_pubsub(&handle.ws_endpoint()).await;
+    let mut events = subscriptions::subscribe(&ws).await;
+    source_api.mine_one().await.unwrap();
     let source_root = tempo_finalization(&source_provider, 2).await;
     let latest: TempoCertifiedBlock =
         provider.client().request("consensus_getFinalization", ("latest",)).await.unwrap();
@@ -7209,6 +7213,7 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     assert_eq!(local.block.header.parent_hash(), parent.header.hash);
     assert_eq!((local.epoch, local.view), (1, 1));
     assert_tempo_certificate(&identity, &local);
+    assert_eq!(subscriptions::next_event(&mut events).await.certified, local);
 
     provider.client().request::<_, serde_json::Value>("anvil_rollback", (1,)).await.unwrap();
     assert_eq!(provider.get_block(BlockId::latest()).full().await.unwrap().unwrap(), parent);
@@ -7221,6 +7226,7 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     let remined = tempo_finalization(&provider, 3).await;
     assert_eq!(remined.block.header.parent_hash(), parent.header.hash);
     assert_tempo_certificate(&identity, &remined);
+    assert_eq!(subscriptions::next_event(&mut events).await.certified, remined);
 
     api.anvil_set_coinbase(Address::repeat_byte(0x44)).await.unwrap();
     api.anvil_reorg(ReorgOptions { depth: 1, tx_block_pairs: Vec::new() }).await.unwrap();
@@ -7228,6 +7234,7 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     assert_ne!(replacement.digest, remined.digest);
     assert_eq!(replacement.block.header.parent_hash(), parent.header.hash);
     assert_tempo_certificate(&identity, &replacement);
+    assert_eq!(subscriptions::next_event(&mut events).await.certified, replacement);
 
     api.anvil_reset(Some(Forking {
         json_rpc_url: Some(source.http_endpoint()),
@@ -7239,7 +7246,9 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     assert_eq!(tempo_finalization(&provider, 3).await, reset_root);
     assert_eq!(tempo_consensus_identity(&provider).await.from_epoch, 1);
     api.mine_one().await.unwrap();
-    assert_tempo_certificate(&identity, &tempo_finalization(&provider, 5).await);
+    let finalized = tempo_finalization(&provider, 5).await;
+    assert_tempo_certificate(&identity, &finalized);
+    assert_eq!(subscriptions::next_event(&mut events).await.certified, finalized);
     provider.client().request::<_, serde_json::Value>("anvil_rollback", (1,)).await.unwrap();
     let parent = source_provider.get_block(4.into()).full().await.unwrap().unwrap();
     assert_eq!(provider.get_block(BlockId::latest()).full().await.unwrap().unwrap(), parent);
@@ -7251,6 +7260,7 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     let remined = tempo_finalization(&provider, 5).await;
     assert_eq!(remined.block.header.parent_hash(), parent.header.hash);
     assert_tempo_certificate(&identity, &remined);
+    assert_eq!(subscriptions::next_event(&mut events).await.certified, remined);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -378,15 +378,15 @@ mod tests {
             latest = Some(event);
         }
 
-        let response = timeout(Duration::from_secs(1), subscription.next()).await.unwrap().unwrap();
-        assert_eq!(
-            response,
+        let expected_response = |event: &TempoConsensusEvent| {
             serde_json::json!({
                 "jsonrpc": "2.0",
                 "method": "consensus_event",
-                "params": { "subscription": id, "result": &**latest.as_ref().unwrap() },
-            }),
-        );
+                "params": { "subscription": id, "result": event },
+            })
+        };
+        let response = timeout(Duration::from_secs(1), subscription.next()).await.unwrap().unwrap();
+        assert_eq!(response, expected_response(latest.as_ref().unwrap()));
         assert_data_eq!(
             fs::read_to_string(log.path()).unwrap(),
             str![[r#"
@@ -403,14 +403,7 @@ mod tests {
         events.send(event.clone()).unwrap();
 
         let response = timeout(Duration::from_secs(1), next).await.unwrap().unwrap();
-        assert_eq!(
-            response,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "consensus_event",
-                "params": { "subscription": id, "result": &*event },
-            }),
-        );
+        assert_eq!(response, expected_response(&event));
         drop(subscription);
         assert_eq!(events.receiver_count(), 0);
 

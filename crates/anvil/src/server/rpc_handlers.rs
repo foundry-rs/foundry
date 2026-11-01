@@ -258,7 +258,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tempo_unsubscribe_preserves_other_namespaces_and_drops_receiver() {
+    async fn tempo_subscription_namespaces_and_cleanup() {
         let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
         let events = broadcast::Sender::new(1);
         let id = SubscriptionId::String("0x1234".to_owned());
@@ -291,14 +291,8 @@ mod tests {
             handler.on_pub_sub(EthPubSub::ConsensusUnsubscribe(id.clone()), context.clone()).await,
             ResponseResult::success(false),
         );
-        assert!(context.remove_subscription(&PubSubSubscriptionId::Eth(id)).is_some());
-    }
+        assert!(context.remove_subscription(&PubSubSubscriptionId::Eth(id.clone())).is_some());
 
-    #[tokio::test]
-    async fn tempo_disconnect_drops_idle_receiver() {
-        let events = broadcast::Sender::new(1);
-        let id = SubscriptionId::String("0x1234".to_owned());
-        let context = PubSubContext::<PubSubEthRpcHandler>::default();
         let mut subscription = EthSubscription::tempo_consensus(events.subscribe(), id.clone());
         assert!(futures::poll!(subscription.next()).is_pending());
         context.add_subscription(PubSubSubscriptionId::Consensus(id), subscription);
