@@ -66,12 +66,9 @@ impl PubSubEthRpcHandler {
         let id = SubscriptionId::random_hex();
         trace!(target: "rpc::ws", "received pubsub request {:?}", pubsub);
         match pubsub {
-            EthPubSub::EthUnSubscribe(id) => {
+            EthPubSub::EthUnSubscribe(id) | EthPubSub::ConsensusUnsubscribe(id) => {
                 trace!(target: "rpc::ws", "canceling subscription {:?}", id);
-                let canceled = cx
-                    .remove_subscription(&PubSubSubscriptionId::Eth(id.clone()))
-                    .or_else(|| cx.remove_subscription(&PubSubSubscriptionId::Consensus(id)))
-                    .is_some();
+                let canceled = cx.remove_subscription(&id).is_some();
                 ResponseResult::success(canceled)
             }
             EthPubSub::EthSubscribe(kind, raw_params) => {
@@ -154,7 +151,7 @@ impl PubSubEthRpcHandler {
                     }
                 };
 
-                cx.add_subscription(PubSubSubscriptionId::Eth(id.clone()), subscription);
+                cx.add_subscription(id.clone(), subscription);
 
                 trace!(target: "rpc::ws", "created new subscription: {:?}", id);
                 to_rpc_result(id)
@@ -165,13 +162,8 @@ impl PubSubEthRpcHandler {
                     Err(error) => return Err::<(), _>(error).to_rpc_result(),
                 };
                 let subscription = EthSubscription::tempo_consensus(events, id.clone());
-                cx.add_subscription(PubSubSubscriptionId::Consensus(id.clone()), subscription);
+                cx.add_subscription(id.clone(), subscription);
                 to_rpc_result(id)
-            }
-            EthPubSub::ConsensusUnsubscribe(id) => {
-                let canceled =
-                    cx.remove_subscription(&PubSubSubscriptionId::Consensus(id)).is_some();
-                ResponseResult::success(canceled)
             }
         }
     }
@@ -179,7 +171,7 @@ impl PubSubEthRpcHandler {
 
 impl PubSubRpcHandler for PubSubEthRpcHandler {
     type Request = EthRpcCall;
-    type SubscriptionId = PubSubSubscriptionId;
+    type SubscriptionId = SubscriptionId;
     type Subscription = EthSubscription<FoundryNetwork>;
 
     async fn on_request(&self, request: Self::Request, cx: PubSubContext<Self>) -> ResponseResult {
@@ -211,15 +203,6 @@ impl PubSubRpcHandler for PubSubEthRpcHandler {
 
 fn log_request_error(method: &str, id: &Id, params: &serde_json::Value, error: &RpcError) {
     node_info!(method, ?id, %params, error = %error, "RPC request failed");
-}
-
-/// Connection-local keys distinguish Ethereum and Tempo consensus subscriptions.
-#[derive(Debug, PartialEq, Eq, Hash)]
-pub enum PubSubSubscriptionId {
-    /// An Ethereum subscription.
-    Eth(SubscriptionId),
-    /// A Tempo consensus subscription.
-    Consensus(SubscriptionId),
 }
 
 #[cfg(test)]
@@ -261,7 +244,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tempo_subscription_namespaces_and_cleanup() {
+    async fn tempo_subscription_unsubscribe_aliases_and_cleanup() {
         let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
         let events = broadcast::Sender::new(1);
         let id = SubscriptionId::String("0x1234".to_owned());
@@ -270,20 +253,17 @@ mod tests {
         let handler = PubSubEthRpcHandler::new(api);
         let mut subscription = EthSubscription::tempo_consensus(events.subscribe(), id.clone());
         assert!(futures::poll!(subscription.next()).is_pending());
-        context.add_subscription(PubSubSubscriptionId::Consensus(id.clone()), subscription);
-        context.add_subscription(
-            PubSubSubscriptionId::Eth(eth_id.clone()),
-            EthSubscription::Syncing(Some(eth_id.clone())),
-        );
+        context.add_subscription(id.clone(), subscription);
+        context.add_subscription(eth_id.clone(), EthSubscription::Syncing(Some(eth_id.clone())));
         assert_eq!(events.receiver_count(), 1);
 
         assert_eq!(
             handler
                 .on_pub_sub(EthPubSub::ConsensusUnsubscribe(eth_id.clone()), context.clone())
                 .await,
-            ResponseResult::success(false),
+            ResponseResult::success(true),
         );
-        assert!(context.remove_subscription(&PubSubSubscriptionId::Eth(eth_id)).is_some());
+        assert!(context.remove_subscription(&eth_id).is_none());
         assert_eq!(
             handler.on_pub_sub(EthPubSub::ConsensusUnsubscribe(id.clone()), context.clone()).await,
             ResponseResult::success(true),
@@ -292,7 +272,7 @@ mod tests {
 
         let mut subscription = EthSubscription::tempo_consensus(events.subscribe(), id.clone());
         assert!(futures::poll!(subscription.next()).is_pending());
-        context.add_subscription(PubSubSubscriptionId::Consensus(id), subscription);
+        context.add_subscription(id, subscription);
         assert_eq!(events.receiver_count(), 1);
         drop(context);
         assert_eq!(events.receiver_count(), 0);
