@@ -368,7 +368,6 @@ struct InnerRoot {
 enum OpcodeStepDispatch {
     #[default]
     None,
-    FuzzerOnly,
     General,
 }
 
@@ -1684,18 +1683,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let inner = &mut *self.inner;
         match inner.static_step_dispatch {
             OpcodeStepDispatch::None => {}
-            OpcodeStepDispatch::FuzzerOnly => {
-                if !storage_hook_active && let Some(inspector) = &mut inner.fuzzer {
-                    Inspector::<TypesFor<FEN>>::step(&mut **inspector, interp);
-                }
-            }
             OpcodeStepDispatch::General => {
                 if !storage_hook_active {
                     call_inspectors!(
                         [
                             // These are sorted in definition order.
                             &mut inner.edge_coverage,
-                            &mut inner.fuzzer,
                             &mut inner.line_coverage,
                         ],
                         |inspector| Inspector::<TypesFor<FEN>>::step(&mut **inspector, interp),
@@ -1753,12 +1746,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 ],
                 |inspector| Inspector::<TypesFor<FEN>>::step_end(&mut **inspector, interp),
             );
-        }
-
-        if let Some(fuzzer) = &mut inner.fuzzer
-            && fuzzer.mapping_slots.is_some()
-        {
-            Inspector::<TypesFor<FEN>>::step_end(&mut **fuzzer, interp);
         }
 
         if self.inner.cheat_stepped
@@ -1899,8 +1886,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         }
         let every_opcode = inner.execution_cancellation.is_some()
             || inner.static_step_dispatch != OpcodeStepDispatch::None
-            || inner.has_static_step_end_inspectors
-            || inner.fuzzer.as_ref().is_some_and(|fuzzer| fuzzer.mapping_slots.is_some());
+            || inner.has_static_step_end_inspectors;
         let steps = if every_opcode {
             OpcodeSet::ALL
         } else {
@@ -2373,6 +2359,9 @@ impl InspectorStackInner {
         self.refresh_static_step_end_dispatch();
     }
 
+    /// The fuzzer never steps: its step hooks collect stack values and mapping slots into the
+    /// per-call copy of the stack, which is dropped after the call, so they never reach the
+    /// dictionary.
     #[inline]
     const fn refresh_static_step_dispatch(&mut self) {
         self.static_step_dispatch = if self.chisel_state.is_none()
@@ -2384,11 +2373,7 @@ impl InspectorStackInner {
             && self.tracer.is_none()
             && self.debug_recorder.is_none()
         {
-            if self.fuzzer.is_some() {
-                OpcodeStepDispatch::FuzzerOnly
-            } else {
-                OpcodeStepDispatch::None
-            }
+            OpcodeStepDispatch::None
         } else {
             OpcodeStepDispatch::General
         };
@@ -2669,18 +2654,18 @@ mod tests {
     }
 
     #[test]
-    fn opcode_dispatch_uses_fuzzer_fast_path_when_fuzzer_is_only_static_step_inspector() {
+    fn opcode_dispatch_does_not_step_for_the_fuzzer() {
         let mut stack = InspectorStack::<EthEvmNetwork>::new();
-        stack.set_fuzzer(Fuzzer::new(16, None));
+        stack.set_fuzzer(Fuzzer::new(16, Some(Default::default())));
 
-        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::FuzzerOnly);
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
         assert!(!stack.inner.has_static_step_end_inspectors);
 
         stack.collect_line_coverage(true);
         assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::General);
 
         stack.collect_line_coverage(false);
-        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::FuzzerOnly);
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
     }
 
     #[test]
