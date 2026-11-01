@@ -290,13 +290,18 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                     )?;
 
                     // Only prompt if we're broadcasting and we've not disabled interactivity.
-                    if self.args.should_broadcast()
-                        && !self.args.non_interactive
-                        && !Confirm::new()
+                    if self.args.should_broadcast() && !self.args.non_interactive {
+                        if !dialoguer::console::Term::stderr().is_term() {
+                            eyre::bail!(
+                                "transaction to {to} has no code; pass --non-interactive to continue without confirmation"
+                            );
+                        }
+                        if !Confirm::new()
                             .with_prompt("Do you wish to continue?".to_string())
                             .interact()?
-                    {
-                        eyre::bail!("User canceled the script.");
+                        {
+                            eyre::bail!("User canceled the script.");
+                        }
                     }
                 }
 
