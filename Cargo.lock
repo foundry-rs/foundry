@@ -5870,6 +5870,7 @@ dependencies = [
  "semver 1.0.28",
  "serde",
  "serde_json",
+ "shlex",
  "tempfile",
  "tempo-alloy",
  "tempo-primitives",

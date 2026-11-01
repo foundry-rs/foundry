@@ -74,7 +74,14 @@ impl<FEN: FoundryEvmNetwork> LinkedState<FEN> {
 
         let bytecode = target_contract.bytecode().ok_or_eyre("target contract has no bytecode")?;
 
-        let (func, calldata) = args.get_method_and_calldata(&target_contract.abi)?;
+        let raw_metadata = build_data
+            .build_data
+            .output
+            .artifact_ids()
+            .find(|(id, _)| *id == build_data.build_data.target)
+            .and_then(|(_, artifact)| artifact.raw_metadata.clone());
+        let (func, calldata) =
+            args.get_method_and_calldata(&target_contract.abi, raw_metadata.as_deref())?;
 
         ensure_clean_constructor(&target_contract.abi)?;
 
