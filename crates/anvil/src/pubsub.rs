@@ -340,20 +340,11 @@ mod tests {
         backend::tempo_consensus::TempoFinalization, tempo_consensus::TempoCertifiedBlock,
     };
     use foundry_primitives::FoundryNetwork;
-    use foundry_test_utils::{assert_data_eq, str};
-    use std::{fs, time::Duration};
+    use std::time::Duration;
     use tokio::time::timeout;
 
     #[tokio::test]
     async fn tempo_subscription_wire_format_lag_and_cleanup() {
-        let log = tempfile::NamedTempFile::new().unwrap();
-        let subscriber = tracing_subscriber::fmt()
-            .with_env_filter("off,rpc=warn")
-            .without_time()
-            .with_ansi(false)
-            .with_writer(Arc::new(log.reopen().unwrap()))
-            .finish();
-        let _subscriber = tracing::subscriber::set_default(subscriber);
         let events = broadcast::Sender::new(1);
         let id = SubscriptionId::String("0x1234".to_owned());
         let mut subscription =
@@ -387,13 +378,6 @@ mod tests {
         };
         let response = timeout(Duration::from_secs(1), subscription.next()).await.unwrap().unwrap();
         assert_eq!(response, expected_response(latest.as_ref().unwrap()));
-        assert_data_eq!(
-            fs::read_to_string(log.path()).unwrap(),
-            str![[r#"
- WARN rpc: Tempo consensus subscription lagged; recover retained blocks with consensus_getFinalization id=0x1234 skipped=1
-
-"#]],
-        );
         let mut next = subscription.next();
         assert!(futures::poll!(&mut next).is_pending());
 

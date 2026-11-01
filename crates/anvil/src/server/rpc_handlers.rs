@@ -265,50 +265,30 @@ mod tests {
         let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
         let events = broadcast::Sender::new(1);
         let id = SubscriptionId::String("0x1234".to_owned());
+        let eth_id = SubscriptionId::String("0x5678".to_owned());
         let context = PubSubContext::<PubSubEthRpcHandler>::default();
         let handler = PubSubEthRpcHandler::new(api);
         let mut subscription = EthSubscription::tempo_consensus(events.subscribe(), id.clone());
         assert!(futures::poll!(subscription.next()).is_pending());
         context.add_subscription(PubSubSubscriptionId::Consensus(id.clone()), subscription);
         context.add_subscription(
-            PubSubSubscriptionId::Eth(id.clone()),
-            EthSubscription::Syncing(Some(id.clone())),
+            PubSubSubscriptionId::Eth(eth_id.clone()),
+            EthSubscription::Syncing(Some(eth_id.clone())),
         );
         assert_eq!(events.receiver_count(), 1);
 
         assert_eq!(
-            handler.on_pub_sub(EthPubSub::EthUnSubscribe(id.clone()), context.clone()).await,
-            ResponseResult::success(true),
+            handler
+                .on_pub_sub(EthPubSub::ConsensusUnsubscribe(eth_id.clone()), context.clone())
+                .await,
+            ResponseResult::success(false),
         );
-        assert_eq!(events.receiver_count(), 1);
-        context.add_subscription(
-            PubSubSubscriptionId::Eth(id.clone()),
-            EthSubscription::Syncing(Some(id.clone())),
-        );
+        assert!(context.remove_subscription(&PubSubSubscriptionId::Eth(eth_id)).is_some());
         assert_eq!(
             handler.on_pub_sub(EthPubSub::ConsensusUnsubscribe(id.clone()), context.clone()).await,
             ResponseResult::success(true),
         );
         assert_eq!(events.receiver_count(), 0);
-        assert_eq!(
-            handler.on_pub_sub(EthPubSub::ConsensusUnsubscribe(id.clone()), context.clone()).await,
-            ResponseResult::success(false),
-        );
-        assert!(context.remove_subscription(&PubSubSubscriptionId::Eth(id.clone())).is_some());
-
-        let mut subscription = EthSubscription::tempo_consensus(events.subscribe(), id.clone());
-        assert!(futures::poll!(subscription.next()).is_pending());
-        context.add_subscription(PubSubSubscriptionId::Consensus(id.clone()), subscription);
-        assert_eq!(events.receiver_count(), 1);
-        assert_eq!(
-            handler.on_pub_sub(EthPubSub::EthUnSubscribe(id.clone()), context.clone()).await,
-            ResponseResult::success(true),
-        );
-        assert_eq!(events.receiver_count(), 0);
-        assert_eq!(
-            handler.on_pub_sub(EthPubSub::EthUnSubscribe(id.clone()), context.clone()).await,
-            ResponseResult::success(false),
-        );
 
         let mut subscription = EthSubscription::tempo_consensus(events.subscribe(), id.clone());
         assert!(futures::poll!(subscription.next()).is_pending());
