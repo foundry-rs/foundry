@@ -14,7 +14,7 @@ use evm2::{
     TxResultWithState,
     ethereum::intrinsic_and_floor_gas,
     evm::{DbResult, PendingState, PrewarmSet, State},
-    interpreter::{GasTracker, Host, InstrStop, MessageKind},
+    interpreter::{GasTracker, Host, InstrStop, MessageKind, op},
     registry::HandlerError,
 };
 use eyre::WrapErr;
@@ -477,7 +477,8 @@ pub struct InspectorStackInner {
     pub batch_rewrite_process_salt: Option<u64>,
     /// Shared cancellation state for interruptible EVM execution.
     execution_cancellation: Option<EvmExecutionCancellation>,
-    /// Amortizes deadline checks in the opcode hot path.
+    /// Amortizes deadline checks: the deadline is read once every 256 stepped instructions, which
+    /// include every jump and call while cancellation is installed.
     cancellation_poll_counter: u8,
     /// Whether this inspector halted the current execution due to cancellation.
     execution_cancelled: bool,
@@ -1884,14 +1885,29 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if inner.early_exit_test_gate.is_some() {
             return InspectorConfig::new();
         }
-        let every_opcode = inner.execution_cancellation.is_some()
-            || inner.static_step_dispatch != OpcodeStepDispatch::None
+        let every_opcode = inner.static_step_dispatch != OpcodeStepDispatch::None
             || inner.has_static_step_end_inspectors;
-        let steps = if every_opcode {
+        let mut steps = if every_opcode {
             OpcodeSet::ALL
         } else {
             self.cheatcodes.as_deref().map_or(OpcodeSet::EMPTY, Cheatcodes::steps)
         };
+        // Cancellation is polled at jumps and calls: every loop runs a jump, and every recursion
+        // runs a call or create.
+        if inner.execution_cancellation.is_some() {
+            for opcode in [
+                op::JUMP,
+                op::JUMPI,
+                op::CALL,
+                op::CALLCODE,
+                op::DELEGATECALL,
+                op::STATICCALL,
+                op::CREATE,
+                op::CREATE2,
+            ] {
+                steps.insert(opcode);
+            }
+        }
         InspectorConfig::new().with_steps(steps)
     }
 
