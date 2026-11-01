@@ -157,7 +157,7 @@ impl EthApi<FoundryNetwork> {
         let best = self.backend.best_number();
         // we go from given block (defaulting to best) down to first block
         // considering only post-fork (or post-genesis in non-fork mode)
-        let from = if block_number == 0 { best } else { block_number - 1 };
+        let from = if block_number == 0 { best } else { (block_number - 1).min(best) };
         let to = self
             .get_fork()
             .map(|f| f.block_number() + 1)
@@ -207,7 +207,7 @@ impl EthApi<FoundryNetwork> {
             .get_fork()
             .map(|f| f.block_number() + 1)
             .unwrap_or_else(|| self.backend.genesis_number() + 1);
-        let from = if block_number == 0 { first_block } else { block_number + 1 };
+        let from = if block_number == 0 { first_block } else { block_number.saturating_add(1) };
         let to = best;
 
         let mut first_page = from >= best;
