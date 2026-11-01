@@ -2050,6 +2050,72 @@ contract OldContract {
     ]]);
 }
 
+// With sources on both sides of Solar's minimum version, `forge build` lints the supported files
+// and names each skipped file by its project path.
+#[forgetest]
+fn build_lint_names_skipped_old_solidity_files(prj: _, cmd: _) {
+    prj.add_source(
+        "Old.sol",
+        r#"
+pragma solidity ^0.7.0;
+
+contract Old {}
+"#,
+    );
+    prj.add_source(
+        "New.sol",
+        r#"
+pragma solidity ^0.8.0;
+
+contract New {}
+"#,
+    );
+    prj.update_config(|config| {
+        config.lint = LinterConfig { lint_on_build: true, ..Default::default() };
+    });
+
+    cmd.arg("build").assert_success().stderr_eq(str![[r#"
+Warning: unable to lint src/Old.sol. Solar only supports Solidity versions >=0.8.0
+
+"#]]);
+}
+
+// A source that is a symlink is linted. Sources are keyed by their canonical path, so the linter
+// looks a symlink up by its target.
+#[cfg(unix)]
+#[forgetest]
+fn build_lints_symlinked_sources(prj: _, cmd: _) {
+    std::fs::create_dir_all(prj.root().join("shared")).unwrap();
+    std::fs::create_dir_all(prj.root().join("src")).unwrap();
+    std::fs::write(
+        prj.root().join("shared/Linked.sol"),
+        r#"
+pragma solidity ^0.8.0;
+
+contract Linked {
+    uint256 constant limit = 10;
+}
+"#,
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("../shared/Linked.sol", prj.root().join("src/Linked.sol")).unwrap();
+    prj.update_config(|config| {
+        config.lint = LinterConfig { lint_on_build: true, severity: vec![], ..Default::default() };
+    });
+
+    cmd.arg("build").assert_success().stderr_eq(str![[r#"
+note[screaming-snake-case-const]: constant name is not `SCREAMING_SNAKE_CASE`
+  [FILE]:5:22
+  │
+5 │     uint256 constant limit = 10;
+  │                      ━━━━━ help: consider using: `LIMIT`
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/screaming-snake-case-const
+
+
+"#]]);
+}
+
 const PRAGMA_INCONSISTENT_ALPHA: &str = r#"
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
