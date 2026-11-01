@@ -603,6 +603,16 @@ async fn test_set_storage_on_empty_account_kept_until_creation() {
     assert_eq!(api.get_code(created, None).await.unwrap(), bytes!("00"));
     assert_eq!(api.storage_at(created, U256::ZERO, None).await.unwrap(), B256::ZERO);
 
+    // A contract created and destroyed in the same transaction also discards the storage. The
+    // init code runs `SELFDESTRUCT(CALLER)`.
+    let init_code = bytes!("33ff");
+    let destroyed = factory.create2(B256::ZERO, keccak256(&init_code));
+    api.anvil_set_storage_at(destroyed, U256::ZERO, one).await.unwrap();
+    send(TransactionRequest::default().to(factory).input(init_code.into()).gas_limit(100_000))
+        .await;
+    assert_eq!(api.get_code(destroyed, None).await.unwrap(), bytes!(""));
+    assert_eq!(api.storage_at(destroyed, U256::ZERO, None).await.unwrap(), B256::ZERO);
+
     // A value transfer revives a deleted account without its storage. `SELFDESTRUCT(CALLER)`
     // deletes the account.
     let deleted = Address::random();
