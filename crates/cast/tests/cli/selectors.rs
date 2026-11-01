@@ -297,6 +297,30 @@ MyUniqueEventWithinLocalProject(uint256,address)
 "#]]);
 }
 
+// `cast decode-event` without `--sig` keeps the indexed flags of a cached signature, so only the
+// non-indexed parameters are read from the data.
+#[forgetest_init]
+fn flaky_indexed_event_decode_with_cache(prj: _, cmd: _) {
+    prj.add_source(
+        "LocalIndexedEventContract",
+        r#"
+contract LocalIndexedEventContract {
+    event MyUniqueIndexedEventWithinLocalProject(address indexed by, uint256 amount);
+}
+   "#,
+    );
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    cmd.cast_fuse()
+        .args(["decode-event", "0xd96257df3e19ef03c9bfc10b0c1315c940b233ac2fa591bed28ece982b29a75e000000000000000000000000000000000000000000000000000000000000004e"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+MyUniqueIndexedEventWithinLocalProject(address,uint256)
+78
+
+"#]]);
+}
+
 // `cast 4byte`, `4byte-calldata` and `4byte-event` find signatures in the local cache that
 // `forge build` populates, like `decode-error` and `decode-event`. Cached library signatures such
 // as `f(LocalFourByteLib.E)` are printed as stored, not as their parsed `f(uint8)` form.
