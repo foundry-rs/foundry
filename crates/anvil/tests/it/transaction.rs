@@ -2,13 +2,14 @@ use crate::{
     abi::{Greeter, Multicall, SimpleStorage},
     utils::{connect_pubsub, http_provider_with_signer},
 };
-use alloy_consensus::{Header, Transaction};
+use alloy_consensus::{Header, SignableTransaction, Transaction, TxEip1559, TxLegacy};
+use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{
     AnyRpcTransaction, EthereumWallet, Network, ReceiptResponse, TransactionBuilder,
-    TransactionResponse, eip2718::Decodable2718,
+    TransactionResponse, TxSignerSync, eip2718::Decodable2718,
 };
 use alloy_primitives::{
-    Address, B256, Bytes, FixedBytes, TxHash, U64, U256, address, b256, bytes, hex,
+    Address, B256, Bytes, FixedBytes, TxHash, TxKind, U64, U256, address, b256, bytes, hex,
     map::B256HashSet,
 };
 use alloy_provider::{PendingTransactionBuilder, Provider, WsConnect};
@@ -19,6 +20,7 @@ use alloy_rpc_types::{
     state::{AccountOverride, EvmOverrides, StateOverride, StateOverridesBuilder},
 };
 use alloy_serde::WithOtherFields;
+use alloy_signer::Signer;
 use alloy_sol_types::SolValue;
 use anvil::{NodeConfig, spawn};
 use anvil_core::eth::block::Block;
@@ -2588,4 +2590,58 @@ async fn can_get_tx_by_sender_and_nonce_with_genesis_block_number() {
             .unwrap();
         assert_eq!(tx.unwrap().tx_hash(), hash, "nonce={nonce}");
     }
+}
+
+/// A legacy transaction signed for another chain must be rejected.
+///
+/// EIP-155 binds the signature to a chain id. An EIP-1559 transaction signed for chain 1 is
+/// already rejected on the default chain. A legacy transaction with the same chain id must be
+/// rejected too. Accepting it returns a hash, mining then drops the transaction, and the sender's
+/// next nonce stays queued.
+#[tokio::test(flavor = "multi_thread")]
+async fn legacy_transaction_signed_for_another_chain_is_rejected() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_wallets().next().unwrap().with_chain_id(Some(1));
+    let recipient = handle.dev_accounts().nth(1).unwrap();
+
+    let mut typed = TxEip1559 {
+        chain_id: 1,
+        nonce: 0,
+        to: TxKind::Call(recipient),
+        value: U256::from(1),
+        max_fee_per_gas: 2_000_000_000,
+        max_priority_fee_per_gas: 1_000_000_000,
+        gas_limit: 21_000,
+        ..Default::default()
+    };
+    let typed_signature = sender.sign_transaction_sync(&mut typed).unwrap();
+    let typed = typed.into_signed(typed_signature);
+    let mut typed_encoded = Vec::new();
+    typed.encode_2718(&mut typed_encoded);
+    let typed_error = provider.send_raw_transaction(&typed_encoded).await.unwrap_err().to_string();
+    assert!(
+        typed_error.contains("invalid chain id"),
+        "typed transaction signed for another chain should be rejected: {typed_error}"
+    );
+
+    let mut tx = TxLegacy {
+        chain_id: Some(1),
+        nonce: 0,
+        gas_price: 2_000_000_000,
+        gas_limit: 21_000,
+        to: TxKind::Call(recipient),
+        value: U256::from(1),
+        input: Default::default(),
+    };
+    let signature = sender.sign_transaction_sync(&mut tx).unwrap();
+    let signed = tx.into_signed(signature);
+    let mut encoded = Vec::new();
+    signed.encode_2718(&mut encoded);
+
+    let error = provider.send_raw_transaction(&encoded).await.unwrap_err().to_string();
+    assert!(
+        error.contains("Incompatible EIP-155 transaction, signed for another chain"),
+        "{error}"
+    );
 }
