@@ -14,7 +14,7 @@ use evm2::{
     TxResultWithState,
     ethereum::intrinsic_and_floor_gas,
     evm::{DbResult, PendingState, PrewarmSet, State},
-    interpreter::{GasTracker, Host, InstrStop, MessageKind},
+    interpreter::{GasTracker, Host, InstrStop, MessageKind, op},
     registry::HandlerError,
 };
 use eyre::WrapErr;
@@ -364,6 +364,24 @@ struct InnerRoot {
     observe: bool,
 }
 
+/// The opcodes at which execution cancellation is polled: every loop runs a jump, and every
+/// recursion runs a call or create.
+const CANCELLATION_POLL_OPCODES: OpcodeSet = {
+    let mut set = OpcodeSet::EMPTY;
+    set.insert(op::JUMP);
+    set.insert(op::JUMPI);
+    set.insert(op::CALL);
+    set.insert(op::CALLCODE);
+    set.insert(op::DELEGATECALL);
+    set.insert(op::STATICCALL);
+    set.insert(op::CREATE);
+    set.insert(op::CREATE2);
+    set
+};
+
+/// How many cancellation polls pass between reads of a campaign deadline.
+const DEADLINE_POLL_INTERVAL: u8 = 16;
+
 /// An inspector that calls multiple inspectors in sequence.
 ///
 /// If a call to an inspector returns a value (indicating a stop or revert) the remaining inspectors
@@ -470,7 +488,7 @@ pub struct InspectorStackInner {
     pub batch_rewrite_process_salt: Option<u64>,
     /// Shared cancellation state for interruptible EVM execution.
     execution_cancellation: Option<EvmExecutionCancellation>,
-    /// Amortizes deadline checks in the opcode hot path.
+    /// Counts cancellation polls; the deadline is read once every [`DEADLINE_POLL_INTERVAL`].
     cancellation_poll_counter: u8,
     /// Whether this inspector halted the current execution due to cancellation.
     execution_cancelled: bool,
@@ -1648,7 +1666,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             self.cheatcodes.as_deref().is_some_and(Cheatcodes::is_storage_hook_active);
 
         #[cfg(test)]
-        if interp.opcode() == evm2::interpreter::op::JUMPDEST
+        if interp.opcode() == op::JUMPDEST
             && let Some(gate) = &self.inner.early_exit_test_gate
             && interp.pc() == gate.target_pc
             && !gate.notified.swap(true, std::sync::atomic::Ordering::Relaxed)
@@ -1664,7 +1682,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         if let Some(cancellation) = &self.inner.execution_cancellation {
             let poll_deadline = self.inner.cancellation_poll_counter == 0;
             self.inner.cancellation_poll_counter =
-                self.inner.cancellation_poll_counter.wrapping_add(1);
+                (self.inner.cancellation_poll_counter + 1) % DEADLINE_POLL_INTERVAL;
             if cancellation.should_stop(poll_deadline) {
                 self.inner.execution_cancelled = true;
                 interp.set_stop(InstrStop::Stop);
@@ -1873,14 +1891,15 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if inner.early_exit_test_gate.is_some() {
             return InspectorConfig::new();
         }
-        let every_opcode = inner.execution_cancellation.is_some()
-            || inner.has_static_step_inspectors
-            || inner.has_static_step_end_inspectors;
-        let steps = if every_opcode {
+        let every_opcode = inner.has_static_step_inspectors || inner.has_static_step_end_inspectors;
+        let mut steps = if every_opcode {
             OpcodeSet::ALL
         } else {
             self.cheatcodes.as_deref().map_or(OpcodeSet::EMPTY, Cheatcodes::steps)
         };
+        if inner.execution_cancellation.is_some() {
+            steps = steps.union(CANCELLATION_POLL_OPCODES);
+        }
         InspectorConfig::new().with_steps(steps)
     }
 
