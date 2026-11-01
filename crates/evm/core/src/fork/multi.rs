@@ -914,10 +914,10 @@ mod tests {
     use crate::opts::EvmOpts;
     use alloy_chains::NamedChain;
     use alloy_eips::eip7928::{AccountChanges, BlockAccessIndex, SlotChanges, StorageChange};
-    use alloy_network::TransactionBuilder;
+    use alloy_network::{AnyHeader, AnyRpcBlock, AnyRpcHeader, TransactionBuilder};
     use alloy_primitives::{Address, B256, U256, bytes};
     use alloy_provider::{Provider, ProviderBuilder, mock::Asserter};
-    use alloy_rpc_types::TransactionRequest;
+    use alloy_rpc_types::{Block, TransactionRequest};
     use alloy_serde::WithOtherFields;
     use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
     use foundry_fork_db::AccountFetchPolicy;
@@ -925,7 +925,7 @@ mod tests {
         spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_recording_method,
     };
     use futures::{channel::oneshot, task::noop_waker_ref};
-    use revm::primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN;
+    use revm::primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE;
     use std::sync::mpsc::{Receiver as OneshotReceiver, TryRecvError};
 
     fn context(block_number: u64) -> ForkContext {
@@ -1484,17 +1484,31 @@ mod tests {
 
     #[test]
     fn cache_block_env_records_blob_excess_gas() {
-        // Pre-evm2 caches record the header's excess blob gas, as for mainnet block 21_234_567.
-        let excess_blob_gas = 62_652_416;
-        let expected =
-            BlobExcessGasAndPrice::new(excess_blob_gas, BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN);
-        let block = evm2::env::BlockEnv::<evm2::BaseEvmTypes> {
-            blob_basefee: U256::from(expected.blob_gasprice),
-            ..Default::default()
+        let fork_block = |excess_blob_gas| {
+            // A mainnet block after Prague and before Osaka.
+            let header =
+                AnyHeader { timestamp: 1_750_000_000, excess_blob_gas, ..Default::default() };
+            AnyRpcBlock::new(
+                Block::new(AnyRpcHeader::from_sealed(header.seal(B256::ZERO)), Default::default())
+                    .into(),
+            )
         };
-        let env = cache_block_env(&block, Some(excess_blob_gas));
-        assert_eq!(env.blob_excess_gas_and_price, Some(expected));
-        let env = cache_block_env(&block, None);
-        assert_eq!(env.blob_excess_gas_and_price, BlockEnv::default().blob_excess_gas_and_price);
+        let cache_env = |block: &AnyRpcBlock| {
+            let env =
+                EvmOpts::default().fork_env_from_block::<EthEvmNetwork, AnyNetwork>(1, 1, block);
+            cache_block_env(&env.block, block.header.excess_blob_gas)
+        };
+
+        // Master recorded REVM's blob price for the header's excess blob gas.
+        let mut expected = BlockEnv::default();
+        expected.set_blob_excess_gas_and_price(62_652_416, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE);
+        assert_eq!(
+            cache_env(&fork_block(Some(62_652_416))).blob_excess_gas_and_price,
+            expected.blob_excess_gas_and_price
+        );
+        assert_eq!(
+            cache_env(&fork_block(None)).blob_excess_gas_and_price,
+            BlockEnv::default().blob_excess_gas_and_price
+        );
     }
 }
