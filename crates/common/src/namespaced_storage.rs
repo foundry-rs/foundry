@@ -64,7 +64,9 @@ pub fn extend_storage_layouts(
         let contracts = contracts_by_source(gcx, root);
         for (id, layout) in &mut layouts {
             let source = id.source.strip_prefix(root).unwrap_or(&id.source).to_slash_lossy();
-            let Some(&contract) = contracts.get(&(source.into_owned(), id.name.clone())) else {
+            // Artifact names may include compiler version and profile suffixes.
+            let name = id.name.split('.').next().unwrap();
+            let Some(&contract) = contracts.get(&(source.into_owned(), name.to_owned())) else {
                 continue;
             };
             if let Err(err) = extend_storage_layout(layout, gcx, root, contract) {
@@ -619,7 +621,13 @@ mod tests {
         let layouts = extend_storage_layouts(
             &mut parser,
             Path::new("/project"),
-            [(id("C"), StorageLayout::default()), (id("Plain"), StorageLayout::default())],
+            [
+                (id("C"), StorageLayout::default()),
+                (id("C.via-ir"), StorageLayout::default()),
+                (id("C.0.8.30"), StorageLayout::default()),
+                (id("C.0.8.30.via-ir"), StorageLayout::default()),
+                (id("Plain"), StorageLayout::default()),
+            ],
         );
         assert_eq!(
             layouts
@@ -629,9 +637,17 @@ mod tests {
                     layout.storage.iter().map(|s| s.label.as_str()).collect::<Vec<_>>()
                 ))
                 .collect::<Vec<_>>(),
-            [("C", vec!["example.value"]), ("Plain", vec![])]
+            [
+                ("C", vec!["example.value"]),
+                ("C.via-ir", vec!["example.value"]),
+                ("C.0.8.30", vec!["example.value"]),
+                ("C.0.8.30.via-ir", vec!["example.value"]),
+                ("Plain", vec![]),
+            ]
         );
-        assert_eq!(layouts[0].1.storage[0].contract, "src/test.sol:C");
+        for (_, layout) in &layouts[..4] {
+            assert_eq!(layout.storage[0].contract, "src/test.sol:C");
+        }
     }
 
     #[test]
@@ -683,5 +699,50 @@ mod tests {
             foundry_compilers::artifacts::Source::new("contract Plain { uint256 x; }"),
         )]);
         assert!(parse_standard_json(&plain, &[]).is_none());
+    }
+
+    #[test]
+    fn profiled_artifact_layouts_keep_source_identity() {
+        let sources =
+            Sources::from_iter([("Left", "left"), ("Right", "right")].map(|(file, namespace)| {
+                (
+                    PathBuf::from(format!("src/{file}.sol")),
+                    foundry_compilers::artifacts::Source::new(format!(
+                        "contract C {{
+                            /// @custom:storage-location erc7201:{namespace}
+                            struct Data {{ uint256 value; }}
+                        }}"
+                    )),
+                )
+            }));
+        let mut compiler = parse_standard_json(&sources, &[]).unwrap();
+        let ids = ["Left", "Right"].map(|file| ArtifactId {
+            path: PathBuf::from(format!("out/{file}.sol/C.via-ir.json")),
+            name: "C.via-ir".into(),
+            source: PathBuf::from(format!("src/{file}.sol")),
+            version: semver::Version::new(0, 8, 30),
+            build_id: file.into(),
+            profile: "via-ir".into(),
+        });
+        let layouts = extend_storage_layouts(
+            &mut compiler,
+            Path::new(""),
+            ids.iter().cloned().map(|id| (id, StorageLayout::default())),
+        );
+        assert_eq!(
+            layouts.iter().map(|(id, _)| id).collect::<Vec<_>>(),
+            ids.iter().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            layouts
+                .iter()
+                .map(|(_, layout)| layout
+                    .storage
+                    .iter()
+                    .map(|s| s.label.as_str())
+                    .collect::<Vec<_>>())
+                .collect::<Vec<_>>(),
+            [vec!["left.value"], vec!["right.value"]]
+        );
     }
 }
