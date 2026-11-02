@@ -447,6 +447,8 @@ pub struct SourcifyErrorResponse {
 mod tests {
     use super::*;
     use clap::Parser;
+    use foundry_cli::utils::LoadConfig;
+    use foundry_common::compile::ProjectCompiler;
     use foundry_config::Config;
     use foundry_test_utils::{forgetest, util::SOLC_VERSION};
     use serde_json::json;
@@ -649,5 +651,32 @@ mod tests {
         let counter_source = sources.get("src/Counter.sol").unwrap().as_object().unwrap();
         let content = counter_source.get("content").unwrap().as_str().unwrap();
         assert!(content.contains("contract Counter {}"));
+    }
+
+    #[forgetest]
+    async fn keeps_solar_compiler_version(prj: _) {
+        prj.add_source("Counter", "contract Counter {}");
+
+        let solar_version = format!("{SOLC_VERSION}+commit.d9f23fb.solar.0.2.0");
+        let args = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0xd8509bee9c9bf012282ad33aba0d87241baf5064",
+            "src/Counter.sol:Counter",
+            "--compiler-version",
+            &solar_version,
+            "--root",
+            &prj.root().to_string_lossy(),
+        ]);
+
+        // Cache the artifacts under the plain version, as for a Solar build.
+        let mut config = args.load_config().unwrap();
+        config.solc = Some(SOLC_VERSION.into());
+        ProjectCompiler::new().quiet(true).compile(&config.project().unwrap()).unwrap();
+
+        let context = args.resolve_context().await.unwrap();
+        let provider = SourcifyVerificationProvider::default();
+        let request = provider.prepare_verify_request(&args, &context).await.unwrap();
+
+        assert_eq!(request.compiler_version, solar_version);
     }
 }
