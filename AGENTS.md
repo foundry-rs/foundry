@@ -56,7 +56,7 @@ For symbolic execution work under `crates/evm/symbolic`, read
 
 ## Reuse and ownership
 
-Before you build, convert, compare, or format a revm, alloy, or Foundry value by
+Before you build, convert, compare, or format an evm2, alloy, or Foundry value by
 hand, check the owning type and crate for a canonical constructor, alias,
 conversion, or predicate. For example, use `BlockId::latest()`, `InMemoryDB`,
 `From` between `U256` and `B256`, and `AccountInfo::is_empty_code_hash()`.
