@@ -894,6 +894,25 @@ mod tests {
             FoundryHardfork::from_chain_and_timestamp(42431, u64::MAX),
             Some(FoundryHardfork::Tempo(TempoHardfork::T13))
         );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MAINNET_CHAIN_ID, MAINNET_T13_TIMESTAMP - 1),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T12))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MAINNET_CHAIN_ID, MAINNET_T13_TIMESTAMP),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T13))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(
+                MODERATO_CHAIN_ID,
+                MODERATO_T13_TIMESTAMP - 1
+            ),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T12))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MODERATO_CHAIN_ID, MODERATO_T13_TIMESTAMP),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T13))
+        );
 
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(MAINNET_CHAIN_ID, MAINNET_T6_TIMESTAMP - 1),
