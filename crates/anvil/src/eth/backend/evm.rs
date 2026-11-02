@@ -509,6 +509,8 @@ pub fn version<N: AnvilEvmNetwork>(
         // evm2's sender balance check includes the gas fee even when the fee is not charged, while
         // REVM's only covered the value without a fee charge.
         (cfg.disable_balance_check || cfg.disable_fee_charge, EvmFeatures::BALANCE_CHECK),
+        // Without a fee charge, REVM left the sender balance as is instead of topping it up.
+        (cfg.disable_fee_charge, EvmFeatures::BALANCE_TOP_UP),
         (cfg.disable_block_gas_limit, EvmFeatures::BLOCK_GAS_LIMIT_CHECK),
         (cfg.disable_eip3607, EvmFeatures::EIP3607),
         (cfg.disable_base_fee, EvmFeatures::BASE_FEE_CHECK),
