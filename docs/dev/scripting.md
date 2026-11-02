@@ -142,18 +142,19 @@ existing attempt.
 
 Before sending new work, `BundledState::wait_for_pending` checks each hash in `pending`. Sequences
 from a multichain deployment are checked concurrently. Outside `--batch`, `--resume` first checks
-the sequences in order in `CompiledState::resume`; a failing sequence does not stop the others,
-each result is saved, and the errors are returned together, so this later check usually finds
-nothing pending. In multichain runs, broadcast and reconcile errors name their chain, and the
-sequence number when several sequences share it. A confirmed success removes the hash from
-`pending` and appends its receipt. A revert removes the hash, records it in `reverted` rather than
-`receipts`, which consumers treat as successful, and returns an error. A later `--resume` warns
-about each recorded revert, never resubmits it, continues with the remaining operations, and
-replaces the final success message with a warning listing the reverts. Receipt-watcher timeouts
-keep retrying without consuming the retry budget while the selected RPC still returns the
-transaction, so ordinary polling is unbounded; Tempo batches use `transaction_timeout`. If that
-endpoint returns no transaction, the durable attempt remains the source of identity: signed bytes
-may be replayed; delegated attempts with a known hash remain checkpointed for a later plain
+the sequences in order in `CompiledState::resume`; a failing sequence does not stop the others, each
+result is saved, and the errors are returned together, so this later check usually finds nothing
+pending. In multichain runs, broadcast and reconcile errors name their chain, and the sequence
+number when several sequences share it. A confirmed success removes the hash from `pending` and
+appends its receipt. A revert removes the hash, records it in `reverted` rather than `receipts`,
+which consumers treat as successful, and returns an error. A later `--resume` warns about each
+recorded revert, never resubmits it, continues with the remaining operations, and replaces the final
+success message with a warning listing the reverts. Receipt-watcher timeouts keep retrying without
+consuming the retry budget while the selected RPC still returns the transaction, so ordinary polling
+is unbounded; Tempo batches use `transaction_timeout`. Outside `--batch`, each polled hash prints
+one warning naming it after its first such timeout (hidden by `--quiet`), and waiting continues. If
+that endpoint returns no transaction, the durable attempt remains the source of identity: signed
+bytes may be replayed; delegated attempts with a known hash remain checkpointed for a later plain
 `--resume`, while unknown outcomes remain blocked until explicitly resolved. Removing a hash from
 `pending` this way prints an immediate `--resume` warning, so the guidance survives a later batch
 failure. An ordinary broadcast that otherwise succeeds while a submitted operation still lacks a
