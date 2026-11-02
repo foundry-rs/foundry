@@ -828,6 +828,23 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
             Vec::new()
         };
 
+        // The callee can neither read nor change other functions' balance-independent locals, so
+        // they stay out of its cache key.
+        let inert = take_inert_locals(&self.gcx.hir, func_id, state);
+        let returns = self.inline_internal_call(func_id, func, body, parameter_predicates, state);
+        state.balance_local_forms.extend(inert.0);
+        state.balance_local_dependencies.extend(inert.1);
+        returns
+    }
+
+    fn inline_internal_call(
+        &mut self,
+        func_id: FunctionId,
+        func: &'gcx hir::Function<'gcx>,
+        body: hir::Block<'gcx>,
+        parameter_predicates: Vec<Option<(PathPredicate, bool)>>,
+        state: &mut FlowState,
+    ) -> Vec<BalanceValue> {
         let key = InlineCallKey {
             func_id,
             recursive_cut: self.first_recursive_cut(func_id),
@@ -1689,6 +1706,27 @@ fn remap_return_paths(
                 .collect();
         }
     }
+}
+
+/// Takes out the balance forms and dependencies that are balance-independent and belong to locals
+/// of functions other than `func_id`, whose paths do not mention `func_id`'s locals.
+fn take_inert_locals(
+    hir: &hir::Hir<'_>,
+    func_id: FunctionId,
+    state: &mut FlowState,
+) -> (BTreeMap<VariableId, BTreeSet<BalanceForm>>, BTreeMap<VariableId, BTreeSet<BalanceForm>>) {
+    let owned = owned_by(hir, func_id);
+    let take = |map: &mut BTreeMap<VariableId, BTreeSet<BalanceForm>>| {
+        let (inert, kept) = std::mem::take(map).into_iter().partition(|(var_id, forms)| {
+            !owned(*var_id)
+                && forms.iter().all(|form| {
+                    form.terms.is_empty() && !form.path.keys().any(|p| p.mentions(&owned))
+                })
+        });
+        *map = kept;
+        inert
+    };
+    (take(&mut state.balance_local_forms), take(&mut state.balance_local_dependencies))
 }
 
 /// Drops every path fact that mentions the (re)assigned local `var_id`.
