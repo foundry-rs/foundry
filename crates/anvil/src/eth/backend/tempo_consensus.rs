@@ -10,10 +10,9 @@
 //! actual view, including skipped views inherited from a native anchor. Genesis and each preceding
 //! epoch boundary serve as view-zero parents. An unsigned contextless anchor uses the no-skips
 //! local convention: view `h` in epoch zero and `h % L + 1` in later epochs. A boundary at
-//! `h % L == L - 1` announces the next committee
-//! in a native [`OnchainDkgOutcome`]. The boundary is signed by the old committee; the next epoch
-//! activates the announced key. The outcome's `is_next_full_dkg = false` describes the next
-//! ceremony, not whether this local key changed.
+//! `h % L == L - 1` announces the next committee in a native [`OnchainDkgOutcome`]. The boundary
+//! is signed by the old committee; the next epoch activates the announced key. The outcome's
+//! `is_next_full_dkg = false` describes the next ceremony, not whether this local key changed.
 //!
 //! [`TempoHeader`] owns the full RLP encoding and hash, including all execution fields and the
 //! optional context. Genesis is unsigned and contextless. Context is omitted before T4, following
