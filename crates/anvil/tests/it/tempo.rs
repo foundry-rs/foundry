@@ -6983,6 +6983,8 @@ async fn tempo_consensus_mined_certificate_matches_block_hash() {
 async fn tempo_consensus_nonempty_native_block_body() {
     let (api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
     let provider = handle.http_provider();
+    let ws = crate::utils::connect_pubsub(&handle.ws_endpoint()).await;
+    let mut events = subscriptions::subscribe(&ws).await;
     let accounts = handle.dev_accounts().collect::<Vec<_>>();
     let ethereum_hash: B256 = provider
         .client()
@@ -7005,6 +7007,7 @@ async fn tempo_consensus_nonempty_native_block_body() {
     let identity = tempo_consensus_identity(&provider).await;
     let finalization = tempo_finalization(&provider, 1).await;
     assert_tempo_certificate(&identity, &finalization);
+    assert_eq!(subscriptions::next_event(&mut events).await.certified, finalization);
     let transactions = &finalization.block.body.transactions;
     let mut transactions =
         transactions.iter().map(|tx| (tx.ty(), *tx.tx_hash())).collect::<Vec<_>>();
@@ -7202,6 +7205,10 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     .await;
     let provider = handle.http_provider();
     let identity = tempo_consensus_identity(&provider).await;
+    assert_ne!(identity, tempo_consensus_identity(&source_provider).await);
+    let ws = crate::utils::connect_pubsub(&handle.ws_endpoint()).await;
+    let mut events = subscriptions::subscribe(&ws).await;
+    source_api.mine_one().await.unwrap();
     let source_root = tempo_finalization(&source_provider, 2).await;
     let latest: TempoCertifiedBlock =
         provider.client().request("consensus_getFinalization", ("latest",)).await.unwrap();
@@ -7218,11 +7225,13 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     assert_eq!(local.block.header.parent_hash(), parent.header.hash);
     assert_eq!((local.epoch, local.view), (0, 8898));
     assert_tempo_certificate(&identity, &local);
+    assert_eq!(subscriptions::next_event(&mut events).await.certified, local);
     assert!(provider.client().request::<_, bool>("evm_revert", (snapshot,)).await.unwrap());
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), nonce);
     provider.client().request::<_, B256>("eth_sendTransaction", (&request,)).await.unwrap();
     api.mine_one().await.unwrap();
-    assert_tempo_fork_round(&provider, &identity, 3, (0, 8898, 8897)).await;
+    let restored = assert_tempo_fork_round(&provider, &identity, 3, (0, 8898, 8897)).await;
+    assert_eq!(subscriptions::next_event(&mut events).await.certified, restored);
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), nonce + 1);
 
     provider.client().request::<_, serde_json::Value>("anvil_rollback", (1,)).await.unwrap();
@@ -7237,6 +7246,7 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     assert_eq!(remined.block.header.parent_hash(), parent.header.hash);
     assert_tempo_certificate(&identity, &remined);
     assert_eq!((remined.epoch, remined.view), (0, 8898));
+    assert_eq!(subscriptions::next_event(&mut events).await.certified, remined);
 
     api.anvil_set_coinbase(Address::repeat_byte(0x44)).await.unwrap();
     api.anvil_reorg(ReorgOptions { depth: 1, tx_block_pairs: Vec::new() }).await.unwrap();
@@ -7245,6 +7255,7 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     assert_eq!(replacement.block.header.parent_hash(), parent.header.hash);
     assert_tempo_certificate(&identity, &replacement);
     assert_eq!((replacement.epoch, replacement.view), (0, 8898));
+    assert_eq!(subscriptions::next_event(&mut events).await.certified, replacement);
 
     api.anvil_reset(Some(Forking {
         json_rpc_url: Some(source.http_endpoint()),
@@ -7256,7 +7267,9 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     assert_eq!(tempo_finalization(&provider, 3).await, reset_root);
     assert_eq!(tempo_consensus_identity(&provider).await.from_epoch, 1);
     api.mine_one().await.unwrap();
-    assert_tempo_certificate(&identity, &tempo_finalization(&provider, 5).await);
+    let finalized = tempo_finalization(&provider, 5).await;
+    assert_tempo_certificate(&identity, &finalized);
+    assert_eq!(subscriptions::next_event(&mut events).await.certified, finalized);
     provider.client().request::<_, serde_json::Value>("anvil_rollback", (1,)).await.unwrap();
     let parent = source_provider.get_block(4.into()).full().await.unwrap().unwrap();
     assert_eq!(provider.get_block(BlockId::latest()).full().await.unwrap().unwrap(), parent);
@@ -7268,6 +7281,7 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     let remined = tempo_finalization(&provider, 5).await;
     assert_eq!(remined.block.header.parent_hash(), parent.header.hash);
     assert_tempo_certificate(&identity, &remined);
+    assert_eq!(subscriptions::next_event(&mut events).await.certified, remined);
 
     api.anvil_reset(Some(Forking {
         json_rpc_url: Some(source.http_endpoint()),
@@ -7276,12 +7290,16 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     .await
     .unwrap();
     api.mine_one().await.unwrap();
-    assert_tempo_fork_round(&provider, &identity, 3, (0, 8898, 8897)).await;
+    let finalized = assert_tempo_fork_round(&provider, &identity, 3, (0, 8898, 8897)).await;
+    assert_eq!(subscriptions::next_event(&mut events).await.certified, finalized);
     api.mine_one().await.unwrap();
-    assert_tempo_fork_round(&provider, &identity, 4, (1, 1, 0)).await;
+    let finalized = assert_tempo_fork_round(&provider, &identity, 4, (1, 1, 0)).await;
+    assert_eq!(subscriptions::next_event(&mut events).await.certified, finalized);
     api.anvil_reset(None).await.unwrap();
     api.mine_one().await.unwrap();
-    assert_tempo_fork_round(&provider, &identity, 1, (0, 1, 0)).await;
+    let finalized = assert_tempo_fork_round(&provider, &identity, 1, (0, 1, 0)).await;
+    assert_eq!(subscriptions::next_event(&mut events).await.certified, finalized);
+    assert!(tokio::time::timeout(Duration::from_millis(100), events.recv_result()).await.is_err());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -8015,13 +8033,17 @@ async fn tempo_consensus_rotation_after_boundary_waits_an_epoch() {
     let initial = tempo_consensus_identity(&provider).await;
     api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
     let published = tempo_finalization(&provider, 2).await;
+    let ws = crate::utils::connect_pubsub(&handle.ws_endpoint()).await;
+    let mut events = subscriptions::subscribe(&ws).await;
     let rotated = tempo_rotate_identity(&provider).await;
     assert_eq!(rotated.from_epoch, 2);
     assert_ne!(rotated.identity, initial.identity);
     assert_eq!(tempo_finalization(&provider, 2).await, published);
     for height in 3..=5 {
         api.mine_one().await.unwrap();
-        assert_tempo_certificate(&initial, &tempo_finalization(&provider, height).await);
+        let finalized = tempo_finalization(&provider, height).await;
+        assert_tempo_certificate(&initial, &finalized);
+        assert_eq!(subscriptions::next_event(&mut events).await.certified, finalized);
     }
     let boundary = tempo_finalization(&provider, 5).await;
     let outcome = OnchainDkgOutcome::decode(boundary.block.header.extra_data().as_ref()).unwrap();
@@ -8029,7 +8051,9 @@ async fn tempo_consensus_rotation_after_boundary_waits_an_epoch() {
     assert_eq!(outcome.network_identity().encode().as_ref(), rotated.identity.as_ref());
     assert_eq!(tempo_consensus_identity(&provider).await, initial);
     api.mine_one().await.unwrap();
-    assert_tempo_certificate(&rotated, &tempo_finalization(&provider, 6).await);
+    let finalized = tempo_finalization(&provider, 6).await;
+    assert_tempo_certificate(&rotated, &finalized);
+    assert_eq!(subscriptions::next_event(&mut events).await.certified, finalized);
     assert_eq!(tempo_consensus_identity(&provider).await, rotated);
 }
 
@@ -8580,3 +8604,5 @@ async fn tempo_consensus_fork_rejects_malformed_epoch_metadata() {
         }
     }
 }
+
+mod subscriptions;

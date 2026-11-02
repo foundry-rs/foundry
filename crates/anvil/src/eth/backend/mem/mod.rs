@@ -6769,8 +6769,15 @@ where
             evm_env.block_env.difficulty = U256::ZERO;
             *self.evm_env.write() = evm_env;
             self.fees.set_next_block_fees(next_block_base_fee, next_block_blob_fees);
+            let finalization =
+                storage.tempo.as_ref().map_or(Ok(None), TempoChain::pending_finalization);
             drop(storage);
             drop(db_guard);
+            if let Err(err) = finalization.and_then(|finalization| {
+                finalization.map_or(Ok(()), |finalization| finalization.send())
+            }) {
+                warn!(target: "backend", %err, "failed to publish Tempo finalization");
+            }
 
             self.time.mark_block_created();
 
