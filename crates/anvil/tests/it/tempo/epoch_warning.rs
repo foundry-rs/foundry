@@ -21,6 +21,8 @@ async fn tempo_consensus_fork_epoch_fallback_warning() {
     let (late, late_root_reads) =
         epoch_metadata::epoch_metadata_after_fork_root(source.http_endpoint(), 1).await;
 
+    let warning = "Warning: Tempo fork epoch length is unavailable; using 21600. \
+                   Set --tempo.epoch-length to match the source.\n";
     for (urls, explicit, quiet, length, warn, reset) in [
         (vec![hidden.clone()], None, false, 21_600, true, None),
         (vec![hidden.clone()], Some("3"), false, 3, false, None),
@@ -70,9 +72,13 @@ async fn tempo_consensus_fork_epoch_fallback_warning() {
                 .unwrap(),
         );
         let provider = http_provider(&format!("http://127.0.0.1:{port}"));
+        let last_line = format!("Epoch length:   {length}\n");
         let identity = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
-                if provider.get_chain_id().await.is_ok() {
+                // RPC readiness can precede the complete startup banner.
+                if provider.get_chain_id().await.is_ok()
+                    && (quiet || read_to_string(&stderr).unwrap().ends_with(&last_line))
+                {
                     break tempo_consensus_identity(&provider).await;
                 }
                 if let Some(status) = child.0.try_wait().unwrap() {
@@ -86,25 +92,13 @@ async fn tempo_consensus_fork_epoch_fallback_warning() {
         assert_eq!(identity.epoch_length, length);
         let mut expected = String::new();
         if warn {
-            expected.push_str(
-                "Warning: Tempo fork epoch length is unavailable; using 21600. \
-                 Set --tempo.epoch-length to match the source.\n",
-            );
+            expected.push_str(warning);
         }
         if !quiet {
             expected.push_str(&format!(
                 "\nTempo Consensus\n==================\nIdentity:       {}\nProposer:       {}\nEpoch length:   {length}\n",
                 identity.identity, identity.proposer,
             ));
-            // The RPC listener can become ready before the startup banner is written.
-            tokio::time::timeout(Duration::from_secs(5), async {
-                let last_line = format!("Epoch length:   {length}\n");
-                while !read_to_string(&stderr).unwrap().ends_with(&last_line) {
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-            })
-            .await
-            .expect("anvil should print its consensus identity");
         }
         if let Some((endpoint, length, warn)) = reset {
             provider
@@ -120,10 +114,7 @@ async fn tempo_consensus_fork_epoch_fallback_warning() {
                 .unwrap();
             assert_eq!(tempo_consensus_identity(&provider).await.epoch_length, length);
             if warn {
-                expected.push_str(
-                    "Warning: Tempo fork epoch length is unavailable; using 21600. \
-                     Set --tempo.epoch-length to match the source.\n",
-                );
+                expected.push_str(warning);
             }
         }
         drop(child);
