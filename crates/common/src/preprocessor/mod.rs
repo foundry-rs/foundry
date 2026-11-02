@@ -237,6 +237,25 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
         // Context changes can alter rewriting eligibility even for previously native deployments.
         paths.is_test_or_script(source)
     }
+
+    fn is_source_context_change_relevant(
+        &self,
+        previous: &BTreeSet<PathBuf>,
+        current: &BTreeSet<PathBuf>,
+    ) -> bool {
+        if !current.is_subset(previous) {
+            return true;
+        }
+        // Rewriting reads source units only to require a unique artifact path suffix and to avoid
+        // deploy helper path collisions. A removal affects neither unless the removed unit is a
+        // helper path or ends with another unit's path.
+        previous.difference(current).any(|removed| {
+            let mut suffix = removed.components();
+            is_deploy_helper_path(removed)
+                || std::iter::from_fn(|| suffix.next().map(|_| suffix.as_path()))
+                    .any(|suffix| !suffix.as_os_str().is_empty() && previous.contains(suffix))
+        })
+    }
 }
 
 impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
@@ -302,6 +321,16 @@ impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
             self,
             source,
             paths.with_language_ref(),
+        )
+    }
+
+    fn is_source_context_change_relevant(
+        &self,
+        previous: &BTreeSet<PathBuf>,
+        current: &BTreeSet<PathBuf>,
+    ) -> bool {
+        <Self as Preprocessor<SolcCompiler>>::is_source_context_change_relevant(
+            self, previous, current,
         )
     }
 }
