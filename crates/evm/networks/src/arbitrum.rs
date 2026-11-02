@@ -13,6 +13,10 @@ pub const ARB_BLOCK_NUMBER_SELECTOR: [u8; 4] = hex!("a3b1b31d");
 /// from storage (800, the EIP-2200 `SLOAD` cost), and copying the 32-byte result costs 3.
 pub const ARB_BLOCK_NUMBER_GAS_COST: u64 = 803;
 
+/// Transaction type of ArbOS internal transactions, such as the `StartBlock` transaction that opens
+/// every block.
+pub const ARBITRUM_INTERNAL_TX_TYPE: u8 = 0x6a;
+
 /// Returns whether `chain_id` is an Arbitrum chain.
 pub fn is_arbitrum_chain(chain_id: u64) -> bool {
     Chain::from_id(chain_id).is_arbitrum()
