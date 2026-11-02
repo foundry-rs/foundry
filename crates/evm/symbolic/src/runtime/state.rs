@@ -336,8 +336,9 @@ impl PathState {
     }
 
     /// Records the account of a failed call that ran no code as a reverter, unless a
-    /// `vm.expectRevert` is pending in this frame: Forge consumes it at this call, so this failure
-    /// must not become the reverter of a later call.
+    /// `vm.expectRevert` is pending in this frame: Forge consumes the expectation at such a call,
+    /// so its failure must not become the reverter of a later call. Symbolic execution does not
+    /// apply the expectation to codeless calls yet.
     pub(crate) fn record_codeless_failure(&mut self, callee: Address) {
         if self.expected_revert.is_none() {
             self.first_failed_callee.get_or_insert(callee);
