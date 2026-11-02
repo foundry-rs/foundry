@@ -86,8 +86,7 @@ impl SymbolicExecutor {
 
         if failure_world.has_code_or_nonce(&mut self.cx, executor, created)? {
             state.world = failure_world;
-            state.return_data = SymReturnData::empty(&mut self.cx);
-            state.stack.push(SymExpr::zero(&mut self.cx))?;
+            self.fail_create_before_frame(executor, state)?;
             return Ok(StepOutcome::Continue);
         }
 
@@ -218,6 +217,33 @@ impl SymbolicExecutor {
             completed_paths,
             CallPathKind::External,
         )
+    }
+
+    /// Fails a CREATE before its frame runs, such as on an insufficient balance or an address
+    /// collision. Like Forge's `create_end`, a pending `vm.expectRevert` is consumed with a depth
+    /// error, because nothing ran below the cheatcode. Reports `Unsupported` where Forge would
+    /// instead match the failure like a revert.
+    pub(super) fn fail_create_before_frame(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        state: &mut PathState,
+    ) -> Result<(), SymbolicError> {
+        state.return_data = match state.expected_revert.take() {
+            None => SymReturnData::empty(&mut self.cx),
+            // Here Forge's depth check is skipped or already passed, so it matches the failure
+            // like a revert.
+            Some(expected) if executor.internal_expect_revert || expected.matched_any() => {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic vm.expectRevert on CREATE that fails before running",
+                ));
+            }
+            Some(_) => error_string_return_data(
+                &mut self.cx,
+                "call didn't revert at a lower depth than cheatcode call depth",
+            ),
+        };
+        state.stack.push(SymExpr::zero(&mut self.cx))?;
+        Ok(())
     }
 }
 
