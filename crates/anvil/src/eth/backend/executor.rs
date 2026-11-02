@@ -37,6 +37,7 @@ use evm2::{
         BlockAccessIndex, BlockStateAccumulator, CONSOLIDATION_REQUEST_ADDRESS,
         HISTORY_STORAGE_ADDRESS, SystemTx, WITHDRAWAL_REQUEST_ADDRESS,
     },
+    interpreter::InstrStop,
 };
 use foundry_evm_hardforks::FoundryHardfork;
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, FoundryTxType};
@@ -294,20 +295,24 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
         Ok(self.evm.state_mut().storage_slot_untracked(&address, &slot)?)
     }
 
-    fn system_call(&mut self, address: Address, data: Bytes) -> Result<Bytes, BlockchainError> {
+    /// Executes and commits a system call to the `name` contract, failing if it does not succeed.
+    fn system_call(
+        &mut self,
+        name: &'static str,
+        address: Address,
+        data: Bytes,
+    ) -> Result<Bytes, BlockchainError> {
         let result = self.evm.system_call(SystemTx::new(address, data))?.commit_to(&mut self.state);
         if result.stop.is_revert() {
             return Err(BlockchainError::Message(format!(
-                "failed to apply {} contract call: execution reverted: {}",
-                system_contract_name(address),
+                "failed to apply {name} contract call: execution reverted: {}",
                 result.output
             )));
         }
         if !result.status {
             return Err(BlockchainError::Message(format!(
-                "failed to apply {} contract call: execution halted: {:?}",
-                system_contract_name(address),
-                result.stop
+                "failed to apply {name} contract call: execution halted: {}",
+                halt_reason_debug(result.stop)
             )));
         }
         Ok(result.output)
@@ -317,13 +322,13 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
     pub(crate) fn apply_pre_execution_changes(&mut self) -> Result<(), BlockchainError> {
         let Some(transitions) = self.ethereum_transitions else { return Ok(()) };
         if transitions.hardfork >= EthereumHardfork::Prague {
-            self.system_call(HISTORY_STORAGE_ADDRESS, Bytes::from(self.parent_hash))?;
+            self.system_call("blockhash", HISTORY_STORAGE_ADDRESS, Bytes::from(self.parent_hash))?;
         }
         if transitions.hardfork >= EthereumHardfork::Cancun {
             let root = transitions.parent_beacon_block_root.ok_or_else(|| {
                 BlockchainError::Message("missing parent beacon block root".to_string())
             })?;
-            self.system_call(BEACON_ROOTS_ADDRESS, Bytes::from(root))?;
+            self.system_call("beacon root", BEACON_ROOTS_ADDRESS, Bytes::from(root))?;
         }
         Ok(())
     }
@@ -451,22 +456,36 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
                     &self.receipts,
                     &mut requests,
                 )?;
-                let withdrawals = self.system_call(WITHDRAWAL_REQUEST_ADDRESS, Bytes::new())?;
+                let withdrawals = self.system_call(
+                    "withdrawal requests",
+                    WITHDRAWAL_REQUEST_ADDRESS,
+                    Bytes::new(),
+                )?;
                 if !withdrawals.is_empty() {
                     requests.push_request_with_type(WITHDRAWAL_REQUEST_TYPE, withdrawals);
                 }
-                let consolidations =
-                    self.system_call(CONSOLIDATION_REQUEST_ADDRESS, Bytes::new())?;
+                let consolidations = self.system_call(
+                    "consolidation requests",
+                    CONSOLIDATION_REQUEST_ADDRESS,
+                    Bytes::new(),
+                )?;
                 if !consolidations.is_empty() {
                     requests.push_request_with_type(CONSOLIDATION_REQUEST_TYPE, consolidations);
                 }
                 if transitions.hardfork >= EthereumHardfork::Amsterdam {
-                    let deposits =
-                        self.system_call(BUILDER_DEPOSIT_REQUEST_ADDRESS, Bytes::new())?;
+                    let deposits = self.system_call(
+                        "builder deposit requests",
+                        BUILDER_DEPOSIT_REQUEST_ADDRESS,
+                        Bytes::new(),
+                    )?;
                     if !deposits.is_empty() {
                         requests.push_request_with_type(BUILDER_DEPOSIT_REQUEST_TYPE, deposits);
                     }
-                    let exits = self.system_call(BUILDER_EXIT_REQUEST_ADDRESS, Bytes::new())?;
+                    let exits = self.system_call(
+                        "builder exit requests",
+                        BUILDER_EXIT_REQUEST_ADDRESS,
+                        Bytes::new(),
+                    )?;
                     if !exits.is_empty() {
                         requests.push_request_with_type(BUILDER_EXIT_REQUEST_TYPE, exits);
                     }
@@ -725,17 +744,20 @@ pub(crate) const fn block_blob_gas_limit(
     if optimism_jovian { block_gas_limit } else { max_blob_gas_per_block }
 }
 
-/// Returns the system contract name used in alloy-evm's `BlockValidationError` messages.
-fn system_contract_name(address: Address) -> &'static str {
-    match address {
-        HISTORY_STORAGE_ADDRESS => "blockhash",
-        BEACON_ROOTS_ADDRESS => "beacon root",
-        WITHDRAWAL_REQUEST_ADDRESS => "withdrawal requests",
-        CONSOLIDATION_REQUEST_ADDRESS => "consolidation requests",
-        BUILDER_DEPOSIT_REQUEST_ADDRESS => "builder deposit requests",
-        BUILDER_EXIT_REQUEST_ADDRESS => "builder exit requests",
-        _ => unreachable!("unknown system contract {address}"),
-    }
+/// Formats an exceptional halt as REVM's `HaltReason` debug output, which alloy-evm's system call
+/// errors printed.
+fn halt_reason_debug(stop: InstrStop) -> String {
+    let out_of_gas = match stop {
+        InstrStop::OutOfGas => "Basic",
+        InstrStop::MemoryOOG => "Memory",
+        InstrStop::MemoryLimitOOG => "MemoryLimit",
+        InstrStop::PrecompileOOG => "Precompile",
+        InstrStop::InvalidOperandOOG => "InvalidOperand",
+        InstrStop::ReentrancySentryOOG => "ReentrancySentry",
+        InstrStop::InvalidImmediateEncoding => return "OpcodeNotFound".to_string(),
+        stop => return format!("{stop:?}"),
+    };
+    format!("OutOfGas({out_of_gas})")
 }
 
 #[cfg(test)]

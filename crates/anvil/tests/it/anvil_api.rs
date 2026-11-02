@@ -1474,6 +1474,27 @@ async fn manual_mining_rpcs_preserve_controls_on_failure() {
     }
 }
 
+// A halting request system call is reported with alloy-evm's message, as before evm2.
+#[tokio::test(flavor = "multi_thread")]
+async fn halting_request_system_call_fails_mining() {
+    let config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(config).await;
+    // The withdrawal requests contract loops until it runs out of gas.
+    let withdrawals = address!("0x00000961ef480eb55e80d19ad83579a64c007002");
+    api.anvil_set_code(withdrawals, Bytes::from_static(&[0x5b, 0x5f, 0x56])).await.unwrap();
+
+    let result =
+        handle.http_provider().raw_request::<_, serde_json::Value>("evm_mine".into(), ()).await;
+    let error = result.unwrap_err();
+    let error = error.as_error_resp().unwrap();
+    assert_eq!(error.code, -32603);
+    assert_eq!(
+        error.message,
+        "failed to apply withdrawal requests contract call: execution halted: OutOfGas(Basic)"
+    );
+    assert_eq!(api.backend.best_number(), 0);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn failed_anvil_mine_preserves_interval_adjustment() {
     let config = NodeConfig::test()
