@@ -126,3 +126,139 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 }
+
+// Only a struct's hash is stored and completing needs the exact struct back, as in EigenLayer
+// withdrawals. The struct is returned and emitted whole, so the dictionary must replay it whole.
+#[forgetest_init]
+fn struct_from_result_and_event_is_reused_whole(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 64;
+        config.invariant.depth = 20;
+        config.invariant.fail_on_revert = false;
+    });
+    prj.add_test(
+        "WithdrawalQueue.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract WithdrawalQueue {
+    struct Withdrawal {
+        address staker;
+        uint256 nonce;
+        uint256 shares;
+        uint32 startBlock;
+    }
+
+    mapping(bytes32 => bool) public pending;
+    uint256 public nonce;
+    bool public completed;
+
+    event WithdrawalQueued(bytes32 root, Withdrawal withdrawal);
+
+    function queue(uint256 amount) external returns (Withdrawal memory w) {
+        w = Withdrawal(msg.sender, nonce, uint256(keccak256(abi.encode(amount, nonce))), uint32(block.number));
+        nonce++;
+        bytes32 root = keccak256(abi.encode(w));
+        pending[root] = true;
+        emit WithdrawalQueued(root, w);
+    }
+
+    function complete(Withdrawal calldata w) external {
+        bytes32 root = keccak256(abi.encode(w));
+        require(pending[root], "not queued");
+        pending[root] = false;
+        completed = true;
+    }
+}
+
+contract WithdrawalQueueTest is Test {
+    WithdrawalQueue q;
+
+    function setUp() public {
+        q = new WithdrawalQueue();
+    }
+
+    function invariant_neverCompleted() public view {
+        require(!q.completed(), "completed a queued withdrawal");
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test", "--fuzz-seed", "1"])).failure().stdout_eq(str![[r#"
+...
+[FAIL: completed a queued withdrawal]
+	[SEQUENCE]
+ invariant_neverCompleted() ([RUNS])
+...
+"#]]);
+}
+
+// The struct is only readable through a getter keyed by the caller, so it reaches the dictionary
+// only when view harvesting is enabled.
+#[forgetest_init]
+fn struct_from_view_is_reused_whole(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 64;
+        config.invariant.depth = 20;
+        config.invariant.fail_on_revert = false;
+        config.invariant.dictionary.include_view_values = true;
+    });
+    prj.add_test(
+        "ViewQueue.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract ViewQueue {
+    struct Withdrawal {
+        address staker;
+        uint256 nonce;
+        uint256 shares;
+    }
+
+    mapping(address => Withdrawal) internal last;
+    mapping(bytes32 => bool) public pending;
+    uint256 public nonce;
+    bool public completed;
+
+    function queue(uint256 amount) external {
+        Withdrawal memory w = Withdrawal(msg.sender, nonce, uint256(keccak256(abi.encode(amount, nonce))));
+        nonce++;
+        last[msg.sender] = w;
+        pending[keccak256(abi.encode(w))] = true;
+    }
+
+    function lastWithdrawal(address staker) external view returns (Withdrawal memory) {
+        return last[staker];
+    }
+
+    function complete(Withdrawal calldata w) external {
+        bytes32 root = keccak256(abi.encode(w));
+        require(pending[root], "not queued");
+        pending[root] = false;
+        completed = true;
+    }
+}
+
+contract ViewQueueTest is Test {
+    ViewQueue q;
+
+    function setUp() public {
+        q = new ViewQueue();
+    }
+
+    function invariant_neverCompleted() public view {
+        require(!q.completed(), "completed a queued withdrawal");
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test", "--fuzz-seed", "1"])).failure().stdout_eq(str![[r#"
+...
+[FAIL: completed a queued withdrawal]
+	[SEQUENCE]
+ invariant_neverCompleted() ([RUNS])
+...
+"#]]);
+}

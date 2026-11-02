@@ -130,6 +130,36 @@ pub(crate) fn fuzz_param_from_state(
     param: &DynSolType,
     state: &impl DictionaryRead,
 ) -> BoxedStrategy<DynSolValue> {
+    let generated = fuzz_param_from_state_inner(param, state);
+    if !param.is_dynamic() && !matches!(param, DynSolType::Tuple(_) | DynSolType::FixedArray(..)) {
+        return generated;
+    }
+
+    // Composite and dynamic values: half the time, reuse a whole value of exactly this type that
+    // the target returned or emitted, so related fields stay consistent (e.g. a struct read from a
+    // getter passed back as-is). Otherwise, or when none was observed, generate it piecewise.
+    let state = state.clone();
+    let param = param.clone();
+    (any::<(bool, prop::sample::Index)>(), generated)
+        .prop_map(move |((reuse, index), generated)| {
+            if !reuse {
+                return generated;
+            }
+            state
+                .with_dictionary(|dict| {
+                    dict.composite_samples(&param).and_then(|values| {
+                        values.get_index(index.index(values.len())).map(|(_, value)| value.clone())
+                    })
+                })
+                .unwrap_or(generated)
+        })
+        .boxed()
+}
+
+fn fuzz_param_from_state_inner(
+    param: &DynSolType,
+    state: &impl DictionaryRead,
+) -> BoxedStrategy<DynSolValue> {
     // Value strategy that uses the state.
     let value = || {
         let state = state.clone();
@@ -827,5 +857,26 @@ mod tests {
 
         assert!(!got_excluded, "select_random_address should not select excluded addresses");
         assert!(got_valid, "select_random_address should select valid (non-excluded) addresses");
+    }
+
+    #[test]
+    fn reuses_whole_struct_from_dictionary() {
+        use alloy_primitives::Address;
+
+        let value = DynSolValue::Tuple(vec![
+            DynSolValue::Address(Address::repeat_byte(0x44)),
+            DynSolValue::Uint(U256::from(123_456_789u64), 256),
+            DynSolValue::Uint(U256::from(77), 32),
+        ]);
+        let ty = value.as_type().unwrap();
+        let mut state = EvmFuzzState::test();
+        state.collect_sample_values([value.clone()], 8);
+
+        let strategy = super::fuzz_param_from_state(&ty, &state);
+        let mut runner = TestRunner::deterministic();
+        let reused =
+            (0..200).filter(|_| strategy.new_tree(&mut runner).unwrap().current() == value).count();
+        // About half the draws reuse the recorded struct whole.
+        assert!((50..=150).contains(&reused), "reused {reused} of 200");
     }
 }
