@@ -63,7 +63,7 @@ pub(crate) struct ForkEndpointIdentity {
     pub(crate) instance_id: Option<B256>,
     pub(crate) source_fork_block_number: Option<u64>,
     pub(crate) source_fork_block_hash: Option<B256>,
-    /// Consensus epoch length reported by the source, independent of local explicit overrides.
+    /// Consensus epoch length learned from compatible sources, independent of local overrides.
     pub(crate) tempo_epoch_length: Option<NonZeroU64>,
 }
 
@@ -73,7 +73,8 @@ impl ForkEndpointIdentity {
         self.hardfork.is_some()
     }
 
-    /// Returns whether two endpoints expose the same fork execution context.
+    /// Returns whether two endpoints expose compatible fork execution contexts.
+    /// Missing optional epoch metadata does not establish a conflict.
     pub(crate) fn context_eq(self, other: Self) -> bool {
         self.execution_chain_id == other.execution_chain_id
             && self.source_chain_id == other.source_chain_id
@@ -83,7 +84,7 @@ impl ForkEndpointIdentity {
             && self.blob_params == other.blob_params
             && self.source_fork_block_number == other.source_fork_block_number
             && self.source_fork_block_hash == other.source_fork_block_hash
-            && self.tempo_epoch_length == other.tempo_epoch_length
+            && self.tempo_epoch_length.zip(other.tempo_epoch_length).is_none_or(|(a, b)| a == b)
     }
 }
 

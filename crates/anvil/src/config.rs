@@ -1957,7 +1957,7 @@ impl NodeConfig {
         let provider = Arc::new(self.fork_provider(eth_rpc_url)?);
         let mut node_info_probe = self.node_info_probe(false);
         for _ in 0..3 {
-            let before =
+            let mut before =
                 self.resolved_fork_endpoint_identity(&provider, &mut node_info_probe).await?;
             eyre::ensure!(
                 before.instance_id != Some(serving_instance_id),
@@ -1981,6 +1981,16 @@ impl NodeConfig {
                     "replacement fork endpoint does not contain active fork block {block_number} with hash {block_hash}"
                 );
             }
+            if expected.tempo_epoch_length.is_none()
+                && self.tempo_epoch_length.is_none()
+                && let Some(epoch_length) = before.tempo_epoch_length
+            {
+                eyre::ensure!(
+                    epoch_length == DEFAULT_TEMPO_EPOCH_LENGTH,
+                    "replacement fork endpoint reveals a different Tempo epoch length; use anvil_reset to rebuild consensus"
+                );
+            }
+            before.tempo_epoch_length = before.tempo_epoch_length.or(expected.tempo_epoch_length);
             return Ok((provider, before));
         }
         eyre::bail!(
@@ -2036,10 +2046,11 @@ impl NodeConfig {
         );
     }
 
+    /// Checks pinned source identity and retains epoch metadata learned from matching mirrors.
     pub(crate) async fn fork_context_matches(
         &self,
         eth_rpc_url: &str,
-        expected: ForkEndpointIdentity,
+        expected: &mut ForkEndpointIdentity,
         block_number: u64,
         block_hash: B256,
     ) -> Result<bool> {
@@ -2065,9 +2076,15 @@ impl NodeConfig {
                     redact_url(eth_rpc_url)
                 );
             }
-            return Ok(
-                before == expected && block.is_some_and(|block| block.header.hash == block_hash)
-            );
+            if before.instance_id == expected.instance_id
+                && before.context_eq(*expected)
+                && block.is_some_and(|block| block.header.hash == block_hash)
+            {
+                expected.tempo_epoch_length =
+                    expected.tempo_epoch_length.or(before.tempo_epoch_length);
+                return Ok(true);
+            }
+            return Ok(false);
         }
         Ok(false)
     }
@@ -2075,16 +2092,21 @@ impl NodeConfig {
     pub(crate) async fn fork_urls_match_context(
         &self,
         fork_urls: &[String],
-        expected: ForkEndpointIdentity,
+        mut expected: ForkEndpointIdentity,
         block_number: u64,
         block_hash: B256,
     ) -> Result<bool> {
+        let original = expected;
         for eth_rpc_url in Self::fork_urls_requiring_revalidation(fork_urls, expected) {
-            if !self.fork_context_matches(eth_rpc_url, expected, block_number, block_hash).await? {
+            if !self
+                .fork_context_matches(eth_rpc_url, &mut expected, block_number, block_hash)
+                .await?
+            {
                 return Ok(false);
             }
         }
-        Ok(true)
+        // A newly discovered schedule requires rebuilding state with that configuration.
+        Ok(expected == original)
     }
 
     const fn fork_urls_requiring_revalidation(
@@ -2173,7 +2195,7 @@ impl NodeConfig {
         // Resolve identity, block, and fee data as one stable snapshot. An upstream Anvil can
         // reset between any two RPC calls, so verify the endpoint identity on both sides.
         let StableForkSnapshot {
-            endpoint_identity: fork_identity,
+            endpoint_identity: mut fork_identity,
             state_is_mutable,
             block_number: fork_block_number,
             transaction_replay: fork_transaction_replay,
@@ -2385,7 +2407,7 @@ latest block number: {latest_block}"
 
         for mirror_url in self.fork_urls.iter().skip(1) {
             if !self
-                .fork_context_matches(mirror_url, fork_identity, fork_block_number, block_hash)
+                .fork_context_matches(mirror_url, &mut fork_identity, fork_block_number, block_hash)
                 .await?
             {
                 eyre::bail!(
@@ -2397,7 +2419,12 @@ latest block number: {latest_block}"
         }
         if self.requires_primary_fork_revalidation(fork_identity)
             && !self
-                .fork_context_matches(&eth_rpc_url, fork_identity, fork_block_number, block_hash)
+                .fork_context_matches(
+                    &eth_rpc_url,
+                    &mut fork_identity,
+                    fork_block_number,
+                    block_hash,
+                )
                 .await?
         {
             eyre::bail!("primary fork endpoint changed while its context was being validated");
@@ -3040,7 +3067,7 @@ mod tests {
             0,
         )
         .await;
-        let expected = ForkEndpointIdentity {
+        let mut expected = ForkEndpointIdentity {
             execution_chain_id: NamedChain::Mainnet as u64,
             source_chain_id: NamedChain::Mainnet as u64,
             network: Some(NetworkVariant::Ethereum),
@@ -3054,7 +3081,7 @@ mod tests {
         };
 
         let error = NodeConfig::test()
-            .fork_context_matches(&fork_url, expected, 0, B256::ZERO)
+            .fork_context_matches(&fork_url, &mut expected, 0, B256::ZERO)
             .await
             .unwrap_err();
 

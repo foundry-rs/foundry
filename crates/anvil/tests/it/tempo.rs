@@ -49,7 +49,10 @@ use commonware_cryptography::bls12381::primitives::{
     ops,
     variant::MinSig,
 };
-use foundry_common::{FoundryTransactionBuilder, provider::RetryProvider};
+use foundry_common::{
+    FoundryTransactionBuilder,
+    provider::{RetryProvider, redact_url},
+};
 use foundry_evm::core::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, ITIP20ChannelReserve, PATH_USD_ADDRESS,
     TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, THETA_USD_ADDRESS,
@@ -60,7 +63,7 @@ use foundry_primitives::{
 };
 use foundry_test_utils::rpc::{
     spawn_rpc_proxy_canned_method, spawn_rpc_proxy_mapping_method,
-    spawn_rpc_proxy_rejecting_method_after,
+    spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_rejecting_method_after,
 };
 use futures::StreamExt;
 use serde::Deserialize;
@@ -8439,10 +8442,16 @@ async fn tempo_consensus_fork_discovers_source_epoch_length() {
     let (source_api, source) =
         spawn(config.clone().with_tempo_epoch_length(NonZeroU64::new(3).unwrap())).await;
     source_api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
+    let hidden = spawn_rpc_proxy_rejecting_method_after(
+        source.http_endpoint(),
+        "anvil_tempoConsensusIdentity",
+        0,
+    )
+    .await;
     let (api, handle) = spawn(
         config
             .clone()
-            .with_eth_rpc_url(Some(source.http_endpoint()))
+            .with_fork_urls(vec![source.http_endpoint(), hidden.clone()])
             .with_fork_block_number(Some(3u64)),
     )
     .await;
@@ -8450,7 +8459,33 @@ async fn tempo_consensus_fork_discovers_source_epoch_length() {
     let identity = tempo_consensus_identity(&provider).await;
     assert_eq!(identity.epoch_length, 3);
     api.mine_one().await.unwrap();
-    assert_tempo_fork_round(&provider, &identity, 4, (1, 2, 1)).await;
+    let finalized = assert_tempo_fork_round(&provider, &identity, 4, (1, 2, 1)).await;
+    let (conflicting, _) = spawn_rpc_proxy_canned_method(
+        source.http_endpoint(),
+        "anvil_tempoConsensusIdentity",
+        serde_json::json!({ "epochLength": 6 }),
+    )
+    .await;
+    let before = serde_json::to_value(api.serialized_state(false).await.unwrap()).unwrap();
+    for url in [source.http_endpoint(), hidden] {
+        api.anvil_set_rpc_url(url.clone()).await.unwrap();
+        let fork = api.backend.get_fork().unwrap();
+        let config_before = fork.config.read().clone();
+        let error = api.anvil_set_rpc_url(conflicting.clone()).await.unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "replacement fork endpoint has an incompatible execution context"
+        );
+        assert!(Arc::ptr_eq(&fork.config.read().provider, &config_before.provider));
+        assert_eq!(fork.config.read().fork_urls, vec![url]);
+        assert_eq!(tempo_consensus_identity(&provider).await, identity);
+        assert_eq!(tempo_finalization(&provider, 4).await, finalized);
+        assert_eq!(
+            serde_json::to_value(api.serialized_state(false).await.unwrap()).unwrap(),
+            before
+        );
+    }
+    api.anvil_set_rpc_url(source.http_endpoint()).await.unwrap();
 
     let (replacement_api, replacement) =
         spawn(config.with_tempo_epoch_length(NonZeroU64::new(6).unwrap())).await;
@@ -8503,15 +8538,28 @@ async fn tempo_consensus_fork_epoch_metadata_and_fallbacks() {
         } else {
             spawn_rpc_proxy_rejecting_method_after(endpoint, method, 0).await
         };
-        let mut config =
-            config.clone().with_eth_rpc_url(Some(endpoint)).with_fork_block_number(Some(1u64));
+        let mut config = config
+            .clone()
+            .with_eth_rpc_url(Some(endpoint.clone()))
+            .with_fork_block_number(Some(1u64));
         if explicit {
             config = config.with_tempo_epoch_length(NonZeroU64::new(3).unwrap());
         }
-        let (_api, handle) = spawn(config).await;
+        let (api, handle) = spawn(config).await;
         let provider = handle.http_provider();
         let identity = tempo_consensus_identity(&provider).await;
         assert_eq!(identity.epoch_length, length);
+        if !native {
+            let source_epoch = if explicit { 6 } else { 21_600 };
+            let (known, _) = spawn_rpc_proxy_canned_method(
+                endpoint,
+                method,
+                serde_json::json!({ "epochLength": source_epoch }),
+            )
+            .await;
+            api.anvil_set_rpc_url(known).await.unwrap();
+            assert_eq!(tempo_consensus_identity(&provider).await, identity);
+        }
     }
 }
 
@@ -8568,6 +8616,91 @@ async fn tempo_consensus_fork_rejects_malformed_epoch_metadata() {
             );
             assert_eq!(tempo_finalization(&provider, 1).await, finalized);
             assert_eq!(tempo_consensus_identity(&provider).await, identity);
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_fork_epoch_metadata_mirrors() {
+    let config = NodeConfig::test_tempo().with_no_mining(true);
+    let (source_api, source) =
+        spawn(config.clone().with_tempo_epoch_length(NonZeroU64::new(3).unwrap())).await;
+    source_api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
+    for native in [false, true] {
+        let (method, endpoint) = if native {
+            (
+                "debug_chainConfig",
+                spawn_rpc_proxy_rejecting_method_after(source.http_endpoint(), "anvil_nodeInfo", 0)
+                    .await,
+            )
+        } else {
+            ("anvil_tempoConsensusIdentity", source.http_endpoint())
+        };
+        let (known, _) = spawn_rpc_proxy_canned_method(
+            endpoint,
+            method,
+            serde_json::json!({ "epochLength": 3 }),
+        )
+        .await;
+        let hidden = spawn_rpc_proxy_rejecting_method_after(known.clone(), method, 0).await;
+        let (conflicting, _) = spawn_rpc_proxy_canned_method(
+            known.clone(),
+            method,
+            serde_json::json!({ "epochLength": 6 }),
+        )
+        .await;
+        for valid in [true, false] {
+            let mut urls = vec![hidden.clone(), known.clone()];
+            if !valid {
+                urls.push(conflicting.clone());
+            }
+            let result =
+                try_spawn(config.clone().with_fork_urls(urls).with_fork_block_number(Some(3u64)))
+                    .await;
+            if valid {
+                let (_api, handle) = result.unwrap();
+                assert_eq!(tempo_consensus_identity(&handle.http_provider()).await.epoch_length, 3);
+                if !native {
+                    let (unknown_api, unknown) = spawn(
+                        config
+                            .clone()
+                            .with_eth_rpc_url(Some(hidden.clone()))
+                            .with_fork_block_number(Some(1u64)),
+                    )
+                    .await;
+                    let error = unknown_api.anvil_set_rpc_url(known.clone()).await.unwrap_err();
+                    assert_eq!(
+                        error.to_string(),
+                        "replacement fork endpoint reveals a different Tempo epoch length; use anvil_reset to rebuild consensus"
+                    );
+                    assert_eq!(
+                        tempo_consensus_identity(&unknown.http_provider()).await.epoch_length,
+                        21_600
+                    );
+                    // Reveal metadata only after the initial snapshot and primary revalidation.
+                    let late =
+                        spawn_rpc_proxy_method_not_found_before(known.clone(), method, 4).await;
+                    unknown_api
+                        .anvil_reset(Some(Forking {
+                            json_rpc_url: Some(late),
+                            block_number: Some(1),
+                        }))
+                        .await
+                        .unwrap();
+                    assert_eq!(
+                        tempo_consensus_identity(&unknown.http_provider()).await.epoch_length,
+                        3
+                    );
+                }
+            } else {
+                assert_eq!(
+                    result.err().expect("conflicting mirror epochs must fail startup").to_string(),
+                    format!(
+                        "fork fallback endpoint `{}` does not expose the primary endpoint's execution and block context",
+                        redact_url(&conflicting)
+                    )
+                );
+            }
         }
     }
 }
