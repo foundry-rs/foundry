@@ -346,8 +346,8 @@ impl SymbolicExecutor {
                 CallStatus::Revert => Some(created),
                 CallStatus::ExceptionalHalt | CallStatus::Failure => Some(CHEATCODE_ADDRESS),
             };
-            match self.join_call_outcome(executor, state, outcome, failed_callee)? {
-                JoinedCallOutcome::Rejected => {}
+            // Like Forge, a cheatcode CREATE leaves `vm.assumeNoRevert` for the next call.
+            match self.join_call_outcome(executor, state, outcome, failed_callee, None)? {
                 JoinedCallOutcome::Failure(parent)
                 | JoinedCallOutcome::Success { parent, unmet_expected_revert: true, .. } => {
                     *state = parent;
