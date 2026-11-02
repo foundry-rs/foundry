@@ -2437,6 +2437,45 @@ async fn cannot_deploy_with_nonexist_create2(prj: _, cmd: _) {
         .broadcast(ScriptOutcome::ScriptFailed);
 }
 
+// Tests that broadcast salted creates go through the CREATE2 factory on Optimism, with Ethereum as
+// the control.
+// <https://github.com/foundry-rs/foundry/issues/18048>
+#[forgetest]
+fn broadcast_create2_uses_factory_on_optimism(prj: _, cmd: _) {
+    prj.add_script(
+        "Create2Factory.s.sol",
+        r#"
+interface Vm {
+    function startBroadcast() external;
+    function stopBroadcast() external;
+    function computeCreate2Address(bytes32 salt, bytes32 initCodeHash) external pure returns (address);
+}
+
+contract C {}
+
+contract Create2Factory {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        vm.startBroadcast();
+        address deployed = address(new C{salt: 0}());
+        vm.stopBroadcast();
+        require(
+            deployed == vm.computeCreate2Address(0, keccak256(type(C).creationCode)),
+            "not deployed through the CREATE2 factory"
+        );
+    }
+}
+"#,
+    );
+
+    for network in ["ethereum", "optimism"] {
+        cmd.forge_fuse()
+            .args(["script", "script/Create2Factory.s.sol:Create2Factory", "--network", network])
+            .assert_success();
+    }
+}
+
 #[forgetest]
 async fn can_deploy_and_simulate_25_txes_concurrently(prj: _, cmd: _) {
     let (_api, handle) = spawn(NodeConfig::test()).await;
