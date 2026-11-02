@@ -340,6 +340,9 @@ struct Analyzer<'ctx, 's, 'c, 'gcx> {
     reentrancy_eth_enabled: bool,
     reentrancy_no_eth_enabled: bool,
     reentrancy_balance_enabled: bool,
+    /// Prunes branches that path predicates rule out; tied to the lint config so the ETH lints
+    /// report the same whether or not an entry point reads a balance.
+    prune_paths: bool,
     /// Set while re-running code only to refine the balance analysis.
     balance_only_analysis: bool,
     /// Balance facts about the return values of each analysed internal call site.
@@ -374,8 +377,8 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         gcx: Gcx<'gcx>,
         entry: &'gcx hir::Function<'gcx>,
     ) -> Self {
-        let reentrancy_balance_enabled =
-            ctx.is_lint_enabled(REENTRANCY_BALANCE.id) && reaches_balance_read(gcx, entry);
+        let prune_paths = ctx.is_lint_enabled(REENTRANCY_BALANCE.id);
+        let reentrancy_balance_enabled = prune_paths && reaches_balance_read(gcx, entry);
         Self {
             ctx,
             gcx,
@@ -388,6 +391,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
             reentrancy_eth_enabled: ctx.is_lint_enabled(REENTRANCY_ETH.id),
             reentrancy_no_eth_enabled: ctx.is_lint_enabled(REENTRANCY_NO_ETH.id),
             reentrancy_balance_enabled,
+            prune_paths,
             balance_only_analysis: false,
             call_balance_values: HashMap::new(),
             return_collectors: Vec::new(),
@@ -608,8 +612,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         then_state: &mut FlowState,
         else_state: &mut FlowState,
     ) -> (bool, bool) {
-        let predicate =
-            self.reentrancy_balance_enabled.then(|| path_predicate(self.gcx, cond)).flatten();
+        let predicate = self.prune_paths.then(|| path_predicate(self.gcx, cond)).flatten();
         let Some((predicate, value)) = predicate else { return (true, true) };
         (
             then_state.constrain_path((predicate, value)),
@@ -716,8 +719,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                 }
             }
             ExprKind::Binary(lhs, op, rhs)
-                if self.reentrancy_balance_enabled
-                    && matches!(op.kind, BinOpKind::And | BinOpKind::Or) =>
+                if self.prune_paths && matches!(op.kind, BinOpKind::And | BinOpKind::Or) =>
             {
                 self.analyze_expr(lhs, state);
                 let rhs_outcome = op.kind == BinOpKind::And;
