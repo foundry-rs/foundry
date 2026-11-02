@@ -82,21 +82,8 @@ impl TempoConsensus {
     /// [`Self::at_header`] to inherit an existing native round.
     pub fn at_height(seed: B256, epoch_length: NonZeroU64, height: u64) -> Self {
         let epoch = height / epoch_length;
-        let initial = Checkpoint {
-            height,
-            view: if epoch == 0 { height } else { height % epoch_length + 1 },
-            counter: 0,
-            committees: BTreeMap::from([(epoch, Arc::new(Committee::derive(seed, 0)))]),
-        };
-        Self {
-            seed,
-            epoch_length,
-            initial: initial.clone(),
-            state: initial,
-            checkpoints: BTreeMap::new(),
-            finalizations: BTreeMap::new(),
-            retained_height: height,
-        }
+        let view = if epoch == 0 { height } else { height % epoch_length + 1 };
+        Self::at_height_with_view(seed, epoch_length, height, view)
     }
 
     /// Starts an unsigned signing segment at a native header, inheriting its actual view.
@@ -109,23 +96,20 @@ impl TempoConsensus {
         epoch_length: NonZeroU64,
         header: &TempoHeader,
     ) -> Result<Self, TempoConsensusError> {
-        let mut consensus = Self::at_height(seed, epoch_length, header.inner.number);
-        if let Some(context) = header.consensus_context {
-            let expected = header.inner.number / epoch_length;
-            if context.epoch != expected {
-                return Err(TempoConsensusError::InvalidAnchorEpoch {
-                    expected,
-                    actual: context.epoch,
-                });
-            }
-            if header.inner.number == 0 || context.view == 0 || context.parent_view >= context.view
-            {
-                return Err(TempoConsensusError::InvalidContext);
-            }
-            consensus.initial.view = context.view;
-            consensus.state.view = context.view;
+        let Some(context) = header.consensus_context else {
+            return Ok(Self::at_height(seed, epoch_length, header.inner.number));
+        };
+        let expected = header.inner.number / epoch_length;
+        if context.epoch != expected {
+            return Err(TempoConsensusError::InvalidAnchorEpoch {
+                expected,
+                actual: context.epoch,
+            });
         }
-        Ok(consensus)
+        if header.inner.number == 0 || context.view == 0 || context.parent_view >= context.view {
+            return Err(TempoConsensusError::InvalidContext);
+        }
+        Ok(Self::at_height_with_view(seed, epoch_length, header.inner.number, context.view))
     }
 
     /// Inherits a remote fork's native round, rejecting non-genesis roots without context.
@@ -384,10 +368,27 @@ impl TempoConsensus {
     pub(super) fn unsigned_successor(&self) -> Result<Self, TempoConsensusError> {
         let height = self.state.height.checked_add(1).ok_or(TempoConsensusError::HeightOverflow)?;
         let (_, view, _) = self.round(height)?;
-        let mut consensus = Self::at_height(self.seed, self.epoch_length, height);
-        consensus.initial.view = view;
-        consensus.state.view = view;
-        Ok(consensus)
+        Ok(Self::at_height_with_view(self.seed, self.epoch_length, height, view))
+    }
+
+    /// Initializes the unsigned anchor and current state with the same authoritative view.
+    fn at_height_with_view(seed: B256, epoch_length: NonZeroU64, height: u64, view: u64) -> Self {
+        let epoch = height / epoch_length;
+        let initial = Checkpoint {
+            height,
+            view,
+            counter: 0,
+            committees: BTreeMap::from([(epoch, Arc::new(Committee::derive(seed, 0)))]),
+        };
+        Self {
+            seed,
+            epoch_length,
+            initial: initial.clone(),
+            state: initial,
+            checkpoints: BTreeMap::new(),
+            finalizations: BTreeMap::new(),
+            retained_height: height,
+        }
     }
 }
 

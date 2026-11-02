@@ -2,9 +2,7 @@
 use self::{in_memory_db::StateRootDb, state::trie_storage, tempo::TempoChain};
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
-    config::{
-        DEFAULT_TEMPO_EPOCH_LENGTH, ForkTransactionReplay, PruneStateHistoryConfig, source_hardfork,
-    },
+    config::{ForkTransactionReplay, PruneStateHistoryConfig, source_hardfork},
     eth::{
         backend::{
             cheats::{CheatEcrecover, CheatsManager, NextBlockOverrides},
@@ -4740,11 +4738,7 @@ impl<N: Network> Backend<N> {
             let consensus = if let Some(fork) = source {
                 TempoChain::fork_consensus(&fork, &cfg).await?
             } else {
-                TempoConsensus::at_height(
-                    cfg.tempo_consensus_seed(),
-                    cfg.tempo_epoch_length.unwrap_or(DEFAULT_TEMPO_EPOCH_LENGTH),
-                    blockchain.storage.read().best_number,
-                )
+                TempoChain::local_consensus(&cfg, blockchain.storage.read().best_number)
             };
             let mut storage = blockchain.storage.write();
             let mut tempo = TempoChain::new(consensus);
@@ -5641,13 +5635,13 @@ impl<N: Network> Backend<N> {
             live_db.maybe_flush_cache().map_err(BlockchainError::Internal)?;
         }
 
-        let tempo_anchor = self.blockchain.storage.read().tempo.as_ref().map(|_| {
-            TempoConsensus::at_height(
-                node_config.tempo_consensus_seed(),
-                node_config.tempo_epoch_length.unwrap_or(DEFAULT_TEMPO_EPOCH_LENGTH),
-                storage.best_number,
-            )
-        });
+        let tempo_anchor = self
+            .blockchain
+            .storage
+            .read()
+            .tempo
+            .as_ref()
+            .map(|_| TempoChain::local_consensus(&node_config, storage.best_number));
 
         *live_config = node_config;
         *live_db = db;
@@ -5692,19 +5686,22 @@ impl<N: Network> Backend<N> {
         let block = self.block_by_hash(hash).await?.ok_or(BlockchainError::BlockNotFound)?;
         let removed_logs = self.removed_logs_since(num);
         let mut db = self.db.write().await;
-        let tempo_anchor = self
-            .blockchain
-            .storage
-            .read()
-            .tempo
-            .as_ref()
-            .map(|tempo| {
-                let header = serde_json::to_value(&block)
-                    .and_then(serde_json::from_value::<FoundryHeader>)
-                    .map_err(|error| BlockchainError::Internal(error.to_string()))?;
-                tempo.prepare_anchor(&header)
-            })
-            .transpose()?;
+        let tempo_anchor = {
+            let storage = self.blockchain.storage.read();
+            storage
+                .tempo
+                .as_ref()
+                .map(|tempo| {
+                    if let Some(block) = storage.blocks.get(&hash) {
+                        return tempo.prepare_anchor(&block.header);
+                    }
+                    let header = serde_json::to_value(&block)
+                        .and_then(serde_json::from_value::<FoundryHeader>)
+                        .map_err(|error| BlockchainError::Internal(error.to_string()))?;
+                    tempo.prepare_anchor(&header)
+                })
+                .transpose()?
+        };
         if !db.revert_state(id, RevertStateSnapshotAction::RevertRemove) {
             return Ok(false);
         }

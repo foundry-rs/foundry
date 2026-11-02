@@ -277,6 +277,15 @@ impl TempoChain {
             .unsigned_successor()
             .map_err(|error| BlockchainError::Internal(error.to_string()))
     }
+
+    /// Starts an unsigned local segment without inferring fork metadata.
+    pub(super) fn local_consensus(config: &NodeConfig, height: u64) -> TempoConsensus {
+        TempoConsensus::at_height(
+            config.tempo_consensus_seed(),
+            config.tempo_epoch_length.unwrap_or(DEFAULT_TEMPO_EPOCH_LENGTH),
+            height,
+        )
+    }
 }
 
 impl fmt::Debug for TempoChain {
@@ -664,7 +673,7 @@ mod tests {
             let _db = api.backend.db.write().await;
             let mut storage = api.backend.blockchain.storage.write();
             let tempo = storage.tempo.as_mut().unwrap();
-            let anchor = tempo.prepare_anchor(&unsigned_tempo_block(5).header).unwrap();
+            let anchor = unsigned_anchor(tempo, 5);
             tempo.reanchor(anchor);
         }
         let error = api.mine_one().await.unwrap_err();
@@ -678,7 +687,7 @@ mod tests {
             let _db = api.backend.db.write().await;
             let mut storage = api.backend.blockchain.storage.write();
             let tempo = storage.tempo.as_mut().unwrap();
-            let anchor = tempo.prepare_anchor(&unsigned_tempo_block(0).header).unwrap();
+            let anchor = unsigned_anchor(tempo, 0);
             tempo.reanchor(anchor);
         }
         api.mine_one().await.unwrap();
@@ -919,7 +928,7 @@ mod tests {
         chain.proof_states.write().insert(hash, StateDb::new(MemDb::default()));
         assert!(chain.proof_states.read().get_state(&hash).is_some());
 
-        chain.reanchor(chain.prepare_anchor(&unsigned_tempo_block(3).header).unwrap());
+        chain.reanchor(unsigned_anchor(&chain, 3));
 
         assert!(chain.proof_states.read().get_state(&hash).is_none());
     }
@@ -937,8 +946,7 @@ mod tests {
 
         chain.unwind(&unsigned_tempo_block(3)).unwrap();
         assert!(chain.consensus.latest().is_none());
-        let _ = chain
-            .restore(U256::ONE, chain.prepare_anchor(&unsigned_tempo_block(5).header).unwrap());
+        let _ = chain.restore(U256::ONE, unsigned_anchor(&chain, 5));
         assert_eq!(chain.consensus.rotate().unwrap(), expected.rotate().unwrap());
 
         // Restoring the snapshot restores anchor 5, so height 4 is an unsigned ancestor again.
@@ -1140,21 +1148,19 @@ mod tests {
         let mut chain =
             TempoChain::new(TempoConsensus::at_height(B256::ZERO, NonZeroU64::new(3).unwrap(), 0));
         chain.snapshot(U256::ONE, None);
-        chain.reanchor(chain.prepare_anchor(&unsigned_tempo_block(3).header).unwrap());
+        chain.reanchor(unsigned_anchor(&chain, 3));
         assert!(chain.snapshots.is_empty());
         chain.snapshot(U256::from(2), None);
         chain.snapshot(U256::from(3), None);
         let expected = chain.consensus.clone().rotate().unwrap();
         chain.consensus.rotate().unwrap();
         chain.snapshot(U256::from(4), None);
-        let _ = chain
-            .restore(U256::from(3), chain.prepare_anchor(&unsigned_tempo_block(3).header).unwrap());
+        let _ = chain.restore(U256::from(3), unsigned_anchor(&chain, 3));
         assert_eq!(chain.consensus.rotate().unwrap(), expected);
         assert_eq!(chain.snapshots.keys().copied().collect::<Vec<_>>(), vec![U256::from(2)]);
 
         // Restoring a pre-import snapshot uses its database height, not the current anchor.
-        let _ = chain
-            .restore(U256::ONE, chain.prepare_anchor(&unsigned_tempo_block(1).header).unwrap());
+        let _ = chain.restore(U256::ONE, unsigned_anchor(&chain, 1));
         assert!(chain.snapshots.is_empty());
         assert_eq!(chain.consensus.anchor_height(), 1);
         assert!(chain.consensus.latest().is_none());
@@ -1182,6 +1188,10 @@ mod tests {
         let mut header = TempoHeader::default();
         header.inner.number = height;
         Block::new(header.into(), Default::default())
+    }
+
+    fn unsigned_anchor(chain: &TempoChain, height: u64) -> TempoConsensus {
+        chain.prepare_anchor(&unsigned_tempo_block(height).header).unwrap()
     }
 
     #[tokio::test(flavor = "multi_thread")]
