@@ -613,6 +613,30 @@ async fn test_set_storage_on_empty_account_kept_until_creation() {
     assert_eq!(api.get_code(destroyed, None).await.unwrap(), bytes!(""));
     assert_eq!(api.storage_at(destroyed, U256::ZERO, None).await.unwrap(), B256::ZERO);
 
+    // A contract created in one transaction and destroyed by a later one in the same block also
+    // discards the storage. The init code deploys `SELFDESTRUCT(CALLER)`.
+    let init_code = bytes!("6002600c60003960026000f333ff");
+    let destroyed = factory.create2(B256::ZERO, keccak256(&init_code));
+    api.anvil_set_storage_at(destroyed, U256::ZERO, one).await.unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
+    let create = TransactionRequest::default().to(factory).input(init_code.into()).nonce(nonce);
+    let destroy = TransactionRequest::default().to(destroyed).nonce(nonce + 1);
+    let mut receipts = Vec::new();
+    for tx in [create, destroy] {
+        let tx = WithOtherFields::new(tx.from(from).gas_limit(100_000));
+        receipts.push(provider.send_transaction(tx).await.unwrap());
+    }
+    api.mine_one().await.unwrap();
+    for receipt in receipts {
+        let receipt = receipt.get_receipt().await.unwrap();
+        assert!(receipt.status());
+        assert_eq!(receipt.block_number, Some(api.backend.best_number()));
+    }
+    api.anvil_set_auto_mine(true).await.unwrap();
+    assert_eq!(api.get_code(destroyed, None).await.unwrap(), bytes!(""));
+    assert_eq!(api.storage_at(destroyed, U256::ZERO, None).await.unwrap(), B256::ZERO);
+
     // A value transfer revives a deleted account without its storage. `SELFDESTRUCT(CALLER)`
     // deletes the account.
     let deleted = Address::random();

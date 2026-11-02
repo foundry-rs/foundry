@@ -528,11 +528,11 @@ pub fn apply_block_overrides<ExtDB>(
 
 /// Records transaction changes in a [`BlockStateAccumulator`] for [`commit_changes`].
 ///
-/// [`EvmDb`] loads an empty account as absent even when Anvil holds storage for it, such as storage
-/// set on an empty address. evm2 records an account absent before the block as created, with no
-/// storage, so an account evm2 did not create, or created and deleted, is recorded with an
-/// existing empty original instead. A creation over an existing account discards its storage, which
-/// evm2 does not report as a wipe.
+/// From Spurious Dragon on, [`EvmDb`] loads an empty account as absent even when Anvil holds
+/// storage for it, such as storage set on an empty address. evm2 records an account absent before
+/// the block as created, with no storage, so every account is recorded with an existing empty
+/// original instead, and a created account's storage is wiped explicitly. This also covers a
+/// creation over an existing account, which evm2 does not report as a wipe.
 pub(crate) struct BlockChanges<'a> {
     block: &'a mut BlockStateAccumulator,
     /// The current account's slots, which evm2 visits before the account itself.
@@ -560,15 +560,15 @@ impl StateChangeSink for BlockChanges<'_> {
     }
 
     fn account(&mut self, change: AccountChangeRef<'_>) -> Result<(), Self::Error> {
-        if change.created && change.original.is_some() {
+        if change.created {
             self.block.storage_wipe(change.address)?;
         }
         self.flush_storage()?;
         let empty = AccountInfo::default();
-        if change.original.is_none() && !(change.created && change.current.is_some()) {
-            return self.block.account(AccountChangeRef { original: Some(&empty), ..change });
-        }
-        self.block.account(change)
+        self.block.account(AccountChangeRef {
+            original: Some(change.original.unwrap_or(&empty)),
+            ..change
+        })
     }
 
     fn storage_wipe(&mut self, address: Address) -> Result<(), Self::Error> {
@@ -593,7 +593,8 @@ impl StateChangeSink for BlockChanges<'_> {
 ///
 /// A created or deleted account starts from empty storage: evm2 drops the storage wipe marker of
 /// accounts that did not exist before the block, so it is applied here before storage writes.
-/// Changes recorded through [`BlockChanges`] only have no original account when it was created.
+/// Changes recorded through [`BlockChanges`] always have an original account and record the wipe
+/// of a created account, so only deletions take this path for them.
 pub(crate) fn commit_changes(cache: &mut Cache, changes: &BlockStateAccumulator) {
     fn wipe(account: &mut DbAccount) {
         account.storage.clear();
@@ -631,7 +632,7 @@ pub(crate) fn commit_changes(cache: &mut Cache, changes: &BlockStateAccumulator)
                 account.info = info;
                 match account.account_state {
                     AccountState::None => account.account_state = AccountState::Touched,
-                    // A revived account has no storage left.
+                    // A revived account exists again, without its old storage.
                     AccountState::NotExisting => {
                         account.account_state = AccountState::StorageCleared
                     }
