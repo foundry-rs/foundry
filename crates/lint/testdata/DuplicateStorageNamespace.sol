@@ -74,3 +74,62 @@ contract OtherScheme is TokenBase {
         uint256 value;
     }
 }
+
+abstract contract DuplicateBase {
+    /// @custom:storage-location erc7201:example.dup
+    struct A1 {
+        uint256 a;
+    }
+
+    /// @custom:storage-location erc7201:example.dup
+    struct A2 { //~WARN: ERC-7201 namespace `example.dup` is already declared by `DuplicateBase.A1`
+        uint256 b;
+    }
+}
+
+// A new struct is reported even though the base already has a collision.
+contract AddsToDuplicateBase is DuplicateBase {
+    /// @custom:storage-location erc7201:example.dup
+    struct A3 { //~WARN: ERC-7201 namespace `example.dup` is already declared by `DuplicateBase.A1`
+        uint256 c;
+    }
+}
+
+abstract contract SingleDup {
+    /// @custom:storage-location erc7201:example.dup
+    struct A4 {
+        uint256 d;
+    }
+}
+
+// Combining a colliding base with another declaration is a new collision.
+contract CombinesDuplicateBase is DuplicateBase, SingleDup {} //~WARN: ERC-7201 namespace `example.dup` is declared by both `DuplicateBase.A1` and `SingleDup.A4`
+
+// Every redeclaring struct is reported.
+contract TwoRedeclarations is TokenBase {
+    /// @custom:storage-location erc7201:example.token
+    struct Y1 { //~WARN: ERC-7201 namespace `example.token` is already declared by `TokenBase.TokenStorage`
+        uint256 a;
+    }
+
+    /// @custom:storage-location erc7201:example.token
+    struct Y2 { //~WARN: ERC-7201 namespace `example.token` is already declared by `TokenBase.TokenStorage`
+        uint256 b;
+    }
+}
+
+// Colliding bases and a redeclaring struct are both reported.
+contract CombinedAndRedeclared is TokenBase, OtherTokenBase { //~WARN: ERC-7201 namespace `example.token` is declared by both `TokenBase.TokenStorage` and `OtherTokenBase.OtherTokenStorage`
+    /// @custom:storage-location erc7201:example.token
+    struct Z { //~WARN: ERC-7201 namespace `example.token` is already declared by `TokenBase.TokenStorage`
+        uint256 value;
+    }
+}
+
+// Malformed annotations are left to the storage layout decoder.
+contract MalformedAnnotation is TokenBase {
+    /// @custom:storage-location erc7201: example.token
+    struct Malformed {
+        uint256 value;
+    }
+}

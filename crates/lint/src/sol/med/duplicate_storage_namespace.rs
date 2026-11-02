@@ -23,40 +23,54 @@ impl<'gcx> LateLintPass<'gcx> for DuplicateStorageNamespace {
     ) {
         let Some((&id, bases)) = contract.linearized_bases.split_first() else { return };
         for (namespace, structs) in namespaced_structs(gcx, contract.linearized_bases) {
-            // Report a collision once, in the first contract whose hierarchy contains it.
-            if structs.len() < 2
-                || bases.iter().any(|&base| {
-                    namespaced_structs(gcx, gcx.hir.contract(base).linearized_bases)
-                        .get(namespace)
-                        .is_some_and(|structs| structs.len() > 1)
-                })
-            {
+            if structs.len() < 2 {
                 continue;
             }
             let first = qualified_name(gcx, structs[0]);
-            let (span, msg) = match structs
+            // Bases come first, so every struct declared here after the first occurrence collides.
+            for &strukt in &structs[1..] {
+                let strukt = gcx.hir.strukt(strukt);
+                if strukt.contract == Some(id) {
+                    ctx.emit_with_msg(
+                        &DUPLICATE_STORAGE_NAMESPACE,
+                        strukt.name.span,
+                        format!(
+                            "ERC-7201 namespace `{namespace}` is already declared by `{first}`"
+                        ),
+                    );
+                }
+            }
+            // Inherited declarations collide here only if no single base already combines them;
+            // otherwise the collision is reported in that base.
+            let inherited = structs
                 .iter()
-                .rev()
-                .find(|&&s| gcx.hir.strukt(s).contract == Some(id))
+                .filter_map(|&strukt| gcx.hir.strukt(strukt).contract.map(|c| (strukt, c)))
+                .filter(|&(_, declared_in)| declared_in != id)
+                .collect::<Vec<_>>();
+            if let [(first, _), .., (last, _)] = inherited[..]
+                && !bases.iter().any(|&base| {
+                    let hierarchy = gcx.hir.contract(base).linearized_bases;
+                    inherited.iter().all(|(_, declared_in)| hierarchy.contains(declared_in))
+                })
             {
-                Some(&declared_here) => (
-                    gcx.hir.strukt(declared_here).name.span,
-                    format!("ERC-7201 namespace `{namespace}` is already declared by `{first}`"),
-                ),
-                None => (
+                ctx.emit_with_msg(
+                    &DUPLICATE_STORAGE_NAMESPACE,
                     contract.name.span,
                     format!(
-                        "ERC-7201 namespace `{namespace}` is declared by both `{first}` and `{}`",
-                        qualified_name(gcx, structs[1])
+                        "ERC-7201 namespace `{namespace}` is declared by both `{}` and `{}`",
+                        qualified_name(gcx, first),
+                        qualified_name(gcx, last)
                     ),
-                ),
-            };
-            ctx.emit_with_msg(&DUPLICATE_STORAGE_NAMESPACE, span, msg);
+                );
+            }
         }
     }
 }
 
 /// Returns the namespaced structs declared in `contracts`, grouped by namespace, most base first.
+///
+/// Malformed ERC-7201 annotations are skipped: they are not duplicates, and the storage layout
+/// decoder rejects them with a dedicated error.
 fn namespaced_structs<'gcx>(
     gcx: Gcx<'gcx>,
     contracts: &[hir::ContractId],

@@ -6,9 +6,14 @@
 ## What it does
 
 Reports two structs in the same inheritance hierarchy whose `@custom:storage-location` annotations
-declare the same ERC-7201 namespace, including structs declared in the same contract or in two bases
-that a contract combines. Inheriting the same declaration through several paths, and reusing a
-namespace in unrelated contracts, are not reported.
+declare the same ERC-7201 namespace. Each struct that redeclares a namespace already used in the
+contract or its bases is reported, and a contract is reported when it combines bases that declare
+the same namespace. Inheriting the same declaration through several paths, and reusing a namespace
+in unrelated contracts, are not reported.
+
+A collision within a single base is reported only on that base, so a contract that inherits one
+from a dependency that is not linted is not reported unless it adds a declaration of its own.
+Malformed annotations are not reported.
 
 ## Why is this bad?
 
