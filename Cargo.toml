@@ -346,10 +346,10 @@ foundry-compilers = { version = "0.21.0", default-features = false, features = [
 ] }
 foundry-fork-db = { version = "0.27.0", features = ["zstd"] }
 imbl = "7"
-solar = { package = "solar-compiler", version = "=0.2.0", default-features = false }
-solar-cli = { version = "=0.2.0", default-features = false }
-solar-lsp = { version = "=0.2.0", default-features = false }
-solar-lint = { version = "=0.2.0", default-features = false }
+solar = { package = "solar-compiler", version = "=0.3.0", default-features = false }
+solar-cli = { version = "=0.3.0", default-features = false }
+solar-lsp = { version = "=0.3.0", default-features = false }
+solar-lint = { version = "=0.3.0", default-features = false }
 svm = { package = "svm-rs", version = "0.5.30", default-features = false, features = [
     "rustls",
 ] }
@@ -578,17 +578,17 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "d00999a5c1dc5d105151234d0dd60f4a087f2fe6" }
-solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "d00999a5c1dc5d105151234d0dd60f4a087f2fe6" }
-solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "d00999a5c1dc5d105151234d0dd60f4a087f2fe6" }
-solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "d00999a5c1dc5d105151234d0dd60f4a087f2fe6" }
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "a2b4435466bff1b91459a1bc64b04e5e8144ed9f" }
+solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "a2b4435466bff1b91459a1bc64b04e5e8144ed9f" }
+solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "a2b4435466bff1b91459a1bc64b04e5e8144ed9f" }
+solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "a2b4435466bff1b91459a1bc64b04e5e8144ed9f" }
 
 ## foundry-core
-# fork-db evm2 completion merged with main feef2fa.
-foundry-wallets = { git = "https://github.com/mablr/foundry-core", rev = "bc35068b55937b41bc3f146a3482e53fbcbaffca" }
-foundry-compilers = { git = "https://github.com/mablr/foundry-core", rev = "bc35068b55937b41bc3f146a3482e53fbcbaffca" }
-foundry-block-explorers = { git = "https://github.com/mablr/foundry-core", rev = "bc35068b55937b41bc3f146a3482e53fbcbaffca" }
-foundry-fork-db = { git = "https://github.com/mablr/foundry-core", rev = "bc35068b55937b41bc3f146a3482e53fbcbaffca" }
+# fork-db evm2 completion merged with main 1534b92.
+foundry-wallets = { git = "https://github.com/mablr/foundry-core", rev = "b3110f09c6591004f9b91bafa19a86c4730772db" }
+foundry-compilers = { git = "https://github.com/mablr/foundry-core", rev = "b3110f09c6591004f9b91bafa19a86c4730772db" }
+foundry-block-explorers = { git = "https://github.com/mablr/foundry-core", rev = "b3110f09c6591004f9b91bafa19a86c4730772db" }
+foundry-fork-db = { git = "https://github.com/mablr/foundry-core", rev = "b3110f09c6591004f9b91bafa19a86c4730772db" }
 
 ## alloy-core
 alloy-dyn-abi = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
