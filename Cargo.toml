@@ -38,7 +38,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.8.8"
+version = "1.9.0"
 edition = "2024"
 rust-version = "1.98"
 authors = ["Foundry Contributors"]
@@ -578,16 +578,17 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "4935059a6a9bc1b4b91649c39573d6b6ce7522d4" }
-solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "4935059a6a9bc1b4b91649c39573d6b6ce7522d4" }
-solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "4935059a6a9bc1b4b91649c39573d6b6ce7522d4" }
-solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "4935059a6a9bc1b4b91649c39573d6b6ce7522d4" }
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "d00999a5c1dc5d105151234d0dd60f4a087f2fe6" }
+solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "d00999a5c1dc5d105151234d0dd60f4a087f2fe6" }
+solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "d00999a5c1dc5d105151234d0dd60f4a087f2fe6" }
+solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "d00999a5c1dc5d105151234d0dd60f4a087f2fe6" }
 
 ## foundry-core
-foundry-wallets = { git = "https://github.com/mablr/foundry-core", rev = "6c6a37ecec7eefb113d4fb77fd210c31e69de4bf" }
-foundry-compilers = { git = "https://github.com/mablr/foundry-core", rev = "6c6a37ecec7eefb113d4fb77fd210c31e69de4bf" }
-foundry-block-explorers = { git = "https://github.com/mablr/foundry-core", rev = "6c6a37ecec7eefb113d4fb77fd210c31e69de4bf" }
-foundry-fork-db = { git = "https://github.com/mablr/foundry-core", rev = "6c6a37ecec7eefb113d4fb77fd210c31e69de4bf" }
+# fork-db evm2 completion merged with main feef2fa.
+foundry-wallets = { git = "https://github.com/mablr/foundry-core", rev = "bc35068b55937b41bc3f146a3482e53fbcbaffca" }
+foundry-compilers = { git = "https://github.com/mablr/foundry-core", rev = "bc35068b55937b41bc3f146a3482e53fbcbaffca" }
+foundry-block-explorers = { git = "https://github.com/mablr/foundry-core", rev = "bc35068b55937b41bc3f146a3482e53fbcbaffca" }
+foundry-fork-db = { git = "https://github.com/mablr/foundry-core", rev = "bc35068b55937b41bc3f146a3482e53fbcbaffca" }
 
 ## alloy-core
 alloy-dyn-abi = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }

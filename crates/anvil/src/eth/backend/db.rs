@@ -36,6 +36,7 @@ use std::{
     fs::File,
     io::BufReader,
     path::Path,
+    sync::Arc,
 };
 
 pub use super::env::{BlobExcessGasAndPrice, BlockEnv, SpecId};
@@ -751,6 +752,11 @@ pub trait MaybeFullDatabase: DatabaseRef {
         self.maybe_as_full_db().cloned()
     }
 
+    /// Returns the accounts if they are stored behind a shared, immutable allocation.
+    fn maybe_shared_full_db(&self) -> Option<Arc<AddressMap<DbAccount>>> {
+        None
+    }
+
     /// Returns whether snapshots of this database use structural sharing.
     fn is_persistent(&self) -> bool {
         false
@@ -808,6 +814,10 @@ impl<T: MaybeFullDatabase + ?Sized> MaybeFullDatabase for Box<T> {
 
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
         T::maybe_full_db(self)
+    }
+
+    fn maybe_shared_full_db(&self) -> Option<Arc<AddressMap<DbAccount>>> {
+        T::maybe_shared_full_db(self)
     }
 
     fn is_persistent(&self) -> bool {
@@ -1170,6 +1180,10 @@ impl MaybeFullDatabase for StateDb {
 
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
         self.0.maybe_full_db()
+    }
+
+    fn maybe_shared_full_db(&self) -> Option<Arc<AddressMap<DbAccount>>> {
+        self.0.maybe_shared_full_db()
     }
 
     fn is_persistent(&self) -> bool {

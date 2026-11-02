@@ -23,6 +23,7 @@ use foundry_evm_traces::{
         quantity,
     },
 };
+use foundry_tui::{TuiMode, restore_terminal_on_panic, tui_mode};
 use serde_json::{Map, Value, json};
 use soldb_core::{
     ContractCreation, EvmWord, ExecutionCall, StepRecord, StepTable, TraceArtifacts,
@@ -85,8 +86,8 @@ impl SoldbDebugger {
 
     /// Runs the session.
     ///
-    /// If stdin and stdout are terminals, the full-screen view opens first. Then commands are
-    /// read from stdin, one per line, until `quit` or the end of the input.
+    /// If the full-screen view can run, it opens first. Then commands are read from stdin, one per
+    /// line, until `quit` or the end of the input, with a prompt if stdin is a terminal.
     pub(crate) fn try_run(self) -> Result<()> {
         let mut state = DebuggerState::new();
         state.load_trace_with_debug_info(self.trace, self.contracts)?;
@@ -105,20 +106,21 @@ impl SoldbDebugger {
         }
         let mut session = Session::new(state);
         let renderer = Renderer::new(Shell::get().out_supports_color());
-        let terminal = io::stdin().is_terminal() && io::stdout().is_terminal();
+        // The prompt goes to stderr, so it shows even when stdout is piped.
+        let prompt = io::stdin().is_terminal();
 
         emit(&renderer, vec![session.loaded()])?;
         emit(&renderer, session.initial_stop())?;
-        if terminal {
-            if open_tui(&mut session)? == Flow::Quit {
-                return Ok(());
-            }
+        if tui_mode().is_interactive() && open_tui(&mut session)? == Flow::Quit {
+            return Ok(());
+        }
+        if prompt {
             sh_eprintln!("Type `help` for the command list, `tui` for the full-screen view.")?;
         }
 
         let mut line = String::new();
         loop {
-            if terminal {
+            if prompt {
                 sh_eprint!("soldb> ")?;
                 io::stderr().flush()?;
             }
@@ -160,7 +162,11 @@ fn emit(renderer: &Renderer, outputs: Vec<Output>) -> Result<Flow> {
 
 /// Opens the full-screen view until the user leaves it.
 fn open_tui(session: &mut Session) -> Result<Flow> {
-    match soldb_tui::run(session) {
+    if let TuiMode::Fallback(reason) = tui_mode() {
+        sh_warn!("cannot open the full-screen view: {}", reason.as_str())?;
+        return Ok(Flow::Continue);
+    }
+    match restore_terminal_on_panic(|| soldb_tui::run(session)) {
         Ok(Exit::Repl) => Ok(Flow::Continue),
         Ok(Exit::Quit) => Ok(Flow::Quit),
         Err(error) if error.kind() == io::ErrorKind::Unsupported => {
@@ -712,6 +718,28 @@ fn contract_debug_info(
     )
 }
 
+/// Checks that a SolDB bundle can be written to `dir`, before the run that records it.
+pub fn ensure_dump_dir(dir: &Path) -> Result<()> {
+    // Before 1.9, `--dump` wrote a single file, which a later run would otherwise fail on only
+    // after recording the trace.
+    if dir.exists() && !dir.is_dir() {
+        eyre::bail!(
+            "--dump now takes a directory, but {} is not one; remove it or pass a directory path",
+            dir.display()
+        );
+    }
+    // The bundle copies the compiler's sources under their project paths, and they can differ
+    // from the files on disk, so a directory with files, such as the project root, could have its
+    // files replaced.
+    if std::fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some()) {
+        eyre::bail!(
+            "cannot write the SolDB bundle to {}: the directory is not empty",
+            dir.display()
+        );
+    }
+    Ok(())
+}
+
 /// Writes a bundle that soldb's own tools read, for example
 /// `soldb profile --trace-file <dir>/trace.json --contracts <dir>/contracts.json`.
 ///
@@ -726,15 +754,7 @@ pub(crate) fn write_bundle(
     sources: &ContractSources,
     known_contracts: &ContractsByArtifact,
 ) -> Result<()> {
-    // The bundle copies the compiler's sources under their project paths, and they can differ
-    // from the files on disk, so a directory with files, such as the project root, could have its
-    // files replaced.
-    if std::fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some()) {
-        eyre::bail!(
-            "cannot write the SolDB bundle to {}: the directory is not empty",
-            dir.display()
-        );
-    }
+    ensure_dump_dir(dir)?;
     // One entry per deployed code, so code replaced at an address keeps its own source maps.
     let mut contracts = BTreeMap::<(Address, B256), CombinedJson>::new();
     let mut written_sources = HashSet::<PathBuf>::default();

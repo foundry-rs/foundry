@@ -579,11 +579,10 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
         }
     }
 
-    let mut gas_limit = ccx.gas.remaining();
-    if version.features.contains(EvmFeatures::EIP150) {
-        gas_limit = gas_params.call_stipend_reduction(gas_limit);
-    }
-    // Forward the gas to the create frame; this cannot fail as it does not exceed `remaining`.
+    // The call to the cheatcode already kept back 1/64 of the caller's gas, as the CREATE opcode
+    // would, so forward all of the remaining gas to the create frame.
+    let gas_limit = ccx.gas.remaining();
+    // This cannot fail as it does not exceed `remaining`.
     let _ = ccx.gas.spend(gas_limit);
 
     // Broadcast the synthetic create only if it was requested by the broadcaster at the broadcast
