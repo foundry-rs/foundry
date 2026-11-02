@@ -335,16 +335,6 @@ impl PathState {
         }
     }
 
-    /// Records the account of a failed call that ran no code as a reverter, unless a
-    /// `vm.expectRevert` is pending in this frame: Forge consumes the expectation at such a call,
-    /// so its failure must not become the reverter of a later call. Symbolic execution does not
-    /// apply the expectation to codeless calls yet.
-    pub(crate) fn record_codeless_failure(&mut self, callee: Address) {
-        if self.expected_revert.is_none() {
-            self.first_failed_callee.get_or_insert(callee);
-        }
-    }
-
     pub(crate) fn take_reverted_top_level_effects(&mut self, mut reverted: Self) {
         let recorded_logs_len = self.recorded_logs.as_ref().map_or(0, Vec::len);
         let recorded_logs_generation = self.recorded_logs_generation;
@@ -1050,6 +1040,10 @@ impl ExpectedRevert {
     pub(crate) fn new(data: ExpectedRevertData, reverter: Option<SymExpr>, count: u64) -> Self {
         let count = count.max(1);
         Self { data, reverter, count, remaining: count }
+    }
+
+    pub(crate) const fn has_reverter(&self) -> bool {
+        self.reverter.is_some()
     }
 
     pub(crate) const fn consume_one(&mut self) -> bool {
