@@ -217,3 +217,44 @@ async fn tempo_consensus_subscription_skips_non_native_block_without_stopping_mi
     let event = next_event(&mut events).await.certified;
     assert_eq!(event, tempo_finalization(&http, 2).await);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_subscription_announces_full_dkg_before_rotation() {
+    let (api, handle) = spawn(
+        NodeConfig::test_tempo()
+            .with_no_mining(true)
+            .with_tempo_epoch_length(NonZeroU64::new(3).unwrap()),
+    )
+    .await;
+    let http = handle.http_provider();
+    let initial = tempo_consensus_identity(&http).await;
+    let provider = connect_pubsub(&handle.ws_endpoint()).await;
+    let mut events = subscribe(&provider).await;
+    let rotated = tempo_rotate_identity(&http).await;
+    assert_eq!(rotated.from_epoch, 2);
+
+    for height in 1..=6 {
+        api.mine_one().await.unwrap();
+        let certified = tempo_finalization(&http, height).await;
+        let identity = if height < 6 { &initial } else { &rotated };
+        assert_tempo_certificate(identity, &certified);
+        assert_eq!(tempo_consensus_identity(&http).await, *identity);
+        assert_eq!(next_event(&mut events).await.certified, certified);
+
+        if height == 2 || height == 5 {
+            let outcome =
+                OnchainDkgOutcome::decode(certified.block.header.extra_data().as_ref()).unwrap();
+            if height == 2 {
+                assert_eq!(outcome.epoch, 1);
+                assert!(outcome.is_next_full_dkg);
+                assert_eq!(outcome.network_identity().encode().as_ref(), initial.identity.as_ref());
+                assert_ne!(outcome.next_players, outcome.output.players().clone());
+            } else {
+                assert_eq!(outcome.epoch, 2);
+                assert!(!outcome.is_next_full_dkg);
+                assert_eq!(outcome.network_identity().encode().as_ref(), rotated.identity.as_ref());
+                assert_eq!(outcome.next_players, outcome.output.players().clone());
+            }
+        }
+    }
+}

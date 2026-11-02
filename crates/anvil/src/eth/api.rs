@@ -5663,7 +5663,10 @@ impl EthApi<FoundryNetwork> {
         self.backend.tempo_consensus_identity().await
     }
 
-    /// Schedules a new identity for the epoch following the next block's epoch.
+    /// Schedules a new identity two epochs after the next block's epoch.
+    ///
+    /// The first boundary announces a full DKG; the following boundary publishes the new key.
+    /// The returned `fromEpoch` is the first epoch that uses it.
     ///
     /// Handler for `anvil_tempoRotateConsensusIdentity`; unavailable on non-Tempo networks.
     pub async fn anvil_tempo_rotate_consensus_identity(&self) -> Result<TempoConsensusIdentity> {
