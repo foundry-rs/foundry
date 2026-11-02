@@ -374,7 +374,8 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         gcx: Gcx<'gcx>,
         entry: &'gcx hir::Function<'gcx>,
     ) -> Self {
-        let reentrancy_balance_enabled = ctx.is_lint_enabled(REENTRANCY_BALANCE.id);
+        let reentrancy_balance_enabled =
+            ctx.is_lint_enabled(REENTRANCY_BALANCE.id) && reaches_balance_read(gcx, entry);
         Self {
             ctx,
             gcx,
@@ -1920,6 +1921,52 @@ fn const_value(
         }
         _ => None,
     }
+}
+
+/// Whether `entry`, or a modifier or internal function it can reach, reads a `.balance`.
+///
+/// The balance analysis only reports stale reads of the contract's own balance, so it can skip
+/// entry points that never read one.
+fn reaches_balance_read<'gcx>(gcx: Gcx<'gcx>, entry: &'gcx hir::Function<'gcx>) -> bool {
+    struct Finder<'gcx> {
+        gcx: Gcx<'gcx>,
+        pending: Vec<FunctionId>,
+    }
+
+    impl<'gcx> Visit<'gcx> for Finder<'gcx> {
+        type BreakValue = ();
+
+        fn hir(&self) -> &'gcx hir::Hir<'gcx> {
+            &self.gcx.hir
+        }
+
+        fn visit_modifier(&mut self, modifier: &'gcx hir::Modifier<'gcx>) -> ControlFlow<()> {
+            self.pending.extend(modifier.id.as_function());
+            self.visit_call_args(&modifier.args)
+        }
+
+        fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<()> {
+            if let ExprKind::Member(_, member) = &expr.kind
+                && member.name == kw::Balance
+            {
+                return ControlFlow::Break(());
+            }
+            self.pending.extend(static_internal_callee(self.gcx, expr));
+            self.walk_expr(expr)
+        }
+    }
+
+    let mut finder = Finder { gcx, pending: Vec::new() };
+    if finder.visit_function(entry).is_break() {
+        return true;
+    }
+    let mut seen = HashSet::new();
+    while let Some(id) = finder.pending.pop() {
+        if seen.insert(id) && finder.visit_function(gcx.hir.function(id)).is_break() {
+            return true;
+        }
+    }
+    false
 }
 
 /// The reentrancy-guard lock, if any, that protects every entry point of every deployable
