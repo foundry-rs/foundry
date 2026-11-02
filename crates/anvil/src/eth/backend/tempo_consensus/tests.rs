@@ -606,3 +606,187 @@ fn repeated_pruning_bounds_retained_history() {
         Err(TempoConsensusError::InvalidRewind { earliest: 22, head: 22, requested: 21 })
     );
 }
+
+#[test]
+fn fork_anchor_inherits_skipped_views_until_a_new_epoch() {
+    let epoch_length = NonZeroU64::new(6).unwrap();
+    for (height, rounds) in [
+        (1, [(0, 8_897, 8_896), (0, 8_898, 8_897)]),
+        (5, [(1, 1, 0), (1, 2, 1)]),
+        (6, [(1, 8_897, 8_896), (1, 8_898, 8_897)]),
+    ] {
+        let mut anchor = fork_anchor(height, epoch_length, 8_896);
+        anchor.consensus_context.as_mut().unwrap().parent_view = 8_870;
+        let mut consensus =
+            TempoConsensus::at_fork_header(B256::ZERO, epoch_length, &anchor).unwrap();
+        assert!(consensus.finalization(height).is_none());
+        for (height, expected) in (height + 1..).zip(rounds) {
+            let (header, certificate) = finalize(&mut consensus, height);
+            let context = header.consensus_context.unwrap();
+            assert_eq!((context.epoch, context.view, context.parent_view), expected);
+            assert_certificate(&consensus.identity(), &header, &certificate);
+        }
+    }
+}
+
+#[test]
+fn fork_contextless_roots_reject_synthetic_rounds_except_at_genesis() {
+    let epoch_length = NonZeroU64::new(3).unwrap();
+    for height in [0, 1, 3] {
+        let mut anchor = TempoHeader::default();
+        anchor.inner.number = height;
+        let mut unsigned = TempoConsensus::at_header(B256::ZERO, epoch_length, &anchor).unwrap();
+        let mut synthetic = TempoConsensus::at_height(B256::ZERO, epoch_length, height);
+        assert_eq!(finalize(&mut unsigned, height + 1), finalize(&mut synthetic, height + 1));
+        let forked = TempoConsensus::at_fork_header(B256::ZERO, epoch_length, &anchor);
+        if height == 0 {
+            assert!(forked.is_ok());
+        } else {
+            assert_eq!(forked.err(), Some(TempoConsensusError::MissingForkContext));
+        }
+    }
+}
+
+#[test]
+fn fork_anchor_rejects_incompatible_epochs_and_invalid_contexts() {
+    let epoch_length = NonZeroU64::new(3).unwrap();
+    let valid = fork_anchor(7, epoch_length, 8_896);
+    for (epoch, view, parent_view, error) in [
+        (3, 8_896, 8_895, TempoConsensusError::InvalidAnchorEpoch { expected: 2, actual: 3 }),
+        (2, 0, 0, TempoConsensusError::InvalidContext),
+        (2, 2, 2, TempoConsensusError::InvalidContext),
+        (2, 2, 3, TempoConsensusError::InvalidContext),
+    ] {
+        let mut invalid = valid.clone();
+        let context = invalid.consensus_context.as_mut().unwrap();
+        context.epoch = epoch;
+        context.view = view;
+        context.parent_view = parent_view;
+        assert_eq!(
+            TempoConsensus::at_fork_header(B256::ZERO, epoch_length, &invalid).err(),
+            Some(error)
+        );
+    }
+    let mut genesis = valid;
+    genesis.inner.number = 0;
+    genesis.consensus_context.as_mut().unwrap().epoch = 0;
+    assert_eq!(
+        TempoConsensus::at_header(B256::ZERO, epoch_length, &genesis).err(),
+        Some(TempoConsensusError::InvalidContext)
+    );
+}
+
+#[test]
+fn fork_anchor_view_survives_checkpoints_pruning_snapshots_and_reset() {
+    let epoch_length = NonZeroU64::new(6).unwrap();
+    let anchor = fork_anchor(7, epoch_length, 8_896);
+    let mut consensus = TempoConsensus::at_fork_header(B256::ZERO, epoch_length, &anchor).unwrap();
+    let first = finalize(&mut consensus, 8);
+    let snapshot = consensus.clone();
+    let second = finalize(&mut consensus, 9);
+    let third = finalize(&mut consensus, 10);
+    consensus.prune(9).unwrap();
+    consensus.unwind(9).unwrap();
+    assert_eq!(finalize(&mut consensus, 10), third);
+
+    consensus.reset();
+    assert!(consensus.latest().is_none());
+    assert_eq!(finalize(&mut consensus, 8), first);
+    consensus = snapshot;
+    assert_eq!(finalize(&mut consensus, 9), second);
+    consensus.unwind(7).unwrap();
+    assert!(consensus.latest().is_none());
+    assert_eq!(finalize(&mut consensus, 8), first);
+}
+
+#[test]
+fn fork_anchor_view_overflow_is_atomic_and_does_not_prevent_epoch_reset() {
+    let epoch_length = NonZeroU64::new(3).unwrap();
+    let anchor = fork_anchor(1, epoch_length, u64::MAX);
+    let mut consensus = TempoConsensus::at_fork_header(B256::ZERO, epoch_length, &anchor).unwrap();
+    let identity = consensus.identity();
+    let mut header = TempoHeader::default();
+    header.inner.number = 2;
+    let unchanged = header.clone();
+    assert_eq!(
+        consensus.prepare_header(&mut header, TempoHardfork::T4),
+        Err(TempoConsensusError::ViewOverflow)
+    );
+    assert_eq!(header, unchanged);
+    assert_eq!(
+        consensus.finalize(&header, TempoHardfork::T4),
+        Err(TempoConsensusError::ViewOverflow)
+    );
+    assert!(consensus.latest().is_none());
+    assert_eq!(consensus.identity(), identity);
+
+    let anchor = fork_anchor(1, epoch_length, u64::MAX - 1);
+    let mut consensus = TempoConsensus::at_fork_header(B256::ZERO, epoch_length, &anchor).unwrap();
+    let (header, certificate) = finalize(&mut consensus, 2);
+    assert_eq!(certificate.view, u64::MAX);
+    assert_certificate(&identity, &header, &certificate);
+    let (header, certificate) = finalize(&mut consensus, 3);
+    let context = header.consensus_context.unwrap();
+    assert_eq!((context.epoch, context.view, context.parent_view), (1, 1, 0));
+    assert_certificate(&identity, &header, &certificate);
+}
+
+#[test]
+fn fork_reanchoring_keeps_configuration_and_uses_the_replacement_round() {
+    let epoch_length = NonZeroU64::new(6).unwrap();
+    let seed = B256::repeat_byte(0x42);
+    let original = fork_anchor(1, epoch_length, 8_896);
+    let consensus = TempoConsensus::at_fork_header(seed, epoch_length, &original).unwrap();
+    let replacement = fork_anchor(3, epoch_length, 9_999);
+    let mut reanchored = consensus.reanchored(&replacement).unwrap();
+    assert_eq!(reanchored.identity(), consensus.identity());
+    let (header, certificate) = finalize(&mut reanchored, 4);
+    let context = header.consensus_context.unwrap();
+    assert_eq!((context.epoch, context.view, context.parent_view), (0, 10_000, 9_999));
+    assert_certificate(&consensus.identity(), &header, &certificate);
+}
+
+fn fork_anchor(height: u64, epoch_length: NonZeroU64, view: u64) -> TempoHeader {
+    let mut anchor = TempoHeader::default();
+    anchor.inner.number = height;
+    anchor.consensus_context = Some(TempoConsensusContext {
+        epoch: height / epoch_length,
+        view,
+        parent_view: view - 1,
+        proposer: TempoConsensus::new(B256::ZERO, epoch_length)
+            .identity()
+            .proposer
+            .try_into()
+            .unwrap(),
+    });
+    anchor
+}
+
+#[test]
+fn fork_unsigned_successor_keeps_rounds_without_header_context() {
+    let epoch_length = NonZeroU64::new(6).unwrap();
+    for (height, expected) in [(1, (0, 8_898, 8_897)), (4, (1, 1, 0)), (5, (1, 2, 1))] {
+        let anchor = fork_anchor(height, epoch_length, 8_896);
+        let consensus = TempoConsensus::at_fork_header(B256::ZERO, epoch_length, &anchor).unwrap();
+        let mut successor = consensus.unsigned_successor().unwrap();
+        assert!(successor.latest().is_none());
+        assert_eq!(successor.anchor_height(), height + 1);
+        let mut header = TempoHeader::default();
+        header.inner.number = height + 2;
+        successor.prepare_header(&mut header, TempoHardfork::T3).unwrap();
+        assert!(header.consensus_context.is_none());
+        let certificate = successor.finalize(&header, TempoHardfork::T3).unwrap();
+        let mut input = certificate.certificate.as_ref();
+        let epoch = u64::from(UInt::<u64>::read(&mut input).unwrap());
+        let view = u64::from(UInt::<u64>::read(&mut input).unwrap());
+        let parent_view = u64::from(UInt::<u64>::read(&mut input).unwrap());
+        assert_eq!((epoch, view, parent_view), expected);
+        assert_certificate(&successor.identity(), &header, &certificate);
+    }
+
+    let overflow = fork_anchor(1, epoch_length, u64::MAX);
+    let consensus = TempoConsensus::at_fork_header(B256::ZERO, epoch_length, &overflow).unwrap();
+    assert_eq!(consensus.unsigned_successor().err(), Some(TempoConsensusError::ViewOverflow));
+    let terminal = TempoConsensus::at_height(B256::ZERO, epoch_length, u64::MAX);
+    assert_eq!(terminal.unsigned_successor().err(), Some(TempoConsensusError::HeightOverflow));
+}

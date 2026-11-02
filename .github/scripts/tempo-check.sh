@@ -993,7 +993,12 @@ cast send --rpc-url "$ETH_RPC_URL" 0xfeec000000000000000000000000000000000000 \
 
 ANVIL_PORT=8547
 echo "Starting forked anvil..."
-anvil --tempo "${ANVIL_HARDFORK_ARGS[@]}" --fork-url "$ETH_RPC_URL" --port $ANVIL_PORT --retries 10 --timeout 60000 &
+# Match the upstream consensus epoch length; override the local default when needed.
+ANVIL_EPOCH_LENGTH_ARGS=()
+if [[ -n "${TEMPO_EPOCH_LENGTH:-}" ]]; then
+  ANVIL_EPOCH_LENGTH_ARGS=(--tempo.epoch-length "$TEMPO_EPOCH_LENGTH")
+fi
+anvil --tempo "${ANVIL_HARDFORK_ARGS[@]}" "${ANVIL_EPOCH_LENGTH_ARGS[@]}" --fork-url "$ETH_RPC_URL" --port $ANVIL_PORT --retries 10 --timeout 60000 &
 ANVIL_PID=$!
 
 # Ensure anvil is stopped on script exit

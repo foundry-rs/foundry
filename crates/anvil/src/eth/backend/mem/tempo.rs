@@ -23,6 +23,11 @@
 //! upstream responses are never cached into the replacement chain. Upstream committees remain
 //! independent of the local development identity. Height-bounded forwarding does not establish
 //! an authenticated committee or ancestry chain from upstream history to locally signed blocks.
+//! Startup and fork resets validate the pinned native root before committing a replacement. Its
+//! context supplies the local successor's actual parent view; epoch transitions reset to view zero.
+//! Non-genesis remote roots without context, including pre-T4 roots, are rejected. Native contexts
+//! must agree with the configured height-based epoch schedule. Imported unsigned execution-only
+//! checkpoints still use the local height-derived round convention.
 //!
 //! Locally mined fork headers seal the same partial account and storage trie used by proofs.
 //! Its snapshots live in a separate bounded history cache, sharing the execution history's cache
@@ -35,13 +40,20 @@ use super::{
     state::StateRootCache,
     storage::{BlockchainStorage, InMemoryBlockStates},
 };
-use crate::eth::{
-    backend::{
-        db::MaybeFullDatabase,
-        tempo_consensus::{TempoConsensus, TempoConsensusIdentity, TempoFinalization},
+use crate::{
+    NodeConfig,
+    config::DEFAULT_TEMPO_EPOCH_LENGTH,
+    eth::{
+        backend::{
+            db::MaybeFullDatabase,
+            fork::ClientFork,
+            tempo_consensus::{
+                TempoConsensus, TempoConsensusError, TempoConsensusIdentity, TempoFinalization,
+            },
+        },
+        error::BlockchainError,
+        tempo_consensus::{TempoCertifiedBlock, TempoConsensusEvent},
     },
-    error::BlockchainError,
-    tempo_consensus::{TempoCertifiedBlock, TempoConsensusEvent},
 };
 use alloy_consensus::{BlockHeader, Sealable, proofs::calculate_transaction_root};
 use alloy_network::Network;
@@ -53,11 +65,11 @@ use alloy_provider::Provider;
 use alloy_rpc_types::EIP1186AccountProofResponse as AccountProof;
 use anvil_core::eth::block::{Block, canonical_block};
 use anvil_rpc::error::{ErrorCode, RpcError};
+use foundry_primitives::FoundryHeader;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::database::DbAccount;
 use std::{
     fmt,
-    num::NonZeroU64,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -68,8 +80,6 @@ use tokio::sync::broadcast;
 /// Local certificates, key schedule, and consensus snapshots for the current signing history.
 #[derive(Clone)]
 pub(crate) struct TempoChain {
-    seed: B256,
-    epoch_length: NonZeroU64,
     consensus: TempoConsensus,
     latest_block: Option<Arc<Block>>,
     snapshots: HashMap<U256, TempoSnapshot>,
@@ -97,11 +107,9 @@ pub(super) struct PendingFinalization {
 }
 
 impl TempoChain {
-    pub(super) fn new(seed: B256, epoch_length: NonZeroU64, height: u64) -> Self {
+    pub(super) fn new(consensus: TempoConsensus) -> Self {
         Self {
-            seed,
-            epoch_length,
-            consensus: TempoConsensus::at_height(seed, epoch_length, height),
+            consensus,
             latest_block: None,
             snapshots: Default::default(),
             proof_states: Default::default(),
@@ -111,8 +119,8 @@ impl TempoChain {
     }
 
     /// Resets local trust at an unsigned chain head and clears saved consensus histories.
-    pub(super) fn reanchor(&mut self, height: u64) {
-        self.consensus = TempoConsensus::at_height(self.seed, self.epoch_length, height);
+    pub(super) fn reanchor(&mut self, consensus: TempoConsensus) {
+        self.consensus = consensus;
         self.latest_block = None;
         self.proof_states.write().clear();
         *self.proof_root.lock() = Default::default();
@@ -132,12 +140,16 @@ impl TempoChain {
 
     /// Restores saved consensus, or starts unsigned if an import discarded that history.
     ///
-    /// The caller supplies the saved database height, which may differ from the imported head,
+    /// The caller prepares the saved database anchor, which may differ from the imported head,
     /// and restores the returned proof state after releasing the chain storage lock.
-    pub(super) fn restore(&mut self, id: U256, height: u64) -> Option<Arc<AddressMap<DbAccount>>> {
+    pub(super) fn restore(
+        &mut self,
+        id: U256,
+        anchor: TempoConsensus,
+    ) -> Option<Arc<AddressMap<DbAccount>>> {
         let TempoSnapshot { consensus, latest_block, proof_state } =
             self.snapshots.remove(&id).unwrap_or_else(|| TempoSnapshot {
-                consensus: TempoConsensus::at_height(self.seed, self.epoch_length, height),
+                consensus: anchor,
                 latest_block: None,
                 proof_state: None,
             });
@@ -154,7 +166,7 @@ impl TempoChain {
             self.consensus.latest().is_some_and(|(current_height, _)| current_height == height);
         if height < self.consensus.anchor_height() {
             // Exact snapshots retain their own controller and anchor across ordinary rollbacks.
-            self.consensus = TempoConsensus::at_height(self.seed, self.epoch_length, height);
+            self.consensus = self.prepare_anchor(&block.header)?;
         } else {
             self.consensus
                 .unwind(height)
@@ -206,6 +218,66 @@ impl TempoChain {
             block: Arc::clone(block),
             events: self.events.clone(),
         }))
+    }
+
+    /// Prepares an unsigned segment from a native head before any canonical state is changed.
+    pub(super) fn prepare_anchor(
+        &self,
+        header: &FoundryHeader,
+    ) -> Result<TempoConsensus, BlockchainError> {
+        // Legacy execution-only dumps are unsigned checkpoints, with no inherited round.
+        let native;
+        let header = if let Some(header) = header.as_tempo() {
+            header
+        } else {
+            native = FoundryHeader::tempo(header.inner().clone());
+            native.as_tempo().expect("the unsigned checkpoint is a Tempo header")
+        };
+        self.consensus
+            .reanchored(header)
+            .map_err(|error| BlockchainError::Internal(error.to_string()))
+    }
+
+    /// Fetches and validates the pinned fork round before acquiring canonical commit locks.
+    pub(super) async fn fork_consensus(
+        fork: &ClientFork,
+        config: &NodeConfig,
+    ) -> Result<TempoConsensus, BlockchainError> {
+        let header = fork.root_header().await?.ok_or(BlockchainError::BlockNotFound)?;
+        // Execution-only genesis fixtures share the unsigned genesis convention. Nonzero
+        // contextless roots are still rejected by the controller.
+        let header = match header {
+            FoundryHeader::Tempo(_) => header,
+            FoundryHeader::Ethereum(inner) => FoundryHeader::tempo(inner),
+        };
+        TempoConsensus::at_fork_header(
+            config.tempo_consensus_seed(),
+            config.tempo_epoch_length,
+            header.as_tempo().expect("the fork anchor is a Tempo header"),
+        )
+        .map_err(|error| {
+            let message = if matches!(error, TempoConsensusError::InvalidAnchorEpoch { .. }) {
+                format!(
+                    "{error}; set --tempo.epoch-length to match the fork source \
+                     (default: {DEFAULT_TEMPO_EPOCH_LENGTH})"
+                )
+            } else {
+                error.to_string()
+            };
+            BlockchainError::Internal(message)
+        })
+    }
+
+    /// Keeps the known parent round when a replay prefix starts an unsigned local segment.
+    pub(super) fn prepare_unsigned_successor(&self) -> Result<TempoConsensus, BlockchainError> {
+        self.consensus
+            .unsigned_successor()
+            .map_err(|error| BlockchainError::Internal(error.to_string()))
+    }
+
+    /// Starts an unsigned local segment without inferring fork metadata.
+    pub(super) fn local_consensus(config: &NodeConfig, height: u64) -> TempoConsensus {
+        TempoConsensus::at_height(config.tempo_consensus_seed(), config.tempo_epoch_length, height)
     }
 }
 
@@ -446,7 +518,6 @@ fn tempo_unavailable() -> BlockchainError {
 mod tests {
     use super::*;
     use crate::{
-        NodeConfig,
         eth::{
             api::EthApi,
             backend::{
@@ -467,9 +538,10 @@ mod tests {
         backend::MemDb,
         hardfork::{EthereumHardfork, FoundryHardfork},
     };
-    use foundry_primitives::{FoundryHeader, FoundryNetwork};
+    use foundry_primitives::FoundryNetwork;
     use revm::database::AccountState;
     use std::{
+        num::NonZeroU64,
         sync::atomic::{AtomicBool, Ordering},
         task::Poll,
         time::Duration,
@@ -592,7 +664,9 @@ mod tests {
         let previous_root = api.backend.db.read().await.maybe_state_root();
         {
             let _db = api.backend.db.write().await;
-            api.backend.blockchain.storage.write().tempo.as_mut().unwrap().reanchor(5);
+            let mut storage = api.backend.blockchain.storage.write();
+            let tempo = storage.tempo.as_mut().unwrap();
+            tempo.reanchor(unsigned_anchor(tempo, 5));
         }
         let error = api.mine_one().await.unwrap_err();
         assert!(matches!(error, BlockchainError::Internal(message)
@@ -603,7 +677,9 @@ mod tests {
         assert!(consensus(&api).latest().is_none());
         {
             let _db = api.backend.db.write().await;
-            api.backend.blockchain.storage.write().tempo.as_mut().unwrap().reanchor(0);
+            let mut storage = api.backend.blockchain.storage.write();
+            let tempo = storage.tempo.as_mut().unwrap();
+            tempo.reanchor(unsigned_anchor(tempo, 0));
         }
         api.mine_one().await.unwrap();
         assert_eq!(api.backend.get_block(1).unwrap().body.transactions.len(), 1);
@@ -789,8 +865,7 @@ mod tests {
         let hash = queue_transfer(&source_api, sender).await;
         source_api.mine_one().await.unwrap();
         let (replay, _replay_handle) = spawn(
-            NodeConfig::test_tempo()
-                .with_no_mining(true)
+            tempo_config(3)
                 .with_eth_rpc_url(Some(source.http_endpoint()))
                 .with_fork_transaction_hash(Some(hash)),
         )
@@ -838,19 +913,21 @@ mod tests {
 
     #[test]
     fn tempo_reanchor_clears_proof_states() {
-        let mut chain = TempoChain::new(B256::ZERO, NonZeroU64::new(3).unwrap(), 0);
+        let mut chain =
+            TempoChain::new(TempoConsensus::at_height(B256::ZERO, NonZeroU64::new(3).unwrap(), 0));
         let hash = B256::repeat_byte(0x42);
         chain.proof_states.write().insert(hash, StateDb::new(MemDb::default()));
         assert!(chain.proof_states.read().get_state(&hash).is_some());
 
-        chain.reanchor(3);
+        chain.reanchor(unsigned_anchor(&chain, 3));
 
         assert!(chain.proof_states.read().get_state(&hash).is_none());
     }
 
     #[test]
     fn tempo_cross_anchor_rollback_preserves_exact_snapshot_anchor() {
-        let mut chain = TempoChain::new(B256::ZERO, NonZeroU64::new(3).unwrap(), 5);
+        let mut chain =
+            TempoChain::new(TempoConsensus::at_height(B256::ZERO, NonZeroU64::new(3).unwrap(), 5));
         chain.consensus.rotate().unwrap();
         let next_rotation = chain.consensus.clone().rotate().unwrap();
         chain.unwind(&unsigned_tempo_block(5)).unwrap();
@@ -860,7 +937,7 @@ mod tests {
 
         chain.unwind(&unsigned_tempo_block(3)).unwrap();
         assert!(chain.consensus.latest().is_none());
-        let _ = chain.restore(U256::ONE, 5);
+        let _ = chain.restore(U256::ONE, unsigned_anchor(&chain, 5));
         assert_eq!(chain.consensus.rotate().unwrap(), expected.rotate().unwrap());
 
         // Restoring the snapshot restores anchor 5, so height 4 is an unsigned ancestor again.
@@ -875,7 +952,8 @@ mod tests {
 
     #[test]
     fn tempo_rollback_above_anchor_preserves_pruning_error() {
-        let mut chain = TempoChain::new(B256::ZERO, NonZeroU64::new(3).unwrap(), 5);
+        let mut chain =
+            TempoChain::new(TempoConsensus::at_height(B256::ZERO, NonZeroU64::new(3).unwrap(), 5));
         for height in 6..=7 {
             let mut header = TempoHeader::default();
             header.inner.number = height;
@@ -1058,21 +1136,22 @@ mod tests {
 
     #[test]
     fn tempo_cross_import_snapshots_preserve_revert_order() {
-        let mut chain = TempoChain::new(B256::ZERO, NonZeroU64::new(3).unwrap(), 0);
+        let mut chain =
+            TempoChain::new(TempoConsensus::at_height(B256::ZERO, NonZeroU64::new(3).unwrap(), 0));
         chain.snapshot(U256::ONE, None);
-        chain.reanchor(3);
+        chain.reanchor(unsigned_anchor(&chain, 3));
         assert!(chain.snapshots.is_empty());
         chain.snapshot(U256::from(2), None);
         chain.snapshot(U256::from(3), None);
         let expected = chain.consensus.clone().rotate().unwrap();
         chain.consensus.rotate().unwrap();
         chain.snapshot(U256::from(4), None);
-        let _ = chain.restore(U256::from(3), 3);
+        let _ = chain.restore(U256::from(3), unsigned_anchor(&chain, 3));
         assert_eq!(chain.consensus.rotate().unwrap(), expected);
         assert_eq!(chain.snapshots.keys().copied().collect::<Vec<_>>(), vec![U256::from(2)]);
 
         // Restoring a pre-import snapshot uses its database height, not the current anchor.
-        let _ = chain.restore(U256::ONE, 1);
+        let _ = chain.restore(U256::ONE, unsigned_anchor(&chain, 1));
         assert!(chain.snapshots.is_empty());
         assert_eq!(chain.consensus.anchor_height(), 1);
         assert!(chain.consensus.latest().is_none());
@@ -1100,6 +1179,10 @@ mod tests {
         let mut header = TempoHeader::default();
         header.inner.number = height;
         Block::new(header.into(), Default::default())
+    }
+
+    fn unsigned_anchor(chain: &TempoChain, height: u64) -> TempoConsensus {
+        chain.prepare_anchor(&unsigned_tempo_block(height).header).unwrap()
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1224,7 +1307,8 @@ mod tests {
         let mut existing = chain.events.subscribe();
         let pending = chain.pending_finalization().unwrap().unwrap();
         let mut late = api.backend.tempo_consensus_notifications().await.unwrap();
-        chain.reanchor(1);
+        let anchor = chain.prepare_anchor(&expected.block.header.clone().into()).unwrap();
+        chain.reanchor(anchor);
         assert!(chain.pending_finalization().unwrap().is_none());
         assert!(matches!(existing.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
         let before = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
