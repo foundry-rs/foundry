@@ -38,6 +38,7 @@ use evm2::{
         BlockAccessIndex, BlockStateAccumulator, CONSOLIDATION_REQUEST_ADDRESS,
         HISTORY_STORAGE_ADDRESS, SystemTx, TxResult, WITHDRAWAL_REQUEST_ADDRESS,
     },
+    interpreter::InstrStop,
 };
 use foundry_evm_hardforks::FoundryHardfork;
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, FoundryTxType};
@@ -310,15 +311,24 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
         Ok(result)
     }
 
-    fn system_call(&mut self, address: Address, data: Bytes) -> Result<Bytes, BlockchainError> {
+    /// Executes and commits a system call to the `name` contract, failing if it does not succeed.
+    fn system_call(
+        &mut self,
+        name: &'static str,
+        address: Address,
+        data: Bytes,
+    ) -> Result<Bytes, BlockchainError> {
         let result = self.unchecked_system_call(address, data)?;
         if result.stop.is_revert() {
-            return Err(InvalidTransactionError::Revert(Some(result.output)).into());
+            return Err(BlockchainError::Message(format!(
+                "failed to apply {name} contract call: execution reverted: {}",
+                result.output
+            )));
         }
         if !result.status {
             return Err(BlockchainError::Message(format!(
-                "system call to {address} failed: {:?}",
-                result.stop
+                "failed to apply {name} contract call: execution halted: {}",
+                halt_reason_debug(result.stop)
             )));
         }
         Ok(result.output)
@@ -468,22 +478,36 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
                     &self.receipts,
                     &mut requests,
                 )?;
-                let withdrawals = self.system_call(WITHDRAWAL_REQUEST_ADDRESS, Bytes::new())?;
+                let withdrawals = self.system_call(
+                    "withdrawal requests",
+                    WITHDRAWAL_REQUEST_ADDRESS,
+                    Bytes::new(),
+                )?;
                 if !withdrawals.is_empty() {
                     requests.push_request_with_type(WITHDRAWAL_REQUEST_TYPE, withdrawals);
                 }
-                let consolidations =
-                    self.system_call(CONSOLIDATION_REQUEST_ADDRESS, Bytes::new())?;
+                let consolidations = self.system_call(
+                    "consolidation requests",
+                    CONSOLIDATION_REQUEST_ADDRESS,
+                    Bytes::new(),
+                )?;
                 if !consolidations.is_empty() {
                     requests.push_request_with_type(CONSOLIDATION_REQUEST_TYPE, consolidations);
                 }
                 if transitions.hardfork >= EthereumHardfork::Amsterdam {
-                    let deposits =
-                        self.system_call(BUILDER_DEPOSIT_REQUEST_ADDRESS, Bytes::new())?;
+                    let deposits = self.system_call(
+                        "builder deposit requests",
+                        BUILDER_DEPOSIT_REQUEST_ADDRESS,
+                        Bytes::new(),
+                    )?;
                     if !deposits.is_empty() {
                         requests.push_request_with_type(BUILDER_DEPOSIT_REQUEST_TYPE, deposits);
                     }
-                    let exits = self.system_call(BUILDER_EXIT_REQUEST_ADDRESS, Bytes::new())?;
+                    let exits = self.system_call(
+                        "builder exit requests",
+                        BUILDER_EXIT_REQUEST_ADDRESS,
+                        Bytes::new(),
+                    )?;
                     if !exits.is_empty() {
                         requests.push_request_with_type(BUILDER_EXIT_REQUEST_TYPE, exits);
                     }
@@ -740,6 +764,22 @@ pub(crate) const fn block_blob_gas_limit(
     max_blob_gas_per_block: u64,
 ) -> u64 {
     if optimism_jovian { block_gas_limit } else { max_blob_gas_per_block }
+}
+
+/// Formats an exceptional halt as REVM's `HaltReason` debug output, which alloy-evm's system call
+/// errors printed.
+fn halt_reason_debug(stop: InstrStop) -> String {
+    let out_of_gas = match stop {
+        InstrStop::OutOfGas => "Basic",
+        InstrStop::MemoryOOG => "Memory",
+        InstrStop::MemoryLimitOOG => "MemoryLimit",
+        InstrStop::PrecompileOOG => "Precompile",
+        InstrStop::InvalidOperandOOG => "InvalidOperand",
+        InstrStop::ReentrancySentryOOG => "ReentrancySentry",
+        InstrStop::InvalidImmediateEncoding => return "OpcodeNotFound".to_string(),
+        stop => return format!("{stop:?}"),
+    };
+    format!("OutOfGas({out_of_gas})")
 }
 
 #[cfg(test)]
