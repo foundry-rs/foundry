@@ -21,6 +21,9 @@ use std::path::PathBuf;
 #[derive(Clone, Debug, Parser)]
 pub struct LintArgs {
     /// Path to the file to be checked. Overrides the `ignore` project config.
+    ///
+    /// Paths under the configured `test` or `script` directories still only run
+    /// `unsafe-cheatcode` and `environment-read-across-mutation`.
     #[arg(value_hint = ValueHint::FilePath, value_name = "PATH", num_args(1..))]
     pub(crate) paths: Vec<PathBuf>,
 
@@ -92,6 +95,31 @@ impl LintArgs {
         if input.is_empty() {
             sh_status!("nothing to lint")?;
             return Ok(());
+        }
+
+        // Test/script paths only run unsafe-cheatcode and environment-read-across-mutation.
+        // Named paths still look like they override ignore, so say when that filter applies.
+        let test_or_script: Vec<_> =
+            input.iter().filter(|path| path_config.is_test_or_script(path)).collect();
+        if !test_or_script.is_empty()
+            && (test_or_script.len() == input.len() || !self.paths.is_empty())
+        {
+            let sample = test_or_script
+                .iter()
+                .take(3)
+                .map(|path| {
+                    path.strip_prefix(&config.root).unwrap_or(path).display().to_string()
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let more = if test_or_script.len() > 3 {
+                format!(" (+{} more)", test_or_script.len() - 3)
+            } else {
+                String::new()
+            };
+            let _ = sh_warn!(
+                "only `unsafe-cheatcode` and `environment-read-across-mutation` run on test/script paths ({sample}{more}); other lints are skipped"
+            );
         }
 
         let parse_lints = |lints: &[String]| -> Result<Vec<SolLint>, SolLintError> {

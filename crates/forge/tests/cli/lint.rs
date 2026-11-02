@@ -495,6 +495,28 @@ note[function-init-state]: state variable initializer depends on a non-pure func
 }
 
 #[forgetest]
+
+#[forgetest]
+fn notes_when_named_test_or_script_paths_skip_most_lints(prj: _, cmd: _) {
+    let fixture = r#"
+contract Deploy {
+    function incorrectShift(uint256 value) public pure {
+        assembly { pop(shr(value, 1)) }
+    }
+}
+"#;
+    let script = prj.add_script("Deploy", fixture);
+
+    cmd.forge_fuse()
+        .arg("lint")
+        .arg(&script)
+        .args(["--only-lint", "incorrect-shift"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: only `unsafe-cheatcode` and `environment-read-across-mutation` run on test/script paths ([..]); other lints are skipped
+"#]]);
+}
+
 fn unsafe_cheatcode_lints_tests_and_scripts(prj: _, cmd: _) {
     let fixture = r#"
 interface Vm {
