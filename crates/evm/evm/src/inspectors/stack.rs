@@ -1679,7 +1679,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 .recv_timeout(std::time::Duration::from_secs(1));
         }
 
-        if let Some(cancellation) = &self.inner.execution_cancellation {
+        // Other inspectors may step every opcode; only the poll opcodes count as polls.
+        if let Some(cancellation) = &self.inner.execution_cancellation
+            && CANCELLATION_POLL_OPCODES.contains(interp.opcode())
+        {
             let poll_deadline = self.inner.cancellation_poll_counter == 0;
             self.inner.cancellation_poll_counter =
                 (self.inner.cancellation_poll_counter + 1) % DEADLINE_POLL_INTERVAL;
