@@ -1,6 +1,6 @@
 use crate::{
     AccountGenerator, CHAIN_ID, NodeConfig,
-    config::{DEFAULT_MNEMONIC, DEFAULT_SLOTS_IN_AN_EPOCH, ForkChoice},
+    config::{DEFAULT_MNEMONIC, DEFAULT_SLOTS_IN_AN_EPOCH, DEFAULT_TEMPO_EPOCH_LENGTH, ForkChoice},
     eth::{
         EthApi, backend::db::SerializableState, miner::INSTANT_COALESCE_WINDOW,
         pool::transactions::TransactionOrder,
@@ -92,10 +92,16 @@ pub struct NodeArgs {
     pub tempo_fee_payer: Option<Address>,
 
     /// Number of block heights in a Tempo consensus epoch. Only used on Tempo networks.
-    ///
-    /// Defaults to the fork source's epoch length when available, otherwise 21,600.
-    /// An explicit value must match the fork source's epoch schedule.
-    #[arg(long = "tempo.epoch-length", value_name = "BLOCKS")]
+    #[arg(
+        long = "tempo.epoch-length",
+        value_name = "BLOCKS",
+        long_help = format!(
+            "Number of block heights in a Tempo consensus epoch. Only used on Tempo networks.\n\n\
+             Defaults to the fork source's epoch length when available, otherwise {}. \
+             An explicit value must match the fork source's epoch schedule.",
+            DEFAULT_TEMPO_EPOCH_LENGTH,
+        )
+    )]
     pub tempo_epoch_length: Option<NonZeroU64>,
 
     /// Development consensus seed for Tempo, as 32 bytes of hex.

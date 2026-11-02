@@ -262,7 +262,7 @@ impl TempoChain {
             let message = if matches!(error, TempoConsensusError::InvalidAnchorEpoch { .. }) {
                 format!(
                     "{error}; set --tempo.epoch-length to match the fork source \
-                     (default: 21600 when source metadata is unavailable)"
+                     (default: {DEFAULT_TEMPO_EPOCH_LENGTH} when source metadata is unavailable)"
                 )
             } else {
                 error.to_string()
