@@ -259,24 +259,7 @@ impl TempoChain {
         )
         .map_err(|error| {
             let message = if matches!(error, TempoConsensusError::InvalidAnchorEpoch { .. }) {
-                match (config.tempo_epoch_length, source_epoch_length) {
-                    (Some(configured), Some(source)) => format!(
-                        "{error}; --tempo.epoch-length is {configured}, fork source reports \
-                         {source}; check the override and fork source anchor"
-                    ),
-                    (Some(configured), None) => format!(
-                        "{error}; --tempo.epoch-length is {configured}, source epoch length is \
-                         unavailable; check the override against the fork source anchor"
-                    ),
-                    (None, Some(source)) => format!(
-                        "{error}; using source epoch length {source}; check the fork source \
-                         metadata against the anchor"
-                    ),
-                    (None, None) => format!(
-                        "{error}; using default epoch length {DEFAULT_TEMPO_EPOCH_LENGTH}; source \
-                         epoch length is unavailable; set --tempo.epoch-length to match the fork source"
-                    ),
-                }
+                format!("{error}; set --tempo.epoch-length to match the fork source")
             } else {
                 error.to_string()
             };
@@ -298,19 +281,6 @@ impl TempoChain {
             config.tempo_epoch_length.unwrap_or(DEFAULT_TEMPO_EPOCH_LENGTH),
             height,
         )
-    }
-
-    /// Reports a validated fork's fallback after reset revalidation.
-    pub(super) fn warn_if_epoch_length_fallback(config: &NodeConfig, fork: &ClientFork) {
-        if !config.silent
-            && config.tempo_epoch_length.is_none()
-            && fork.config.read().endpoint_identity.tempo_epoch_length.is_none()
-        {
-            let _ = foundry_common::sh_warn!(
-                "Tempo fork epoch length is unavailable; using {DEFAULT_TEMPO_EPOCH_LENGTH}. \
-                 Set --tempo.epoch-length to match the source."
-            );
-        }
     }
 }
 

@@ -4737,8 +4737,8 @@ impl<N: Network> Backend<N> {
         if networks.is_tempo() {
             let cfg = node_config.read().await;
             let source = fork.read().clone();
-            let consensus = if let Some(fork) = &source {
-                TempoChain::fork_consensus(fork, &cfg).await?
+            let consensus = if let Some(fork) = source {
+                TempoChain::fork_consensus(&fork, &cfg).await?
             } else {
                 TempoChain::local_consensus(&cfg, blockchain.storage.read().best_number)
             };
@@ -4753,9 +4753,6 @@ impl<N: Network> Backend<N> {
             }
             tempo.proof_states = Arc::new(RwLock::new(proof_states));
             storage.tempo = Some(tempo);
-            if let Some(fork) = &source {
-                TempoChain::warn_if_epoch_length_fallback(&cfg, fork);
-            }
         }
         let startup_cache_lease = if fork.read().is_some() {
             let db = db.read().await;
@@ -5325,9 +5322,6 @@ impl<N: Network> Backend<N> {
                 return Ok(None);
             }
 
-            if tempo_consensus.is_some() {
-                TempoChain::warn_if_epoch_length_fallback(&staged_config, &staged_fork);
-            }
             Ok(Some((fork_block, staged_fork.storage.read().clone(), tempo_consensus)))
         }
         .await;

@@ -7487,26 +7487,10 @@ async fn tempo_consensus_fork_rejects_incompatible_epoch_length() {
     )
     .await;
     for (endpoint, explicit, expected) in [
-        (
-            source.http_endpoint(),
-            Some(3),
-            "expected Tempo consensus anchor epoch 2, got 1; --tempo.epoch-length is 3, fork source reports 6; check the override and fork source anchor",
-        ),
-        (
-            hidden.clone(),
-            Some(3),
-            "expected Tempo consensus anchor epoch 2, got 1; --tempo.epoch-length is 3, source epoch length is unavailable; check the override against the fork source anchor",
-        ),
-        (
-            inconsistent,
-            None,
-            "expected Tempo consensus anchor epoch 2, got 1; using source epoch length 3; check the fork source metadata against the anchor",
-        ),
-        (
-            hidden,
-            None,
-            "expected Tempo consensus anchor epoch 0, got 1; using default epoch length 21600; source epoch length is unavailable; set --tempo.epoch-length to match the fork source",
-        ),
+        (source.http_endpoint(), Some(3), "expected Tempo consensus anchor epoch 2, got 1"),
+        (hidden.clone(), Some(3), "expected Tempo consensus anchor epoch 2, got 1"),
+        (inconsistent, None, "expected Tempo consensus anchor epoch 2, got 1"),
+        (hidden, None, "expected Tempo consensus anchor epoch 0, got 1"),
     ] {
         let mut config =
             config.clone().with_eth_rpc_url(Some(endpoint)).with_fork_block_number(Some(6u64));
@@ -7517,7 +7501,12 @@ async fn tempo_consensus_fork_rejects_incompatible_epoch_length() {
             .await
             .err()
             .expect("a fork epoch must agree with the configured epoch length");
-        assert_data_eq!(error.to_string(), format!("Internal error: \"{expected}\""));
+        assert_data_eq!(
+            error.to_string(),
+            format!(
+                "Internal error: \"{expected}; set --tempo.epoch-length to match the fork source\""
+            )
+        );
     }
 }
 
@@ -8743,6 +8732,4 @@ async fn tempo_epoch_metadata_endpoints(source: &anvil::NodeHandle) -> [(&'stati
 }
 
 mod epoch_metadata;
-#[cfg(feature = "cli")]
-mod epoch_warning;
 mod subscriptions;
