@@ -1036,6 +1036,10 @@ impl ExpectedRevert {
         Self { data, reverter, count, remaining: count }
     }
 
+    pub(crate) const fn has_reverter(&self) -> bool {
+        self.reverter.is_some()
+    }
+
     pub(crate) const fn consume_one(&mut self) -> bool {
         self.remaining = self.remaining.saturating_sub(1);
         self.remaining == 0
