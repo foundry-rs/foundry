@@ -37,6 +37,9 @@ impl<R: ReceiptResponse> From<R> for TxStatus<R> {
 
 /// Checks the status of a txhash by first polling for a receipt, then for
 /// mempool inclusion. Returns the tx hash, and a status
+///
+/// While the transaction stays pending past `timeout`, warns once above `progress` that it is still
+/// being waited on.
 pub async fn check_tx_status<N: Network>(
     provider: &RootProvider<N>,
     hash: TxHash,
@@ -83,7 +86,7 @@ pub async fn check_tx_status<N: Network>(
                             if !warned.swap(true, Ordering::Relaxed) {
                                 progress.suspend(|| {
                                     let _ = sh_warn!(
-                                        "Transaction {hash} is still known to the RPC endpoint; continuing to wait for its receipt and requested confirmations."
+                                        "Transaction {hash} has not been mined after {timeout}s; still waiting for its receipt."
                                     );
                                 });
                             }
