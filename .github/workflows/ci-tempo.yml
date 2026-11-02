@@ -130,6 +130,7 @@ jobs:
         if: vars.TEMPO_DEVNET_CI != 'false' && (github.event_name == 'push' || github.event_name == 'pull_request' || github.event.inputs.network == 'devnet' || github.event.inputs.network == 'all')
         env:
           ETH_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
+          TEMPO_EPOCH_LENGTH: ${{ vars.TEMPO_DEVNET_EPOCH_LENGTH || '1000' }}
           SCRIPTS: ${{ github.event.inputs.scripts || 'both' }}
         run: |
           if [ "$SCRIPTS" = "check" ] || [ "$SCRIPTS" = "both" ]; then
