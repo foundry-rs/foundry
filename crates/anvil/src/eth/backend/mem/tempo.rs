@@ -252,14 +252,17 @@ impl TempoChain {
         };
         TempoConsensus::at_fork_header(
             config.tempo_consensus_seed(),
-            config.tempo_epoch_length,
+            config
+                .tempo_epoch_length
+                .or(fork.config.read().endpoint_identity.tempo_epoch_length)
+                .unwrap_or(DEFAULT_TEMPO_EPOCH_LENGTH),
             header.as_tempo().expect("the fork anchor is a Tempo header"),
         )
         .map_err(|error| {
             let message = if matches!(error, TempoConsensusError::InvalidAnchorEpoch { .. }) {
                 format!(
                     "{error}; set --tempo.epoch-length to match the fork source \
-                     (default: {DEFAULT_TEMPO_EPOCH_LENGTH})"
+                     (default: {DEFAULT_TEMPO_EPOCH_LENGTH} when source metadata is unavailable)"
                 )
             } else {
                 error.to_string()
@@ -277,7 +280,11 @@ impl TempoChain {
 
     /// Starts an unsigned local segment without inferring fork metadata.
     pub(super) fn local_consensus(config: &NodeConfig, height: u64) -> TempoConsensus {
-        TempoConsensus::at_height(config.tempo_consensus_seed(), config.tempo_epoch_length, height)
+        TempoConsensus::at_height(
+            config.tempo_consensus_seed(),
+            config.tempo_epoch_length.unwrap_or(DEFAULT_TEMPO_EPOCH_LENGTH),
+            height,
+        )
     }
 }
 

@@ -59,6 +59,7 @@ fn fork_config(asserter: Asserter, block_hash: B256) -> ClientForkConfig {
             instance_id: None,
             source_fork_block_number: None,
             source_fork_block_hash: None,
+            tempo_epoch_length: None,
         },
         state_is_mutable: false,
         timestamp: 1_800_000_000,
