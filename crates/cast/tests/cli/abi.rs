@@ -531,3 +531,73 @@ fn calldata_bool(cmd: _) {
         .assert_success()
         .stdout_eq("0x6fae94120000000000000000000000000000000000000000000000000000000000000000\n");
 }
+
+// `dirs::home_dir()` ignores `HOME` on Windows, so the signature cache cannot be isolated there.
+#[cfg(not(windows))]
+#[casttest]
+fn decode_error_event_json_without_sig_is_only_json(prj: _, cmd: _) {
+    // Isolate and seed the signature cache so selector lookup is deterministic and offline.
+    let home = prj.root().join("home");
+    let cache_dir = home.join(".foundry/cache");
+    fs::create_dir_all(&cache_dir).unwrap();
+    fs::write(
+        cache_dir.join("signatures"),
+        serde_json::to_vec(&json!({
+            "functions": {},
+            "errors": { "0xe94fe3af": "TooSmall(uint256,uint256)" },
+            "events": {
+                "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef":
+                    "Transfer(address,address,uint256)"
+            },
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let error_data = "0xe94fe3af0000000000000000000000000000000000000000000000000000000000000005000000000000000000000000000000000000000000000000000000000000000a";
+    let event_data = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000005";
+
+    cmd.env("HOME", &home);
+    cmd.args(["decode-error", error_data]).assert_success().stdout_eq(str![[r#"
+TooSmall(uint256,uint256)
+5
+10
+
+"#]]);
+
+    cmd.cast_fuse();
+    cmd.env("HOME", &home);
+    cmd.args(["decode-error", error_data, "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{"schema_version":1,"success":true,"data":["5","10"],"errors":[],"warnings":[]}
+
+"#]])
+        .stderr_eq(str![[r#"
+TooSmall(uint256,uint256)
+
+"#]]);
+
+    cmd.cast_fuse();
+    cmd.env("HOME", &home);
+    cmd.args(["decode-event", event_data]).assert_success().stdout_eq(str![[r#"
+Transfer(address,address,uint256)
+0x0000000000000000000000000000000000000001
+0x0000000000000000000000000000000000000002
+5
+
+"#]]);
+
+    cmd.cast_fuse();
+    cmd.env("HOME", &home);
+    cmd.args(["decode-event", event_data, "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{"schema_version":1,"success":true,"data":["0x0000000000000000000000000000000000000001","0x0000000000000000000000000000000000000002","5"],"errors":[],"warnings":[]}
+
+"#]])
+        .stderr_eq(str![[r#"
+Transfer(address,address,uint256)
+
+"#]]);
+}
