@@ -873,11 +873,12 @@ async fn create_fork<
         fork_context.source_chain_id,
         &resolved.block,
     );
-    // An endpoint without Anvil metadata takes an explicitly selected network as its profile, so
-    // its recognized chain ID decides the family it belongs to.
+    // An endpoint without Anvil node info takes an explicitly selected network as its profile, so
+    // its recognized chain ID decides the family it belongs to. Fork contexts require a recognized
+    // hardfork, so a reported hardfork means node info reported the family.
     let chain = fork_context.source_chain_id;
     let source = match NetworkVariant::from_known_chain_id(chain) {
-        Ok(Some(network)) if fork_context.instance_id.is_none() => {
+        Ok(Some(network)) if fork_context.hardfork.is_none() => {
             NetworkConfigs::default().with_rpc_identity(network, chain)
         }
         _ => fork_context.network_profile,

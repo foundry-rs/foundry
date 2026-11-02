@@ -475,6 +475,22 @@ Warning: fork of chain 1 belongs to `ethereum`, but the selected network is `mon
         .args(["test", "--network", "ethereum", "--fork-url", &op])
         .assert_success()
         .stderr_eq(str![""]);
+
+    // Node info reports the family even when `anvil_metadata` is unavailable, so the chain ID
+    // does not override it.
+    let (_api, monad) =
+        anvil::spawn(anvil::NodeConfig::test_monad().with_chain_id(Some(1u64))).await;
+    let monad = rpc::spawn_rpc_proxy_method_not_found_before(
+        monad.http_endpoint(),
+        "anvil_metadata",
+        usize::MAX,
+    )
+    .await;
+    cmd.forge_fuse().args(["test", "--fork-url", &monad]).assert_success().stderr_eq(str![""]);
+    cmd.forge_fuse()
+        .args(["test", "--network", "monad", "--fork-url", &monad])
+        .assert_success()
+        .stderr_eq(str![""]);
 }
 
 #[cfg(feature = "monad")]
