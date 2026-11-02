@@ -250,8 +250,8 @@ impl TempoChain {
             FoundryHeader::Tempo(_) => header,
             FoundryHeader::Ethereum(inner) => FoundryHeader::tempo(inner),
         };
-        let epoch_length =
-            config.tempo_epoch_length.or(fork.config.read().endpoint_identity.tempo_epoch_length);
+        let source_epoch_length = fork.config.read().endpoint_identity.tempo_epoch_length;
+        let epoch_length = config.tempo_epoch_length.or(source_epoch_length);
         TempoConsensus::at_fork_header(
             config.tempo_consensus_seed(),
             epoch_length.unwrap_or(DEFAULT_TEMPO_EPOCH_LENGTH),
@@ -259,10 +259,24 @@ impl TempoChain {
         )
         .map_err(|error| {
             let message = if matches!(error, TempoConsensusError::InvalidAnchorEpoch { .. }) {
-                format!(
-                    "{error}; set --tempo.epoch-length to match the fork source \
-                     (default: {DEFAULT_TEMPO_EPOCH_LENGTH} when source metadata is unavailable)"
-                )
+                match (config.tempo_epoch_length, source_epoch_length) {
+                    (Some(configured), Some(source)) => format!(
+                        "{error}; --tempo.epoch-length is {configured}, fork source reports \
+                         {source}; check the override and fork source anchor"
+                    ),
+                    (Some(configured), None) => format!(
+                        "{error}; --tempo.epoch-length is {configured}, source epoch length is \
+                         unavailable; check the override against the fork source anchor"
+                    ),
+                    (None, Some(source)) => format!(
+                        "{error}; using source epoch length {source}; check the fork source \
+                         metadata against the anchor"
+                    ),
+                    (None, None) => format!(
+                        "{error}; using default epoch length {DEFAULT_TEMPO_EPOCH_LENGTH}; source \
+                         epoch length is unavailable; set --tempo.epoch-length to match the fork source"
+                    ),
+                }
             } else {
                 error.to_string()
             };

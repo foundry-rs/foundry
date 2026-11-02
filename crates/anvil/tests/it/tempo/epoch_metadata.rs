@@ -173,3 +173,34 @@ async fn alternating_epoch_metadata(
     })
     .await
 }
+
+/// Reveals metadata after the pinned root is fetched for the first staged replacement.
+/// The returned counter tracks full root reads so tests can assert that staging was retried.
+pub(super) async fn epoch_metadata_after_fork_root(
+    endpoint: String,
+    block_number: u64,
+) -> (String, Arc<AtomicUsize>) {
+    let root_reads = Arc::new(AtomicUsize::new(0));
+    let endpoint = spawn_rpc_proxy_mapping_method(endpoint, "anvil_tempoConsensusIdentity", {
+        let root_reads = Arc::clone(&root_reads);
+        move |_, value| {
+            if root_reads.load(Ordering::Relaxed) == 0 { serde_json::Value::Null } else { value }
+        }
+    })
+    .await;
+    let root_number = serde_json::to_value(BlockNumberOrTag::Number(block_number)).unwrap();
+    let endpoint = spawn_rpc_proxy_mapping_method(endpoint, "eth_getBlockByNumber", {
+        let root_reads = Arc::clone(&root_reads);
+        move |params, value| {
+            if params.get(0) == Some(&root_number)
+                && params.get(1).and_then(serde_json::Value::as_bool) == Some(true)
+                && !value.is_null()
+            {
+                root_reads.fetch_add(1, Ordering::Relaxed);
+            }
+            value
+        }
+    })
+    .await;
+    (endpoint, root_reads)
+}

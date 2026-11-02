@@ -2102,7 +2102,10 @@ impl NodeConfig {
                 return Ok(false);
             }
         }
-        // A newly discovered schedule requires rebuilding state with that configuration.
+        // Consensus has already been built from the original schedule, so updating only the
+        // identity could leave it inconsistent. Reset retries from a fresh snapshot and must
+        // rediscover the schedule before building consensus; repeated late discoveries exhaust
+        // its bounded retries without changing live state.
         Ok(expected == original)
     }
 

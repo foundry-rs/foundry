@@ -63,7 +63,7 @@ use foundry_primitives::{
 };
 use foundry_test_utils::rpc::{
     spawn_rpc_proxy_canned_method, spawn_rpc_proxy_mapping_method,
-    spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_rejecting_method_after,
+    spawn_rpc_proxy_rejecting_method_after,
 };
 use futures::StreamExt;
 use serde::Deserialize;
@@ -7470,25 +7470,55 @@ async fn tempo_consensus_fork_rejects_missing_context_without_resetting_live_sta
 
 #[tokio::test(flavor = "multi_thread")]
 async fn tempo_consensus_fork_rejects_incompatible_epoch_length() {
-    let config = NodeConfig::test_tempo()
-        .with_no_mining(true)
-        .with_tempo_epoch_length(NonZeroU64::new(6).unwrap());
-    let (source_api, source) = spawn(config.clone()).await;
+    let config = NodeConfig::test_tempo().with_no_mining(true);
+    let (source_api, source) =
+        spawn(config.clone().with_tempo_epoch_length(NonZeroU64::new(6).unwrap())).await;
     source_api.anvil_mine(Some(U256::from(6)), None).await.unwrap();
-
-    let error = try_spawn(
-        config
-            .with_tempo_epoch_length(NonZeroU64::new(3).unwrap())
-            .with_eth_rpc_url(Some(source.http_endpoint()))
-            .with_fork_block_number(Some(6u64)),
+    let hidden = spawn_rpc_proxy_rejecting_method_after(
+        source.http_endpoint(),
+        "anvil_tempoConsensusIdentity",
+        0,
     )
-    .await
-    .err()
-    .expect("a fork epoch must agree with the configured epoch length");
-    assert_eq!(
-        error.to_string(),
-        "Internal error: \"expected Tempo consensus anchor epoch 2, got 1; set --tempo.epoch-length to match the fork source (default: 21600 when source metadata is unavailable)\""
-    );
+    .await;
+    let (inconsistent, _) = spawn_rpc_proxy_canned_method(
+        source.http_endpoint(),
+        "anvil_tempoConsensusIdentity",
+        serde_json::json!({ "epochLength": 3 }),
+    )
+    .await;
+    for (endpoint, explicit, expected) in [
+        (
+            source.http_endpoint(),
+            Some(3),
+            "expected Tempo consensus anchor epoch 2, got 1; --tempo.epoch-length is 3, fork source reports 6; check the override and fork source anchor",
+        ),
+        (
+            hidden.clone(),
+            Some(3),
+            "expected Tempo consensus anchor epoch 2, got 1; --tempo.epoch-length is 3, source epoch length is unavailable; check the override against the fork source anchor",
+        ),
+        (
+            inconsistent,
+            None,
+            "expected Tempo consensus anchor epoch 2, got 1; using source epoch length 3; check the fork source metadata against the anchor",
+        ),
+        (
+            hidden,
+            None,
+            "expected Tempo consensus anchor epoch 0, got 1; using default epoch length 21600; source epoch length is unavailable; set --tempo.epoch-length to match the fork source",
+        ),
+    ] {
+        let mut config =
+            config.clone().with_eth_rpc_url(Some(endpoint)).with_fork_block_number(Some(6u64));
+        if let Some(length) = explicit {
+            config = config.with_tempo_epoch_length(NonZeroU64::new(length).unwrap());
+        }
+        let error = try_spawn(config)
+            .await
+            .err()
+            .expect("a fork epoch must agree with the configured epoch length");
+        assert_data_eq!(error.to_string(), format!("Internal error: \"{expected}\""));
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -8684,9 +8714,8 @@ async fn tempo_consensus_fork_epoch_metadata_mirrors() {
                         tempo_consensus_identity(&unknown.http_provider()).await.epoch_length,
                         21_600
                     );
-                    // Reveal metadata only after the initial snapshot and primary revalidation.
-                    let late =
-                        spawn_rpc_proxy_method_not_found_before(known.clone(), method, 4).await;
+                    let (late, root_reads) =
+                        epoch_metadata::epoch_metadata_after_fork_root(known.clone(), 1).await;
                     unknown_api
                         .anvil_reset(Some(Forking {
                             json_rpc_url: Some(late),
@@ -8698,6 +8727,7 @@ async fn tempo_consensus_fork_epoch_metadata_mirrors() {
                         tempo_consensus_identity(&unknown.http_provider()).await.epoch_length,
                         3
                     );
+                    assert_eq!(root_reads.load(Ordering::Relaxed), 2);
                 }
             } else {
                 assert_eq!(

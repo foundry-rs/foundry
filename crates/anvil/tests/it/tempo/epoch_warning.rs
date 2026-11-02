@@ -18,12 +18,8 @@ async fn tempo_consensus_fork_epoch_fallback_warning() {
         0,
     )
     .await;
-    let late = spawn_rpc_proxy_method_not_found_before(
-        source.http_endpoint(),
-        "anvil_tempoConsensusIdentity",
-        4,
-    )
-    .await;
+    let (late, late_root_reads) =
+        epoch_metadata::epoch_metadata_after_fork_root(source.http_endpoint(), 1).await;
 
     for (urls, explicit, quiet, length, warn, reset) in [
         (vec![hidden.clone()], None, false, 21_600, true, None),
@@ -133,4 +129,5 @@ async fn tempo_consensus_fork_epoch_fallback_warning() {
         drop(child);
         assert_data_eq!(read_to_string(&stderr).unwrap(), expected);
     }
+    assert_eq!(late_root_reads.load(Ordering::Relaxed), 2);
 }
