@@ -9,6 +9,7 @@ use alloy_eips::{BlockNumHash, eip7928::BlockAccessList};
 use alloy_evm::EvmEnv;
 use alloy_network::{AnyNetwork, Network};
 use alloy_primitives::map::HashMap;
+use foundry_common::sh_warn;
 use foundry_config::Config;
 use foundry_fork_db::{
     BackendHandler, BlockchainDb, ForkBlock, ForkBlockEnv, SharedBackend, cache::BlockchainDbMeta,
@@ -21,10 +22,11 @@ use futures::{
 };
 use revm::primitives::hardfork::SpecId;
 use std::{
+    collections::BTreeSet,
     fmt::{self, Write},
     pin::Pin,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc::{Sender as OneshotSender, channel as oneshot_channel},
     },
@@ -878,6 +880,21 @@ async fn create_fork<
             fork_context.network,
             execution_networks.execution_network()
         );
+    }
+    // An explicit network selection is kept even when the fork belongs to another family, so
+    // warn once per source chain instead of failing. Rolls reuse an already checked fork.
+    if !require_endpoint_family_match
+        && expected_identity.is_none()
+        && !execution_networks.supports_fork_source(&fork_context.network_profile)
+    {
+        static WARNED_CHAINS: Mutex<BTreeSet<u64>> = Mutex::new(BTreeSet::new());
+        let chain = fork_context.source_chain_id;
+        if WARNED_CHAINS.lock().unwrap().insert(chain) {
+            let (fork, selected) = (fork_context.network, execution_networks.execution_network());
+            let _ = sh_warn!(
+                "fork of chain {chain} belongs to `{fork}`, but the selected network is `{selected}`, so the fork runs with `{selected}` rules"
+            );
+        }
     }
     if let Some(expected) = expected_identity {
         eyre::ensure!(

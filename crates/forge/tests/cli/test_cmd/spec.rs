@@ -436,6 +436,36 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 #[cfg(feature = "monad")]
 #[forgetest]
+async fn explicit_network_warns_on_fork_of_another_family(prj: _, cmd: _) {
+    prj.add_test(
+        "ForkNetworkMismatch.t.sol",
+        r#"
+contract ForkNetworkMismatchTest {
+    function test_runs() public {}
+}
+   "#,
+    );
+
+    let (_api, ethereum) = anvil::spawn(anvil::NodeConfig::test()).await;
+    cmd.args(["test", "--network", "monad", "--fork-url", &ethereum.http_endpoint()])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: fork of chain 31337 belongs to `ethereum`, but the selected network is `monad`, so the fork runs with `monad` rules
+
+"#]]);
+
+    let (_api, monad) = anvil::spawn(anvil::NodeConfig::test_monad()).await;
+    cmd.forge_fuse()
+        .args(["test", "--network", "ethereum", "--fork-url", &monad.http_endpoint()])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: fork of chain 143 belongs to `monad`, but the selected network is `ethereum`, so the fork runs with `ethereum` rules
+
+"#]]);
+}
+
+#[cfg(feature = "monad")]
+#[forgetest]
 async fn fork_resolves_monad_hardfork_from_timestamp(prj: _, cmd: _) {
     let monad_nine_activation =
         foundry_evm::hardforks::MonadHardfork::MonadNine.mainnet_activation_timestamp().unwrap();
