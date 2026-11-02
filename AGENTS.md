@@ -45,8 +45,9 @@ Rust formatting uses nightly.
 - `crates/script`: script execution support
 - `crates/verify`: contract verification support
 
-Foundry's EVM execution tooling is built around `revm`. Cheatcodes are calls to
-the fixed cheatcode address and are dispatched through the cheatcode inspector.
+Foundry's EVM execution tooling is built around `evm2`; see
+[`docs/dev/evm2.md`](docs/dev/evm2.md). Cheatcodes are calls to the fixed
+cheatcode address and are dispatched through the cheatcode inspector.
 For custom network work, follow the ownership, state-lifecycle, tool-dispatch,
 and CI checklist in [`docs/dev/networks.md`](docs/dev/networks.md).
 

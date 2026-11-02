@@ -40,6 +40,8 @@ use forking must contain `fork` in their name. Forge and Cast CLI tests live und
 - [Debugging](./debugging.md) collects contributor debugging techniques.
 - [Editor integrations](../../editors/README.md) covers the VS Code Development Host,
   independent client builds, local packaging and Zed installation.
+- [evm2 execution](./evm2.md) points to the execution contracts and lists known divergences from
+  revm.
 - [External compiler adapters](./external-compiler-adapters.md) defines the executable protocol,
   cache contract, and artifact integration for compiler-native EVM projects.
 - [Lint rules](./lintrules.md) covers the lint registry, UI fixtures, and documentation contract.
