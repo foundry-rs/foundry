@@ -1074,6 +1074,11 @@ impl ExpectedRevert {
         if self.count > 1 { callee } else { first_failed_callee }
     }
 
+    /// Returns whether at least one expected revert has already matched.
+    pub(crate) const fn matched_any(&self) -> bool {
+        self.remaining < self.count
+    }
+
     pub(crate) fn match_condition(
         &self,
         cx: &mut SymCx,

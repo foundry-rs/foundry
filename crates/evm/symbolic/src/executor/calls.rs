@@ -1383,8 +1383,7 @@ impl SymbolicExecutor {
         match can_pay.as_const() {
             Some(true) => Ok(true),
             Some(false) => {
-                state.return_data = SymReturnData::empty(&mut self.cx);
-                state.stack.push(SymExpr::zero(&mut self.cx))?;
+                self.fail_create_before_frame(executor, state)?;
                 Ok(false)
             }
             None => {
@@ -1400,8 +1399,7 @@ impl SymbolicExecutor {
                     (true, true) => {
                         let mut failure = state.clone();
                         failure.constraints = failure_constraints;
-                        failure.return_data = SymReturnData::empty(&mut self.cx);
-                        failure.stack.push(SymExpr::zero(&mut self.cx))?;
+                        self.fail_create_before_frame(executor, &mut failure)?;
                         worklist.push_back(failure);
 
                         state.constraints = success_constraints;
@@ -1413,8 +1411,7 @@ impl SymbolicExecutor {
                     }
                     (false, true) => {
                         state.constraints = failure_constraints;
-                        state.return_data = SymReturnData::empty(&mut self.cx);
-                        state.stack.push(SymExpr::zero(&mut self.cx))?;
+                        self.fail_create_before_frame(executor, state)?;
                         Ok(false)
                     }
                     (false, false) => Ok(false),
