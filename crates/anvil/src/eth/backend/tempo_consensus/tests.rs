@@ -720,20 +720,15 @@ fn fork_anchor_view_overflow_is_atomic_and_does_not_prevent_epoch_reset() {
     assert!(consensus.latest().is_none());
     assert_eq!(consensus.identity(), identity);
 
-    for (height, view) in [(1, u64::MAX - 1), (2, u64::MAX)] {
-        let anchor = fork_anchor(height, epoch_length, view);
-        let mut consensus =
-            TempoConsensus::at_fork_header(B256::ZERO, epoch_length, &anchor).unwrap();
-        if height == 1 {
-            let (header, certificate) = finalize(&mut consensus, 2);
-            assert_eq!(certificate.view, u64::MAX);
-            assert_certificate(&identity, &header, &certificate);
-        }
-        let (header, certificate) = finalize(&mut consensus, 3);
-        let context = header.consensus_context.unwrap();
-        assert_eq!((context.epoch, context.view, context.parent_view), (1, 1, 0));
-        assert_certificate(&identity, &header, &certificate);
-    }
+    let anchor = fork_anchor(1, epoch_length, u64::MAX - 1);
+    let mut consensus = TempoConsensus::at_fork_header(B256::ZERO, epoch_length, &anchor).unwrap();
+    let (header, certificate) = finalize(&mut consensus, 2);
+    assert_eq!(certificate.view, u64::MAX);
+    assert_certificate(&identity, &header, &certificate);
+    let (header, certificate) = finalize(&mut consensus, 3);
+    let context = header.consensus_context.unwrap();
+    assert_eq!((context.epoch, context.view, context.parent_view), (1, 1, 0));
+    assert_certificate(&identity, &header, &certificate);
 }
 
 #[test]

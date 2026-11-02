@@ -673,8 +673,7 @@ mod tests {
             let _db = api.backend.db.write().await;
             let mut storage = api.backend.blockchain.storage.write();
             let tempo = storage.tempo.as_mut().unwrap();
-            let anchor = unsigned_anchor(tempo, 5);
-            tempo.reanchor(anchor);
+            tempo.reanchor(unsigned_anchor(tempo, 5));
         }
         let error = api.mine_one().await.unwrap_err();
         assert!(matches!(error, BlockchainError::Internal(message)
@@ -687,8 +686,7 @@ mod tests {
             let _db = api.backend.db.write().await;
             let mut storage = api.backend.blockchain.storage.write();
             let tempo = storage.tempo.as_mut().unwrap();
-            let anchor = unsigned_anchor(tempo, 0);
-            tempo.reanchor(anchor);
+            tempo.reanchor(unsigned_anchor(tempo, 0));
         }
         api.mine_one().await.unwrap();
         assert_eq!(api.backend.get_block(1).unwrap().body.transactions.len(), 1);
