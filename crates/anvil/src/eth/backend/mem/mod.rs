@@ -706,6 +706,7 @@ fn uses_protocol_call_nonce(tx: &FoundryTxEnvelope) -> bool {
 }
 
 /// Describes an exceptional halt with REVM's `HaltReason` messages.
+// TODO: move these messages upstream as `impl Display for InstrStop` in evm2.
 pub(crate) fn halt_reason(stop: InstrStop) -> String {
     match stop {
         InstrStop::OutOfGas => "out of gas",
