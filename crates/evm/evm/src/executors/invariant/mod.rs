@@ -17,7 +17,8 @@ use crate::{
     },
     inspectors::Fuzzer,
 };
-use alloy_json_abi::Function;
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
+use alloy_json_abi::{Function, StateMutability};
 use alloy_primitives::{
     Address, Bytes, FixedBytes, I256, Selector, U256,
     map::{AddressMap, AddressSet, HashMap, hash_map::Entry as AddressMapEntry},
@@ -1138,6 +1139,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             corpus_seed,
         )?;
         let mut runs = 0;
+        // Where the next view harvesting window starts; kept across runs so it keeps rotating.
+        let mut view_cursor = 0;
         let mut snapshots = StateSnapshots::new(config.depth);
         campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
         // Report invariants that already fail in the initial state. Later runs only report
@@ -1345,6 +1348,16 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                     run_depth,
                                     mapping_slots,
                                 );
+                                if config.dictionary.include_view_values {
+                                    collect_view_values(
+                                        &invariant_test,
+                                        &current_run.executor,
+                                        &state_changeset,
+                                        current_run.inputs.last().expect("checked above"),
+                                        run_depth,
+                                        &mut view_cursor,
+                                    );
+                                }
                             }
 
                             let created_before = current_run.created_contracts.len();
@@ -2342,6 +2355,79 @@ fn collect_data<FEN: FoundryEvmNetwork>(
     if let Some(changed) = sender_changeset {
         state_changeset.insert(tx.sender, changed);
     }
+}
+
+/// Maximum number of view calls made to harvest dictionary values after one invariant call.
+const MAX_VIEW_CALLS_PER_TX: usize = 32;
+
+/// Calls the view functions of targeted contracts that the successful call accessed (read or
+/// written), and adds their decoded results to the fuzz dictionary, whole structs included.
+///
+/// Eligible views take no inputs or only addresses, which are bound to the call's sender, so
+/// values such as `balanceOf(sender)` or a getter's struct describe the state the next calls
+/// act on. Calls run against the committed state without changing it; reverted calls are ignored.
+///
+/// At most [`MAX_VIEW_CALLS_PER_TX`] views are called. When more are eligible, `view_cursor`
+/// starts each call's window where the previous one ended, so views past the first window are
+/// reached too; with a stable set of eligible views, every one is called in turn.
+fn collect_view_values<FEN: FoundryEvmNetwork>(
+    invariant_test: &InvariantTest,
+    executor: &Executor<FEN>,
+    state_changeset: &AddressMap<Account>,
+    tx: &BasicTxDetails,
+    run_depth: u32,
+    view_cursor: &mut usize,
+) {
+    let calls = {
+        let targets = invariant_test.targeted_contracts.targets();
+        let mut candidates = targets
+            .iter()
+            .filter(|(address, _)| state_changeset.contains_key(*address))
+            .flat_map(|(address, contract)| {
+                contract
+                    .abi
+                    .functions()
+                    .filter(|function| is_harvestable_view(function))
+                    .map(move |function| (*address, function))
+            })
+            .collect::<Vec<_>>();
+        if candidates.len() > MAX_VIEW_CALLS_PER_TX {
+            let start = *view_cursor % candidates.len();
+            candidates.rotate_left(start);
+            candidates.truncate(MAX_VIEW_CALLS_PER_TX);
+            *view_cursor = start + MAX_VIEW_CALLS_PER_TX;
+        }
+        candidates
+            .into_iter()
+            .map(|(address, function)| (address, function.clone()))
+            .collect::<Vec<_>>()
+    };
+
+    for (address, function) in calls {
+        let args = vec![DynSolValue::Address(tx.sender); function.inputs.len()];
+        let Ok(calldata) = function.abi_encode_input(&args) else { continue };
+        let Ok(call_result) = executor.call_raw(tx.sender, address, calldata.into(), U256::ZERO)
+        else {
+            continue;
+        };
+        if !call_result.reverted {
+            invariant_test.fuzz_state.collect_values_from_view(
+                &function,
+                &call_result.result,
+                run_depth,
+            );
+        }
+    }
+}
+
+/// Returns whether a function is a view whose result can be harvested without fuzzed inputs.
+fn is_harvestable_view(function: &Function) -> bool {
+    matches!(function.state_mutability, StateMutability::View | StateMutability::Pure)
+        && !function.outputs.is_empty()
+        && function.inputs.iter().all(|input| input.ty == "address")
+        && !function.name.starts_with("invariant")
+        && !function.name.starts_with("target")
+        && !function.name.starts_with("exclude")
 }
 
 /// Calls the `afterInvariant()` function on a contract.

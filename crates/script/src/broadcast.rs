@@ -471,7 +471,7 @@ where
         .collect()
 }
 
-fn remaining_operation_indices<N: Network>(
+pub(crate) fn remaining_operation_indices<N: Network>(
     sequence: &ScriptSequenceKind<N>,
     sequence_index: usize,
 ) -> Vec<usize>
