@@ -356,10 +356,10 @@ svm = { package = "svm-rs", version = "0.5.30", default-features = false, featur
 
 ## evm2
 # Keep all migration satellites on the same engine fork.
-evm2 = { git = "https://github.com/mablr/evm2", rev = "f1a2c6d655f115e1c13c4cf20bcdbfaf0bbbc4e2", default-features = false, features = [
+evm2 = { git = "https://github.com/mablr/evm2", rev = "bee42cd84d9b9f9638c1636098957f1013bea2cd", default-features = false, features = [
     "std",
 ] }
-evm2-inspectors = { git = "https://github.com/mablr/evm2", rev = "f1a2c6d655f115e1c13c4cf20bcdbfaf0bbbc4e2", features = [
+evm2-inspectors = { git = "https://github.com/mablr/evm2", rev = "bee42cd84d9b9f9638c1636098957f1013bea2cd", features = [
     "serde",
 ] }
 # Tempo's evm2 integration (tempoxyz/tempo#7871).
@@ -654,19 +654,18 @@ reth-zstd-compressors = { git = "https://github.com/paradigmxyz/reth-core", rev 
 [workspace.metadata.cargo-shear]
 ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]
 
-# The single evm2 revision for the whole graph: `mablr/evm2` `mablr/fix-transfer-overflow`, which
-# is `mablr/upstream-main-873` (alloy-rs/evm2 `main` plus alloy-rs/evm2#873 squashed) plus a fix
-# that fails value transfers overflowing the recipient's balance. Tempo, reth and evm2-networks pin
+# The single evm2 revision for the whole graph: `mablr/evm2` `mablr/upstream-main-873`, which is
+# alloy-rs/evm2 `main` plus alloy-rs/evm2#873 squashed. Tempo, reth and evm2-networks pin
 # `alloy-rs/evm2`, while foundry-core pins `mablr/evm2`. Cargo rejects a patch from the same
 # source, so both go through `DaniPopes/evm2`, a URL in the same fork network. evm2-networks is
 # pinned above to its `main` after foundry-rs/evm2-networks#13, which marks its message
 # instructions for alloy-rs/evm2#873.
 [patch."https://github.com/alloy-rs/evm2"]
-evm2 = { git = "https://github.com/DaniPopes/evm2", rev = "f1a2c6d655f115e1c13c4cf20bcdbfaf0bbbc4e2" }
-evm2-inspectors = { git = "https://github.com/DaniPopes/evm2", rev = "f1a2c6d655f115e1c13c4cf20bcdbfaf0bbbc4e2" }
-evm2-macros = { git = "https://github.com/DaniPopes/evm2", rev = "f1a2c6d655f115e1c13c4cf20bcdbfaf0bbbc4e2" }
+evm2 = { git = "https://github.com/DaniPopes/evm2", rev = "bee42cd84d9b9f9638c1636098957f1013bea2cd" }
+evm2-inspectors = { git = "https://github.com/DaniPopes/evm2", rev = "bee42cd84d9b9f9638c1636098957f1013bea2cd" }
+evm2-macros = { git = "https://github.com/DaniPopes/evm2", rev = "bee42cd84d9b9f9638c1636098957f1013bea2cd" }
 
 [patch."https://github.com/mablr/evm2"]
-evm2 = { git = "https://github.com/DaniPopes/evm2", rev = "f1a2c6d655f115e1c13c4cf20bcdbfaf0bbbc4e2" }
-evm2-inspectors = { git = "https://github.com/DaniPopes/evm2", rev = "f1a2c6d655f115e1c13c4cf20bcdbfaf0bbbc4e2" }
-evm2-macros = { git = "https://github.com/DaniPopes/evm2", rev = "f1a2c6d655f115e1c13c4cf20bcdbfaf0bbbc4e2" }
+evm2 = { git = "https://github.com/DaniPopes/evm2", rev = "bee42cd84d9b9f9638c1636098957f1013bea2cd" }
+evm2-inspectors = { git = "https://github.com/DaniPopes/evm2", rev = "bee42cd84d9b9f9638c1636098957f1013bea2cd" }
+evm2-macros = { git = "https://github.com/DaniPopes/evm2", rev = "bee42cd84d9b9f9638c1636098957f1013bea2cd" }
