@@ -13,7 +13,7 @@ use eyre::{Context, Result};
 use forge_fmt::FormatterConfig;
 use foundry_cli::utils::fetch_abi_from_etherscan;
 use foundry_common::provider::redact_url;
-use foundry_config::{Chain, Config, RpcEndpointUrl};
+use foundry_config::{Chain, Config, RpcEndpoint, RpcEndpointUrl};
 use foundry_evm::{
     core::evm::{EthEvmNetwork, FoundryEvmNetwork},
     decode::decode_console_logs,
@@ -410,14 +410,11 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         // If the argument is an RPC alias designated in the
         // `[rpc_endpoints]` section of the `foundry.toml` within
         // the pwd, use the URL matched to the key.
-        let endpoint = if let Some(endpoint) =
-            self.source_mut().config.foundry_config.rpc_endpoints.get(&url)
-        {
-            endpoint.clone()
-        } else {
-            RpcEndpointUrl::Env(url).into()
+        let rpc_endpoints = self.source_mut().config.foundry_config.rpc_endpoints.clone();
+        let endpoint = match rpc_endpoints.resolved().remove(&url) {
+            Some(endpoint) => endpoint,
+            None => RpcEndpoint::from(RpcEndpointUrl::Env(url)).resolve(),
         };
-        let endpoint = endpoint.resolve();
         let fork_url = endpoint.url()?;
         let fork_headers =
             endpoint.auth.transpose()?.map(|auth| vec![format!("Authorization: {auth}")]);

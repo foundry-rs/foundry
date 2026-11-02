@@ -16,7 +16,7 @@ pub struct UnresolvedEnvVarError {
     pub var: String,
     /// the `env::var` error
     pub source: VarError,
-    /// The config key whose value references the var, like `rpc_endpoints.sepolia`
+    /// The config key whose value references the var, like `rpc_endpoints.sepolia`.
     pub key: Option<String>,
 }
 

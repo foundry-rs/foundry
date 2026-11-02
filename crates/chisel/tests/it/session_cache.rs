@@ -150,3 +150,26 @@ Set fork URL to http://127.0.0.1:[..]/
 "#]])
         .stderr_eq(str![""]);
 }
+
+#[test]
+fn fork_alias_error_names_unresolved_env_var_key() {
+    let home = tempfile::tempdir().unwrap();
+    fs::write(
+        home.path().join("foundry.toml"),
+        "[rpc_endpoints]\nprivate = \"${CHISEL_MISSING_RPC_URL}\"\n",
+    )
+    .unwrap();
+
+    command(home.path())
+        .args(["--use", "0.8.29", "eval", "!fork private"])
+        .assert()
+        .failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Error: environment variable `CHISEL_MISSING_RPC_URL` not found (used by `rpc_endpoints.private`)
+
+Context:
+- environment variable not found
+
+"#]]);
+}
