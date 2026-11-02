@@ -13,7 +13,7 @@ use foundry_compilers::{
 use path_slash::PathExt;
 use solar::{
     ast::{ContractKind, NatSpecKind},
-    data_structures::Never,
+    data_structures::{Never, map::FxIndexSet},
     interface::{
         ColorChoice, Session,
         config::{CompileOpts, ImportRemapping},
@@ -80,23 +80,19 @@ pub fn extend_storage_layouts(
     layouts
 }
 
-/// Appends the ERC-7201 namespaces of `contract` and its bases to its storage layout.
+/// Appends the ERC-7201 namespaces of `contract`, its bases, and the libraries they reference to
+/// its storage layout.
 ///
 /// Namespaced fields are labeled `<namespace>.<field>`. Malformed annotations, duplicate namespace
-/// roots, and errors emitted while computing types are errors, in which case `layout` is unchanged.
+/// roots, and errors emitted while computing types in the contract and its bases are errors, in
+/// which case `layout` is unchanged. Such problems in libraries only skip the affected namespace.
 pub fn extend_storage_layout(
     layout: &mut StorageLayout,
     gcx: Gcx<'_>,
     root: &Path,
     contract: hir::ContractId,
 ) -> Result<()> {
-    // Only errors emitted for this contract count; earlier ones may come from unrelated sources.
-    let errors = gcx.sess.dcx.err_count();
-    let namespaces = collect_storage_layouts(gcx, root, contract)?;
-    if gcx.sess.dcx.err_count() > errors {
-        return Err(solar_error(gcx.sess));
-    }
-    merge_storage_namespaces(layout, namespaces)
+    merge_storage_namespaces(layout, collect_storage_layouts(gcx, root, contract)?)
 }
 
 /// Lowers the parsed sources to HIR unless that has already happened.
@@ -231,7 +227,9 @@ fn contracts_by_source(gcx: Gcx<'_>, root: &Path) -> HashMap<(String, String), h
 ///
 /// Unrelated contracts, unreferenced libraries, and file-level structs are excluded: importing a
 /// declaration does not establish that the selected contract uses its storage. Unknown
-/// storage-location schemes are ignored; malformed ERC-7201 annotations are errors.
+/// storage-location schemes are ignored. Malformed ERC-7201 annotations in the contract and its
+/// bases are errors. Library namespaces are best-effort: malformed ones, and ones whose root is
+/// already declared by a base or an earlier library, are logged and skipped.
 fn collect_storage_layouts(
     gcx: Gcx<'_>,
     root: &Path,
@@ -239,65 +237,148 @@ fn collect_storage_layouts(
 ) -> Result<Vec<StorageNamespace>> {
     let mut namespaces = Vec::new();
     let bases = gcx.hir.contract(contract).linearized_bases;
-    for base in bases.iter().rev().copied().chain(referenced_libraries(gcx, bases)) {
-        let contract = gcx.hir.contract(base);
-        for id in contract.items.iter().filter_map(|item| item.as_struct()) {
-            let strukt = gcx.hir.strukt(id);
-            let Some(namespace) = storage_namespace(gcx, strukt)? else { continue };
-            // Match solc's project-relative source names.
-            let contract_name = match &gcx.hir.source(contract.source).file.name {
-                FileName::Real(path) => format!(
-                    "{}:{}",
-                    path.strip_prefix(root).unwrap_or(path).to_slash_lossy(),
-                    contract.name
+    for &base in bases.iter().rev() {
+        for id in gcx.hir.contract(base).items.iter().filter_map(|item| item.as_struct()) {
+            namespaces.extend(struct_namespace(gcx, root, base, id)?);
+        }
+    }
+    if !has_library_annotations(gcx) {
+        return Ok(namespaces);
+    }
+    for library in referenced_libraries(gcx, bases) {
+        for id in gcx.hir.contract(library).items.iter().filter_map(|item| item.as_struct()) {
+            match struct_namespace(gcx, root, library, id) {
+                Ok(Some(namespace)) => {
+                    if let Some(previous) = namespaces.iter().find(|n| n.root == namespace.root) {
+                        warn!(
+                            target: "erc7201",
+                            namespace = %namespace.id,
+                            declaration = %namespace.declaration,
+                            previous = %previous.declaration,
+                            "skipping duplicate library ERC-7201 namespace"
+                        );
+                    } else {
+                        namespaces.push(namespace);
+                    }
+                }
+                Ok(None) => {}
+                Err(err) => warn!(
+                    target: "erc7201",
+                    library = %gcx.contract_fully_qualified_name(library),
+                    %err,
+                    "skipping library ERC-7201 namespace"
                 ),
-                _ => gcx.contract_fully_qualified_name(base).to_string(),
-            };
-            let declaration = format!("{contract_name}.{}", strukt.name);
-            let root = crate::erc7201(namespace).into();
-            let mut output = gcx.storage_layout_for_struct(id, root);
-            scope_layout(&mut output, namespace, &contract_name);
-            namespaces.push(StorageNamespace {
-                id: namespace.to_owned(),
-                declaration,
-                root,
-                layout: serde_json::from_value(serde_json::to_value(output)?)?,
-            });
+            }
         }
     }
     Ok(namespaces)
 }
 
-/// Returns the libraries referenced by `contracts`, directly or through other libraries, in
-/// discovery order.
+/// Returns the namespace declared by struct `id` in `contract`, if any.
+///
+/// Errors if the annotation is malformed or Solar emits errors while computing the layout.
+fn struct_namespace(
+    gcx: Gcx<'_>,
+    root: &Path,
+    contract: hir::ContractId,
+    id: hir::StructId,
+) -> Result<Option<StorageNamespace>> {
+    let strukt = gcx.hir.strukt(id);
+    let Some(namespace) = storage_namespace(gcx, strukt)? else { return Ok(None) };
+    // Match solc's project-relative source names.
+    let contract_name = match &gcx.hir.source(gcx.hir.contract(contract).source).file.name {
+        FileName::Real(path) => format!(
+            "{}:{}",
+            path.strip_prefix(root).unwrap_or(path).to_slash_lossy(),
+            gcx.hir.contract(contract).name
+        ),
+        _ => gcx.contract_fully_qualified_name(contract).to_string(),
+    };
+    let slot = crate::erc7201(namespace).into();
+    // Only errors emitted for this struct count; earlier ones may come from unrelated sources.
+    let errors = gcx.sess.dcx.err_count();
+    let mut output = gcx.storage_layout_for_struct(id, slot);
+    if gcx.sess.dcx.err_count() > errors {
+        return Err(solar_error(gcx.sess));
+    }
+    scope_layout(&mut output, namespace, &contract_name);
+    Ok(Some(StorageNamespace {
+        id: namespace.to_owned(),
+        declaration: format!("{contract_name}.{}", strukt.name),
+        root: slot,
+        layout: serde_json::from_value(serde_json::to_value(output)?)?,
+    }))
+}
+
+/// Returns whether any library declares a struct that mentions an ERC-7201 storage location.
+///
+/// Finding referenced libraries walks function bodies, so it is skipped when no library could
+/// contribute a namespace, such as when only base contracts declare them.
+fn has_library_annotations(gcx: Gcx<'_>) -> bool {
+    gcx.hir.strukt_ids().any(|id| {
+        let strukt = gcx.hir.strukt(id);
+        strukt
+            .contract
+            .is_some_and(|contract| gcx.hir.contract(contract).kind == ContractKind::Library)
+            && gcx
+                .hir
+                .doc(strukt.doc)
+                .ast_comments()
+                .iter()
+                .any(|doc| doc.natspec.iter().any(|tag| has_annotation(tag.content())))
+    })
+}
+
+/// Returns the libraries referenced by `contracts`, directly or through other libraries and free
+/// functions, in discovery order and excluding `contracts` themselves.
 ///
 /// Library code runs against the caller's storage, so a namespace declared in a library, such as
 /// `Storage.get()` returning a namespaced struct, belongs to every contract that reaches it.
+/// `using ... global` directives declared in other sources are not followed.
 fn referenced_libraries(gcx: Gcx<'_>, contracts: &[hir::ContractId]) -> Vec<hir::ContractId> {
-    let mut references = LibraryReferences { hir: &gcx.hir, libraries: Vec::new() };
-    for &contract in contracts {
+    let mut references = LibraryReferences {
+        hir: &gcx.hir,
+        libraries: FxIndexSet::default(),
+        functions: FxIndexSet::default(),
+    };
+    // Most-base first, matching the order of base namespaces.
+    for &contract in contracts.iter().rev() {
         references.visit_contract_code(contract);
     }
-    // Libraries found while visiting a library are appended, so this reaches a fixed point.
-    let mut visited = 0;
-    while let Some(&library) = references.libraries.get(visited) {
-        references.visit_contract_code(library);
-        visited += 1;
+    // Code reached from libraries and free functions is appended, so this reaches a fixed point.
+    let (mut libraries, mut functions) = (0, 0);
+    loop {
+        if let Some(&library) = references.libraries.get_index(libraries) {
+            libraries += 1;
+            references.visit_contract_code(library);
+        } else if let Some(&function) = references.functions.get_index(functions) {
+            functions += 1;
+            let _ = hir::Visit::visit_nested_function(&mut references, function);
+        } else {
+            break;
+        }
     }
-    references.libraries
+    // An inspected library is its own base, and its namespaces are collected as such.
+    references.libraries.into_iter().filter(|id| !contracts.contains(id)).collect()
 }
 
-/// Collects the libraries that visited code refers to by name, type, modifier, or `using`.
+/// Collects the libraries that visited code refers to by name, type, modifier, or `using`, and
+/// the free functions it calls, so their bodies can be visited too.
 struct LibraryReferences<'hir> {
     hir: &'hir hir::Hir<'hir>,
-    libraries: Vec<hir::ContractId>,
+    libraries: FxIndexSet<hir::ContractId>,
+    functions: FxIndexSet<hir::FunctionId>,
 }
 
 impl<'hir> LibraryReferences<'hir> {
-    /// Visits a contract's items and the `using` directives that apply to it.
+    /// Visits a contract's items, its storage layout specifier, and the `using` directives that
+    /// apply to it.
     fn visit_contract_code(&mut self, id: hir::ContractId) {
         let contract = self.hir.contract(id);
         let _ = hir::Visit::visit_contract(self, contract);
+        if let Some(layout) = contract.layout {
+            let _ = hir::Visit::visit_expr(self, layout);
+        }
         let usings = self.hir.source(contract.source).usings;
         for directive in contract.usings.iter().chain(usings) {
             for entry in directive.entries {
@@ -314,10 +395,14 @@ impl<'hir> LibraryReferences<'hir> {
         }
     }
 
-    /// Records the library that declares `item`, or `item` itself if it is a library.
+    /// Records the library that declares `item`, `item` itself if it is a library, or `item` if
+    /// it is a free function.
     fn add_owner(&mut self, item: hir::ItemId) {
         match item {
             hir::ItemId::Contract(id) => self.add(id),
+            hir::ItemId::Function(id) if self.hir.function(id).contract.is_none() => {
+                self.functions.insert(id);
+            }
             _ => {
                 if let Some(id) = self.hir.item(item).contract() {
                     self.add(id);
@@ -327,8 +412,8 @@ impl<'hir> LibraryReferences<'hir> {
     }
 
     fn add(&mut self, id: hir::ContractId) {
-        if self.hir.contract(id).kind == ContractKind::Library && !self.libraries.contains(&id) {
-            self.libraries.push(id);
+        if self.hir.contract(id).kind == ContractKind::Library {
+            self.libraries.insert(id);
         }
     }
 }
@@ -341,12 +426,35 @@ impl<'hir> hir::Visit<'hir> for LibraryReferences<'hir> {
     }
 
     fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-        if let hir::ExprKind::Ident(resolutions) = expr.kind {
-            for resolution in resolutions {
-                if let hir::Res::Item(item) = *resolution {
-                    self.add_owner(item);
+        match expr.kind {
+            hir::ExprKind::Ident(resolutions) => {
+                for resolution in resolutions {
+                    if let hir::Res::Item(item) = *resolution {
+                        self.add_owner(item);
+                    }
                 }
             }
+            // `L.Storage` with `import "./Lib.sol" as L`: members of a namespace are only
+            // resolved during type checking, so look them up in the imported source.
+            hir::ExprKind::Member(base, member)
+                if let hir::ExprKind::Ident(resolutions) = base.kind =>
+            {
+                for resolution in resolutions {
+                    if let hir::Res::Namespace(source) = *resolution {
+                        for &item in self.hir.source(source).items {
+                            if self
+                                .hir
+                                .item(item)
+                                .name()
+                                .is_some_and(|name| name.name == member.name)
+                            {
+                                self.add_owner(item);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
         self.walk_expr(expr)
     }
@@ -645,6 +753,145 @@ mod tests {
         assert_eq!(
             namespaces.iter().map(|n| n.declaration.as_str()).collect::<Vec<_>>(),
             ["test.sol:Math.Data", "test.sol:Storage.Data"]
+        );
+    }
+
+    fn declarations(source: &str, contract: &str) -> Vec<String> {
+        layouts(source, contract).unwrap().into_iter().map(|n| n.declaration).collect()
+    }
+
+    #[test]
+    fn library_artifact_namespaces() {
+        let source = r#"
+            library Storage {
+                /// @custom:storage-location erc7201:example.storage
+                struct Data { uint256 value; }
+                function get() internal pure returns (Data storage $) {
+                    assembly { $.slot := 0 }
+                }
+            }
+        "#;
+        assert_eq!(declarations(source, "Storage"), ["test.sol:Storage.Data"]);
+    }
+
+    #[test]
+    fn library_reference_kinds() {
+        const LIBRARY: &str = r#"
+            library L {
+                /// @custom:storage-location erc7201:lib
+                struct Data { uint256 value; }
+                uint256 internal constant K = 1;
+                function f() internal pure returns (uint256) { return 1; }
+                function g(uint256 x) internal pure returns (uint256) { return x; }
+            }
+        "#;
+        for code in [
+            "contract C { function h(L.Data storage) internal {} }",
+            "contract C { modifier m(uint256) { _; } function h() public m(L.f()) {} }",
+            "contract B { constructor(uint256) {} } contract C is B(L.f()) {}",
+            "using L for uint256; contract C {}",
+            "contract C { using {L.g} for uint256; }",
+            "function free() pure returns (uint256) { return L.f(); }
+             contract C { function h() public pure { free(); } }",
+            "function inc(uint256 x) pure returns (uint256) { return L.g(x); }
+             contract C { using {inc} for uint256; }",
+            "contract C layout at L.K {}",
+        ] {
+            let source = format!("{LIBRARY}\n{code}");
+            assert_eq!(declarations(&source, "C"), ["test.sol:L.Data"], "{code}");
+        }
+        assert!(declarations(&format!("{LIBRARY}\ncontract C {{}}"), "C").is_empty());
+    }
+
+    #[test]
+    fn library_namespaces_are_best_effort() {
+        // A base's namespace takes precedence over a library's.
+        let source = r#"
+            library L {
+                /// @custom:storage-location erc7201:app.main
+                struct Data { uint256 value; }
+                function f() internal {}
+            }
+            contract C {
+                /// @custom:storage-location erc7201:app.main
+                struct Main { uint256 value; }
+                function g() public { L.f(); }
+            }
+        "#;
+        assert_eq!(declarations(source, "C"), ["test.sol:C.Main"]);
+
+        // Of vendored copies, the first discovered library wins.
+        let source = r#"
+            library LibA {
+                /// @custom:storage-location erc7201:app.shared
+                struct Data { uint256 value; }
+                function f() internal {}
+            }
+            library LibB {
+                /// @custom:storage-location erc7201:app.shared
+                struct Data { uint256 value; }
+                function f() internal {}
+            }
+            contract C {
+                /// @custom:storage-location erc7201:app.own
+                struct Own { uint256 value; }
+                function g() public { LibA.f(); LibB.f(); }
+            }
+        "#;
+        assert_eq!(declarations(source, "C"), ["test.sol:C.Own", "test.sol:LibA.Data"]);
+
+        // Malformed library annotations only skip their struct.
+        let source = r#"
+            library Util {
+                /// @custom:storage-location erc7201
+                struct Broken { uint256 value; }
+                /// @custom:storage-location erc7201:util.valid
+                struct Valid { uint256 value; }
+                function id(uint256 x) internal pure returns (uint256) { return x; }
+            }
+            contract C {
+                /// @custom:storage-location erc7201:app.own
+                struct Own { uint256 value; }
+                function g() public pure returns (uint256) { return Util.id(1); }
+            }
+        "#;
+        assert_eq!(declarations(source, "C"), ["test.sol:C.Own", "test.sol:Util.Valid"]);
+    }
+
+    #[test]
+    fn namespace_import_alias() {
+        let sources = Sources::from_iter([
+            (
+                PathBuf::from("src/Lib.sol"),
+                foundry_compilers::artifacts::Source::new(
+                    r#"library Storage {
+                    /// @custom:storage-location erc7201:example.storage
+                    struct Data { uint256 value; }
+                    function get() internal pure returns (Data storage $) {
+                        assembly { $.slot := 0 }
+                    }
+                }"#,
+                ),
+            ),
+            (
+                PathBuf::from("src/C.sol"),
+                foundry_compilers::artifacts::Source::new(
+                    r#"import "./Lib.sol" as L;
+                    contract C { function f() public { L.Storage.get().value = 1; } }"#,
+                ),
+            ),
+        ]);
+        let mut compiler = parse_standard_json(&sources, &[]).unwrap();
+        let namespaces = erc7201_storage_layouts(
+            &mut compiler,
+            Path::new(""),
+            Path::new("src/C.sol"),
+            Some("C"),
+        )
+        .unwrap();
+        assert_eq!(
+            namespaces.iter().map(|n| n.declaration.as_str()).collect::<Vec<_>>(),
+            ["src/Lib.sol:Storage.Data"]
         );
     }
 
