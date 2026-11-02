@@ -250,12 +250,11 @@ impl TempoChain {
             FoundryHeader::Tempo(_) => header,
             FoundryHeader::Ethereum(inner) => FoundryHeader::tempo(inner),
         };
+        let epoch_length =
+            config.tempo_epoch_length.or(fork.config.read().endpoint_identity.tempo_epoch_length);
         TempoConsensus::at_fork_header(
             config.tempo_consensus_seed(),
-            config
-                .tempo_epoch_length
-                .or(fork.config.read().endpoint_identity.tempo_epoch_length)
-                .unwrap_or(DEFAULT_TEMPO_EPOCH_LENGTH),
+            epoch_length.unwrap_or(DEFAULT_TEMPO_EPOCH_LENGTH),
             header.as_tempo().expect("the fork anchor is a Tempo header"),
         )
         .map_err(|error| {
@@ -285,6 +284,19 @@ impl TempoChain {
             config.tempo_epoch_length.unwrap_or(DEFAULT_TEMPO_EPOCH_LENGTH),
             height,
         )
+    }
+
+    /// Reports a validated fork's fallback after reset revalidation.
+    pub(super) fn warn_if_epoch_length_fallback(config: &NodeConfig, fork: &ClientFork) {
+        if !config.silent
+            && config.tempo_epoch_length.is_none()
+            && fork.config.read().endpoint_identity.tempo_epoch_length.is_none()
+        {
+            let _ = foundry_common::sh_warn!(
+                "Tempo fork epoch length is unavailable; using {DEFAULT_TEMPO_EPOCH_LENGTH}. \
+                 Set --tempo.epoch-length to match the source."
+            );
+        }
     }
 }
 

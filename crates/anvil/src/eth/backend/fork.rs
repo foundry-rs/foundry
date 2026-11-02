@@ -86,6 +86,12 @@ impl ForkEndpointIdentity {
             && self.source_fork_block_hash == other.source_fork_block_hash
             && self.tempo_epoch_length.zip(other.tempo_epoch_length).is_none_or(|(a, b)| a == b)
     }
+
+    /// Returns whether observations identify the same instance with compatible configuration.
+    /// Missing optional epoch metadata does not establish an identity change.
+    pub(crate) fn same_instance(self, other: Self) -> bool {
+        self.instance_id == other.instance_id && self.context_eq(other)
+    }
 }
 
 /// Ensures Anvil's EVM backend can execute the resolved upstream source chain.

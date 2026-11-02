@@ -21,7 +21,7 @@ use alloy_chains::Chain;
 use alloy_consensus::BlockHeader;
 use alloy_eips::{BlockId, eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
-use alloy_genesis::{ChainConfig, Genesis};
+use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, AnyRpcBlock, BlockResponse, TransactionResponse};
 use alloy_primitives::{
     Address, B256, BlockNumber, TxHash, U256, hex, keccak256, map::HashMap, utils::Unit,
@@ -1936,15 +1936,7 @@ impl NodeConfig {
         let guidance = format!(
             "invalid Tempo epoch configuration from {method}; epochLength must be a nonzero u64"
         );
-        let length = if anvil {
-            value.get("epochLength").cloned()
-        } else {
-            serde_json::from_value::<ChainConfig>(value)
-                .wrap_err_with(|| guidance.clone())?
-                .extra_fields
-                .get("epochLength")
-                .cloned()
-        };
+        let length = value.get("epochLength").cloned();
         length.map(|value| alloy_serde::quantity::deserialize(value).wrap_err(guidance)).transpose()
     }
 
@@ -1971,9 +1963,10 @@ impl NodeConfig {
                 .wrap_err("failed to confirm active fork block on replacement endpoint")?;
             let after =
                 self.resolved_fork_endpoint_identity(&provider, &mut node_info_probe).await?;
-            if before != after {
+            if !before.same_instance(after) {
                 continue;
             }
+            before.tempo_epoch_length = before.tempo_epoch_length.or(after.tempo_epoch_length);
             if !before.context_eq(expected) {
                 eyre::bail!("replacement fork endpoint has an incompatible execution context");
             }
@@ -2007,7 +2000,7 @@ impl NodeConfig {
     ) -> Result<StableForkSnapshot> {
         let mut node_info_probe = self.node_info_probe(self.fork_endpoint_is_anvil);
         for _ in 0..3 {
-            let before =
+            let mut before =
                 self.resolved_fork_endpoint_identity(provider, &mut node_info_probe).await?;
             let (block_number, transaction_replay) = if let Some(fork_choice) = &self.fork_choice {
                 derive_block_and_replay(fork_choice, provider).await.wrap_err(
@@ -2032,7 +2025,8 @@ impl NodeConfig {
             };
             let after =
                 self.resolved_fork_endpoint_identity(provider, &mut node_info_probe).await?;
-            if before == after {
+            if before.same_instance(after) {
+                before.tempo_epoch_length = before.tempo_epoch_length.or(after.tempo_epoch_length);
                 return Ok(StableForkSnapshot {
                     endpoint_identity: before,
                     state_is_mutable: node_info_probe.identified || node_info_probe.inconclusive,
@@ -2059,7 +2053,7 @@ impl NodeConfig {
         let provider = self.fork_provider(eth_rpc_url)?;
         let mut node_info_probe = self.node_info_probe(expected.is_authoritative());
         for _ in 0..3 {
-            let before =
+            let mut before =
                 self.resolved_fork_endpoint_identity(&provider, &mut node_info_probe).await?;
             let block = provider
                 .get_block(BlockId::number(block_number))
@@ -2067,9 +2061,10 @@ impl NodeConfig {
                 .wrap_err("failed to confirm fork block context")?;
             let after =
                 self.resolved_fork_endpoint_identity(&provider, &mut node_info_probe).await?;
-            if before != after {
+            if !before.same_instance(after) {
                 continue;
             }
+            before.tempo_epoch_length = before.tempo_epoch_length.or(after.tempo_epoch_length);
             if before.source_chain_id != expected.source_chain_id {
                 eyre::bail!(
                     "fork endpoints must use the same chain ID: expected {}, got {} from {}",

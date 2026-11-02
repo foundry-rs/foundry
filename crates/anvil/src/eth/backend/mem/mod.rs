@@ -320,12 +320,14 @@ impl ForkCacheSource {
         rpc_url: &str,
         endpoint_identity: ForkEndpointIdentity,
     ) -> bool {
-        // `hardfork` is populated only when `anvil_nodeInfo` succeeds, which makes the complete
-        // endpoint identity authoritative. Anonymous RPC endpoints intentionally retain Foundry's
-        // existing cache behavior when reused through the same URL.
+        // `hardfork` is populated only when `anvil_nodeInfo` succeeds, making the endpoint
+        // authoritative. Optional epoch metadata can still be unavailable. Anonymous RPC endpoints
+        // intentionally retain Foundry's existing cache behavior when reused through the same URL.
         let authoritative =
             self.endpoint_identity.is_authoritative() || endpoint_identity.is_authoritative();
-        self.rpc_url == rpc_url && authoritative && self.endpoint_identity != endpoint_identity
+        self.rpc_url == rpc_url
+            && authoritative
+            && !self.endpoint_identity.same_instance(endpoint_identity)
     }
 }
 
@@ -4735,8 +4737,8 @@ impl<N: Network> Backend<N> {
         if networks.is_tempo() {
             let cfg = node_config.read().await;
             let source = fork.read().clone();
-            let consensus = if let Some(fork) = source {
-                TempoChain::fork_consensus(&fork, &cfg).await?
+            let consensus = if let Some(fork) = &source {
+                TempoChain::fork_consensus(fork, &cfg).await?
             } else {
                 TempoChain::local_consensus(&cfg, blockchain.storage.read().best_number)
             };
@@ -4751,6 +4753,9 @@ impl<N: Network> Backend<N> {
             }
             tempo.proof_states = Arc::new(RwLock::new(proof_states));
             storage.tempo = Some(tempo);
+            if let Some(fork) = &source {
+                TempoChain::warn_if_epoch_length_fallback(&cfg, fork);
+            }
         }
         let startup_cache_lease = if fork.read().is_some() {
             let db = db.read().await;
@@ -5320,6 +5325,9 @@ impl<N: Network> Backend<N> {
                 return Ok(None);
             }
 
+            if tempo_consensus.is_some() {
+                TempoChain::warn_if_epoch_length_fallback(&staged_config, &staged_fork);
+            }
             Ok(Some((fork_block, staged_fork.storage.read().clone(), tempo_consensus)))
         }
         .await;
@@ -11163,38 +11171,19 @@ fn foundry_header(networks: &NetworkConfigs, header: Header) -> FoundryHeader {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        BlockRequest, FeeDetails, ForkCacheNamespace, ForkCacheSource, InstructionResult,
-        MiningCommitHook, Output, StagedForkCacheLease, StagedForkDbUser,
-        arbitrum_replay_block_number,
-    };
-    use crate::{NodeConfig, config::ForkTransactionReplay, spawn};
-    use alloy_network::{AnyHeader, AnyRpcBlock, AnyRpcHeader, TransactionBuilder};
-    use alloy_primitives::{Address, B256, Bytes, U256};
+    use super::*;
+    use crate::spawn;
+    use alloy_network::TransactionBuilder;
     use alloy_provider::Provider;
-    use alloy_rpc_types::{Block, BlockTransactions, TransactionRequest, state::EvmOverrides};
-    use alloy_serde::WithOtherFields;
-    use foundry_config::NamedChain;
-    use foundry_evm::{
-        backend::{BlockchainDb, BlockchainDbMeta},
-        hardfork::{EthereumHardfork, FoundryHardfork},
-    };
-    use foundry_evm_networks::arbitrum;
-    use std::sync::Arc;
+    use alloy_rpc_types::Block;
+    use foundry_evm::backend::BlockchainDbMeta;
+    use std::num::NonZeroU64;
     use tempfile::tempdir;
-    use tokio::sync::Notify;
 
     #[cfg(feature = "base")]
     use base_common_precompiles::{ActivationRegistryStorage, B20FactoryStorage};
     #[cfg(feature = "base")]
-    use foundry_evm::{hardforks::BaseUpgrade, traces::CallTraceDecoderBuilder};
-
-    #[cfg(all(feature = "base", feature = "optimism"))]
-    use alloy_consensus::Header;
-    #[cfg(all(feature = "base", feature = "optimism"))]
-    use foundry_evm::hardfork::OpHardfork;
-    #[cfg(all(feature = "base", feature = "optimism"))]
-    use foundry_evm_networks::NetworkConfigs;
+    use foundry_evm::traces::CallTraceDecoderBuilder;
 
     fn test_cache_db(cache_path: std::path::PathBuf) -> BlockchainDb {
         let db = BlockchainDb::new(BlockchainDbMeta::default(), Some(cache_path));
@@ -11656,6 +11645,32 @@ mod tests {
             authoritative_source
                 .authoritative_identity_changed_at_same_url("http://localhost", anonymous)
         );
+    }
+
+    #[test]
+    fn fork_cache_source_preserves_cache_when_epoch_metadata_is_unavailable() {
+        let mut identity = test_endpoint_identity(
+            Some(FoundryHardfork::Tempo(TempoHardfork::T14)),
+            Some(B256::repeat_byte(0x22)),
+        );
+        identity.tempo_epoch_length = NonZeroU64::new(3);
+        let source = ForkCacheSource {
+            rpc_url: "http://localhost".to_string(),
+            endpoint_identity: identity,
+        };
+        let mut unavailable = identity;
+        unavailable.tempo_epoch_length = None;
+        assert!(
+            !source.authoritative_identity_changed_at_same_url("http://localhost", unavailable)
+        );
+        let unknown_source = ForkCacheSource { endpoint_identity: unavailable, ..source.clone() };
+        assert!(
+            !unknown_source
+                .authoritative_identity_changed_at_same_url("http://localhost", identity)
+        );
+        let mut conflicting = identity;
+        conflicting.tempo_epoch_length = NonZeroU64::new(6);
+        assert!(source.authoritative_identity_changed_at_same_url("http://localhost", conflicting));
     }
 
     #[tokio::test]

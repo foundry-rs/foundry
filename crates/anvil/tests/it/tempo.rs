@@ -8712,4 +8712,7 @@ async fn tempo_consensus_fork_epoch_metadata_mirrors() {
     }
 }
 
+mod epoch_metadata;
+#[cfg(feature = "cli")]
+mod epoch_warning;
 mod subscriptions;
