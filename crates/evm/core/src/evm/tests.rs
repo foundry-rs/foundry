@@ -112,7 +112,7 @@ where
     assert_eq!(slot(&mut evm), U256::from(8));
     assert_eq!(nonce(&mut evm, caller), 3);
 
-    // Snapshots restore state; removal also drops later snapshots.
+    // Snapshots restore state; removal keeps later snapshots.
     let first = lifecycle.snapshot(&mut evm);
     let tx = FEN::tx_from_request(request(STORE_ADDRESS, 3, 11, chain_id)).unwrap();
     assert!(evm.transact(&tx).unwrap().commit().status);
@@ -124,7 +124,7 @@ where
     assert_eq!((slot(&mut evm), nonce(&mut evm, caller)), (U256::from(8), 3));
     assert!(lifecycle.revert(&mut evm, first, remove, phase).is_some());
     assert!(lifecycle.revert(&mut evm, first, remove, phase).is_none());
-    assert!(lifecycle.revert(&mut evm, second, remove, phase).is_none(), "later snapshot dropped");
+    assert!(lifecycle.delete_snapshot(second), "later snapshot kept");
 
     // A nested transaction sees in-flight writes and merges its changes as journaled writes of
     // the running transaction; a failed one only keeps its nonce increment and fee payment.
