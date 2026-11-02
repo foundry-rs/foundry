@@ -715,7 +715,7 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
     fn prepare_target(&mut self) {
         let requirements = TraceRequirements::none()
             .with_calls(true)
-            .with_debug(self.args.debug)
+            .with_debug_recording(self.args.debug)
             .with_decode_internal(if self.tracing.decode_internal {
                 InternalTraceMode::Full
             } else {

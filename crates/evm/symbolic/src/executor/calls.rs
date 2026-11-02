@@ -556,9 +556,8 @@ impl SymbolicExecutor {
     /// code or a failed value transfer, applying a pending `vm.expectRevert` as Forge's
     /// `call_end` does. Like `join_call_outcome`, a mismatch fails the path.
     ///
-    /// A pending `vm.assumeNoRevert` is consumed but never rejects the path, because Forge only
-    /// discards the run when the reverted call's error reaches the test frame, which is not
-    /// modeled here. Like Forge, a revert it consumes leaves `vm.expectRevert` pending.
+    /// Like `join_call_outcome`, a revert under `vm.assumeNoRevert` skips `vm.expectRevert`, and
+    /// a matching revert returns `FOUNDRY::ASSUME`.
     #[expect(clippy::too_many_arguments)]
     pub(super) fn finish_codeless_call(
         &mut self,
@@ -571,8 +570,14 @@ impl SymbolicExecutor {
         out_size: &BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
         let mut success = status == CallStatus::Success;
-        let assumed_revert =
-            state.assume_no_revert_next_call.take().is_some() && status == CallStatus::Revert;
+        let assumption = state.assume_no_revert_next_call.take();
+        let assumed_revert = status == CallStatus::Revert && assumption.is_some();
+        if let Some(assumption) = &assumption
+            && assumed_revert
+            && self.assume_no_revert_matches(state, assumption, reverter, &return_data)?
+        {
+            return_data = SymReturnData::from_concrete_bytes(&mut self.cx, MAGIC_ASSUME.to_vec());
+        }
         // Like Forge, internal `expectRevert` mode keeps waiting after a successful call.
         if !assumed_revert
             && let Some(mut expected) = state.expected_revert.clone()
@@ -600,9 +605,11 @@ impl SymbolicExecutor {
         Ok(StepOutcome::Continue)
     }
 
-    pub(super) fn assume_no_revert_rejects(
+    /// Returns whether a revert matches `vm.assumeNoRevert`, or `Unsupported` when both outcomes
+    /// are feasible.
+    pub(super) fn assume_no_revert_matches(
         &mut self,
-        state: &mut PathState,
+        state: &PathState,
         assumption: &AssumeNoRevert,
         reverter: Address,
         return_data: &SymReturnData,
@@ -620,18 +627,15 @@ impl SymbolicExecutor {
         }
 
         let condition = SymBoolExpr::or(&mut self.cx, conditions);
-        let (_match_constraints, match_sat) =
-            self.constraints_with_condition(state, condition.clone())?;
+        let (_, match_sat) = self.constraints_with_condition(state, condition.clone())?;
         if !match_sat {
             return Ok(false);
         }
 
         let mismatch_condition = condition.not(&mut self.cx);
-        let (mismatch_constraints, mismatch_sat) =
-            self.constraints_with_condition(state, mismatch_condition)?;
+        let (_, mismatch_sat) = self.constraints_with_condition(state, mismatch_condition)?;
         if mismatch_sat {
-            state.constraints = mismatch_constraints;
-            return Ok(false);
+            return Err(SymbolicError::Unsupported("ambiguous symbolic vm.assumeNoRevert match"));
         }
 
         Ok(true)
@@ -1100,10 +1104,10 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::AssumeRejected);
         }
 
+        let assume_no_revert = state.assume_no_revert_next_call.take();
         let mut parents = VecDeque::with_capacity(outcomes.len());
         for outcome in outcomes {
-            match self.join_call_outcome(executor, state, outcome, to)? {
-                JoinedCallOutcome::Rejected => {}
+            match self.join_call_outcome(executor, state, outcome, to, assume_no_revert.as_ref())? {
                 JoinedCallOutcome::Failure(parent) => {
                     *state = parent;
                     return Ok(StepOutcome::Failure);

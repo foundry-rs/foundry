@@ -298,7 +298,8 @@ MyUniqueEventWithinLocalProject(uint256,address)
 }
 
 // `cast 4byte`, `4byte-calldata` and `4byte-event` find signatures in the local cache that
-// `forge build` populates, like `decode-error` and `decode-event`.
+// `forge build` populates, like `decode-error` and `decode-event`. Cached library signatures such
+// as `f(LocalFourByteLib.E)` are printed as stored, not as their parsed `f(uint8)` form.
 #[forgetest_init]
 fn flaky_fourbyte_with_cache(prj: _, cmd: _) {
     prj.add_source(
@@ -310,6 +311,16 @@ contract LocalFourByteContract {
     function myUniqueFunctionWithinLocalProject(uint256 a) external {
         emit MyUniqueFourByteEventWithinLocalProject(a);
     }
+}
+
+library LocalFourByteLib {
+    enum E { A }
+
+    struct S { uint256 a; uint256 b; }
+
+    function myUniqueLibFunctionWithinLocalProject(E) external pure {}
+
+    function myUniqueLibStructWithinLocalProject(S calldata) external pure {}
 }
    "#,
     );
@@ -335,6 +346,32 @@ myUniqueFunctionWithinLocalProject(uint256)
         .assert_success()
         .stdout_eq(str![[r#"
 MyUniqueFourByteEventWithinLocalProject(uint256)
+
+"#]]);
+    cmd.cast_fuse().args(["4byte", "0x36e32338"]).assert_success().stdout_eq(str![[r#"
+myUniqueLibFunctionWithinLocalProject(LocalFourByteLib.E)
+
+"#]]);
+    cmd.cast_fuse()
+        .args([
+            "4byte-calldata",
+            "0x36e323380000000000000000000000000000000000000000000000000000000000000000",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+1) "myUniqueLibFunctionWithinLocalProject(LocalFourByteLib.E)"
+0
+
+"#]]);
+    // `LocalFourByteLib.S` parses as `uint8`, which would decode only the first struct field.
+    cmd.cast_fuse()
+        .args([
+            "4byte-calldata",
+            "0x1c422ee300000000000000000000000000000000000000000000000000000000000003e80000000000000000000000000000000000000000000000000000000000000007",
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: No signatures found
 
 "#]]);
 }

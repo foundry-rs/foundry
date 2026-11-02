@@ -4679,14 +4679,9 @@ fn preprocess_constructor_validation(prj: _, cmd: _) {
             .stderr
             .clone();
         prj.update_config(|config| config.dynamic_test_linking = true);
-        let expected = if target == "library Target {}" {
-            let mut expected = b"Warning: dynamic test linking disabled for 1 files: error[1130]: invalid use of a library name\n".to_vec();
-            expected.extend_from_slice(&native);
-            expected
-        } else {
-            native
-        };
-        cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(expected);
+        // DTL-disable warnings are deferred until a successful compile (#17913), so a
+        // failing build matches native stderr even when Solar disables DTL first.
+        cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(native);
     }
 }
 
@@ -5040,9 +5035,8 @@ fn preprocess_inline_verbatim_diagnostics(prj: _, cmd: _) {
             .stderr
             .clone();
         prj.update_config(|config| config.dynamic_test_linking = true);
-        let mut expected = b"Warning: dynamic test linking disabled for 1 files: error: unsupported verbatim builtin\n".to_vec();
-        expected.extend(native);
-        cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(expected);
+        // Failing builds omit the deferred DTL-disable warning (#17913).
+        cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(native);
     }
 }
 
@@ -5263,6 +5257,52 @@ Compiler run successful!
 ...
 "#]])
         .stderr_eq(str![[r#"
+Warning: dynamic test linking disabled for 1 files: error: unresolved symbol `now`
+
+"#]]);
+}
+
+// Each compiler job that falls back to native linking reports its own deferred warning.
+#[forgetest]
+fn preprocess_analysis_fallback_warns_per_compiler_job(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+        config.solc = Some(foundry_config::SolcReq::Version("0.6.12".parse().unwrap()));
+        config.evm_version = EvmVersion::Istanbul;
+        config.lint.lint_on_build = false;
+        config.additional_compiler_profiles = vec![SettingsOverrides {
+            name: "optimized".to_owned(),
+            via_ir: None,
+            evm_version: None,
+            optimizer: Some(true),
+            optimizer_runs: Some(10_000),
+            bytecode_hash: None,
+        }];
+        config.compilation_restrictions = vec![CompilationRestrictions {
+            paths: "test/Optimized.t.sol".parse().unwrap(),
+            version: None,
+            via_ir: None,
+            bytecode_hash: None,
+            min_optimizer_runs: Some(10_000),
+            optimizer_runs: None,
+            max_optimizer_runs: None,
+            min_evm_version: None,
+            evm_version: None,
+            max_evm_version: None,
+        }];
+    });
+    prj.add_raw_source("Target.sol", "pragma solidity 0.6.12; contract Target {}");
+    for name in ["Default", "Optimized"] {
+        // `now` is valid in solc 0.6.12, but unavailable in Solar's analysis.
+        prj.add_raw_test(
+            &format!("{name}.t.sol"),
+            &format!(
+                "pragma solidity 0.6.12; import '../src/Target.sol'; contract {name}Test {{ uint256 timestamp = now; function test_deploy() public {{ new Target(); }} }}"
+            ),
+        );
+    }
+    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
+Warning: dynamic test linking disabled for 1 files: error: unresolved symbol `now`
 Warning: dynamic test linking disabled for 1 files: error: unresolved symbol `now`
 
 "#]]);
