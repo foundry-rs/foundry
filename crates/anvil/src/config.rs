@@ -1914,6 +1914,9 @@ impl NodeConfig {
     }
 
     /// Reads optional source configuration without making metadata RPC support mandatory.
+    ///
+    /// RPC errors and timeouts mean metadata is unavailable, even for identified Anvil sources.
+    /// A present invalid `epochLength` is rejected.
     async fn fork_tempo_epoch_length(
         provider: &RetryProvider,
         anvil: bool,

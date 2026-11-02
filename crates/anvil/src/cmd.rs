@@ -98,7 +98,8 @@ pub struct NodeArgs {
         long_help = format!(
             "Number of block heights in a Tempo consensus epoch. Only used on Tempo networks.\n\n\
              Defaults to the fork source's epoch length when available, otherwise {}. \
-             An explicit value must match the fork source's epoch schedule.",
+             An explicit value overrides source metadata and must be compatible with the fork \
+             block's consensus epoch.",
             DEFAULT_TEMPO_EPOCH_LENGTH,
         )
     )]
