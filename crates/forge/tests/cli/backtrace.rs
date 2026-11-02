@@ -752,9 +752,7 @@ contract VaultTest {
 "#,
     );
 
-    let backtraces = str![[r#"
-...
-Backtrace:
+    let backtraces = r#"Backtrace:
   at Vault.withdraw (src/Vault.sol:15:16)
   at VaultTest.test_CustomErrorUncaught (test/Vault.t.sol:17:9)
 ...
@@ -762,9 +760,12 @@ Backtrace:
   at Vault.share
   at VaultTest.test_DivByZero (test/Vault.t.sol:22:9)
 ...
-"#]];
-    cmd.args(["test", "-vvvvv"]).assert_failure().stdout_eq(backtraces.clone());
+"#;
+    cmd.args(["test", "-vvvvv"]).assert_failure().stdout_eq(format!("...\n{backtraces}"));
 
     // Cached builds keep the preprocessor edits.
-    cmd.forge_fuse().args(["test", "-vvvvv"]).assert_failure().stdout_eq(backtraces);
+    cmd.forge_fuse()
+        .args(["test", "-vvvvv"])
+        .assert_failure()
+        .stdout_eq(format!("No files changed, compilation skipped\n...\n{backtraces}"));
 }

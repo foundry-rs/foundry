@@ -25,7 +25,7 @@ pub struct PcSourceMapper<'a> {
     ic_pc_map: IcPcMap,
     /// Source data consists of the source_map and the deployed bytecode
     source_data: SourceData,
-    /// Source files i.e source path, content, and preprocessor edits (indexed by source_id)
+    /// Source files i.e source path, content, and preprocessor edits (indexed by source_id).
     sources: &'a [BuildSource],
     /// Cached line offset mappings for each source file.
     line_offsets: Vec<Vec<usize>>,
@@ -83,13 +83,7 @@ impl<'a> PcSourceMapper<'a> {
             "Mapped PC to source location"
         );
 
-        Some(SourceLocation {
-            file: file_path.clone(),
-            line,
-            column,
-            length: element.length() as usize,
-            offset,
-        })
+        Some(SourceLocation { file: file_path.clone(), line, column, offset })
     }
 
     /// Finds the instruction counter for a given program counter.
@@ -116,7 +110,6 @@ pub struct SourceLocation {
     pub file: PathBuf,
     pub line: usize,
     pub column: usize,
-    pub length: usize,
     /// Byte offset in the source file
     /// This specifically useful when one source file contains multiple contracts / libraries.
     pub offset: usize,
@@ -148,7 +141,7 @@ pub fn load_build_sources(
     // Highest source_id
     let max_source_id = build_ctx.source_id_to_path.keys().max().map_or(0, |id| *id) as usize;
 
-    // Vec of source path, content, and preprocessor edits
+    // Vec of source path, content, and preprocessor edits.
     let mut sources = vec![(PathBuf::new(), String::new(), Vec::new()); max_source_id + 1];
 
     // Populate sources at their correct indices
