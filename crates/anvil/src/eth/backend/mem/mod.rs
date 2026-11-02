@@ -1697,6 +1697,10 @@ impl<N: Network> Backend<N> {
     }
 
     pub fn ensure_eip4844_active(&self) -> Result<(), BlockchainError> {
+        // Tempo has no blob transaction type, so its EVM cannot represent one.
+        if self.is_tempo() {
+            return Err(InvalidTransactionError::TempoBlobTransactionUnsupported.into());
+        }
         if self.is_eip4844() {
             return Ok(());
         }
