@@ -21,7 +21,7 @@ use alloy_chains::Chain;
 use alloy_consensus::BlockHeader;
 use alloy_eips::{BlockId, eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
-use alloy_genesis::{ChainConfig, Genesis};
+use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, AnyRpcBlock, BlockResponse, TransactionResponse};
 use alloy_primitives::{
     Address, B256, BlockNumber, TxHash, U256, hex, keccak256, map::HashMap, utils::Unit,
@@ -375,9 +375,8 @@ pub struct NodeConfig {
     ///
     /// Must be an unlocked signer account. Defaults to the last dev account on Tempo networks.
     pub tempo_fee_payer: Option<Address>,
-    /// Explicit Tempo consensus epoch length; otherwise inferred from the fork or defaulted
-    /// locally.
-    pub tempo_epoch_length: Option<NonZeroU64>,
+    /// Number of block heights in a Tempo consensus epoch.
+    pub tempo_epoch_length: NonZeroU64,
     /// Optional development consensus seed; otherwise derived from the account mnemonic.
     pub tempo_consensus_seed: Option<B256>,
     /// Do not print log messages.
@@ -737,7 +736,7 @@ impl Default for NodeConfig {
             #[cfg(feature = "base")]
             base_activation_admin: None,
             tempo_fee_payer: None,
-            tempo_epoch_length: None,
+            tempo_epoch_length: DEFAULT_TEMPO_EPOCH_LENGTH,
             tempo_consensus_seed: None,
             silent: false,
             cache_path: None,
@@ -1422,7 +1421,7 @@ impl NodeConfig {
     /// Sets the number of block heights in a Tempo consensus epoch.
     #[must_use]
     pub const fn with_tempo_epoch_length(mut self, epoch_length: NonZeroU64) -> Self {
-        self.tempo_epoch_length = Some(epoch_length);
+        self.tempo_epoch_length = epoch_length;
         self
     }
 
@@ -1817,7 +1816,6 @@ impl NodeConfig {
                 instance_id: None,
                 source_fork_block_number: None,
                 source_fork_block_hash: None,
-                tempo_epoch_length: None,
             });
         };
 
@@ -1885,7 +1883,6 @@ impl NodeConfig {
             instance_id,
             source_fork_block_number,
             source_fork_block_hash,
-            tempo_epoch_length: None,
         })
     }
 
@@ -1894,7 +1891,7 @@ impl NodeConfig {
         provider: &RetryProvider,
         node_info_probe: &mut AnvilNodeInfoProbe,
     ) -> Result<ForkEndpointIdentity> {
-        let mut identity = if let Some(chain_id) = self.fork_chain_id {
+        let identity = if let Some(chain_id) = self.fork_chain_id {
             let chain_id = chain_id.to();
             // `fork_chain_id` avoids depending on `eth_chainId`, but an online Anvil endpoint can
             // still expose authoritative family, hardfork, and instance metadata. Probe it so
@@ -1906,44 +1903,7 @@ impl NodeConfig {
             self.fork_endpoint_identity(provider, execution_chain_id, None, node_info_probe).await
         }?;
         ensure_fork_network_supported(identity.source_chain_id)?;
-        if identity.network == Some(NetworkVariant::Tempo) {
-            identity.tempo_epoch_length =
-                Self::fork_tempo_epoch_length(provider, identity.is_authoritative()).await?;
-        }
         Ok(identity)
-    }
-
-    /// Reads optional source configuration without making metadata RPC support mandatory.
-    async fn fork_tempo_epoch_length(
-        provider: &RetryProvider,
-        anvil: bool,
-    ) -> Result<Option<NonZeroU64>> {
-        let method = if anvil { "anvil_tempoConsensusIdentity" } else { "debug_chainConfig" };
-        let Ok(Ok(value)) = tokio::time::timeout(
-            FORK_IDENTITY_PROBE_TIMEOUT,
-            provider.raw_request::<_, Value>(method.into(), ()),
-        )
-        .await
-        else {
-            return Ok(None);
-        };
-        if value.is_null() {
-            return Ok(None);
-        }
-        let guidance = format!(
-            "invalid Tempo epoch configuration from {method}; epochLength must be a nonzero u64; \
-             set --tempo.epoch-length to match the fork source if metadata is unavailable"
-        );
-        let length = if anvil {
-            value.get("epochLength").cloned()
-        } else {
-            serde_json::from_value::<ChainConfig>(value)
-                .wrap_err_with(|| guidance.clone())?
-                .extra_fields
-                .get("epochLength")
-                .cloned()
-        };
-        length.map(|value| alloy_serde::quantity::deserialize(value).wrap_err(guidance)).transpose()
     }
 
     pub(crate) async fn replacement_fork_provider(
@@ -3004,7 +2964,6 @@ mod tests {
             instance_id: None,
             source_fork_block_number: None,
             source_fork_block_hash: None,
-            tempo_epoch_length: None,
         };
         let mut config =
             NodeConfig::test().with_eth_rpc_url(Some("http://localhost:8545".to_string()));
@@ -3050,7 +3009,6 @@ mod tests {
             instance_id: Some(B256::with_last_byte(1)),
             source_fork_block_number: None,
             source_fork_block_hash: None,
-            tempo_epoch_length: None,
         };
 
         let error = NodeConfig::test()
@@ -3213,7 +3171,7 @@ mod tests {
     #[test]
     fn tempo_consensus_configuration_defaults_and_overrides() {
         let config = NodeConfig::default();
-        assert_eq!(config.tempo_epoch_length, None);
+        assert_eq!(config.tempo_epoch_length.get(), 21_600);
         assert_eq!(config.tempo_consensus_seed(), TempoConsensus::default_seed(DEFAULT_MNEMONIC));
         let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
         let config =
@@ -3222,7 +3180,7 @@ mod tests {
         let seed = B256::repeat_byte(7);
         let config =
             config.with_tempo_epoch_length(NonZeroU64::MIN).with_tempo_consensus_seed(Some(seed));
-        assert_eq!(config.tempo_epoch_length, Some(NonZeroU64::MIN));
+        assert_eq!(config.tempo_epoch_length, NonZeroU64::MIN);
         assert_eq!(config.tempo_consensus_seed(), seed);
     }
 }

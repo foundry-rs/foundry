@@ -48,7 +48,7 @@ use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
 };
 use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork::SpecId};
-use std::{num::NonZeroU64, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tokio::sync::RwLock as AsyncRwLock;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,8 +63,6 @@ pub(crate) struct ForkEndpointIdentity {
     pub(crate) instance_id: Option<B256>,
     pub(crate) source_fork_block_number: Option<u64>,
     pub(crate) source_fork_block_hash: Option<B256>,
-    /// Consensus epoch length reported by the source, independent of local explicit overrides.
-    pub(crate) tempo_epoch_length: Option<NonZeroU64>,
 }
 
 impl ForkEndpointIdentity {
@@ -83,7 +81,6 @@ impl ForkEndpointIdentity {
             && self.blob_params == other.blob_params
             && self.source_fork_block_number == other.source_fork_block_number
             && self.source_fork_block_hash == other.source_fork_block_hash
-            && self.tempo_epoch_length == other.tempo_epoch_length
     }
 }
 
