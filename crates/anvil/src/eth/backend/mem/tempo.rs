@@ -913,8 +913,7 @@ mod tests {
 
     #[test]
     fn tempo_reanchor_clears_proof_states() {
-        let mut chain =
-            TempoChain::new(TempoConsensus::at_height(B256::ZERO, NonZeroU64::new(3).unwrap(), 0));
+        let mut chain = test_chain(0);
         let hash = B256::repeat_byte(0x42);
         chain.proof_states.write().insert(hash, StateDb::new(MemDb::default()));
         assert!(chain.proof_states.read().get_state(&hash).is_some());
@@ -926,8 +925,7 @@ mod tests {
 
     #[test]
     fn tempo_cross_anchor_rollback_preserves_exact_snapshot_anchor() {
-        let mut chain =
-            TempoChain::new(TempoConsensus::at_height(B256::ZERO, NonZeroU64::new(3).unwrap(), 5));
+        let mut chain = test_chain(5);
         chain.consensus.rotate().unwrap();
         let next_rotation = chain.consensus.clone().rotate().unwrap();
         chain.unwind(&unsigned_tempo_block(5)).unwrap();
@@ -952,8 +950,7 @@ mod tests {
 
     #[test]
     fn tempo_rollback_above_anchor_preserves_pruning_error() {
-        let mut chain =
-            TempoChain::new(TempoConsensus::at_height(B256::ZERO, NonZeroU64::new(3).unwrap(), 5));
+        let mut chain = test_chain(5);
         for height in 6..=7 {
             let mut header = TempoHeader::default();
             header.inner.number = height;
@@ -1136,8 +1133,7 @@ mod tests {
 
     #[test]
     fn tempo_cross_import_snapshots_preserve_revert_order() {
-        let mut chain =
-            TempoChain::new(TempoConsensus::at_height(B256::ZERO, NonZeroU64::new(3).unwrap(), 0));
+        let mut chain = test_chain(0);
         chain.snapshot(U256::ONE, None);
         chain.reanchor(unsigned_anchor(&chain, 3));
         assert!(chain.snapshots.is_empty());
@@ -1183,6 +1179,10 @@ mod tests {
 
     fn unsigned_anchor(chain: &TempoChain, height: u64) -> TempoConsensus {
         chain.prepare_anchor(&unsigned_tempo_block(height).header).unwrap()
+    }
+
+    fn test_chain(height: u64) -> TempoChain {
+        TempoChain::new(TempoConsensus::at_height(B256::ZERO, NonZeroU64::new(3).unwrap(), height))
     }
 
     #[tokio::test(flavor = "multi_thread")]

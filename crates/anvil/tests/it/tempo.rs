@@ -7430,7 +7430,7 @@ async fn tempo_consensus_fork_rejects_missing_context_without_resetting_live_sta
     let mut native: TempoHeader = serde_json::from_value(root.clone()).unwrap();
     native.consensus_context = None;
     let mut response = root;
-    response["consensusContext"] = serde_json::to_value(native.consensus_context).unwrap();
+    response["consensusContext"] = serde_json::Value::Null;
     response["hash"] = serde_json::to_value(native.hash_slow()).unwrap();
     let (endpoint, _) = spawn_rpc_proxy_canned_method(
         source.http_endpoint(),
@@ -7457,6 +7457,17 @@ async fn tempo_consensus_fork_rejects_missing_context_without_resetting_live_sta
     assert_eq!(serde_json::to_value(api.serialized_state(false).await.unwrap()).unwrap(), before);
     assert_eq!(tempo_finalization(&provider, 1).await, finalized);
     assert_eq!(tempo_consensus_identity(&provider).await, identity);
+    api.mine_one().await.unwrap();
+    assert_tempo_fork_round(&provider, &identity, 2, (0, 2, 1)).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_fork_rejects_incompatible_epoch_length() {
+    let config = NodeConfig::test_tempo()
+        .with_no_mining(true)
+        .with_tempo_epoch_length(NonZeroU64::new(6).unwrap());
+    let (source_api, source) = spawn(config.clone()).await;
+    source_api.anvil_mine(Some(U256::from(6)), None).await.unwrap();
 
     let error = try_spawn(
         config
@@ -7471,8 +7482,6 @@ async fn tempo_consensus_fork_rejects_missing_context_without_resetting_live_sta
         error.to_string(),
         "Internal error: \"expected Tempo consensus anchor epoch 2, got 1; set --tempo.epoch-length to match the fork source (default: 21600)\""
     );
-    api.mine_one().await.unwrap();
-    assert_tempo_fork_round(&provider, &identity, 2, (0, 2, 1)).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

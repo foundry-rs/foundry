@@ -414,6 +414,22 @@ fn certificate_verifies(
         && ops::verify_message::<MinSig>(&public, b"TEMPO_SEED", &bytes[..round_len], &seed).is_ok()
 }
 
+fn fork_anchor(height: u64, epoch_length: NonZeroU64, view: u64) -> TempoHeader {
+    let mut anchor = TempoHeader::default();
+    anchor.inner.number = height;
+    anchor.consensus_context = Some(TempoConsensusContext {
+        epoch: height / epoch_length,
+        view,
+        parent_view: view - 1,
+        proposer: TempoConsensus::new(B256::ZERO, epoch_length)
+            .identity()
+            .proposer
+            .try_into()
+            .unwrap(),
+    });
+    anchor
+}
+
 #[test]
 fn rounds_start_after_genesis_and_restart_after_boundaries() {
     for hardfork in [TempoHardfork::T3, TempoHardfork::T4] {
@@ -442,12 +458,7 @@ fn rounds_start_after_genesis_and_restart_after_boundaries() {
                 assert!(header.inner.extra_data.is_empty());
             }
             let certificate = consensus.finalize(&header, hardfork).unwrap();
-            let mut input = certificate.certificate.as_ref();
-            let epoch = u64::from(UInt::<u64>::read(&mut input).unwrap());
-            let view = u64::from(UInt::<u64>::read(&mut input).unwrap());
-            let parent_view = u64::from(UInt::<u64>::read(&mut input).unwrap());
-            assert_eq!((epoch, view, parent_view), round);
-            assert_certificate(&consensus.identity(), &header, &certificate);
+            assert_eq!(assert_certificate(&consensus.identity(), &header, &certificate), round);
         }
     }
 }
@@ -745,22 +756,6 @@ fn fork_reanchoring_keeps_configuration_and_uses_the_replacement_round() {
     let context = header.consensus_context.unwrap();
     assert_eq!((context.epoch, context.view, context.parent_view), (0, 10_000, 9_999));
     assert_certificate(&consensus.identity(), &header, &certificate);
-}
-
-fn fork_anchor(height: u64, epoch_length: NonZeroU64, view: u64) -> TempoHeader {
-    let mut anchor = TempoHeader::default();
-    anchor.inner.number = height;
-    anchor.consensus_context = Some(TempoConsensusContext {
-        epoch: height / epoch_length,
-        view,
-        parent_view: view - 1,
-        proposer: TempoConsensus::new(B256::ZERO, epoch_length)
-            .identity()
-            .proposer
-            .try_into()
-            .unwrap(),
-    });
-    anchor
 }
 
 #[test]
