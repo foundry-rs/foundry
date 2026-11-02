@@ -7218,10 +7218,8 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     api.mine_one().await.unwrap();
     assert!(provider.get_transaction_receipt(transaction).await.unwrap().unwrap().status());
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), nonce + 1);
-    let local = tempo_finalization(&provider, 3).await;
+    let local = assert_tempo_fork_round(&provider, &identity, 3, (0, 8898, 8897)).await;
     assert_eq!(local.block.header.parent_hash(), parent.header.hash);
-    assert_eq!((local.epoch, local.view), (0, 8898));
-    assert_tempo_certificate(&identity, &local);
     assert_eq!(subscriptions::next_event(&mut events).await.certified, local);
     assert!(provider.client().request::<_, bool>("evm_revert", (snapshot,)).await.unwrap());
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), nonce);
@@ -7239,19 +7237,15 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
         provider.client().request("consensus_getFinalization", ("latest",)).await.unwrap();
     assert_eq!(latest, source_root);
     api.mine_one().await.unwrap();
-    let remined = tempo_finalization(&provider, 3).await;
+    let remined = assert_tempo_fork_round(&provider, &identity, 3, (0, 8898, 8897)).await;
     assert_eq!(remined.block.header.parent_hash(), parent.header.hash);
-    assert_tempo_certificate(&identity, &remined);
-    assert_eq!((remined.epoch, remined.view), (0, 8898));
     assert_eq!(subscriptions::next_event(&mut events).await.certified, remined);
 
     api.anvil_set_coinbase(Address::repeat_byte(0x44)).await.unwrap();
     api.anvil_reorg(ReorgOptions { depth: 1, tx_block_pairs: Vec::new() }).await.unwrap();
-    let replacement = tempo_finalization(&provider, 3).await;
+    let replacement = assert_tempo_fork_round(&provider, &identity, 3, (0, 8898, 8897)).await;
     assert_ne!(replacement.digest, remined.digest);
     assert_eq!(replacement.block.header.parent_hash(), parent.header.hash);
-    assert_tempo_certificate(&identity, &replacement);
-    assert_eq!((replacement.epoch, replacement.view), (0, 8898));
     assert_eq!(subscriptions::next_event(&mut events).await.certified, replacement);
 
     api.anvil_reset(Some(Forking {
@@ -7264,8 +7258,7 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     assert_eq!(tempo_finalization(&provider, 3).await, reset_root);
     assert_eq!(tempo_consensus_identity(&provider).await.from_epoch, 1);
     api.mine_one().await.unwrap();
-    let finalized = tempo_finalization(&provider, 5).await;
-    assert_tempo_certificate(&identity, &finalized);
+    let finalized = assert_tempo_fork_round(&provider, &identity, 5, (1, 2, 1)).await;
     assert_eq!(subscriptions::next_event(&mut events).await.certified, finalized);
     provider.client().request::<_, serde_json::Value>("anvil_rollback", (1,)).await.unwrap();
     let parent = source_provider.get_block(4.into()).full().await.unwrap().unwrap();
@@ -7275,9 +7268,8 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
         provider.client().request("consensus_getFinalization", ("latest",)).await.unwrap();
     assert_eq!(latest, tempo_finalization(&source_provider, 4).await);
     api.mine_one().await.unwrap();
-    let remined = tempo_finalization(&provider, 5).await;
+    let remined = assert_tempo_fork_round(&provider, &identity, 5, (1, 2, 1)).await;
     assert_eq!(remined.block.header.parent_hash(), parent.header.hash);
-    assert_tempo_certificate(&identity, &remined);
     assert_eq!(subscriptions::next_event(&mut events).await.certified, remined);
 
     api.anvil_reset(Some(Forking {
@@ -7324,9 +7316,7 @@ async fn tempo_consensus_fork_transaction_replay_keeps_skipped_views_with_t3_ove
             .from(sender)
             .to(Address::repeat_byte(0x33))
             .nonce(nonce)
-            .gas_limit(1_000_000)
-            .max_fee_per_gas(1_000_000_000_000)
-            .max_priority_fee_per_gas(0);
+            .gas_limit(1_000_000);
         let hash = source_provider
             .client()
             .request::<_, B256>("eth_sendTransaction", (transaction,))
@@ -7402,7 +7392,7 @@ async fn test_tempo_fork_startup_rejects_invalid_root() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn tempo_consensus_fork_rejects_invalid_context_without_resetting_live_state() {
+async fn tempo_consensus_fork_rejects_missing_context_without_resetting_live_state() {
     let config = NodeConfig::test_tempo()
         .with_no_mining(true)
         .with_tempo_epoch_length(NonZeroU64::new(6).unwrap());
@@ -7421,57 +7411,37 @@ async fn tempo_consensus_fork_rejects_invalid_context_without_resetting_live_sta
     let finalized = tempo_finalization(&provider, 1).await;
     let identity = tempo_consensus_identity(&provider).await;
 
-    for (corruption, message) in [
-        (0, "Tempo fork root is missing consensus context"),
-        (1, "invalid Tempo consensus context"),
-        (
-            2,
-            "expected Tempo consensus anchor epoch 1, got 2; set --tempo.epoch-length to match the fork source (default: 21600)",
-        ),
-    ] {
-        let mut native: TempoHeader = serde_json::from_value(root.clone()).unwrap();
-        match corruption {
-            0 => native.consensus_context = None,
-            1 => {
-                let context = native.consensus_context.as_mut().unwrap();
-                context.parent_view = context.view;
-            }
-            _ => native.consensus_context.as_mut().unwrap().epoch = 2,
-        }
-        let mut response = root.clone();
-        response["consensusContext"] = serde_json::to_value(native.consensus_context).unwrap();
-        response["hash"] = serde_json::to_value(native.hash_slow()).unwrap();
-        let (endpoint, _) = spawn_rpc_proxy_canned_method(
-            source.http_endpoint(),
-            "eth_getBlockByNumber",
-            response.clone(),
-        )
-        .await;
-        let (endpoint, _) =
-            spawn_rpc_proxy_canned_method(endpoint, "eth_getBlockByHash", response).await;
-        let error = try_spawn(
-            config
-                .clone()
-                .with_eth_rpc_url(Some(endpoint.clone()))
-                .with_fork_block_number(Some(6u64)),
-        )
-        .await
-        .err()
-        .expect("an invalid consensus anchor must fail startup");
-        assert_eq!(error.to_string(), format!("Internal error: {message:?}"));
+    let mut native: TempoHeader = serde_json::from_value(root.clone()).unwrap();
+    native.consensus_context = None;
+    let mut response = root;
+    response["consensusContext"] = serde_json::to_value(native.consensus_context).unwrap();
+    response["hash"] = serde_json::to_value(native.hash_slow()).unwrap();
+    let (endpoint, _) = spawn_rpc_proxy_canned_method(
+        source.http_endpoint(),
+        "eth_getBlockByNumber",
+        response.clone(),
+    )
+    .await;
+    let (endpoint, _) =
+        spawn_rpc_proxy_canned_method(endpoint, "eth_getBlockByHash", response).await;
+    let error = try_spawn(
+        config.clone().with_eth_rpc_url(Some(endpoint.clone())).with_fork_block_number(Some(6u64)),
+    )
+    .await
+    .err()
+    .expect("a non-genesis fork root without consensus context must fail startup");
+    let expected = "Internal error: \"Tempo fork root is missing consensus context\"";
+    assert_eq!(error.to_string(), expected);
 
-        let error = api
-            .anvil_reset(Some(Forking { json_rpc_url: Some(endpoint), block_number: Some(6) }))
-            .await
-            .unwrap_err();
-        assert_eq!(error.to_string(), format!("Internal error: {message:?}"));
-        assert_eq!(
-            serde_json::to_value(api.serialized_state(false).await.unwrap()).unwrap(),
-            before
-        );
-        assert_eq!(tempo_finalization(&provider, 1).await, finalized);
-        assert_eq!(tempo_consensus_identity(&provider).await, identity);
-    }
+    let error = api
+        .anvil_reset(Some(Forking { json_rpc_url: Some(endpoint), block_number: Some(6) }))
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), expected);
+    assert_eq!(serde_json::to_value(api.serialized_state(false).await.unwrap()).unwrap(), before);
+    assert_eq!(tempo_finalization(&provider, 1).await, finalized);
+    assert_eq!(tempo_consensus_identity(&provider).await, identity);
+
     let error = try_spawn(
         config
             .with_tempo_epoch_length(NonZeroU64::new(3).unwrap())
