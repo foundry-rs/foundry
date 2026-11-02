@@ -7165,3 +7165,159 @@ contract SymbolicMappingStorageHooksSymbolicSize is Test {
         result["symbolic"]
     );
 }
+
+// Like Forge, `vm.stopRecord` pauses recording but keeps the accesses for `vm.accesses`, and
+// `vm.expectEmit(emitter, 0)` fails when a matching log is emitted.
+#[forgetest_init]
+fn symbolic_stop_record_and_expect_emit_count_zero_match_forge(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_stop_record_and_expect_emit_count_zero_match_forge");
+
+    prj.add_test(
+        "SymbolicRecordAndEmitCount.t.sol",
+        r#"
+interface Vm {
+    function record() external;
+    function stopRecord() external;
+    function accesses(address target) external returns (bytes32[] memory, bytes32[] memory);
+    function expectEmit() external;
+    function expectEmit(address emitter, uint64 count) external;
+    function expectRevert() external;
+}
+
+contract Store {
+    uint256 public a;
+    uint256 public b;
+    event Set(uint256 value);
+    event Other(uint256 value);
+
+    function setA(uint256 value) external {
+        a = value;
+        emit Set(value);
+    }
+
+    function setB(uint256 value) external {
+        b = value;
+        emit Other(value);
+    }
+
+    function noop() external {}
+
+    function setAThenRevert(uint256 value) external {
+        emit Set(value);
+        revert();
+    }
+}
+
+contract SymbolicRecordAndEmitCount {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    event Set(uint256 value);
+    event Other(uint256 value);
+    event Anon(uint256 value) anonymous;
+    Store store;
+
+    function setUp() public {
+        store = new Store();
+    }
+
+    function checkStopRecordKeepsAndPausesAccesses(uint256 value) public {
+        vm.record();
+        store.setA(value);
+        vm.stopRecord();
+        store.setB(value);
+        (, bytes32[] memory writes) = vm.accesses(address(store));
+        assert(writes.length == 1);
+    }
+
+    function checkStoppedRecordReportsWrite(uint256 value) public {
+        vm.record();
+        store.setA(value);
+        vm.stopRecord();
+        (, bytes32[] memory writes) = vm.accesses(address(store));
+        assert(writes.length == 0);
+    }
+
+    function checkExpectNoEmitFailsWhenEmitted(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        store.setA(value);
+    }
+
+    function checkExpectNoEmitAllowsOtherEvent(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        store.setB(value);
+    }
+
+    function checkExpectNoEmitAllowsNoEvent(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        store.noop();
+    }
+
+    function checkExpectNoEmitEndsAfterNextCall(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        store.noop();
+        store.setA(value);
+    }
+
+    // Forge queues expectations; a second pending one is reported as unsupported instead of
+    // replacing the first.
+    function checkQueuedExpectEmitFailsClosed(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        vm.expectEmit();
+        emit Other(value);
+        store.setB(value);
+        store.setA(value);
+    }
+
+    // Forge reverts the emitting frame, which `vm.expectRevert` sees, so this is unsupported.
+    function checkExpectNoEmitUnderExpectRevert(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(1);
+        vm.expectRevert();
+        store.setA(value);
+    }
+
+    // Like Forge, a log without topics cannot be the template of a count 0 expectation.
+    function checkExpectNoEmitAnonymousTemplate(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Anon(value);
+        store.setA(value);
+    }
+
+    // Forge keeps a template set inside a reverted call, so this is reported as unsupported.
+    function checkExpectNoEmitTemplateFromRevertedCall(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        try store.setAThenRevert(value) {} catch {}
+        store.setA(value);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicRecordAndEmitCount",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 10 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCount
+[PASS] checkExpectNoEmitAllowsNoEvent(uint256) ([METRICS])
+[PASS] checkExpectNoEmitAllowsOtherEvent(uint256) ([METRICS])
+[FAIL: use vm.expectEmitAnonymous to match anonymous events; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectNoEmitAnonymousTemplate(uint256) ([METRICS])
+[PASS] checkExpectNoEmitEndsAfterNextCall(uint256) ([METRICS])
+[FAIL: log emitted but expected 0 times; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectNoEmitFailsWhenEmitted(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit count 0 across a failed call] checkExpectNoEmitTemplateFromRevertedCall(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit count 0 across a failed call] checkExpectNoEmitUnderExpectRevert(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit with a pending expectation] checkQueuedExpectEmitFailsClosed(uint256) ([METRICS])
+[PASS] checkStopRecordKeepsAndPausesAccesses(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkStoppedRecordReportsWrite(uint256) ([METRICS])
+Suite result: FAILED. 4 passed; 6 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}

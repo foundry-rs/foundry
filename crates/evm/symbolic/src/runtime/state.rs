@@ -986,20 +986,45 @@ impl SymbolicLog {
     pub(crate) fn into_parts(self) -> (Arc<[SymExpr]>, SymExpr, SymBytes, Address) {
         (self.topics, self.data_len, self.data, self.emitter)
     }
+
+    pub(crate) fn has_concrete_data_len(&self) -> bool {
+        self.data_len.as_const().is_some()
+    }
+
+    pub(crate) fn has_topics(&self) -> bool {
+        !self.topics.is_empty()
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct AccessRecord {
     reads: HashMap<Address, Vec<SymExpr>>,
     writes: HashMap<Address, Vec<SymExpr>>,
+    recording: bool,
 }
 
 impl AccessRecord {
+    /// Creates an empty record that collects accesses, as `vm.record` does.
+    pub(crate) fn recording() -> Self {
+        Self { recording: true, ..Default::default() }
+    }
+
+    /// Stops collecting accesses while keeping the recorded ones, as `vm.stopRecord` does.
+    pub(crate) const fn stop(&mut self) {
+        self.recording = false;
+    }
+
     pub(crate) fn read(&mut self, address: Address, slot: SymExpr) {
+        if !self.recording {
+            return;
+        }
         Self::push_unique_slot(self.reads.entry(address).or_default(), slot);
     }
 
     pub(crate) fn write(&mut self, address: Address, slot: SymExpr) {
+        if !self.recording {
+            return;
+        }
         self.read(address, slot.clone());
         Self::push_unique_slot(self.writes.entry(address).or_default(), slot);
     }
@@ -1400,19 +1425,38 @@ pub(crate) struct ExpectedEmit {
     emitter: Option<SymExpr>,
     remaining: u64,
     template: Option<SymbolicLog>,
+    /// Call depth of the frame that declared the expectation.
+    depth: usize,
 }
 
 impl ExpectedEmit {
-    pub(crate) fn new(
+    pub(crate) const fn new(
         checks: ExpectedEmitChecks,
         emitter: Option<SymExpr>,
         remaining: u64,
+        depth: usize,
     ) -> Self {
-        Self { checks, emitter, remaining: remaining.max(1), template: None }
+        Self { checks, emitter, remaining, template: None, depth }
     }
 
+    /// Returns whether no further matching log is required.
+    ///
+    /// A satisfied `count >= 1` expectation is dropped once consumed, so a stored expectation with
+    /// nothing remaining is a `count = 0` expectation, which is met while no log matches it.
     pub(crate) const fn is_satisfied(&self) -> bool {
-        self.template.is_none() && self.remaining == 0
+        self.remaining == 0
+    }
+
+    /// Returns whether this expectation forbids logs matching its template (`count = 0`).
+    pub(crate) const fn is_forbidden(&self) -> bool {
+        self.remaining == 0
+    }
+
+    /// Returns whether a successful non-static call from `depth` ends this expectation.
+    ///
+    /// Like Forge, a met `count = 0` expectation only covers the next call from its frame.
+    pub(crate) const fn ends_after_call_from(&self, depth: usize) -> bool {
+        self.is_forbidden() && self.depth == depth
     }
 
     pub(crate) const fn template(&self) -> Option<&SymbolicLog> {
@@ -1442,6 +1486,10 @@ impl ExpectedEmit {
         let mut conditions = Vec::new();
         if let Some(expected_emitter) = &self.emitter {
             conditions.push(expected_emitter.address_match_condition(cx, actual.emitter));
+        }
+        // Like Forge, logs with different topic counts never match.
+        if template.topics.len() != actual.topics.len() {
+            return None;
         }
         for (idx, &check_topic) in self.checks.topics.iter().enumerate() {
             if !check_topic {

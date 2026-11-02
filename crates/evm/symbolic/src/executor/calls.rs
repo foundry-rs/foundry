@@ -706,6 +706,29 @@ impl SymbolicExecutor {
         };
 
         if let Some(template) = expected.template().cloned() {
+            if expected.is_forbidden() {
+                // Like Forge, a `count = 0` expectation fails on any log that matches it.
+                let condition = match expected.match_condition(&mut self.cx, &template, &log) {
+                    Some(condition) => Some(condition),
+                    None if template.has_concrete_data_len() && log.has_concrete_data_len() => None,
+                    None => {
+                        return Err(SymbolicError::Unsupported(
+                            "symbolic vm.expectEmit count 0 with symbolic log size",
+                        ));
+                    }
+                };
+                let matching = match condition {
+                    Some(condition) => self.constraints_for_condition(state, condition)?,
+                    None => None,
+                };
+                state.expected_emit = Some(expected);
+                state.record_log(log);
+                if let Some(constraints) = matching {
+                    state.constraints = constraints;
+                    return Ok(StepOutcome::Failure);
+                }
+                return Ok(StepOutcome::Continue);
+            }
             if !self.expected_emit_matches(state, &expected, &template, &log)? {
                 state.expected_emit = Some(expected);
                 state.record_log(log);
@@ -716,6 +739,13 @@ impl SymbolicExecutor {
                 state.expected_emit = Some(expected);
             }
         } else {
+            // Like Forge, a log without topics cannot fill a non-anonymous template, which every
+            // count 0 expectation is.
+            if expected.is_forbidden() && !log.has_topics() {
+                state.expected_emit = Some(expected);
+                state.record_log(log);
+                return Ok(StepOutcome::Failure);
+            }
             expected.set_template(log.clone());
             state.expected_emit = Some(expected);
         }
@@ -1152,7 +1182,12 @@ impl SymbolicExecutor {
                     if isolated {
                         parent.world.restore_transient_storage(&original_world);
                     }
-                    parent.expected_emit = child.expected_emit;
+                    parent.expected_emit = child.expected_emit.filter(|expected| {
+                        unmet_expected_revert
+                            || parent.is_static
+                            || matches!(kind, CallKind::StaticCall)
+                            || !expected.ends_after_call_from(parent.call_depth)
+                    });
                     parent.expected_creates = child.expected_creates;
                     parent.return_data = if unmet_expected_revert {
                         error_string_return_data(

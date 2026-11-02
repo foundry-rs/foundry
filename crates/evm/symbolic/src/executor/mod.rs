@@ -173,6 +173,19 @@ impl SymbolicExecutor {
                 state.recorded_logs_generation,
             );
         }
+        // Forge keeps a count 0 `expectEmit` declared or filled in a call that fails, and a match
+        // reverts the emitting frame with its own error, which a pending `vm.expectRevert` sees.
+        // The single symbolic expectation follows neither, so report these cases as unsupported.
+        if !matches!(outcome.status, CallStatus::Success)
+            && outcome.state.expected_emit.as_ref().is_some_and(ExpectedEmit::is_forbidden)
+            && (outcome.state.expected_emit != state.expected_emit
+                || (matches!(outcome.status, CallStatus::Failure)
+                    && state.expected_revert.is_some()))
+        {
+            return Err(SymbolicError::Unsupported(
+                "symbolic vm.expectEmit count 0 across a failed call",
+            ));
+        }
 
         // Like Forge, a revert under `vm.assumeNoRevert` skips `vm.expectRevert`, and a matching
         // revert returns `FOUNDRY::ASSUME`, which discards the run only if it reaches the top.
