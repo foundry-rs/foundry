@@ -266,7 +266,7 @@ fn collect_storage_layouts(
 }
 
 /// Returns the ERC-7201 namespace declared by a struct's `@custom:storage-location` tag.
-fn storage_namespace<'a>(gcx: Gcx<'a>, strukt: &hir::Struct<'_>) -> Result<Option<&'a str>> {
+pub fn storage_namespace<'a>(gcx: Gcx<'a>, strukt: &hir::Struct<'_>) -> Result<Option<&'a str>> {
     let mut namespace = None;
     for doc in gcx.hir.doc(strukt.doc).ast_comments().iter() {
         for tag in doc.natspec.iter() {
