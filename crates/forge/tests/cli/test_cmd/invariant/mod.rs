@@ -10,6 +10,7 @@ use std::{
 
 mod common;
 mod handler;
+mod snapshot;
 mod storage;
 mod target;
 

@@ -83,11 +83,14 @@ mod result;
 pub use result::{InvariantFuzzTestResult, did_fail_on_assert};
 
 mod shrink;
+
+mod snapshot;
 pub use shrink::{
     CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome, HandlerReplayOutcome,
     SequenceShrink, ShrinkCandidateKeys, ShrinkRun, ShrinkRunStats, check_sequence,
     check_sequence_value, replay_handler_failure_sequence, shrink_sequence_by_removing,
 };
+use snapshot::StateSnapshots;
 
 /// Minimum number of logical runs assigned to each auto invariant worker at the default invariant
 /// depth.
@@ -763,12 +766,22 @@ struct InvariantCampaignSeed {
 
 impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
     /// Instantiates an invariant test run.
-    fn new(first_input: BasicTxDetails, executor: Executor<FEN>, depth: usize) -> Self {
-        let mut inputs = Vec::with_capacity(depth.saturating_add(1));
+    ///
+    /// A run resumed from a snapshot starts with the calls that reached it as its inputs.
+    fn new(
+        prefix: &[BasicTxDetails],
+        first_input: BasicTxDetails,
+        executor: Executor<FEN>,
+        depth: usize,
+    ) -> Self {
+        let mut inputs = Vec::with_capacity(prefix.len() + depth.saturating_add(1));
+        inputs.extend_from_slice(prefix);
         inputs.push(first_input);
+        let mut cmp_seq = Vec::with_capacity(prefix.len() + depth);
+        cmp_seq.resize_with(prefix.len(), Vec::new);
         Self {
             inputs,
-            cmp_seq: Vec::with_capacity(depth),
+            cmp_seq,
             executor,
             fuzz_runs: Vec::with_capacity(depth),
             created_contracts: vec![],
@@ -1125,6 +1138,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             corpus_seed,
         )?;
         let mut runs = 0;
+        let mut snapshots = StateSnapshots::new(config.depth);
         campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
         // Report invariants that already fail in the initial state. Later runs only report
         // failures that they add.
@@ -1151,24 +1165,30 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 optimization: invariant_contract.is_optimization(),
             });
 
-            let sequence_plan =
-                corpus_manager.new_sequence(&mut invariant_test.test_data.branch_runner)?;
-            let initial_seq = sequence_plan.initial();
-
             let run_depth =
                 invariant_run_depth(&config, &mut invariant_test.test_data.branch_runner);
 
             let mut corpus_run = Option::<RecordedCallSequence>::None;
+            // Before each run, we must reset the backend state: to the post-setUp state or to a
+            // snapshot reached by an earlier run.
+            let start = snapshots.start(&mut invariant_test.test_data.branch_runner, &executor);
+            // Corpus entries replay from the post-setUp state, so a resumed run makes fresh calls.
+            let sequence_plan = if start.prefix.is_empty() {
+                corpus_manager.new_sequence(&mut invariant_test.test_data.branch_runner)?
+            } else {
+                corpus_manager.fresh_sequence(&mut invariant_test.test_data.branch_runner)?
+            };
+            let initial_seq = sequence_plan.initial();
             let mut frontier_run = (frontier_limit > 0).then(|| RecordedCallSequence {
-                inputs: Vec::with_capacity(run_depth as usize),
-                cmp_seq: Vec::with_capacity(run_depth as usize),
+                inputs: start.prefix.to_vec(),
+                cmp_seq: vec![Vec::new(); start.prefix.len()],
             });
 
             // Create current invariant run data.
             let mut current_run = InvariantTestRun::new(
+                &start.prefix,
                 initial_seq[0].clone(),
-                // Before each run, we must reset the backend state.
-                executor.clone(),
+                start.executor,
                 run_depth as usize,
             );
 
@@ -1309,6 +1329,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             let (handler_target, handler_selector) =
                                 handler.take().expect("feedback precedes campaign checks");
                             let mut state_changeset = std::mem::take(&mut result.state_changeset);
+                            let reverted = result.reverted;
                             if !result.reverted {
                                 let mapping_slots = current_run
                                     .executor
@@ -1420,6 +1441,18 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                     stop_after_run = true;
                                 }
                                 return Ok(CampaignControl::Stop);
+                            }
+                            if !reverted {
+                                let novel = snapshots.observe(&state_changeset);
+                                // Targets created mid-run are dropped at its end, so states
+                                // holding them are not resumed.
+                                if current_run.created_contracts.is_empty() {
+                                    snapshots.capture(
+                                        &current_run.executor,
+                                        &current_run.inputs,
+                                        novel,
+                                    );
+                                }
                             }
                         }
                         CampaignEvent::Advance => current_run.depth += 1,
@@ -1560,6 +1593,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             for fuzz_run in &current_run.fuzz_runs {
                 campaign_state.record_call(fuzz_run.gas);
             }
+            snapshots.finish_run(current_run.new_coverage);
             current_run.drop_corpus_payloads();
             invariant_test.end_run(current_run, gas_report_samples);
             runs += 1;
