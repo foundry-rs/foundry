@@ -5,6 +5,9 @@ use foundry_evm::revm::interpreter::instructions::i256::{i256_div, i256_mod};
 // unique nodes so adversarial expression trees cannot make construction unbounded.
 const MAX_BITWISE_BOOL_WORD_VISITS: usize = 256;
 const MAX_CONSTANT_DIFFERENCE_VISITS: usize = 256;
+// Storage layout keys `keccak(..) + offset` are assumed not to alias fixed slots or other hash
+// bases only while the offset stays below `2^64`, the range Solidity layouts use.
+const STORAGE_LAYOUT_OFFSET_BITS: usize = 64;
 
 impl SymExpr {
     pub(crate) fn select_storage_write(
@@ -32,16 +35,34 @@ impl SymExpr {
         {
             return SymBoolExpr::constant(cx, false);
         }
+        // The hash assumption only rules out aliasing for small offsets: an offset chosen as
+        // `slot - keccak(..)` reaches any slot, so large offsets keep real word equality.
         match (self.storage_layout_key(cx), write_key.storage_layout_key(cx)) {
             (Some((read_base, read_offset)), Some((write_base, write_offset))) => {
+                let large_read_offset = storage_offset_is_large(cx, &read_offset);
+                let large_write_offset = storage_offset_is_large(cx, &write_offset);
+                let large_offset = SymBoolExpr::or(cx, vec![large_read_offset, large_write_offset]);
                 let read_base = read_base
                     .storage_base_eq(cx, &write_base)
                     .unwrap_or_else(|| SymBoolExpr::eq(cx, read_base, write_base));
                 let read_offset = SymBoolExpr::eq(cx, read_offset, write_offset);
-                SymBoolExpr::and(cx, vec![read_base, read_offset])
+                let same_layout_slot = SymBoolExpr::and(cx, vec![read_base, read_offset]);
+                let words_eq = SymBoolExpr::eq(cx, self.clone(), write_key.clone());
+                let aliased = SymBoolExpr::and(cx, vec![large_offset, words_eq]);
+                SymBoolExpr::or(cx, vec![same_layout_slot, aliased])
             }
-            (Some(_), None) if write_key.as_const().is_some() => SymBoolExpr::constant(cx, false),
-            (None, Some(_)) if self.as_const().is_some() => SymBoolExpr::constant(cx, false),
+            // Against a constant, which may be a folded `keccak(..) + 1`, a concrete hash base is
+            // compared exactly; a symbolic hash base only reaches it through a large offset.
+            (Some((base, offset)), None) | (None, Some((base, offset)))
+                if self.as_const().is_some() || write_key.as_const().is_some() =>
+            {
+                let words_eq = SymBoolExpr::eq(cx, self.clone(), write_key.clone());
+                if base.as_const().is_some() {
+                    return words_eq;
+                }
+                let large_offset = storage_offset_is_large(cx, &offset);
+                SymBoolExpr::and(cx, vec![large_offset, words_eq])
+            }
             _ => SymBoolExpr::eq(cx, self.clone(), write_key.clone()),
         }
     }
@@ -196,6 +217,14 @@ fn storage_mapping_key_eq(
     } else {
         SymBoolExpr::eq(cx, read.key.clone(), write.key.clone())
     }
+}
+
+/// Returns the condition under which a storage layout offset is too large to assume no aliasing.
+fn storage_offset_is_large(cx: &mut SymCx, offset: &SymExpr) -> SymBoolExpr {
+    if offset.unsigned_bits() <= STORAGE_LAYOUT_OFFSET_BITS {
+        return SymBoolExpr::constant(cx, false);
+    }
+    SymBoolExpr::cmp_word_const(cx, SymCmpOp::Uge, offset, U256::ONE << STORAGE_LAYOUT_OFFSET_BITS)
 }
 
 fn masked_expr_matches(candidate: &SymExprKind, target: &SymExpr) -> Option<U256> {
