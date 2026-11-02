@@ -25,11 +25,11 @@ serialize, so existing caches stay readable. revm does not execute anything.
 Foundry releases before evm2 executed on revm. These differences are accepted: do not adjust gas
 snapshots or tests to reproduce the revm behavior.
 
-- **Recipient balance overflow** ([OSS-1253](https://linear.app/tempoxyz/issue/OSS-1253)): a value
-  transfer that would overflow the recipient's balance succeeds on evm2. The sender loses the value
-  and the recipient's balance saturates at `type(uint256).max`. revm failed the transfer without
-  changing balances. It is reachable only through `vm.deal` or `anvil_setBalance`, and concrete
-  execution disagrees with the symbolic engine, which models revm's halt.
+- **Recipient balance overflow**: evm2's `State::transfer` saturates the recipient's balance at
+  `type(uint256).max` instead of failing the transfer, as revm's `OverflowPayment` did. A value
+  call that would overflow the recipient therefore succeeds: the sender loses the full value and
+  the excess is burned. It is reachable only through `vm.deal` or `anvil_setBalance`, and concrete
+  execution disagrees with the symbolic engine, which models revm's failure.
 - **Arbitrary storage warmth**: revm read every slot warm after `vm.setArbitraryStorage`. On evm2,
   slots of an arbitrary-storage account warm on first access as usual, so a first read costs 2,000
   more gas.
