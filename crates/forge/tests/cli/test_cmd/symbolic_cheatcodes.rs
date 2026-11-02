@@ -3170,6 +3170,12 @@ contract SymbolicExpectRevertCodeless is Test {
         target.ping();
     }
 
+    function checkMockedRevertWrongReverter() public {
+        vm.mockCallRevert(address(target), abi.encodeCall(CodelessTarget.ping, ()), bytes("mocked"));
+        vm.expectRevert(bytes("mocked"), address(0xdead));
+        target.ping();
+    }
+
     function checkMockedRevertMismatch() public {
         vm.mockCallRevert(address(target), abi.encodeCall(CodelessTarget.ping, ()), bytes("actual"));
         vm.expectRevert(bytes("expected"));
@@ -3209,11 +3215,11 @@ contract SymbolicExpectRevertCodeless is Test {
         assertTrue(ok);
     }
 
-    function checkAssumeNoRevertCaughtMock(uint256 x) public {
+    function checkAssumeNoRevertMockData(uint256 x) public {
         vm.mockCallRevert(address(target), abi.encodeCall(CodelessTarget.f, (1)), bytes("mocked"));
         vm.assumeNoRevert();
-        (bool ok,) = address(target).call(abi.encodeCall(CodelessTarget.f, (x)));
-        assertTrue(ok);
+        (, bytes memory data) = address(target).call(abi.encodeCall(CodelessTarget.f, (x)));
+        assertNotEq(data, bytes("FOUNDRY::ASSUME"));
     }
 }
 "#,
@@ -3228,19 +3234,20 @@ contract SymbolicExpectRevertCodeless is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 11 tests for test/SymbolicExpectRevertCodeless.t.sol:SymbolicExpectRevertCodeless
-[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertCaughtMock(uint256) ([METRICS])
+Ran 12 tests for test/SymbolicExpectRevertCodeless.t.sol:SymbolicExpectRevertCodeless
 [FAIL: Error != expected error: assertion failed != m; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertKeepsExpectRevert() ([METRICS])
+[FAIL: assertion failed: 0x464f554e4452593a3a415353554d45 == 0x464f554e4452593a3a415353554d45; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertMockData(uint256) ([METRICS])
 [PASS] checkAssumeNoRevertNoCode() ([METRICS])
 [PASS] checkKzgFailure() ([METRICS])
 [PASS] checkMockedRevert() ([METRICS])
 [FAIL: Error != expected error: actual != expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockedRevertMismatch() ([METRICS])
+[FAIL: Reverter != expected reverter: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f != 0x000000000000000000000000000000000000dEaD; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockedRevertWrongReverter() ([METRICS])
 [PASS] checkMockedSuccess() ([METRICS])
 [PASS] checkNoCode() ([METRICS])
 [PASS] checkPrecompileFailure() ([METRICS])
 [PASS] checkPrecompileSuccess() ([METRICS])
 [PASS] checkValueTransfer(uint256) ([METRICS])
-Suite result: FAILED. 8 passed; 3 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 8 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

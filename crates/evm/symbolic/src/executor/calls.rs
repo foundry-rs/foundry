@@ -1229,7 +1229,6 @@ impl SymbolicExecutor {
                     None,
                 )? {
                     StepOutcome::Continue => worklist.push_back(failure),
-                    StepOutcome::AssumeRejected => {}
                     outcome => {
                         *state = failure;
                         return Ok(outcome);
@@ -1402,7 +1401,6 @@ impl SymbolicExecutor {
                             out_size,
                         )? {
                             StepOutcome::Continue => worklist.push_back(failure),
-                            StepOutcome::AssumeRejected => {}
                             outcome => {
                                 *state = failure;
                                 return Ok(Some(outcome));
@@ -1550,6 +1548,13 @@ impl SymbolicExecutor {
             let mut outcome = None;
             if matches!(kind, CallKind::Call | CallKind::CallCode) {
                 let transfer_to = if matches!(kind, CallKind::Call) {
+                    // A failed transfer would report this placeholder, not the symbolic target, as
+                    // the reverter.
+                    if branch.expected_revert.as_ref().is_some_and(ExpectedRevert::has_reverter) {
+                        return Err(SymbolicError::Unsupported(
+                            "symbolic vm.expectRevert reverter on symbolic CALL target",
+                        ));
+                    }
                     branch.world.symbolic_address_slot(target)
                 } else {
                     branch.address
