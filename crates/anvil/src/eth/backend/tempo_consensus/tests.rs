@@ -377,7 +377,7 @@ fn assert_certificate(
     identity: &TempoConsensusIdentity,
     header: &TempoHeader,
     finalization: &TempoFinalization,
-) {
+) -> (u64, u64, u64) {
     let bytes = finalization.certificate.as_ref();
     let mut input = bytes;
     let epoch = u64::from(UInt::<u64>::read(&mut input).unwrap());
@@ -392,6 +392,7 @@ fn assert_certificate(
         assert_eq!(B256::from(context.proposer), identity.proposer);
     }
     assert!(certificate_verifies(identity, finalization));
+    (epoch, view, parent_view)
 }
 
 fn certificate_verifies(
@@ -776,12 +777,7 @@ fn fork_unsigned_successor_keeps_rounds_without_header_context() {
         successor.prepare_header(&mut header, TempoHardfork::T3).unwrap();
         assert!(header.consensus_context.is_none());
         let certificate = successor.finalize(&header, TempoHardfork::T3).unwrap();
-        let mut input = certificate.certificate.as_ref();
-        let epoch = u64::from(UInt::<u64>::read(&mut input).unwrap());
-        let view = u64::from(UInt::<u64>::read(&mut input).unwrap());
-        let parent_view = u64::from(UInt::<u64>::read(&mut input).unwrap());
-        assert_eq!((epoch, view, parent_view), expected);
-        assert_certificate(&successor.identity(), &header, &certificate);
+        assert_eq!(assert_certificate(&successor.identity(), &header, &certificate), expected);
     }
 
     let overflow = fork_anchor(1, epoch_length, u64::MAX);
