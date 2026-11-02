@@ -413,6 +413,63 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 }
 
+// Tests that the timeout interrupts a handler that loops without calls, which only the timeout
+// ends.
+#[forgetest_init]
+fn invariant_timeout_interrupts_loop_without_calls(prj: _, cmd: _) {
+    prj.add_test(
+        "LoopTimeoutTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract LoopHandler {
+    uint256 public acc;
+
+    function spin() public {
+        uint256 value;
+        // `value` stays even, so the loop never ends.
+        while (value != 1) {
+            unchecked {
+                value += 2;
+            }
+        }
+        acc = value;
+    }
+}
+
+contract LoopTimeoutTest is Test {
+    LoopHandler handler;
+
+    function setUp() public {
+        handler = new LoopHandler();
+    }
+
+    /// forge-config: default.invariant.runs = 10
+    /// forge-config: default.invariant.depth = 10
+    /// forge-config: default.invariant.timeout = 1
+    function invariant_loop_timeout() public view {
+        require(handler.acc() == 0);
+    }
+}
+     "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_loop_timeout", "--gas-limit", &i64::MAX.to_string()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/LoopTimeoutTest.t.sol:LoopTimeoutTest
+[PASS] invariant_loop_timeout() (runs: 0, calls: 0, reverts: 0)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+}
+
 // Tests that selector hits are uniformly distributed
 // <https://github.com/foundry-rs/foundry/issues/2986>
 #[forgetest_init]

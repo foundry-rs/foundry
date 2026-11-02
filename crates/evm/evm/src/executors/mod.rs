@@ -2540,6 +2540,33 @@ mod tests {
     }
 
     #[test]
+    fn campaign_deadline_is_polled_at_calls() {
+        let mut executor = eth_executor(ExecutorBuilder::default().gas_limit(1 << 24));
+        let cancellation = EvmExecutionCancellation::campaign(
+            EarlyExit::new(false),
+            Arc::new(AtomicBool::new(false)),
+            Some(Instant::now()),
+        );
+        executor.inspector_mut().set_execution_cancellation(cancellation);
+
+        let target = Address::repeat_byte(0x11);
+        // PUSH0 x5; ADDRESS; GAS; CALL; STOP calls itself without a jump until the call stops.
+        executor
+            .set_code(
+                target,
+                Bytecode::new_raw(Bytes::from_static(&[
+                    0x5f, 0x5f, 0x5f, 0x5f, 0x5f, 0x30, 0x5a, 0xf1, 0x00,
+                ])),
+            )
+            .unwrap();
+
+        let result = executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert!(result.execution_cancelled);
+        assert!(!result.reverted);
+        assert_eq!(result.exit_reason, Some(InstrStop::Stop));
+    }
+
+    #[test]
     fn gas_price_opcode_reads_configured_gas_price() {
         let mut env = default_env::<EthEvmNetwork>();
         env.set_chain_id(1);

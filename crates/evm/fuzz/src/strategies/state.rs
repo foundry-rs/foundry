@@ -1,5 +1,5 @@
 use crate::{
-    BasicTxDetails, Fuzzer,
+    BasicTxDetails,
     invariant::{
         FuzzRunIdentifiedContracts, TargetedContract, TargetedContractEvent, TargetedContracts,
     },
@@ -9,7 +9,7 @@ use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt, FunctionExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, B256, Bytes, Log, U256,
-    map::{AddressIndexSet, AddressMap, B256IndexSet, HashMap, HashSet, IndexSet},
+    map::{AddressIndexSet, B256IndexSet, HashMap, HashSet, IndexSet},
 };
 use evm2::{
     bytecode::Bytecode,
@@ -17,7 +17,6 @@ use evm2::{
 };
 use foundry_common::{
     ignore_metadata_hash,
-    mapping_slots::MappingSlots,
     slot_identifier::{SlotIdentifier, SlotInfo},
 };
 use foundry_config::FuzzDictionaryConfig;
@@ -141,18 +140,6 @@ impl FuzzState {
         }
     }
 
-    pub fn collect_fuzzer_values(&self, fuzzer: &mut Fuzzer) {
-        if fuzzer.collected_values.is_empty() {
-            return;
-        }
-
-        let FuzzStateInner::Invariant(inner) = &self.inner else { return };
-        let mut dict = inner.borrow_mut();
-        for value in fuzzer.collected_values.drain(..) {
-            dict.insert_value(value);
-        }
-    }
-
     /// Collects the accounts and storage a call loaded, its output and its logs into a worker
     /// state according to the given [FuzzDictionaryConfig].
     ///
@@ -167,7 +154,6 @@ impl FuzzState {
         logs: &[Log],
         state_changes: impl IntoIterator<Item = AccountChanges<'a>>,
         run_depth: u32,
-        mapping_slots: Option<&AddressMap<MappingSlots>>,
     ) {
         let mut state_changes = state_changes.into_iter().peekable();
         if logs.is_empty() && result.is_empty() && state_changes.peek().is_none() {
@@ -188,7 +174,7 @@ impl FuzzState {
         if !result.is_empty() {
             dict.insert_result_values(target_function, result, run_depth);
         }
-        dict.insert_new_state_values(state_changes, &targets, mapping_slots);
+        dict.insert_new_state_values(state_changes, &targets);
     }
 
     /// Collects typed trace-cmp operands from sancov-instrumented code.
@@ -507,7 +493,6 @@ impl FuzzDictionary {
         &mut self,
         state_changes: impl IntoIterator<Item = AccountChanges<'a>>,
         targets: &TargetedContracts,
-        mapping_slots: Option<&AddressMap<MappingSlots>>,
     ) {
         // Sort accounts before inserting to ensure deterministic dictionary.
         let mut accounts = state_changes.into_iter().collect::<Vec<_>>();
@@ -537,11 +522,6 @@ impl FuzzDictionary {
                         key
                     })
                 });
-                trace!(
-                    "{address:?} has mapping_slots {}",
-                    mapping_slots.is_some_and(|m| m.contains_key(address))
-                );
-                let mapping_slots = mapping_slots.and_then(|m| m.get(address));
                 // Sort storage values before inserting to ensure deterministic dictionary.
                 let mut storage = storage.iter().collect::<Vec<_>>();
                 storage.sort_unstable_by_key(|(slot, _)| **slot);
@@ -550,7 +530,7 @@ impl FuzzDictionary {
                     let slot_info = slot_identifier_key.and_then(|key| {
                         let slot = B256::from(*slot);
                         let value_word = B256::from(value);
-                        self.identify_storage_slot(key, slot, mapping_slots)
+                        self.identify_storage_slot(key, slot)
                             .filter(|slot_info| slot_info.decode(value_word).is_some())
                     });
                     self.insert_storage_value(slot, &value, slot_info);
@@ -559,19 +539,7 @@ impl FuzzDictionary {
         }
     }
 
-    fn identify_storage_slot(
-        &mut self,
-        key: usize,
-        slot: B256,
-        mapping_slots: Option<&MappingSlots>,
-    ) -> Option<SlotInfo> {
-        if mapping_slots.is_some() {
-            return self
-                .slot_identifiers
-                .get(&key)
-                .and_then(|identifier| identifier.identify(&slot, mapping_slots));
-        }
-
+    fn identify_storage_slot(&mut self, key: usize, slot: B256) -> Option<SlotInfo> {
         let cache_key = (key, slot);
         if let Some(slot_info) = self.slot_info_cache.get(&cache_key) {
             return slot_info.clone();
@@ -1120,11 +1088,7 @@ mod tests {
         state.insert_storage(address, U256::from(7), U256::ZERO, U256::from(0xbeef_u64));
         let mut dictionary = FuzzDictionary::default();
 
-        dictionary.insert_new_state_values(
-            state.account_changes(),
-            &TargetedContracts::new(),
-            None,
-        );
+        dictionary.insert_new_state_values(state.account_changes(), &TargetedContracts::new());
 
         for value in [
             address.into_word(),
@@ -1181,11 +1145,7 @@ mod tests {
         }
 
         let mut dictionary = FuzzDictionary::default();
-        dictionary.insert_new_state_values(
-            state.account_changes(),
-            &TargetedContracts::new(),
-            None,
-        );
+        dictionary.insert_new_state_values(state.account_changes(), &TargetedContracts::new());
 
         let mut expected = vec![B256::ZERO];
         for i in 1..=4 {

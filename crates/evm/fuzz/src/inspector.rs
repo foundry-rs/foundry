@@ -1,10 +1,9 @@
 use crate::invariant::RandomCallGenerator;
-use alloy_primitives::{Address, B256, Bytes, U256, map::AddressMap};
+use alloy_primitives::{Address, Bytes, U256};
 use evm2::{
-    EvmTypes, EvmTypesHost, Inspector,
+    EvmTypes, Inspector,
     interpreter::{Interpreter, Message, MessageKind, MessageResult},
 };
-use foundry_common::mapping_slots::{self, MappingSlots, PendingMappingHash};
 use foundry_evm_core::constants::CHEATCODE_ADDRESS;
 
 /// A sub-call observed by the [`Fuzzer`] inspector.
@@ -21,21 +20,12 @@ pub struct ObservedCall {
     pub value: Option<U256>,
 }
 
-/// An inspector that can fuzz and collect data for that effect.
-#[derive(Clone, Debug)]
+/// An inspector that overrides calls to simulate reentrancy and records sub-calls for the
+/// invariant fuzzer.
+#[derive(Clone, Debug, Default)]
 pub struct Fuzzer {
-    /// If set, it collects `stack` and `memory` values for fuzzing purposes.
-    pub collect: bool,
     /// Given a strategy, it generates a random call.
     pub call_generator: Option<RandomCallGenerator>,
-    /// If `collect` is set, we store collected values until the invariant worker drains them.
-    pub collected_values: Vec<B256>,
-    /// Maximum number of stack words staged before the invariant worker drains them.
-    pub max_collected_values: usize,
-    /// Mapping accesses observed during execution, used for storage slot sampling.
-    pub mapping_slots: Option<AddressMap<MappingSlots>>,
-    /// A 64-byte Keccak operation waiting to be recorded after execution.
-    pending_mapping_hash: Option<PendingMappingHash>,
     /// Whether sub-calls should be buffered for later corpus seeding.
     record_calls: bool,
     /// Sub-calls observed since the last drain.
@@ -47,20 +37,6 @@ pub struct Fuzzer {
 }
 
 impl<T: EvmTypes> Inspector<T> for Fuzzer {
-    #[inline]
-    fn step(&mut self, interp: &mut Interpreter<'_, '_, T>) {
-        self.capture_mapping_hash(interp);
-        // We only collect `stack` and `memory` data before and after calls.
-        if self.collect {
-            self.collect_data(interp);
-        }
-    }
-
-    #[inline]
-    fn step_end(&mut self, interp: &mut Interpreter<'_, '_, T>) {
-        self.record_mapping_hash(interp);
-    }
-
     fn call(
         &mut self,
         interp: &mut Interpreter<'_, '_, T>,
@@ -82,10 +58,6 @@ impl<T: EvmTypes> Inspector<T> for Fuzzer {
             });
         }
 
-        // We only collect `stack` and `memory` data before and after calls.
-        // this will be turned off on the next `step`
-        self.collect = true;
-
         None
     }
 
@@ -102,51 +74,11 @@ impl<T: EvmTypes> Inspector<T> for Fuzzer {
             }
         }
 
-        // We only collect `stack` and `memory` data before and after calls.
-        // this will be turned off on the next `step`
-        self.collect = true;
-
         self.call_depth = self.call_depth.saturating_sub(1);
     }
 }
 
 impl Fuzzer {
-    /// Records mapping slots written by `SSTORE` and captures a 64-byte `KECCAK256` operation
-    /// before it executes.
-    fn capture_mapping_hash<T: EvmTypesHost>(&mut self, interp: &Interpreter<'_, '_, T>) {
-        let Some(mapping_slots) = &mut self.mapping_slots else { return };
-        mapping_slots::step(mapping_slots, interp);
-        self.pending_mapping_hash = mapping_slots::capture_hash(interp);
-    }
-
-    /// Records a successfully executed 64-byte `KECCAK256` operation after memory expansion.
-    fn record_mapping_hash<T: EvmTypesHost>(&mut self, interp: &Interpreter<'_, '_, T>) {
-        if let Some(pending) = self.pending_mapping_hash.take()
-            && let Some(mapping_slots) = &mut self.mapping_slots
-        {
-            mapping_slots::record_hash(mapping_slots, interp, pending);
-        }
-    }
-
-    /// Constructs a new `Fuzzer` inspector.
-    pub const fn new(
-        max_collected_values: usize,
-        mapping_slots: Option<AddressMap<MappingSlots>>,
-    ) -> Self {
-        Self {
-            collect: true,
-            call_generator: None,
-            collected_values: Vec::new(),
-            max_collected_values,
-            mapping_slots,
-            pending_mapping_hash: None,
-            record_calls: false,
-            observed_calls: Vec::new(),
-            call_depth: 0,
-            extra_cheatcode_addresses: &[],
-        }
-    }
-
     /// Sets additional network-specific cheatcode addresses that must not be overridden.
     pub const fn with_extra_cheatcode_addresses(mut self, addresses: &'static [Address]) -> Self {
         self.extra_cheatcode_addresses = addresses;
@@ -177,24 +109,6 @@ impl Fuzzer {
     #[inline]
     fn is_cheatcode_address(&self, address: Address) -> bool {
         address == CHEATCODE_ADDRESS || self.extra_cheatcode_addresses.contains(&address)
-    }
-
-    /// Collects `stack` and `memory` values into the fuzz dictionary.
-    #[cold]
-    fn collect_data<T: EvmTypesHost>(&mut self, interp: &Interpreter<'_, '_, T>) {
-        let remaining = self.max_collected_values.saturating_sub(self.collected_values.len());
-        self.collected_values
-            .extend(interp.stack().iter().take(remaining).copied().map(B256::from));
-
-        // TODO: disabled for now since it's flooding the dictionary
-        // for index in 0..interpreter.shared_memory.len() / 32 {
-        //     let mut slot = [0u8; 32];
-        //     slot.clone_from_slice(interpreter.shared_memory.get_slice(index * 32, 32));
-
-        //     state.insert(slot);
-        // }
-
-        self.collect = false;
     }
 
     /// Overrides an external call to simulate reentrancy attacks.
@@ -282,7 +196,7 @@ mod tests {
     use super::*;
     use crate::{BasicTxDetails, CallDetails};
     use alloy_network::TransactionBuilder;
-    use alloy_primitives::{keccak256, map::AddressSet};
+    use alloy_primitives::{B256, keccak256, map::AddressSet};
     use evm2::{
         Evm,
         bytecode::Bytecode,
@@ -367,8 +281,8 @@ mod tests {
     where
         TransactionRequestFor<FEN>: Default,
     {
-        // Observation: the sub-call, the stack after it returns and the mapping slot it writes.
-        let fuzzer = Fuzzer::new(16, Some(AddressMap::default())).with_call_recording(true);
+        // Observation: the sub-call. The handler writes the mapping slot.
+        let fuzzer = Fuzzer::default().with_call_recording(true);
         let (mut evm, mut fuzzer) = run::<FEN>(fuzzer, &handler_code());
         let mapping_slot = keccak256([B256::with_last_byte(7), B256::with_last_byte(1)].concat());
         assert_eq!(slot(&mut evm, VICTIM, mapping_slot.into()), U256::from(2));
@@ -382,13 +296,6 @@ mod tests {
                 value: None,
             }]
         );
-        assert_eq!(fuzzer.collected_values, [B256::with_last_byte(1)]);
-        let slots = &fuzzer.mapping_slots.unwrap()[&VICTIM];
-        assert_eq!(
-            slots.seen_sha3[&mapping_slot],
-            (B256::with_last_byte(7), B256::with_last_byte(1))
-        );
-        assert_eq!(slots.keys[&mapping_slot], B256::with_last_byte(7));
 
         // Override: the handler's call to the victim reenters through `REENTRANT` instead.
         let callback = BasicTxDetails {
@@ -406,8 +313,7 @@ mod tests {
         );
         generator.last_sequence.write().push(Some(callback));
         generator.set_replay(true);
-        let mut fuzzer = Fuzzer::new(16, None);
-        fuzzer.call_generator = Some(generator);
+        let fuzzer = Fuzzer { call_generator: Some(generator), ..Default::default() };
         let (mut evm, _) = run::<FEN>(fuzzer, &handler_code());
         assert_eq!(slot(&mut evm, REENTRANT, U256::ZERO), U256::ONE);
         assert_eq!(slot(&mut evm, VICTIM, mapping_slot.into()), U256::ZERO);
@@ -427,17 +333,16 @@ mod tests {
 
     #[test]
     fn network_cheatcode_addresses_are_opt_in() {
-        let ethereum = Fuzzer::new(16, None);
+        let ethereum = Fuzzer::default();
         assert!(!ethereum.is_cheatcode_address(MONAD_CHEATCODE_ADDRESS));
 
-        let monad =
-            Fuzzer::new(16, None).with_extra_cheatcode_addresses(&[MONAD_CHEATCODE_ADDRESS]);
+        let monad = Fuzzer::default().with_extra_cheatcode_addresses(&[MONAD_CHEATCODE_ADDRESS]);
         assert!(monad.is_cheatcode_address(MONAD_CHEATCODE_ADDRESS));
     }
 
     #[test]
     fn observed_calls_are_disabled_by_default() {
-        let (_, mut fuzzer) = run::<EthEvmNetwork>(Fuzzer::new(16, None), &handler_code());
+        let (_, mut fuzzer) = run::<EthEvmNetwork>(Fuzzer::default(), &handler_code());
         assert!(fuzzer.take_observed_calls().is_empty());
     }
 
@@ -453,7 +358,7 @@ mod tests {
         handler.extend_from_slice(VICTIM.as_slice());
         handler.extend([0x5a, 0xf4, 0x50, 0x00]);
 
-        let fuzzer = Fuzzer::new(16, None).with_call_recording(true);
+        let fuzzer = Fuzzer::default().with_call_recording(true);
         let (_, mut fuzzer) = run::<EthEvmNetwork>(fuzzer, &handler);
 
         // The top-level call and the delegate call are not recorded.
