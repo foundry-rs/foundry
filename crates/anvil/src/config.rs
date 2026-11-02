@@ -1931,8 +1931,7 @@ impl NodeConfig {
             return Ok(None);
         }
         let guidance = format!(
-            "invalid Tempo epoch configuration from {method}; epochLength must be a nonzero u64; \
-             set --tempo.epoch-length to match the fork source if metadata is unavailable"
+            "invalid Tempo epoch configuration from {method}; epochLength must be a nonzero u64"
         );
         let length = if anvil {
             value.get("epochLength").cloned()
