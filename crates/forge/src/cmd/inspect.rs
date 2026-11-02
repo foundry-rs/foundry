@@ -12,7 +12,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler},
-    find_matching_contract_artifact, find_target_path, shell,
+    find_matching_contract_artifact, find_target_path, namespaced_storage, shell,
 };
 use foundry_compilers::{
     ProjectCompileOutput,
@@ -29,7 +29,7 @@ use foundry_compilers::{
 use path_slash::PathExt;
 use regex::Regex;
 use serde_json::{Map, Value};
-use solar::sema::interface::source_map::FileName;
+use solar::sema::{hir, interface::source_map::FileName};
 use std::{collections::BTreeMap, fmt, ops::ControlFlow, path::Path, str::FromStr, sync::LazyLock};
 
 /// CLI arguments for `forge inspect`.
@@ -156,7 +156,24 @@ impl InspectArgs {
                 print_json(&artifact.gas_estimates)?;
             }
             ContractArtifactField::StorageLayout => {
-                print_storage_layout(artifact.storage_layout.as_ref(), "storage layout", wrap)?;
+                let mut layout =
+                    artifact.storage_layout.ok_or_else(|| missing_error("storage layout"))?;
+                let compiler = output.parser_mut().solc_mut().compiler_mut();
+                if is_solidity_source(&target_path) && namespaced_storage::has_annotations(compiler)
+                {
+                    compiler.enter_mut(|compiler| {
+                        namespaced_storage::lower(compiler)?;
+                        let gcx = compiler.gcx();
+                        let target = find_target_contract(&gcx.hir, &target_path, contract.name())?;
+                        namespaced_storage::extend_storage_layout(
+                            &mut layout,
+                            gcx,
+                            project.root(),
+                            target,
+                        )
+                    })?;
+                }
+                print_storage_layout(Some(&layout), "storage layout", wrap)?;
             }
             ContractArtifactField::TransientStorageLayout => {
                 print_storage_layout(
@@ -499,40 +516,7 @@ fn print_linearization(
         lowered = true;
 
         let hir = &compiler.gcx().hir;
-        let matching_contracts = hir
-            .contract_ids()
-            .filter(|id| {
-                let contract = hir.contract(*id);
-                if let Some(target_name) = target_name
-                    && contract.name.as_str() != target_name
-                {
-                    return false;
-                }
-
-                matches!(
-                    &hir.source(contract.source).file.name,
-                    FileName::Real(path) if path == target_path
-                )
-            })
-            .collect::<Vec<_>>();
-
-        let target_contract = match matching_contracts.as_slice() {
-            [id] => *id,
-            [] => {
-                if let Some(target_name) = target_name {
-                    eyre::bail!(
-                        "Could not find contract `{target_name}` in `{}`",
-                        target_path.display()
-                    );
-                }
-                eyre::bail!("Could not find contract in `{}`", target_path.display());
-            }
-            _ => {
-                eyre::bail!(
-                    "Multiple contracts found in the same file, please specify the target <path>:<contract> or <contract>"
-                );
-            }
-        };
+        let target_contract = find_target_contract(hir, target_path, target_name)?;
 
         for (order, base_id) in hir.contract(target_contract).linearized_bases.iter().enumerate() {
             let contract = hir.contract(*base_id);
@@ -586,6 +570,48 @@ fn print_linearization(
         },
         should_wrap,
     )
+}
+
+/// Returns the single contract named `target_name`, or the only contract, in `target_path`.
+fn find_target_contract(
+    hir: &hir::Hir<'_>,
+    target_path: &Path,
+    target_name: Option<&str>,
+) -> Result<hir::ContractId> {
+    let matching_contracts = hir
+        .contract_ids()
+        .filter(|id| {
+            let contract = hir.contract(*id);
+            if let Some(target_name) = target_name
+                && contract.name.as_str() != target_name
+            {
+                return false;
+            }
+
+            matches!(
+                &hir.source(contract.source).file.name,
+                FileName::Real(path) if path == target_path
+            )
+        })
+        .collect::<Vec<_>>();
+
+    match matching_contracts.as_slice() {
+        [id] => Ok(*id),
+        [] => {
+            if let Some(target_name) = target_name {
+                eyre::bail!(
+                    "Could not find contract `{target_name}` in `{}`",
+                    target_path.display()
+                );
+            }
+            eyre::bail!("Could not find contract in `{}`", target_path.display());
+        }
+        _ => {
+            eyre::bail!(
+                "Multiple contracts found in the same file, please specify the target <path>:<contract> or <contract>"
+            );
+        }
+    }
 }
 
 /// Contract level output selection

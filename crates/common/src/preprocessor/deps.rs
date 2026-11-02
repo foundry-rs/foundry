@@ -593,6 +593,8 @@ fn constructor_uses_private_constants(gcx: Gcx<'_>, contract: &Contract<'_>) -> 
 }
 
 /// Returns whether generated helper and artifact references preserve the source-unit identity.
+///
+/// Keep `is_source_context_change_relevant` in sync with how this reads `source_units`.
 fn can_rewrite(
     path: &Path,
     source_path: &Path,

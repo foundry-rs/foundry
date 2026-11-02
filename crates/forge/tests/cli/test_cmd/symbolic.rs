@@ -7487,6 +7487,7 @@ contract NormalizerBoundariesTest {
         }
     }
 }
+
 "#,
     );
     let signatures = [
@@ -7517,5 +7518,235 @@ contract NormalizerBoundariesTest {
             statuses.iter().all(|(_, status)| status == "fail_counterexample"),
             "optimized={optimized}: {statuses:?}"
         );
+    }
+}
+
+#[forgetest_init]
+fn symbolic_checked_xor_specialist(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_checked_xor_specialist");
+    prj.add_test(
+        "CheckedXor.t.sol",
+        r#"
+contract CheckedXorTest {
+    uint256 constant A = (1 << 255) | 0x123456789abcdef;
+    uint256 constant B = (1 << 128) | 0xfedcba987654321;
+
+    function checkWordCycle(uint256 a, uint256 b, uint256 c) external pure {
+        require(a ^ b == A);
+        require(b ^ c == B);
+        assert(a ^ c == A ^ B);
+    }
+
+    function checkComplement(uint256 a, uint256 b, uint256 c) external pure {
+        require(~(a ^ b) == A);
+        require(b ^ c == B);
+        assert(~(a ^ c) == A ^ B);
+    }
+
+    function checkInconsistentEqualities(uint256 a, uint256 b, uint256 c) external pure {
+        require(a ^ b == A);
+        require(b ^ c == B);
+        if (a ^ c == A ^ B ^ 1) {
+            assert(false);
+        }
+    }
+
+    function checkOpaqueCycle(uint256 a, uint256 b, uint256 c) external pure {
+        unchecked {
+            uint256 x = a << 3;
+            uint256 y = b & type(uint160).max;
+            uint256 z = c + c;
+            require(x ^ y == 0x12345678);
+            require(y ^ z == 0xfedcba98);
+            assert(x ^ z == 0xece8ece0);
+        }
+    }
+
+    function checkWrongCycle(uint256 a, uint256 b, uint256 c) external pure {
+        require(a ^ b == A);
+        require(b ^ c == B);
+        assert(a ^ c == A ^ B ^ (1 << 255));
+    }
+
+    function checkNegatedEqualities(uint256 a, uint256 b, uint256 c) external pure {
+        require(a ^ b != A);
+        require(b ^ c != A);
+        assert(a ^ c != 0);
+    }
+
+    function checkRelatedAtoms(uint256 a) external pure {
+        require(a ^ (a & 0xff) == 0);
+        assert(a == 0);
+    }
+
+    function checkNonlinearFallback(uint256 a, uint256 b) external pure {
+        require(a ^ b == A);
+        require(a > 5 && a < 8);
+        assert(a == 0);
+    }
+
+    function checkNegatedConjunction(uint256 a, uint256 b, uint256 c) external pure {
+        require(!(a ^ b == A && b ^ c == B));
+        require(a ^ c == A ^ B ^ 1);
+        assert(false);
+    }
+
+    function checkWrappedEquality(uint256 a, uint256 b) external pure {
+        unchecked {
+            require(a + 1 == 0);
+            require(a ^ b == B);
+            assert(a == type(uint256).max);
+        }
+    }
+
+    function checkAdditionInsideXor(uint256 a, uint256 b) external pure {
+        unchecked {
+            require(a ^ b == 0);
+            assert((a + 1) ^ b == 1);
+        }
+    }
+}
+"#,
+    );
+
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "CheckedXorTest"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        for name in ["checkWordCycle", "checkComplement", "checkInconsistentEqualities"] {
+            let result = json_test_result(&output, &format!("{name}(uint256,uint256,uint256)"));
+            assert_eq!(result["symbolic"]["status"], "pass", "{name}, optimized={optimized}");
+            assert_eq!(result["symbolic"]["solver"]["stats"]["smt_queries"], 0, "{name}");
+        }
+        let result = json_test_result(&output, "checkOpaqueCycle(uint256,uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        let result = json_test_result(&output, "checkWrappedEquality(uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+        for signature in [
+            "checkWrongCycle(uint256,uint256,uint256)",
+            "checkNegatedEqualities(uint256,uint256,uint256)",
+            "checkRelatedAtoms(uint256)",
+            "checkNonlinearFallback(uint256,uint256)",
+            "checkNegatedConjunction(uint256,uint256,uint256)",
+            "checkAdditionInsideXor(uint256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature}, optimized={optimized}: {result}"
+            );
+            assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+        }
+    }
+}
+
+// The expected result comes from exhaustive concrete evaluation, independently of the symbolic
+// solver, for systems mixing equalities, disequalities, repeated terms, and two-bit constants.
+#[forgetest_init]
+fn symbolic_xor_matches_exhaustive_models(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_xor_matches_exhaustive_models");
+    let mut source = String::from("contract XorOracleTest {\n");
+    let mut expected = Vec::new();
+    for case in 0..48usize {
+        let relations = (0..4)
+            .map(|row| {
+                let mask = 1 + (case * (row + 1) + row * 3) % 7;
+                let constant = (case + row * 5) % 4;
+                let negated = (case >> row) & 1 != 0;
+                (mask, constant, negated)
+            })
+            .collect::<Vec<_>>();
+        let satisfiable = (0..4usize).any(|a| {
+            (0..4usize).any(|b| {
+                (0..4usize).any(|c| {
+                    relations.iter().all(|(mask, constant, negated)| {
+                        let value = [a, b, c].iter().enumerate().fold(0, |value, (bit, word)| {
+                            if mask & (1 << bit) != 0 { value ^ word } else { value }
+                        });
+                        (value == *constant) != *negated
+                    })
+                })
+            })
+        });
+        expected.push(satisfiable);
+        source.push_str(&format!(
+            "function checkCase{case}(uint256 a, uint256 b, uint256 c) external pure {{\n\
+             if (a < 4 && b < 4 && c < 4"
+        ));
+        for (mask, constant, negated) in relations {
+            let terms = ["a", "b", "c"]
+                .into_iter()
+                .enumerate()
+                .filter(|(bit, _)| mask & (1 << bit) != 0)
+                .map(|(_, name)| name)
+                .collect::<Vec<_>>()
+                .join(" ^ ");
+            let op = if negated { "!=" } else { "==" };
+            // Repeated terms exercise cancellation across differently associated XOR trees.
+            source.push_str(&format!(" && ((({terms}) ^ a) ^ a {op} {constant})"));
+        }
+        source.push_str(") { assert(false); }\n}\n");
+    }
+    source.push_str("}\n");
+    prj.add_test("XorOracle.t.sol", &source);
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "XorOracleTest"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        for (case, satisfiable) in expected.iter().enumerate() {
+            let result =
+                json_test_result(&output, &format!("checkCase{case}(uint256,uint256,uint256)"));
+            let status = if *satisfiable { "fail_counterexample" } else { "pass" };
+            assert_eq!(result["symbolic"]["status"], status, "case={case}, optimized={optimized}");
+            if *satisfiable {
+                assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+            }
+        }
+    }
+}
+
+#[forgetest_init]
+fn symbolic_xor_specialist_limits_fall_back(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_xor_specialist_limits_fall_back");
+    let mut source = String::from("contract XorLimitsTest {\n");
+    source.push_str("function checkRows(uint256 a, uint256 b) external pure {\n");
+    for index in 0..260 {
+        source.push_str(&format!("require(a ^ (b << {}) != {});\n", index % 256, index + 1));
+    }
+    source.push_str("assert(a == 0);\n}\n");
+    source.push_str("function checkAtoms(uint256 a, uint256 b) external pure {\n");
+    for index in 0..130 {
+        source
+            .push_str(&format!("require((a << {index}) ^ (b << {index}) != type(uint256).max);\n"));
+    }
+    source.push_str("assert(a == 0);\n}\n");
+    source.push_str(
+        "function checkVisits(uint256 a, uint256 b) external pure {\nuint256 x = a ^ b;\n",
+    );
+    for index in 1..18 {
+        source.push_str(&format!("x = (x ^ (a << {index})) ^ (x ^ (b << {index}));\n"));
+    }
+    source.push_str("assert(x == a);\n}\n}\n");
+    prj.add_test("XorLimits.t.sol", &source);
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-contract", "XorLimitsTest"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    for name in ["checkRows", "checkAtoms", "checkVisits"] {
+        let result = json_test_result(&output, &format!("{name}(uint256,uint256)"));
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{name}: {result}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
     }
 }

@@ -1465,14 +1465,9 @@ impl SymbolicExecutor {
         let size = state.stack.pop()?;
         match state.constrained_usize_checked(&mut self.cx, &size) {
             Some(Ok(size)) => {
-                state.return_data = state.memory.return_data(&mut self.cx, offset.clone(), size)?;
-                if is_revert {
-                    Ok(self.classify_revert(state, offset, size))
-                } else {
-                    Ok(StepOutcome::Halt)
-                }
+                state.return_data = state.memory.return_data(&mut self.cx, offset, size)?;
             }
-            Some(Err(_)) => Ok(StepOutcome::Revert),
+            Some(Err(_)) => return Ok(StepOutcome::Revert),
             None => {
                 let max_limit = self.config.max_calldata_bytes as usize;
                 let reason =
@@ -1480,27 +1475,39 @@ impl SymbolicExecutor {
                 let max_size = self.solver_upper_bound_usize(state, &size, max_limit, reason)?;
                 state.return_data =
                     state.memory.return_data_symbolic_size(&mut self.cx, offset, size, max_size)?;
-                Ok(if is_revert { StepOutcome::Revert } else { StepOutcome::Halt })
             }
         }
+        if is_revert { self.classify_revert(state) } else { Ok(StepOutcome::Halt) }
     }
 
     pub(super) fn classify_revert(
         &mut self,
-        state: &PathState,
-        offset: SymExpr,
-        size: usize,
-    ) -> StepOutcome {
-        if state.call_depth == 0
-            && let Some(offset) = offset.as_const()
-            && let Ok(offset) = usize::try_from(offset)
-            && let Ok(data) = state.memory.read_concrete(&mut self.cx, offset, size)
-            && is_assertion_revert(&data)
-        {
-            StepOutcome::Failure
-        } else {
-            StepOutcome::Revert
+        state: &mut PathState,
+    ) -> Result<StepOutcome, SymbolicError> {
+        if state.call_depth != 0 {
+            return Ok(StepOutcome::Revert);
         }
+        let data = state.return_data.read_concrete(&mut self.cx, "symbolic revert data");
+        // Like Forge's fuzz and invariant runners, a `vm.assumeNoRevert` rejection that reaches the
+        // top frame discards the run. Invariant predicates still treat it as a revert.
+        if !state.invariant_predicate && data.as_deref().is_ok_and(|data| data == MAGIC_ASSUME) {
+            return Ok(StepOutcome::AssumeRejected);
+        }
+        // In `check*`/`prove*` tests, a `CheatcodeError` that reaches the top frame, such as an
+        // unmet `vm.expectRevert`, is a failure. Invariant handlers treat it as a revert.
+        // Match its selector independently of the memory address and the rest of the payload.
+        if state.root_calldata.is_some()
+            && let Some(condition) =
+                cheatcode_error_revert_condition(&mut self.cx, &state.return_data)
+            && let Some(constraints) = self.constraints_for_condition(state, condition)?
+        {
+            state.constraints = constraints;
+            return Ok(StepOutcome::Failure);
+        }
+        if data.is_ok_and(|data| is_assertion_revert(&data)) {
+            return Ok(StepOutcome::Failure);
+        }
+        Ok(StepOutcome::Revert)
     }
 }
 

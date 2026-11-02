@@ -1,6 +1,8 @@
 use crate::{
     ScriptArgs, ScriptConfig,
-    broadcast::{BundledState, remaining_unsigned_transactions_for_recovery},
+    broadcast::{
+        BundledState, remaining_operation_indices, remaining_unsigned_transactions_for_recovery,
+    },
     execute::LinkedState,
     multi_sequence::MultiChainSequence,
     progress::ScriptProgress,
@@ -18,7 +20,7 @@ use foundry_cheatcodes::Wallets;
 use foundry_cli::opts::TempoOpts;
 use foundry_common::{
     ContractData, ContractsByArtifact, ContractsByArtifactBuilder, compile::ProjectCompiler,
-    external_compiler::is_builtin_compiler_source, fs::canonicalize_path,
+    external_compiler::is_builtin_compiler_source, fs::canonicalize_path, namespaced_storage,
     provider::ProviderBuilder,
 };
 use foundry_compilers::{
@@ -165,7 +167,7 @@ impl LinkedBuildData {
     pub fn new(
         libraries: Libraries,
         predeploy_libraries: ScriptPredeployLibraries,
-        build_data: BuildData,
+        mut build_data: BuildData,
     ) -> Result<Self> {
         let sources = ContractSources::from_project_output(
             &build_data.output,
@@ -173,13 +175,15 @@ impl LinkedBuildData {
             Some(&libraries),
         )?;
 
+        let storage_layouts = namespaced_storage::project_storage_layouts(
+            &mut build_data.output,
+            &build_data.project_root,
+        );
         let linked_contracts = build_data.get_linker().get_linked_artifacts(&libraries)?;
         let known_contracts = ContractsByArtifactBuilder::new(
             linked_contracts.iter().map(|(id, artifact)| (id.clone(), artifact.into())),
         )
-        .with_storage_layouts(build_data.output.artifact_ids().filter_map(|(id, artifact)| {
-            artifact.storage_layout.as_ref().map(|layout| (id, layout.clone()))
-        }))
+        .with_storage_layouts(storage_layouts)
         .build();
 
         Ok(Self { build_data, known_contracts, libraries, predeploy_libraries, sources })
@@ -437,7 +441,20 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 _ => eyre::bail!("{}", errors.iter().format("\n")),
             }
         }
-        for deployment in sequence.sequences() {
+        for (index, deployment) in sequence.sequences().iter().enumerate() {
+            // The script stops at a failed call, so it never planned to send the operations left
+            // after a revert, and resume must not send them for it.
+            if !deployment.reverted.is_empty()
+                && !remaining_operation_indices(&sequence, index).is_empty()
+            {
+                return Err(sequence.label_error(
+                    index,
+                    eyre::eyre!(
+                        "transaction {} reverted, so the script would not have sent the operations after it; resume will not send them. Pass `--broadcast --start-fresh` to archive this broadcast and run the script again",
+                        deployment.reverted.iter().format(", ")
+                    ),
+                ));
+            }
             for hash in &deployment.reverted {
                 sh_warn!(
                     "Transaction {hash} on chain {} reverted; resume will not resubmit it.",

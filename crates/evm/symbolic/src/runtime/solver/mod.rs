@@ -19,7 +19,10 @@ use normalize::{
     NormalizationCache, constraints_are_directly_unsat, normalize_constraints_for_solver_cached,
     sorted_bool_exprs_are_subset,
 };
-use reasoning::{product_monotonic_unsat_normalized, remove_implied_monotonic_constraints};
+use reasoning::{
+    CheckedXorResult, checked_xor_result, product_monotonic_unsat_normalized,
+    remove_implied_monotonic_constraints,
+};
 use smt::write_smt_assertions;
 
 pub(crate) use fallback::{
@@ -315,6 +318,21 @@ impl SmtLibSubprocessSolver {
         )
         .entered();
         trace!(query_id = self.queries, constraint_count = constraints.len(), "solver model");
+        if let Some(result) = checked_xor_result(constraints) {
+            match result {
+                CheckedXorResult::Unsat => {
+                    self.cache_sat_result(cache_key, false);
+                    return Err(SymbolicError::Solver(
+                        "counterexample path became unsat".to_string(),
+                    ));
+                }
+                CheckedXorResult::Model(model) => {
+                    self.cache_sat_result(cache_key.clone(), true);
+                    self.cache_model_result(cache_key, model.clone());
+                    return Ok(model);
+                }
+            }
+        }
         if let Some(model) = fallback_single_var_model(&smt_constraints)
             && eval_model_constraints(constraints, &model)
         {
@@ -456,6 +474,15 @@ impl SmtLibSubprocessSolver {
             trace!("is_sat: monotonic product contradiction");
             self.cache_sat_result(cache_key, false);
             return Ok(BranchFeasibility::Unsat);
+        }
+        if let Some(result) = checked_xor_result(constraints) {
+            let sat = matches!(result, CheckedXorResult::Model(_));
+            trace!(sat, "is_sat: checked XOR specialist");
+            self.cache_sat_result(cache_key.clone(), sat);
+            if let CheckedXorResult::Model(model) = result {
+                self.cache_model_result(cache_key, model);
+            }
+            return Ok(if sat { BranchFeasibility::Sat } else { BranchFeasibility::Unsat });
         }
         if !constraints.is_empty()
             && eval_model_constraints(constraints, &SymbolicModel::default())

@@ -1,4 +1,8 @@
 use super::{abi::*, runtime::*, *};
+use foundry_evm::{
+    constants::MAGIC_ASSUME,
+    inspectors::cheatcodes::{DUMMY_CALL_OUTPUT, DUMMY_CREATE_ADDRESS},
+};
 
 mod calls;
 mod cheatcodes;
@@ -23,10 +27,20 @@ enum CallStatus {
 }
 
 enum JoinedCallOutcome {
-    Rejected,
-    ExpectedRevert { parent: PathState, child: PathState },
-    Success { parent: PathState, child: PathState },
-    Revert { parent: PathState, child: PathState },
+    ExpectedRevert {
+        parent: PathState,
+        child: PathState,
+    },
+    /// A successful call; `unmet_expected_revert` means the caller must see it as a revert.
+    Success {
+        parent: PathState,
+        child: PathState,
+        unmet_expected_revert: bool,
+    },
+    Revert {
+        parent: PathState,
+        child: PathState,
+    },
     ExceptionalHalt(PathState),
     Failure(PathState),
 }
@@ -143,11 +157,15 @@ impl SymbolicExecutor {
 
     fn join_call_outcome(
         &mut self,
+        executor: &ExecutorView<'_>,
         state: &PathState,
         mut outcome: CallOutcome,
-        reverter: Address,
+        failed_callee: Option<Address>,
+        assume_no_revert: Option<&AssumeNoRevert>,
     ) -> Result<JoinedCallOutcome, SymbolicError> {
         let mut parent = state.clone();
+        parent.first_failed_callee =
+            parent.first_failed_callee.or(outcome.state.first_failed_callee);
         parent.take_call_outcome_state(&mut outcome.state);
         if !matches!(outcome.status, CallStatus::Success) {
             parent.discard_failed_call_logs(
@@ -156,22 +174,41 @@ impl SymbolicExecutor {
             );
         }
 
-        if let Some(assumption) = parent.assume_no_revert_next_call.take()
+        // Like Forge, a revert under `vm.assumeNoRevert` skips `vm.expectRevert`, and a matching
+        // revert returns `FOUNDRY::ASSUME`, which discards the run only if it reaches the top.
+        if let Some(assumption) = assume_no_revert
             && matches!(outcome.status, CallStatus::Revert)
-            && self.assume_no_revert_rejects(
-                &mut parent,
-                &assumption,
-                reverter,
-                &outcome.state.frame.return_data,
-            )?
         {
-            return Ok(JoinedCallOutcome::Rejected);
+            if self.assume_no_revert_matches(
+                &parent,
+                assumption,
+                outcome.state.address,
+                &outcome.state.frame.return_data,
+            )? {
+                outcome.state.frame.return_data =
+                    SymReturnData::from_concrete_bytes(&mut self.cx, MAGIC_ASSUME.to_vec());
+            }
+            return Ok(JoinedCallOutcome::Revert { parent, child: outcome.state });
         }
+        // Like Forge, the first failure inside the call precedes the call's own failure, which
+        // `vm.assumeNoRevert` handles before it is recorded.
+        parent.first_failed_callee = parent.first_failed_callee.or(failed_callee);
 
         if let Some(mut expected) = parent.expected_revert.clone() {
+            // Like Forge, a call that succeeds under `vm.expectRevert` keeps its state, but the
+            // caller sees a `CheatcodeError` revert. A revert with the wrong reason fails the path.
+            if matches!(outcome.status, CallStatus::Success) && !executor.internal_expect_revert {
+                parent.expected_revert = None;
+                return Ok(JoinedCallOutcome::Success {
+                    parent,
+                    child: outcome.state,
+                    unmet_expected_revert: true,
+                });
+            }
             match outcome.status {
                 CallStatus::Success => return Ok(JoinedCallOutcome::Failure(parent)),
                 CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {
+                    let reverter = expected.reverted_by(failed_callee, parent.first_failed_callee);
                     if !self.expected_revert_matches(
                         &mut parent,
                         &expected,
@@ -191,7 +228,11 @@ impl SymbolicExecutor {
         }
 
         Ok(match outcome.status {
-            CallStatus::Success => JoinedCallOutcome::Success { parent, child: outcome.state },
+            CallStatus::Success => JoinedCallOutcome::Success {
+                parent,
+                child: outcome.state,
+                unmet_expected_revert: false,
+            },
             CallStatus::Revert => JoinedCallOutcome::Revert { parent, child: outcome.state },
             CallStatus::ExceptionalHalt => JoinedCallOutcome::ExceptionalHalt(parent),
             CallStatus::Failure => JoinedCallOutcome::Failure(parent),

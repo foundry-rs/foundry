@@ -66,3 +66,22 @@ pub struct TempoConsensusState {
     /// Reserved by Tempo; local mining only produces finalizations.
     pub notarized: Option<TempoCertifiedBlock>,
 }
+
+/// A locally finalized block, matching Tempo's consensus subscription event.
+///
+/// The live stream is bounded and skips older events when a subscriber falls behind, matching
+/// Tempo's RPC behavior. Clients needing a complete canonical chain must reconcile block heights
+/// and hashes and query `consensus_getFinalization` while the missing history is still retained.
+/// Pruned or rewound history may be unavailable; subscriptions do not provide durable replay.
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum TempoConsensusEvent {
+    /// A complete block and its finalization certificate at canonical publication.
+    Finalized {
+        /// The certified block, independent of subsequent pruning or rewinds.
+        #[serde(flatten)]
+        block: TempoCertifiedBlock,
+        /// Unix timestamp in milliseconds when this finalization was observed.
+        seen: u64,
+    },
+}

@@ -74,6 +74,11 @@ pub struct FuzzDictionaryConfig {
     pub include_storage: bool,
     /// The flag indicating whether to include push bytes values
     pub include_push_bytes: bool,
+    /// The flag indicating whether invariant runs call targeted contracts' view functions (with
+    /// no inputs or only address inputs, bound to the sender) after each successful call that
+    /// accessed them, and add the results, whole structs included, to the dictionary. At most 32
+    /// views are called per call; when more are eligible, the selection rotates across calls.
+    pub include_view_values: bool,
     /// How many addresses to record at most.
     /// Once the fuzzer exceeds this limit, it will start evicting random entries
     ///
@@ -109,6 +114,7 @@ impl Default for FuzzDictionaryConfig {
             dictionary_weight: 40,
             include_storage: true,
             include_push_bytes: true,
+            include_view_values: false,
             max_fuzz_dictionary_addresses: 300 * MB / 20,
             max_fuzz_dictionary_values: 300 * MB / 32,
             max_fuzz_dictionary_literals: 200 * MB / 32,

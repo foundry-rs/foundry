@@ -5,7 +5,9 @@ use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Address, B256, Selector, hex};
 use eyre::Result;
 use forge_script_sequence::TransactionWithMetadata;
-use foundry_common::{ContractData, SELECTOR_LEN, TransactionMaybeSigned, fmt::format_token_raw};
+use foundry_common::{
+    ContractData, ContractsByArtifact, SELECTOR_LEN, TransactionMaybeSigned, fmt::format_token_raw,
+};
 use foundry_evm::traces::{CallKind, CallTraceDecoder};
 use itertools::Itertools;
 use std::collections::BTreeMap;
@@ -29,6 +31,7 @@ impl<N: Network> ScriptTransactionBuilder<N> {
     pub fn set_call(
         &mut self,
         local_contracts: &BTreeMap<Address, &ContractData>,
+        known_contracts: &ContractsByArtifact,
         decoder: &CallTraceDecoder,
         create2_deployer: Address,
     ) -> Result<()> {
@@ -45,7 +48,7 @@ impl<N: Network> ScriptTransactionBuilder<N> {
                     self.set_create(
                         true,
                         create2_deployer.create2_from_code(B256::from_slice(salt), init_code),
-                        local_contracts,
+                        known_contracts,
                     )?;
                 } else {
                     let input_len =
@@ -106,7 +109,7 @@ impl<N: Network> ScriptTransactionBuilder<N> {
         &mut self,
         is_create2: bool,
         address: Address,
-        contracts: &BTreeMap<Address, &ContractData>,
+        contracts: &ContractsByArtifact,
     ) -> Result<()> {
         if is_create2 {
             self.transaction.call_kind = CallKind::Create2;
@@ -114,13 +117,9 @@ impl<N: Network> ScriptTransactionBuilder<N> {
             self.transaction.call_kind = CallKind::Create;
         }
 
-        let info = contracts.get(&address);
-        self.transaction.contract_name = info.map(|info| info.name.clone());
         self.transaction.contract_address = Some(address);
 
         let Some(data) = self.transaction.transaction.input() else { return Ok(()) };
-        let Some(info) = info else { return Ok(()) };
-        let Some(bytecode) = info.bytecode() else { return Ok(()) };
 
         // `create2` transactions are prefixed by a 32 byte salt.
         let creation_code = if is_create2 {
@@ -131,6 +130,16 @@ impl<N: Network> ScriptTransactionBuilder<N> {
         } else {
             data
         };
+        let artifact = contracts.find_by_creation_code_prefix(creation_code);
+        self.transaction.contract_name = artifact
+            .or_else(|| contracts.find_by_creation_code(creation_code))
+            .map(|(id, _)| id.name.clone());
+        // Script verification skips Vyper, so a Vyper deployment never has to match on resume.
+        self.transaction.exact_artifact_match =
+            artifact.is_some_and(|(id, _)| !id.source.extension().is_some_and(|ext| ext == "vy"));
+
+        let Some((_, info)) = artifact else { return Ok(()) };
+        let Some(bytecode) = info.bytecode() else { return Ok(()) };
 
         // The constructor args start after bytecode.
         let contains_constructor_args = creation_code.len() > bytecode.len();
@@ -215,7 +224,9 @@ mod tests {
             "http://localhost:8545".to_string(),
         );
         let decoder = CallTraceDecoder::new();
-        builder.set_call(&BTreeMap::new(), decoder, create2_deployer).unwrap();
+        builder
+            .set_call(&BTreeMap::new(), &ContractsByArtifact::default(), decoder, create2_deployer)
+            .unwrap();
         builder.build()
     }
 
@@ -283,7 +294,9 @@ mod monad_tests {
             TransactionMaybeSigned::new(transaction),
             "http://localhost:8545".to_string(),
         );
-        builder.set_call(&BTreeMap::new(), &decoder, Address::ZERO).unwrap();
+        builder
+            .set_call(&BTreeMap::new(), &ContractsByArtifact::default(), &decoder, Address::ZERO)
+            .unwrap();
         builder.build()
     }
 

@@ -8,8 +8,8 @@ use crate::{
 use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt, FunctionExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{
-    Address, B256, Bytes, Log, U256,
-    map::{AddressIndexSet, AddressMap, B256IndexSet, HashMap, HashSet, IndexSet},
+    Address, B256, Bytes, Log, U256, keccak256,
+    map::{AddressIndexSet, AddressMap, B256IndexSet, HashMap, HashSet, IndexMap, IndexSet},
 };
 use foundry_common::{
     ignore_metadata_hash,
@@ -34,6 +34,11 @@ use revm::database::InMemoryDB;
 /// This is to limit the performance impact of fuzz tests that might deploy arbitrarily sized
 /// bytecode (as is the case with Solmate).
 const PUSH_BYTE_ANALYSIS_LIMIT: usize = 24 * 1024;
+
+/// The maximum length in bytes of a `bytes` or `string` value recorded whole on its own in the
+/// composite dictionary. Longer values are not recorded, since they have no word leaves; composites
+/// containing them are still recorded whole.
+const MAX_COMPOSITE_BYTES_LEN: usize = 1024;
 
 /// Immutable fuzz dictionary seed used by parallel stateless fuzz workers.
 #[derive(Clone, Debug)]
@@ -110,6 +115,15 @@ impl EvmFuzzState {
         Self { inner: Arc::clone(&self.inner), deployed_libs: self.deployed_libs.clone() }
     }
 
+    #[cfg(test)]
+    pub(crate) fn collect_sample_values(
+        &mut self,
+        values: impl IntoIterator<Item = DynSolValue>,
+        limit: u32,
+    ) {
+        Arc::make_mut(&mut self.inner).insert_sample_values(values, limit);
+    }
+
     pub fn collect_values(&mut self, values: impl IntoIterator<Item = B256>) {
         let dict = Arc::make_mut(&mut self.inner);
         for value in values {
@@ -183,12 +197,18 @@ impl FuzzState {
             targets.fuzzed_artifacts(tx)
         };
         if !logs.is_empty() {
-            dict.insert_logs_values(target_contract, logs, run_depth);
+            dict.insert_logs_values(target_contract, &targets, logs, run_depth);
         }
         if !result.is_empty() {
             dict.insert_result_values(target_function, result, run_depth);
         }
         dict.insert_new_state_values(state_changeset, &targets, mapping_slots);
+    }
+
+    /// Collects the decoded result of a view call into the fuzz dictionary.
+    pub fn collect_values_from_view(&self, function: &Function, result: &Bytes, run_depth: u32) {
+        let FuzzStateInner::Invariant(inner) = &self.inner else { return };
+        inner.borrow_mut().insert_result_values(Some(function), result, run_depth);
     }
 
     /// Collects typed trace-cmp operands from sancov-instrumented code.
@@ -292,6 +312,16 @@ pub struct FuzzDictionary {
     /// Set to `true` on first call to `seed_samples()`. Before seeding, `samples()` checks both
     /// maps separately. After seeding, literals are merged in, so only `sample_values` is checked.
     samples_seeded: bool,
+    /// Whole composite ABI values (structs, tuples, arrays, `bytes` and `string`) observed in call
+    /// results and logs, keyed by canonical ABI type and deduplicated by encoding hash.
+    ///
+    /// Reusing a value whole keeps related fields consistent: a struct returned by a getter or
+    /// emitted in an event can be passed back verbatim, which field-by-field generation almost
+    /// never reconstructs. Persisted across invariant runs and bounded per type like
+    /// `sample_values`, evicting the oldest entry when full. Values whose type depends on an empty
+    /// dynamic array, such as a struct with an empty array field, have no derivable type and are
+    /// not recorded whole; their leaves still are.
+    composite_values: HashMap<DynSolType, IndexMap<B256, DynSolValue>>,
     /// Persistent values from sancov trace-cmp that survive `revert()` across runs.
     persistent_values: B256IndexSet,
     /// Parsed storage layout identifiers keyed by the layout allocation.
@@ -333,6 +363,7 @@ impl FuzzDictionary {
             db_addresses: Default::default(),
             db_push_bytecode_hashes: Default::default(),
             sample_values: Default::default(),
+            composite_values: Default::default(),
             literal_values: Default::default(),
             persistent_values: Default::default(),
             slot_identifiers: Default::default(),
@@ -410,33 +441,26 @@ impl FuzzDictionary {
     }
 
     /// Insert values from call log topics and data into fuzz dictionary.
+    ///
+    /// Each log is decoded with the ABI of the targeted contract that emitted it, then with the
+    /// called contract's, then with any other targeted contract's, so typed values (including
+    /// whole structs) from events emitted by nested calls are not lost to raw-word fallback.
     fn insert_logs_values(
         &mut self,
         target_contract: Option<&TargetedContract>,
+        targets: &TargetedContracts,
         logs: &[Log],
         run_depth: u32,
     ) {
         let mut samples = Vec::new();
         // Decode logs with known events and collect samples from indexed fields and event body.
         for log in logs {
-            // Try to decode log with events from contract abi.
-            let log_decoded = if let Some(contract) = target_contract {
-                let matched_events = log
-                    .topics()
-                    .first()
-                    .and_then(|selector| {
-                        contract.event_lookup.by_topic(selector, log.topics().len() - 1)
-                    })
-                    .unwrap_or(&[]);
-                Self::decode_log_events(
-                    matched_events,
-                    contract.event_lookup.anonymous(),
-                    log,
-                    &mut samples,
-                )
-            } else {
-                false
-            };
+            let emitter = targets.get(&log.address);
+            let log_decoded = emitter
+                .into_iter()
+                .chain(target_contract)
+                .chain(targets.values())
+                .any(|contract| Self::decode_log_with_contract(contract, log, &mut samples));
 
             // If we weren't able to decode event then we insert raw data in fuzz dictionary.
             if !log_decoded {
@@ -457,6 +481,21 @@ impl FuzzDictionary {
         if !samples.is_empty() {
             self.insert_sample_values(samples, run_depth);
         }
+    }
+
+    fn decode_log_with_contract(
+        contract: &TargetedContract,
+        log: &Log,
+        samples: &mut Vec<DynSolValue>,
+    ) -> bool {
+        let matched_events = log
+            .topics()
+            .first()
+            .and_then(|selector| {
+                contract.event_lookup.by_topic(selector, log.topics().len().saturating_sub(1))
+            })
+            .unwrap_or(&[]);
+        Self::decode_log_events(matched_events, contract.event_lookup.anonymous(), log, samples)
     }
 
     fn decode_log_events(
@@ -497,7 +536,10 @@ impl FuzzDictionary {
         targets: &TargetedContracts,
         mapping_slots: Option<&AddressMap<MappingSlots>>,
     ) {
-        for (address, account) in state_changeset {
+        // Sort accounts before inserting to ensure deterministic dictionary.
+        let mut accounts = state_changeset.iter().collect::<Vec<_>>();
+        accounts.sort_unstable_by_key(|(address, _)| **address);
+        for (address, account) in accounts {
             if is_history_storage_address(address) {
                 continue;
             }
@@ -522,7 +564,10 @@ impl FuzzDictionary {
                     mapping_slots.is_some_and(|m| m.contains_key(address))
                 );
                 let mapping_slots = mapping_slots.and_then(|m| m.get(address));
-                for (slot, value) in &account.storage {
+                // Sort storage values before inserting to ensure deterministic dictionary.
+                let mut storage = account.storage.iter().collect::<Vec<_>>();
+                storage.sort_unstable_by_key(|(slot, _)| **slot);
+                for (slot, value) in storage {
                     let slot_info = slot_identifier_key.and_then(|key| {
                         let slot = B256::from(*slot);
                         let value_word = B256::from(value.present_value());
@@ -750,7 +795,39 @@ impl FuzzDictionary {
             self.seed_samples();
         }
         for sample in sample_values {
-            if let (Some(sample_type), Some(sample_value)) = (sample.as_type(), sample.as_word()) {
+            self.insert_sample_value(sample, limit);
+        }
+    }
+
+    /// Inserts one decoded value. Composite values are recorded whole under their canonical type
+    /// and their nested values are recorded recursively, so every leaf also feeds its own typed
+    /// bucket instead of being dropped.
+    fn insert_sample_value(&mut self, sample: DynSolValue, limit: u32) {
+        match &sample {
+            DynSolValue::Tuple(inner)
+            | DynSolValue::Array(inner)
+            | DynSolValue::FixedArray(inner)
+            | DynSolValue::CustomStruct { tuple: inner, .. } => {
+                for value in inner {
+                    self.insert_sample_value(value.clone(), limit);
+                }
+                self.insert_composite_value(sample, limit);
+            }
+            DynSolValue::Bytes(bytes) => {
+                if bytes.len() <= MAX_COMPOSITE_BYTES_LEN {
+                    self.insert_composite_value(sample, limit);
+                }
+            }
+            DynSolValue::String(string) => {
+                if string.len() <= MAX_COMPOSITE_BYTES_LEN {
+                    self.insert_composite_value(sample, limit);
+                }
+            }
+            _ => {
+                let (Some(sample_type), Some(sample_value)) = (sample.as_type(), sample.as_word())
+                else {
+                    return;
+                };
                 if let Some(values) = self.sample_values.get_mut(&sample_type) {
                     if values.len() < limit as usize {
                         values.insert(sample_value);
@@ -763,6 +840,31 @@ impl FuzzDictionary {
                 }
             }
         }
+    }
+
+    /// Records a whole composite value under its canonical ABI type, evicting the oldest entry
+    /// of that type once `limit` entries are stored.
+    fn insert_composite_value(&mut self, value: DynSolValue, limit: u32) {
+        // A value whose type depends on an empty dynamic array has no element type to key on.
+        let Some(ty) = value.as_type().map(canonical_type) else { return };
+        let key = keccak256(value.abi_encode());
+        let values = self.composite_values.entry(ty).or_default();
+        if values.contains_key(&key) {
+            return;
+        }
+        if values.len() >= (limit as usize).max(1) {
+            values.shift_remove_index(0);
+        }
+        values.insert(key, value);
+    }
+
+    /// Returns whole composite values previously observed for the given type.
+    #[inline]
+    pub fn composite_samples(
+        &self,
+        param_type: &DynSolType,
+    ) -> Option<&IndexMap<B256, DynSolValue>> {
+        self.composite_values.get(param_type).filter(|values| !values.is_empty())
     }
 
     pub const fn values(&self) -> &B256IndexSet {
@@ -833,13 +935,31 @@ impl FuzzDictionary {
     }
 }
 
+/// Returns the type with every struct replaced by its plain tuple, which is how ABI function
+/// parameters resolve, so values decoded with struct names still match parameter types.
+fn canonical_type(ty: DynSolType) -> DynSolType {
+    match ty {
+        DynSolType::CustomStruct { tuple, .. } | DynSolType::Tuple(tuple) => {
+            DynSolType::Tuple(tuple.into_iter().map(canonical_type).collect())
+        }
+        DynSolType::Array(inner) => DynSolType::Array(Box::new(canonical_type(*inner))),
+        DynSolType::FixedArray(inner, size) => {
+            DynSolType::FixedArray(Box::new(canonical_type(*inner)), size)
+        }
+        ty => ty,
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
     use super::*;
     use alloy_json_abi::{Event, JsonAbi};
     use foundry_evm_core::eip2935::HISTORY_STORAGE_ADDRESS;
-    use revm::bytecode::Bytecode;
+    use revm::{
+        bytecode::Bytecode,
+        state::{Account, EvmStorageSlot, TransactionId},
+    };
 
     fn account_with_code(raw: &'static [u8]) -> AccountInfo {
         AccountInfo::default().with_code(Bytecode::new_raw(Bytes::from_static(raw)))
@@ -1063,5 +1183,121 @@ mod tests {
             assert!(dict.persistent_values.contains(&persistent));
             assert!(dict.sample_values[&DynSolType::Uint(8)].contains(&persistent));
         });
+    }
+
+    #[test]
+    fn new_state_values_are_inserted_in_sorted_order() {
+        // Account `i` holds slots `i * 0x100 + j` with values `i * 0x10000 + j * 0x10`, so no
+        // address, slot, or value (+/- 1) collides with another.
+        let entry =
+            |i: u64, j: u64| (U256::from(i * 0x100 + j), U256::from(i * 0x10000 + j * 0x10));
+        let address = |i: u64| Address::repeat_byte(i as u8 * 0x11);
+
+        let mut state_changeset = StateChangeset::default();
+        for i in [3, 1, 4, 2] {
+            let storage = [3, 1, 2].map(|j| {
+                let (slot, value) = entry(i, j);
+                (slot, EvmStorageSlot::new(value, TransactionId::ZERO))
+            });
+            state_changeset
+                .insert(address(i), Account::default().with_storage(storage.into_iter()));
+        }
+
+        let mut dictionary = FuzzDictionary::default();
+        dictionary.insert_new_state_values(&state_changeset, &TargetedContracts::new(), None);
+
+        let mut expected = vec![B256::ZERO];
+        for i in 1..=4 {
+            expected.push(address(i).into_word());
+            for j in 1..=3 {
+                let (slot, value) = entry(i, j);
+                expected
+                    .extend([slot, value, value - U256::ONE, value + U256::ONE].map(B256::from));
+            }
+        }
+        assert_eq!(dictionary.state_values.as_slice(), expected.as_slice());
+    }
+
+    fn withdrawal(staker: u8, nonce: u64) -> DynSolValue {
+        DynSolValue::Tuple(vec![
+            DynSolValue::Address(Address::repeat_byte(staker)),
+            DynSolValue::Uint(U256::from(nonce), 256),
+            DynSolValue::Tuple(vec![DynSolValue::Uint(U256::from(7), 32), DynSolValue::Bool(true)]),
+        ])
+    }
+
+    #[test]
+    fn struct_samples_are_kept_whole_and_flattened() {
+        let mut dictionary = FuzzDictionary::default();
+        let value = withdrawal(0x11, 42);
+        dictionary.insert_sample_values([value.clone()], 8);
+
+        let ty = value.as_type().unwrap();
+        let whole = dictionary.composite_samples(&ty).expect("struct kept whole");
+        assert_eq!(whole.values().collect::<Vec<_>>(), vec![&value]);
+
+        let inner_ty = DynSolType::Tuple(vec![DynSolType::Uint(32), DynSolType::Bool]);
+        assert!(dictionary.composite_samples(&inner_ty).is_some());
+
+        let addresses = dictionary.samples(&DynSolType::Address).unwrap();
+        assert!(addresses.contains(&Address::repeat_byte(0x11).into_word()));
+        let uints = dictionary.samples(&DynSolType::Uint(256)).unwrap();
+        assert!(uints.contains(&B256::from(U256::from(42))));
+    }
+
+    #[test]
+    fn named_struct_samples_match_tuple_parameters() {
+        let mut dictionary = FuzzDictionary::default();
+        let DynSolValue::Tuple(tuple) = withdrawal(0x22, 1) else { unreachable!() };
+        let named = DynSolValue::CustomStruct {
+            name: "Withdrawal".into(),
+            prop_names: vec!["staker".into(), "nonce".into(), "meta".into()],
+            tuple,
+        };
+        dictionary.insert_sample_values([named], 8);
+
+        assert!(dictionary.composite_samples(&withdrawal(0, 0).as_type().unwrap()).is_some());
+    }
+
+    #[test]
+    fn composite_samples_evict_oldest_when_full() {
+        let mut dictionary = FuzzDictionary::default();
+        dictionary.insert_sample_values([withdrawal(1, 1), withdrawal(2, 2)], 2);
+        dictionary.insert_sample_values([withdrawal(2, 2), withdrawal(3, 3)], 2);
+
+        let ty = withdrawal(0, 0).as_type().unwrap();
+        let values = dictionary.composite_samples(&ty).unwrap();
+        assert_eq!(
+            values.values().cloned().collect::<Vec<_>>(),
+            vec![withdrawal(2, 2), withdrawal(3, 3)]
+        );
+    }
+
+    #[test]
+    fn logs_from_other_targets_decode_with_emitter_abi() {
+        let emitter_abi =
+            JsonAbi::parse(["event Queued(bytes32 root, (address,uint256,(uint32,bool)) w)"])
+                .unwrap();
+        let event = emitter_abi.events().next().unwrap().clone();
+        let emitter = Address::repeat_byte(0xe0);
+        let called = Address::repeat_byte(0xca);
+
+        let mut targets = TargetedContracts::new();
+        targets.insert(emitter, TargetedContract::new("Emitter".into(), emitter_abi));
+        targets.insert(called, TargetedContract::new("Handler".into(), JsonAbi::default()));
+
+        let value = withdrawal(0x33, 9);
+        let data = DynSolValue::Tuple(vec![
+            DynSolValue::FixedBytes(B256::repeat_byte(0xaa), 32),
+            value.clone(),
+        ])
+        .abi_encode_params();
+        let log = Log::new_unchecked(emitter, vec![event.selector()], data.into());
+
+        let mut dictionary = FuzzDictionary::default();
+        dictionary.insert_logs_values(targets.get(&called), &targets, &[log], 8);
+
+        let values = dictionary.composite_samples(&value.as_type().unwrap()).unwrap();
+        assert!(values.values().any(|v| *v == value));
     }
 }

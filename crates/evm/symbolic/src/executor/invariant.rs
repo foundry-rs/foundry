@@ -21,18 +21,23 @@ impl SymbolicExecutor {
     pub(super) fn execute_invariant_check(
         &mut self,
         executor: &ExecutorView<'_>,
-        state: PathState,
+        state: &PathState,
         invariant_address: Address,
         sender: Address,
         invariant: &Function,
         after_invariant: Option<&Function>,
         completed_paths: &mut usize,
     ) -> Result<Vec<InvariantCheckOutcome>, SymbolicError> {
-        let mut call =
-            self.prepare_invariant_call(executor, state, invariant_address, sender, invariant)?;
+        let mut call = self.prepare_invariant_call(
+            executor,
+            state.clone(),
+            invariant_address,
+            sender,
+            invariant,
+        )?;
 
         let mut checked = Vec::new();
-        while let Some(outcome) =
+        while let Some(mut outcome) =
             self.execute_sequence_call_next(executor, &mut call, completed_paths)?
         {
             if !matches!(outcome.status, CallStatus::Success) {
@@ -44,9 +49,14 @@ impl SymbolicExecutor {
                 continue;
             };
 
+            // Concrete invariant checks do not commit predicate state before invoking
+            // `afterInvariant`. Retain the predicate's path state while restoring the unchanged
+            // post-handler world.
+            let mut after_state = state.clone();
+            after_state.take_noncommitting_check_state(&mut outcome.state);
             let mut after_call = self.prepare_invariant_call(
                 executor,
-                outcome.state,
+                after_state,
                 invariant_address,
                 sender,
                 after_invariant,
@@ -180,7 +190,7 @@ impl SymbolicExecutor {
                     let mut stop_after_predicate = false;
                     let mut candidate_states = Vec::new();
                     loop {
-                        let predicate_outcome = match self.execute_sequence_call_next(
+                        let mut predicate_outcome = match self.execute_sequence_call_next(
                             &input.executor,
                             &mut predicate,
                             &mut completed_paths,
@@ -202,10 +212,10 @@ impl SymbolicExecutor {
                         };
 
                         // Concrete invariant checks do not commit predicate state before invoking
-                        // `afterInvariant`. Retain its path constraints while restoring the
+                        // `afterInvariant`. Retain the predicate's path state while restoring the
                         // unchanged post-handler world.
                         let mut after_state = handler_state.clone();
-                        after_state.constraints = predicate_outcome.state.constraints;
+                        after_state.take_noncommitting_check_state(&mut predicate_outcome.state);
                         let mut after = match self.prepare_invariant_call(
                             &input.executor,
                             after_state,

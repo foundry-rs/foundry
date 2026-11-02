@@ -1,5 +1,9 @@
 //! In-memory blockchain backend.
-use self::{in_memory_db::StateRootDb, state::trie_storage, tempo::TempoChain};
+use self::{
+    in_memory_db::StateRootDb,
+    state::trie_storage,
+    tempo::{SealedAccounts, TempoChain},
+};
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
     config::{ForkTransactionReplay, PruneStateHistoryConfig, source_hardfork},
@@ -32,6 +36,7 @@ use crate::{
                 prepare_fork_transaction_replay,
             },
             tempo::AnvilStorageProvider,
+            tempo_consensus::TempoConsensus,
             time::{PendingBlockTimestamp, TimeManager, TimeSnapshot, utc_from_secs},
             validate::TransactionValidator,
         },
@@ -123,9 +128,7 @@ use chrono::Datelike;
 use eyre::{Context, Result};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use foundry_evm::{
-    backend::{
-        BlockchainDb, DatabaseError, DatabaseResult, EmptyDBWrapper, RevertStateSnapshotAction,
-    },
+    backend::{BlockchainDb, DatabaseError, DatabaseResult, RevertStateSnapshotAction},
     constants::{DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE},
     core::precompiles::EC_RECOVER,
     decode::RevertDecoder,
@@ -283,6 +286,7 @@ pub(crate) struct StagedForkReset {
     invalidated_cache_namespaces: Vec<ForkCacheNamespace>,
     flush_old_cache: bool,
     cache_lease: StagedForkCacheLease,
+    tempo_consensus: Option<TempoConsensus>,
 }
 
 /// Fully prepared in-memory replacement awaiting an atomic backend commit.
@@ -2003,13 +2007,10 @@ impl<N: Network> Backend<N> {
             // Live execution may already contain unmined development edits.
             let states = states.upgradable_read();
             if let Some(state) = states.get_state(&hash) {
-                return state.maybe_as_full_db().cloned().map(Arc::new);
+                return state.maybe_shared_full_db();
             }
             let mut states = RwLockUpgradableReadGuard::upgrade(states);
-            states
-                .get_on_disk_state(&hash)
-                .and_then(|state| state.maybe_as_full_db().cloned())
-                .map(Arc::new)
+            states.get_on_disk_state(&hash).and_then(|state| state.maybe_shared_full_db())
         });
         if let Some(tempo) = &mut self.blockchain.storage.write().tempo {
             tempo.snapshot(id, proof_state);
@@ -2660,6 +2661,37 @@ impl<N: Network> Backend<N> {
         } else {
             Ok(requested)
         }
+    }
+
+    /// Returns the number of the block a trace method executes against.
+    ///
+    /// Unlike [`Self::ensure_block_number`], this reports every block that is not part of this
+    /// chain as [`BlockchainError::BlockNotFound`]: a number past the head or below the genesis
+    /// number, and a hash of a block that is neither stored locally nor the fork block or an
+    /// upstream block below it.
+    pub async fn ensure_trace_block_number(
+        &self,
+        block_id: BlockId,
+    ) -> Result<u64, BlockchainError> {
+        let number = match self.ensure_block_number(Some(block_id)).await {
+            Err(BlockchainError::BlockOutOfRange(_, _)) => {
+                return Err(BlockchainError::BlockNotFound);
+            }
+            result => result?,
+        };
+        let known = match block_id {
+            BlockId::Hash(hash) => {
+                self.get_block_by_hash(hash.block_hash).is_some()
+                    || self.get_fork().is_some_and(|fork| {
+                        fork.predates_fork(number) || hash.block_hash == fork.block_hash()
+                    })
+            }
+            BlockId::Number(_) => {
+                self.get_block(number).is_some()
+                    || self.get_fork().is_some_and(|fork| fork.predates_fork_inclusive(number))
+            }
+        };
+        if known { Ok(number) } else { Err(BlockchainError::BlockNotFound) }
     }
 
     /// Returns the timestamp represented by a block request.
@@ -4041,7 +4073,7 @@ impl<N: Network> Backend<N> {
 
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
-            if fork.predates_fork(number) {
+            if fork.predates_fork_inclusive(number) {
                 return Ok(fork
                     .transaction_by_block_number_and_index(number, index.into())
                     .await?);
@@ -4228,13 +4260,12 @@ impl<N: Network> Backend<N> {
         .await
     }
 
-    /// Replays all transactions in a block and returns the requested traces for each transaction,
-    /// or `None` if the block is unknown.
+    /// Replays all transactions in a block and returns the requested traces for each transaction.
     pub async fn trace_replay_block_transactions(
         &self,
         block: BlockNumber,
         trace_types: HashSet<TraceType>,
-    ) -> Result<Option<Vec<TraceResultsWithTransactionHash>>, BlockchainError> {
+    ) -> Result<Vec<TraceResultsWithTransactionHash>, BlockchainError> {
         ensure_mined_trace_block(block)?;
         let block_number = self.convert_block_number(Some(block));
 
@@ -4242,19 +4273,17 @@ impl<N: Network> Backend<N> {
         if let Some(results) =
             self.mined_parity_trace_replay_block_transactions(block_number, &trace_types)?
         {
-            return Ok(Some(results));
+            return Ok(results);
         }
 
         // Fallback to fork if block predates fork
         if let Some(fork) = self.get_fork()
             && fork.predates_fork_inclusive(block_number)
         {
-            return Ok(Some(
-                fork.trace_replay_block_transactions(block_number, trace_types).await?,
-            ));
+            return Ok(fork.trace_replay_block_transactions(block_number, trace_types).await?);
         }
 
-        Ok(None)
+        Err(BlockchainError::BlockNotFound)
     }
 
     /// Replays a mined transaction and returns the requested traces, or `None` if the transaction
@@ -4704,12 +4733,14 @@ impl<N: Network> Backend<N> {
         };
         if networks.is_tempo() {
             let cfg = node_config.read().await;
+            let source = fork.read().clone();
+            let consensus = if let Some(fork) = source {
+                TempoChain::fork_consensus(&fork, &cfg).await?
+            } else {
+                TempoChain::local_consensus(&cfg, blockchain.storage.read().best_number)
+            };
             let mut storage = blockchain.storage.write();
-            let mut tempo = TempoChain::new(
-                cfg.tempo_consensus_seed(),
-                cfg.tempo_epoch_length,
-                storage.best_number,
-            );
+            let mut tempo = TempoChain::new(consensus);
             let mut proof_states = new_states();
             if prune_state_history_config.is_state_history_supported() {
                 // Execution history counts past states; proof history also retains the head.
@@ -5171,6 +5202,7 @@ impl<N: Network> Backend<N> {
         if rpc_url_was_provided {
             staged_config.fork_chain_id = None;
         }
+        staged_config.warn_if_fork_headers_withheld(target_rpc_url);
         let configured_endpoint_is_anvil = staged_config.fork_endpoint_is_anvil
             && staged_config.fork_urls.contains(target_rpc_url);
         let cached_endpoint_is_anvil = previous_source.as_ref().is_some_and(|source| {
@@ -5256,6 +5288,11 @@ impl<N: Network> Backend<N> {
             if fork_block.header.hash != staged_client_config.block_hash {
                 return Ok(None);
             }
+            let tempo_consensus = if self.blockchain.storage.read().tempo.is_some() {
+                Some(TempoChain::fork_consensus(&staged_fork, &staged_config).await?)
+            } else {
+                None
+            };
             self.apply_fork_genesis(
                 Arc::clone(&staged_db),
                 cache_lease.clone(),
@@ -5282,11 +5319,11 @@ impl<N: Network> Backend<N> {
                 return Ok(None);
             }
 
-            Ok(Some((fork_block, staged_fork.storage.read().clone())))
+            Ok(Some((fork_block, staged_fork.storage.read().clone(), tempo_consensus)))
         }
         .await;
         drop(staged_fork);
-        let (fork_block, staged_storage) = match attempt {
+        let (fork_block, staged_storage, tempo_consensus) = match attempt {
             Ok(Some(staged)) => staged,
             Ok(None) => {
                 drop(staged_db);
@@ -5323,6 +5360,7 @@ impl<N: Network> Backend<N> {
             invalidated_cache_namespaces,
             flush_old_cache,
             cache_lease,
+            tempo_consensus,
         }))
     }
 
@@ -5396,6 +5434,7 @@ impl<N: Network> Backend<N> {
             evm_env,
             fork,
             timestamp,
+            tempo_consensus,
             ..
         } = staged;
         *node_config = staged_node_config;
@@ -5413,7 +5452,7 @@ impl<N: Network> Backend<N> {
             );
             replacement.tempo = storage.tempo.take();
             if let Some(tempo) = &mut replacement.tempo {
-                tempo.reanchor(fork_block_number);
+                tempo.reanchor(tempo_consensus.expect("Tempo fork consensus was staged"));
             }
             *storage = replacement;
         }
@@ -5595,6 +5634,14 @@ impl<N: Network> Backend<N> {
             live_db.maybe_flush_cache().map_err(BlockchainError::Internal)?;
         }
 
+        let tempo_anchor = self
+            .blockchain
+            .storage
+            .read()
+            .tempo
+            .as_ref()
+            .map(|_| TempoChain::local_consensus(&node_config, storage.best_number));
+
         *live_config = node_config;
         *live_db = db;
         self.fees.replace_from(&fees);
@@ -5605,7 +5652,7 @@ impl<N: Network> Backend<N> {
             let mut live_storage = self.blockchain.storage.write();
             storage.tempo = live_storage.tempo.take();
             if let Some(tempo) = &mut storage.tempo {
-                tempo.reanchor(storage.best_number);
+                tempo.reanchor(tempo_anchor.expect("Tempo memory consensus was prepared"));
             }
             *live_storage = storage;
         }
@@ -5638,6 +5685,22 @@ impl<N: Network> Backend<N> {
         let block = self.block_by_hash(hash).await?.ok_or(BlockchainError::BlockNotFound)?;
         let removed_logs = self.removed_logs_since(num);
         let mut db = self.db.write().await;
+        let tempo_anchor = {
+            let storage = self.blockchain.storage.read();
+            storage
+                .tempo
+                .as_ref()
+                .map(|tempo| {
+                    if let Some(block) = storage.blocks.get(&hash) {
+                        return tempo.prepare_anchor(&block.header);
+                    }
+                    let header = serde_json::to_value(&block)
+                        .and_then(serde_json::from_value::<FoundryHeader>)
+                        .map_err(|error| BlockchainError::Internal(error.to_string()))?;
+                    tempo.prepare_anchor(&header)
+                })
+                .transpose()?
+        };
         if !db.revert_state(id, RevertStateSnapshotAction::RevertRemove) {
             return Ok(false);
         }
@@ -5650,24 +5713,26 @@ impl<N: Network> Backend<N> {
         let (removed_blocks, proof_state) = {
             let mut storage = self.blockchain.storage.write();
             let proof_state = storage.tempo.as_mut().and_then(|tempo| {
-                tempo.restore(id, num).map(|state| (Arc::clone(&tempo.proof_states), state))
+                tempo
+                    .restore(id, tempo_anchor.expect("Tempo snapshot anchor was prepared"))
+                    .map(|state| (Arc::clone(&tempo.proof_states), state))
             });
-            (storage.unwind_to(num, hash), proof_state)
+            let removed_blocks = storage.unwind_to(num, hash);
+            // Queue the removed logs before readers can observe the unwound blocks as missing.
+            if !removed_logs.is_empty() {
+                self.notify_on_removed_logs(removed_logs);
+            }
+            (removed_blocks, proof_state)
         };
         if let Some((states, accounts)) = proof_state {
-            let mut state = CacheDB::<EmptyDBWrapper>::new(Default::default());
-            state.cache.accounts = (*accounts).clone();
             let mut states = states.write();
             states.remove_block_states(&[hash]);
-            states.insert(hash, StateDb::new(state));
+            states.insert(hash, StateDb::new(SealedAccounts(accounts)));
         }
         let removed_hashes: Vec<_> = removed_blocks.iter().map(|b| b.header.hash_slow()).collect();
         self.states.write().remove_block_states(&removed_hashes);
         if let Some(states) = self.tempo_proof_states() {
             states.write().remove_block_states(&removed_hashes);
-        }
-        if !removed_logs.is_empty() {
-            self.notify_on_removed_logs(removed_logs);
         }
 
         self.time.restore(time);
@@ -6042,7 +6107,7 @@ where
                 monad_context,
             )?;
             let state_root = overlay.maybe_state_root().unwrap_or_default();
-            let block_info = self.build_block_info(
+            let mut block_info = self.build_block_info(
                 &replay_env,
                 best_hash,
                 block_number,
@@ -6053,6 +6118,11 @@ where
                 parent_beacon_block_root,
                 None,
             );
+            if let Some(tempo) = &self.blockchain.storage.read().tempo
+                && let FoundryHeader::Tempo(header) = &mut block_info.block.header
+            {
+                tempo.prepare(header, self.tempo_hardfork())?;
+            }
             let block_hash = block_info.block.header.hash_slow();
             (block_info, state_changes, block_hash)
         };
@@ -6063,6 +6133,14 @@ where
         }
 
         let mut db = self.db.write().await;
+        let tempo_anchor = self
+            .blockchain
+            .storage
+            .read()
+            .tempo
+            .as_ref()
+            .map(TempoChain::prepare_unsigned_successor)
+            .transpose()?;
         for state in state_changes {
             db.commit(state);
         }
@@ -6075,7 +6153,7 @@ where
             storage.best_number = block_number;
             storage.best_hash = block_hash;
             if let Some(tempo) = &mut storage.tempo {
-                tempo.reanchor(block_number);
+                tempo.reanchor(tempo_anchor.expect("Tempo replay anchor was prepared"));
             }
             if !self.is_eip3675() {
                 storage.total_difficulty =
@@ -6496,19 +6574,37 @@ where
                 if let Some(hook) = self.mining_state_root_hook.lock().as_ref() {
                     hook();
                 }
+                // The one copy of the live account cache, shared by proof history, the next
+                // seal's diff base, and EVM snapshots.
                 let proof_state = (matches!(block_info.block.header, FoundryHeader::Tempo(_))
                     && self.get_fork().is_some())
                 .then(|| {
-                    let mut state = CacheDB::<EmptyDBWrapper>::new(Default::default());
-                    state.cache.accounts = db
-                        .maybe_as_full_db()
-                        .expect("a fork database exposes its cached accounts")
-                        .clone();
-                    state
+                    Arc::new(
+                        db.maybe_as_full_db()
+                            .expect("a fork database exposes its cached accounts")
+                            .clone(),
+                    )
                 });
                 let state_root = proof_state.as_ref().map_or_else(
                     || db.maybe_state_root().unwrap_or_default(),
-                    |state| state_root(&state.cache.accounts),
+                    |accounts| {
+                        let proof_root = Arc::clone(
+                            &self
+                                .blockchain
+                                .storage
+                                .read()
+                                .tempo
+                                .as_ref()
+                                .expect("Tempo chain is initialized")
+                                .proof_root,
+                        );
+                        let (cache, previous) = &mut *proof_root.lock();
+                        // Rehash only the paths that changed since the previous seal.
+                        cache.record_diff(accounts, previous);
+                        let root = cache.root(accounts);
+                        *previous = Arc::clone(accounts);
+                        root
+                    },
                 );
                 match &mut block_info.block.header {
                     FoundryHeader::Tempo(header) => header.inner.state_root = state_root,
@@ -6523,7 +6619,7 @@ where
                     let mut proof_states = proof_states.write();
                     // Re-mining after a rewind can produce an already cached hash.
                     proof_states.remove_block_states(&[block_hash]);
-                    proof_states.insert(block_hash, StateDb::new(proof_state));
+                    proof_states.insert(block_hash, StateDb::new(SealedAccounts(proof_state)));
                 }
                 db.insert_block_hash(U256::from(block_info.block.header.number()), block_hash);
                 self.time.commit_next_timestamp(pending_timestamp);
@@ -6616,6 +6712,12 @@ where
             }
             storage.blocks.insert(block_hash, block);
             storage.hashes.insert(block_number, block_hash);
+            {
+                let storage = &mut *storage;
+                if let Some(tempo) = &mut storage.tempo {
+                    tempo.prune(&storage.hashes, &self.states.read());
+                }
+            }
             if let Some(block_access_list) = block_access_list {
                 storage.block_access_lists.insert(block_hash, block_access_list);
             }
@@ -6670,8 +6772,15 @@ where
             evm_env.block_env.difficulty = U256::ZERO;
             *self.evm_env.write() = evm_env;
             self.fees.set_next_block_fees(next_block_base_fee, next_block_blob_fees);
+            let finalization =
+                storage.tempo.as_ref().map_or(Ok(None), TempoChain::pending_finalization);
             drop(storage);
             drop(db_guard);
+            if let Err(err) = finalization.and_then(|finalization| {
+                finalization.map_or(Ok(()), |finalization| finalization.send())
+            }) {
+                warn!(target: "backend", %err, "failed to publish Tempo finalization");
+            }
 
             self.time.mark_block_created();
 
@@ -7864,7 +7973,14 @@ where
                 if let Some(hook) = self.rollback_unwind_hook.lock().as_ref() {
                     hook();
                 }
-                storage.unwind_to(common_block.header.number(), hash)
+                let removed_blocks = storage.unwind_to(common_block.header.number(), hash);
+                // Notify all log subscriptions and filters about the removed logs, so they
+                // receive them again marked as removed, before any new chain notifications are
+                // emitted and before readers can observe the unwound blocks as missing.
+                if !removed_logs.is_empty() {
+                    self.notify_on_removed_logs(removed_logs);
+                }
+                removed_blocks
             };
 
             // Clean up in-memory and on-disk states for removed blocks
@@ -7873,12 +7989,6 @@ where
             self.states.write().remove_block_states(&removed_hashes);
             if let Some(states) = self.tempo_proof_states() {
                 states.write().remove_block_states(&removed_hashes);
-            }
-
-            // Notify all log subscriptions and filters about the removed logs, so they receive
-            // them again marked as removed, before any new chain notifications are emitted
-            if !removed_logs.is_empty() {
-                self.notify_on_removed_logs(removed_logs);
             }
 
             // Set environment back to common block
@@ -8746,8 +8856,43 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             (parent_fees, blob_excess_gas_and_price)
         });
 
+        // A fork root may live only in the provider cache. Resolve it before taking the commit
+        // lock; all other imported heads are already present in staged storage.
+        let tempo_header = if storage.tempo.is_some() {
+            if let Some(block) = storage.blocks.get(&storage.best_hash) {
+                Some(block.header.clone())
+            } else if let Some(fork) = self.get_fork()
+                && storage.best_hash == fork.block_hash()
+            {
+                fork.root_header().await?
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         let historical_states = state.historical_states.take();
         let mut db = self.db.write().await;
+        let tempo_anchor =
+            {
+                // Keep the live controller when loading identical canonical history, including any
+                // rotations or snapshots created since staging. Validate changed history before DB
+                // load.
+                let live_storage = self.blockchain.storage.read();
+                if let Some(tempo) = &live_storage.tempo
+                    && (storage.best_number != live_storage.best_number
+                        || storage.best_hash != live_storage.best_hash
+                        || storage.genesis_number != live_storage.genesis_number
+                        || storage.genesis_hash != live_storage.genesis_hash
+                        || storage.hashes != live_storage.hashes)
+                {
+                    Some(tempo.prepare_anchor(
+                        tempo_header.as_ref().ok_or(BlockchainError::BlockNotFound)?,
+                    )?)
+                } else {
+                    None
+                }
+            };
         let db_snapshot = db.snapshot_state();
         let load_result = (|| -> Result<(), BlockchainError> {
             if !db.load_state(state)? {
@@ -8784,23 +8929,14 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 .collect()
         };
 
-        let reanchor_tempo = {
-            // The database guard keeps chain identity stable until publication. Compare under a
-            // read guard so existing chain readers need not wait for a large history comparison.
-            let live_storage = self.blockchain.storage.read();
-            live_storage.tempo.is_some()
-                && (storage.best_number != live_storage.best_number
-                    || storage.best_hash != live_storage.best_hash
-                    || storage.genesis_number != live_storage.genesis_number
-                    || storage.genesis_hash != live_storage.genesis_hash
-                    || storage.hashes != live_storage.hashes)
-        };
         {
             let mut live_storage = self.blockchain.storage.write();
             // Keep the live consensus, including snapshots or rotations created since staging.
             storage.tempo = live_storage.tempo.take();
-            if reanchor_tempo && let Some(tempo) = &mut storage.tempo {
-                tempo.reanchor(storage.best_number);
+            if let Some(anchor) = tempo_anchor
+                && let Some(tempo) = &mut storage.tempo
+            {
+                tempo.reanchor(anchor);
             }
             *live_storage = storage;
         }

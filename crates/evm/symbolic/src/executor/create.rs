@@ -86,8 +86,7 @@ impl SymbolicExecutor {
 
         if failure_world.has_code_or_nonce(&mut self.cx, executor, created)? {
             state.world = failure_world;
-            state.return_data = SymReturnData::empty(&mut self.cx);
-            state.stack.push(SymExpr::zero(&mut self.cx))?;
+            self.fail_create_before_frame(executor, state)?;
             return Ok(StepOutcome::Continue);
         }
 
@@ -124,6 +123,9 @@ impl SymbolicExecutor {
 
         let mut parents = VecDeque::with_capacity(outcomes.len());
         for mut outcome in outcomes {
+            // Forge records a CREATE as the reverter only when it reverts, not when it halts, such
+            // as on the runtime code checks below.
+            let failed_callee = matches!(outcome.status, CallStatus::Revert).then_some(created);
             let runtime = &outcome.state.frame.return_data;
             let spec_id = executor.spec_id;
             let mut rejected_runtime = false;
@@ -136,8 +138,15 @@ impl SymbolicExecutor {
                     rejected_runtime = true;
                 }
             }
-            match self.join_call_outcome(state, outcome, created)? {
-                JoinedCallOutcome::Rejected => {}
+            if !matches!(outcome.status, CallStatus::Success)
+                && state.expected_revert.as_ref().is_some_and(ExpectedRevert::repeats_with_reverter)
+            {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic vm.expectRevert reverter count on CREATE",
+                ));
+            }
+            // Like Forge's `create_end`, a CREATE leaves `vm.assumeNoRevert` for the next call.
+            match self.join_call_outcome(executor, state, outcome, failed_callee, None)? {
                 JoinedCallOutcome::Failure(mut parent) => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
                     *state = parent;
@@ -153,10 +162,11 @@ impl SymbolicExecutor {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
                     parent.expected_creates = pending_expected_creates.clone();
                     parent.world = failure_world.clone();
-                    parent.stack.push(created_word.clone())?;
+                    let address = address_word(DUMMY_CREATE_ADDRESS);
+                    parent.stack.push(SymExpr::constant(&mut self.cx, address))?;
                     parents.push_back(parent);
                 }
-                JoinedCallOutcome::Success { mut parent, child } => {
+                JoinedCallOutcome::Success { mut parent, child, unmet_expected_revert } => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
                     let runtime = &child.frame.return_data;
                     parent.world = child.world;
@@ -165,12 +175,24 @@ impl SymbolicExecutor {
                     }
                     parent.expected_emit = child.expected_emit;
                     parent.expected_creates = pending_expected_creates.clone();
-                    self.observe_expected_create(&mut parent, state.address, kind, runtime)?;
+                    // Under an unmet `vm.expectRevert`, the caller sees a failed CREATE, but the
+                    // code stays deployed and `expectCreate` does not count it.
+                    if !unmet_expected_revert {
+                        self.observe_expected_create(&mut parent, state.address, kind, runtime)?;
+                    }
                     if !parent.world.is_destroyed(created) {
                         parent.world.install_code(created, runtime.to_code(&mut self.cx)?);
                         parent.world.set_nonce(created, 1);
                     }
-                    parent.stack.push(created_word.clone())?;
+                    if unmet_expected_revert {
+                        parent.return_data = error_string_return_data(
+                            &mut self.cx,
+                            "next call did not revert as expected",
+                        );
+                        parent.stack.push(SymExpr::zero(&mut self.cx))?;
+                    } else {
+                        parent.stack.push(created_word.clone())?;
+                    }
                     parents.push_back(parent);
                 }
                 JoinedCallOutcome::Revert { mut parent, child } => {
@@ -205,6 +227,33 @@ impl SymbolicExecutor {
             completed_paths,
             CallPathKind::External,
         )
+    }
+
+    /// Fails a CREATE before its frame runs, such as on an insufficient balance or an address
+    /// collision. Like Forge's `create_end`, a pending `vm.expectRevert` is consumed with a depth
+    /// error, because nothing ran below the cheatcode. Reports `Unsupported` where Forge would
+    /// instead match the failure like a revert.
+    pub(super) fn fail_create_before_frame(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        state: &mut PathState,
+    ) -> Result<(), SymbolicError> {
+        state.return_data = match state.expected_revert.take() {
+            None => SymReturnData::empty(&mut self.cx),
+            // Here Forge's depth check is skipped or already passed, so it matches the failure
+            // like a revert.
+            Some(expected) if executor.internal_expect_revert || expected.matched_any() => {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic vm.expectRevert on CREATE that fails before running",
+                ));
+            }
+            Some(_) => error_string_return_data(
+                &mut self.cx,
+                "call didn't revert at a lower depth than cheatcode call depth",
+            ),
+        };
+        state.stack.push(SymExpr::zero(&mut self.cx))?;
+        Ok(())
     }
 }
 

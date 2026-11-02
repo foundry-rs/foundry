@@ -702,6 +702,72 @@ Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
+// A failure inside one symbolic-target candidate must keep that candidate's constraints, so the
+// counterexample picks the failing target and inputs and replays.
+#[forgetest_init]
+fn symbolic_call_target_failure_keeps_candidate_state(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_call_target_failure_keeps_candidate_state");
+
+    prj.add_test(
+        "SymbolicTargetFailureState.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Good {
+    function f(uint256 x) external pure returns (bool) {
+        if (x != 12345) revert();
+        return true;
+    }
+}
+
+contract Bad {
+    function f(uint256) external pure returns (bool) {
+        revert();
+    }
+}
+
+contract SymbolicTargetFailureState is Test {
+    Good good;
+    Bad bad;
+
+    function setUp() public {
+        good = new Good();
+        bad = new Bad();
+    }
+
+    function checkExpectRevertOnSymbolicTarget(address target, uint256 x) public {
+        vm.assume(target == address(good) || target == address(bad));
+        vm.expectRevert();
+        Good(target).f(x);
+    }
+
+    function checkForbiddenCallOnSymbolicTarget(address target, uint256 x) public {
+        vm.assume(target == address(good) || target == address(bad));
+        vm.expectCall(address(good), abi.encodeCall(Good.f, (12345)), 0);
+        (bool ok,) = target.call(abi.encodeCall(Good.f, (x)));
+        ok;
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicTargetFailureState",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicTargetFailureState.t.sol:SymbolicTargetFailureState
+[FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectRevertOnSymbolicTarget(address,uint256) ([METRICS])
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0xb3de648b0000000000000000000000000000000000000000000000000000000000003039 to be called 0 times, but was called 1 time; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkForbiddenCallOnSymbolicTarget(address,uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
 // Call targets: known and symbolic targets, unknown selectors and failing callees.
 #[forgetest_init]
 fn symbolic_call_targets_and_dispatch(prj: _, cmd: _) {

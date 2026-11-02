@@ -276,6 +276,11 @@ impl InMemoryBlockStates {
         }
         self
     }
+
+    /// Returns whether a state for `hash` is retained in memory or on disk.
+    pub(crate) fn contains(&self, hash: &B256) -> bool {
+        self.states.contains_key(hash) || self.on_disk_states.contains_key(hash)
+    }
 }
 
 impl fmt::Debug for InMemoryBlockStates {
