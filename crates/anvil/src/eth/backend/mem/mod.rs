@@ -11318,6 +11318,7 @@ mod tests {
             instance_id,
             source_fork_block_number: None,
             source_fork_block_hash: None,
+            tempo_epoch_length: None,
         }
     }
 
