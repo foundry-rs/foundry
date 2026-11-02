@@ -1572,10 +1572,10 @@ additional contract: address, contractName, creatorCodeAddresses, exactArtifactM
     );
 }
 
-// A mined revert is recorded outside `receipts`, and resume warns about it, never resubmits it, and
-// continues with the operations after it.
+// A mined revert is recorded outside `receipts`. The script would have stopped at it, so resume
+// never resubmits it and refuses to send the operations planned after it.
 #[forgetest_init]
-async fn resume_skips_recorded_revert(prj: _, cmd: _) {
+async fn resume_refuses_operations_after_recorded_revert(prj: _, cmd: _) {
     let gate = address!("0x000000000000000000000000000000000000bEEF");
     let script = prj.add_script(
         "RevertedResume.s.sol",
@@ -1646,19 +1646,17 @@ contract RevertedResume is Script {
     assert_eq!(sequence["reverted"], serde_json::json!([reverted]));
     assert!(sequence["receipts"].as_array().unwrap().is_empty());
 
-    // Every resume skips the revert; the first submits the remaining calls, the second nothing.
+    // Every resume refuses without sending the transfers that `require(success)` blocks.
     let provider = handle.http_provider();
     for _ in 0..2 {
         cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--resume");
-        cmd.assert_success().stderr_eq(format!(
-            "Warning: Transaction {reverted} on chain 31337 reverted; resume will not resubmit it.\nWarning: ONCHAIN EXECUTION COMPLETE WITH REVERTED TRANSACTIONS:\nchain 31337: {reverted}\n"
+        cmd.assert_failure().stderr_eq(format!(
+            "Error: transaction {reverted} reverted, so the script would not have sent the operations after it; resume will not send them. Pass `--broadcast --start-fresh` to archive this broadcast and run the script again\n"
         ));
         let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
         assert_eq!(sequence["reverted"], serde_json::json!([reverted]));
-        let receipts = sequence["receipts"].as_array().unwrap();
-        assert_eq!(receipts.len(), 2);
-        assert!(receipts.iter().all(|receipt| receipt["status"] == "0x1"));
-        assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 3);
+        assert!(sequence["receipts"].as_array().unwrap().is_empty());
+        assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
     }
 }
 
