@@ -7170,7 +7170,7 @@ async fn tempo_consensus_latest_survives_body_pruning_and_snapshot() {
 async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     let config = NodeConfig::test_tempo()
         .with_no_mining(true)
-        .with_tempo_epoch_length(NonZeroU64::new(3).unwrap())
+        .with_tempo_epoch_length(NonZeroU64::new(4).unwrap())
         .with_hardfork(Some(TempoHardfork::T7.into()));
     let (source_api, source) = spawn(config.clone()).await;
     let source_provider = source.http_provider();
@@ -7180,6 +7180,14 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
         .to(Address::repeat_byte(0x33))
         .gas_limit(1_000_000);
     source_api.mine_one().await.unwrap();
+    let mut state = source_api.serialized_state(false).await.unwrap();
+    let block = state.blocks.iter_mut().find(|block| block.header.number() == 1).unwrap();
+    let mut anchor = block.header.as_tempo().unwrap().clone();
+    let context = anchor.consensus_context.as_mut().unwrap();
+    context.view = 8896;
+    context.parent_view = 8870;
+    block.header = anchor.into();
+    source_api.anvil_load_state(serde_json::to_vec(&state).unwrap().into()).await.unwrap();
     source_provider.client().request::<_, B256>("eth_sendTransaction", (&request,)).await.unwrap();
     source_api.mine_one().await.unwrap();
     let parent = source_provider.get_block(2.into()).full().await.unwrap().unwrap();
@@ -7200,6 +7208,7 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     assert_eq!(latest, source_root);
     let nonce = provider.get_transaction_count(sender).await.unwrap();
     assert_eq!(nonce, 1);
+    let snapshot: U256 = provider.client().request("evm_snapshot", ()).await.unwrap();
     let transaction =
         provider.client().request::<_, B256>("eth_sendTransaction", (&request,)).await.unwrap();
     api.mine_one().await.unwrap();
@@ -7207,8 +7216,14 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), nonce + 1);
     let local = tempo_finalization(&provider, 3).await;
     assert_eq!(local.block.header.parent_hash(), parent.header.hash);
-    assert_eq!((local.epoch, local.view), (1, 1));
+    assert_eq!((local.epoch, local.view), (0, 8898));
     assert_tempo_certificate(&identity, &local);
+    assert!(provider.client().request::<_, bool>("evm_revert", (snapshot,)).await.unwrap());
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), nonce);
+    provider.client().request::<_, B256>("eth_sendTransaction", (&request,)).await.unwrap();
+    api.mine_one().await.unwrap();
+    assert_tempo_fork_round(&provider, &identity, 3, (0, 8898, 8897)).await;
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), nonce + 1);
 
     provider.client().request::<_, serde_json::Value>("anvil_rollback", (1,)).await.unwrap();
     assert_eq!(provider.get_block(BlockId::latest()).full().await.unwrap().unwrap(), parent);
@@ -7221,6 +7236,7 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     let remined = tempo_finalization(&provider, 3).await;
     assert_eq!(remined.block.header.parent_hash(), parent.header.hash);
     assert_tempo_certificate(&identity, &remined);
+    assert_eq!((remined.epoch, remined.view), (0, 8898));
 
     api.anvil_set_coinbase(Address::repeat_byte(0x44)).await.unwrap();
     api.anvil_reorg(ReorgOptions { depth: 1, tx_block_pairs: Vec::new() }).await.unwrap();
@@ -7228,6 +7244,7 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     assert_ne!(replacement.digest, remined.digest);
     assert_eq!(replacement.block.header.parent_hash(), parent.header.hash);
     assert_tempo_certificate(&identity, &replacement);
+    assert_eq!((replacement.epoch, replacement.view), (0, 8898));
 
     api.anvil_reset(Some(Forking {
         json_rpc_url: Some(source.http_endpoint()),
@@ -7251,75 +7268,17 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     let remined = tempo_finalization(&provider, 5).await;
     assert_eq!(remined.block.header.parent_hash(), parent.header.hash);
     assert_tempo_certificate(&identity, &remined);
-}
 
-#[tokio::test(flavor = "multi_thread")]
-async fn tempo_consensus_fork_inherits_skipped_views_across_lifecycle() {
-    let config = NodeConfig::test_tempo()
-        .with_no_mining(true)
-        .with_tempo_epoch_length(NonZeroU64::new(6).unwrap());
-    let (source_api, source) = spawn(config.clone()).await;
-    source_api.mine_one().await.unwrap();
-    let mut state = source_api.serialized_state(false).await.unwrap();
-    let block = state.blocks.iter_mut().find(|block| block.header.number() == 1).unwrap();
-    let mut anchor = block.header.as_tempo().unwrap().clone();
-    let context = anchor.consensus_context.as_mut().unwrap();
-    context.view = 8896;
-    context.parent_view = 8870;
-    block.header = anchor.clone().into();
-    source_api.anvil_load_state(serde_json::to_vec(&state).unwrap().into()).await.unwrap();
-
-    let (api, handle) = spawn(
-        config
-            .with_eth_rpc_url(Some(source.http_endpoint()))
-            .with_fork_block_number(Some(1u64))
-            .with_tempo_consensus_seed(Some(B256::repeat_byte(0x42))),
-    )
-    .await;
-    let provider = handle.http_provider();
-    let identity = tempo_consensus_identity(&provider).await;
-    let snapshot: U256 = provider.client().request("evm_snapshot", ()).await.unwrap();
-    for (height, view) in [(2, 8897), (3, 8898)] {
-        api.mine_one().await.unwrap();
-        assert_tempo_fork_round(&provider, &identity, height, (0, view, view - 1)).await;
-    }
-    let first = tempo_finalization(&provider, 2).await;
-    assert_eq!(first.block.header.parent_hash(), anchor.hash_slow());
-
-    assert!(provider.client().request::<_, bool>("evm_revert", (snapshot,)).await.unwrap());
-    api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(source.http_endpoint()),
+        block_number: Some(2),
+    }))
+    .await
+    .unwrap();
+    api.mine_one().await.unwrap();
     assert_tempo_fork_round(&provider, &identity, 3, (0, 8898, 8897)).await;
-    provider.client().request::<_, serde_json::Value>("anvil_rollback", (1,)).await.unwrap();
-    api.anvil_set_coinbase(Address::repeat_byte(0x44)).await.unwrap();
-    api.anvil_reorg(ReorgOptions { depth: 1, tx_block_pairs: Vec::new() }).await.unwrap();
-    assert_tempo_fork_round(&provider, &identity, 2, (0, 8897, 8896)).await;
-    assert_ne!(tempo_finalization(&provider, 2).await.digest, first.digest);
-
-    source_api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
-    let source_provider = source.http_provider();
-    let source_identity = tempo_consensus_identity(&source_provider).await;
-    let anchor =
-        assert_tempo_fork_round(&source_provider, &source_identity, 4, (0, 8899, 8898)).await;
-    api.anvil_reset(Some(Forking {
-        json_rpc_url: Some(source.http_endpoint()),
-        block_number: Some(4),
-    }))
-    .await
-    .unwrap();
     api.mine_one().await.unwrap();
-    let boundary = assert_tempo_fork_round(&provider, &identity, 5, (0, 8900, 8899)).await;
-    assert_eq!(boundary.block.header.parent_hash(), anchor.digest);
-
-    source_api.mine_one().await.unwrap();
-    assert_tempo_fork_round(&source_provider, &source_identity, 5, (0, 8900, 8899)).await;
-    api.anvil_reset(Some(Forking {
-        json_rpc_url: Some(source.http_endpoint()),
-        block_number: Some(5),
-    }))
-    .await
-    .unwrap();
-    api.mine_one().await.unwrap();
-    assert_tempo_fork_round(&provider, &identity, 6, (1, 1, 0)).await;
+    assert_tempo_fork_round(&provider, &identity, 4, (1, 1, 0)).await;
     api.anvil_reset(None).await.unwrap();
     api.mine_one().await.unwrap();
     assert_tempo_fork_round(&provider, &identity, 1, (0, 1, 0)).await;
@@ -8516,15 +8475,17 @@ async fn tempo_consensus_fork_preserves_explicit_epoch_length() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn tempo_consensus_fork_native_epoch_metadata_and_fallbacks() {
-    for (length, explicit, metadata, expected) in [
-        (3, false, Some(serde_json::json!({ "epochLength": 3 })), 3),
-        (3, false, Some(serde_json::json!({ "epochLength": "0x3" })), 3),
-        (3, false, Some(serde_json::json!({ "epochLength": "3" })), 3),
-        (21_600, false, Some(serde_json::Value::Null), 21_600),
-        (21_600, false, Some(serde_json::json!({})), 21_600),
-        (21_600, false, None, 21_600),
-        (3, true, None, 3),
+async fn tempo_consensus_fork_epoch_metadata_and_fallbacks() {
+    for (native, length, explicit, metadata) in [
+        (true, 3, false, Some(serde_json::json!({ "epochLength": 3 }))),
+        (true, 3, false, Some(serde_json::json!({ "epochLength": "0x3" }))),
+        (true, 3, false, Some(serde_json::json!({ "epochLength": "3" }))),
+        (true, 21_600, false, Some(serde_json::Value::Null)),
+        (true, 21_600, false, Some(serde_json::json!({}))),
+        (true, 21_600, false, None),
+        (true, 3, true, None),
+        (false, 21_600, false, None),
+        (false, 3, true, None),
     ] {
         let (source_api, source) = spawn(
             NodeConfig::test_tempo()
@@ -8533,13 +8494,19 @@ async fn tempo_consensus_fork_native_epoch_metadata_and_fallbacks() {
         )
         .await;
         source_api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
-        let endpoint =
-            spawn_rpc_proxy_rejecting_method_after(source.http_endpoint(), "anvil_nodeInfo", 0)
-                .await;
-        let endpoint = if let Some(metadata) = metadata {
-            spawn_rpc_proxy_canned_method(endpoint, "debug_chainConfig", metadata).await.0
+        let (method, endpoint) = if native {
+            (
+                "debug_chainConfig",
+                spawn_rpc_proxy_rejecting_method_after(source.http_endpoint(), "anvil_nodeInfo", 0)
+                    .await,
+            )
         } else {
-            spawn_rpc_proxy_rejecting_method_after(endpoint, "debug_chainConfig", 0).await
+            ("anvil_tempoConsensusIdentity", source.http_endpoint())
+        };
+        let endpoint = if let Some(metadata) = metadata {
+            spawn_rpc_proxy_canned_method(endpoint, method, metadata).await.0
+        } else {
+            spawn_rpc_proxy_rejecting_method_after(endpoint, method, 0).await
         };
         let mut config = NodeConfig::test_tempo()
             .with_no_mining(true)
@@ -8551,9 +8518,9 @@ async fn tempo_consensus_fork_native_epoch_metadata_and_fallbacks() {
         let (api, handle) = spawn(config).await;
         let provider = handle.http_provider();
         let identity = tempo_consensus_identity(&provider).await;
-        assert_eq!(identity.epoch_length, expected);
+        assert_eq!(identity.epoch_length, length);
         api.mine_one().await.unwrap();
-        let round = if expected == 3 { (1, 2, 1) } else { (0, 4, 3) };
+        let round = if length == 3 { (1, 2, 1) } else { (0, 4, 3) };
         assert_tempo_fork_round(&provider, &identity, 4, round).await;
     }
 }
@@ -8611,39 +8578,5 @@ async fn tempo_consensus_fork_rejects_malformed_epoch_metadata() {
             assert_eq!(tempo_finalization(&provider, 1).await, finalized);
             assert_eq!(tempo_consensus_identity(&provider).await, identity);
         }
-    }
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn tempo_consensus_fork_anvil_epoch_metadata_fallbacks() {
-    for explicit in [false, true] {
-        let length = if explicit { 3 } else { 21_600 };
-        let (source_api, source) = spawn(
-            NodeConfig::test_tempo()
-                .with_no_mining(true)
-                .with_tempo_epoch_length(NonZeroU64::new(length).unwrap()),
-        )
-        .await;
-        source_api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
-        let endpoint = spawn_rpc_proxy_rejecting_method_after(
-            source.http_endpoint(),
-            "anvil_tempoConsensusIdentity",
-            0,
-        )
-        .await;
-        let mut config = NodeConfig::test_tempo()
-            .with_no_mining(true)
-            .with_eth_rpc_url(Some(endpoint))
-            .with_fork_block_number(Some(3u64));
-        if explicit {
-            config = config.with_tempo_epoch_length(NonZeroU64::new(3).unwrap());
-        }
-        let (api, handle) = spawn(config).await;
-        let provider = handle.http_provider();
-        let identity = tempo_consensus_identity(&provider).await;
-        assert_eq!(identity.epoch_length, length);
-        api.mine_one().await.unwrap();
-        let round = if explicit { (1, 2, 1) } else { (0, 4, 3) };
-        assert_tempo_fork_round(&provider, &identity, 4, round).await;
     }
 }

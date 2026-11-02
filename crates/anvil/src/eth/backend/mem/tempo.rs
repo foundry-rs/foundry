@@ -214,12 +214,9 @@ impl TempoChain {
         let header = fork.root_header().await?.ok_or(BlockchainError::BlockNotFound)?;
         // Execution-only genesis fixtures share the unsigned genesis convention. Nonzero
         // contextless roots are still rejected by the controller.
-        let native;
-        let header = if let Some(header) = header.as_tempo() {
-            header
-        } else {
-            native = FoundryHeader::tempo(header.inner().clone());
-            native.as_tempo().expect("the unsigned checkpoint is a Tempo header")
+        let header = match header {
+            FoundryHeader::Tempo(_) => header,
+            FoundryHeader::Ethereum(inner) => FoundryHeader::tempo(inner),
         };
         TempoConsensus::at_fork_header(
             config.tempo_consensus_seed(),
@@ -227,7 +224,7 @@ impl TempoChain {
                 .tempo_epoch_length
                 .or(fork.config.read().endpoint_identity.tempo_epoch_length)
                 .unwrap_or(DEFAULT_TEMPO_EPOCH_LENGTH),
-            header,
+            header.as_tempo().expect("the fork anchor is a Tempo header"),
         )
         .map_err(|error| {
             let message = if matches!(error, TempoConsensusError::InvalidAnchorEpoch { .. }) {
