@@ -160,10 +160,12 @@ impl SymbolicExecutor {
         executor: &ExecutorView<'_>,
         state: &PathState,
         mut outcome: CallOutcome,
-        reverter: Address,
+        failed_callee: Option<Address>,
         assume_no_revert: Option<&AssumeNoRevert>,
     ) -> Result<JoinedCallOutcome, SymbolicError> {
         let mut parent = state.clone();
+        parent.first_failed_callee =
+            parent.first_failed_callee.or(outcome.state.first_failed_callee);
         parent.take_call_outcome_state(&mut outcome.state);
         if !matches!(outcome.status, CallStatus::Success) {
             parent.discard_failed_call_logs(
@@ -180,7 +182,7 @@ impl SymbolicExecutor {
             if self.assume_no_revert_matches(
                 &parent,
                 assumption,
-                reverter,
+                outcome.state.address,
                 &outcome.state.frame.return_data,
             )? {
                 outcome.state.frame.return_data =
@@ -188,6 +190,9 @@ impl SymbolicExecutor {
             }
             return Ok(JoinedCallOutcome::Revert { parent, child: outcome.state });
         }
+        // Like Forge, the first failure inside the call precedes the call's own failure, which
+        // `vm.assumeNoRevert` handles before it is recorded.
+        parent.first_failed_callee = parent.first_failed_callee.or(failed_callee);
 
         if let Some(mut expected) = parent.expected_revert.clone() {
             // Like Forge, a call that succeeds under `vm.expectRevert` keeps its state, but the
@@ -203,6 +208,7 @@ impl SymbolicExecutor {
             match outcome.status {
                 CallStatus::Success => return Ok(JoinedCallOutcome::Failure(parent)),
                 CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {
+                    let reverter = expected.reverted_by(failed_callee, parent.first_failed_callee);
                     if !self.expected_revert_matches(
                         &mut parent,
                         &expected,

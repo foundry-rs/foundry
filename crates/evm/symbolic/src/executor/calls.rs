@@ -527,7 +527,7 @@ impl SymbolicExecutor {
         &mut self,
         state: &mut PathState,
         expected: &ExpectedRevert,
-        reverter: Address,
+        reverter: Option<Address>,
         return_data: &SymReturnData,
     ) -> Result<bool, SymbolicError> {
         let Some(condition) = expected.match_condition(&mut self.cx, reverter, return_data) else {
@@ -588,6 +588,10 @@ impl SymbolicExecutor {
                 return_data =
                     error_string_return_data(&mut self.cx, "next call did not revert as expected");
             } else {
+                // Like Forge, the reverter is the first call that failed since `vm.expectRevert`,
+                // which is this call unless an earlier one failed.
+                let first_failed_callee = state.first_failed_callee.or(Some(reverter));
+                let reverter = expected.reverted_by(Some(reverter), first_failed_callee);
                 if !self.expected_revert_matches(state, &expected, reverter, &return_data)? {
                     return Ok(StepOutcome::Failure);
                 }
@@ -597,6 +601,10 @@ impl SymbolicExecutor {
                     SymReturnData::from_concrete_bytes(&mut self.cx, DUMMY_CALL_OUTPUT.to_vec());
             }
             success = !success;
+        } else if !success && !assumed_revert {
+            // Like Forge, a failure not consumed here can be the reverter of a pending
+            // `vm.expectRevert`.
+            state.first_failed_callee.get_or_insert(reverter);
         }
         state.return_data = return_data;
         state.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;
@@ -620,7 +628,7 @@ impl SymbolicExecutor {
 
         let conditions = filters
             .iter()
-            .filter_map(|filter| filter.match_condition(&mut self.cx, reverter, return_data))
+            .filter_map(|filter| filter.match_condition(&mut self.cx, Some(reverter), return_data))
             .collect::<Vec<_>>();
         if conditions.is_empty() {
             return Ok(false);
@@ -872,6 +880,7 @@ impl SymbolicExecutor {
                     CheatcodeOutcome::Continue(ret) => SymReturnData::from_words(&mut self.cx, ret),
                     CheatcodeOutcome::ContinueData(ret) => ret,
                     CheatcodeOutcome::Revert(ret) => {
+                        state.first_failed_callee.get_or_insert(CHEATCODE_ADDRESS);
                         state.return_data = ret;
                         state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
                         state.stack.push(SymExpr::zero(&mut self.cx))?;
@@ -1107,7 +1116,15 @@ impl SymbolicExecutor {
         let assume_no_revert = state.assume_no_revert_next_call.take();
         let mut parents = VecDeque::with_capacity(outcomes.len());
         for outcome in outcomes {
-            match self.join_call_outcome(executor, state, outcome, to, assume_no_revert.as_ref())? {
+            let failed_callee =
+                (!matches!(outcome.status, CallStatus::Success)).then_some(outcome.state.address);
+            match self.join_call_outcome(
+                executor,
+                state,
+                outcome,
+                failed_callee,
+                assume_no_revert.as_ref(),
+            )? {
                 JoinedCallOutcome::Failure(parent) => {
                     *state = parent;
                     return Ok(StepOutcome::Failure);
