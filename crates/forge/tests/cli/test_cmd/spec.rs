@@ -459,7 +459,7 @@ Warning: fork of chain 31337 belongs to `ethereum`, but the selected network is 
         .args(["test", "--network", "ethereum", "--fork-url", &monad.http_endpoint()])
         .assert_success()
         .stderr_eq(str![[r#"
-Warning: fork of chain 143 belongs to `monad`, but the selected network is `ethereum`, so the fork runs with `ethereum` rules
+Warning: fork of chain 31337 belongs to `monad`, but the selected network is `ethereum`, so the fork runs with `ethereum` rules
 
 "#]]);
 }
