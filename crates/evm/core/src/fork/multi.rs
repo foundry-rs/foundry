@@ -11,6 +11,7 @@ use alloy_network::{AnyNetwork, Network};
 use alloy_primitives::map::HashMap;
 use foundry_common::sh_warn;
 use foundry_config::Config;
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use foundry_fork_db::{
     BackendHandler, BlockchainDb, ForkBlock, ForkBlockEnv, SharedBackend, cache::BlockchainDbMeta,
 };
@@ -872,25 +873,26 @@ async fn create_fork<
         fork_context.source_chain_id,
         &resolved.block,
     );
-    if require_endpoint_family_match
-        && !execution_networks.supports_fork_source(&fork_context.network_profile)
-    {
-        eyre::bail!(
-            "cannot create a `{}` fork with an EVM instantiated for `{}`; run the script with --rpc-url pointing to the forked chain to select its EVM",
-            fork_context.network,
-            execution_networks.execution_network()
+    // An endpoint without Anvil metadata takes an explicitly selected network as its profile, so
+    // its recognized chain ID decides the family it belongs to.
+    let chain = fork_context.source_chain_id;
+    let source = match NetworkVariant::from_known_chain_id(chain) {
+        Ok(Some(network)) if fork_context.instance_id.is_none() => {
+            NetworkConfigs::default().with_rpc_identity(network, chain)
+        }
+        _ => fork_context.network_profile,
+    };
+    if !execution_networks.supports_fork_source(&source) {
+        let (fork, selected) =
+            (source.execution_profile_name(), execution_networks.execution_profile_name());
+        eyre::ensure!(
+            !require_endpoint_family_match,
+            "cannot create a `{fork}` fork with an EVM instantiated for `{selected}`; run the script with --rpc-url pointing to the forked chain to select its EVM"
         );
-    }
-    // An explicit network selection is kept even when the fork belongs to another family, so
-    // warn once per source chain instead of failing. Rolls reuse an already checked fork.
-    if !require_endpoint_family_match
-        && expected_identity.is_none()
-        && !execution_networks.supports_fork_source(&fork_context.network_profile)
-    {
-        static WARNED_CHAINS: Mutex<BTreeSet<u64>> = Mutex::new(BTreeSet::new());
-        let chain = fork_context.source_chain_id;
-        if WARNED_CHAINS.lock().unwrap().insert(chain) {
-            let (fork, selected) = (fork_context.network, execution_networks.execution_network());
+        // An explicit network selection is kept even when the fork belongs to another family, so
+        // warn once per source chain and family pair instead of failing.
+        static WARNED: Mutex<BTreeSet<(u64, &str, &str)>> = Mutex::new(BTreeSet::new());
+        if WARNED.lock().unwrap().insert((chain, fork, selected)) {
             let _ = sh_warn!(
                 "fork of chain {chain} belongs to `{fork}`, but the selected network is `{selected}`, so the fork runs with `{selected}` rules"
             );

@@ -454,14 +454,27 @@ Warning: fork of chain 31337 belongs to `ethereum`, but the selected network is 
 
 "#]]);
 
-    let (_api, monad) = anvil::spawn(anvil::NodeConfig::test_monad()).await;
+    // An endpoint without Anvil metadata belongs to the family of its recognized chain ID.
+    let (_api, mainnet) = anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(1u64))).await;
+    let mainnet =
+        rpc::spawn_rpc_proxy_rejecting_method_after(mainnet.http_endpoint(), "anvil_nodeInfo", 0)
+            .await;
     cmd.forge_fuse()
-        .args(["test", "--network", "ethereum", "--fork-url", &monad.http_endpoint()])
+        .args(["test", "--network", "monad", "--fork-url", &mainnet])
         .assert_success()
         .stderr_eq(str![[r#"
-Warning: fork of chain 31337 belongs to `monad`, but the selected network is `ethereum`, so the fork runs with `ethereum` rules
+Warning: fork of chain 1 belongs to `ethereum`, but the selected network is `monad`, so the fork runs with `monad` rules
 
 "#]]);
+
+    // The Ethereum EVM can serve an OP Stack fork, so a different family alone does not warn.
+    let (_api, op) = anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(10u64))).await;
+    let op =
+        rpc::spawn_rpc_proxy_rejecting_method_after(op.http_endpoint(), "anvil_nodeInfo", 0).await;
+    cmd.forge_fuse()
+        .args(["test", "--network", "ethereum", "--fork-url", &op])
+        .assert_success()
+        .stderr_eq(str![""]);
 }
 
 #[cfg(feature = "monad")]
