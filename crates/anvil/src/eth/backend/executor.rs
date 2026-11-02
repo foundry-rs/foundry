@@ -36,7 +36,7 @@ use evm2::{
     evm::{
         BEACON_ROOTS_ADDRESS, BUILDER_DEPOSIT_REQUEST_ADDRESS, BUILDER_EXIT_REQUEST_ADDRESS,
         BlockAccessIndex, BlockStateAccumulator, CONSOLIDATION_REQUEST_ADDRESS,
-        HISTORY_STORAGE_ADDRESS, SystemTx, WITHDRAWAL_REQUEST_ADDRESS,
+        HISTORY_STORAGE_ADDRESS, SystemTx, TxResult, WITHDRAWAL_REQUEST_ADDRESS,
     },
 };
 use foundry_evm_hardforks::FoundryHardfork;
@@ -295,11 +295,23 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
         Ok(self.evm.state_mut().storage_slot_untracked(&address, &slot)?)
     }
 
-    fn system_call(&mut self, address: Address, data: Bytes) -> Result<Bytes, BlockchainError> {
+    /// Executes and commits a system call without checking its outcome.
+    ///
+    /// A failed call commits no state, as evm2 rolls it back.
+    fn unchecked_system_call(
+        &mut self,
+        address: Address,
+        data: Bytes,
+    ) -> Result<TxResult<TypesFor<N>>, BlockchainError> {
         let Ok(result) = self
             .evm
             .system_call(SystemTx::new(address, data))?
             .commit_with(&mut BlockChanges::new(&mut self.state));
+        Ok(result)
+    }
+
+    fn system_call(&mut self, address: Address, data: Bytes) -> Result<Bytes, BlockchainError> {
+        let result = self.unchecked_system_call(address, data)?;
         if result.stop.is_revert() {
             return Err(InvalidTransactionError::Revert(Some(result.output)).into());
         }
@@ -313,16 +325,19 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
     }
 
     /// Applies canonical Ethereum block-start transitions in consensus order.
+    ///
+    /// A failing block-start system call does not invalidate the block (EIP-2935, EIP-4788).
     pub(crate) fn apply_pre_execution_changes(&mut self) -> Result<(), BlockchainError> {
         let Some(transitions) = self.ethereum_transitions else { return Ok(()) };
         if transitions.hardfork >= EthereumHardfork::Prague {
-            self.system_call(HISTORY_STORAGE_ADDRESS, Bytes::from(self.parent_hash))?;
+            let _ =
+                self.unchecked_system_call(HISTORY_STORAGE_ADDRESS, Bytes::from(self.parent_hash))?;
         }
         if transitions.hardfork >= EthereumHardfork::Cancun {
             let root = transitions.parent_beacon_block_root.ok_or_else(|| {
                 BlockchainError::Message("missing parent beacon block root".to_string())
             })?;
-            self.system_call(BEACON_ROOTS_ADDRESS, Bytes::from(root))?;
+            let _ = self.unchecked_system_call(BEACON_ROOTS_ADDRESS, Bytes::from(root))?;
         }
         Ok(())
     }
