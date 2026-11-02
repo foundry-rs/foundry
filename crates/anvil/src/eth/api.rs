@@ -3,7 +3,7 @@ use super::{
         db::{CacheDB, DatabaseRef, apply_block_overrides, apply_state_overrides},
         env::{BlobExcessGasAndPrice, BlockEnv},
         mem::{
-            BlockRequest, CallOutcome, GasEstimateCallOptions, MonadReplayContext,
+            BlockRequest, CallOutcome, GasEstimateCallOptions, MonadReplayContext, halt_reason,
             sanitize_simulation_blocks,
         },
     },
@@ -5796,7 +5796,7 @@ fn execution_error(exit: InstrStop) -> Option<String> {
     } else if exit.is_revert() {
         Some("execution reverted".to_string())
     } else {
-        Some(format!("{exit:?}"))
+        Some(halt_reason(exit))
     }
 }
 

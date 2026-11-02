@@ -7,9 +7,9 @@ use crate::{
         backend::{
             cheats::{CheatsManager, NextBlockOverrides},
             db::{
-                AccountState, BLOCKHASH_HISTORY, BlockchainDb, CacheDB, DatabaseRef, Db, DbAccount,
-                EmptyDb, EvmDb, MaybeFullDatabase, RevertStateSnapshotAction, SerializableState,
-                StateDb, apply_block_overrides, apply_state_overrides,
+                AccountState, BLOCKHASH_HISTORY, BlockChanges, BlockchainDb, CacheDB, DatabaseRef,
+                Db, DbAccount, EmptyDb, EvmDb, MaybeFullDatabase, RevertStateSnapshotAction,
+                SerializableState, StateDb, apply_block_overrides, apply_state_overrides,
             },
             env::{
                 BlobExcessGasAndPrice, BlockEnv, CfgEnv, EvmEnv, SpecId,
@@ -705,15 +705,43 @@ fn uses_protocol_call_nonce(tx: &FoundryTxEnvelope) -> bool {
     }
 }
 
-/// Describes an exceptional halt.
-fn halt_reason(stop: InstrStop) -> String {
-    format!("{stop:?}")
+/// Describes an exceptional halt with REVM's `HaltReason` messages.
+// TODO: move these messages upstream as `impl Display for InstrStop` in evm2.
+pub(crate) fn halt_reason(stop: InstrStop) -> String {
+    match stop {
+        InstrStop::OutOfGas => "out of gas",
+        InstrStop::MemoryOOG => "out of gas: memory expansion",
+        InstrStop::MemoryLimitOOG => "out of gas: memory limit exceeded",
+        InstrStop::PrecompileOOG => "out of gas: precompile",
+        InstrStop::InvalidOperandOOG => "out of gas: invalid operand",
+        InstrStop::ReentrancySentryOOG => "out of gas: reentrancy sentry",
+        InstrStop::OpcodeNotFound | InstrStop::InvalidImmediateEncoding => "opcode not found",
+        InstrStop::InvalidFEOpcode => "invalid 0xFE opcode",
+        InstrStop::InvalidJump => "invalid jump destination",
+        InstrStop::NotActivated => "feature or opcode not activated",
+        InstrStop::StackUnderflow => "stack underflow",
+        InstrStop::StackOverflow => "stack overflow",
+        InstrStop::OutOfOffset => "out of offset",
+        InstrStop::CreateCollision => "create collision",
+        InstrStop::PrecompileError => "precompile error",
+        InstrStop::NonceOverflow => "nonce overflow",
+        InstrStop::CreateContractSizeLimit => "create contract size limit",
+        InstrStop::CreateContractStartingWithEF => "create contract starting with 0xEF",
+        InstrStop::CreateInitCodeSizeLimit => "create initcode size limit",
+        InstrStop::StateChangeDuringStaticCall => "state change during static call",
+        InstrStop::CallNotAllowedInsideStatic => "call not allowed inside static call",
+        InstrStop::OutOfFunds => "out of funds",
+        InstrStop::CallTooDeep => "call too deep",
+        InstrStop::FatalExternalError => "fatal external error",
+        stop => return format!("{stop:?}"),
+    }
+    .to_string()
 }
 
 /// Applies a transaction's detached state changes to `db`.
 fn commit_pending<DB: DatabaseRef>(db: &mut CacheDB<DB>, state: &PendingState) {
     let mut changes = BlockStateAccumulator::new();
-    let Ok(()) = state.visit(&mut changes);
+    let Ok(()) = state.visit(&mut BlockChanges::new(&mut changes));
     db.commit(&changes);
 }
 
