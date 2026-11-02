@@ -78,7 +78,7 @@ t_linux_arm = Target(
 t_macos = Target("depot-macos-latest", "aarch64-apple-darwin", "macosx-aarch64")
 t_windows = Target("depot-windows-latest-16", "x86_64-pc-windows-msvc", "windows-amd64")
 if is_pr:
-    targets = [t_linux_x86, t_windows]
+    targets = [t_linux_x86]
 else:
     targets = [t_linux_x86, t_linux_arm, t_macos, t_windows]
 
