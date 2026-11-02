@@ -80,8 +80,8 @@ where
                             (self.storage.block(hash), self.storage.receipts(hash))
                         else {
                             // Pruning keeps headers, so the block was unwound or dropped by a
-                            // reset. Its logs were never delivered, so its removed logs are
-                            // dropped too.
+                            // reset or state load. Its logs were never delivered, so its removed
+                            // logs are dropped too.
                             self.skipped.insert(hash);
                             continue;
                         };
