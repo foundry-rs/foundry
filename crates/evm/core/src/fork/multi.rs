@@ -9,7 +9,9 @@ use alloy_eips::{BlockNumHash, eip7928::BlockAccessList};
 use alloy_evm::EvmEnv;
 use alloy_network::{AnyNetwork, Network};
 use alloy_primitives::map::HashMap;
+use foundry_common::sh_warn;
 use foundry_config::Config;
+use foundry_evm_networks::NetworkConfigs;
 use foundry_fork_db::{
     BackendHandler, BlockchainDb, ForkBlock, ForkBlockEnv, SharedBackend, cache::BlockchainDbMeta,
 };
@@ -879,6 +881,11 @@ async fn create_fork<
             execution_networks.execution_network()
         );
     }
+    if !require_endpoint_family_match
+        && let Some(warning) = explicit_network_mismatch(&execution_networks, &fork_context)
+    {
+        let _ = sh_warn!("{warning}");
+    }
     if let Some(expected) = expected_identity {
         eyre::ensure!(
             fork_context.has_same_endpoint_identity(expected),
@@ -893,6 +900,24 @@ async fn create_fork<
     let fork_id = ForkId::resolved(&fork.url, &resolved);
 
     Ok((fork_id, fork, resolved, evm_env, bal))
+}
+
+/// Returns a warning when the explicitly selected network does not match the fork's network.
+///
+/// The fork still runs with the selected network's rules, so the warning names both networks.
+fn explicit_network_mismatch(
+    execution_networks: &NetworkConfigs,
+    fork_context: &ForkContext,
+) -> Option<String> {
+    (!execution_networks.supports_fork_source(&fork_context.network_profile)).then(|| {
+        format!(
+            "fork of chain {} is a `{}` network, but `--network` selected `{}`; the fork will run with `{}` rules",
+            fork_context.source_chain_id,
+            fork_context.network,
+            execution_networks.execution_network(),
+            execution_networks.execution_network(),
+        )
+    })
 }
 
 /// Creates the backend of a resolved fork.
@@ -946,7 +971,7 @@ mod tests {
     use alloy_provider::{Provider, ProviderBuilder, mock::Asserter};
     use alloy_rpc_types::TransactionRequest;
     use alloy_serde::WithOtherFields;
-    use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
+    use foundry_evm_networks::NetworkVariant;
     use foundry_fork_db::AccountFetchPolicy;
     use foundry_test_utils::rpc::{
         spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_recording_method,
@@ -967,6 +992,30 @@ mod tests {
             source_fork_block_number: None,
             source_fork_block_hash: None,
         }
+    }
+
+    #[test]
+    #[cfg(feature = "optimism")]
+    fn explicit_network_mismatch_names_both_networks() {
+        let optimism = NetworkConfigs::from(NetworkVariant::Optimism);
+        let ethereum_fork = context(1);
+        assert_eq!(
+            explicit_network_mismatch(&optimism, &ethereum_fork).as_deref(),
+            Some(
+                "fork of chain 1 is a `ethereum` network, but `--network` selected `optimism`; the fork will run with `optimism` rules"
+            )
+        );
+
+        let optimism_fork = ForkContext {
+            network: NetworkVariant::Optimism,
+            network_profile: optimism,
+            ..context(10)
+        };
+        assert_eq!(explicit_network_mismatch(&optimism, &optimism_fork), None);
+        assert_eq!(
+            explicit_network_mismatch(&NetworkConfigs::with_ethereum(), &ethereum_fork),
+            None
+        );
     }
 
     #[test]
