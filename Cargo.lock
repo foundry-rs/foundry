@@ -6384,6 +6384,7 @@ dependencies = [
  "foundry-compilers",
  "foundry-evm-core",
  "foundry-evm-traces",
+ "foundry-tui",
  "revm",
  "serde_json",
  "soldb-core",
