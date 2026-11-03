@@ -736,12 +736,27 @@ struct TypedCallOverrides {
     gas_limit: Option<u64>,
     access_list: Option<AccessList>,
     disable_fee_charge: bool,
+    console_logs: ConsoleLogs,
+}
+
+/// When a call prints the `console.log` output it collected.
+///
+/// This does not change whether the console collector is installed, because the collector can
+/// change execution.
+#[derive(Default)]
+pub(crate) enum ConsoleLogs {
+    #[default]
+    Always,
+    /// Only if the call reverts or halts.
+    OnFailure,
+    Never,
 }
 
 pub(crate) struct GasEstimateCallOptions {
     gas_limit: u64,
     disable_fee_charge: bool,
     monad_context: Option<MonadReplayContext>,
+    console_logs: ConsoleLogs,
 }
 
 impl GasEstimateCallOptions {
@@ -749,8 +764,9 @@ impl GasEstimateCallOptions {
         gas_limit: u64,
         disable_fee_charge: bool,
         monad_context: Option<MonadReplayContext>,
+        console_logs: ConsoleLogs,
     ) -> Self {
-        Self { gas_limit, disable_fee_charge, monad_context }
+        Self { gas_limit, disable_fee_charge, monad_context, console_logs }
     }
 }
 
@@ -3897,7 +3913,8 @@ impl<N: Network> Backend<N> {
         block_env: BlockEnv,
         options: GasEstimateCallOptions,
     ) -> Result<(InstructionResult, Option<Output>, u128, StateChangeset), BlockchainError> {
-        let GasEstimateCallOptions { gas_limit, disable_fee_charge, monad_context } = options;
+        let GasEstimateCallOptions { gas_limit, disable_fee_charge, monad_context, console_logs } =
+            options;
         self.call_with_state_typed_inner(
             state,
             request,
@@ -3906,6 +3923,7 @@ impl<N: Network> Backend<N> {
             TypedCallOverrides {
                 gas_limit: Some(gas_limit),
                 disable_fee_charge,
+                console_logs,
                 ..Default::default()
             },
             monad_context,
@@ -3968,7 +3986,14 @@ impl<N: Network> Backend<N> {
             monad_context.as_mut().map(next_monad_context),
         )?;
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
-        inspector.print_logs();
+        let print_logs = match overrides.console_logs {
+            ConsoleLogs::Always => true,
+            ConsoleLogs::OnFailure => !exit_reason.is_ok(),
+            ConsoleLogs::Never => false,
+        };
+        if print_logs {
+            inspector.print_logs();
+        }
         Ok((exit_reason, out, gas_used as u128, state))
     }
 
