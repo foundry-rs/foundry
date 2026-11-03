@@ -2617,8 +2617,7 @@ async fn legacy_transaction_signed_for_another_chain_is_rejected() {
     };
     let typed_signature = sender.sign_transaction_sync(&mut typed).unwrap();
     let typed = typed.into_signed(typed_signature);
-    let mut typed_encoded = Vec::new();
-    typed.encode_2718(&mut typed_encoded);
+    let typed_encoded = typed.encoded_2718();
     let typed_error = provider.send_raw_transaction(&typed_encoded).await.unwrap_err().to_string();
     assert!(
         typed_error.contains("invalid chain id"),
@@ -2636,8 +2635,7 @@ async fn legacy_transaction_signed_for_another_chain_is_rejected() {
     };
     let signature = sender.sign_transaction_sync(&mut tx).unwrap();
     let signed = tx.into_signed(signature);
-    let mut encoded = Vec::new();
-    signed.encode_2718(&mut encoded);
+    let encoded = signed.encoded_2718();
 
     let error = provider.send_raw_transaction(&encoded).await.unwrap_err().to_string();
     assert!(

@@ -10306,12 +10306,12 @@ where
             if chain_id.to::<u64>() != tx_chain_id {
                 // EIP-155 binds a legacy signature to one chain once Spurious Dragon is active.
                 // <https://eips.ethereum.org/EIPS/eip-155>
-                let legacy = tx.as_ref().is_legacy();
-                if legacy && evm_env.cfg_env.spec >= SpecId::SPURIOUS_DRAGON {
-                    debug!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
-                    return Err(InvalidTransactionError::IncompatibleEIP155);
-                }
-                if !legacy {
+                if tx.as_ref().is_legacy() {
+                    if evm_env.cfg_env.spec >= SpecId::SPURIOUS_DRAGON {
+                        debug!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
+                        return Err(InvalidTransactionError::IncompatibleEIP155);
+                    }
+                } else {
                     debug!(target: "backend", ?chain_id, ?tx_chain_id, "invalid chain id");
                     return Err(InvalidTransactionError::InvalidChainId);
                 }
