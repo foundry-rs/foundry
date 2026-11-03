@@ -1706,8 +1706,10 @@ mod tests {
     fn optimized_selector_search_terminates_without_a_match() {
         // Four leading zero bytes will not show up in the last thousand nonces, and the search must
         // report that instead of wrapping the nonce around and starting over.
-        let err = find_optimized_selector("transfer", "address,uint256)", 4, u32::MAX - 1000)
-            .unwrap_err();
+        // Use two threads so one lane overflows instead of reaching u32::MAX exactly.
+        let err = rayon::ThreadPoolBuilder::new().num_threads(2).build().unwrap().install(|| {
+            find_optimized_selector("transfer", "address,uint256)", 4, u32::MAX - 1000).unwrap_err()
+        });
         assert_eq!(err.to_string(), "No selector found");
     }
 
