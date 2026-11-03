@@ -27,6 +27,9 @@ pub(crate) struct PathState {
     /// Predicate context follows child calls but is not committed back to handler state.
     pub(crate) invariant_predicate: bool,
     corpus_seed_models: Vec<Arc<SymbolicModel>>,
+    /// Subexpressions this path's constraints pin to one value, recorded where the executor
+    /// forked on them, so expressions built from them fold to constants without the solver.
+    pub(crate) pinned: Arc<HashMap<SymExpr, U256>>,
     branch_target: Option<SymbolicBranchTarget>,
     branch_target_reached: bool,
     needs_feasibility_check: bool,
@@ -109,6 +112,7 @@ impl PathState {
             root_calldata: None,
             invariant_predicate: false,
             corpus_seed_models: Vec::new(),
+            pinned: Arc::default(),
             branch_target: None,
             branch_target_reached: false,
             needs_feasibility_check: false,
@@ -279,7 +283,10 @@ impl PathState {
         if let Some(value) = expr.eval() {
             return Some(value);
         }
-        if let Some(value) = expr.known_word() {
+        if let Some(value) = expr.known_word_in(cx) {
+            return Some(value);
+        }
+        if let Some(value) = self.pinned_value(cx, expr) {
             return Some(value);
         }
 
@@ -295,6 +302,37 @@ impl PathState {
         }
 
         expr.eval_model(&model).ok()
+    }
+
+    /// Pins `expr` to `value`, which the path's constraints must imply, along with its part
+    /// beside an added constant: pinning `t + c` to `v` pins `t` to `v - c`, so `t + c'` folds too.
+    pub(crate) fn pin(&mut self, expr: &SymExpr, value: U256) {
+        let pinned = Arc::make_mut(&mut self.pinned);
+        pinned.insert(expr.clone(), value);
+        if let Some((core, constant)) = expr.split_added_constant() {
+            pinned.insert(core, value.wrapping_sub(constant));
+        }
+    }
+
+    /// Returns the value of `expr` once its pinned subexpressions are replaced by their values.
+    fn pinned_value(&self, cx: &mut SymCx, expr: &SymExpr) -> Option<U256> {
+        if self.pinned.is_empty() {
+            return None;
+        }
+        if let Some(value) = self.pinned.get(expr) {
+            return Some(*value);
+        }
+        if let Some((core, constant)) = expr.split_added_constant()
+            && let Some(value) = self.pinned.get(&core)
+        {
+            return Some(value.wrapping_add(constant));
+        }
+        let pinned = Arc::clone(&self.pinned);
+        let folded = expr.fold(cx, &mut |cx, node| match pinned.get(&node) {
+            Some(value) => SymExpr::constant(cx, *value),
+            None => node,
+        });
+        folded.eval()
     }
 
     pub(crate) fn split_corpus_seed_models(
@@ -761,7 +799,7 @@ impl PathState {
         let shift = self.stack.pop()?;
         let value = self.stack.pop()?;
         let expr = SymExpr::binop(cx, op, value, shift);
-        let result = expr.known_word().map(|word| SymExpr::constant(cx, word)).unwrap_or(expr);
+        let result = expr.known_word_in(cx).map(|word| SymExpr::constant(cx, word)).unwrap_or(expr);
         self.stack.push(result)
     }
 

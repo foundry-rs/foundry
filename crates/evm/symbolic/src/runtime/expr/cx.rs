@@ -19,7 +19,13 @@ pub(crate) struct SymCx {
     /// Memoized solver forms of `word == 0` (`true`) and `word != 0` (`false`), `None` when the
     /// word has no special form.
     normalized_zero_tests: HashMap<(SymExpr, bool), Option<SymBoolExpr>>,
+    /// Memoized bytes each word is known to hold whatever its symbols are, a pure function of
+    /// the word.
+    known_bytes: HashMap<SymExpr, KnownBytes>,
 }
+
+/// The byte at each of a word's 32 positions, when it is known.
+pub(in crate::runtime) type KnownBytes = [Option<u8>; 32];
 
 /// Most memoized normalizations kept per kind before the memo starts over.
 const MAX_NORMALIZATION_MEMO: usize = 1 << 20;
@@ -56,7 +62,19 @@ impl SymCx {
             normalized_words: HashMap::default(),
             normalized_bools: HashMap::default(),
             normalized_zero_tests: HashMap::default(),
+            known_bytes: HashMap::default(),
         }
+    }
+
+    pub(in crate::runtime) fn cached_known_bytes(&self, expr: &SymExpr) -> Option<KnownBytes> {
+        self.known_bytes.get(expr).copied()
+    }
+
+    pub(in crate::runtime) fn memoize_known_bytes(&mut self, expr: SymExpr, bytes: KnownBytes) {
+        if self.known_bytes.len() >= MAX_NORMALIZATION_MEMO {
+            self.known_bytes.clear();
+        }
+        self.known_bytes.insert(expr, bytes);
     }
 
     pub(in crate::runtime) fn mk_expr_kind(&mut self, expr: SymExprKind) -> SymExpr {

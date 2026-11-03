@@ -20,6 +20,7 @@ impl SymbolicExecutor {
             nested_deferred_mode: DeferredPathMode::Skip,
             stateless_retry_safe: true,
             equivalence: None,
+            unenumerable_offsets: HashSet::default(),
         }
     }
 
@@ -40,6 +41,7 @@ impl SymbolicExecutor {
     }
 
     pub(super) fn reset_run_state(&mut self, use_wall_clock_deadline: bool) {
+        self.unenumerable_offsets.clear();
         self.deferred_incomplete = None;
         self.nested_deferred_mode = DeferredPathMode::Skip;
         self.stateless_retry_safe = true;

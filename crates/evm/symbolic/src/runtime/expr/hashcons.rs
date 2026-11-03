@@ -19,6 +19,8 @@ struct HashConsedInner<T> {
     hash: u64,
     /// Summary bits of the whole subtree, computed once from the children's bits.
     flags: u8,
+    /// Upper bound on the value's unsigned bit width, computed once from the children's.
+    bits: u16,
     value: T,
 }
 
@@ -28,6 +30,11 @@ pub(in crate::runtime) trait NodeFlags {
     /// Returns this node's bits, including those of every child.
     fn flags(&self) -> u8 {
         0
+    }
+
+    /// Returns an upper bound on this node's unsigned bit width, from its children's.
+    fn bits(&self) -> u16 {
+        256
     }
 }
 
@@ -58,6 +65,11 @@ impl<T> HashConsed<T> {
     #[inline]
     pub(in crate::runtime) fn flags(&self) -> u8 {
         self.inner.flags
+    }
+
+    #[inline]
+    pub(in crate::runtime) fn bits(&self) -> u16 {
+        self.inner.bits
     }
 }
 
@@ -183,7 +195,8 @@ impl<T: Eq + Hash + NodeFlags> HashCons<T> {
                 }
                 Entry::Vacant(entry) => {
                     let flags = value.flags();
-                    let inner = Arc::new(HashConsedInner { hash, flags, value });
+                    let bits = value.bits();
+                    let inner = Arc::new(HashConsedInner { hash, flags, bits, value });
                     entry.insert(HashConsEntry { hash, value: Arc::downgrade(&inner) });
                     return HashConsed { inner };
                 }

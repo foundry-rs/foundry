@@ -291,6 +291,130 @@ impl SymbolicExecutor {
         Ok(true)
     }
 
+    /// In an equivalence check, forks a memory access whose offset is symbolic but provably takes
+    /// few values into one path per value, with the offset concrete, like hevm's branching on
+    /// symbolic values up to `--max-width`. A loop over a computed length, such as a hex string's,
+    /// otherwise writes at symbolic offsets on every iteration, and every later read becomes a
+    /// choice over all those writes.
+    fn concretize_small_memory_offset(
+        &mut self,
+        state: &mut PathState,
+        worklist: &mut VecDeque<PathState>,
+        offset: &SymExpr,
+    ) -> Result<Option<StepOutcome>, SymbolicError> {
+        if self.equivalence.is_none()
+            || offset.as_const().is_some()
+            || state.constrained_usize_checked(&mut self.cx, offset).is_some()
+        {
+            return Ok(None);
+        }
+        let low = state.lower_bound_usize(offset);
+        let values = match state.upper_bound_usize(&mut self.cx, offset) {
+            Some(high) if high >= low && high - low < MAX_CONCRETIZED_MEMORY_OFFSETS => {
+                (low..=high).map(U256::from).collect::<Vec<_>>()
+            }
+            _ => match self.enumerate_offset_values(state, offset)? {
+                Some(values) => values,
+                None => return Ok(None),
+            },
+        };
+        trace!(values = values.len(), "concretizing symbolic memory offset");
+        if let [value] = values.as_slice() {
+            let value = *value;
+            state.stack.pop()?;
+            state.stack.push(SymExpr::constant(&mut self.cx, value))?;
+            let at = SymBoolExpr::eq_word_const(&mut self.cx, offset, value);
+            state.constraints.push(at);
+            state.pin(offset, value);
+            return Ok(None);
+        }
+        // The values cover every feasible one, so the forks partition the path.
+        for value in values {
+            let mut fork = state.clone();
+            fork.pc = fork.pc.saturating_sub(1);
+            fork.depth = fork.depth.saturating_sub(1);
+            fork.stack.pop()?;
+            fork.stack.push(SymExpr::constant(&mut self.cx, value))?;
+            let at = SymBoolExpr::eq_word_const(&mut self.cx, offset, value);
+            fork.constraints.push(at);
+            fork.pin(offset, value);
+            fork.defer_feasibility_check();
+            worklist.push_back(fork);
+        }
+        Ok(Some(StepOutcome::Forked))
+    }
+
+    /// Lists every value `offset` may take on this path with the solver, or returns `None` when
+    /// there are more than [`MAX_ENUMERATED_MEMORY_OFFSETS`]. Offsets that had too many are
+    /// remembered so later accesses do not ask again.
+    fn enumerate_offset_values(
+        &mut self,
+        state: &PathState,
+        offset: &SymExpr,
+    ) -> Result<Option<Vec<U256>>, SymbolicError> {
+        if self.unenumerable_offsets.contains(offset) {
+            return Ok(None);
+        }
+        // Only an offset whose varying part is narrow, such as a length computed from a value's
+        // magnitude, can take few values; skip the solver for the rest, such as calldata words.
+        let core = offset.split_added_constant().map_or_else(|| offset.clone(), |(core, _)| core);
+        if core.unsigned_bits() > MAX_ENUMERATED_OFFSET_BITS {
+            self.unenumerable_offsets.insert(offset.clone());
+            return Ok(None);
+        }
+        let replayable = state.world.replay_storage_symbols();
+        // One query rules out a varying part that ranges widely.
+        let low = state.lower_bound_usize(&core);
+        let mut too_wide = state.constraints.clone();
+        too_wide.push(SymBoolExpr::cmp_word_const(
+            &mut self.cx,
+            SymCmpOp::Uge,
+            &core,
+            U256::from(low.saturating_add(MAX_ENUMERATED_MEMORY_OFFSETS)),
+        ));
+        match self.solver.is_sat_with_replayable_storage(&mut self.cx, &too_wide, &replayable) {
+            Ok(false) => {}
+            Ok(true) | Err(SymbolicError::SolverUnknown) => {
+                self.unenumerable_offsets.insert(offset.clone());
+                return Ok(None);
+            }
+            Err(err) => return Err(err),
+        }
+        let mut constraints = state.constraints.clone();
+        let mut values = Vec::new();
+        loop {
+            self.check_timeout()?;
+            match self.solver.is_sat_with_replayable_storage(
+                &mut self.cx,
+                &constraints,
+                &replayable,
+            ) {
+                Ok(false) => return Ok(Some(values)),
+                Ok(true) => {}
+                Err(SymbolicError::SolverUnknown) => break,
+                Err(err) => return Err(err),
+            }
+            if values.len() >= MAX_ENUMERATED_MEMORY_OFFSETS {
+                break;
+            }
+            let model = match self.solver.model_with_replayable_storage(
+                &mut self.cx,
+                &constraints,
+                &replayable,
+            ) {
+                Ok(model) => model,
+                Err(SymbolicError::SolverUnknown) => break,
+                Err(err) => return Err(err),
+            };
+            let Ok(value) = offset.eval_model(&model) else { break };
+            values.push(value);
+            let other = SymBoolExpr::eq_word_const(&mut self.cx, offset, value).not(&mut self.cx);
+            constraints.push(other);
+        }
+        self.unenumerable_offsets.insert(offset.clone());
+        Ok(None)
+    }
+
     fn guard_fixed_memory_access(
         &mut self,
         executor: &ExecutorView<'_>,
@@ -960,6 +1084,11 @@ impl SymbolicExecutor {
             opcode::MLOAD => {
                 let offset = state.stack.peek(0)?.clone();
                 if let Some(outcome) =
+                    self.concretize_small_memory_offset(state, worklist, &offset)?
+                {
+                    return Ok(outcome);
+                }
+                if let Some(outcome) =
                     self.guard_fixed_memory_access(executor, state, worklist, &offset, 32)?
                 {
                     return Ok(outcome);
@@ -970,6 +1099,11 @@ impl SymbolicExecutor {
             }
             opcode::MSTORE => {
                 let offset = state.stack.peek(0)?.clone();
+                if let Some(outcome) =
+                    self.concretize_small_memory_offset(state, worklist, &offset)?
+                {
+                    return Ok(outcome);
+                }
                 if let Some(outcome) =
                     self.guard_fixed_memory_access(executor, state, worklist, &offset, 32)?
                 {
@@ -982,6 +1116,11 @@ impl SymbolicExecutor {
             }
             opcode::MSTORE8 => {
                 let offset = state.stack.peek(0)?.clone();
+                if let Some(outcome) =
+                    self.concretize_small_memory_offset(state, worklist, &offset)?
+                {
+                    return Ok(outcome);
+                }
                 if let Some(outcome) =
                     self.guard_fixed_memory_access(executor, state, worklist, &offset, 1)?
                 {
@@ -1154,7 +1293,13 @@ impl SymbolicExecutor {
             opcode::JUMPI => {
                 let dest = state.stack.pop()?;
                 let cond = state.stack.pop()?;
-                match cond.as_const().map(|value| !value.is_zero()) {
+                // A condition decided by values the path pinned needs no branch.
+                let decided = cond.as_const().or_else(|| {
+                    (!state.pinned.is_empty())
+                        .then(|| state.constrained_expr_value(&mut self.cx, &cond))
+                        .flatten()
+                });
+                match decided.map(|value| !value.is_zero()) {
                     Some(true) => {
                         let Some(dest) = self.resolve_jump_destination(
                             state,
@@ -1677,6 +1822,15 @@ impl SymbolicExecutor {
         Ok(StepOutcome::Revert)
     }
 }
+
+/// Most values a symbolic memory offset may take for an equivalence check to fork on each.
+const MAX_CONCRETIZED_MEMORY_OFFSETS: usize = 128;
+
+/// Widest varying part, in bits, of a symbolic memory offset whose values the solver lists.
+const MAX_ENUMERATED_OFFSET_BITS: usize = 8;
+
+/// Most values the solver lists for a symbolic memory offset whose bounds are unknown.
+const MAX_ENUMERATED_MEMORY_OFFSETS: usize = 80;
 
 /// Returns the activation fork for opcodes implemented by the symbolic executor.
 const fn opcode_activation(op: u8) -> SpecId {

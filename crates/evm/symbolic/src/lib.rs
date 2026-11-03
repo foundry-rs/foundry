@@ -526,6 +526,8 @@ pub struct SymbolicExecutor {
     stateless_retry_safe: bool,
     /// Set while an equivalence check runs.
     equivalence: Option<EquivalenceMode>,
+    /// Symbolic memory offsets that take too many values to fork on, per run.
+    unenumerable_offsets: HashSet<runtime::SymExpr>,
 }
 
 /// Settings of a running equivalence check.

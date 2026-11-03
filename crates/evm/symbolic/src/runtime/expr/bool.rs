@@ -108,6 +108,31 @@ impl SymBoolExpr {
             };
         }
 
+        // An unsigned comparison against a constant that the other side's bit width decides,
+        // such as Solidity's bounds check `(x & 0xf) < 16`.
+        if matches!(op, SymCmpOp::Ult | SymCmpOp::Ugt | SymCmpOp::Ule | SymCmpOp::Uge) {
+            let decided = match (left.as_const(), right.as_const()) {
+                (None, Some(constant)) => unsigned_max(&left).map(|max| match op {
+                    SymCmpOp::Ult if max < constant => Some(true),
+                    SymCmpOp::Ule if max <= constant => Some(true),
+                    SymCmpOp::Ugt if max <= constant => Some(false),
+                    SymCmpOp::Uge if max < constant => Some(false),
+                    _ => None,
+                }),
+                (Some(constant), None) => unsigned_max(&right).map(|max| match op {
+                    SymCmpOp::Ugt if max < constant => Some(true),
+                    SymCmpOp::Uge if max <= constant => Some(true),
+                    SymCmpOp::Ult if max <= constant => Some(false),
+                    SymCmpOp::Ule if max < constant => Some(false),
+                    _ => None,
+                }),
+                _ => None,
+            };
+            if let Some(Some(value)) = decided {
+                return Self::constant(cx, value);
+            }
+        }
+
         match op {
             SymCmpOp::Eq => {
                 if let Some(condition) = Self::ite_eq_arm(cx, &left, &right)
@@ -126,7 +151,7 @@ impl SymBoolExpr {
                         if let Some(condition) = Self::bool_word_eq_const(cx, &left, *right_value) {
                             return condition;
                         }
-                        if let Some(left_value) = left.known_word() {
+                        if let Some(left_value) = left.known_word_in(cx) {
                             // `known(a) == const => const`.
                             return Self::constant(cx, left_value == *right_value);
                         }
@@ -138,7 +163,7 @@ impl SymBoolExpr {
                         if let Some(condition) = Self::bool_word_eq_const(cx, &right, *left_value) {
                             return condition;
                         }
-                        if let Some(right_value) = right.known_word() {
+                        if let Some(right_value) = right.known_word_in(cx) {
                             // `const == known(a) => const`.
                             return Self::constant(cx, *left_value == right_value);
                         }
@@ -937,4 +962,10 @@ pub(crate) fn visit_unique<'a, B>(
         }
     }
     ControlFlow::Continue(())
+}
+
+/// Returns the largest value `expr` can take by its bit width, when that is below `2^256 - 1`.
+fn unsigned_max(expr: &SymExpr) -> Option<U256> {
+    let bits = expr.unsigned_bits();
+    (bits < 256).then(|| (U256::ONE << bits) - U256::ONE)
 }

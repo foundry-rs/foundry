@@ -624,6 +624,11 @@ The model matches hevm's:
   as exceptional halts, and `PUSH` data past the end of code reads as zero.
 - `keccak256` of a region whose size may exceed the modeled bound is a symbol
   named by the whole memory, the offset and the size.
+- A memory access whose offset is symbolic but takes at most a few dozen values,
+  such as a byte written at a length computed from a number's magnitude, forks
+  into one path per value, like hevm's branching up to `--max-width`; each path
+  pins the offset, so later offsets that differ from it by a constant, and
+  branches they decide, need no solver.
 
 Gas is not priced, so balances only move by value transfers and
 self-destructs, and code that spends more gas to do the same thing is

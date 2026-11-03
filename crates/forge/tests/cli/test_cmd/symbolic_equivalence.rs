@@ -526,3 +526,27 @@ contract Shifted {
     assert_eq!(json["status"], "not_equivalent");
     assert_eq!(json["replayed"], true);
 }
+
+#[forgetest]
+fn equivalence_forks_on_narrow_memory_offsets(cmd: _) {
+    skip_unless_z3!("equivalence_forks_on_narrow_memory_offsets");
+    // mstore8(0x80 + (calldataload(0) & 7), 1) and the same byte placed by a shifted mstore; the
+    // offset takes eight values, so the check forks on each instead of reasoning symbolically.
+    let byte_store = "0x600160075f35166080015360086080f3";
+    let shifted_store = "0x6001600860075f35160260f8031b60805260086080f3";
+    cmd.args(["equivalence", "--code-a", byte_store, "--code-b", shifted_store]).assert_success();
+    // Shifting by one byte too few places it one position later.
+    let out = cmd
+        .forge_fuse()
+        .args([
+            "equivalence",
+            "--code-a",
+            byte_store,
+            "--code-b",
+            "0x6001600860075f35160260f0031b60805260086080f3",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(out.contains("code-a: returned 0x0100000000000000"), "{out}");
+}
