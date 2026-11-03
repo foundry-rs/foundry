@@ -7,9 +7,10 @@
 
 Reports inline assembly that points a storage pointer at a slot other than the root of the
 ERC-7201 namespace declared by the pointer's struct, as in `$.slot := SLOT` where the struct is
-annotated with `@custom:storage-location erc7201:<id>`. Only slots that are compile-time constants
-are checked: literals, and constants whose value can be computed, including the usual
-`keccak256(abi.encode(uint256(keccak256("<id>")) - 1)) & ~bytes32(uint256(0xff))` expression.
+annotated with `@custom:storage-location erc7201:<id>`. Numeric literal slots and references to Solidity
+constants are checked. Slots assigned through Solidity locals, Yul locals, or Yul expressions
+are not checked, including computed namespace roots passed through a local variable. Yul string
+literals are also not checked.
 
 ## Why is this bad?
 
@@ -46,6 +47,19 @@ Use the root of the annotated namespace. If the contract is already deployed wit
 update the annotation to match the slot in use instead of moving the storage.
 
 ```solidity
-bytes32 private constant ERC20_STORAGE =
-    0x52c63247e1f47db19d5ce0460030c497f067ca4cebf71ba98eeadabe20bace00;
+contract Token {
+    /// @custom:storage-location erc7201:openzeppelin.storage.ERC20
+    struct ERC20Storage {
+        mapping(address => uint256) balances;
+    }
+
+    bytes32 private constant ERC20_STORAGE =
+        0x52c63247e1f47db19d5ce0460030c497f067ca4cebf71ba98eeadabe20bace00;
+
+    function _getERC20Storage() private pure returns (ERC20Storage storage $) {
+        assembly {
+            $.slot := ERC20_STORAGE
+        }
+    }
+}
 ```

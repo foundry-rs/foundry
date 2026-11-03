@@ -38,7 +38,7 @@ contract WrongConstant {
     }
 }
 
-contract ComputedConstant {
+contract SharedConstant {
     /// @custom:storage-location erc7201:example.main
     struct MainStorage {
         uint256 value;
@@ -50,11 +50,7 @@ contract ComputedConstant {
     }
 
     bytes32 private constant MAIN_STORAGE =
-        keccak256(abi.encode(uint256(keccak256("example.main")) - 1)) & ~bytes32(uint256(0xff));
-
-    // The namespace string differs from the annotation.
-    bytes32 private constant OTHER_STORAGE =
-        keccak256(abi.encode(uint256(keccak256("example.others")) - 1)) & ~bytes32(uint256(0xff));
+        0x183a6125c38840424c4a85fa12bab2ab606c4b6d0e7cc73c0c06ba5300eab500;
 
     function _main() private pure returns (MainStorage storage $) {
         assembly {
@@ -64,7 +60,24 @@ contract ComputedConstant {
 
     function _other() private pure returns (OtherStorage storage $) {
         assembly {
-            $.slot := OTHER_STORAGE //~WARN: storage slot does not match the struct's ERC-7201 namespace
+            // The suggestion must not change MAIN_STORAGE, which is correct for _main.
+            $.slot := MAIN_STORAGE //~WARN: storage slot does not match the struct's ERC-7201 namespace
+        }
+    }
+}
+
+contract NarrowConstant {
+    /// @custom:storage-location erc7201:openzeppelin.storage.ERC20
+    struct ERC20Storage {
+        uint256 value;
+    }
+
+    bytes4 private constant STORAGE = 0x52c63247;
+
+    function get() private pure returns (ERC20Storage storage $) {
+        assembly {
+            // The suggestion must not put a 32-byte root into a bytes4 initializer.
+            $.slot := STORAGE //~WARN: storage slot does not match the struct's ERC-7201 namespace
         }
     }
 }
@@ -92,7 +105,11 @@ contract NotChecked {
         uint256 value;
     }
 
-    bytes32 private constant SOME_SLOT = bytes32(uint256(1));
+    bytes32 private constant SOME_SLOT =
+        0x0000000000000000000000000000000000000000000000000000000000000001;
+
+    bytes32 private constant COMPUTED_SLOT =
+        keccak256(abi.encode(uint256(keccak256("example.wrong")) - 1)) & ~bytes32(uint256(0xff));
 
     // Slots that are not compile-time constants are not checked.
     function _computed(bytes32 slot) private pure returns (MainStorage storage $) {
@@ -105,6 +122,24 @@ contract NotChecked {
     function _plain() private pure returns (Plain storage $) {
         assembly {
             $.slot := SOME_SLOT
+        }
+    }
+
+    // Computed Solidity locals are not checked, even with a constant initializer.
+    function _local() private pure returns (MainStorage storage $) {
+        bytes32 slot = COMPUTED_SLOT;
+        assembly {
+            $.slot := slot
+        }
+    }
+
+    // Yul locals, expressions, and string literals are not checked.
+    function _yul() private pure returns (MainStorage storage $) {
+        assembly {
+            let slot := SOME_SLOT
+            $.slot := slot
+            $.slot := add(SOME_SLOT, 1)
+            $.slot := "wrong"
         }
     }
 }

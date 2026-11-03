@@ -31,22 +31,14 @@ impl<'gcx> LateLintPass<'gcx> for IncorrectStorageNamespaceSlot {
             && let Some(slot) = gcx.const_eval().eval_expr(value).ok().and_then(|v| v.as_word())
         {
             let expected = erc7201(namespace);
-            if slot == U256::from_be_bytes(expected.0) {
+            if slot == Into::<U256>::into(expected) {
                 return;
             }
-            // Fix the constant's definition rather than its use.
-            let fix_span = match value.kind {
-                hir::ExprKind::Ident([hir::Res::Item(hir::ItemId::Variable(constant))]) => {
-                    gcx.hir.variable(*constant).initializer.map_or(value.span, |init| init.span)
-                }
-                _ => value.span,
-            };
             ctx.emit_with_suggestion(
                 &INCORRECT_STORAGE_NAMESPACE_SLOT,
                 value.span,
                 Suggestion::fix(expected.to_string(), Applicability::MaybeIncorrect)
-                    .with_desc("the ERC-7201 slot of the annotated namespace is")
-                    .with_span(fix_span),
+                    .with_desc("consider using the annotated namespace's ERC-7201 root"),
             );
         }
     }
