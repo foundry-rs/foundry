@@ -10404,9 +10404,10 @@ where
         if let Some(tx_chain_id) = tx.chain_id() {
             let chain_id = self.chain_id();
             if chain_id.to::<u64>() != tx_chain_id {
-                if let FoundryTxEnvelope::Legacy(tx) = tx.as_ref() {
-                    // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
-                    if evm_env.cfg_env.spec >= SpecId::SPURIOUS_DRAGON && tx.chain_id().is_none() {
+                // EIP-155 binds a legacy signature to one chain once Spurious Dragon is active.
+                // <https://eips.ethereum.org/EIPS/eip-155>
+                if tx.as_ref().is_legacy() {
+                    if evm_env.cfg_env.spec >= SpecId::SPURIOUS_DRAGON {
                         debug!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
                         return Err(InvalidTransactionError::IncompatibleEIP155);
                     }
