@@ -417,6 +417,7 @@ pub fn print_console_logs(logs: &[String]) {
     if logs.is_empty() {
         return;
     }
+    let _guard = crate::logging::NODE_LOG_LOCK.lock();
     tracing::info!(target: crate::logging::EVM_CONSOLE_LOG_TARGET, "    console.log:");
     for log in logs {
         tracing::info!(target: crate::logging::EVM_CONSOLE_LOG_TARGET, "        {log}");

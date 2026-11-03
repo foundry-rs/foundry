@@ -5923,6 +5923,9 @@ mod tests {
     use super::*;
     use crate::{NodeConfig, spawn};
     use foundry_evm::constants::HARDHAT_CONSOLE_ADDRESS;
+    use std::{fmt, sync::mpsc as std_mpsc};
+    use tracing::{Event, Subscriber, field::Field};
+    use tracing_subscriber::{Layer, layer::Context, prelude::*};
 
     #[cfg(feature = "base")]
     #[tokio::test(flavor = "multi_thread")]
@@ -5991,10 +5994,11 @@ mod tests {
     const STOP: &[u8] = &[0x00];
     const REVERT: &[u8] = &[0x60, 0x00, 0x80, 0xfd];
 
-    /// Code that calls `console.log(uint256)` with 1, then runs `end`.
-    fn console_log_code(end: &[u8]) -> Bytes {
-        let mut code =
-            alloy_primitives::hex!("63f82c50f160e01b60005260016004526000600060246000").to_vec();
+    /// Code that calls `console.log(uint256)` with `value`, then runs `end`.
+    fn console_log_code(value: u8, end: &[u8]) -> Bytes {
+        let mut code = alloy_primitives::hex!("63f82c50f160e01b60005260").to_vec();
+        code.push(value);
+        code.extend_from_slice(&alloy_primitives::hex!("6004526000600060246000"));
         code.push(0x73);
         code.extend_from_slice(HARDHAT_CONSOLE_ADDRESS.as_slice());
         code.extend_from_slice(&[0x5a, 0xfa, 0x50]);
@@ -6006,12 +6010,12 @@ mod tests {
     // search. Console logs are printed only when the estimation fails, and then once.
     #[tokio::test]
     async fn estimate_gas_prints_console_logs_only_on_failure() {
-        let (api, handle) = spawn(NodeConfig::test()).await;
+        let (api, handle) = spawn(NodeConfig::test().with_tracing(false)).await;
         let from = handle.dev_accounts().next().unwrap();
         let succeeds = Address::repeat_byte(0x42);
         let reverts = Address::repeat_byte(0x43);
-        api.anvil_set_code(succeeds, console_log_code(STOP)).await.unwrap();
-        api.anvil_set_code(reverts, console_log_code(REVERT)).await.unwrap();
+        api.anvil_set_code(succeeds, console_log_code(1, STOP)).await.unwrap();
+        api.anvil_set_code(reverts, console_log_code(1, REVERT)).await.unwrap();
 
         for (to, expected) in [
             (succeeds, ""),
@@ -6042,16 +6046,26 @@ mod tests {
         }
     }
 
-    // A mined transaction prints its console logs once, with the other details of the
-    // transaction. Executing it for the pending block does not print them.
+    // Pending execution is silent. Each mined transaction, including a revert, prints only its
+    // own logs, then releases them rather than retaining them in the stored transaction.
     #[tokio::test]
     async fn mined_transaction_prints_console_logs_with_its_details() {
-        let (api, handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+        let (api, handle) =
+            spawn(NodeConfig::test().with_tracing(false).with_no_mining(true)).await;
         let from = handle.dev_accounts().next().unwrap();
-        let contract = Address::repeat_byte(0x42);
-        api.anvil_set_code(contract, console_log_code(STOP)).await.unwrap();
-        let request = TransactionRequest::default().from(from).to(contract).gas_limit(100_000);
-        api.send_transaction(WithOtherFields::new(request)).await.unwrap();
+        let succeeds = Address::repeat_byte(0x42);
+        let reverts = Address::repeat_byte(0x43);
+        api.anvil_set_code(succeeds, console_log_code(11, STOP)).await.unwrap();
+        api.anvil_set_code(reverts, console_log_code(22, REVERT)).await.unwrap();
+        let mut hashes = Vec::new();
+        for (nonce, to) in [succeeds, reverts].into_iter().enumerate() {
+            let request = TransactionRequest::default()
+                .from(from)
+                .to(to)
+                .nonce(nonce as u64)
+                .gas_limit(100_000);
+            hashes.push(api.send_transaction(WithOtherFields::new(request)).await.unwrap());
+        }
 
         let file = tempfile::NamedTempFile::new().unwrap();
         let subscriber = tracing_subscriber::fmt()
@@ -6064,16 +6078,29 @@ mod tests {
             .finish();
         let _subscriber = tracing::subscriber::set_default(subscriber);
         api.pending_block().await.unwrap();
+        api.pending_block().await.unwrap();
         api.mine_one().await.unwrap();
 
+        for hash in &hashes {
+            assert!(api.backend.mined_transaction(*hash).unwrap().info.console_logs.is_empty());
+        }
         foundry_test_utils::assert_data_eq!(
-            std::fs::read_to_string(file.path()).unwrap(),
+            std::fs::read_to_string(file.path())
+                .unwrap()
+                .replace(&hashes[0].to_string(), "[SUCCEEDS]")
+                .replace(&hashes[1].to_string(), "[REVERTS]"),
             foundry_test_utils::str![[r#"
 
-    Transaction: [..]
+    Transaction: [SUCCEEDS]
     Gas used: [..]
     console.log:
-        1
+        11
+
+    Transaction: [REVERTS]
+    Gas used: [..]
+    Error: reverted with: EvmError: Revert
+    console.log:
+        22
 
     Block Number: 1
     Block Hash: [..]
@@ -6171,5 +6198,110 @@ mod tests {
         assert_eq!(response.blob_gas_used_ratio.len(), 6);
         assert_eq!(response.base_fee_per_blob_gas.len(), 6);
         assert_eq!(rewards.len(), 6);
+    }
+
+    #[tokio::test]
+    async fn mined_console_logs_do_not_interleave_with_calls() {
+        let (api, handle) =
+            spawn(NodeConfig::test().with_tracing(false).with_no_mining(true)).await;
+        let from = handle.dev_accounts().next().unwrap();
+        let mined = Address::repeat_byte(0x42);
+        let called = Address::repeat_byte(0x43);
+        api.anvil_set_code(mined, console_log_code(11, STOP)).await.unwrap();
+        api.anvil_set_code(called, console_log_code(37, STOP)).await.unwrap();
+        let request = TransactionRequest::default().from(from).to(mined).gas_limit(100_000);
+        let hash = api.send_transaction(WithOtherFields::new(request)).await.unwrap();
+
+        let (start, started) = std_mpsc::sync_channel(1);
+        let (in_database, database_entered) = std_mpsc::sync_channel(1);
+        let (finished, call_finished) = std_mpsc::sync_channel(1);
+        let pause = PauseTransactionSummary(Mutex::new(Some(Box::new(move || {
+            start.send(()).unwrap();
+            // A call can acquire the database while summary output is paused. It must not print
+            // until the summary is complete. The timeout bounds the deliberately blocked call.
+            database_entered.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_eq!(
+                call_finished.recv_timeout(Duration::from_millis(250)),
+                Err(std_mpsc::RecvTimeoutError::Timeout)
+            );
+        }))));
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let subscriber = tracing::Dispatch::new(
+            tracing_subscriber::registry()
+                .with(tracing_subscriber::EnvFilter::new("off,node::user=info,node::console=info"))
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        .without_time()
+                        .with_ansi(false)
+                        .with_target(false)
+                        .with_level(false)
+                        .with_writer(Arc::new(file.reopen().unwrap())),
+                )
+                .with(pause),
+        );
+        let call_subscriber = subscriber.clone();
+        let backend = api.backend.clone();
+        let caller = std::thread::spawn(move || {
+            let _subscriber = tracing::dispatcher::set_default(&call_subscriber);
+            started.recv_timeout(Duration::from_secs(5)).unwrap();
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(backend.with_database_at_and_context(None, |state, block, context| {
+                    in_database.send(()).unwrap();
+                    let (exit, _, _, _) = backend.call_with_state_and_context(
+                        &state,
+                        WithOtherFields::new(TransactionRequest::default().from(from).to(called)),
+                        FeeDetails::zero(),
+                        block,
+                        context,
+                    )?;
+                    assert!(exit.is_ok());
+                    Ok(())
+                }))
+                .unwrap();
+            // The receiver is dropped when the paused summary resumes.
+            let _ = finished.send(());
+        });
+        let _subscriber = tracing::dispatcher::set_default(&subscriber);
+        api.mine_one().await.unwrap();
+        caller.join().unwrap();
+
+        foundry_test_utils::assert_data_eq!(
+            std::fs::read_to_string(file.path()).unwrap().replace(&hash.to_string(), "[MINED]"),
+            foundry_test_utils::str![[r#"
+
+    Transaction: [MINED]
+    Gas used: [..]
+    console.log:
+        11
+
+    Block Number: 1
+    Block Hash: [..]
+    Block Time: [..]
+
+    console.log:
+        37
+
+"#]]
+        );
+    }
+
+    /// Pauses once after the first transaction header reaches the output subscriber.
+    struct PauseTransactionSummary(Mutex<Option<Box<dyn FnOnce() + Send>>>);
+
+    impl<S: Subscriber> Layer<S> for PauseTransactionSummary {
+        fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+            let mut transaction = false;
+            event.record(&mut |field: &Field, value: &dyn fmt::Debug| {
+                if field.name() == "message" {
+                    transaction = format!("{value:?}").starts_with("    Transaction:");
+                }
+            });
+            if transaction && let Some(pause) = self.0.lock().take() {
+                pause();
+            }
+        }
     }
 }

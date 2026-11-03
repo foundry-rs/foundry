@@ -6729,7 +6729,7 @@ where
                 );
             }
 
-            // insert all transactions, keeping what to log until the locks are released
+            // Insert all transactions, keeping what to log until the locks are released.
             let mut summaries = Vec::with_capacity(transactions.len());
             for (mut info, receipt) in transactions.into_iter().zip(receipts) {
                 let error = (!info.exit.is_ok()).then(|| {
@@ -6775,6 +6775,9 @@ where
 
             let timestamp = utc_from_secs(header.timestamp);
 
+            // Keep calls and other node output out of this block's transaction summaries.
+            // Both database and storage locks have already been released.
+            let _log_guard = crate::logging::NODE_LOG_LOCK.lock();
             node_info!("");
             for summary in &summaries {
                 summary.log();

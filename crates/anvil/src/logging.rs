@@ -1,6 +1,6 @@
 //! User facing Logger
 
-use parking_lot::RwLock;
+use parking_lot::{ReentrantMutex, RwLock};
 use std::sync::Arc;
 use tracing::{Metadata, subscriber::Interest};
 use tracing_subscriber::{Layer, layer::Context};
@@ -10,6 +10,10 @@ pub(crate) const NODE_USER_LOG_TARGET: &str = "node::user";
 
 /// The target that identifies the events coming from the `console.log` invocations.
 pub(crate) const EVM_CONSOLE_LOG_TARGET: &str = "node::console";
+
+/// Serializes node output groups. Block summaries acquire this after releasing database and
+/// storage locks. Reentrant so they can contain individual node events and console groups.
+pub(crate) static NODE_LOG_LOCK: ReentrantMutex<()> = ReentrantMutex::new(());
 
 /// A logger that listens for node related events and displays them.
 ///
