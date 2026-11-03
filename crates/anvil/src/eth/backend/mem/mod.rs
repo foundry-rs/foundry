@@ -3361,8 +3361,12 @@ impl<N: Network> Backend<N> {
         let key_type = request.key_type.unwrap_or(SignatureType::Secp256k1);
         // A configurable account approves with an owner quorum whose verification gas, commitment
         // checks and first-use registration a primitive placeholder cannot model, so estimating
-        // with one would under-report gas.
-        if key_type == SignatureType::ConfigurableAccount {
+        // with one would under-report gas. A simulation witness implies such a quorum even when
+        // the request omits keyType.
+        if key_type == SignatureType::ConfigurableAccount
+            || request.configurable_account_simulation.is_some()
+            || request.key_authorization_simulation.is_some()
+        {
             return Err(BlockchainError::InvalidTransactionRequest(
                 "configurable account key type is not supported for simulation".to_string(),
             ));
