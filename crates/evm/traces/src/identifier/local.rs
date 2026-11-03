@@ -127,13 +127,11 @@ impl<'a> LocalTraceIdentifier<'a> {
                 .filter(|(_, contract)| matches_contract_creation(contract, creation_code))
                 .max_by_key(|(_, contract)| contract.bytecode().map(|bytecode| bytecode.len()))
         {
-            // A constructor can return another artifact's runtime verbatim. Keep that runtime's
-            // identity and ABI rather than replacing it with the creation artifact.
-            if let Some((id, contract)) = self.known_contracts.iter().find(|(_, contract)| {
-                contract
-                    .deployed_bytecode_without_placeholders()
-                    .is_some_and(|bytecode| bytecode.as_ref() == runtime_code)
-            }) {
+            // A constructor can return another artifact's runtime, including populated immutables
+            // and library references. Preserve its identity and ABI only if metadata also matches.
+            if let Some((id, contract)) =
+                self.known_contracts.find_by_deployed_code_exact_with_metadata(runtime_code)
+            {
                 return Some((id, &contract.abi, None));
             }
 
@@ -229,7 +227,7 @@ impl TraceIdentifier for LocalTraceIdentifier<'_> {
 mod tests {
     use super::*;
     use foundry_compilers::artifacts::{
-        BytecodeObject, CompactBytecode, CompactContractBytecode, CompactDeployedBytecode,
+        BytecodeObject, CompactBytecode, CompactContractBytecode, CompactDeployedBytecode, Offsets,
     };
     use revm_inspectors::tracing::types::{CallKind, CallTrace};
 
@@ -443,5 +441,62 @@ mod tests {
             };
             assert!(identifier.identify_addresses(&[&node]).is_empty());
         }
+    }
+
+    #[test]
+    fn creation_fallback_preserves_runtime_references() {
+        let creation = [0x60; 64];
+        let runtime = [0x5b; 64];
+        let mut compiled_runtime = runtime;
+        compiled_runtime[8..28].fill(0);
+        let runtime_abi = JsonAbi::parse(["function increment()"]).unwrap();
+
+        for immutable in [true, false] {
+            let (id, mut contract) =
+                artifact("Runtime", runtime_abi.clone(), &[0xff; 64], &compiled_runtime);
+            let deployed = contract.deployed_bytecode.as_mut().unwrap();
+            let offsets = vec![Offsets { start: 8, length: 20 }];
+            if immutable {
+                deployed.immutable_references.insert("value".to_owned(), offsets);
+            } else {
+                deployed
+                    .bytecode
+                    .as_mut()
+                    .unwrap()
+                    .link_references
+                    .insert("Library.sol".to_owned(), [("Library".to_owned(), offsets)].into());
+            }
+            let contracts = ContractsByArtifact::new([
+                (id, contract),
+                artifact("RuntimeDeployer", JsonAbi::default(), &creation, &[0]),
+            ]);
+            let identifier = LocalTraceIdentifier::new(&contracts);
+            let (id, abi, offset) = identifier.identify_code(&runtime, &creation).unwrap();
+            assert_eq!(id.name, "Runtime");
+            assert_eq!(abi, &runtime_abi);
+            assert_eq!(offset, None);
+
+            // A difference outside the declared references is not an exact runtime match.
+            let mut unrelated_runtime = runtime;
+            unrelated_runtime[40] = 0x5a;
+            let (id, _, _) = identifier.identify_code(&unrelated_runtime, &creation).unwrap();
+            assert_eq!(id.name, "RuntimeDeployer");
+        }
+    }
+
+    #[test]
+    fn creation_fallback_rejects_runtime_with_different_metadata() {
+        let creation = [0x60; 64];
+        let mut runtime = [0x5b; 64];
+        runtime[61..].copy_from_slice(&[0xa0, 0x00, 0x01]);
+        let mut compiled_runtime = runtime;
+        compiled_runtime[61] = 0xf6;
+        let contracts = ContractsByArtifact::new([
+            artifact("Runtime", JsonAbi::default(), &[0xff; 64], &compiled_runtime),
+            artifact("RuntimeDeployer", JsonAbi::default(), &creation, &[0]),
+        ]);
+        let identifier = LocalTraceIdentifier::new(&contracts);
+        let (id, _, _) = identifier.identify_code(&runtime, &creation).unwrap();
+        assert_eq!(id.name, "RuntimeDeployer");
     }
 }
