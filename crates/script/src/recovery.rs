@@ -999,7 +999,7 @@ where
             == Some(DRY_RUN_DIR.as_ref());
         if data.has_recovery_generation() && !dry_run && incomplete(&data) {
             bail!(
-                "the recovery snapshot `{}` of the previous broadcast `{}` is missing, so its unfinished operations may already have been sent; restore the snapshot and finish with `{}`, or pass `--start-fresh` after confirming that none of its transactions reached the chain",
+                "the recovery snapshot `{}` of the previous broadcast `{}` is missing, so forge cannot tell which of its unfinished operations were sent; restore the snapshot and finish with `{}`, or pass `--start-fresh` to archive it and broadcast anew after confirming that none of its transactions is still pending",
                 snapshot.display(),
                 paths.0.display(),
                 if multi { "--multi --resume" } else { "--resume" }
@@ -2151,7 +2151,7 @@ mod tests {
         assert_eq!(
             create().unwrap_err().to_string(),
             format!(
-                "the recovery snapshot `{}` of the previous broadcast `{}` is missing, so its unfinished operations may already have been sent; restore the snapshot and finish with `--resume`, or pass `--start-fresh` after confirming that none of its transactions reached the chain",
+                "the recovery snapshot `{}` of the previous broadcast `{}` is missing, so forge cannot tell which of its unfinished operations were sent; restore the snapshot and finish with `--resume`, or pass `--start-fresh` to archive it and broadcast anew after confirming that none of its transactions is still pending",
                 snapshot.display(),
                 paths.0.display()
             )
