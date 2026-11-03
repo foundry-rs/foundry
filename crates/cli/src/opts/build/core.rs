@@ -99,7 +99,7 @@ pub struct BuildOpts {
 
     /// Do not access the network.
     ///
-    /// Missing solc versions will not be installed.
+    /// Missing solc versions and Solar releases will not be installed.
     #[arg(help_heading = "Compiler options", long)]
     #[serde(skip)]
     pub offline: bool,

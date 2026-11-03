@@ -1915,23 +1915,23 @@ fn deny_warnings_allows_solar_experimental_codegen(prj: _, cmd: _) {
     cmd.args(["build"]).assert_success();
 }
 
-// A `solar:<version>` pin builds with the first `solar` on `PATH` that reports that version, and
+// A `solar:<version>` pin builds with the release installed in `~/.foundry/solar`, and
 // `forge config` reports the pin.
 #[cfg(unix)]
 #[forgetest]
-fn solar_pin_uses_matching_solar(prj: _, cmd: _) {
+fn solar_pin_uses_installed_release(prj: _, cmd: _) {
     prj.add_source("A.sol", "contract A {}");
-    let old = prj.root().join("old/solar");
-    let new = prj.root().join("new/solar");
-    write_fake_solar(&old, "0.8.37+commit.3a70399.solar.9.9.8");
-    write_fake_solar(&new, "0.8.38+commit.3a70399.solar.9.9.9");
-    let path = std::env::join_paths([old.parent().unwrap(), new.parent().unwrap()]).unwrap();
+    let home = prj.root().join("home");
+    write_fake_solar(
+        &home.join(".foundry/solar/9.9.9/solar"),
+        "0.8.38+commit.3a70399.solar.9.9.9",
+    );
     prj.update_config(|config| {
         config.solc = Some("solar:9.9.9".into());
         config.deny = DenyLevel::Warnings;
     });
 
-    cmd.env("PATH", &path);
+    cmd.env("HOME", &home);
     cmd.args(["build", "--offline"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with Solar 0.8.38
 Solar 0.8.38 [ELAPSED]
@@ -1939,28 +1939,30 @@ Compiler run successful!
 
 "#]]);
 
-    cmd.forge_fuse().env("PATH", &path);
-    let config = cmd.args(["config", "--json"]).assert_success().get_output().stdout_lossy();
-    assert_eq!(serde_json::from_str::<serde_json::Value>(&config).unwrap()["solc"], "solar:9.9.9");
+    cmd.forge_fuse().env("HOME", &home);
+    cmd.args(["config", "--json"])
+        .assert_json_stdout(str![[r#"{ "solc": "solar:9.9.9", "...": "{...}" }"#]]);
 }
 
-// Without network access, a missing Solar pin lists the `solar` binaries that were found, and
-// `--use` accepts a pin.
+// Without network access, a Solar pin that is not installed fails, and `--use` accepts a pin.
 #[cfg(unix)]
 #[forgetest]
-fn solar_pin_offline_lists_found_solar(prj: _, cmd: _) {
+fn solar_pin_offline_requires_installed_release(prj: _, cmd: _) {
     prj.add_source("A.sol", "contract A {}");
-    let old = prj.root().join("old/solar");
-    write_fake_solar(&old, "0.8.38+commit.3a70399.solar.9.9.8");
+    let home = prj.root().join("home");
+    write_fake_solar(
+        &home.join(".foundry/solar/9.9.8/solar"),
+        "0.8.38+commit.3a70399.solar.9.9.8",
+    );
     prj.update_config(|config| config.solc = Some("solar:9.9.9".into()));
 
-    cmd.env("PATH", old.parent().unwrap());
+    cmd.env("HOME", &home);
     cmd.args(["build", "--offline"]).assert_failure().stderr_eq(str![[r#"
-Error: can't install missing solar 9.9.9 in offline mode; found [..]old/solar (0.8.38+commit.3a70399.solar.9.9.8)
+Error: can't install missing solar 9.9.9 in offline mode
 
 "#]]);
 
-    cmd.forge_fuse().env("PATH", old.parent().unwrap());
+    cmd.forge_fuse().env("HOME", &home);
     cmd.args(["build", "--offline", "--use", "solar:9.9.8"]).assert_success().stdout_eq(str![[
         r#"
 [COMPILING_FILES] with Solar 0.8.38
@@ -1972,7 +1974,7 @@ Compiler run successful!
 
     prj.update_config(|config| config.solc = Some("solar:9.9".into()));
     cmd.forge_fuse().args(["build", "--offline"]).assert_failure().stderr_eq(str![[r#"
-Error: invalid Solar pin "solar:9.9", expected `solar:<version>`
+Error: invalid Solar pin "solar:9.9", expected `solar:<version>` naming a release 0.2.0 or later, without pre-release or build metadata
 
 "#]]);
 }
@@ -1987,8 +1989,7 @@ if [ "$1" = "--version" ]; then
     echo "Version: VERSION"
     exit 0
 fi
-# Drain the input with builtins only, since tests may run with a `PATH` without `cat`.
-while read -r _; do :; done
+cat >/dev/null
 printf '%s\n' '{"errors":[{"component":"general","errorCode":"2264","formattedMessage":"Warning: code generation is experimental","message":"code generation is experimental","severity":"warning","type":"Warning"}],"sources":{"src/A.sol":{"id":0}},"contracts":{}}'
 "#;
     fs::write(solar, script.replace("VERSION", version)).unwrap();
