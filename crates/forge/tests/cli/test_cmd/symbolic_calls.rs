@@ -41,6 +41,76 @@ contract SymbolicInvalidChildCall {
     cmd.args(["test", "--symbolic", "--match-test", "checkInvalidChildCall"]).assert_success();
 }
 
+// A callee that stops, by STOP or by running past the end of its code, after a call of its own
+// returns no data, not the return data of that call. Initcode that does the same deploys no code.
+#[forgetest_init]
+fn symbolic_stopped_callee_returns_no_data(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_stopped_callee_returns_no_data");
+
+    prj.add_test(
+        "SymbolicStoppedCallee.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Inner {
+    function value() external pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract Outer {
+    function callInner(Inner inner) external {
+        inner.value();
+    }
+}
+
+contract SymbolicStoppedCallee is Test {
+    function checkStoppedCalleeReturnsNoData(uint256 size) public {
+        Outer outer = new Outer();
+        (bool success, bytes memory output) =
+            address(outer).call(abi.encodeCall(Outer.callInner, (new Inner())));
+        assert(success);
+        assert(output.length == 0);
+
+        // Runtime code that calls the identity precompile with 32 bytes, then runs past its end.
+        bytes memory initcode = hex"6012600c60003960126000f3602a600052600060006020600060045afa50";
+        address endless;
+        assembly ("memory-safe") {
+            endless := create(0, add(initcode, 0x20), mload(initcode))
+        }
+        (success, output) = endless.call("");
+        assert(success);
+        assert(output.length == 0);
+
+        // Initcode `staticcall(gas(), 4, 3, 2, 1, 0)` to the identity precompile, which returns
+        // 2 bytes, then STOP.
+        initcode = hex"58585858585afa5000";
+        address created;
+        assembly ("memory-safe") {
+            created := create(0, add(initcode, 0x20), mload(initcode))
+        }
+        assert(created != address(0));
+        assert(created.code.length == 0);
+
+        // The same call with a symbolic initcode size: at size 8 the initcode runs past its end,
+        // and at size 9 it reaches INVALID. Bounds, not equalities, keep the size symbolic.
+        initcode = hex"58585858585afa50fe";
+        vm.assume(size >= 8);
+        vm.assume(size <= 9);
+        assembly ("memory-safe") {
+            created := create(0, add(initcode, 0x20), size)
+        }
+        assert(size == 9 || created != address(0));
+        assert(created.code.length == 0);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "checkStoppedCalleeReturnsNoData"])
+        .assert_success();
+}
+
 #[forgetest_init]
 fn symbolic_assume_no_revert_does_not_prune_invalid_child_halt(prj: _, cmd: _) {
     if !z3_available() {
