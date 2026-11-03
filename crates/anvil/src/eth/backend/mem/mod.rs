@@ -6689,6 +6689,12 @@ where
                 hook.reached.notify_one();
                 hook.resume.notified().await;
             }
+            // Pruning reads both state histories. Lock them before storage so a historical reader
+            // holding a history write guard delays this publication instead of every storage
+            // reader.
+            let proof_states = self.tempo_proof_states();
+            let history =
+                proof_states.as_ref().map(|proof_states| (self.states.read(), proof_states.read()));
             let mut storage = self.blockchain.storage.write();
             if let FoundryHeader::Tempo(header) = &header {
                 storage
@@ -6714,10 +6720,13 @@ where
             storage.hashes.insert(block_number, block_hash);
             {
                 let storage = &mut *storage;
-                if let Some(tempo) = &mut storage.tempo {
-                    tempo.prune(&storage.hashes, &self.states.read());
+                if let Some(tempo) = &mut storage.tempo
+                    && let Some((states, proof_states)) = &history
+                {
+                    tempo.prune(&storage.hashes, states, proof_states);
                 }
             }
+            drop(history);
             if let Some(block_access_list) = block_access_list {
                 storage.block_access_lists.insert(block_hash, block_access_list);
             }
@@ -8362,7 +8371,8 @@ where
         hash: B256,
         opts: GethDebugTracingOptions,
     ) -> Option<Result<GethTrace, BlockchainError>> {
-        self.blockchain.storage.read().transactions.get(&hash).map(|tx| self.geth_trace(tx, opts))
+        // Replay may wait for a state history lock, which mining holds while it waits for storage.
+        self.mined_transaction(hash).map(|tx| self.geth_trace(&tx, opts))
     }
 
     pub async fn transaction_receipt(
