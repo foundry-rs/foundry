@@ -1,6 +1,7 @@
 use super::{hashcons::HashCons, *};
 use alloy_primitives::map::DefaultHashBuilder;
 use inturn::unsync::Interner;
+use std::collections::BTreeMap;
 
 pub(crate) struct SymCx {
     words: HashCons<SymExprKind>,
@@ -8,7 +9,8 @@ pub(crate) struct SymCx {
     bytes: HashCons<SymBytesKind>,
     symbols: Interner<Symbol, DefaultHashBuilder>,
     replayable_inputs: SymbolicVars,
-    concrete_keccak_preimages: HashMap<U256, Arc<[SymExpr]>>,
+    /// Ordered so that the closest hash below a constant is a range lookup.
+    concrete_keccak_preimages: BTreeMap<U256, Arc<[SymExpr]>>,
     cache: SymCxCache,
 }
 
@@ -39,7 +41,7 @@ impl SymCx {
             bytes,
             symbols: Interner::with_hasher(DefaultHashBuilder::default()),
             replayable_inputs: SymbolicVars::default(),
-            concrete_keccak_preimages: HashMap::default(),
+            concrete_keccak_preimages: BTreeMap::new(),
             cache: SymCxCache { zero, one, bool_true, bool_false, bytes_empty },
         }
     }
@@ -100,6 +102,17 @@ impl SymCx {
         hash: U256,
     ) -> Option<Arc<[SymExpr]>> {
         self.concrete_keccak_preimages.get(&hash).cloned()
+    }
+
+    /// Returns the closest recorded concrete hash below `value` that `value` is a storage layout
+    /// offset from, so a folded `keccak(..) + offset` constant keeps its hash base.
+    pub(in crate::runtime::expr) fn concrete_keccak_base(
+        &self,
+        value: U256,
+        offset_bits: usize,
+    ) -> Option<U256> {
+        let (&hash, _) = self.concrete_keccak_preimages.range(..=value).next_back()?;
+        (value - hash < U256::ONE << offset_bits).then_some(hash)
     }
 }
 
