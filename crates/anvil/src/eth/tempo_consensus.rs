@@ -4,9 +4,10 @@
 //! [`TempoConsensusState`] with nullable `finalized` and `notarized`; local mining only populates
 //! `finalized`. The certificate bytes are unprefixed hex.
 //!
-//! Identity rotation takes effect in the epoch after the next block's epoch, allowing its
-//! predecessor's boundary block to announce the new key before it signs. Snapshots restore pending
-//! rotations exactly; rollback restores the retained block's key schedule.
+//! Identity rotation takes effect two epochs after the next block's epoch. The first boundary
+//! announces a full DKG for the intervening epoch; its final boundary publishes the new key before
+//! it signs. Snapshots restore pending rotations exactly; rollback restores the retained block's
+//! key schedule.
 //!
 //! Locally mined fork blocks commit to a partial trie of the accounts and storage slots cached
 //! when the block was mined, rather than the complete upstream state. Non-pending `eth_getProof`
