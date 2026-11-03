@@ -337,7 +337,7 @@ fn has_library_annotations(gcx: Gcx<'_>) -> bool {
 /// `using ... global` directives declared in other sources are not followed.
 fn referenced_libraries(gcx: Gcx<'_>, contracts: &[hir::ContractId]) -> Vec<hir::ContractId> {
     let mut references = LibraryReferences {
-        hir: &gcx.hir,
+        gcx,
         libraries: FxIndexSet::default(),
         functions: FxIndexSet::default(),
     };
@@ -365,7 +365,7 @@ fn referenced_libraries(gcx: Gcx<'_>, contracts: &[hir::ContractId]) -> Vec<hir:
 /// Collects the libraries that visited code refers to by name, type, modifier, or `using`, and
 /// the free functions it calls, so their bodies can be visited too.
 struct LibraryReferences<'hir> {
-    hir: &'hir hir::Hir<'hir>,
+    gcx: Gcx<'hir>,
     libraries: FxIndexSet<hir::ContractId>,
     functions: FxIndexSet<hir::FunctionId>,
 }
@@ -374,13 +374,39 @@ impl<'hir> LibraryReferences<'hir> {
     /// Visits a contract's items, its storage layout specifier, and the `using` directives that
     /// apply to it.
     fn visit_contract_code(&mut self, id: hir::ContractId) {
-        let contract = self.hir.contract(id);
+        let contract = self.gcx.hir.contract(id);
         let _ = hir::Visit::visit_contract(self, contract);
         if let Some(layout) = contract.layout {
             let _ = hir::Visit::visit_expr(self, layout);
         }
-        let usings = self.hir.source(contract.source).usings;
-        for directive in contract.usings.iter().chain(usings) {
+        self.visit_usings(contract.usings);
+        self.visit_usings(self.gcx.hir.source(contract.source).usings);
+    }
+
+    /// Records the library that declares `item`, `item` itself if it is a library, or `item` if
+    /// it is a free function.
+    fn add_owner(&mut self, item: hir::ItemId) {
+        match item {
+            hir::ItemId::Contract(id) => self.add(id),
+            hir::ItemId::Function(id) if self.gcx.hir.function(id).contract.is_none() => {
+                self.functions.insert(id);
+            }
+            _ => {
+                if let Some(id) = self.gcx.hir.item(item).contract() {
+                    self.add(id);
+                }
+            }
+        }
+    }
+
+    fn add(&mut self, id: hir::ContractId) {
+        if self.gcx.hir.contract(id).kind == ContractKind::Library {
+            self.libraries.insert(id);
+        }
+    }
+
+    fn visit_usings(&mut self, usings: &'hir [hir::UsingDirective<'hir>]) {
+        for directive in usings {
             for entry in directive.entries {
                 match entry.kind {
                     hir::UsingEntryKind::Library(library) => self.add(library),
@@ -394,67 +420,46 @@ impl<'hir> LibraryReferences<'hir> {
             }
         }
     }
-
-    /// Records the library that declares `item`, `item` itself if it is a library, or `item` if
-    /// it is a free function.
-    fn add_owner(&mut self, item: hir::ItemId) {
-        match item {
-            hir::ItemId::Contract(id) => self.add(id),
-            hir::ItemId::Function(id) if self.hir.function(id).contract.is_none() => {
-                self.functions.insert(id);
-            }
-            _ => {
-                if let Some(id) = self.hir.item(item).contract() {
-                    self.add(id);
-                }
-            }
-        }
-    }
-
-    fn add(&mut self, id: hir::ContractId) {
-        if self.hir.contract(id).kind == ContractKind::Library {
-            self.libraries.insert(id);
-        }
-    }
 }
 
 impl<'hir> hir::Visit<'hir> for LibraryReferences<'hir> {
     type BreakValue = Never;
 
     fn hir(&self) -> &'hir hir::Hir<'hir> {
-        self.hir
+        &self.gcx.hir
     }
 
     fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-        match expr.kind {
-            hir::ExprKind::Ident(resolutions) => {
-                for resolution in resolutions {
-                    if let hir::Res::Item(item) = *resolution {
-                        self.add_owner(item);
-                    }
+        if let hir::ExprKind::Ident(resolutions) = expr.kind {
+            for resolution in resolutions {
+                if let hir::Res::Item(item) = *resolution {
+                    self.add_owner(item);
                 }
             }
-            // `L.Storage` with `import "./Lib.sol" as L`: members of a namespace are only
-            // resolved during type checking, so look them up in the imported source.
-            hir::ExprKind::Member(base, member)
-                if let hir::ExprKind::Ident(resolutions) = base.kind =>
-            {
+        } else if let hir::ExprKind::Member(base, member) = expr.kind {
+            let mut names = vec![member];
+            let mut root = base.peel_parens();
+            while let hir::ExprKind::Member(base, member) = root.kind {
+                names.push(member);
+                root = base.peel_parens();
+            }
+            if let hir::ExprKind::Ident(resolutions) = root.kind {
+                names.reverse();
                 for resolution in resolutions {
-                    if let hir::Res::Namespace(source) = *resolution {
-                        for &item in self.hir.source(source).items {
-                            if self
-                                .hir
-                                .item(item)
-                                .name()
-                                .is_some_and(|name| name.name == member.name)
-                            {
+                    if let hir::Res::Namespace(source) = *resolution
+                        && let Some(resolutions) =
+                            self.gcx.source_path_resolutions(&names, source, None)
+                        && let Some(targets) = resolutions.last()
+                    {
+                        // Keep every overload of namespace-qualified free functions.
+                        for target in targets {
+                            if let hir::Res::Item(item) = *target {
                                 self.add_owner(item);
                             }
                         }
                     }
                 }
             }
-            _ => {}
         }
         self.walk_expr(expr)
     }
@@ -472,6 +477,16 @@ impl<'hir> hir::Visit<'hir> for LibraryReferences<'hir> {
             self.add_owner(item);
         }
         self.walk_ty(ty)
+    }
+
+    fn visit_function(
+        &mut self,
+        function: &'hir hir::Function<'hir>,
+    ) -> ControlFlow<Self::BreakValue> {
+        if function.contract.is_none() {
+            self.visit_usings(self.gcx.hir.source(function.source).usings);
+        }
+        self.walk_function(function)
     }
 }
 
@@ -567,6 +582,7 @@ fn solar_error(sess: &Session) -> eyre::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_compilers::artifacts::Source;
 
     /// Lowers `compiler` and collects the namespaces of `name` in `path`.
     fn erc7201_storage_layouts(
@@ -860,39 +876,131 @@ mod tests {
 
     #[test]
     fn namespace_import_alias() {
-        let sources = Sources::from_iter([
-            (
-                PathBuf::from("src/Lib.sol"),
-                foundry_compilers::artifacts::Source::new(
-                    r#"library Storage {
-                    /// @custom:storage-location erc7201:example.storage
-                    struct Data { uint256 value; }
-                    function get() internal pure returns (Data storage $) {
-                        assembly { $.slot := 0 }
-                    }
-                }"#,
+        for (import, exports, accessor) in [
+            ("Lib.sol", "", "L.Storage"),
+            ("Exports.sol", r#"import {Storage} from "./Lib.sol";"#, "L.Storage"),
+            ("Exports.sol", r#"import {Storage as Store} from "./Lib.sol";"#, "L.Store"),
+            ("Exports.sol", r#"import "./Lib.sol" as Inner;"#, "L.Inner.Storage"),
+            ("Exports.sol", r#"import "./Lib.sol" as Inner;"#, "(L).Inner.Storage"),
+        ] {
+            let sources = Sources::from_iter([
+                (
+                    PathBuf::from("src/Lib.sol"),
+                    Source::new(
+                        r#"library Storage {
+                            /// @custom:storage-location erc7201:example.storage
+                            struct Data { uint256 value; }
+                            function get() internal pure returns (Data storage $) {
+                                bytes32 slot = keccak256(abi.encode(uint256(keccak256("example.storage")) - 1)) & ~bytes32(uint256(0xff));
+                                assembly { $.slot := slot }
+                            }
+                        }"#,
+                    ),
                 ),
-            ),
-            (
-                PathBuf::from("src/C.sol"),
-                foundry_compilers::artifacts::Source::new(
-                    r#"import "./Lib.sol" as L;
-                    contract C { function f() public { L.Storage.get().value = 1; } }"#,
+                (PathBuf::from("src/Exports.sol"), Source::new(exports)),
+                (
+                    PathBuf::from("src/C.sol"),
+                    Source::new(format!(
+                        r#"import "./{import}" as L;
+                        contract C {{ function f() public {{ {accessor}.get().value = 1; }} }}"#
+                    )),
                 ),
-            ),
-        ]);
-        let mut compiler = parse_standard_json(&sources, &[]).unwrap();
-        let namespaces = erc7201_storage_layouts(
-            &mut compiler,
-            Path::new(""),
-            Path::new("src/C.sol"),
-            Some("C"),
-        )
-        .unwrap();
-        assert_eq!(
-            namespaces.iter().map(|n| n.declaration.as_str()).collect::<Vec<_>>(),
-            ["src/Lib.sol:Storage.Data"]
-        );
+            ]);
+            let mut compiler = parse_standard_json(&sources, &[]).unwrap();
+            let mut layout = StorageLayout::default();
+            compiler
+                .enter_mut(|compiler| {
+                    lower(compiler)?;
+                    let gcx = compiler.gcx();
+                    let contract =
+                        find_contract(gcx, Path::new(""), Path::new("src/C.sol"), "C").unwrap();
+                    extend_storage_layout(&mut layout, gcx, Path::new(""), contract)
+                })
+                .unwrap();
+            assert_eq!(
+                layout
+                    .storage
+                    .iter()
+                    .map(|s| (s.label.as_str(), s.contract.as_str()))
+                    .collect::<Vec<_>>(),
+                [("example.storage.value", "src/Lib.sol:Storage")],
+                "{import}: {exports} {accessor}"
+            );
+        }
+    }
+
+    #[test]
+    fn free_function_source_usings() {
+        for using in ["using Storage for uint256;", "using {Storage.bump} for uint256;"] {
+            for (import, call) in [
+                (r#"import {bump} from "./Free.sol";"#, "bump"),
+                (r#"import "./Free.sol" as F;"#, "F.bump"),
+                (r#"import "./Free.sol" as F;"#, "(F).bump"),
+            ] {
+                let sources = Sources::from_iter([
+                    (
+                        PathBuf::from("src/Lib.sol"),
+                        Source::new(
+                            r#"library Storage {
+                            /// @custom:storage-location erc7201:example.storage
+                            struct Data { uint256 value; }
+                            function bump(uint256 x) internal returns (uint256) {
+                                Data storage $;
+                                bytes32 slot = keccak256(abi.encode(uint256(keccak256("example.storage")) - 1)) & ~bytes32(uint256(0xff));
+                                assembly { $.slot := slot }
+                                return $.value += x;
+                            }
+                        }"#,
+                        ),
+                    ),
+                    (
+                        PathBuf::from("src/Free.sol"),
+                        Source::new(format!(
+                            r#"import {{Storage}} from "./Lib.sol";
+                        {using}
+                        function bump(uint256 x) returns (uint256) {{ return x.bump(); }}
+                        function bump(address) pure returns (uint256) {{ return 0; }}"#
+                        )),
+                    ),
+                    (
+                        PathBuf::from("src/C.sol"),
+                        Source::new(format!(
+                            r#"{import}
+                        contract C {{
+                            function f() public returns (uint256) {{ return {call}(uint256(1)); }}
+                        }}
+                        contract Unused {{}}"#,
+                        )),
+                    ),
+                ]);
+                let mut compiler = parse_standard_json(&sources, &[]).unwrap();
+                for (name, expected) in [
+                    ("C", vec![("example.storage.value", "src/Lib.sol:Storage")]),
+                    ("Unused", vec![]),
+                ] {
+                    let mut layout = StorageLayout::default();
+                    compiler
+                        .enter_mut(|compiler| {
+                            lower(compiler)?;
+                            let gcx = compiler.gcx();
+                            let contract =
+                                find_contract(gcx, Path::new(""), Path::new("src/C.sol"), name)
+                                    .unwrap();
+                            extend_storage_layout(&mut layout, gcx, Path::new(""), contract)
+                        })
+                        .unwrap();
+                    assert_eq!(
+                        layout
+                            .storage
+                            .iter()
+                            .map(|s| (s.label.as_str(), s.contract.as_str()))
+                            .collect::<Vec<_>>(),
+                        expected,
+                        "{name}: {using} {import} {call}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
