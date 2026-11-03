@@ -29,8 +29,8 @@ use std::{
 /// Most snapshots kept per worker.
 const MAX_SNAPSHOTS: usize = 64;
 /// Storage slots that the snapshots of all workers may copy together. Each snapshot holds a full
-/// copy of the backend, so workers keep fewer snapshots as the post-setUp state grows, but at least
-/// two, so a run resumed from one snapshot can still replace the other.
+/// copy of the backend, so workers keep fewer snapshots as their states grow, but at least two, so
+/// a run resumed from one snapshot can still replace the other.
 const SNAPSHOT_SLOT_BUDGET: usize = 1 << 20;
 /// Snapshots are only taken while the reproducing sequence is at most this many run depths long.
 const MAX_PREFIX_DEPTHS: usize = 4;
@@ -44,6 +44,31 @@ const COMPUTED_SLOT: U256 = U256::from_limbs([0, 0, 1, 0]);
 /// different, magnitude-ordered bins.
 fn log2_bin(value: U256) -> u16 {
     if value.bit(255) { 512 - (!value).bit_len() as u16 } else { value.bit_len() as u16 }
+}
+
+/// Storage slots held by the executor's backend, and its nonzero computed slots per contract.
+fn storage_stats<FEN: FoundryEvmNetwork>(executor: &Executor<FEN>) -> (usize, AddressMap<u64>) {
+    let backend = executor.backend();
+    let mut slots = 0;
+    let mut cardinality = AddressMap::<u64>::default();
+    for (address, account) in backend
+        .mem_db()
+        .cache
+        .accounts
+        .iter()
+        .chain(backend.active_fork_db().into_iter().flat_map(|db| &db.cache.accounts))
+    {
+        slots += account.storage.len();
+        let computed = account
+            .storage
+            .iter()
+            .filter(|(slot, value)| **slot >= COMPUTED_SLOT && !value.is_zero())
+            .count() as u64;
+        if computed > 0 {
+            *cardinality.entry(*address).or_default() += computed;
+        }
+    }
+    (slots, cardinality)
 }
 
 #[derive(Clone, Copy, Default)]
@@ -63,6 +88,8 @@ struct Snapshot<FEN: FoundryEvmNetwork> {
     prefix: Arc<[BasicTxDetails]>,
     /// Nonzero computed slots per contract in this state.
     cardinality: AddressMap<u64>,
+    /// Storage slots held by the executor's backend.
+    slots: usize,
     /// Features first reached by the call that produced this state.
     features: Vec<u64>,
     energy: Energy,
@@ -83,7 +110,8 @@ pub(super) struct RunStart<FEN: FoundryEvmNetwork> {
 
 /// Per-worker pool of snapshots and the state features seen so far.
 pub(super) struct StateSnapshots<FEN: FoundryEvmNetwork> {
-    max_snapshots: usize,
+    /// Storage slots that this worker's snapshots may copy together.
+    slot_budget: usize,
     max_prefix: usize,
     /// Hashes features with fixed keys, so a seed picks the same snapshots in every process.
     hasher: BuildHasherDefault<DefaultHasher>,
@@ -94,6 +122,8 @@ pub(super) struct StateSnapshots<FEN: FoundryEvmNetwork> {
     setup: Energy,
     snapshots: Vec<Snapshot<FEN>>,
     current: Start,
+    /// Nonzero computed slots per contract in the post-setUp state.
+    setup_cardinality: AddressMap<u64>,
     /// Nonzero computed slots per contract in the current run.
     cardinality: AddressMap<u64>,
     /// Whether the current run reached a new feature.
@@ -103,16 +133,8 @@ pub(super) struct StateSnapshots<FEN: FoundryEvmNetwork> {
 impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
     /// Creates the pool of one of `workers` workers, whose runs start from `setup`.
     pub(super) fn new(depth: u32, setup: &Executor<FEN>, workers: usize) -> Self {
-        let backend = setup.backend();
-        let mut slots =
-            backend.mem_db().cache.accounts.values().map(|a| a.storage.len()).sum::<usize>();
-        if let Some(db) = backend.active_fork_db() {
-            slots += db.cache.accounts.values().map(|a| a.storage.len()).sum::<usize>();
-        }
-        let max_snapshots = (SNAPSHOT_SLOT_BUDGET / slots.max(1).saturating_mul(workers.max(1)))
-            .clamp(2, MAX_SNAPSHOTS);
         Self {
-            max_snapshots,
+            slot_budget: SNAPSHOT_SLOT_BUDGET / workers.max(1),
             max_prefix: (depth as usize).saturating_mul(MAX_PREFIX_DEPTHS),
             hasher: BuildHasherDefault::default(),
             hits: HashMap::default(),
@@ -120,6 +142,7 @@ impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
             setup: Energy::default(),
             snapshots: Vec::new(),
             current: Start::Setup,
+            setup_cardinality: storage_stats(setup).1,
             cardinality: AddressMap::default(),
             run_found: false,
         }
@@ -148,7 +171,7 @@ impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
         match self.current {
             Start::Setup => {
                 self.setup.picks += 1;
-                self.cardinality.clear();
+                self.cardinality.clone_from(&self.setup_cardinality);
                 RunStart { executor: setup.clone(), prefix: Arc::from([]) }
             }
             Start::Snapshot(index) => {
@@ -262,32 +285,42 @@ impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
         if novel.is_empty() || inputs.is_empty() || inputs.len() > self.max_prefix {
             return;
         }
-        let snapshot = Snapshot {
+        let slots = storage_stats(executor).0;
+        let mut total = self.snapshots.iter().map(|snapshot| snapshot.slots).sum::<usize>();
+        // Evict the weakest snapshots, except the one the current run started from, until the new
+        // one fits the pool and its slot budget.
+        while self.snapshots.len() >= 2
+            && (self.snapshots.len() >= MAX_SNAPSHOTS || total + slots > self.slot_budget)
+        {
+            let current = match self.current {
+                Start::Snapshot(index) => Some(index),
+                Start::Setup => None,
+            };
+            let Some(weakest) = self
+                .snapshots
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| current != Some(*index))
+                .min_by(|(_, a), (_, b)| self.weight(a).total_cmp(&self.weight(b)))
+                .map(|(index, _)| index)
+            else {
+                break;
+            };
+            total -= self.snapshots.remove(weakest).slots;
+            if let Start::Snapshot(index) = &mut self.current
+                && *index > weakest
+            {
+                *index -= 1;
+            }
+        }
+        self.snapshots.push(Snapshot {
             executor: executor.clone(),
             prefix: Arc::from(inputs),
             cardinality: self.cardinality.clone(),
+            slots,
             features: novel,
             energy: Energy::default(),
-        };
-        if self.snapshots.len() < self.max_snapshots {
-            self.snapshots.push(snapshot);
-            return;
-        }
-        // Replace the weakest snapshot, unless it is the one the current run started from.
-        let current = match self.current {
-            Start::Snapshot(index) => Some(index),
-            Start::Setup => None,
-        };
-        let weakest = self
-            .snapshots
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| current != Some(*index))
-            .min_by(|(_, a), (_, b)| self.weight(a).total_cmp(&self.weight(b)))
-            .map(|(index, _)| index);
-        if let Some(index) = weakest {
-            self.snapshots[index] = snapshot;
-        }
+        });
     }
 
     /// Credits the run's starting state when the run found new coverage or a new state.
@@ -385,20 +418,25 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_pool_shrinks_as_setup_state_grows() {
+    fn deletions_count_from_setup_entries() {
+        let entry = |i: u64| U256::MAX - U256::from(i);
         let mut setup = executor();
-        assert_eq!(StateSnapshots::new(10, &setup, 1).max_snapshots, MAX_SNAPSHOTS);
-        for slot in 0..1u64 << 15 {
-            setup
-                .set_storage_slot(Address::repeat_byte(0x22), U256::from(slot), U256::ONE)
-                .unwrap();
+        for i in 0..4 {
+            setup.set_storage_slot(Address::repeat_byte(0x11), entry(i), U256::ONE).unwrap();
         }
-        // 2^20 slots shared by 4 workers copying 2^15 slots each.
-        assert_eq!(StateSnapshots::new(10, &setup, 4).max_snapshots, 8);
+        let mut snapshots = StateSnapshots::new(10, &setup, 1);
+        snapshots.start(&mut TestRunner::deterministic(), &setup);
+        // 4 -> 3 entries: a new value and a new cardinality bin.
+        assert!(!snapshots.observe(&write(entry(0), U256::ONE, U256::ZERO)).is_empty());
+        // 3 -> 2 entries share a bin.
+        assert!(snapshots.observe(&write(entry(1), U256::ONE, U256::ZERO)).is_empty());
+        // 2 -> 1 and 1 -> 0 entries each reach a new bin.
+        assert!(!snapshots.observe(&write(entry(2), U256::ONE, U256::ZERO)).is_empty());
+        assert!(!snapshots.observe(&write(entry(3), U256::ONE, U256::ZERO)).is_empty());
+    }
 
-        // Every worker keeps at least two snapshots, and a full pool keeps its size.
-        let mut pool = StateSnapshots::new(10, &setup, 64);
-        assert_eq!(pool.max_snapshots, 2);
+    #[test]
+    fn snapshot_pool_stays_within_slot_budget() {
         let tx = BasicTxDetails {
             warp: None,
             roll: None,
@@ -409,14 +447,35 @@ mod tests {
                 value: None,
             },
         };
+        let retained = |pool: &StateSnapshots<EthEvmNetwork>| {
+            pool.snapshots.iter().map(|snapshot| storage_stats(&snapshot.executor).0).sum::<usize>()
+        };
+
+        // Runs that keep adding storage: the snapshots never copy more than the worker's share
+        // of the budget.
+        let mut state = executor();
+        let mut pool = StateSnapshots::new(10, &state, 16);
+        for step in 0..16u64 {
+            for slot in 0..1u64 << 11 {
+                let slot = U256::from((step << 11) + slot);
+                state.set_storage_slot(Address::repeat_byte(0x22), slot, U256::ONE).unwrap();
+            }
+            pool.capture(&state, std::slice::from_ref(&tx), vec![step]);
+            assert!(retained(&pool) <= SNAPSHOT_SLOT_BUDGET / 16);
+            // Deeper states evict weaker ones rather than being declined.
+            assert_eq!(pool.snapshots.last().unwrap().features, [step]);
+        }
+
+        // Every worker keeps at least two snapshots, even past its budget.
+        let mut pool = StateSnapshots::new(10, &state, 64);
         for feature in 1..=3 {
-            pool.capture(&setup, std::slice::from_ref(&tx), vec![feature]);
+            pool.capture(&state, std::slice::from_ref(&tx), vec![feature]);
         }
         assert_eq!(pool.snapshots.len(), 2);
         // A run resumed from a snapshot keeps it and replaces the other one.
         pool.current = Start::Snapshot(0);
         let start = pool.snapshots[0].features.clone();
-        pool.capture(&setup, std::slice::from_ref(&tx), vec![4]);
+        pool.capture(&state, std::slice::from_ref(&tx), vec![4]);
         assert_eq!(pool.snapshots[0].features, start);
         assert_eq!(pool.snapshots[1].features, [4]);
     }
