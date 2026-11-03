@@ -546,7 +546,7 @@ mod tests {
             ))
         );
 
-        let identifier = SignaturesIdentifier::new_offline_with_abis_from_cache(None, [&abi]);
+        let identifier = SignaturesIdentifier::from_cache((cache, None), None);
         let decoded = identifier.identify_event(event.selector()).await.unwrap();
         assert_eq!(decoded.selector(), event.selector());
         assert_eq!(decoded.inputs.iter().filter(|i| i.indexed).count(), 1);

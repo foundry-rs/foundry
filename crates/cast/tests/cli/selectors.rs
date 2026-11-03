@@ -268,11 +268,24 @@ fn flaky_error_event_decode_with_cache(prj: _, cmd: _) {
 contract ContractWithCustomError {
     error AnotherValueTooHigh(uint256, address);
     event MyUniqueEventWithinLocalProject(uint256 a, address b);
+    struct Order { address who; uint256 amount; }
+    event MyUniqueStructEventWithinLocalProject(Order order);
 }
    "#,
     );
     // Build and cache project selectors.
     cmd.forge_fuse().args(["build"]).assert_success();
+
+    // Assert struct events decode from the cache populated by build alone.
+    cmd.cast_fuse()
+        .args(["decode-event", "0x8230d1a1e87386c5af1fb9804c3d8fd63c22ba426ff297e2d2d1ccb59d63f48d0000000000000000000000000000000000000000000000000000000000d0004f000000000000000000000000000000000000000000000000000000000000004e"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+MyUniqueStructEventWithinLocalProject((address,uint256))
+(0x0000000000000000000000000000000000D0004F, 78)
+
+"#]]);
+
     cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
 
     // Assert cast can decode custom error with local cache.
@@ -293,30 +306,6 @@ AnotherValueTooHigh(uint256,address)
 MyUniqueEventWithinLocalProject(uint256,address)
 78
 0x00000000000000000000000000000DD00000004e
-
-"#]]);
-}
-
-// Events with a struct parameter are cached in a form `cast decode-event` can parse back.
-#[forgetest_init]
-fn flaky_struct_event_decode_with_cache(prj: _, cmd: _) {
-    prj.add_source(
-        "LocalStructEventContract",
-        r#"
-contract LocalStructEventContract {
-    struct Order { address who; uint256 amount; }
-    event MyUniqueStructEventWithinLocalProject(Order order);
-}
-   "#,
-    );
-    cmd.forge_fuse().args(["build"]).assert_success();
-
-    cmd.cast_fuse()
-        .args(["decode-event", "0x8230d1a1e87386c5af1fb9804c3d8fd63c22ba426ff297e2d2d1ccb59d63f48d0000000000000000000000000000000000000000000000000000000000d0004f000000000000000000000000000000000000000000000000000000000000004e"])
-        .assert_success()
-        .stdout_eq(str![[r#"
-MyUniqueStructEventWithinLocalProject((address,uint256))
-(0x0000000000000000000000000000000000D0004F, 78)
 
 "#]]);
 }
