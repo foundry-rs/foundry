@@ -5741,16 +5741,12 @@ impl<N: Network> Backend<N> {
         {
             let mut env = self.evm_env.write();
             env.block_env = BlockEnv {
-                number: self.evm_block_number(num),
-                timestamp: U256::from(block.header.timestamp()),
-                difficulty: block.header.difficulty(),
                 // ensures prevrandao is set
                 prevrandao: Some(block.header.mix_hash().unwrap_or_default()),
-                gas_limit: block.header.gas_limit(),
                 // Keep previous `beneficiary` and `basefee` value
                 beneficiary: env.block_env.beneficiary,
                 basefee: env.block_env.basefee,
-                ..Default::default()
+                ..self.block_env_from_header(&block.header)
             };
         }
         self.fees.restore(fees);

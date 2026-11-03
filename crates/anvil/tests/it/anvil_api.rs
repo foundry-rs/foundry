@@ -41,6 +41,7 @@ use foundry_evm::hardfork::EthereumHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryTxEnvelope;
 use futures::{FutureExt, StreamExt};
+use revm::context_interface::block::BlobExcessGasAndPrice;
 use tempo_hardfork::TempoHardfork;
 
 use std::{
@@ -909,6 +910,32 @@ async fn test_set_next_block_prevrandao_restored_on_revert() {
 
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(block.header.mix_hash, Some(prevrandao));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_revert_keeps_latest_blob_base_fee() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let update_fraction = api.backend.blob_params().update_fraction as u64;
+    api.backend
+        .fees()
+        .set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(50_000_000, update_fraction));
+    api.mine_one().await.unwrap();
+
+    // BLOBBASEFEE PUSH0 MSTORE PUSH1 0x20 PUSH0 RETURN
+    let target = address!("0x00000000000000000000000000000000000b10b5");
+    api.anvil_set_code(target, Bytes::from_static(&[0x4a, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3]))
+        .await
+        .unwrap();
+    api.mine_one().await.unwrap();
+
+    let call = || WithOtherFields::new(TransactionRequest::default().to(target));
+    let before = api.call(call(), None, Default::default()).await.unwrap();
+    assert_ne!(U256::from_be_slice(&before), U256::from(1));
+
+    let state_snapshot = api.evm_snapshot().await.unwrap();
+    assert!(api.evm_revert(state_snapshot).await.unwrap());
+    let after = api.call(call(), None, Default::default()).await.unwrap();
+    assert_eq!(after, before);
 }
 
 // Tests that `anvil_setNextBlockParentBeaconBlockRoot` sets the parent beacon block root of the
