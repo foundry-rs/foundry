@@ -1,7 +1,7 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{Address, U256, map::HashMap};
 use alloy_provider::{Network, Provider, RootProvider, network::AnyNetwork};
-use eyre::{ContextCompat, Result};
+use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{provider::ProviderBuilder, shell};
 use foundry_config::{Chain, Config};
 use itertools::Itertools;
@@ -365,18 +365,13 @@ impl CommandUtils for Command {
     }
 
     fn spawn_output(&mut self) -> Result<Output> {
-        self.output().map_err(|err| {
+        self.output().wrap_err_with(|| {
             let program = self.get_program().to_string_lossy();
-            // A missing working directory is also reported as `NotFound` on Unix.
-            if let Some(dir) = self.get_current_dir().filter(|dir| !dir.is_dir()) {
-                return eyre::eyre!("could not run `{program}`: {} does not exist", dir.display());
+            if let Some(dir) = self.get_current_dir() {
+                format!("could not run `{program}` in {}", dir.display())
+            } else {
+                format!("could not run `{program}`")
             }
-            if err.kind() == std::io::ErrorKind::NotFound {
-                return eyre::eyre!(
-                    "`{program}` was not found; make sure it is installed and on your PATH"
-                );
-            }
-            eyre::eyre!("could not run `{program}`: {err}")
         })
     }
 
@@ -1296,23 +1291,6 @@ mod tests {
     use std::{env, fs::File, io::Write};
     use tempfile::tempdir;
 
-    #[test]
-    fn spawn_output_names_the_program() {
-        let err = Command::new("foundry-missing-program").spawn_output().unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "`foundry-missing-program` was not found; make sure it is installed and on your PATH"
-        );
-
-        let dir = tempdir().unwrap();
-        let missing = dir.path().join("missing");
-        let err = Command::new("git").current_dir(&missing).spawn_output().unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            format!("could not run `git`: {} does not exist", missing.display())
-        );
-    }
-
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
@@ -1726,5 +1704,54 @@ mod tests {
             git.read_submodules_with_branch(tmp.path(), OsStr::new("lib")).unwrap(),
             HashMap::from_iter([(PathBuf::from("lib/dep"), "feature/v1".to_string())])
         );
+    }
+
+    #[test]
+    fn spawn_output_names_the_program() {
+        let dir = tempdir().unwrap();
+        let program = dir.path().join("missing-program");
+        let err = Command::new(&program).spawn_output().unwrap_err();
+        assert_eq!(err.to_string(), format!("could not run `{}`", program.display()));
+        assert_eq!(
+            err.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::NotFound
+        );
+    }
+
+    #[test]
+    fn spawn_output_preserves_working_directory_errors() {
+        let dir = tempdir().unwrap();
+        let missing = dir.path().join("missing");
+        let file = dir.path().join("file");
+        fs::write(&file, "not a directory").unwrap();
+
+        for cwd in [&missing, &file] {
+            let mut command = Command::new("git");
+            command.current_dir(cwd);
+            let original = command.output().unwrap_err();
+            let err = command.spawn_output().unwrap_err();
+            assert_eq!(err.to_string(), format!("could not run `git` in {}", cwd.display()));
+            assert_eq!(err.downcast_ref::<std::io::Error>().unwrap().kind(), original.kind());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn spawn_output_preserves_executable_errors() {
+        let dir = tempdir().unwrap();
+        let program = dir.path().join("program");
+        let interpreter = dir.path().join("missing-interpreter");
+        fs::write(&program, format!("#!{}\n", interpreter.display())).unwrap();
+
+        for (mode, kind) in
+            [(0o755, std::io::ErrorKind::NotFound), (0o644, std::io::ErrorKind::PermissionDenied)]
+        {
+            let mut permissions = std::fs::metadata(&program).unwrap().permissions();
+            permissions.set_mode(mode);
+            std::fs::set_permissions(&program, permissions).unwrap();
+            let err = Command::new(&program).spawn_output().unwrap_err();
+            assert_eq!(err.to_string(), format!("could not run `{}`", program.display()));
+            assert_eq!(err.downcast_ref::<std::io::Error>().unwrap().kind(), kind);
+        }
     }
 }
