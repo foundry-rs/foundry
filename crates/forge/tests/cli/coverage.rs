@@ -3745,7 +3745,6 @@ contract CounterTest is DSTest {
 // The lines run by a failing fuzz input are covered, as they are for a failing unit test.
 #[forgetest]
 fn coverage_includes_failing_fuzz_input(prj: _, cmd: _) {
-    prj.insert_ds_test();
     prj.add_source(
         "Risky.sol",
         r#"
@@ -3763,14 +3762,13 @@ contract Risky {
     prj.add_source(
         "RiskyTest.sol",
         r#"
-import "./test.sol";
 import {Risky} from "./Risky.sol";
 
-contract RiskyTest is DSTest {
+contract RiskyTest {
     Risky risky = new Risky();
 
     function testFuzz_Check(uint256 x) public {
-        assertTrue(risky.check(x) != 7);
+        require(risky.check(x) != 7);
     }
 }
     "#,
@@ -3779,9 +3777,9 @@ contract RiskyTest is DSTest {
     cmd.arg("coverage").args(["--report=lcov"]).assert_failure();
 
     // `return 7;` is reached only by the failing input.
-    let source = std::fs::read_to_string(prj.root().join("src/Risky.sol")).unwrap();
+    let source = fs::read_to_string(prj.root().join("src/Risky.sol")).unwrap();
     let line = source.lines().position(|l| l.contains("return 7;")).unwrap() + 1;
-    let lcov = std::fs::read_to_string(prj.root().join("lcov.info")).unwrap();
+    let lcov = fs::read_to_string(prj.root().join("lcov.info")).unwrap();
     let hits = lcov
         .lines()
         .find_map(|l| l.strip_prefix(&format!("DA:{line},")))
