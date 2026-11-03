@@ -194,8 +194,13 @@ async fn fetch_parent<P: Provider<AnyNetwork>>(
 pub fn block_txs<FEN: FoundryEvmNetwork>(
     block: &AnyRpcBlock,
 ) -> eyre::Result<Vec<Recovered<TxFor<FEN>>>> {
+    full_transactions(block)?.iter().map(FEN::tx_from_any_rpc).collect()
+}
+
+/// Returns the transactions of `block`, which must contain full transactions.
+pub(crate) fn full_transactions(block: &AnyRpcBlock) -> eyre::Result<&[AnyRpcTransaction]> {
     let BlockTransactions::Full(transactions) = &block.transactions else {
         eyre::bail!("block {} does not contain full transactions", block.header.number());
     };
-    transactions.iter().map(FEN::tx_from_any_rpc).collect()
+    Ok(transactions)
 }

@@ -1,9 +1,10 @@
 use crate::{evm::EvmEnv, hardfork::FoundryHardfork};
 use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, private::alloy_eips::eip7840::BlobParams};
+use alloy_eips::eip2930::AccessList;
 use alloy_hardforks::EthereumHardfork;
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{ChainId, Selector, U256};
+use alloy_primitives::{Address, ChainId, Selector, U256};
 use alloy_provider::{Network, network::BlockResponse};
 use evm2::{EvmFeatures, EvmTypesHost, SpecId, env::BlockEnv};
 use foundry_config::NamedChain::{
@@ -207,8 +208,8 @@ pub fn get_function<'a>(
 /// access list.
 pub fn tx_warm_addresses<T: EvmTypesHost>(
     env: &EvmEnv<T>,
-    access_list: Option<&alloy_eips::eip2930::AccessList>,
-) -> Vec<alloy_primitives::Address> {
+    access_list: Option<&AccessList>,
+) -> Vec<Address> {
     let coinbase = env.version.feature(EvmFeatures::EIP3651).then_some(env.block.beneficiary);
     let arb_sys =
         arbitrum::is_arbitrum_chain(env.version.chain_id).then_some(arbitrum::ARB_SYS_ADDRESS);

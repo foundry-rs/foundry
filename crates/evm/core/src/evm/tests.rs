@@ -474,7 +474,7 @@ fn base_factory_plants_precompile_sentinels() {
     for address in foundry_evm_networks::BASE_CODE_SENTINEL_ADDRESSES {
         let info = evm.read_account_info(address).unwrap();
         let active = foundry_evm_networks::is_base_precompile_active_at(*address, spec.upgrade());
-        let has_code = info.is_some_and(|info| info.code_hash != alloy_primitives::KECCAK256_EMPTY);
+        let has_code = info.is_some_and(|info| !info.is_empty_code_hash());
         assert_eq!(has_code, active, "{address}");
         planted += usize::from(has_code);
     }

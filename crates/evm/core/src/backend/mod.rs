@@ -28,14 +28,14 @@ use crate::{
         BackingDb, BlockContext, ChainFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested,
         ExecutionLifecycle, ExecutionPhase, ForkDb, ForkInfo, ForkPosition, FoundryDatabase,
         FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, PersistentWrite,
-        PreparedTx, SpecFor, StoredExt, TxFor, TxResultFor, TypesFor, block_txs, evm_env,
-        merge_untracked_nested_changes,
+        PreparedTx, SpecFor, StoredExt, TransactionRequestFor, TxFor, TxResultFor, TypesFor,
+        block_txs, evm_env, full_transactions, merge_untracked_nested_changes,
     },
     fork::{CreateFork, Fork as RemoteFork, ForkId, ForkResult, MultiFork},
     opts::{EvmOpts, ExecutionSpecContext},
     utils::{
         apply_chain_and_block_specific_env_changes_for_chain,
-        apply_chain_specific_tx_replay_env_changes_for_chain,
+        apply_chain_specific_tx_replay_env_changes_for_chain, block_env_from_header,
     },
 };
 use alloy_chains::Chain;
@@ -305,7 +305,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     pub async fn env(
         &self,
         opts: &EvmOpts,
-    ) -> eyre::Result<(EvmEnvFor<FEN>, crate::evm::TransactionRequestFor<FEN>)> {
+    ) -> eyre::Result<(EvmEnvFor<FEN>, TransactionRequestFor<FEN>)> {
         opts.env_at_fork::<FEN>(self.fork().as_ref()).await
     }
 
@@ -448,7 +448,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let mut account = self.lifecycle.accepted_db().get_account(&address)?;
         if let Some(account) = &mut account
             && account.code.is_none()
-            && account.code_hash != KECCAK256_EMPTY
+            && !account.is_empty_code_hash()
         {
             account.code = Some(self.code_by_hash(account.code_hash)?);
         }
@@ -478,7 +478,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         if let Some(code) = account.code.take()
             && !code.is_empty()
         {
-            if account.code_hash == KECCAK256_EMPTY || account.code_hash.is_zero() {
+            if account.is_empty_code_hash() || account.code_hash.is_zero() {
                 account.code_hash = code.hash_slow();
             }
             cache.contracts.insert(account.code_hash, code);
@@ -766,10 +766,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let factory = self.lifecycle.factory().clone();
         let context = self.lifecycle.forks_mut().context_mut(Some(id)).expect("fork exists");
         let mut env = factory.env_with_spec(context.env, running.spec);
-        env.set_feature(
-            EvmFeatures::FEE_CHARGE,
-            running.version.features.contains(EvmFeatures::FEE_CHARGE),
-        );
+        env.set_feature(EvmFeatures::FEE_CHARGE, running.version.feature(EvmFeatures::FEE_CHARGE));
         context.env = env;
         self.lifecycle.select_fork(evm, Some(id), phase)
     }
@@ -905,7 +902,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                     EvmFeatures::BALANCE_CHECK,
                     EvmFeatures::BALANCE_TOP_UP,
                 ] {
-                    env.set_feature(feature, outer.version.features.contains(feature));
+                    env.set_feature(feature, outer.version.feature(feature));
                 }
             }
             env
@@ -915,7 +912,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         // The mined transaction is signed for its source chain, whatever chain ID the running
         // transaction or the fork's environment uses.
         env.set_chain_id(source_chain_id);
-        env.block = crate::utils::block_env_from_header::<TypesFor<FEN>>(&target.block.header);
+        env.block = block_env_from_header::<TypesFor<FEN>>(&target.block.header);
         apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _>(
             &mut env,
             &target.block,
@@ -931,12 +928,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             let index = target
                 .index
                 .ok_or_else(|| eyre::eyre!("transaction {transaction} has no block position"))?;
-            let BlockTransactions::Full(transactions) = &target.block.transactions else {
-                eyre::bail!(
-                    "block {} does not contain full transactions",
-                    target.block.header.number()
-                );
-            };
+            let transactions = full_transactions(&target.block)?;
             let block = BlockNumHash::new(target.block.header.number(), target.block.header.hash);
             let next = self
                 .fork_position(id)?
@@ -1462,9 +1454,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             block.header.number(),
             block.header.hash
         );
-        let BlockTransactions::Full(transactions) = &block.transactions else {
-            eyre::bail!("block {} does not contain full transactions", block.header.number());
-        };
+        let transactions = full_transactions(&block)?;
         let index = transactions.iter().position(|tx| tx.tx_hash() == transaction);
         eyre::ensure!(
             index.is_some(),
@@ -1549,9 +1539,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         context: Option<BlockContext<FEN>>,
         source_chain_id: ChainId,
     ) -> eyre::Result<Cache> {
-        let BlockTransactions::Full(transactions) = &block.transactions else {
-            eyre::bail!("block {} does not contain full transactions", block.header.number());
-        };
+        let transactions = full_transactions(block)?;
         apply_chain_specific_tx_replay_env_changes_for_chain(&mut env, source_chain_id);
 
         let now = Instant::now();

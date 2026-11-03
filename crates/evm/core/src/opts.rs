@@ -1,7 +1,7 @@
 use crate::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     evm::{
-        EvmEnv, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork, SpecFor,
+        EvmEnv, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork, SpecFor, SpecOf,
         TransactionRequestFor, TypesFor,
     },
     fork::{CreateFork, Fork},
@@ -1377,16 +1377,16 @@ pub fn resolve_execution_spec<F: FoundryEvmFactory>(
     configured_hardfork: Option<FoundryHardfork>,
     evm_env: &mut EvmEnv<F::Types>,
     context: ExecutionSpecContext,
-    explicit_spec: Option<crate::evm::SpecOf<F>>,
+    explicit_spec: Option<SpecOf<F>>,
 ) -> Option<FoundryHardfork> {
-    let configured_spec = evm_spec_id::<crate::evm::SpecOf<F>>(evm_version);
+    let configured_spec = evm_spec_id::<SpecOf<F>>(evm_version);
     let (spec, hardfork) = if let Some(spec) = explicit_spec {
         (spec, spec.reported_hardfork())
     } else if let Some((hardfork, spec)) = configured_hardfork
-        .filter(|&hardfork| crate::evm::SpecOf::<F>::from_foundry_hardfork(hardfork).is_some())
+        .filter(|&hardfork| SpecOf::<F>::from_foundry_hardfork(hardfork).is_some())
         .or_else(|| context.hardfork(evm_env.block.timestamp.saturating_to(), configured_spec))
         .and_then(|hardfork| {
-            crate::evm::SpecOf::<F>::from_foundry_hardfork(hardfork).map(|spec| (hardfork, spec))
+            SpecOf::<F>::from_foundry_hardfork(hardfork).map(|spec| (hardfork, spec))
         })
     {
         (spec, Some(hardfork))
