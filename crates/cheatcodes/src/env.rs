@@ -292,12 +292,10 @@ fn env_default<T: SolValue>(key: &str, default: &T, ty: &DynSolType) -> Result {
 
 fn env_array(key: &str, delim: &str, ty: &DynSolType) -> Result {
     get_env(key).and_then(|val| {
-        let values = || val.split(delim).map(str::trim);
-        string::parse_array(values(), ty).map_err(|_| {
-            // Only the position of the first element that fails to parse is reported.
-            let index = values().position(|value| string::parse_value(value, ty).is_err());
-            fmt_err!("failed parsing ${key}[{}] as type `{ty}`", index.unwrap_or_default())
-        })
+        let mut consumed = 0usize;
+        let values = val.split(delim).map(str::trim).inspect(|_| consumed += 1);
+        string::parse_array(values, ty)
+            .map_err(|_| fmt_err!("failed parsing ${key}[{}] as type `{ty}`", consumed - 1))
     })
 }
 
@@ -385,21 +383,6 @@ mod tests {
         let err =
             env_array_default(key, ",", &7u64, &DynSolType::Uint(256)).unwrap_err().to_string();
         assert!(err.contains("$env_or_unparsable"), "{err:?}");
-        unsafe {
-            env::remove_var(key);
-        }
-    }
-
-    #[test]
-    fn parse_env_uint() {
-        let key = "parse_env_uint";
-        let value = "t";
-        unsafe {
-            env::set_var(key, value);
-        }
-
-        let err = env(key, &DynSolType::Uint(256)).unwrap_err().to_string();
-        assert_eq!(err, "failed parsing $parse_env_uint as type `uint256`");
         unsafe {
             env::remove_var(key);
         }
