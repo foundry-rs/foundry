@@ -217,9 +217,9 @@ fn decode_as_non_empty_string(err: &[u8]) -> Option<String> {
 
     // ASCII string.
     if err.is_ascii() {
-        let msg = std::str::from_utf8(err).unwrap().to_string();
-        if !msg.is_empty() && is_printable(&msg) {
-            return Some(msg);
+        let msg = std::str::from_utf8(err).unwrap();
+        if !msg.is_empty() && is_printable(msg) {
+            return Some(msg.to_owned());
         }
     }
 
