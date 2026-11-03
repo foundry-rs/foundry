@@ -623,6 +623,10 @@ gas where the other doesn't is not equivalent; `--ignore-out-of-gas` leaves
 those inputs out, which compares the codes modulo gas as hevm and the Solidity
 optimizer do.
 
+Like hevm, the check uses bitwuzla when it is installed and no other solver is
+configured, since it answers these bit-vector queries several times faster than
+z3; \`--solver\` picks another.
+
 A counterexample is replayed through the concrete executor with the model's
 environment and pre-state, and printed with both results and every storage
 slot, balance, nonce and code that differs; the command then exits with a

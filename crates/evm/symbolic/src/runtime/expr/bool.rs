@@ -25,7 +25,23 @@ pub(in crate::runtime) enum SymBoolExprKind {
     Cmp(SymCmpOp, SymExpr, SymExpr),
 }
 
+impl super::hashcons::NodeFlags for SymBoolExprKind {
+    fn flags(&self) -> u8 {
+        match self {
+            Self::Const(_) => 0,
+            Self::Not(value) => value.flags(),
+            Self::And(values) => values.iter().fold(0, |flags, value| flags | value.flags()),
+            Self::Cmp(_, left, right) => left.flags() | right.flags(),
+        }
+    }
+}
+
 impl SymBoolExpr {
+    #[inline]
+    pub(in crate::runtime) fn flags(&self) -> u8 {
+        self.kind.flags()
+    }
+
     #[inline]
     pub(in crate::runtime) fn stable_hash_cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.kind.stable_hash_cmp(&other.kind)
@@ -493,15 +509,15 @@ impl SymBoolExpr {
     }
 
     pub(crate) fn contains_keccak(&self) -> bool {
-        self.visit_bool(|expr| matches!(expr.kind(), SymExprKind::Keccak { .. }))
+        self.flags() & FLAG_KECCAK != 0
     }
 
     pub(crate) fn contains_gasleft(&self) -> bool {
-        self.visit_bool(|expr| expr.is_raw_gasleft())
+        self.flags() & FLAG_GASLEFT != 0
     }
 
     pub(crate) fn contains_udiv(&self) -> bool {
-        self.visit_bool(|expr| expr.contains_udiv())
+        self.flags() & FLAG_UDIV != 0
     }
 
     pub(crate) fn implies_unsigned_less_or_equal(

@@ -374,3 +374,21 @@ fn equivalence_compares_modulo_gas_on_request(cmd: _) {
         .args(["equivalence", "--code-a", touch_memory, "--code-b", "0x00", "--ignore-out-of-gas"])
         .assert_success();
 }
+
+#[forgetest]
+fn equivalence_relates_calldata_reads_at_symbolic_offsets(cmd: _) {
+    skip_unless_z3!("equivalence_relates_calldata_reads_at_symbolic_offsets");
+    // For x = calldataload(0) & 0xffff, calldataload(x + 1) is
+    // (calldataload(x) << 8) | byte(0, calldataload(x + 32)) at every offset.
+    let shifted = "0x600161ffff5f351601355f5500";
+    let assembled = "0x61ffff5f351660208101355f1a903560081b175f5500";
+    cmd.args(["equivalence", "--code-a", shifted, "--code-b", assembled]).assert_success();
+    // calldataload(x + 2) differs.
+    let out = cmd
+        .forge_fuse()
+        .args(["equivalence", "--code-a", shifted, "--code-b", "0x600261ffff5f351601355f5500"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(out.contains("storage slot 0x0: code-a "), "{out}");
+}

@@ -34,6 +34,9 @@ impl SymCalldata {
     }
 
     fn load_dynamic(&self, cx: &mut SymCx, offset: &SymExpr) -> SymExpr {
+        if self.size > SYMBOLIC_WORD_READ_MIN_LEN {
+            return self.bytes.word_at_symbolic(cx, offset);
+        }
         let mut result = SymExpr::zero(cx);
         for candidate in (0..self.size).rev() {
             let candidate_expr = SymExpr::constant(cx, U256::from(candidate));

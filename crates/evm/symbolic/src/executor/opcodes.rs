@@ -329,8 +329,11 @@ impl SymbolicExecutor {
             SymBoolExpr::constant(&mut self.cx, false)
         };
         let size = SymExpr::constant(&mut self.cx, U256::from(size));
-        let local_size =
-            state.memory.size_after_range_expansion_word(&mut self.cx, offset.clone(), size);
+        let local_size = state.memory.size_after_range_expansion_word(
+            &mut self.cx,
+            offset.clone(),
+            size.clone(),
+        );
         if let Some(local_size) = local_size.as_const() {
             if local_size <= U256::from(memory_limit) {
                 return Ok(None);
@@ -341,18 +344,44 @@ impl SymbolicExecutor {
             state.return_data = SymReturnData::empty(&mut self.cx);
             return Ok(Some(StepOutcome::Revert));
         }
+        if self.ignores_out_of_gas() {
+            return self.modulo_gas_memory_guard(executor, state, offset, &size);
+        }
         let memory_limit = SymExpr::constant(&mut self.cx, U256::from(memory_limit));
         let within_limit = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, local_size, memory_limit);
         let valid_access = SymBoolExpr::and(&mut self.cx, vec![representable, within_limit]);
-        if self.ignores_out_of_gas() {
-            let (constraints, feasible) = self.constraints_with_condition(state, valid_access)?;
-            if !feasible {
-                return Ok(Some(StepOutcome::AssumeRejected));
-            }
-            state.constraints = constraints;
+        self.apply_memory_access_guard(state, worklist, valid_access)
+    }
+
+    /// Leaves out, in an equivalence check modulo gas, the inputs whose memory access could run
+    /// out of gas: a nonempty access must keep its offset and size each within 8 MiB (or half the
+    /// memory limit, when smaller). Expanding memory to 8 MiB already costs more gas than any block
+    /// holds, so every input this drops runs out of gas on a real chain, and every input it keeps
+    /// fits the memory limit and replays within Foundry's default gas limit. Unlike tracking the
+    /// exact memory size, the condition does not grow with each access, so later queries stay
+    /// small.
+    fn modulo_gas_memory_guard(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        state: &mut PathState,
+        offset: &SymExpr,
+        size: &SymExpr,
+    ) -> Result<Option<StepOutcome>, SymbolicError> {
+        let half = U256::from((executor.memory_limit / 2).min(1 << 23).saturating_sub(32));
+        let empty = SymBoolExpr::eq_word_const(&mut self.cx, size, U256::ZERO);
+        let offset_fits = SymBoolExpr::cmp_word_const(&mut self.cx, SymCmpOp::Ule, offset, half);
+        let size_fits = SymBoolExpr::cmp_word_const(&mut self.cx, SymCmpOp::Ule, size, half);
+        let fits = SymBoolExpr::and(&mut self.cx, vec![offset_fits, size_fits]);
+        let valid = SymBoolExpr::or(&mut self.cx, vec![empty, fits]);
+        if valid.as_const() == Some(true) {
             return Ok(None);
         }
-        self.apply_memory_access_guard(state, worklist, valid_access)
+        let (constraints, feasible) = self.constraints_with_condition(state, valid)?;
+        if !feasible {
+            return Ok(Some(StepOutcome::AssumeRejected));
+        }
+        state.constraints = constraints;
+        Ok(None)
     }
 
     fn apply_memory_access_guard(
@@ -454,15 +483,12 @@ impl SymbolicExecutor {
             SymBoolExpr::and(&mut self.cx, vec![size_fits, offset_fits, local_fits]);
         let valid_access = SymBoolExpr::or(&mut self.cx, vec![zero_size, nonzero_valid]);
 
-        // An equivalence check modulo gas leaves out the inputs that run out of memory gas.
         if self.ignores_out_of_gas() {
-            let (constraints, feasible) = self.constraints_with_condition(state, valid_access)?;
-            if !feasible {
-                return Ok(Some(StepOutcome::AssumeRejected));
+            let outcome = self.modulo_gas_memory_guard(executor, state, offset, size)?;
+            if outcome.is_none() {
+                state.memory.expand_range(&mut self.cx, offset.clone(), size.clone());
             }
-            state.constraints = constraints;
-            state.memory.expand_range(&mut self.cx, offset.clone(), size.clone());
-            return Ok(None);
+            return Ok(outcome);
         }
         let outcome = self.apply_memory_access_guard(state, worklist, valid_access)?;
         if outcome.is_none() {
@@ -635,16 +661,26 @@ impl SymbolicExecutor {
                             }
                         }
                         let max_limit = self.config.max_calldata_bytes as usize;
-                        let max_size = match self.solver_upper_bound_usize(
-                            state,
-                            &size,
-                            max_limit,
-                            "symbolic SHA3 size",
-                        ) {
+                        // An equivalence check hashes a region without a static size bound to a
+                        // symbol named by the whole memory, the offset and the size, so equal
+                        // memory gives the two programs the same hash, as an uninterpreted
+                        // function would, without asking the solver for a bound first.
+                        let unbounded = self.equivalence.is_some()
+                            && state
+                                .upper_bound_usize(&mut self.cx, &size)
+                                .is_none_or(|bound| bound > max_limit);
+                        let bound = if unbounded {
+                            Err(SymbolicError::Unsupported("symbolic SHA3 size"))
+                        } else {
+                            self.solver_upper_bound_usize(
+                                state,
+                                &size,
+                                max_limit,
+                                "symbolic SHA3 size",
+                            )
+                        };
+                        let max_size = match bound {
                             Ok(max_size) => max_size,
-                            // An equivalence check hashes an unbounded region to a symbol named
-                            // by the whole memory, the offset and the size, so equal memory
-                            // gives the two programs the same hash.
                             Err(SymbolicError::Unsupported(_)) if self.equivalence.is_some() => {
                                 let mut identity = state.memory.identity_exprs(&mut self.cx);
                                 identity.push(offset);

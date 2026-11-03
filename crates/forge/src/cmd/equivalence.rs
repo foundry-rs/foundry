@@ -4,7 +4,7 @@ use alloy_primitives::{Address, B256, Bytes, Log, TxKind, U256, hex, map::HashMa
 use clap::{Parser, ValueHint};
 use eyre::{Result, WrapErr, bail};
 use foundry_common::{sh_println, shell};
-use foundry_config::{Config, SymbolicStorageLayout};
+use foundry_config::{Config, SymbolicConfig, SymbolicStorageLayout};
 use foundry_evm::{
     backend::Backend,
     constants::{CALLER, TEST_CONTRACT_ADDRESS},
@@ -73,7 +73,8 @@ pub struct EquivalenceArgs {
     #[arg(long)]
     pub ignore_out_of_gas: bool,
 
-    /// Solver to use, such as z3, cvc5, yices or bitwuzla. Defaults to `symbolic.solver`.
+    /// Solver to use, such as z3, cvc5, yices or bitwuzla. Defaults to bitwuzla when it is
+    /// installed and `symbolic.solver` is left at its default, and to `symbolic.solver` otherwise.
     #[arg(long, value_name = "SOLVER")]
     pub solver: Option<String>,
 
@@ -110,6 +111,14 @@ impl EquivalenceArgs {
         let mut symbolic = config.symbolic.clone();
         if let Some(solver) = self.solver {
             symbolic.solver = solver;
+        } else if symbolic.solver == SymbolicConfig::default().solver
+            && symbolic.solver_command.as_deref().is_none_or(str::is_empty)
+            && symbolic.solver_portfolio.is_empty()
+            && bitwuzla_available()
+        {
+            // Like hevm, prefer bitwuzla, which answers equivalence queries several times faster
+            // than z3.
+            symbolic.solver = "bitwuzla".to_string();
         }
         if let Some(timeout) = self.timeout {
             symbolic.timeout = Some(timeout);
@@ -383,6 +392,16 @@ impl AccountMap {
             account
         }
     }
+}
+
+/// Returns whether a bitwuzla binary runs.
+fn bitwuzla_available() -> bool {
+    std::process::Command::new("bitwuzla")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 /// Reads hex bytecode from a flag or a file.

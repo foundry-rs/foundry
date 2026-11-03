@@ -352,6 +352,37 @@ impl fmt::Debug for SymExprKind {
     }
 }
 
+/// The subtree contains an unsigned division.
+pub(in crate::runtime) const FLAG_UDIV: u8 = 1;
+/// The subtree contains a raw `gasleft()` symbol.
+pub(in crate::runtime) const FLAG_GASLEFT: u8 = 1 << 1;
+/// The subtree contains a Keccak node.
+pub(in crate::runtime) const FLAG_KECCAK: u8 = 1 << 2;
+/// The word subtree contains an if-then-else outside Boolean conditions.
+pub(in crate::runtime) const FLAG_ITE: u8 = 1 << 3;
+
+impl super::hashcons::NodeFlags for SymExprKind {
+    fn flags(&self) -> u8 {
+        let words = |exprs: &[SymExpr]| exprs.iter().fold(0, |flags, expr| flags | expr.flags());
+        match self {
+            Self::Const(_) | Self::Var(_) => 0,
+            Self::GasLeft(_) => FLAG_GASLEFT,
+            Self::Keccak { len, bytes, .. } => FLAG_KECCAK | len.flags() | words(bytes),
+            Self::Hash { bytes, .. } => words(bytes),
+            Self::Not(value) => value.flags(),
+            Self::BinOp(op, left, right) => {
+                let own = if matches!(op, SymBinOp::UDiv) { FLAG_UDIV } else { 0 };
+                own | left.flags() | right.flags()
+            }
+            Self::TernOp(_, first, second, third) => first.flags() | second.flags() | third.flags(),
+            // An ITE condition's own ITEs do not make the word an ITE.
+            Self::Ite(condition, then, otherwise) => {
+                FLAG_ITE | (condition.flags() & !FLAG_ITE) | then.flags() | otherwise.flags()
+            }
+        }
+    }
+}
+
 impl SymExprKind {
     pub(in crate::runtime) const fn get_var(&self) -> Option<Symbol> {
         match self {
@@ -376,6 +407,11 @@ impl SymExprKind {
 impl SymExpr {
     pub(in crate::runtime) fn kind(&self) -> &SymExprKind {
         self.kind.value()
+    }
+
+    #[inline]
+    pub(in crate::runtime) fn flags(&self) -> u8 {
+        self.kind.flags()
     }
 
     pub(in crate::runtime) fn from_kind(cx: &mut SymCx, kind: SymExprKind) -> Self {
@@ -1397,20 +1433,24 @@ impl SymExpr {
     }
 
     pub(crate) fn contains_keccak(&self) -> bool {
-        self.visit_bool(|expr| matches!(expr.kind(), SymExprKind::Keccak { .. }))
+        self.flags() & FLAG_KECCAK != 0
     }
 
     pub(crate) fn contains_gasleft(&self) -> bool {
-        self.visit_bool(|expr| expr.is_raw_gasleft())
+        self.flags() & FLAG_GASLEFT != 0
     }
 
     pub(crate) fn contains_udiv(&self) -> bool {
-        self.visit_bool(|expr| matches!(expr.kind(), SymExprKind::BinOp(SymBinOp::UDiv, _, _)))
+        self.flags() & FLAG_UDIV != 0
     }
 
     pub(crate) fn contains_ite(&self) -> bool {
-        let mut visited = HashSet::<&Self>::default();
-        self.contains_ite_cached(&mut visited, false)
+        let contains = self.flags() & FLAG_ITE != 0;
+        debug_assert_eq!(contains, {
+            let mut visited = HashSet::<&Self>::default();
+            self.contains_ite_cached(&mut visited, false)
+        });
+        contains
     }
 
     fn contains_ite_cached<'a>(&'a self, visited: &mut HashSet<&'a Self>, memoize: bool) -> bool {
