@@ -7181,6 +7181,8 @@ interface Vm {
     function accesses(address target) external returns (bytes32[] memory, bytes32[] memory);
     function expectEmit() external;
     function expectEmit(address emitter, uint64 count) external;
+    function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData)
+        external;
     function expectRevert() external;
     function mockCall(address callee, bytes calldata data, bytes calldata returnData) external;
 }
@@ -7203,6 +7205,10 @@ contract Store {
     }
 
     function noop() external {}
+
+    function revertWithoutEmit() external pure {
+        revert();
+    }
 
     function setAThenRevert(uint256 value) external {
         emit Set(value);
@@ -7306,6 +7312,25 @@ contract SymbolicRecordAndEmitCount {
         store.setA(value);
     }
 
+    // Like Forge, a reverted call does not end the expectation.
+    function checkExpectNoEmitKeptAcrossRevertedCall(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        try store.revertWithoutEmit() {} catch {}
+        store.setA(value);
+    }
+
+    // Like Forge, logs with different topic counts never match, even on unchecked topics.
+    function checkExpectEmitRequiresSameTopicCount(uint256 value) public {
+        vm.expectEmit(false, false, false, true);
+        bytes32 topic = Set.selector;
+        assembly {
+            mstore(0, value)
+            log2(0, 32, topic, value)
+        }
+        store.setA(value);
+    }
+
     // Like Forge, a static call does not end the expectation.
     function checkExpectNoEmitKeptAcrossStaticCall(uint256 value) public {
         vm.expectEmit(address(store), 0);
@@ -7396,7 +7421,8 @@ contract SymbolicRecordAndEmitCount {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 15 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCount
+Ran 17 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCount
+[FAIL: Set indexed topic count mismatch: expected 1, got 0; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitRequiresSameTopicCount(uint256) ([METRICS])
 [PASS] checkExpectNoEmitAllowsOtherEvent(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit count 0 across a failed call] checkExpectNoEmitAnonymousInRevertedCall(uint256) ([METRICS])
 [FAIL: use vm.expectEmitAnonymous to match anonymous events; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectNoEmitAnonymousTemplate(uint256) ([METRICS])
@@ -7407,12 +7433,13 @@ Ran 15 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCoun
 [PASS] checkExpectNoEmitEndsAfterNextCall(uint256) ([METRICS])
 [FAIL: log emitted but expected 0 times; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectNoEmitFailsWhenEmitted(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectNoEmitKeepsNonMatchingPath(uint256) ([METRICS])
+[FAIL: log emitted but expected 0 times; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectNoEmitKeptAcrossRevertedCall(uint256) ([METRICS])
 [FAIL: log emitted but expected 0 times; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectNoEmitKeptAcrossStaticCall(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit count 0 across a failed call] checkExpectNoEmitTemplateFromRevertedCall(uint256) ([METRICS])
 [PASS] checkExpectNoEmitUnderExpectRevert(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit with a pending expectation] checkQueuedExpectEmitFailsClosed(uint256) ([METRICS])
 [PASS] checkStopRecordKeepsAndPausesAccesses(uint256) ([METRICS])
-Suite result: FAILED. 8 passed; 7 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 8 passed; 9 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
