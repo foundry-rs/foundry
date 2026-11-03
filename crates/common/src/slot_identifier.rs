@@ -116,7 +116,24 @@ impl SlotInfo {
                     None
                 }
             }
-            _ => decode_storage_word(actual_type, value),
+            _ => {
+                let bits = match *actual_type {
+                    DynSolType::Uint(bits) | DynSolType::Int(bits) => bits,
+                    DynSolType::FixedBytes(size) => size * 8,
+                    DynSolType::Bool => 8,
+                    _ => return actual_type.abi_decode(value.as_slice()).ok(),
+                };
+                // Storage does not sign-extend intN or left-align bytesN as ABI encoding does.
+                // Discard higher-order bytes before moving the value to its ABI position.
+                let shift = 256 - bits;
+                let value = Into::<U256>::into(value) << shift;
+                let value = match actual_type {
+                    DynSolType::Int(_) => I256::from_raw(value).asr(shift).into_raw(),
+                    DynSolType::FixedBytes(_) => value,
+                    _ => value >> shift,
+                };
+                actual_type.abi_decode(B256::from(value).as_slice()).ok()
+            }
         }
     }
 
@@ -312,9 +329,9 @@ impl SlotInfo {
                 }
 
                 // Decode the member values
-                if let (Some(prev_val), Some(new_val)) = (
-                    decode_storage_word(&member.slot_type.dyn_sol_type, prev_bytes.into()),
-                    decode_storage_word(&member.slot_type.dyn_sol_type, new_bytes.into()),
+                if let (Ok(prev_val), Ok(new_val)) = (
+                    member.slot_type.dyn_sol_type.abi_decode(&prev_bytes),
+                    member.slot_type.dyn_sol_type.abi_decode(&new_bytes),
                 ) {
                     member.decoded =
                         Some(DecodedSlotValues { previous_value: prev_val, new_value: new_val });
@@ -1054,32 +1071,9 @@ pub fn is_struct(s: &str) -> bool {
     s.starts_with("struct ")
 }
 
-/// Decodes a value type held in the lowest-order bytes of a storage word.
-///
-/// Unlike ABI encoding, storage does not sign-extend `intN` or left-align `bytesN`, and it packs
-/// other variables into the higher-order bytes.
-fn decode_storage_word(ty: &DynSolType, word: B256) -> Option<DynSolValue> {
-    let bits = match *ty {
-        DynSolType::Uint(bits) | DynSolType::Int(bits) => bits,
-        DynSolType::FixedBytes(size) => size * 8,
-        DynSolType::Bool => 8,
-        _ => return ty.abi_decode(word.as_slice()).ok(),
-    };
-    // Shift out the higher-order bytes, then move the value to its ABI position
-    let shift = 256 - bits;
-    let value = Into::<U256>::into(word) << shift;
-    let value = match ty {
-        DynSolType::Int(_) => I256::from_raw(value).asr(shift).into_raw(),
-        DynSolType::FixedBytes(_) => value,
-        _ => value >> shift,
-    };
-    ty.abi_decode(B256::from(value).as_slice()).ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::b256;
 
     #[test]
     fn preserves_contract_and_enum_array_dimensions() {
@@ -1257,51 +1251,52 @@ mod tests {
     }
 
     #[test]
-    fn decodes_packed_signed_and_fixed_bytes_values() {
-        let info = |ty: &str, offset| SlotInfo {
-            label: String::new(),
-            slot_type: StorageTypeInfo {
-                label: ty.to_string(),
-                dyn_sol_type: DynSolType::parse(ty).unwrap(),
-            },
-            offset,
-            slot: "0".to_string(),
-            members: None,
-            decoded: None,
-            keys: None,
-        };
-        let decode = |mut info: SlotInfo, new_value| {
-            info.decode_values(B256::ZERO, new_value);
-            info
-        };
-
-        // `int8 small = -1` packed with `bytes4 tag = 0xdeadbeef`
-        let small = decode(
-            info("int8", 0),
-            b256!("0x000000000000000000000000000000000000000000000000000000deadbeefff"),
-        );
-        let tag = decode(
-            info("bytes4", 0),
-            b256!("0x00000000000000000000000000000000000000000000000000000000deadbeef"),
-        );
-        // `uint128 a = 5` packed with `uint128 b = 1`
-        let a = decode(
-            info("uint128", 0),
-            b256!("0x0000000000000000000000000000000100000000000000000000000000000005"),
-        );
-        // `struct { int16 a; bytes4 b; }` set to `(-2, 0x12345678)`
-        let mut packed = info("(int16,bytes4)", 0);
-        packed.members = Some(vec![info("int16", 0), info("bytes4", 2)]);
-        let packed = decode(
-            packed,
-            b256!("0x000000000000000000000000000000000000000000000000000012345678fffe"),
-        );
-
-        let values = [&small, &tag, &a]
-            .into_iter()
-            .chain(packed.members.as_ref().unwrap())
-            .map(|info| format_token_raw(&info.decoded.as_ref().unwrap().new_value))
-            .collect::<Vec<_>>();
-        assert_eq!(values, ["-1", "0xdeadbeef", "5", "-2", "0x12345678"]);
+    fn decodes_standalone_storage_values() {
+        for (ty, size, previous, new, previous_decoded, new_decoded) in [
+            ("int8", "1", "ff", "80", "-1", "-128"),
+            ("int16", "2", "8000", "7fff", "-32768", "32767"),
+            (
+                "int256",
+                "32",
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "1",
+                "-1",
+                "1",
+            ),
+            ("bytes1", "1", "ab", "cd", "0xab", "0xcd"),
+            ("bytes4", "4", "deadbeef", "12345678", "0xdeadbeef", "0x12345678"),
+            (
+                "bytes32",
+                "32",
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+                "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                "0xfedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+            ),
+        ] {
+            let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
+                "storage": [
+                    { "astId": 1, "contract": "C", "label": "value", "offset": 0, "slot": "0", "type": "t_value" }
+                ],
+                "types": {
+                    "t_value": { "encoding": "inplace", "label": ty, "numberOfBytes": size }
+                }
+            }))
+            .unwrap();
+            let identifier = SlotIdentifier::new(Arc::new(layout));
+            let mut info = identifier.identify(&B256::ZERO, None).unwrap();
+            info.decode_values(
+                B256::from(U256::from_str_radix(previous, 16).unwrap()),
+                B256::from(U256::from_str_radix(new, 16).unwrap()),
+            );
+            assert_eq!(
+                serde_json::to_value(info).unwrap(),
+                serde_json::json!({
+                    "label": "value", "type": ty, "offset": 0, "slot": "0",
+                    "decoded": { "previousValue": previous_decoded, "newValue": new_decoded }
+                }),
+                "{ty}"
+            );
+        }
     }
 }
