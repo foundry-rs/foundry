@@ -487,6 +487,11 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 } else {
                     let _ = sh_println!("{}", event.signature());
                 }
+                let expected = event.selector();
+                eyre::ensure!(
+                    expected == selector,
+                    alloy_dyn_abi::Error::EventSignatureMismatch { expected, actual: selector }
+                );
                 // Keep the indexed flags of a cached signature: indexed parameters are not in DATA.
                 let data = data.get(64..).unwrap_or_default();
                 abi_decode_event_data(&event, &hex::decode(data)?)?

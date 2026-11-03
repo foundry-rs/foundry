@@ -1,5 +1,9 @@
-use foundry_test_utils::util::OutputExt;
-use std::path::Path;
+use super::*;
+
+#[cfg(not(windows))]
+use foundry_common::selectors::SelectorKind;
+#[cfg(not(windows))]
+use foundry_evm::traces::identifier::SignaturesCache;
 
 #[casttest]
 fn flaky_error_decode_with_openchain(prj: _, cmd: _) {
@@ -470,4 +474,27 @@ fn signature_selector(cmd: _) {
         .args(["sig", "foo(address,uint256)"])
         .assert_success()
         .stdout_eq("0xbd0d639f\n");
+}
+
+// `dirs::home_dir()` ignores `HOME` on Windows, so the signature cache cannot be isolated there.
+#[cfg(not(windows))]
+#[casttest]
+fn event_decode_rejects_mismatched_cached_signature(prj: _, cmd: _) {
+    let selector = keccak256("Expected(uint256)");
+    let mut cache = SignaturesCache::default();
+    cache.insert(SelectorKind::Event(selector), "Other(uint256)".into());
+    cache.save(&prj.root().join(".foundry/cache/signatures"));
+
+    let data = format!("{selector}{}", hex::encode((U256::from(78),).abi_encode()));
+    cmd.env("HOME", prj.root());
+    cmd.args(["decode-event", &data])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+Other(uint256)
+
+"#]])
+        .stderr_eq(str![[r#"
+Error: invalid event signature: expected 0x42d43c8775dfae639a33729abbd197262a51e5f0a31afc5914fbf109e1fd527f, got 0x080982c6f2efa9fb20abd1695f8727b5006db2695f6434c387b493cc04f8038d
+
+"#]]);
 }
