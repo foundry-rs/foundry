@@ -2477,8 +2477,16 @@ impl<'ast> State<'_, 'ast> {
                 self.print_word(")");
                 self.nbsp();
             }
+            // A trailing comment inside an empty block goes after `}`, as it does on a second pass.
+            let trailing_pos = if block.is_empty()
+                && self.peek_trailing_comment(block.span.lo(), Some(try_span.hi())).is_some()
+            {
+                block.span.lo()
+            } else {
+                try_span.hi()
+            };
             if block.is_empty() {
-                self.print_block(block, *try_span);
+                self.print_block(block, try_span.with_hi(trailing_pos));
                 self.end();
             } else {
                 self.print_word("{");
@@ -2493,7 +2501,7 @@ impl<'ast> State<'_, 'ast> {
             }
 
             let mut skip_ind = false;
-            if self.print_trailing_comment(try_span.hi(), other.first().map(|c| c.span.lo())) {
+            if self.print_trailing_comment(trailing_pos, other.first().map(|c| c.span.lo())) {
                 // if a trailing comment is printed at the very end, we have to manually
                 // adjust the offset to avoid having a double break.
                 self.break_offset_if_not_bol(0, self.ind, false);

@@ -101,4 +101,9 @@ contract TryStatement {
             return true;
         } catch {} // https://github.com/foundry-rs/foundry/issues/12240
     }
+
+    function try_emptyBlockComment(I target) public {
+        try target.fetch() {} // note
+            catch {}
+    }
 }
