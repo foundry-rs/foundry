@@ -1845,11 +1845,29 @@ impl Config {
 
     /// Returns configuration for a compiler to use when setting up a [Project].
     pub fn solc_compiler(&self) -> Result<SolcCompiler, SolcError> {
-        if let Some(solc) = self.ensure_solc()? {
+        if let Some(mut solc) = self.ensure_solc()? {
+            self.forward_solar_threads(&mut solc);
             Ok(SolcCompiler::Specific(solc))
         } else {
             Ok(SolcCompiler::AutoDetect)
         }
+    }
+
+    /// Runs Solar with as many threads as the global thread pool, so `-j` reaches it and it
+    /// otherwise uses every core instead of its own default. The count is passed on the compiler
+    /// instance rather than in the settings, so it does not change the build cache. A thread
+    /// count already set in `extra_args` wins.
+    fn forward_solar_threads(&self, solc: &mut Solc) {
+        if solc.solar_version().is_none() {
+            return;
+        }
+        let is_threads_arg = |arg: &str| {
+            arg.starts_with("--threads") || arg.starts_with("--jobs") || arg.starts_with("-j")
+        };
+        if solc.extra_args.iter().chain(&self.extra_args).any(|arg| is_threads_arg(arg)) {
+            return;
+        }
+        solc.extra_args.push(format!("--threads={}", rayon::current_num_threads()));
     }
 
     /// Returns the solc version, if any.
