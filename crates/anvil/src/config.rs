@@ -2078,8 +2078,7 @@ impl NodeConfig {
                     redact_url(eth_rpc_url)
                 );
             }
-            if before.instance_id == expected.instance_id
-                && before.context_eq(*expected)
+            if before.same_instance(*expected)
                 && block.is_some_and(|block| block.header.hash == block_hash)
             {
                 expected.tempo_epoch_length =
