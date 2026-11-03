@@ -64,6 +64,25 @@ For a full list of all configuration options, see the [Foundry Book](https://get
 - [Linter Configuration](https://getfoundry.sh/config/reference/linter) - Linting options
 - [Doc Generator Configuration](https://getfoundry.sh/config/reference/doc-generator) - Documentation generation options
 
+## Editor support
+
+The [JSON schema](assets/foundry.schema.json) provides completion, hover documentation, and validation in
+TOML editors that support JSON schemas, such as Taplo. To select it explicitly, add this comment at the
+top of `foundry.toml`:
+
+```toml
+#:schema https://raw.githubusercontent.com/foundry-rs/foundry/master/crates/config/assets/foundry.schema.json
+```
+
+The schema describes the current `master` configuration. It checks the file, not the final configuration
+after merging profiles, inherited files, and environment variables. Dictionary entries can omit fields
+supplied by inheritance; for example, an RPC override can set only `retries` and inherit its URL.
+Array entries must be complete, because inheritance replaces or concatenates arrays rather than merging
+their entries. Loading the configuration with Foundry remains the authoritative validation.
+
+Regenerate the schema after changing config types with
+`SNAPSHOTS=overwrite cargo test -p foundry-config --features schema schema`.
+
 ## Environment Variables
 
 Foundry's tools read all environment variable names prefixed with `FOUNDRY_` using the string after the `_` as the name

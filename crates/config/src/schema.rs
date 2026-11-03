@@ -4,6 +4,9 @@
 //! keys, plus the standalone sections such as `[fmt]` or `[rpc_endpoints]`. It is generated from
 //! the config types and committed to `crates/config/assets/foundry.schema.json`, so editors can
 //! offer completion, documentation and validation for `foundry.toml`.
+//!
+//! Dictionary entries may be partial overrides of inherited entries. Their required fields
+//! cannot be checked in isolation; array records, however, are never merged field by field.
 
 use crate::{
     Config, DEPRECATIONS, DenyLevel, FormatterConfig, GasLimit, RegexWrapper, SolcReq,
@@ -26,6 +29,7 @@ use crate::{
     vyper::VyperConfig,
 };
 use foundry_compilers::artifacts::EvmVersion;
+use heck::{ToKebabCase, ToLowerCamelCase, ToShoutySnakeCase, ToUpperCamelCase};
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde_json::{Map, Value, json};
 use std::{borrow::Cow, collections::BTreeMap};
@@ -41,6 +45,7 @@ pub fn json_schema() -> String {
     schema["$defs"] = Value::Object(finalize_defs(defs, &defaults));
     let root = schema.as_object_mut().unwrap();
     root.insert("$id".into(), SCHEMA_ID.into());
+    root.remove("required");
     clean(root);
     // Sort keys, so the output does not depend on serde_json's `preserve_order` feature, which
     // other workspace crates enable.
@@ -167,7 +172,8 @@ const VALUE_ALIASES: &[(&str, &str, &str)] = &[
 /// - sets the default of each key from `defaults`;
 /// - adds the aliases serde accepts but schemars does not list;
 /// - closes the tables to unknown keys, as forge warns about them;
-/// - removes `required` and `null`: every key in `foundry.toml` is optional, and TOML has no null.
+/// - makes default-backed sections and inherited dictionary entries partial;
+/// - removes `null`, which TOML cannot represent.
 fn finalize_defs(mut defs: Map<String, Value>, defaults: &Value) -> Map<String, Value> {
     // Config sections and the default value of each, taken from `Config::default()`.
     let mut sections = vec![("Config".to_string(), defaults.clone())];
@@ -194,6 +200,13 @@ fn finalize_defs(mut defs: Map<String, Value>, defaults: &Value) -> Map<String, 
             {
                 prop.entry("default").or_insert_with(|| default.clone());
             }
+        }
+    }
+    for name in
+        sections.iter().map(|(name, _)| name.as_str()).chain(["MapDependency", "EtherscanConfig"])
+    {
+        if let Some(Value::Object(def)) = defs.get_mut(name) {
+            def.remove("required");
         }
     }
 
@@ -227,8 +240,31 @@ fn finalize_defs(mut defs: Map<String, Value>, defaults: &Value) -> Map<String, 
         }
         clean(def);
     }
-    // Forge converts the keys of a profile to snake_case, so `viaIr` and `via-ir` are accepted.
-    defs["Config"]["patternProperties"] = json!({ "[A-Z-]": {} });
+    // Keep the usual alternate spellings accepted by ForcedSnakeCaseData tied to their
+    // canonical schemas, without suggesting duplicate keys in editor completion.
+    let patterns = defs["Config"]["properties"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(|key| {
+            let mut aliases = vec![
+                key.to_lower_camel_case(),
+                key.to_upper_camel_case(),
+                key.to_shouty_snake_case(),
+                key.to_kebab_case(),
+            ];
+            aliases.retain(|alias| alias != key);
+            aliases.sort();
+            aliases.dedup();
+            let pattern =
+                aliases.iter().map(|alias| regex::escape(alias)).collect::<Vec<_>>().join("|");
+            (
+                format!("^(?:{pattern})$"),
+                json!({ "$ref": format!("#/$defs/Config/properties/{key}") }),
+            )
+        })
+        .collect::<Map<_, _>>();
+    defs["Config"]["patternProperties"] = patterns.into();
     defs
 }
 
@@ -247,7 +283,6 @@ fn sorted(value: Value) -> Value {
 
 /// Removes what does not apply to a TOML file.
 fn clean(schema: &mut Map<String, Value>) {
-    schema.remove("required");
     if schema.get("default").is_some_and(Value::is_null) {
         schema.remove("default");
     }
@@ -346,20 +381,41 @@ pub(crate) fn bytecode_hash(_: &mut SchemaGenerator) -> Schema {
 
 /// A count, or `max`.
 pub(crate) fn usize_or_max(_: &mut SchemaGenerator) -> Schema {
-    json_schema!({
-        "anyOf": [
-            { "type": "integer", "minimum": 0 },
-            { "type": "string", "description": "`max`, or a decimal number." },
-        ],
-    })
+    unsigned_or_max()
 }
 
 /// A percentage from 0 to 100.
 pub(crate) fn percent(_: &mut SchemaGenerator) -> Schema {
+    // Numeric accepts decimal, hex, octal and binary strings, including leading zeros and
+    // underscores. Enumerate the bounded values in each radix rather than approximate the bound.
+    let patterns = [(10, ""), (16, "0[xX]"), (8, "0[oO]"), (2, "0[bB]")].map(|(radix, prefix)| {
+        let values = (1u32..=100)
+            .map(|value| {
+                let digits = match radix {
+                    16 => format!("{value:x}"),
+                    8 => format!("{value:o}"),
+                    2 => format!("{value:b}"),
+                    _ => value.to_string(),
+                };
+                digits
+                    .chars()
+                    .map(|c| {
+                        if c.is_ascii_alphabetic() {
+                            format!("[{c}{}]_*", c.to_ascii_uppercase())
+                        } else {
+                            format!("{c}_*")
+                        }
+                    })
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("|");
+        format!("{prefix}[0_]*(?:{values})?")
+    });
     json_schema!({
         "anyOf": [
             { "type": "integer", "minimum": 0, "maximum": 100 },
-            { "type": "string", "description": "A number from 0 to 100." },
+            { "type": "string", "pattern": format!("^(?:{})$", patterns.join("|")) },
         ],
     })
 }
@@ -405,9 +461,8 @@ pub(crate) fn hardfork(_: &mut SchemaGenerator) -> Schema {
 
 pub(crate) fn uint256(_: &mut SchemaGenerator) -> Schema {
     json_schema!({
-        "type": ["integer", "string"],
-        "description": "An unsigned 256-bit integer. Use a decimal or `0x` hex string for values \
-                        that do not fit in a TOML integer.",
+        "type": "string",
+        "description": "An unsigned 256-bit integer, written as a decimal or `0x` hex string.",
     })
 }
 
@@ -497,12 +552,7 @@ impl_schema! {
         "type": "string",
         "description": "A solc version such as `0.8.28`, or the path to a solc binary.",
     });
-    GasLimit => json_schema!({
-        "anyOf": [
-            { "type": "integer", "minimum": 0 },
-            { "type": "string", "description": "`max`, or a decimal number." },
-        ],
-    });
+    GasLimit => unsigned_or_max();
     DenyLevel => {
         let mut level = case_insensitive(
             "Case is ignored; `warning`, `w`, `note`, `n`, `false` and `f` are also accepted.",
@@ -522,8 +572,12 @@ impl_schema! {
     );
     InvariantWorkers => json_schema!({
         "anyOf": [
-            { "type": "integer", "minimum": 1 },
-            { "type": "string", "pattern": "^\\s*(?:[aA][uU][tT][oO]|[1-9][0-9]*)\\s*$" },
+            { "type": "integer", "minimum": 1, "maximum": u64::MAX },
+            {
+                "type": "string",
+                "pattern": format!("^\\s*(?:[aA][uU][tT][oO]|{})\\s*$", unsigned_decimal_pattern()),
+                "not": { "pattern": "^\\s*\\+?0+\\s*$" },
+            },
         ],
     });
     CachedChains => json_schema!({
@@ -576,6 +630,14 @@ impl_schema! {
                     },
                 },
                 "additionalProperties": false,
+                // Missing URLs can be inherited, but specifying two forms is always invalid.
+                "not": {
+                    "anyOf": [
+                        { "required": ["endpoint", "url"] },
+                        { "required": ["endpoint", "endpoints"] },
+                        { "required": ["url", "endpoints"] },
+                    ],
+                },
             },
         ],
     });
@@ -598,9 +660,53 @@ impl JsonSchema for SolidityErrorCode {
     }
 }
 
+/// A `u64`, or a decimal string or case-insensitive `max`.
+fn unsigned_or_max() -> Schema {
+    json_schema!({
+        "anyOf": [
+            { "type": "integer", "minimum": 0, "maximum": u64::MAX },
+            {
+                "type": "string",
+                "pattern": format!("^(?:[mM][aA][xX]|{})$", unsigned_decimal_pattern()),
+                "description": "`max`, or an unsigned decimal number that fits in 64 bits.",
+            },
+        ],
+    })
+}
+
+/// Decimal strings through `u64::MAX`, allowing a leading plus and leading zeros.
+fn unsigned_decimal_pattern() -> String {
+    let max = u64::MAX.to_string();
+    let mut alternatives = vec![format!("[0-9]{{1,{}}}", max.len() - 1)];
+    for (i, digit) in max.bytes().enumerate() {
+        if digit > b'0' {
+            alternatives.push(format!(
+                "{}[0-{}][0-9]{{{}}}",
+                &max[..i],
+                char::from(digit - 1),
+                max.len() - i - 1,
+            ));
+        }
+    }
+    alternatives.push(max);
+    format!("\\+?0*(?:{})", alternatives.join("|"))
+}
+
+/// Block numbers and timestamps additionally accept unquoted `u64` values.
+pub(crate) fn u64_or_uint256(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({
+        "type": ["integer", "string"],
+        "minimum": 0,
+        "maximum": u64::MAX,
+        "description": "An unsigned 64-bit integer, or a decimal or `0x` hex string for a \
+                        256-bit value.",
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::ValueEnum;
     use std::path::Path;
 
     const SCHEMA_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/foundry.schema.json");
@@ -650,7 +756,6 @@ mod tests {
 
     #[test]
     fn networks_complete() {
-        use clap::ValueEnum;
         for variant in foundry_evm_networks::NetworkVariant::value_variants() {
             let name = variant.to_possible_value().unwrap().get_name().to_string();
             assert!(NETWORKS.contains(&name.as_str()), "`{name}` missing from NETWORKS");
@@ -668,5 +773,205 @@ mod tests {
             assert!(props.contains_key(*section), "section `{section}` missing from the schema");
         }
         assert_eq!(props.len(), Config::STANDALONE_SECTIONS.len() + 2);
+    }
+
+    #[test]
+    fn profile_key_validation() {
+        let validator = validator();
+        for (setting, valid) in [
+            ("via_ir = true", true),
+            ("viaIr = true", true),
+            ("via-ir = true", true),
+            ("ViaIr = true", true),
+            ("VIA_IR = true", true),
+            ("optimizerRuns = 200", true),
+            ("evmVersion = 'SHANGHAI'", true),
+            ("optimizerRuns = '200'", false),
+            ("optimizer-runs = '200'", false),
+            ("evmVersion = 'shangai'", false),
+            ("fuzz_runs = 10000", false),
+            ("fuzzRuns = 10000", false),
+            ("fuzz-runs = 10000", false),
+        ] {
+            assert_config_validation(&validator, &format!("[profile.default]\n{setting}"), valid);
+        }
+    }
+
+    #[test]
+    fn record_validation() {
+        let validator = validator();
+        for (setting, valid) in [
+            ("additional_compiler_profiles = [{ name = 'ir', via_ir = true }]", true),
+            ("additional_compiler_profiles = [{ via_ir = true }]", false),
+            ("compilation_restrictions = [{ paths = 'src/**', optimizer_runs = 200 }]", true),
+            ("compilation_restrictions = [{ optimizer_runs = 200 }]", false),
+            ("fs_permissions = [{ access = 'read', path = 'out' }]", true),
+            ("fs_permissions = [{ access = 'read' }]", false),
+        ] {
+            assert_config_validation(&validator, &format!("[profile.default]\n{setting}"), valid);
+        }
+    }
+
+    #[test]
+    fn rpc_endpoint_validation() {
+        let validator = validator();
+        for (endpoint, valid) in [
+            ("'https://example.com'", true),
+            ("{ endpoint = 'https://example.com', retries = 3 }", true),
+            ("{ url = 'https://example.com' }", true),
+            ("{ endpoints = ['https://example.com', 'https://fallback.example.com'] }", true),
+            ("{ endpoint = 'https://example.com', endpoints = ['https://example.com'] }", false),
+            ("{ url = 'https://example.com', endpoints = ['https://example.com'] }", false),
+            ("{ endpoint = 'https://example.com', url = 'https://example.com' }", false),
+            ("{ endpoints = [] }", false),
+        ] {
+            assert_config_validation(
+                &validator,
+                &format!("[rpc_endpoints]\nmainnet = {endpoint}"),
+                valid,
+            );
+        }
+    }
+
+    #[test]
+    fn numeric_string_validation() {
+        let validator = validator();
+        for (setting, valid) in [
+            ("gas_limit = 'max'", true),
+            ("gas_limit = 'MaX'", true),
+            ("gas_limit = '+00021'", true),
+            ("gas_limit = '18446744073709551615'", true),
+            ("gas_limit = '18446744073709551616'", false),
+            ("gas_limit = 'unlimited'", false),
+            ("gas_limit = '-1'", false),
+            ("fuzz.max_fuzz_dictionary_values = 'MAX'", true),
+            ("fuzz.max_fuzz_dictionary_values = '-1'", false),
+            ("fuzz.dictionary_weight = 100", true),
+            ("fuzz.dictionary_weight = 101", false),
+            ("fuzz.dictionary_weight = '00100'", true),
+            ("fuzz.dictionary_weight = '101'", false),
+            ("fuzz.dictionary_weight = '0x64'", true),
+            ("fuzz.dictionary_weight = '0x65'", false),
+            ("fuzz.dictionary_weight = '0o144'", true),
+            ("fuzz.dictionary_weight = '0o145'", false),
+            ("fuzz.dictionary_weight = '0b110_0100'", true),
+            ("fuzz.dictionary_weight = '0b110_0101'", false),
+            ("fuzz.dictionary_weight = 'invalid'", false),
+            ("invariant.workers = '01'", true),
+            ("invariant.workers = '+1'", true),
+            ("invariant.workers = '  AuTo  '", true),
+            ("invariant.workers = '0'", false),
+            ("invariant.workers = '18446744073709551616'", false),
+        ] {
+            assert_config_validation(&validator, &format!("[profile.default]\n{setting}"), valid);
+        }
+    }
+
+    #[test]
+    fn inherited_dictionary_validation() {
+        let validator = validator();
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            let input = r#"
+                [profile.default]
+                additional_compiler_profiles = [{ name = "ir", via_ir = true }]
+                compilation_restrictions = [{ paths = "src/**", optimizer_runs = 200 }]
+                [profile.default.dependencies]
+                example = { version = "1.0.0", git = "https://example.com/dependency.git" }
+                [profile.default.rpc_endpoints]
+                mainnet = { endpoint = "https://example.com", retries = 1 }
+
+                [profile.ci]
+                fuzz = { runs = 32 }
+                [profile.ci.dependencies]
+                example = { rev = "some-revision" }
+                [profile.ci.rpc_endpoints]
+                mainnet = { retries = 3 }
+
+                [rpc_endpoints]
+                mainnet = { retry_backoff = 5 }
+            "#;
+            jail.create_file("foundry.toml", input)?;
+            assert!(validator.is_valid(&toml::from_str::<Value>(input).unwrap()));
+            let config = Config::load().unwrap();
+            assert_eq!(config.fuzz.runs, 32);
+            assert_eq!(config.additional_compiler_profiles[0].name, "ir");
+            assert_eq!(config.compilation_restrictions.len(), 1);
+            assert_eq!(
+                config.rpc_endpoints["mainnet"].endpoint.as_url(),
+                Some("https://example.com")
+            );
+            assert_eq!(config.rpc_endpoints["mainnet"].config.retries, Some(3));
+            assert_eq!(config.rpc_endpoints["mainnet"].config.retry_backoff, Some(5));
+            let dependencies = config.dependencies.unwrap();
+            let crate::soldeer::SoldeerDependencyValue::Map(dependency) =
+                &dependencies.0["example"]
+            else {
+                panic!("expected an inherited dependency table");
+            };
+            assert_eq!(dependency.version, "1.0.0");
+            assert_eq!(dependency.rev.as_deref(), Some("some-revision"));
+
+            // Arrays replace inherited records; their missing fields cannot be filled in.
+            for setting in [
+                "additional_compiler_profiles = [{ via_ir = true }]",
+                "compilation_restrictions = [{ optimizer_runs = 500 }]",
+            ] {
+                let input = input.replace("fuzz = { runs = 32 }", setting);
+                jail.create_file("foundry.toml", &input)?;
+                assert!(!validator.is_valid(&toml::from_str::<Value>(&input).unwrap()));
+                assert!(Config::load().is_err());
+            }
+            Ok(())
+        });
+    }
+
+    fn assert_config_validation(validator: &jsonschema::Validator, input: &str, valid: bool) {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file("foundry.toml", input)?;
+            let result = Config::load();
+            assert_eq!(
+                result.as_ref().is_ok_and(|config| config.warnings.is_empty()),
+                valid,
+                "config validation for {input}: {result:?}",
+            );
+            Ok(())
+        });
+        let document = toml::from_str::<Value>(input).unwrap();
+        let result = validator.validate(&document);
+        assert_eq!(result.is_ok(), valid, "schema validation for {input}: {result:?}");
+    }
+
+    fn validator() -> jsonschema::Validator {
+        let schema = serde_json::from_str(&std::fs::read_to_string(SCHEMA_PATH).unwrap()).unwrap();
+        jsonschema::validator_for(&schema).unwrap()
+    }
+
+    #[test]
+    fn uint256_validation() {
+        let validator = validator();
+        for (setting, valid) in [
+            ("initial_balance = '1000000'", true),
+            ("fuzz.seed = '42'", true),
+            ("fuzz.seed = '0x2a'", true),
+            ("block_number = 100", true),
+            ("block_number = '0x10000000000000000'", true),
+            ("block_timestamp = 200", true),
+            ("block_timestamp = '200'", true),
+            ("initial_balance = 1000000", false),
+            ("fuzz.seed = 42", false),
+        ] {
+            assert_config_validation(&validator, &format!("[profile.default]\n{setting}"), valid);
+        }
+    }
+
+    #[test]
+    fn fuzz_runs_validation() {
+        let validator = validator();
+        for (setting, valid) in
+            [("fuzz.runs = 1", true), ("invariant.runs = 0", true), ("fuzz.runs = 0", false)]
+        {
+            assert_config_validation(&validator, &format!("[profile.default]\n{setting}"), valid);
+        }
     }
 }

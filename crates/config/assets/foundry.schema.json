@@ -160,13 +160,441 @@
           "type": "boolean"
         }
       },
+      "required": [
+        "paths"
+      ],
       "type": "object"
     },
     "Config": {
       "additionalProperties": false,
       "description": "The settings of a profile.",
       "patternProperties": {
-        "[A-Z-]": {}
+        "^(?:ADDITIONAL_COMPILER_PROFILES|AdditionalCompilerProfiles|additional\\-compiler\\-profiles|additionalCompilerProfiles)$": {
+          "$ref": "#/$defs/Config/properties/additional_compiler_profiles"
+        },
+        "^(?:ALLOW_INTERNAL_EXPECT_REVERT|AllowInternalExpectRevert|allow\\-internal\\-expect\\-revert|allowInternalExpectRevert)$": {
+          "$ref": "#/$defs/Config/properties/allow_internal_expect_revert"
+        },
+        "^(?:ALLOW_LINKED_LIBRARIES|AllowLinkedLibraries|allow\\-linked\\-libraries|allowLinkedLibraries)$": {
+          "$ref": "#/$defs/Config/properties/allow_linked_libraries"
+        },
+        "^(?:ALLOW_PATHS|AllowPaths|allow\\-paths|allowPaths)$": {
+          "$ref": "#/$defs/Config/properties/allow_paths"
+        },
+        "^(?:ALWAYS_USE_CREATE_2_FACTORY|AlwaysUseCreate2Factory|always\\-use\\-create\\-2\\-factory|alwaysUseCreate2Factory)$": {
+          "$ref": "#/$defs/Config/properties/always_use_create_2_factory"
+        },
+        "^(?:ASSERTIONS_REVERT|AssertionsRevert|assertions\\-revert|assertionsRevert)$": {
+          "$ref": "#/$defs/Config/properties/assertions_revert"
+        },
+        "^(?:AST|Ast)$": {
+          "$ref": "#/$defs/Config/properties/ast"
+        },
+        "^(?:AUTO_DETECT_REMAPPINGS|AutoDetectRemappings|auto\\-detect\\-remappings|autoDetectRemappings)$": {
+          "$ref": "#/$defs/Config/properties/auto_detect_remappings"
+        },
+        "^(?:AUTO_DETECT_SOLC|AutoDetectSolc|auto\\-detect\\-solc|autoDetectSolc)$": {
+          "$ref": "#/$defs/Config/properties/auto_detect_solc"
+        },
+        "^(?:BIND_JSON|BindJson|bind\\-json|bindJson)$": {
+          "$ref": "#/$defs/Config/properties/bind_json"
+        },
+        "^(?:BLOCK_BASE_FEE_PER_GAS|BlockBaseFeePerGas|block\\-base\\-fee\\-per\\-gas|blockBaseFeePerGas)$": {
+          "$ref": "#/$defs/Config/properties/block_base_fee_per_gas"
+        },
+        "^(?:BLOCK_COINBASE|BlockCoinbase|block\\-coinbase|blockCoinbase)$": {
+          "$ref": "#/$defs/Config/properties/block_coinbase"
+        },
+        "^(?:BLOCK_DIFFICULTY|BlockDifficulty|block\\-difficulty|blockDifficulty)$": {
+          "$ref": "#/$defs/Config/properties/block_difficulty"
+        },
+        "^(?:BLOCK_GAS_LIMIT|BlockGasLimit|block\\-gas\\-limit|blockGasLimit)$": {
+          "$ref": "#/$defs/Config/properties/block_gas_limit"
+        },
+        "^(?:BLOCK_NUMBER|BlockNumber|block\\-number|blockNumber)$": {
+          "$ref": "#/$defs/Config/properties/block_number"
+        },
+        "^(?:BLOCK_PREVRANDAO|BlockPrevrandao|block\\-prevrandao|blockPrevrandao)$": {
+          "$ref": "#/$defs/Config/properties/block_prevrandao"
+        },
+        "^(?:BLOCK_TIMESTAMP|BlockTimestamp|block\\-timestamp|blockTimestamp)$": {
+          "$ref": "#/$defs/Config/properties/block_timestamp"
+        },
+        "^(?:BROADCAST|Broadcast)$": {
+          "$ref": "#/$defs/Config/properties/broadcast"
+        },
+        "^(?:BUILD_INFO_PATH|BuildInfoPath|build\\-info\\-path|buildInfoPath)$": {
+          "$ref": "#/$defs/Config/properties/build_info_path"
+        },
+        "^(?:BUILD_INFO|BuildInfo|build\\-info|buildInfo)$": {
+          "$ref": "#/$defs/Config/properties/build_info"
+        },
+        "^(?:BYPASS_PREVRANDAO|BypassPrevrandao|bypass\\-prevrandao|bypassPrevrandao)$": {
+          "$ref": "#/$defs/Config/properties/bypass_prevrandao"
+        },
+        "^(?:BYTECODE_HASH|BytecodeHash|bytecode\\-hash|bytecodeHash)$": {
+          "$ref": "#/$defs/Config/properties/bytecode_hash"
+        },
+        "^(?:CACHE_PATH|CachePath|cache\\-path|cachePath)$": {
+          "$ref": "#/$defs/Config/properties/cache_path"
+        },
+        "^(?:CACHE|Cache)$": {
+          "$ref": "#/$defs/Config/properties/cache"
+        },
+        "^(?:CANCUN|Cancun)$": {
+          "$ref": "#/$defs/Config/properties/cancun"
+        },
+        "^(?:CBOR_METADATA|CborMetadata|cbor\\-metadata|cborMetadata)$": {
+          "$ref": "#/$defs/Config/properties/cbor_metadata"
+        },
+        "^(?:CELO|Celo)$": {
+          "$ref": "#/$defs/Config/properties/celo"
+        },
+        "^(?:CHAIN_ID|ChainId|chain\\-id|chainId)$": {
+          "$ref": "#/$defs/Config/properties/chain_id"
+        },
+        "^(?:CHAIN|Chain)$": {
+          "$ref": "#/$defs/Config/properties/chain"
+        },
+        "^(?:CODE_SIZE_LIMIT|CodeSizeLimit|code\\-size\\-limit|codeSizeLimit)$": {
+          "$ref": "#/$defs/Config/properties/code_size_limit"
+        },
+        "^(?:COMPILATION_RESTRICTIONS|CompilationRestrictions|compilation\\-restrictions|compilationRestrictions)$": {
+          "$ref": "#/$defs/Config/properties/compilation_restrictions"
+        },
+        "^(?:COVERAGE|Coverage)$": {
+          "$ref": "#/$defs/Config/properties/coverage"
+        },
+        "^(?:CREATE2_DEPLOYER|Create2Deployer|create2\\-deployer|create2Deployer)$": {
+          "$ref": "#/$defs/Config/properties/create2_deployer"
+        },
+        "^(?:CREATE2_LIBRARY_SALT|Create2LibrarySalt|create2\\-library\\-salt|create2LibrarySalt)$": {
+          "$ref": "#/$defs/Config/properties/create2_library_salt"
+        },
+        "^(?:DECODE_EXTERNAL_STORAGE|DecodeExternalStorage|decode\\-external\\-storage|decodeExternalStorage)$": {
+          "$ref": "#/$defs/Config/properties/decode_external_storage"
+        },
+        "^(?:DENY_WARNINGS|DenyWarnings|deny\\-warnings|denyWarnings)$": {
+          "$ref": "#/$defs/Config/properties/deny_warnings"
+        },
+        "^(?:DENY|Deny)$": {
+          "$ref": "#/$defs/Config/properties/deny"
+        },
+        "^(?:DEPENDENCIES|Dependencies)$": {
+          "$ref": "#/$defs/Config/properties/dependencies"
+        },
+        "^(?:DISABLE_BLOCK_GAS_LIMIT|DisableBlockGasLimit|disable\\-block\\-gas\\-limit|disableBlockGasLimit)$": {
+          "$ref": "#/$defs/Config/properties/disable_block_gas_limit"
+        },
+        "^(?:DOC|Doc)$": {
+          "$ref": "#/$defs/Config/properties/doc"
+        },
+        "^(?:DYNAMIC_TEST_LINKING|DynamicTestLinking|dynamic\\-test\\-linking|dynamicTestLinking)$": {
+          "$ref": "#/$defs/Config/properties/dynamic_test_linking"
+        },
+        "^(?:EIP1559_FEE_ESTIMATE|Eip1559FeeEstimate|eip1559\\-fee\\-estimate|eip1559FeeEstimate)$": {
+          "$ref": "#/$defs/Config/properties/eip1559_fee_estimate"
+        },
+        "^(?:ENABLE_TX_GAS_LIMIT|EnableTxGasLimit|enable\\-tx\\-gas\\-limit|enableTxGasLimit)$": {
+          "$ref": "#/$defs/Config/properties/enable_tx_gas_limit"
+        },
+        "^(?:ETHERSCAN_API_KEY|EtherscanApiKey|etherscan\\-api\\-key|etherscanApiKey)$": {
+          "$ref": "#/$defs/Config/properties/etherscan_api_key"
+        },
+        "^(?:ETHERSCAN|Etherscan)$": {
+          "$ref": "#/$defs/Config/properties/etherscan"
+        },
+        "^(?:ETH_RPC_ACCEPT_INVALID_CERTS|EthRpcAcceptInvalidCerts|eth\\-rpc\\-accept\\-invalid\\-certs|ethRpcAcceptInvalidCerts)$": {
+          "$ref": "#/$defs/Config/properties/eth_rpc_accept_invalid_certs"
+        },
+        "^(?:ETH_RPC_CURL|EthRpcCurl|eth\\-rpc\\-curl|ethRpcCurl)$": {
+          "$ref": "#/$defs/Config/properties/eth_rpc_curl"
+        },
+        "^(?:ETH_RPC_HEADERS|EthRpcHeaders|eth\\-rpc\\-headers|ethRpcHeaders)$": {
+          "$ref": "#/$defs/Config/properties/eth_rpc_headers"
+        },
+        "^(?:ETH_RPC_JWT|EthRpcJwt|eth\\-rpc\\-jwt|ethRpcJwt)$": {
+          "$ref": "#/$defs/Config/properties/eth_rpc_jwt"
+        },
+        "^(?:ETH_RPC_NO_PROXY|EthRpcNoProxy|eth\\-rpc\\-no\\-proxy|ethRpcNoProxy)$": {
+          "$ref": "#/$defs/Config/properties/eth_rpc_no_proxy"
+        },
+        "^(?:ETH_RPC_TIMEOUT|EthRpcTimeout|eth\\-rpc\\-timeout|ethRpcTimeout)$": {
+          "$ref": "#/$defs/Config/properties/eth_rpc_timeout"
+        },
+        "^(?:ETH_RPC_URL|EthRpcUrl|eth\\-rpc\\-url|ethRpcUrl)$": {
+          "$ref": "#/$defs/Config/properties/eth_rpc_url"
+        },
+        "^(?:EVM_VERSION|EvmVersion|evm\\-version|evmVersion)$": {
+          "$ref": "#/$defs/Config/properties/evm_version"
+        },
+        "^(?:EXPERIMENTAL|Experimental)$": {
+          "$ref": "#/$defs/Config/properties/experimental"
+        },
+        "^(?:EXTENDS|Extends)$": {
+          "$ref": "#/$defs/Config/properties/extends"
+        },
+        "^(?:EXTERNAL_COMPILERS|ExternalCompilers|external\\-compilers|externalCompilers)$": {
+          "$ref": "#/$defs/Config/properties/external_compilers"
+        },
+        "^(?:EXTRA_ARGS|ExtraArgs|extra\\-args|extraArgs)$": {
+          "$ref": "#/$defs/Config/properties/extra_args"
+        },
+        "^(?:EXTRA_OUTPUT_FILES|ExtraOutputFiles|extra\\-output\\-files|extraOutputFiles)$": {
+          "$ref": "#/$defs/Config/properties/extra_output_files"
+        },
+        "^(?:EXTRA_OUTPUT|ExtraOutput|extra\\-output|extraOutput)$": {
+          "$ref": "#/$defs/Config/properties/extra_output"
+        },
+        "^(?:FFI|Ffi)$": {
+          "$ref": "#/$defs/Config/properties/ffi"
+        },
+        "^(?:FMT|Fmt)$": {
+          "$ref": "#/$defs/Config/properties/fmt"
+        },
+        "^(?:FORCE|Force)$": {
+          "$ref": "#/$defs/Config/properties/force"
+        },
+        "^(?:FORK_BLOCK_NUMBER|ForkBlockNumber|fork\\-block\\-number|forkBlockNumber)$": {
+          "$ref": "#/$defs/Config/properties/fork_block_number"
+        },
+        "^(?:FORK_PREFETCH|ForkPrefetch|fork\\-prefetch|forkPrefetch)$": {
+          "$ref": "#/$defs/Config/properties/fork_prefetch"
+        },
+        "^(?:FORK_STATE_BY_NUMBER|ForkStateByNumber|fork\\-state\\-by\\-number|forkStateByNumber)$": {
+          "$ref": "#/$defs/Config/properties/fork_state_by_number"
+        },
+        "^(?:FS_PERMISSIONS|FsPermissions|fs\\-permissions|fsPermissions)$": {
+          "$ref": "#/$defs/Config/properties/fs_permissions"
+        },
+        "^(?:FUZZ|Fuzz)$": {
+          "$ref": "#/$defs/Config/properties/fuzz"
+        },
+        "^(?:GAS_LIMIT|GasLimit|gas\\-limit|gasLimit)$": {
+          "$ref": "#/$defs/Config/properties/gas_limit"
+        },
+        "^(?:GAS_PRICE|GasPrice|gas\\-price|gasPrice)$": {
+          "$ref": "#/$defs/Config/properties/gas_price"
+        },
+        "^(?:GAS_REPORTS_IGNORE|GasReportsIgnore|gas\\-reports\\-ignore|gasReportsIgnore)$": {
+          "$ref": "#/$defs/Config/properties/gas_reports_ignore"
+        },
+        "^(?:GAS_REPORTS_INCLUDE_TESTS|GasReportsIncludeTests|gas\\-reports\\-include\\-tests|gasReportsIncludeTests)$": {
+          "$ref": "#/$defs/Config/properties/gas_reports_include_tests"
+        },
+        "^(?:GAS_REPORTS|GasReports|gas\\-reports|gasReports)$": {
+          "$ref": "#/$defs/Config/properties/gas_reports"
+        },
+        "^(?:GAS_SNAPSHOT_CHECK|GasSnapshotCheck|gas\\-snapshot\\-check|gasSnapshotCheck)$": {
+          "$ref": "#/$defs/Config/properties/gas_snapshot_check"
+        },
+        "^(?:GAS_SNAPSHOT_EMIT|GasSnapshotEmit|gas\\-snapshot\\-emit|gasSnapshotEmit)$": {
+          "$ref": "#/$defs/Config/properties/gas_snapshot_emit"
+        },
+        "^(?:HARDFORK|Hardfork)$": {
+          "$ref": "#/$defs/Config/properties/hardfork"
+        },
+        "^(?:IGNORED_ERROR_CODES_FROM|IgnoredErrorCodesFrom|ignored\\-error\\-codes\\-from|ignoredErrorCodesFrom)$": {
+          "$ref": "#/$defs/Config/properties/ignored_error_codes_from"
+        },
+        "^(?:IGNORED_ERROR_CODES|IgnoredErrorCodes|ignored\\-error\\-codes|ignoredErrorCodes)$": {
+          "$ref": "#/$defs/Config/properties/ignored_error_codes"
+        },
+        "^(?:IGNORED_WARNINGS_FROM|IgnoredWarningsFrom|ignored\\-warnings\\-from|ignoredWarningsFrom)$": {
+          "$ref": "#/$defs/Config/properties/ignored_warnings_from"
+        },
+        "^(?:INCLUDE_PATHS|IncludePaths|include\\-paths|includePaths)$": {
+          "$ref": "#/$defs/Config/properties/include_paths"
+        },
+        "^(?:INITIAL_BALANCE|InitialBalance|initial\\-balance|initialBalance)$": {
+          "$ref": "#/$defs/Config/properties/initial_balance"
+        },
+        "^(?:INVARIANT|Invariant)$": {
+          "$ref": "#/$defs/Config/properties/invariant"
+        },
+        "^(?:ISOLATE|Isolate)$": {
+          "$ref": "#/$defs/Config/properties/isolate"
+        },
+        "^(?:LABELS|Labels)$": {
+          "$ref": "#/$defs/Config/properties/labels"
+        },
+        "^(?:LEGACY_ASSERTIONS|LegacyAssertions|legacy\\-assertions|legacyAssertions)$": {
+          "$ref": "#/$defs/Config/properties/legacy_assertions"
+        },
+        "^(?:LIBRARIES|Libraries)$": {
+          "$ref": "#/$defs/Config/properties/libraries"
+        },
+        "^(?:LIBS|Libs)$": {
+          "$ref": "#/$defs/Config/properties/libs"
+        },
+        "^(?:LINT|Lint)$": {
+          "$ref": "#/$defs/Config/properties/lint"
+        },
+        "^(?:LIVE_LOGS|LiveLogs|live\\-logs|liveLogs)$": {
+          "$ref": "#/$defs/Config/properties/live_logs"
+        },
+        "^(?:MATCH_CONTRACT|MatchContract|match\\-contract|matchContract)$": {
+          "$ref": "#/$defs/Config/properties/match_contract"
+        },
+        "^(?:MATCH_PATH|MatchPath|match\\-path|matchPath)$": {
+          "$ref": "#/$defs/Config/properties/match_path"
+        },
+        "^(?:MATCH_TEST|MatchTest|match\\-test|matchTest)$": {
+          "$ref": "#/$defs/Config/properties/match_test"
+        },
+        "^(?:MEMORY_LIMIT|MemoryLimit|memory\\-limit|memoryLimit)$": {
+          "$ref": "#/$defs/Config/properties/memory_limit"
+        },
+        "^(?:MODEL_CHECKER|ModelChecker|model\\-checker|modelChecker)$": {
+          "$ref": "#/$defs/Config/properties/model_checker"
+        },
+        "^(?:MONAD|Monad)$": {
+          "$ref": "#/$defs/Config/properties/monad"
+        },
+        "^(?:MUTATION_DIR|MutationDir|mutation\\-dir|mutationDir)$": {
+          "$ref": "#/$defs/Config/properties/mutation_dir"
+        },
+        "^(?:MUTATION|Mutation)$": {
+          "$ref": "#/$defs/Config/properties/mutation"
+        },
+        "^(?:NAMES|Names)$": {
+          "$ref": "#/$defs/Config/properties/names"
+        },
+        "^(?:NETWORK|Network)$": {
+          "$ref": "#/$defs/Config/properties/network"
+        },
+        "^(?:NO_FORK_BAL|NoForkBal|no\\-fork\\-bal|noForkBal)$": {
+          "$ref": "#/$defs/Config/properties/no_fork_bal"
+        },
+        "^(?:NO_MATCH_CONTRACT|NoMatchContract|no\\-match\\-contract|noMatchContract)$": {
+          "$ref": "#/$defs/Config/properties/no_match_contract"
+        },
+        "^(?:NO_MATCH_COVERAGE|NoMatchCoverage|no\\-match\\-coverage|noMatchCoverage)$": {
+          "$ref": "#/$defs/Config/properties/no_match_coverage"
+        },
+        "^(?:NO_MATCH_PATH|NoMatchPath|no\\-match\\-path|noMatchPath)$": {
+          "$ref": "#/$defs/Config/properties/no_match_path"
+        },
+        "^(?:NO_MATCH_TEST|NoMatchTest|no\\-match\\-test|noMatchTest)$": {
+          "$ref": "#/$defs/Config/properties/no_match_test"
+        },
+        "^(?:NO_RPC_RATE_LIMIT|NoRpcRateLimit|no\\-rpc\\-rate\\-limit|noRpcRateLimit)$": {
+          "$ref": "#/$defs/Config/properties/no_rpc_rate_limit"
+        },
+        "^(?:NO_STORAGE_CACHING|NoStorageCaching|no\\-storage\\-caching|noStorageCaching)$": {
+          "$ref": "#/$defs/Config/properties/no_storage_caching"
+        },
+        "^(?:OFFLINE|Offline)$": {
+          "$ref": "#/$defs/Config/properties/offline"
+        },
+        "^(?:OPTIMISM|Optimism)$": {
+          "$ref": "#/$defs/Config/properties/optimism"
+        },
+        "^(?:OPTIMIZER_DETAILS|OptimizerDetails|optimizer\\-details|optimizerDetails)$": {
+          "$ref": "#/$defs/Config/properties/optimizer_details"
+        },
+        "^(?:OPTIMIZER_RUNS|OptimizerRuns|optimizer\\-runs|optimizerRuns)$": {
+          "$ref": "#/$defs/Config/properties/optimizer_runs"
+        },
+        "^(?:OPTIMIZER|Optimizer)$": {
+          "$ref": "#/$defs/Config/properties/optimizer"
+        },
+        "^(?:OUT|Out)$": {
+          "$ref": "#/$defs/Config/properties/out"
+        },
+        "^(?:PROMPT_TIMEOUT|PromptTimeout|prompt\\-timeout|promptTimeout)$": {
+          "$ref": "#/$defs/Config/properties/prompt_timeout"
+        },
+        "^(?:REMAPPINGS|Remappings)$": {
+          "$ref": "#/$defs/Config/properties/remappings"
+        },
+        "^(?:REVERT_STRINGS|RevertStrings|revert\\-strings|revertStrings)$": {
+          "$ref": "#/$defs/Config/properties/revert_strings"
+        },
+        "^(?:RPC_ENDPOINTS|RpcEndpoints|rpc\\-endpoints|rpcEndpoints)$": {
+          "$ref": "#/$defs/Config/properties/rpc_endpoints"
+        },
+        "^(?:RPC_STORAGE_CACHING|RpcStorageCaching|rpc\\-storage\\-caching|rpcStorageCaching)$": {
+          "$ref": "#/$defs/Config/properties/rpc_storage_caching"
+        },
+        "^(?:SCRIPT_EXECUTION_PROTECTION|ScriptExecutionProtection|script\\-execution\\-protection|scriptExecutionProtection)$": {
+          "$ref": "#/$defs/Config/properties/script_execution_protection"
+        },
+        "^(?:SCRIPT|Script)$": {
+          "$ref": "#/$defs/Config/properties/script"
+        },
+        "^(?:SENDER|Sender)$": {
+          "$ref": "#/$defs/Config/properties/sender"
+        },
+        "^(?:SHOW_PROGRESS|ShowProgress|show\\-progress|showProgress)$": {
+          "$ref": "#/$defs/Config/properties/show_progress"
+        },
+        "^(?:SIZES|Sizes)$": {
+          "$ref": "#/$defs/Config/properties/sizes"
+        },
+        "^(?:SKIP|Skip)$": {
+          "$ref": "#/$defs/Config/properties/skip"
+        },
+        "^(?:SNAPSHOTS|Snapshots)$": {
+          "$ref": "#/$defs/Config/properties/snapshots"
+        },
+        "^(?:SOLC_VERSION|SolcVersion|solc\\-version|solcVersion)$": {
+          "$ref": "#/$defs/Config/properties/solc_version"
+        },
+        "^(?:SOLC|Solc)$": {
+          "$ref": "#/$defs/Config/properties/solc"
+        },
+        "^(?:SOLDEER|Soldeer)$": {
+          "$ref": "#/$defs/Config/properties/soldeer"
+        },
+        "^(?:SPARSE_MODE|SparseMode|sparse\\-mode|sparseMode)$": {
+          "$ref": "#/$defs/Config/properties/sparse_mode"
+        },
+        "^(?:SRC|Src)$": {
+          "$ref": "#/$defs/Config/properties/src"
+        },
+        "^(?:SYMBOLIC|Symbolic)$": {
+          "$ref": "#/$defs/Config/properties/symbolic"
+        },
+        "^(?:TEMPO|Tempo)$": {
+          "$ref": "#/$defs/Config/properties/tempo"
+        },
+        "^(?:TEST_FAILURES_FILE|TestFailuresFile|test\\-failures\\-file|testFailuresFile)$": {
+          "$ref": "#/$defs/Config/properties/test_failures_file"
+        },
+        "^(?:TEST|Test)$": {
+          "$ref": "#/$defs/Config/properties/test"
+        },
+        "^(?:THREADS|Threads)$": {
+          "$ref": "#/$defs/Config/properties/threads"
+        },
+        "^(?:TRACING|Tracing)$": {
+          "$ref": "#/$defs/Config/properties/tracing"
+        },
+        "^(?:TRANSACTION_TIMEOUT|TransactionTimeout|transaction\\-timeout|transactionTimeout)$": {
+          "$ref": "#/$defs/Config/properties/transaction_timeout"
+        },
+        "^(?:TX_ORIGIN|TxOrigin|tx\\-origin|txOrigin)$": {
+          "$ref": "#/$defs/Config/properties/tx_origin"
+        },
+        "^(?:UNCHECKED_CHEATCODE_ARTIFACTS|UncheckedCheatcodeArtifacts|unchecked\\-cheatcode\\-artifacts|uncheckedCheatcodeArtifacts)$": {
+          "$ref": "#/$defs/Config/properties/unchecked_cheatcode_artifacts"
+        },
+        "^(?:USE_LITERAL_CONTENT|UseLiteralContent|use\\-literal\\-content|useLiteralContent)$": {
+          "$ref": "#/$defs/Config/properties/use_literal_content"
+        },
+        "^(?:VERBOSITY|Verbosity)$": {
+          "$ref": "#/$defs/Config/properties/verbosity"
+        },
+        "^(?:VIA_IR|ViaIr|via\\-ir|viaIr)$": {
+          "$ref": "#/$defs/Config/properties/via_ir"
+        },
+        "^(?:VIA_SSA_CFG|ViaSsaCfg|via\\-ssa\\-cfg|viaSsaCfg)$": {
+          "$ref": "#/$defs/Config/properties/via_ssa_cfg"
+        },
+        "^(?:VYPER|Vyper)$": {
+          "$ref": "#/$defs/Config/properties/vyper"
+        }
       },
       "properties": {
         "additional_compiler_profiles": {
@@ -251,6 +679,8 @@
         "block_number": {
           "default": 1,
           "description": "the block.number value during EVM execution",
+          "maximum": 18446744073709551615,
+          "minimum": 0,
           "type": [
             "integer",
             "string"
@@ -265,6 +695,8 @@
         "block_timestamp": {
           "default": 1,
           "description": "The `block.timestamp` value during EVM execution.",
+          "maximum": 18446744073709551615,
+          "minimum": 0,
           "type": [
             "integer",
             "string"
@@ -697,10 +1129,7 @@
         "initial_balance": {
           "default": "0xffffffffffffffffffffffff",
           "description": "the initial balance of each deployed test contract",
-          "type": [
-            "integer",
-            "string"
-          ]
+          "type": "string"
         },
         "invariant": {
           "$ref": "#/$defs/InvariantConfig",
@@ -1280,6 +1709,9 @@
           "$ref": "#/$defs/ExtendStrategy"
         }
       },
+      "required": [
+        "path"
+      ],
       "type": "object"
     },
     "ExtendStrategy": {
@@ -1347,6 +1779,11 @@
           "type": "object"
         }
       },
+      "required": [
+        "id",
+        "command",
+        "roots"
+      ],
       "type": "object"
     },
     "FormatterConfig": {
@@ -1511,7 +1948,7 @@
               "type": "integer"
             },
             {
-              "description": "A number from 0 to 100.",
+              "pattern": "^(?:[0_]*(?:1_*|2_*|3_*|4_*|5_*|6_*|7_*|8_*|9_*|1_*0_*|1_*1_*|1_*2_*|1_*3_*|1_*4_*|1_*5_*|1_*6_*|1_*7_*|1_*8_*|1_*9_*|2_*0_*|2_*1_*|2_*2_*|2_*3_*|2_*4_*|2_*5_*|2_*6_*|2_*7_*|2_*8_*|2_*9_*|3_*0_*|3_*1_*|3_*2_*|3_*3_*|3_*4_*|3_*5_*|3_*6_*|3_*7_*|3_*8_*|3_*9_*|4_*0_*|4_*1_*|4_*2_*|4_*3_*|4_*4_*|4_*5_*|4_*6_*|4_*7_*|4_*8_*|4_*9_*|5_*0_*|5_*1_*|5_*2_*|5_*3_*|5_*4_*|5_*5_*|5_*6_*|5_*7_*|5_*8_*|5_*9_*|6_*0_*|6_*1_*|6_*2_*|6_*3_*|6_*4_*|6_*5_*|6_*6_*|6_*7_*|6_*8_*|6_*9_*|7_*0_*|7_*1_*|7_*2_*|7_*3_*|7_*4_*|7_*5_*|7_*6_*|7_*7_*|7_*8_*|7_*9_*|8_*0_*|8_*1_*|8_*2_*|8_*3_*|8_*4_*|8_*5_*|8_*6_*|8_*7_*|8_*8_*|8_*9_*|9_*0_*|9_*1_*|9_*2_*|9_*3_*|9_*4_*|9_*5_*|9_*6_*|9_*7_*|9_*8_*|9_*9_*|1_*0_*0_*)?|0[xX][0_]*(?:1_*|2_*|3_*|4_*|5_*|6_*|7_*|8_*|9_*|[aA]_*|[bB]_*|[cC]_*|[dD]_*|[eE]_*|[fF]_*|1_*0_*|1_*1_*|1_*2_*|1_*3_*|1_*4_*|1_*5_*|1_*6_*|1_*7_*|1_*8_*|1_*9_*|1_*[aA]_*|1_*[bB]_*|1_*[cC]_*|1_*[dD]_*|1_*[eE]_*|1_*[fF]_*|2_*0_*|2_*1_*|2_*2_*|2_*3_*|2_*4_*|2_*5_*|2_*6_*|2_*7_*|2_*8_*|2_*9_*|2_*[aA]_*|2_*[bB]_*|2_*[cC]_*|2_*[dD]_*|2_*[eE]_*|2_*[fF]_*|3_*0_*|3_*1_*|3_*2_*|3_*3_*|3_*4_*|3_*5_*|3_*6_*|3_*7_*|3_*8_*|3_*9_*|3_*[aA]_*|3_*[bB]_*|3_*[cC]_*|3_*[dD]_*|3_*[eE]_*|3_*[fF]_*|4_*0_*|4_*1_*|4_*2_*|4_*3_*|4_*4_*|4_*5_*|4_*6_*|4_*7_*|4_*8_*|4_*9_*|4_*[aA]_*|4_*[bB]_*|4_*[cC]_*|4_*[dD]_*|4_*[eE]_*|4_*[fF]_*|5_*0_*|5_*1_*|5_*2_*|5_*3_*|5_*4_*|5_*5_*|5_*6_*|5_*7_*|5_*8_*|5_*9_*|5_*[aA]_*|5_*[bB]_*|5_*[cC]_*|5_*[dD]_*|5_*[eE]_*|5_*[fF]_*|6_*0_*|6_*1_*|6_*2_*|6_*3_*|6_*4_*)?|0[oO][0_]*(?:1_*|2_*|3_*|4_*|5_*|6_*|7_*|1_*0_*|1_*1_*|1_*2_*|1_*3_*|1_*4_*|1_*5_*|1_*6_*|1_*7_*|2_*0_*|2_*1_*|2_*2_*|2_*3_*|2_*4_*|2_*5_*|2_*6_*|2_*7_*|3_*0_*|3_*1_*|3_*2_*|3_*3_*|3_*4_*|3_*5_*|3_*6_*|3_*7_*|4_*0_*|4_*1_*|4_*2_*|4_*3_*|4_*4_*|4_*5_*|4_*6_*|4_*7_*|5_*0_*|5_*1_*|5_*2_*|5_*3_*|5_*4_*|5_*5_*|5_*6_*|5_*7_*|6_*0_*|6_*1_*|6_*2_*|6_*3_*|6_*4_*|6_*5_*|6_*6_*|6_*7_*|7_*0_*|7_*1_*|7_*2_*|7_*3_*|7_*4_*|7_*5_*|7_*6_*|7_*7_*|1_*0_*0_*|1_*0_*1_*|1_*0_*2_*|1_*0_*3_*|1_*0_*4_*|1_*0_*5_*|1_*0_*6_*|1_*0_*7_*|1_*1_*0_*|1_*1_*1_*|1_*1_*2_*|1_*1_*3_*|1_*1_*4_*|1_*1_*5_*|1_*1_*6_*|1_*1_*7_*|1_*2_*0_*|1_*2_*1_*|1_*2_*2_*|1_*2_*3_*|1_*2_*4_*|1_*2_*5_*|1_*2_*6_*|1_*2_*7_*|1_*3_*0_*|1_*3_*1_*|1_*3_*2_*|1_*3_*3_*|1_*3_*4_*|1_*3_*5_*|1_*3_*6_*|1_*3_*7_*|1_*4_*0_*|1_*4_*1_*|1_*4_*2_*|1_*4_*3_*|1_*4_*4_*)?|0[bB][0_]*(?:1_*|1_*0_*|1_*1_*|1_*0_*0_*|1_*0_*1_*|1_*1_*0_*|1_*1_*1_*|1_*0_*0_*0_*|1_*0_*0_*1_*|1_*0_*1_*0_*|1_*0_*1_*1_*|1_*1_*0_*0_*|1_*1_*0_*1_*|1_*1_*1_*0_*|1_*1_*1_*1_*|1_*0_*0_*0_*0_*|1_*0_*0_*0_*1_*|1_*0_*0_*1_*0_*|1_*0_*0_*1_*1_*|1_*0_*1_*0_*0_*|1_*0_*1_*0_*1_*|1_*0_*1_*1_*0_*|1_*0_*1_*1_*1_*|1_*1_*0_*0_*0_*|1_*1_*0_*0_*1_*|1_*1_*0_*1_*0_*|1_*1_*0_*1_*1_*|1_*1_*1_*0_*0_*|1_*1_*1_*0_*1_*|1_*1_*1_*1_*0_*|1_*1_*1_*1_*1_*|1_*0_*0_*0_*0_*0_*|1_*0_*0_*0_*0_*1_*|1_*0_*0_*0_*1_*0_*|1_*0_*0_*0_*1_*1_*|1_*0_*0_*1_*0_*0_*|1_*0_*0_*1_*0_*1_*|1_*0_*0_*1_*1_*0_*|1_*0_*0_*1_*1_*1_*|1_*0_*1_*0_*0_*0_*|1_*0_*1_*0_*0_*1_*|1_*0_*1_*0_*1_*0_*|1_*0_*1_*0_*1_*1_*|1_*0_*1_*1_*0_*0_*|1_*0_*1_*1_*0_*1_*|1_*0_*1_*1_*1_*0_*|1_*0_*1_*1_*1_*1_*|1_*1_*0_*0_*0_*0_*|1_*1_*0_*0_*0_*1_*|1_*1_*0_*0_*1_*0_*|1_*1_*0_*0_*1_*1_*|1_*1_*0_*1_*0_*0_*|1_*1_*0_*1_*0_*1_*|1_*1_*0_*1_*1_*0_*|1_*1_*0_*1_*1_*1_*|1_*1_*1_*0_*0_*0_*|1_*1_*1_*0_*0_*1_*|1_*1_*1_*0_*1_*0_*|1_*1_*1_*0_*1_*1_*|1_*1_*1_*1_*0_*0_*|1_*1_*1_*1_*0_*1_*|1_*1_*1_*1_*1_*0_*|1_*1_*1_*1_*1_*1_*|1_*0_*0_*0_*0_*0_*0_*|1_*0_*0_*0_*0_*0_*1_*|1_*0_*0_*0_*0_*1_*0_*|1_*0_*0_*0_*0_*1_*1_*|1_*0_*0_*0_*1_*0_*0_*|1_*0_*0_*0_*1_*0_*1_*|1_*0_*0_*0_*1_*1_*0_*|1_*0_*0_*0_*1_*1_*1_*|1_*0_*0_*1_*0_*0_*0_*|1_*0_*0_*1_*0_*0_*1_*|1_*0_*0_*1_*0_*1_*0_*|1_*0_*0_*1_*0_*1_*1_*|1_*0_*0_*1_*1_*0_*0_*|1_*0_*0_*1_*1_*0_*1_*|1_*0_*0_*1_*1_*1_*0_*|1_*0_*0_*1_*1_*1_*1_*|1_*0_*1_*0_*0_*0_*0_*|1_*0_*1_*0_*0_*0_*1_*|1_*0_*1_*0_*0_*1_*0_*|1_*0_*1_*0_*0_*1_*1_*|1_*0_*1_*0_*1_*0_*0_*|1_*0_*1_*0_*1_*0_*1_*|1_*0_*1_*0_*1_*1_*0_*|1_*0_*1_*0_*1_*1_*1_*|1_*0_*1_*1_*0_*0_*0_*|1_*0_*1_*1_*0_*0_*1_*|1_*0_*1_*1_*0_*1_*0_*|1_*0_*1_*1_*0_*1_*1_*|1_*0_*1_*1_*1_*0_*0_*|1_*0_*1_*1_*1_*0_*1_*|1_*0_*1_*1_*1_*1_*0_*|1_*0_*1_*1_*1_*1_*1_*|1_*1_*0_*0_*0_*0_*0_*|1_*1_*0_*0_*0_*0_*1_*|1_*1_*0_*0_*0_*1_*0_*|1_*1_*0_*0_*0_*1_*1_*|1_*1_*0_*0_*1_*0_*0_*)?)$",
               "type": "string"
             }
           ],
@@ -1526,7 +1963,7 @@
               "type": "integer"
             },
             {
-              "description": "A number from 0 to 100.",
+              "pattern": "^(?:[0_]*(?:1_*|2_*|3_*|4_*|5_*|6_*|7_*|8_*|9_*|1_*0_*|1_*1_*|1_*2_*|1_*3_*|1_*4_*|1_*5_*|1_*6_*|1_*7_*|1_*8_*|1_*9_*|2_*0_*|2_*1_*|2_*2_*|2_*3_*|2_*4_*|2_*5_*|2_*6_*|2_*7_*|2_*8_*|2_*9_*|3_*0_*|3_*1_*|3_*2_*|3_*3_*|3_*4_*|3_*5_*|3_*6_*|3_*7_*|3_*8_*|3_*9_*|4_*0_*|4_*1_*|4_*2_*|4_*3_*|4_*4_*|4_*5_*|4_*6_*|4_*7_*|4_*8_*|4_*9_*|5_*0_*|5_*1_*|5_*2_*|5_*3_*|5_*4_*|5_*5_*|5_*6_*|5_*7_*|5_*8_*|5_*9_*|6_*0_*|6_*1_*|6_*2_*|6_*3_*|6_*4_*|6_*5_*|6_*6_*|6_*7_*|6_*8_*|6_*9_*|7_*0_*|7_*1_*|7_*2_*|7_*3_*|7_*4_*|7_*5_*|7_*6_*|7_*7_*|7_*8_*|7_*9_*|8_*0_*|8_*1_*|8_*2_*|8_*3_*|8_*4_*|8_*5_*|8_*6_*|8_*7_*|8_*8_*|8_*9_*|9_*0_*|9_*1_*|9_*2_*|9_*3_*|9_*4_*|9_*5_*|9_*6_*|9_*7_*|9_*8_*|9_*9_*|1_*0_*0_*)?|0[xX][0_]*(?:1_*|2_*|3_*|4_*|5_*|6_*|7_*|8_*|9_*|[aA]_*|[bB]_*|[cC]_*|[dD]_*|[eE]_*|[fF]_*|1_*0_*|1_*1_*|1_*2_*|1_*3_*|1_*4_*|1_*5_*|1_*6_*|1_*7_*|1_*8_*|1_*9_*|1_*[aA]_*|1_*[bB]_*|1_*[cC]_*|1_*[dD]_*|1_*[eE]_*|1_*[fF]_*|2_*0_*|2_*1_*|2_*2_*|2_*3_*|2_*4_*|2_*5_*|2_*6_*|2_*7_*|2_*8_*|2_*9_*|2_*[aA]_*|2_*[bB]_*|2_*[cC]_*|2_*[dD]_*|2_*[eE]_*|2_*[fF]_*|3_*0_*|3_*1_*|3_*2_*|3_*3_*|3_*4_*|3_*5_*|3_*6_*|3_*7_*|3_*8_*|3_*9_*|3_*[aA]_*|3_*[bB]_*|3_*[cC]_*|3_*[dD]_*|3_*[eE]_*|3_*[fF]_*|4_*0_*|4_*1_*|4_*2_*|4_*3_*|4_*4_*|4_*5_*|4_*6_*|4_*7_*|4_*8_*|4_*9_*|4_*[aA]_*|4_*[bB]_*|4_*[cC]_*|4_*[dD]_*|4_*[eE]_*|4_*[fF]_*|5_*0_*|5_*1_*|5_*2_*|5_*3_*|5_*4_*|5_*5_*|5_*6_*|5_*7_*|5_*8_*|5_*9_*|5_*[aA]_*|5_*[bB]_*|5_*[cC]_*|5_*[dD]_*|5_*[eE]_*|5_*[fF]_*|6_*0_*|6_*1_*|6_*2_*|6_*3_*|6_*4_*)?|0[oO][0_]*(?:1_*|2_*|3_*|4_*|5_*|6_*|7_*|1_*0_*|1_*1_*|1_*2_*|1_*3_*|1_*4_*|1_*5_*|1_*6_*|1_*7_*|2_*0_*|2_*1_*|2_*2_*|2_*3_*|2_*4_*|2_*5_*|2_*6_*|2_*7_*|3_*0_*|3_*1_*|3_*2_*|3_*3_*|3_*4_*|3_*5_*|3_*6_*|3_*7_*|4_*0_*|4_*1_*|4_*2_*|4_*3_*|4_*4_*|4_*5_*|4_*6_*|4_*7_*|5_*0_*|5_*1_*|5_*2_*|5_*3_*|5_*4_*|5_*5_*|5_*6_*|5_*7_*|6_*0_*|6_*1_*|6_*2_*|6_*3_*|6_*4_*|6_*5_*|6_*6_*|6_*7_*|7_*0_*|7_*1_*|7_*2_*|7_*3_*|7_*4_*|7_*5_*|7_*6_*|7_*7_*|1_*0_*0_*|1_*0_*1_*|1_*0_*2_*|1_*0_*3_*|1_*0_*4_*|1_*0_*5_*|1_*0_*6_*|1_*0_*7_*|1_*1_*0_*|1_*1_*1_*|1_*1_*2_*|1_*1_*3_*|1_*1_*4_*|1_*1_*5_*|1_*1_*6_*|1_*1_*7_*|1_*2_*0_*|1_*2_*1_*|1_*2_*2_*|1_*2_*3_*|1_*2_*4_*|1_*2_*5_*|1_*2_*6_*|1_*2_*7_*|1_*3_*0_*|1_*3_*1_*|1_*3_*2_*|1_*3_*3_*|1_*3_*4_*|1_*3_*5_*|1_*3_*6_*|1_*3_*7_*|1_*4_*0_*|1_*4_*1_*|1_*4_*2_*|1_*4_*3_*|1_*4_*4_*)?|0[bB][0_]*(?:1_*|1_*0_*|1_*1_*|1_*0_*0_*|1_*0_*1_*|1_*1_*0_*|1_*1_*1_*|1_*0_*0_*0_*|1_*0_*0_*1_*|1_*0_*1_*0_*|1_*0_*1_*1_*|1_*1_*0_*0_*|1_*1_*0_*1_*|1_*1_*1_*0_*|1_*1_*1_*1_*|1_*0_*0_*0_*0_*|1_*0_*0_*0_*1_*|1_*0_*0_*1_*0_*|1_*0_*0_*1_*1_*|1_*0_*1_*0_*0_*|1_*0_*1_*0_*1_*|1_*0_*1_*1_*0_*|1_*0_*1_*1_*1_*|1_*1_*0_*0_*0_*|1_*1_*0_*0_*1_*|1_*1_*0_*1_*0_*|1_*1_*0_*1_*1_*|1_*1_*1_*0_*0_*|1_*1_*1_*0_*1_*|1_*1_*1_*1_*0_*|1_*1_*1_*1_*1_*|1_*0_*0_*0_*0_*0_*|1_*0_*0_*0_*0_*1_*|1_*0_*0_*0_*1_*0_*|1_*0_*0_*0_*1_*1_*|1_*0_*0_*1_*0_*0_*|1_*0_*0_*1_*0_*1_*|1_*0_*0_*1_*1_*0_*|1_*0_*0_*1_*1_*1_*|1_*0_*1_*0_*0_*0_*|1_*0_*1_*0_*0_*1_*|1_*0_*1_*0_*1_*0_*|1_*0_*1_*0_*1_*1_*|1_*0_*1_*1_*0_*0_*|1_*0_*1_*1_*0_*1_*|1_*0_*1_*1_*1_*0_*|1_*0_*1_*1_*1_*1_*|1_*1_*0_*0_*0_*0_*|1_*1_*0_*0_*0_*1_*|1_*1_*0_*0_*1_*0_*|1_*1_*0_*0_*1_*1_*|1_*1_*0_*1_*0_*0_*|1_*1_*0_*1_*0_*1_*|1_*1_*0_*1_*1_*0_*|1_*1_*0_*1_*1_*1_*|1_*1_*1_*0_*0_*0_*|1_*1_*1_*0_*0_*1_*|1_*1_*1_*0_*1_*0_*|1_*1_*1_*0_*1_*1_*|1_*1_*1_*1_*0_*0_*|1_*1_*1_*1_*0_*1_*|1_*1_*1_*1_*1_*0_*|1_*1_*1_*1_*1_*1_*|1_*0_*0_*0_*0_*0_*0_*|1_*0_*0_*0_*0_*0_*1_*|1_*0_*0_*0_*0_*1_*0_*|1_*0_*0_*0_*0_*1_*1_*|1_*0_*0_*0_*1_*0_*0_*|1_*0_*0_*0_*1_*0_*1_*|1_*0_*0_*0_*1_*1_*0_*|1_*0_*0_*0_*1_*1_*1_*|1_*0_*0_*1_*0_*0_*0_*|1_*0_*0_*1_*0_*0_*1_*|1_*0_*0_*1_*0_*1_*0_*|1_*0_*0_*1_*0_*1_*1_*|1_*0_*0_*1_*1_*0_*0_*|1_*0_*0_*1_*1_*0_*1_*|1_*0_*0_*1_*1_*1_*0_*|1_*0_*0_*1_*1_*1_*1_*|1_*0_*1_*0_*0_*0_*0_*|1_*0_*1_*0_*0_*0_*1_*|1_*0_*1_*0_*0_*1_*0_*|1_*0_*1_*0_*0_*1_*1_*|1_*0_*1_*0_*1_*0_*0_*|1_*0_*1_*0_*1_*0_*1_*|1_*0_*1_*0_*1_*1_*0_*|1_*0_*1_*0_*1_*1_*1_*|1_*0_*1_*1_*0_*0_*0_*|1_*0_*1_*1_*0_*0_*1_*|1_*0_*1_*1_*0_*1_*0_*|1_*0_*1_*1_*0_*1_*1_*|1_*0_*1_*1_*1_*0_*0_*|1_*0_*1_*1_*1_*0_*1_*|1_*0_*1_*1_*1_*1_*0_*|1_*0_*1_*1_*1_*1_*1_*|1_*1_*0_*0_*0_*0_*0_*|1_*1_*0_*0_*0_*0_*1_*|1_*1_*0_*0_*0_*1_*0_*|1_*1_*0_*0_*0_*1_*1_*|1_*1_*0_*0_*1_*0_*0_*)?)$",
               "type": "string"
             }
           ],
@@ -1582,11 +2019,13 @@
         "max_fuzz_dictionary_addresses": {
           "anyOf": [
             {
+              "maximum": 18446744073709551615,
               "minimum": 0,
               "type": "integer"
             },
             {
-              "description": "`max`, or a decimal number.",
+              "description": "`max`, or an unsigned decimal number that fits in 64 bits.",
+              "pattern": "^(?:[mM][aA][xX]|\\+?0*(?:[0-9]{1,19}|[0-0][0-9]{19}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615))$",
               "type": "string"
             }
           ],
@@ -1596,11 +2035,13 @@
         "max_fuzz_dictionary_literals": {
           "anyOf": [
             {
+              "maximum": 18446744073709551615,
               "minimum": 0,
               "type": "integer"
             },
             {
-              "description": "`max`, or a decimal number.",
+              "description": "`max`, or an unsigned decimal number that fits in 64 bits.",
+              "pattern": "^(?:[mM][aA][xX]|\\+?0*(?:[0-9]{1,19}|[0-0][0-9]{19}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615))$",
               "type": "string"
             }
           ],
@@ -1610,11 +2051,13 @@
         "max_fuzz_dictionary_values": {
           "anyOf": [
             {
+              "maximum": 18446744073709551615,
               "minimum": 0,
               "type": "integer"
             },
             {
-              "description": "`max`, or a decimal number.",
+              "description": "`max`, or an unsigned decimal number that fits in 64 bits.",
+              "pattern": "^(?:[mM][aA][xX]|\\+?0*(?:[0-9]{1,19}|[0-0][0-9]{19}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615))$",
               "type": "string"
             }
           ],
@@ -1685,7 +2128,7 @@
               "type": "integer"
             },
             {
-              "description": "A number from 0 to 100.",
+              "pattern": "^(?:[0_]*(?:1_*|2_*|3_*|4_*|5_*|6_*|7_*|8_*|9_*|1_*0_*|1_*1_*|1_*2_*|1_*3_*|1_*4_*|1_*5_*|1_*6_*|1_*7_*|1_*8_*|1_*9_*|2_*0_*|2_*1_*|2_*2_*|2_*3_*|2_*4_*|2_*5_*|2_*6_*|2_*7_*|2_*8_*|2_*9_*|3_*0_*|3_*1_*|3_*2_*|3_*3_*|3_*4_*|3_*5_*|3_*6_*|3_*7_*|3_*8_*|3_*9_*|4_*0_*|4_*1_*|4_*2_*|4_*3_*|4_*4_*|4_*5_*|4_*6_*|4_*7_*|4_*8_*|4_*9_*|5_*0_*|5_*1_*|5_*2_*|5_*3_*|5_*4_*|5_*5_*|5_*6_*|5_*7_*|5_*8_*|5_*9_*|6_*0_*|6_*1_*|6_*2_*|6_*3_*|6_*4_*|6_*5_*|6_*6_*|6_*7_*|6_*8_*|6_*9_*|7_*0_*|7_*1_*|7_*2_*|7_*3_*|7_*4_*|7_*5_*|7_*6_*|7_*7_*|7_*8_*|7_*9_*|8_*0_*|8_*1_*|8_*2_*|8_*3_*|8_*4_*|8_*5_*|8_*6_*|8_*7_*|8_*8_*|8_*9_*|9_*0_*|9_*1_*|9_*2_*|9_*3_*|9_*4_*|9_*5_*|9_*6_*|9_*7_*|9_*8_*|9_*9_*|1_*0_*0_*)?|0[xX][0_]*(?:1_*|2_*|3_*|4_*|5_*|6_*|7_*|8_*|9_*|[aA]_*|[bB]_*|[cC]_*|[dD]_*|[eE]_*|[fF]_*|1_*0_*|1_*1_*|1_*2_*|1_*3_*|1_*4_*|1_*5_*|1_*6_*|1_*7_*|1_*8_*|1_*9_*|1_*[aA]_*|1_*[bB]_*|1_*[cC]_*|1_*[dD]_*|1_*[eE]_*|1_*[fF]_*|2_*0_*|2_*1_*|2_*2_*|2_*3_*|2_*4_*|2_*5_*|2_*6_*|2_*7_*|2_*8_*|2_*9_*|2_*[aA]_*|2_*[bB]_*|2_*[cC]_*|2_*[dD]_*|2_*[eE]_*|2_*[fF]_*|3_*0_*|3_*1_*|3_*2_*|3_*3_*|3_*4_*|3_*5_*|3_*6_*|3_*7_*|3_*8_*|3_*9_*|3_*[aA]_*|3_*[bB]_*|3_*[cC]_*|3_*[dD]_*|3_*[eE]_*|3_*[fF]_*|4_*0_*|4_*1_*|4_*2_*|4_*3_*|4_*4_*|4_*5_*|4_*6_*|4_*7_*|4_*8_*|4_*9_*|4_*[aA]_*|4_*[bB]_*|4_*[cC]_*|4_*[dD]_*|4_*[eE]_*|4_*[fF]_*|5_*0_*|5_*1_*|5_*2_*|5_*3_*|5_*4_*|5_*5_*|5_*6_*|5_*7_*|5_*8_*|5_*9_*|5_*[aA]_*|5_*[bB]_*|5_*[cC]_*|5_*[dD]_*|5_*[eE]_*|5_*[fF]_*|6_*0_*|6_*1_*|6_*2_*|6_*3_*|6_*4_*)?|0[oO][0_]*(?:1_*|2_*|3_*|4_*|5_*|6_*|7_*|1_*0_*|1_*1_*|1_*2_*|1_*3_*|1_*4_*|1_*5_*|1_*6_*|1_*7_*|2_*0_*|2_*1_*|2_*2_*|2_*3_*|2_*4_*|2_*5_*|2_*6_*|2_*7_*|3_*0_*|3_*1_*|3_*2_*|3_*3_*|3_*4_*|3_*5_*|3_*6_*|3_*7_*|4_*0_*|4_*1_*|4_*2_*|4_*3_*|4_*4_*|4_*5_*|4_*6_*|4_*7_*|5_*0_*|5_*1_*|5_*2_*|5_*3_*|5_*4_*|5_*5_*|5_*6_*|5_*7_*|6_*0_*|6_*1_*|6_*2_*|6_*3_*|6_*4_*|6_*5_*|6_*6_*|6_*7_*|7_*0_*|7_*1_*|7_*2_*|7_*3_*|7_*4_*|7_*5_*|7_*6_*|7_*7_*|1_*0_*0_*|1_*0_*1_*|1_*0_*2_*|1_*0_*3_*|1_*0_*4_*|1_*0_*5_*|1_*0_*6_*|1_*0_*7_*|1_*1_*0_*|1_*1_*1_*|1_*1_*2_*|1_*1_*3_*|1_*1_*4_*|1_*1_*5_*|1_*1_*6_*|1_*1_*7_*|1_*2_*0_*|1_*2_*1_*|1_*2_*2_*|1_*2_*3_*|1_*2_*4_*|1_*2_*5_*|1_*2_*6_*|1_*2_*7_*|1_*3_*0_*|1_*3_*1_*|1_*3_*2_*|1_*3_*3_*|1_*3_*4_*|1_*3_*5_*|1_*3_*6_*|1_*3_*7_*|1_*4_*0_*|1_*4_*1_*|1_*4_*2_*|1_*4_*3_*|1_*4_*4_*)?|0[bB][0_]*(?:1_*|1_*0_*|1_*1_*|1_*0_*0_*|1_*0_*1_*|1_*1_*0_*|1_*1_*1_*|1_*0_*0_*0_*|1_*0_*0_*1_*|1_*0_*1_*0_*|1_*0_*1_*1_*|1_*1_*0_*0_*|1_*1_*0_*1_*|1_*1_*1_*0_*|1_*1_*1_*1_*|1_*0_*0_*0_*0_*|1_*0_*0_*0_*1_*|1_*0_*0_*1_*0_*|1_*0_*0_*1_*1_*|1_*0_*1_*0_*0_*|1_*0_*1_*0_*1_*|1_*0_*1_*1_*0_*|1_*0_*1_*1_*1_*|1_*1_*0_*0_*0_*|1_*1_*0_*0_*1_*|1_*1_*0_*1_*0_*|1_*1_*0_*1_*1_*|1_*1_*1_*0_*0_*|1_*1_*1_*0_*1_*|1_*1_*1_*1_*0_*|1_*1_*1_*1_*1_*|1_*0_*0_*0_*0_*0_*|1_*0_*0_*0_*0_*1_*|1_*0_*0_*0_*1_*0_*|1_*0_*0_*0_*1_*1_*|1_*0_*0_*1_*0_*0_*|1_*0_*0_*1_*0_*1_*|1_*0_*0_*1_*1_*0_*|1_*0_*0_*1_*1_*1_*|1_*0_*1_*0_*0_*0_*|1_*0_*1_*0_*0_*1_*|1_*0_*1_*0_*1_*0_*|1_*0_*1_*0_*1_*1_*|1_*0_*1_*1_*0_*0_*|1_*0_*1_*1_*0_*1_*|1_*0_*1_*1_*1_*0_*|1_*0_*1_*1_*1_*1_*|1_*1_*0_*0_*0_*0_*|1_*1_*0_*0_*0_*1_*|1_*1_*0_*0_*1_*0_*|1_*1_*0_*0_*1_*1_*|1_*1_*0_*1_*0_*0_*|1_*1_*0_*1_*0_*1_*|1_*1_*0_*1_*1_*0_*|1_*1_*0_*1_*1_*1_*|1_*1_*1_*0_*0_*0_*|1_*1_*1_*0_*0_*1_*|1_*1_*1_*0_*1_*0_*|1_*1_*1_*0_*1_*1_*|1_*1_*1_*1_*0_*0_*|1_*1_*1_*1_*0_*1_*|1_*1_*1_*1_*1_*0_*|1_*1_*1_*1_*1_*1_*|1_*0_*0_*0_*0_*0_*0_*|1_*0_*0_*0_*0_*0_*1_*|1_*0_*0_*0_*0_*1_*0_*|1_*0_*0_*0_*0_*1_*1_*|1_*0_*0_*0_*1_*0_*0_*|1_*0_*0_*0_*1_*0_*1_*|1_*0_*0_*0_*1_*1_*0_*|1_*0_*0_*0_*1_*1_*1_*|1_*0_*0_*1_*0_*0_*0_*|1_*0_*0_*1_*0_*0_*1_*|1_*0_*0_*1_*0_*1_*0_*|1_*0_*0_*1_*0_*1_*1_*|1_*0_*0_*1_*1_*0_*0_*|1_*0_*0_*1_*1_*0_*1_*|1_*0_*0_*1_*1_*1_*0_*|1_*0_*0_*1_*1_*1_*1_*|1_*0_*1_*0_*0_*0_*0_*|1_*0_*1_*0_*0_*0_*1_*|1_*0_*1_*0_*0_*1_*0_*|1_*0_*1_*0_*0_*1_*1_*|1_*0_*1_*0_*1_*0_*0_*|1_*0_*1_*0_*1_*0_*1_*|1_*0_*1_*0_*1_*1_*0_*|1_*0_*1_*0_*1_*1_*1_*|1_*0_*1_*1_*0_*0_*0_*|1_*0_*1_*1_*0_*0_*1_*|1_*0_*1_*1_*0_*1_*0_*|1_*0_*1_*1_*0_*1_*1_*|1_*0_*1_*1_*1_*0_*0_*|1_*0_*1_*1_*1_*0_*1_*|1_*0_*1_*1_*1_*1_*0_*|1_*0_*1_*1_*1_*1_*1_*|1_*1_*0_*0_*0_*0_*0_*|1_*1_*0_*0_*0_*0_*1_*|1_*1_*0_*0_*0_*1_*0_*|1_*1_*0_*0_*0_*1_*1_*|1_*1_*0_*0_*1_*0_*0_*)?)$",
               "type": "string"
             }
           ],
@@ -1702,7 +2145,7 @@
           "default": 256,
           "description": "The number of test cases that must execute for each property test",
           "format": "uint32",
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer"
         },
         "sancov_edges": {
@@ -1717,10 +2160,7 @@
         },
         "seed": {
           "description": "Optional seed for the fuzzing RNG algorithm",
-          "type": [
-            "integer",
-            "string"
-          ]
+          "type": "string"
         },
         "show_edge_coverage": {
           "default": false,
@@ -1750,11 +2190,13 @@
     "GasLimit": {
       "anyOf": [
         {
+          "maximum": 18446744073709551615,
           "minimum": 0,
           "type": "integer"
         },
         {
-          "description": "`max`, or a decimal number.",
+          "description": "`max`, or an unsigned decimal number that fits in 64 bits.",
+          "pattern": "^(?:[mM][aA][xX]|\\+?0*(?:[0-9]{1,19}|[0-0][0-9]{19}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615))$",
           "type": "string"
         }
       ]
@@ -1854,7 +2296,7 @@
               "type": "integer"
             },
             {
-              "description": "A number from 0 to 100.",
+              "pattern": "^(?:[0_]*(?:1_*|2_*|3_*|4_*|5_*|6_*|7_*|8_*|9_*|1_*0_*|1_*1_*|1_*2_*|1_*3_*|1_*4_*|1_*5_*|1_*6_*|1_*7_*|1_*8_*|1_*9_*|2_*0_*|2_*1_*|2_*2_*|2_*3_*|2_*4_*|2_*5_*|2_*6_*|2_*7_*|2_*8_*|2_*9_*|3_*0_*|3_*1_*|3_*2_*|3_*3_*|3_*4_*|3_*5_*|3_*6_*|3_*7_*|3_*8_*|3_*9_*|4_*0_*|4_*1_*|4_*2_*|4_*3_*|4_*4_*|4_*5_*|4_*6_*|4_*7_*|4_*8_*|4_*9_*|5_*0_*|5_*1_*|5_*2_*|5_*3_*|5_*4_*|5_*5_*|5_*6_*|5_*7_*|5_*8_*|5_*9_*|6_*0_*|6_*1_*|6_*2_*|6_*3_*|6_*4_*|6_*5_*|6_*6_*|6_*7_*|6_*8_*|6_*9_*|7_*0_*|7_*1_*|7_*2_*|7_*3_*|7_*4_*|7_*5_*|7_*6_*|7_*7_*|7_*8_*|7_*9_*|8_*0_*|8_*1_*|8_*2_*|8_*3_*|8_*4_*|8_*5_*|8_*6_*|8_*7_*|8_*8_*|8_*9_*|9_*0_*|9_*1_*|9_*2_*|9_*3_*|9_*4_*|9_*5_*|9_*6_*|9_*7_*|9_*8_*|9_*9_*|1_*0_*0_*)?|0[xX][0_]*(?:1_*|2_*|3_*|4_*|5_*|6_*|7_*|8_*|9_*|[aA]_*|[bB]_*|[cC]_*|[dD]_*|[eE]_*|[fF]_*|1_*0_*|1_*1_*|1_*2_*|1_*3_*|1_*4_*|1_*5_*|1_*6_*|1_*7_*|1_*8_*|1_*9_*|1_*[aA]_*|1_*[bB]_*|1_*[cC]_*|1_*[dD]_*|1_*[eE]_*|1_*[fF]_*|2_*0_*|2_*1_*|2_*2_*|2_*3_*|2_*4_*|2_*5_*|2_*6_*|2_*7_*|2_*8_*|2_*9_*|2_*[aA]_*|2_*[bB]_*|2_*[cC]_*|2_*[dD]_*|2_*[eE]_*|2_*[fF]_*|3_*0_*|3_*1_*|3_*2_*|3_*3_*|3_*4_*|3_*5_*|3_*6_*|3_*7_*|3_*8_*|3_*9_*|3_*[aA]_*|3_*[bB]_*|3_*[cC]_*|3_*[dD]_*|3_*[eE]_*|3_*[fF]_*|4_*0_*|4_*1_*|4_*2_*|4_*3_*|4_*4_*|4_*5_*|4_*6_*|4_*7_*|4_*8_*|4_*9_*|4_*[aA]_*|4_*[bB]_*|4_*[cC]_*|4_*[dD]_*|4_*[eE]_*|4_*[fF]_*|5_*0_*|5_*1_*|5_*2_*|5_*3_*|5_*4_*|5_*5_*|5_*6_*|5_*7_*|5_*8_*|5_*9_*|5_*[aA]_*|5_*[bB]_*|5_*[cC]_*|5_*[dD]_*|5_*[eE]_*|5_*[fF]_*|6_*0_*|6_*1_*|6_*2_*|6_*3_*|6_*4_*)?|0[oO][0_]*(?:1_*|2_*|3_*|4_*|5_*|6_*|7_*|1_*0_*|1_*1_*|1_*2_*|1_*3_*|1_*4_*|1_*5_*|1_*6_*|1_*7_*|2_*0_*|2_*1_*|2_*2_*|2_*3_*|2_*4_*|2_*5_*|2_*6_*|2_*7_*|3_*0_*|3_*1_*|3_*2_*|3_*3_*|3_*4_*|3_*5_*|3_*6_*|3_*7_*|4_*0_*|4_*1_*|4_*2_*|4_*3_*|4_*4_*|4_*5_*|4_*6_*|4_*7_*|5_*0_*|5_*1_*|5_*2_*|5_*3_*|5_*4_*|5_*5_*|5_*6_*|5_*7_*|6_*0_*|6_*1_*|6_*2_*|6_*3_*|6_*4_*|6_*5_*|6_*6_*|6_*7_*|7_*0_*|7_*1_*|7_*2_*|7_*3_*|7_*4_*|7_*5_*|7_*6_*|7_*7_*|1_*0_*0_*|1_*0_*1_*|1_*0_*2_*|1_*0_*3_*|1_*0_*4_*|1_*0_*5_*|1_*0_*6_*|1_*0_*7_*|1_*1_*0_*|1_*1_*1_*|1_*1_*2_*|1_*1_*3_*|1_*1_*4_*|1_*1_*5_*|1_*1_*6_*|1_*1_*7_*|1_*2_*0_*|1_*2_*1_*|1_*2_*2_*|1_*2_*3_*|1_*2_*4_*|1_*2_*5_*|1_*2_*6_*|1_*2_*7_*|1_*3_*0_*|1_*3_*1_*|1_*3_*2_*|1_*3_*3_*|1_*3_*4_*|1_*3_*5_*|1_*3_*6_*|1_*3_*7_*|1_*4_*0_*|1_*4_*1_*|1_*4_*2_*|1_*4_*3_*|1_*4_*4_*)?|0[bB][0_]*(?:1_*|1_*0_*|1_*1_*|1_*0_*0_*|1_*0_*1_*|1_*1_*0_*|1_*1_*1_*|1_*0_*0_*0_*|1_*0_*0_*1_*|1_*0_*1_*0_*|1_*0_*1_*1_*|1_*1_*0_*0_*|1_*1_*0_*1_*|1_*1_*1_*0_*|1_*1_*1_*1_*|1_*0_*0_*0_*0_*|1_*0_*0_*0_*1_*|1_*0_*0_*1_*0_*|1_*0_*0_*1_*1_*|1_*0_*1_*0_*0_*|1_*0_*1_*0_*1_*|1_*0_*1_*1_*0_*|1_*0_*1_*1_*1_*|1_*1_*0_*0_*0_*|1_*1_*0_*0_*1_*|1_*1_*0_*1_*0_*|1_*1_*0_*1_*1_*|1_*1_*1_*0_*0_*|1_*1_*1_*0_*1_*|1_*1_*1_*1_*0_*|1_*1_*1_*1_*1_*|1_*0_*0_*0_*0_*0_*|1_*0_*0_*0_*0_*1_*|1_*0_*0_*0_*1_*0_*|1_*0_*0_*0_*1_*1_*|1_*0_*0_*1_*0_*0_*|1_*0_*0_*1_*0_*1_*|1_*0_*0_*1_*1_*0_*|1_*0_*0_*1_*1_*1_*|1_*0_*1_*0_*0_*0_*|1_*0_*1_*0_*0_*1_*|1_*0_*1_*0_*1_*0_*|1_*0_*1_*0_*1_*1_*|1_*0_*1_*1_*0_*0_*|1_*0_*1_*1_*0_*1_*|1_*0_*1_*1_*1_*0_*|1_*0_*1_*1_*1_*1_*|1_*1_*0_*0_*0_*0_*|1_*1_*0_*0_*0_*1_*|1_*1_*0_*0_*1_*0_*|1_*1_*0_*0_*1_*1_*|1_*1_*0_*1_*0_*0_*|1_*1_*0_*1_*0_*1_*|1_*1_*0_*1_*1_*0_*|1_*1_*0_*1_*1_*1_*|1_*1_*1_*0_*0_*0_*|1_*1_*1_*0_*0_*1_*|1_*1_*1_*0_*1_*0_*|1_*1_*1_*0_*1_*1_*|1_*1_*1_*1_*0_*0_*|1_*1_*1_*1_*0_*1_*|1_*1_*1_*1_*1_*0_*|1_*1_*1_*1_*1_*1_*|1_*0_*0_*0_*0_*0_*0_*|1_*0_*0_*0_*0_*0_*1_*|1_*0_*0_*0_*0_*1_*0_*|1_*0_*0_*0_*0_*1_*1_*|1_*0_*0_*0_*1_*0_*0_*|1_*0_*0_*0_*1_*0_*1_*|1_*0_*0_*0_*1_*1_*0_*|1_*0_*0_*0_*1_*1_*1_*|1_*0_*0_*1_*0_*0_*0_*|1_*0_*0_*1_*0_*0_*1_*|1_*0_*0_*1_*0_*1_*0_*|1_*0_*0_*1_*0_*1_*1_*|1_*0_*0_*1_*1_*0_*0_*|1_*0_*0_*1_*1_*0_*1_*|1_*0_*0_*1_*1_*1_*0_*|1_*0_*0_*1_*1_*1_*1_*|1_*0_*1_*0_*0_*0_*0_*|1_*0_*1_*0_*0_*0_*1_*|1_*0_*1_*0_*0_*1_*0_*|1_*0_*1_*0_*0_*1_*1_*|1_*0_*1_*0_*1_*0_*0_*|1_*0_*1_*0_*1_*0_*1_*|1_*0_*1_*0_*1_*1_*0_*|1_*0_*1_*0_*1_*1_*1_*|1_*0_*1_*1_*0_*0_*0_*|1_*0_*1_*1_*0_*0_*1_*|1_*0_*1_*1_*0_*1_*0_*|1_*0_*1_*1_*0_*1_*1_*|1_*0_*1_*1_*1_*0_*0_*|1_*0_*1_*1_*1_*0_*1_*|1_*0_*1_*1_*1_*1_*0_*|1_*0_*1_*1_*1_*1_*1_*|1_*1_*0_*0_*0_*0_*0_*|1_*1_*0_*0_*0_*0_*1_*|1_*1_*0_*0_*0_*1_*0_*|1_*1_*0_*0_*0_*1_*1_*|1_*1_*0_*0_*1_*0_*0_*)?)$",
               "type": "string"
             }
           ],
@@ -1880,7 +2322,7 @@
               "type": "integer"
             },
             {
-              "description": "A number from 0 to 100.",
+              "pattern": "^(?:[0_]*(?:1_*|2_*|3_*|4_*|5_*|6_*|7_*|8_*|9_*|1_*0_*|1_*1_*|1_*2_*|1_*3_*|1_*4_*|1_*5_*|1_*6_*|1_*7_*|1_*8_*|1_*9_*|2_*0_*|2_*1_*|2_*2_*|2_*3_*|2_*4_*|2_*5_*|2_*6_*|2_*7_*|2_*8_*|2_*9_*|3_*0_*|3_*1_*|3_*2_*|3_*3_*|3_*4_*|3_*5_*|3_*6_*|3_*7_*|3_*8_*|3_*9_*|4_*0_*|4_*1_*|4_*2_*|4_*3_*|4_*4_*|4_*5_*|4_*6_*|4_*7_*|4_*8_*|4_*9_*|5_*0_*|5_*1_*|5_*2_*|5_*3_*|5_*4_*|5_*5_*|5_*6_*|5_*7_*|5_*8_*|5_*9_*|6_*0_*|6_*1_*|6_*2_*|6_*3_*|6_*4_*|6_*5_*|6_*6_*|6_*7_*|6_*8_*|6_*9_*|7_*0_*|7_*1_*|7_*2_*|7_*3_*|7_*4_*|7_*5_*|7_*6_*|7_*7_*|7_*8_*|7_*9_*|8_*0_*|8_*1_*|8_*2_*|8_*3_*|8_*4_*|8_*5_*|8_*6_*|8_*7_*|8_*8_*|8_*9_*|9_*0_*|9_*1_*|9_*2_*|9_*3_*|9_*4_*|9_*5_*|9_*6_*|9_*7_*|9_*8_*|9_*9_*|1_*0_*0_*)?|0[xX][0_]*(?:1_*|2_*|3_*|4_*|5_*|6_*|7_*|8_*|9_*|[aA]_*|[bB]_*|[cC]_*|[dD]_*|[eE]_*|[fF]_*|1_*0_*|1_*1_*|1_*2_*|1_*3_*|1_*4_*|1_*5_*|1_*6_*|1_*7_*|1_*8_*|1_*9_*|1_*[aA]_*|1_*[bB]_*|1_*[cC]_*|1_*[dD]_*|1_*[eE]_*|1_*[fF]_*|2_*0_*|2_*1_*|2_*2_*|2_*3_*|2_*4_*|2_*5_*|2_*6_*|2_*7_*|2_*8_*|2_*9_*|2_*[aA]_*|2_*[bB]_*|2_*[cC]_*|2_*[dD]_*|2_*[eE]_*|2_*[fF]_*|3_*0_*|3_*1_*|3_*2_*|3_*3_*|3_*4_*|3_*5_*|3_*6_*|3_*7_*|3_*8_*|3_*9_*|3_*[aA]_*|3_*[bB]_*|3_*[cC]_*|3_*[dD]_*|3_*[eE]_*|3_*[fF]_*|4_*0_*|4_*1_*|4_*2_*|4_*3_*|4_*4_*|4_*5_*|4_*6_*|4_*7_*|4_*8_*|4_*9_*|4_*[aA]_*|4_*[bB]_*|4_*[cC]_*|4_*[dD]_*|4_*[eE]_*|4_*[fF]_*|5_*0_*|5_*1_*|5_*2_*|5_*3_*|5_*4_*|5_*5_*|5_*6_*|5_*7_*|5_*8_*|5_*9_*|5_*[aA]_*|5_*[bB]_*|5_*[cC]_*|5_*[dD]_*|5_*[eE]_*|5_*[fF]_*|6_*0_*|6_*1_*|6_*2_*|6_*3_*|6_*4_*)?|0[oO][0_]*(?:1_*|2_*|3_*|4_*|5_*|6_*|7_*|1_*0_*|1_*1_*|1_*2_*|1_*3_*|1_*4_*|1_*5_*|1_*6_*|1_*7_*|2_*0_*|2_*1_*|2_*2_*|2_*3_*|2_*4_*|2_*5_*|2_*6_*|2_*7_*|3_*0_*|3_*1_*|3_*2_*|3_*3_*|3_*4_*|3_*5_*|3_*6_*|3_*7_*|4_*0_*|4_*1_*|4_*2_*|4_*3_*|4_*4_*|4_*5_*|4_*6_*|4_*7_*|5_*0_*|5_*1_*|5_*2_*|5_*3_*|5_*4_*|5_*5_*|5_*6_*|5_*7_*|6_*0_*|6_*1_*|6_*2_*|6_*3_*|6_*4_*|6_*5_*|6_*6_*|6_*7_*|7_*0_*|7_*1_*|7_*2_*|7_*3_*|7_*4_*|7_*5_*|7_*6_*|7_*7_*|1_*0_*0_*|1_*0_*1_*|1_*0_*2_*|1_*0_*3_*|1_*0_*4_*|1_*0_*5_*|1_*0_*6_*|1_*0_*7_*|1_*1_*0_*|1_*1_*1_*|1_*1_*2_*|1_*1_*3_*|1_*1_*4_*|1_*1_*5_*|1_*1_*6_*|1_*1_*7_*|1_*2_*0_*|1_*2_*1_*|1_*2_*2_*|1_*2_*3_*|1_*2_*4_*|1_*2_*5_*|1_*2_*6_*|1_*2_*7_*|1_*3_*0_*|1_*3_*1_*|1_*3_*2_*|1_*3_*3_*|1_*3_*4_*|1_*3_*5_*|1_*3_*6_*|1_*3_*7_*|1_*4_*0_*|1_*4_*1_*|1_*4_*2_*|1_*4_*3_*|1_*4_*4_*)?|0[bB][0_]*(?:1_*|1_*0_*|1_*1_*|1_*0_*0_*|1_*0_*1_*|1_*1_*0_*|1_*1_*1_*|1_*0_*0_*0_*|1_*0_*0_*1_*|1_*0_*1_*0_*|1_*0_*1_*1_*|1_*1_*0_*0_*|1_*1_*0_*1_*|1_*1_*1_*0_*|1_*1_*1_*1_*|1_*0_*0_*0_*0_*|1_*0_*0_*0_*1_*|1_*0_*0_*1_*0_*|1_*0_*0_*1_*1_*|1_*0_*1_*0_*0_*|1_*0_*1_*0_*1_*|1_*0_*1_*1_*0_*|1_*0_*1_*1_*1_*|1_*1_*0_*0_*0_*|1_*1_*0_*0_*1_*|1_*1_*0_*1_*0_*|1_*1_*0_*1_*1_*|1_*1_*1_*0_*0_*|1_*1_*1_*0_*1_*|1_*1_*1_*1_*0_*|1_*1_*1_*1_*1_*|1_*0_*0_*0_*0_*0_*|1_*0_*0_*0_*0_*1_*|1_*0_*0_*0_*1_*0_*|1_*0_*0_*0_*1_*1_*|1_*0_*0_*1_*0_*0_*|1_*0_*0_*1_*0_*1_*|1_*0_*0_*1_*1_*0_*|1_*0_*0_*1_*1_*1_*|1_*0_*1_*0_*0_*0_*|1_*0_*1_*0_*0_*1_*|1_*0_*1_*0_*1_*0_*|1_*0_*1_*0_*1_*1_*|1_*0_*1_*1_*0_*0_*|1_*0_*1_*1_*0_*1_*|1_*0_*1_*1_*1_*0_*|1_*0_*1_*1_*1_*1_*|1_*1_*0_*0_*0_*0_*|1_*1_*0_*0_*0_*1_*|1_*1_*0_*0_*1_*0_*|1_*1_*0_*0_*1_*1_*|1_*1_*0_*1_*0_*0_*|1_*1_*0_*1_*0_*1_*|1_*1_*0_*1_*1_*0_*|1_*1_*0_*1_*1_*1_*|1_*1_*1_*0_*0_*0_*|1_*1_*1_*0_*0_*1_*|1_*1_*1_*0_*1_*0_*|1_*1_*1_*0_*1_*1_*|1_*1_*1_*1_*0_*0_*|1_*1_*1_*1_*0_*1_*|1_*1_*1_*1_*1_*0_*|1_*1_*1_*1_*1_*1_*|1_*0_*0_*0_*0_*0_*0_*|1_*0_*0_*0_*0_*0_*1_*|1_*0_*0_*0_*0_*1_*0_*|1_*0_*0_*0_*0_*1_*1_*|1_*0_*0_*0_*1_*0_*0_*|1_*0_*0_*0_*1_*0_*1_*|1_*0_*0_*0_*1_*1_*0_*|1_*0_*0_*0_*1_*1_*1_*|1_*0_*0_*1_*0_*0_*0_*|1_*0_*0_*1_*0_*0_*1_*|1_*0_*0_*1_*0_*1_*0_*|1_*0_*0_*1_*0_*1_*1_*|1_*0_*0_*1_*1_*0_*0_*|1_*0_*0_*1_*1_*0_*1_*|1_*0_*0_*1_*1_*1_*0_*|1_*0_*0_*1_*1_*1_*1_*|1_*0_*1_*0_*0_*0_*0_*|1_*0_*1_*0_*0_*0_*1_*|1_*0_*1_*0_*0_*1_*0_*|1_*0_*1_*0_*0_*1_*1_*|1_*0_*1_*0_*1_*0_*0_*|1_*0_*1_*0_*1_*0_*1_*|1_*0_*1_*0_*1_*1_*0_*|1_*0_*1_*0_*1_*1_*1_*|1_*0_*1_*1_*0_*0_*0_*|1_*0_*1_*1_*0_*0_*1_*|1_*0_*1_*1_*0_*1_*0_*|1_*0_*1_*1_*0_*1_*1_*|1_*0_*1_*1_*1_*0_*0_*|1_*0_*1_*1_*1_*0_*1_*|1_*0_*1_*1_*1_*1_*0_*|1_*0_*1_*1_*1_*1_*1_*|1_*1_*0_*0_*0_*0_*0_*|1_*1_*0_*0_*0_*0_*1_*|1_*1_*0_*0_*0_*1_*0_*|1_*1_*0_*0_*0_*1_*1_*|1_*1_*0_*0_*1_*0_*0_*)?)$",
               "type": "string"
             }
           ],
@@ -1949,11 +2391,13 @@
         "max_fuzz_dictionary_addresses": {
           "anyOf": [
             {
+              "maximum": 18446744073709551615,
               "minimum": 0,
               "type": "integer"
             },
             {
-              "description": "`max`, or a decimal number.",
+              "description": "`max`, or an unsigned decimal number that fits in 64 bits.",
+              "pattern": "^(?:[mM][aA][xX]|\\+?0*(?:[0-9]{1,19}|[0-0][0-9]{19}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615))$",
               "type": "string"
             }
           ],
@@ -1963,11 +2407,13 @@
         "max_fuzz_dictionary_literals": {
           "anyOf": [
             {
+              "maximum": 18446744073709551615,
               "minimum": 0,
               "type": "integer"
             },
             {
-              "description": "`max`, or a decimal number.",
+              "description": "`max`, or an unsigned decimal number that fits in 64 bits.",
+              "pattern": "^(?:[mM][aA][xX]|\\+?0*(?:[0-9]{1,19}|[0-0][0-9]{19}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615))$",
               "type": "string"
             }
           ],
@@ -1977,11 +2423,13 @@
         "max_fuzz_dictionary_values": {
           "anyOf": [
             {
+              "maximum": 18446744073709551615,
               "minimum": 0,
               "type": "integer"
             },
             {
-              "description": "`max`, or a decimal number.",
+              "description": "`max`, or an unsigned decimal number that fits in 64 bits.",
+              "pattern": "^(?:[mM][aA][xX]|\\+?0*(?:[0-9]{1,19}|[0-0][0-9]{19}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615))$",
               "type": "string"
             }
           ],
@@ -2058,7 +2506,7 @@
               "type": "integer"
             },
             {
-              "description": "A number from 0 to 100.",
+              "pattern": "^(?:[0_]*(?:1_*|2_*|3_*|4_*|5_*|6_*|7_*|8_*|9_*|1_*0_*|1_*1_*|1_*2_*|1_*3_*|1_*4_*|1_*5_*|1_*6_*|1_*7_*|1_*8_*|1_*9_*|2_*0_*|2_*1_*|2_*2_*|2_*3_*|2_*4_*|2_*5_*|2_*6_*|2_*7_*|2_*8_*|2_*9_*|3_*0_*|3_*1_*|3_*2_*|3_*3_*|3_*4_*|3_*5_*|3_*6_*|3_*7_*|3_*8_*|3_*9_*|4_*0_*|4_*1_*|4_*2_*|4_*3_*|4_*4_*|4_*5_*|4_*6_*|4_*7_*|4_*8_*|4_*9_*|5_*0_*|5_*1_*|5_*2_*|5_*3_*|5_*4_*|5_*5_*|5_*6_*|5_*7_*|5_*8_*|5_*9_*|6_*0_*|6_*1_*|6_*2_*|6_*3_*|6_*4_*|6_*5_*|6_*6_*|6_*7_*|6_*8_*|6_*9_*|7_*0_*|7_*1_*|7_*2_*|7_*3_*|7_*4_*|7_*5_*|7_*6_*|7_*7_*|7_*8_*|7_*9_*|8_*0_*|8_*1_*|8_*2_*|8_*3_*|8_*4_*|8_*5_*|8_*6_*|8_*7_*|8_*8_*|8_*9_*|9_*0_*|9_*1_*|9_*2_*|9_*3_*|9_*4_*|9_*5_*|9_*6_*|9_*7_*|9_*8_*|9_*9_*|1_*0_*0_*)?|0[xX][0_]*(?:1_*|2_*|3_*|4_*|5_*|6_*|7_*|8_*|9_*|[aA]_*|[bB]_*|[cC]_*|[dD]_*|[eE]_*|[fF]_*|1_*0_*|1_*1_*|1_*2_*|1_*3_*|1_*4_*|1_*5_*|1_*6_*|1_*7_*|1_*8_*|1_*9_*|1_*[aA]_*|1_*[bB]_*|1_*[cC]_*|1_*[dD]_*|1_*[eE]_*|1_*[fF]_*|2_*0_*|2_*1_*|2_*2_*|2_*3_*|2_*4_*|2_*5_*|2_*6_*|2_*7_*|2_*8_*|2_*9_*|2_*[aA]_*|2_*[bB]_*|2_*[cC]_*|2_*[dD]_*|2_*[eE]_*|2_*[fF]_*|3_*0_*|3_*1_*|3_*2_*|3_*3_*|3_*4_*|3_*5_*|3_*6_*|3_*7_*|3_*8_*|3_*9_*|3_*[aA]_*|3_*[bB]_*|3_*[cC]_*|3_*[dD]_*|3_*[eE]_*|3_*[fF]_*|4_*0_*|4_*1_*|4_*2_*|4_*3_*|4_*4_*|4_*5_*|4_*6_*|4_*7_*|4_*8_*|4_*9_*|4_*[aA]_*|4_*[bB]_*|4_*[cC]_*|4_*[dD]_*|4_*[eE]_*|4_*[fF]_*|5_*0_*|5_*1_*|5_*2_*|5_*3_*|5_*4_*|5_*5_*|5_*6_*|5_*7_*|5_*8_*|5_*9_*|5_*[aA]_*|5_*[bB]_*|5_*[cC]_*|5_*[dD]_*|5_*[eE]_*|5_*[fF]_*|6_*0_*|6_*1_*|6_*2_*|6_*3_*|6_*4_*)?|0[oO][0_]*(?:1_*|2_*|3_*|4_*|5_*|6_*|7_*|1_*0_*|1_*1_*|1_*2_*|1_*3_*|1_*4_*|1_*5_*|1_*6_*|1_*7_*|2_*0_*|2_*1_*|2_*2_*|2_*3_*|2_*4_*|2_*5_*|2_*6_*|2_*7_*|3_*0_*|3_*1_*|3_*2_*|3_*3_*|3_*4_*|3_*5_*|3_*6_*|3_*7_*|4_*0_*|4_*1_*|4_*2_*|4_*3_*|4_*4_*|4_*5_*|4_*6_*|4_*7_*|5_*0_*|5_*1_*|5_*2_*|5_*3_*|5_*4_*|5_*5_*|5_*6_*|5_*7_*|6_*0_*|6_*1_*|6_*2_*|6_*3_*|6_*4_*|6_*5_*|6_*6_*|6_*7_*|7_*0_*|7_*1_*|7_*2_*|7_*3_*|7_*4_*|7_*5_*|7_*6_*|7_*7_*|1_*0_*0_*|1_*0_*1_*|1_*0_*2_*|1_*0_*3_*|1_*0_*4_*|1_*0_*5_*|1_*0_*6_*|1_*0_*7_*|1_*1_*0_*|1_*1_*1_*|1_*1_*2_*|1_*1_*3_*|1_*1_*4_*|1_*1_*5_*|1_*1_*6_*|1_*1_*7_*|1_*2_*0_*|1_*2_*1_*|1_*2_*2_*|1_*2_*3_*|1_*2_*4_*|1_*2_*5_*|1_*2_*6_*|1_*2_*7_*|1_*3_*0_*|1_*3_*1_*|1_*3_*2_*|1_*3_*3_*|1_*3_*4_*|1_*3_*5_*|1_*3_*6_*|1_*3_*7_*|1_*4_*0_*|1_*4_*1_*|1_*4_*2_*|1_*4_*3_*|1_*4_*4_*)?|0[bB][0_]*(?:1_*|1_*0_*|1_*1_*|1_*0_*0_*|1_*0_*1_*|1_*1_*0_*|1_*1_*1_*|1_*0_*0_*0_*|1_*0_*0_*1_*|1_*0_*1_*0_*|1_*0_*1_*1_*|1_*1_*0_*0_*|1_*1_*0_*1_*|1_*1_*1_*0_*|1_*1_*1_*1_*|1_*0_*0_*0_*0_*|1_*0_*0_*0_*1_*|1_*0_*0_*1_*0_*|1_*0_*0_*1_*1_*|1_*0_*1_*0_*0_*|1_*0_*1_*0_*1_*|1_*0_*1_*1_*0_*|1_*0_*1_*1_*1_*|1_*1_*0_*0_*0_*|1_*1_*0_*0_*1_*|1_*1_*0_*1_*0_*|1_*1_*0_*1_*1_*|1_*1_*1_*0_*0_*|1_*1_*1_*0_*1_*|1_*1_*1_*1_*0_*|1_*1_*1_*1_*1_*|1_*0_*0_*0_*0_*0_*|1_*0_*0_*0_*0_*1_*|1_*0_*0_*0_*1_*0_*|1_*0_*0_*0_*1_*1_*|1_*0_*0_*1_*0_*0_*|1_*0_*0_*1_*0_*1_*|1_*0_*0_*1_*1_*0_*|1_*0_*0_*1_*1_*1_*|1_*0_*1_*0_*0_*0_*|1_*0_*1_*0_*0_*1_*|1_*0_*1_*0_*1_*0_*|1_*0_*1_*0_*1_*1_*|1_*0_*1_*1_*0_*0_*|1_*0_*1_*1_*0_*1_*|1_*0_*1_*1_*1_*0_*|1_*0_*1_*1_*1_*1_*|1_*1_*0_*0_*0_*0_*|1_*1_*0_*0_*0_*1_*|1_*1_*0_*0_*1_*0_*|1_*1_*0_*0_*1_*1_*|1_*1_*0_*1_*0_*0_*|1_*1_*0_*1_*0_*1_*|1_*1_*0_*1_*1_*0_*|1_*1_*0_*1_*1_*1_*|1_*1_*1_*0_*0_*0_*|1_*1_*1_*0_*0_*1_*|1_*1_*1_*0_*1_*0_*|1_*1_*1_*0_*1_*1_*|1_*1_*1_*1_*0_*0_*|1_*1_*1_*1_*0_*1_*|1_*1_*1_*1_*1_*0_*|1_*1_*1_*1_*1_*1_*|1_*0_*0_*0_*0_*0_*0_*|1_*0_*0_*0_*0_*0_*1_*|1_*0_*0_*0_*0_*1_*0_*|1_*0_*0_*0_*0_*1_*1_*|1_*0_*0_*0_*1_*0_*0_*|1_*0_*0_*0_*1_*0_*1_*|1_*0_*0_*0_*1_*1_*0_*|1_*0_*0_*0_*1_*1_*1_*|1_*0_*0_*1_*0_*0_*0_*|1_*0_*0_*1_*0_*0_*1_*|1_*0_*0_*1_*0_*1_*0_*|1_*0_*0_*1_*0_*1_*1_*|1_*0_*0_*1_*1_*0_*0_*|1_*0_*0_*1_*1_*0_*1_*|1_*0_*0_*1_*1_*1_*0_*|1_*0_*0_*1_*1_*1_*1_*|1_*0_*1_*0_*0_*0_*0_*|1_*0_*1_*0_*0_*0_*1_*|1_*0_*1_*0_*0_*1_*0_*|1_*0_*1_*0_*0_*1_*1_*|1_*0_*1_*0_*1_*0_*0_*|1_*0_*1_*0_*1_*0_*1_*|1_*0_*1_*0_*1_*1_*0_*|1_*0_*1_*0_*1_*1_*1_*|1_*0_*1_*1_*0_*0_*0_*|1_*0_*1_*1_*0_*0_*1_*|1_*0_*1_*1_*0_*1_*0_*|1_*0_*1_*1_*0_*1_*1_*|1_*0_*1_*1_*1_*0_*0_*|1_*0_*1_*1_*1_*0_*1_*|1_*0_*1_*1_*1_*1_*0_*|1_*0_*1_*1_*1_*1_*1_*|1_*1_*0_*0_*0_*0_*0_*|1_*1_*0_*0_*0_*0_*1_*|1_*1_*0_*0_*0_*1_*0_*|1_*1_*0_*0_*0_*1_*1_*|1_*1_*0_*0_*1_*0_*0_*)?)$",
               "type": "string"
             }
           ],
@@ -2140,11 +2588,15 @@
     "InvariantWorkers": {
       "anyOf": [
         {
+          "maximum": 18446744073709551615,
           "minimum": 1,
           "type": "integer"
         },
         {
-          "pattern": "^\\s*(?:[aA][uU][tT][oO]|[1-9][0-9]*)\\s*$",
+          "not": {
+            "pattern": "^\\s*\\+?0+\\s*$"
+          },
+          "pattern": "^\\s*(?:[aA][uU][tT][oO]|\\+?0*(?:[0-9]{1,19}|[0-0][0-9]{19}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615))\\s*$",
           "type": "string"
         }
       ]
@@ -2402,6 +2854,10 @@
           "type": "string"
         }
       },
+      "required": [
+        "access",
+        "path"
+      ],
       "type": "object"
     },
     "PreferCompact": {
@@ -2471,6 +2927,28 @@
         },
         {
           "additionalProperties": false,
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "endpoint",
+                  "url"
+                ]
+              },
+              {
+                "required": [
+                  "endpoint",
+                  "endpoints"
+                ]
+              },
+              {
+                "required": [
+                  "url",
+                  "endpoints"
+                ]
+              }
+            ]
+          },
           "properties": {
             "auth": {
               "description": "Value of the `Authorization` header.",
@@ -2567,6 +3045,9 @@
           "type": "boolean"
         }
       },
+      "required": [
+        "name"
+      ],
       "type": "object"
     },
     "Severity": {

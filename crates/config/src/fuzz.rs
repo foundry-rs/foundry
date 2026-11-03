@@ -11,6 +11,7 @@ use std::path::PathBuf;
 pub struct FuzzConfig {
     /// The number of test cases that must execute for each property test
     #[serde(deserialize_with = "deserialize_fuzz_runs")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
     pub runs: u32,
     /// Optional 1-based fuzz run to execute.
     pub run: Option<u32>,

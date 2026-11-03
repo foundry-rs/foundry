@@ -455,7 +455,7 @@ pub struct Config {
         deserialize_with = "crate::deserialize_u64_to_u256",
         serialize_with = "crate::serialize_u64_or_u256"
     )]
-    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::uint256"))]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::u64_or_uint256"))]
     pub block_number: U256,
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
@@ -485,7 +485,7 @@ pub struct Config {
         deserialize_with = "crate::deserialize_u64_to_u256",
         serialize_with = "crate::serialize_u64_or_u256"
     )]
-    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::uint256"))]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::u64_or_uint256"))]
     pub block_timestamp: U256,
     /// The `block.difficulty` value during EVM execution.
     pub block_difficulty: u64,

@@ -60,10 +60,9 @@ path-slash = "0.2"
 snapbox.workspace = true
 similar-asserts.workspace = true
 tempfile.workspace = true
+jsonschema = { version = "0.60", default-features = false }
 
 [features]
-schema = [
-    "dep:schemars",
-]
+schema = ["dep:schemars"]
 monad = ["foundry-evm-hardforks/monad", "foundry-evm-networks/monad"]
 base = ["foundry-evm-hardforks/base", "foundry-evm-networks/base"]

@@ -21,7 +21,10 @@ pub struct SettingsOverrides {
     pub evm_version: Option<EvmVersion>,
     pub optimizer: Option<bool>,
     pub optimizer_runs: Option<usize>,
-    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::bytecode_hash_variant"))]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(default, schema_with = "crate::schema::bytecode_hash_variant")
+    )]
     pub bytecode_hash: Option<BytecodeHash>,
 }
 
@@ -77,7 +80,10 @@ pub struct CompilationRestrictions {
     #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::version_req"))]
     pub version: Option<VersionReq>,
     pub via_ir: Option<bool>,
-    #[cfg_attr(feature = "schema", schemars(schema_with = "crate::schema::bytecode_hash_variant"))]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(default, schema_with = "crate::schema::bytecode_hash_variant")
+    )]
     pub bytecode_hash: Option<BytecodeHash>,
 
     pub min_optimizer_runs: Option<usize>,
