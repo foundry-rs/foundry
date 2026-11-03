@@ -973,3 +973,173 @@ fn fractional_and_wide_number_literals() {
     let expected = "contract C {\n    function f() external {\n        1.25e-2;\n        1e100;\n        1.2e3;\n    }\n}\n";
     assert_eq!(format(source, Path::new("test.sol"), Arc::default()), expected);
 }
+
+#[test]
+fn try_empty_block_comment_runs_are_idempotent() {
+    for returns in ["", " returns (uint256 value)"] {
+        for (body, outside) in [
+            ("{ // inside\n        } // outside", "// outside"),
+            ("{ // inside\n\n        // outside\n        }", "// outside"),
+            ("{ // inside\n        } /* outside */", "/* outside */"),
+        ] {
+            let source = format!(
+                "contract C {{\n    function f() external {{\n        try target.fetch(){returns} {body}\n        catch {{}}\n    }}\n}}\n"
+            );
+            let expected = format!(
+                "contract C {{\n    function f() external {{\n        try target.fetch(){returns} {{}} // inside\n        {outside}\n            catch {{}}\n    }}\n}}\n"
+            );
+            for wrap_comments in [false, true] {
+                let config = Arc::new(FormatterConfig { wrap_comments, ..Default::default() });
+                assert_eq!(format(&source, Path::new("test.sol"), config.clone()), expected);
+                assert_eq!(format(&expected, Path::new("test.sol"), config), expected);
+            }
+        }
+    }
+}
+
+#[test]
+fn try_nonempty_block_comment_runs_are_idempotent() {
+    let source = r#"contract C {
+    function f() external {
+        try this.f() {
+            return;
+        }
+        /* first */ /* second */
+        catch {}
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        try this.f() {
+            return;
+        } /* first */
+            /* second */
+            catch {}
+    }
+}
+"#;
+    for wrap_comments in [false, true] {
+        let config = Arc::new(FormatterConfig { wrap_comments, ..Default::default() });
+        assert_eq!(format(source, Path::new("test.sol"), config.clone()), expected);
+        assert_eq!(format(expected, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
+fn try_mixed_comment_runs_are_idempotent() {
+    for (body, header, before_catch) in [
+        ("{} // a\n        /* b */ /* c */", "{} // a", "            /* b */ /* c */ "),
+        (
+            "{ /* mixed */ // inside\n        } /* b */ /* c */",
+            "{} /* mixed */ // inside",
+            "            /* b */ /* c */ ",
+        ),
+        (
+            "{ /* mixed */ // inside\n        }\n        // a\n        /* b */ // c\n",
+            "{} /* mixed */ // inside",
+            "        // a\n        /* b */\n        // c\n            ",
+        ),
+        (
+            "{ /* a */ // b\n        } /* o */ /* p */\n",
+            "{} /* a */ // b",
+            "        /* o */\n        /* p */\n            ",
+        ),
+    ] {
+        let source = format!(
+            "contract C {{\n    function f() external {{\n        try this.f() {body} catch {{}}\n    }}\n}}\n"
+        );
+        let expected = format!(
+            "contract C {{\n    function f() external {{\n        try this.f() {header}\n{before_catch}catch {{}}\n    }}\n}}\n"
+        );
+        for wrap_comments in [false, true] {
+            let config = Arc::new(FormatterConfig { wrap_comments, ..Default::default() });
+            assert_eq!(format(&source, Path::new("test.sol"), config.clone()), expected);
+            assert_eq!(format(&expected, Path::new("test.sol"), config), expected);
+        }
+    }
+}
+
+#[test]
+fn try_narrow_mixed_comment_stays_with_catch() {
+    let source = r#"contract C {
+    function f() external {
+        try this.f() { /* m */ // a
+        } // b
+        /* c */ catch Error(string memory errorMessage) { return; }
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        try this.f() {} /* m */ // a
+        // b
+            /* c
+            */ catch Error(string memory errorMessage) {
+            return;
+        }
+    }
+}
+"#;
+    let config =
+        Arc::new(FormatterConfig { line_length: 40, wrap_comments: true, ..Default::default() });
+    assert_eq!(format(source, Path::new("test.sol"), config.clone()), expected);
+    assert_eq!(format(expected, Path::new("test.sol"), config), expected);
+}
+
+#[test]
+fn try_disabled_opening_comment_run_stays_inside_block() {
+    let source = r#"contract C {
+    function f() external {
+        try this.f() { /* forgefmt: disable-start */ // note
+// forgefmt: disable-end
+        } catch {}
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        try this.f() {/* forgefmt: disable-start */ // note
+// forgefmt: disable-end
+        }
+            catch {}
+    }
+}
+"#;
+    for (source, expected) in [
+        (source.to_owned(), expected.to_owned()),
+        (
+            source.replace("{ /* forgefmt:", "{ /* a */ // b\n        /* forgefmt:"),
+            expected.replace("{/* forgefmt:", "{ /* a */ // b\n        /* forgefmt:"),
+        ),
+    ] {
+        for wrap_comments in [false, true] {
+            let config = Arc::new(FormatterConfig { wrap_comments, ..Default::default() });
+            assert_eq!(format(&source, Path::new("test.sol"), config.clone()), expected);
+            assert_eq!(format(&expected, Path::new("test.sol"), config), expected);
+        }
+    }
+}
+
+#[test]
+fn try_narrow_nonempty_block_comment_is_idempotent() {
+    let source = r#"contract C {
+    function f() external {
+        try this.f() { return; } /* c */ catch Error(string memory errorMessage) {}
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        try this.f() {
+            return;
+        } /* c */
+            catch Error(string memory errorMessage) {}
+    }
+}
+"#;
+    let config =
+        Arc::new(FormatterConfig { line_length: 40, wrap_comments: true, ..Default::default() });
+    assert_eq!(format(source, Path::new("test.sol"), config.clone()), expected);
+    assert_eq!(format(expected, Path::new("test.sol"), config), expected);
+}

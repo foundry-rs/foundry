@@ -2478,8 +2478,14 @@ impl<'ast> State<'_, 'ast> {
                 self.nbsp();
             }
             // A trailing comment inside an empty block goes after `}`, as it does on a second pass.
+            // Leave disabled comment runs in place so their source cursor and braces stay intact.
             let trailing_pos = if block.is_empty()
                 && self.peek_trailing_comment(block.span.lo(), Some(try_span.hi())).is_some()
+                && self
+                    .comments
+                    .iter()
+                    .take_while(|cmnt| cmnt.pos() < try_span.hi())
+                    .all(|cmnt| !self.inline_config.is_disabled(cmnt.span))
             {
                 block.span.lo()
             } else {
@@ -2502,12 +2508,27 @@ impl<'ast> State<'_, 'ast> {
 
             let mut skip_ind = false;
             if self.print_trailing_comment(trailing_pos, other.first().map(|c| c.span.lo())) {
+                // Keep comment runs outside the catch box when wrapping groups them, except for
+                // the final mixed suffix, which must stay attached to catch.
+                if block.is_empty()
+                    && let Some(next) = other.first()
+                {
+                    let pos = self
+                        .comments
+                        .iter()
+                        .take_while(|cmnt| cmnt.pos() < next.span.lo())
+                        .fold(next.span.lo(), |pos, cmnt| {
+                            if cmnt.style.is_mixed() { pos.min(cmnt.pos()) } else { next.span.lo() }
+                        });
+                    self.print_comments(pos, CommentConfig::skip_ws());
+                }
                 // if a trailing comment is printed at the very end, we have to manually
                 // adjust the offset to avoid having a double break.
                 self.break_offset_if_not_bol(0, self.ind, false);
                 skip_ind = true;
             };
 
+            let glue_catch_comment = block.is_empty() && skip_ind;
             let mut prev_block_multiline = self.is_multiline_block(block, false, true);
 
             // Handle 'catch' clauses
@@ -2528,10 +2549,12 @@ impl<'ast> State<'_, 'ast> {
                     }
                 }
                 self.s.ibox(self.ind);
-                self.print_comments(
-                    catch_span.lo(),
-                    CommentConfig::skip_ws().mixed_no_break().mixed_post_nbsp(),
-                );
+                let mut comment_config =
+                    CommentConfig::skip_ws().mixed_no_break().mixed_post_nbsp();
+                if pos.is_first && glue_catch_comment {
+                    comment_config = comment_config.mixed_post_glued();
+                }
+                self.print_comments(catch_span.lo(), comment_config);
 
                 self.print_word("catch ");
                 if !args.is_empty() {
