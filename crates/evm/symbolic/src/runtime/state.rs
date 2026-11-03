@@ -1723,6 +1723,17 @@ impl SymbolicWorld {
         keys
     }
 
+    /// Returns every account whose balance this world changed or destroyed.
+    pub(crate) fn balance_addresses(&self) -> Vec<Address> {
+        let mut addresses = self.balances.keys().copied().collect::<Vec<_>>();
+        for address in &self.destroyed_accounts {
+            if !addresses.contains(address) {
+                addresses.push(*address);
+            }
+        }
+        addresses
+    }
+
     pub(crate) fn tload(&self, cx: &mut SymCx, address: Address, key: SymExpr) -> SymExpr {
         let base = SymExpr::zero(cx);
         StorageWrite::select_from(cx, &self.transient_storage, address, key, base)

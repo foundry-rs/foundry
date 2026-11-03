@@ -129,3 +129,192 @@ contract Unchecked {
     );
     assert!(out.contains("code-b: returned no data"), "{out}");
 }
+
+fn deployed_bytecode(cmd: &mut foundry_test_utils::TestCommand, contract: &str) -> String {
+    cmd.forge_fuse()
+        .args(["inspect", contract, "deployedBytecode"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string()
+}
+
+#[forgetest]
+fn equivalence_compares_logs(prj: _, cmd: _) {
+    skip_unless_z3!("equivalence_compares_logs");
+    prj.add_source(
+        "Logs.sol",
+        r#"
+contract Emit {
+    event Set(uint256 v);
+    function set(uint256 v) external { emit Set(v); }
+}
+
+contract EmitOffByOne {
+    event Set(uint256 v);
+    function set(uint256 v) external { emit Set(v == 7 ? 8 : v); }
+}
+
+contract EmitAfterLoop {
+    event Set(uint256 v);
+    function set(uint256 v) external {
+        uint256 w = v;
+        for (uint256 i; i < 3; i++) {
+            w = w ^ i ^ i;
+        }
+        emit Set(w);
+    }
+}
+"#,
+    );
+    let emit = deployed_bytecode(&mut cmd, "Emit");
+    let off_by_one = deployed_bytecode(&mut cmd, "EmitOffByOne");
+    let after_loop = deployed_bytecode(&mut cmd, "EmitAfterLoop");
+
+    let out = cmd
+        .forge_fuse()
+        .args(["equivalence", "--code-a", &emit, "--code-b", &off_by_one, "--sig", "set(uint256)"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(out.contains("args:   (7)"), "{out}");
+    assert!(out.contains("code-a logs:"), "{out}");
+    assert!(
+        out.contains("data 0x0000000000000000000000000000000000000000000000000000000000000008"),
+        "{out}"
+    );
+
+    // Spending more gas on the same events is not a difference.
+    cmd.forge_fuse()
+        .args(["equivalence", "--code-a", &emit, "--code-b", &after_loop, "--sig", "set(uint256)"])
+        .assert_success();
+}
+
+#[forgetest]
+fn equivalence_compares_balances_without_gas(prj: _, cmd: _) {
+    skip_unless_z3!("equivalence_compares_balances_without_gas");
+    prj.add_source(
+        "Refunds.sol",
+        r#"
+contract Refund {
+    function pay(uint256 amt) external {
+        require(amt <= 100);
+        (bool ok,) = msg.sender.call{value: amt}("");
+        require(ok);
+    }
+}
+
+contract RefundShort {
+    function pay(uint256 amt) external {
+        require(amt <= 100);
+        (bool ok,) = msg.sender.call{value: amt == 42 ? 41 : amt}("");
+        require(ok);
+    }
+}
+
+contract RefundAfterLoop {
+    function pay(uint256 amt) external {
+        require(amt <= 100);
+        uint256 x;
+        for (uint256 i; i < 5; i++) {
+            x += i;
+        }
+        (bool ok,) = msg.sender.call{value: amt + x - 10}("");
+        require(ok);
+    }
+}
+
+contract KeepChange {
+    function buy() external payable {
+        require(msg.value >= 10);
+        (bool ok,) = msg.sender.call{value: msg.value - 10}("");
+        require(ok);
+    }
+}
+
+contract KeepAll {
+    function buy() external payable {
+        require(msg.value >= 10);
+    }
+}
+"#,
+    );
+    let refund = deployed_bytecode(&mut cmd, "Refund");
+    let short = deployed_bytecode(&mut cmd, "RefundShort");
+    let after_loop = deployed_bytecode(&mut cmd, "RefundAfterLoop");
+    let keep_change = deployed_bytecode(&mut cmd, "KeepChange");
+    let keep_all = deployed_bytecode(&mut cmd, "KeepAll");
+
+    let out = cmd
+        .forge_fuse()
+        .args([
+            "equivalence",
+            "--code-a",
+            &refund,
+            "--code-b",
+            &short,
+            "--sig",
+            "pay(uint256)",
+            "--balance",
+            "1000",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(out.contains("args:   (42)"), "{out}");
+    assert!(
+        out.contains("balance of 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38: code-a 42, code-b 41"),
+        "{out}"
+    );
+
+    // Gas is not priced, so a costlier refund of the same amount is equivalent.
+    cmd.forge_fuse()
+        .args([
+            "equivalence",
+            "--code-a",
+            &refund,
+            "--code-b",
+            &after_loop,
+            "--sig",
+            "pay(uint256)",
+            "--balance",
+            "1000",
+        ])
+        .assert_success();
+
+    // Change is only owed back once the call value exceeds the price.
+    cmd.forge_fuse()
+        .args([
+            "equivalence",
+            "--code-a",
+            &keep_change,
+            "--code-b",
+            &keep_all,
+            "--sig",
+            "buy()",
+            "--value",
+            "10",
+        ])
+        .assert_success();
+    let out = cmd
+        .forge_fuse()
+        .args([
+            "equivalence",
+            "--code-a",
+            &keep_change,
+            "--code-b",
+            &keep_all,
+            "--sig",
+            "buy()",
+            "--value",
+            "25",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(
+        out.contains("balance of 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38: code-a 15, code-b 0"),
+        "{out}"
+    );
+}

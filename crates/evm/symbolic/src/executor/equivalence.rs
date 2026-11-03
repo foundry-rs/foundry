@@ -13,7 +13,9 @@ impl SymbolicExecutor {
     ///
     /// Both codes run at [`SymbolicEquivalenceInput::address`] from the same pre-state on shared
     /// symbolic calldata. They are equivalent when every pair of feasible paths agrees on success,
-    /// on return or revert data and, when both succeed, on every storage slot either one wrote.
+    /// on return or revert data and, when both succeed, on every storage slot either one wrote, on
+    /// the emitted logs and on every balance either one changed. Gas is not priced, so balances
+    /// only move by value transfers and self-destructs.
     /// A counterexample is a solver model and must be replayed concretely before it is reported.
     pub fn run_equivalence(
         &mut self,
@@ -150,11 +152,21 @@ impl SymbolicExecutor {
         code: &SymCode,
     ) -> PathState {
         let mut root =
-            PathState::new(&mut self.cx, input.address, input.sender, U256::ZERO, calldata, false);
+            PathState::new(&mut self.cx, input.address, input.sender, input.value, calldata, false);
         root.apply_executor_env(&mut self.cx, &input.executor);
         root.world.set_storage_layout(self.config.storage_layout);
         root.world.clear_transaction_scoped_state();
         root.world.install_code(input.address, code.clone());
+        // Record every log so both sides' emitted events can be compared.
+        root.recorded_logs = Some(Vec::new());
+        if !input.value.is_zero() {
+            let sender = root.world.backend_balance(&input.executor, input.sender);
+            let target = root.world.backend_balance(&input.executor, input.address);
+            let sender = SymExpr::constant(&mut self.cx, sender.saturating_sub(input.value));
+            let target = SymExpr::constant(&mut self.cx, target.saturating_add(input.value));
+            root.world.set_balance_word(input.sender, sender);
+            root.world.set_balance_word(input.address, target);
+        }
         root
     }
 
@@ -186,9 +198,42 @@ impl SymbolicExecutor {
         if end_a.success != end_b.success {
             return Ok(SymBoolExpr::constant(&mut self.cx, true));
         }
-        let mut diffs =
-            vec![return_data_mismatch(&mut self.cx, &end_a.return_data, &end_b.return_data)];
+        let mut diffs = vec![bytes_mismatch(
+            &mut self.cx,
+            (&end_a.return_data.len_word, &end_a.return_data.bytes),
+            (&end_b.return_data.len_word, &end_b.return_data.bytes),
+        )];
         if end_a.success {
+            let logs_a = state_a.recorded_logs.clone().unwrap_or_default();
+            let logs_b = state_b.recorded_logs.clone().unwrap_or_default();
+            if logs_a.len() != logs_b.len() {
+                return Ok(SymBoolExpr::constant(&mut self.cx, true));
+            }
+            for (log_a, log_b) in logs_a.into_iter().zip(logs_b) {
+                let (topics_a, len_a, data_a, emitter_a) = log_a.into_parts();
+                let (topics_b, len_b, data_b, emitter_b) = log_b.into_parts();
+                if emitter_a != emitter_b || topics_a.len() != topics_b.len() {
+                    return Ok(SymBoolExpr::constant(&mut self.cx, true));
+                }
+                for (topic_a, topic_b) in topics_a.iter().zip(topics_b.iter()) {
+                    let same = SymBoolExpr::eq(&mut self.cx, topic_a.clone(), topic_b.clone());
+                    diffs.push(same.not(&mut self.cx));
+                }
+                diffs.push(bytes_mismatch(&mut self.cx, (&len_a, &data_a), (&len_b, &data_b)));
+            }
+
+            let mut accounts = state_a.world.balance_addresses();
+            for account in state_b.world.balance_addresses() {
+                if !accounts.contains(&account) {
+                    accounts.push(account);
+                }
+            }
+            for account in accounts {
+                let left = state_a.world.balance_word_for_address(&mut self.cx, executor, account);
+                let right = state_b.world.balance_word_for_address(&mut self.cx, executor, account);
+                diffs.push(SymBoolExpr::eq(&mut self.cx, left, right).not(&mut self.cx));
+            }
+
             // Both runs share one pre-state, so storage can only differ at a slot one of them
             // wrote.
             let mut keys = state_a.world.storage_write_keys(address);
@@ -237,9 +282,13 @@ struct SymbolicEquivalenceCounterexample {
     storage: Vec<SymbolicStorageAssignment>,
 }
 
-/// Returns the condition under which two return buffers differ in length or in a byte in range.
-fn return_data_mismatch(cx: &mut SymCx, a: &SymReturnData, b: &SymReturnData) -> SymBoolExpr {
-    let mut diffs = vec![SymBoolExpr::eq(cx, a.len_word.clone(), b.len_word.clone()).not(cx)];
+/// Returns the condition under which two byte buffers differ in length or in a byte in range.
+fn bytes_mismatch(
+    cx: &mut SymCx,
+    (len_a, a): (&SymExpr, &SymBytes),
+    (len_b, b): (&SymExpr, &SymBytes),
+) -> SymBoolExpr {
+    let mut diffs = vec![SymBoolExpr::eq(cx, len_a.clone(), len_b.clone()).not(cx)];
     for idx in 0..a.len().min(b.len()) {
         let left = a.byte(cx, idx);
         let right = b.byte(cx, idx);
@@ -247,7 +296,7 @@ fn return_data_mismatch(cx: &mut SymCx, a: &SymReturnData, b: &SymReturnData) ->
         if differ.as_const() == Some(false) {
             continue;
         }
-        let in_range = SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ugt, &a.len_word, U256::from(idx));
+        let in_range = SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ugt, len_a, U256::from(idx));
         diffs.push(SymBoolExpr::and(cx, vec![in_range, differ]));
     }
     SymBoolExpr::or(cx, diffs)

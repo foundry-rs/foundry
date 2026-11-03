@@ -580,7 +580,9 @@ feasible paths:
 
 - whether the call succeeded or reverted,
 - the return or revert data,
-- when both succeed, every storage slot either code wrote.
+- when both succeed, every storage slot either code wrote, the emitted logs
+  (emitter, topics and data, in order), and every ETH balance either code
+  changed.
 
 ```sh
 forge equivalence --code-a "$(forge inspect A deployedBytecode)" \
@@ -600,8 +602,11 @@ both results and any storage slots that differ; the command then exits with a
 non-zero status. `--json` prints the same result as JSON. Like `forge test
 --symbolic`, `Equivalent` is scoped to the modeled EVM surface and configured
 bounds, and a check that cannot finish reports an incomplete result instead.
-Logs, balances and other accounts' state are not compared, and the call value
-is zero.
+Gas is not priced, so balances only move by value transfers and
+self-destructs: code that spends more gas to do the same thing is equivalent.
+`--value` sets the call value and `--balance` the contract's starting balance,
+both in wei and zero by default. Other accounts' storage and code are not
+compared.
 
 ## Configuration
 

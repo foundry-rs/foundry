@@ -354,6 +354,8 @@ pub struct SymbolicEquivalenceInput<'a> {
     pub code_b: Bytes,
     /// Sender of the top-level call.
     pub sender: Address,
+    /// Call value of the top-level call, moved from the sender to `address` before it runs.
+    pub value: U256,
     /// When set, calldata is limited to ABI-encoded calls of this function.
     pub function: Option<&'a Function>,
     /// Lengths of unconstrained raw calldata to explore when `function` is `None`.

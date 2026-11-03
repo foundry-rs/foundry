@@ -239,7 +239,7 @@ pub enum ForgeSubcommand {
     /// Check whether two contracts' runtime bytecodes behave the same for every input.
     ///
     /// Like `hevm equivalence`, it symbolically explores both codes on shared calldata and
-    /// compares success, return or revert data, and storage.
+    /// compares success, return or revert data, storage, logs and balances.
     ///
     /// Examples:
     /// - forge equivalence --code-a 0x6001... --code-b 0x6001...
