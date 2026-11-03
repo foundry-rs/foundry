@@ -5468,12 +5468,6 @@ impl<N: Network> Backend<N> {
         self.cheats.clear_next_block_overrides();
 
         trace!(target: "backend", "reset fork");
-        let storage = self.blockchain.storage.read();
-        if storage.tempo.is_some()
-            && let Some(fork) = self.get_fork()
-        {
-            TempoChain::warn_if_epoch_length_fallback(&node_config, &fork);
-        }
         Ok(())
     }
 

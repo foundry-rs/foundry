@@ -8752,6 +8752,3 @@ async fn tempo_epoch_metadata_endpoints(source: &anvil::NodeHandle) -> [(&'stati
 
 mod epoch_metadata;
 mod subscriptions;
-
-#[cfg(feature = "cli")]
-mod epoch_warning;

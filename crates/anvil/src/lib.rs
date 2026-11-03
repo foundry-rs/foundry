@@ -292,8 +292,6 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
         )?;
     }
 
-    api.backend.warn_if_tempo_epoch_length_fallback().await;
-
     Ok((api, handle))
 }
 

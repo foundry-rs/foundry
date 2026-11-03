@@ -282,19 +282,6 @@ impl TempoChain {
             height,
         )
     }
-
-    /// Reports fallback only after the fork's final metadata and consensus have been committed.
-    pub(super) fn warn_if_epoch_length_fallback(config: &NodeConfig, fork: &ClientFork) {
-        if !config.silent
-            && config.tempo_epoch_length.is_none()
-            && fork.config.read().endpoint_identity.tempo_epoch_length.is_none()
-        {
-            let _ = foundry_common::sh_warn!(
-                "Tempo fork epoch length is unavailable; using {DEFAULT_TEMPO_EPOCH_LENGTH}. \
-                 Set --tempo.epoch-length to match the source."
-            );
-        }
-    }
 }
 
 impl fmt::Debug for TempoChain {
@@ -486,18 +473,6 @@ impl<N: Network> Backend<N> {
             .clone();
         drop(states);
         Ok(Some(super::prove_account(&accounts, address, keys)))
-    }
-
-    /// Reports a successful Tempo fork startup that could not discover the source epoch length.
-    pub(crate) async fn warn_if_tempo_epoch_length_fallback(&self) {
-        let config = self.node_config.read().await;
-        let _db = self.db.read().await;
-        let storage = self.blockchain.storage.read();
-        if storage.tempo.is_some()
-            && let Some(fork) = self.get_fork()
-        {
-            TempoChain::warn_if_epoch_length_fallback(&config, &fork);
-        }
     }
 }
 
