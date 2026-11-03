@@ -504,6 +504,7 @@ impl ScriptArgs {
                     } else {
                         bundled.broadcast().await?
                     };
+                    broadcasted.print_deployed_contracts()?;
                     if broadcasted.args.verify {
                         broadcasted.verify().await?;
                     }
@@ -720,6 +721,7 @@ impl ScriptArgs {
 
     async fn broadcast_bundle<FEN: FoundryEvmNetwork>(bundled: BundledState<FEN>) -> Result<()> {
         let broadcasted = bundled.wait_for_pending().await?.broadcast().await?;
+        broadcasted.print_deployed_contracts()?;
 
         if broadcasted.args.verify {
             broadcasted.verify().await?;
@@ -1032,6 +1034,7 @@ impl<N: Network> ScriptResult<N> {
                         exact_artifact_match,
                         init_code,
                         creator_code_addresses,
+                        label: None,
                     })
                 })
             })
