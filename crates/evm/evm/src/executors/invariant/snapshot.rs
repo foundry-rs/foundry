@@ -15,13 +15,16 @@
 use crate::executors::Executor;
 use alloy_primitives::{
     Address, U256,
-    map::{AddressMap, DefaultHashBuilder, HashMap, HashSet},
+    map::{AddressMap, HashMap, HashSet},
 };
 use foundry_evm_core::{constants::CHEATCODE_ADDRESS, evm::FoundryEvmNetwork};
 use foundry_evm_fuzz::BasicTxDetails;
 use proptest::{prelude::Rng, test_runner::TestRunner};
 use revm::state::Account;
-use std::{hash::BuildHasher, sync::Arc};
+use std::{
+    hash::{BuildHasher, BuildHasherDefault, DefaultHasher},
+    sync::Arc,
+};
 
 /// Most snapshots kept per worker.
 const MAX_SNAPSHOTS: usize = 64;
@@ -82,7 +85,8 @@ pub(super) struct RunStart<FEN: FoundryEvmNetwork> {
 pub(super) struct StateSnapshots<FEN: FoundryEvmNetwork> {
     max_snapshots: usize,
     max_prefix: usize,
-    hasher: DefaultHashBuilder,
+    /// Hashes features with fixed keys, so a seed picks the same snapshots in every process.
+    hasher: BuildHasherDefault<DefaultHasher>,
     /// Feature -> number of calls that reached it.
     hits: HashMap<u64, u32>,
     /// Distinct values per (contract, slot) until the slot becomes a distribution.
@@ -110,7 +114,7 @@ impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
         Self {
             max_snapshots,
             max_prefix: (depth as usize).saturating_mul(MAX_PREFIX_DEPTHS),
-            hasher: DefaultHashBuilder::default(),
+            hasher: BuildHasherDefault::default(),
             hits: HashMap::default(),
             slot_values: HashMap::default(),
             setup: Energy::default(),
@@ -192,14 +196,21 @@ impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
                 continue;
             }
             let mut cardinality_changed = false;
-            for (slot, value) in &account.storage {
-                if !value.is_changed() {
-                    continue;
-                }
+            // Mapping keys and array indices are not part of the state's shape: fold them. A
+            // slot's set can fill up mid-call, so visit writes by folded slot and value, not in
+            // storage map order or by keys, which can be random addresses.
+            let mut writes = account
+                .storage
+                .iter()
+                .filter(|(_, value)| value.is_changed())
+                .map(|(slot, value)| {
+                    let computed = *slot >= COMPUTED_SLOT;
+                    (if computed { U256::MAX } else { *slot }, computed, value)
+                })
+                .collect::<Vec<_>>();
+            writes.sort_unstable_by_key(|(slot_key, _, value)| (*slot_key, value.present_value));
+            for (slot_key, computed, value) in writes {
                 let present = value.present_value;
-                let computed = *slot >= COMPUTED_SLOT;
-                // Mapping keys and array indices are not part of the state's shape: fold them.
-                let slot_key = if computed { U256::MAX } else { *slot };
                 if computed && value.original_value.is_zero() != present.is_zero() {
                     let count = self.cardinality.entry(*address).or_default();
                     if present.is_zero() {
@@ -408,5 +419,34 @@ mod tests {
         pool.capture(&setup, std::slice::from_ref(&tx), vec![4]);
         assert_eq!(pool.snapshots[0].features, start);
         assert_eq!(pool.snapshots[1].features, [4]);
+    }
+
+    #[test]
+    fn features_do_not_depend_on_storage_order_or_mapping_keys() {
+        let entry = |i: u64| U256::MAX - U256::from(i);
+        let outcomes = (0..16)
+            .map(|round| {
+                let mut snapshots = snapshots();
+                for i in 1..MAX_SET_VALUES as u64 {
+                    snapshots.observe(&write(entry(100 + i), U256::ZERO, U256::from(i)));
+                }
+                // One call fills the folded entry set: which value stays exact depends on the
+                // order the two writes are visited in. Alternate which key holds which value, as
+                // with keys derived from random senders.
+                let mut account = Account::default();
+                let keys = if round % 2 == 0 { [1, 2] } else { [2, 1] };
+                for (i, value) in keys.into_iter().zip([U256::from(1000), U256::from(1u64 << 40)]) {
+                    let mut storage = EvmStorageSlot::new(U256::ZERO, Default::default());
+                    storage.present_value = value;
+                    account.storage.insert(entry(i), storage);
+                }
+                let filled = snapshots
+                    .observe(&AddressMap::from_iter([(Address::repeat_byte(0x11), account)]));
+                let next =
+                    snapshots.observe(&write(entry(3), U256::ZERO, U256::from((1u64 << 40) + 1)));
+                (filled, next)
+            })
+            .collect::<Vec<_>>();
+        assert!(outcomes.windows(2).all(|pair| pair[0] == pair[1]), "{outcomes:?}");
     }
 }
