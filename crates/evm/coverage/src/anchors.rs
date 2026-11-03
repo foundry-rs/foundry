@@ -7,6 +7,7 @@ use eyre::ensure;
 use foundry_compilers::artifacts::sourcemap::{SourceElement, SourceMap};
 use foundry_evm_core::{bytecode::InstIter, ic::IcPcMap};
 use revm::bytecode::opcode;
+use std::ops::Range;
 
 impl ItemAnchor {
     fn from_instruction(
@@ -124,6 +125,8 @@ struct AnchorIndex<'a> {
     entries: Vec<(i32, u32, usize)>,
     /// `(ic, next pc, push immediate)` for every push that feeds a `JUMPI`.
     branches: Vec<(usize, usize, &'a [u8])>,
+    /// Straight-line instruction ranges ending in REVERT or INVALID, ordered by start.
+    reverting_runs: Vec<Range<usize>>,
 }
 
 impl<'a> AnchorIndex<'a> {
@@ -135,7 +138,22 @@ impl<'a> AnchorIndex<'a> {
             .collect::<Vec<_>>();
         entries.sort_unstable();
         let mut branches = Vec::new();
+        let mut reverting_runs = Vec::new();
+        let mut run_start = 0;
         for (ic, (pc, inst)) in InstIter::new(bytecode).with_pc().enumerate() {
+            match inst.opcode.get() {
+                opcode::REVERT | opcode::INVALID => {
+                    reverting_runs.push(run_start..ic + 1);
+                    run_start = ic + 1;
+                }
+                opcode::JUMP
+                | opcode::JUMPI
+                | opcode::JUMPDEST
+                | opcode::STOP
+                | opcode::RETURN
+                | opcode::SELFDESTRUCT => run_start = ic + 1,
+                _ => {}
+            }
             if (opcode::PUSH1..=opcode::PUSH32).contains(&inst.opcode.get()) {
                 // Stop where the source map ends.
                 if source_map.get(ic).is_none() {
@@ -147,10 +165,10 @@ impl<'a> AnchorIndex<'a> {
                 }
             }
         }
-        Self { source_map, ic_pc_map, entries, branches }
+        Self { source_map, ic_pc_map, entries, branches, reverting_runs }
     }
 
-    /// Finds the anchor for the first opcode within the given source range.
+    /// Finds the first opcode in the source range, preferring code outside a failure stub.
     fn simple(&self, item_id: u32, loc: &SourceLocation) -> eyre::Result<ItemAnchor> {
         let source = loc.source_id as i32;
         let start = self
@@ -159,11 +177,20 @@ impl<'a> AnchorIndex<'a> {
         let end = self.entries.partition_point(|&(id, offset, _)| {
             (id, offset) <= (source, loc.bytes.start + loc.len())
         });
-        let instruction = self.entries[start..end]
+        let candidates = self.entries[start..end]
             .iter()
             .map(|&(_, _, instruction)| instruction)
-            .filter(|&instruction| is_in_source_range(&self.source_map[instruction], loc))
-            .min();
+            .filter(|&instruction| is_in_source_range(&self.source_map[instruction], loc));
+        // Cold validation stubs can precede the statement's main code in the bytecode.
+        // A revert statement itself may have only failure-path candidates, so retain the fallback.
+        let instruction = candidates
+            .clone()
+            .filter(|&instruction| {
+                let next = self.reverting_runs.partition_point(|run| run.end <= instruction);
+                !self.reverting_runs.get(next).is_some_and(|run| run.contains(&instruction))
+            })
+            .min()
+            .or_else(|| candidates.min());
         ItemAnchor::from_instruction(instruction, self.ic_pc_map, item_id, loc)
     }
 
@@ -235,5 +262,60 @@ mod tests {
         let ic_pc_map = IcPcMap::new(&bytecode);
         let index = AnchorIndex::new(&bytecode, &inner_only, &ic_pc_map);
         assert!(index.branch(0, &loc, true).is_err());
+    }
+
+    #[test]
+    fn statement_anchors_do_not_depend_on_cold_stub_order() {
+        let loc =
+            SourceLocation { source_id: 0, contract_name: "T".into(), bytes: 10..30, lines: 1..2 };
+        for (bytecode, expected) in [
+            (
+                vec![
+                    opcode::PUSH0,
+                    opcode::PUSH0,
+                    opcode::REVERT,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::PUSH0,
+                    opcode::RETURN,
+                ],
+                3,
+            ),
+            (
+                vec![
+                    opcode::PUSH0,
+                    opcode::PUSH0,
+                    opcode::RETURN,
+                    opcode::JUMPDEST,
+                    opcode::PUSH0,
+                    opcode::PUSH0,
+                    opcode::REVERT,
+                ],
+                0,
+            ),
+            (vec![opcode::PUSH0, opcode::PUSH0, opcode::INVALID], 0),
+            (vec![opcode::PUSH0, opcode::PUSH0, opcode::REVERT], 0),
+            (
+                vec![
+                    opcode::PUSH0,
+                    opcode::PUSH1,
+                    7,
+                    opcode::JUMPI,
+                    opcode::PUSH0,
+                    opcode::PUSH0,
+                    opcode::REVERT,
+                    opcode::JUMPDEST,
+                    opcode::STOP,
+                ],
+                0,
+            ),
+        ] {
+            let count = InstIter::new(&bytecode).count();
+            let source_map =
+                sourcemap::parse(&format!("10:20:0{}", ";".repeat(count - 1))).unwrap();
+            let ic_pc_map = IcPcMap::new(&bytecode);
+            let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+            assert_eq!(index.simple(0, &loc).unwrap().instruction, expected);
+        }
     }
 }
