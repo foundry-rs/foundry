@@ -8051,18 +8051,22 @@ async fn tempo_consensus_rotation_after_boundary_waits_for_full_dkg() {
         api.mine_one().await.unwrap();
         let finalized = tempo_finalization(&provider, height).await;
         assert_tempo_certificate(&initial, &finalized);
+        assert_eq!(tempo_consensus_identity(&provider).await, initial);
         assert_eq!(subscriptions::next_event(&mut events).await.certified, finalized);
     }
     let boundary = tempo_finalization(&provider, 5).await;
-    let outcome = OnchainDkgOutcome::decode(boundary.block.header.extra_data().as_ref()).unwrap();
-    assert_eq!(outcome.epoch, 2);
-    assert!(outcome.is_next_full_dkg);
-    assert_eq!(outcome.network_identity().encode().as_ref(), initial.identity.as_ref());
+    let ceremony = OnchainDkgOutcome::decode(boundary.block.header.extra_data().as_ref()).unwrap();
+    assert_eq!(ceremony.epoch, 2);
+    assert!(ceremony.is_next_full_dkg);
+    assert_eq!(ceremony.network_identity().encode().as_ref(), initial.identity.as_ref());
+    assert_ne!(ceremony.next_players, *ceremony.output.players());
     let boundary = tempo_finalization(&provider, 8).await;
     let outcome = OnchainDkgOutcome::decode(boundary.block.header.extra_data().as_ref()).unwrap();
     assert_eq!(outcome.epoch, 3);
     assert!(!outcome.is_next_full_dkg);
     assert_eq!(outcome.network_identity().encode().as_ref(), rotated.identity.as_ref());
+    assert_eq!(ceremony.next_players, *outcome.output.players());
+    assert_eq!(outcome.next_players, *outcome.output.players());
     assert_eq!(tempo_consensus_identity(&provider).await, initial);
     api.mine_one().await.unwrap();
     let finalized = tempo_finalization(&provider, 9).await;

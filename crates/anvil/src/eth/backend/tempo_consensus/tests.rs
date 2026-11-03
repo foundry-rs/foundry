@@ -829,39 +829,6 @@ fn fork_unsigned_successor_keeps_rounds_without_header_context() {
 }
 
 #[test]
-fn rotation_announces_full_dkg_before_publishing_fresh_identity() {
-    let mut consensus = TempoConsensus::new(B256::ZERO, NonZeroU64::new(3).unwrap());
-    let initial = consensus.identity();
-    let rotated = consensus.rotate().unwrap();
-    assert_eq!(rotated.from_epoch, 2);
-
-    finalize(&mut consensus, 1);
-    let (announcement, certificate) = finalize(&mut consensus, 2);
-    assert_certificate(&initial, &announcement, &certificate);
-    let announcement = OnchainDkgOutcome::decode(announcement.inner.extra_data.as_ref()).unwrap();
-    assert_eq!(announcement.epoch, 1);
-    assert!(announcement.is_next_full_dkg);
-    assert_eq!(announcement.network_identity().encode().as_ref(), initial.identity.as_ref());
-
-    for height in 3..=4 {
-        let (header, certificate) = finalize(&mut consensus, height);
-        assert_eq!(consensus.identity(), initial);
-        assert_certificate(&initial, &header, &certificate);
-    }
-    let (boundary, certificate) = finalize(&mut consensus, 5);
-    assert_certificate(&initial, &boundary, &certificate);
-    let outcome = OnchainDkgOutcome::decode(boundary.inner.extra_data.as_ref()).unwrap();
-    assert_eq!(outcome.epoch, 2);
-    assert!(!outcome.is_next_full_dkg);
-    assert_eq!(outcome.network_identity().encode().as_ref(), rotated.identity.as_ref());
-    assert_eq!(announcement.next_players, *outcome.output.players());
-    let (header, certificate) = finalize(&mut consensus, 6);
-    assert_eq!(consensus.identity(), rotated);
-    assert_certificate(&rotated, &header, &certificate);
-    assert!(!certificate_verifies(&initial, &certificate));
-}
-
-#[test]
 fn last_representable_dkg_outcome_preserves_announced_committee() {
     let mut consensus = TempoConsensus::at_height(B256::ZERO, NonZeroU64::MIN, u64::MAX - 3);
     let initial = consensus.identity();
