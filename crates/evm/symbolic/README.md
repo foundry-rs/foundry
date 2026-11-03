@@ -855,7 +855,7 @@ be modeled safely. The supported surface includes:
 
 - `vm.assume`, `vm.bound`, `vm.skip`, `vm.assumeNoRevert`
 - forge-std and DSTest assertion/failure signals
-- `warp`, `roll`, `fee`, `chainId`, `difficulty`, `coinbase`, blockhash helpers
+- `warp`, `roll`, `rollSlot`, `fee`, `chainId`, `difficulty`, `coinbase`, blockhash helpers
 - `deal`, `store`, `load`, `etch`, `getCode`, `getDeployedCode`
 - `prank`, `startPrank`, `stopPrank`
 - `addr`, `sign`, `deriveKey`, `rememberKey`, `rememberKeys`

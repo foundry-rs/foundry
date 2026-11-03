@@ -777,3 +777,121 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
         "expected Keccak-heuristic taint or warning in output, got:\n{stdout}"
     );
 }
+
+#[forgetest_init]
+fn symbolic_amsterdam_opcodes_follow_active_spec(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_amsterdam_opcodes_follow_active_spec");
+
+    prj.add_test(
+        "SymbolicAmsterdamOpcodes.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface VmSlot {
+    function getSlotNumber() external view returns (uint64);
+    function rollSlot(uint64 newSlotNumber) external;
+}
+
+contract SymbolicAmsterdamOpcodes is Test {
+    VmSlot constant slots = VmSlot(address(vm));
+    // SLOTNUM; MSTORE(0); RETURN(0, 32).
+    address constant SLOTNUM = address(0x1000);
+    // CALLDATALOAD(0); PUSH0 x16; DUPN 17; MSTORE(0); RETURN(0, 32).
+    address constant DUPN = address(0x2000);
+    // CALLDATALOAD(0); PUSH0 x17; SWAPN 17; MSTORE(0); RETURN(0, 32).
+    address constant SWAPN = address(0x3000);
+    // CALLDATALOAD(0); PUSH0 x2; EXCHANGE 1 2; POP; MSTORE(0); RETURN(0, 32).
+    address constant EXCHANGE = address(0x4000);
+    // DUPN with the invalid immediate 0x5b.
+    address constant INVALID_IMMEDIATE = address(0x5000);
+    // PUSH1 4; JUMP; DUPN; JUMPDEST; STOP. The JUMPDEST is the DUPN immediate.
+    address constant JUMP_INTO_IMMEDIATE = address(0x6000);
+
+    function setUp() public {
+        vm.etch(SLOTNUM, hex"4b5f5260205ff3");
+        vm.etch(DUPN, hex"5f355f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5fe6805f5260205ff3");
+        vm.etch(SWAPN, hex"5f355f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5fe7805f5260205ff3");
+        vm.etch(EXCHANGE, hex"5f355f5fe88e505f5260205ff3");
+        vm.etch(INVALID_IMMEDIATE, hex"5f5fe65b00");
+        vm.etch(JUMP_INTO_IMMEDIATE, hex"600456e65b00");
+    }
+
+    function read(address target, uint256 x) internal returns (uint256) {
+        (bool ok, bytes memory data) = target.call(abi.encode(x));
+        assertTrue(ok);
+        return abi.decode(data, (uint256));
+    }
+
+    function checkSlotNumber(uint64 slot) public {
+        slots.rollSlot(slot);
+        assertEq(slots.getSlotNumber(), slot);
+        assertEq(read(SLOTNUM, 0), slot);
+    }
+
+    function checkStackOpcodes(uint256 x) public {
+        assertEq(read(DUPN, x), x);
+        assertEq(read(SWAPN, x), x);
+        assertEq(read(EXCHANGE, x), x);
+    }
+
+    function checkDupnFindsCounterexample(uint256 x) public {
+        assertTrue(read(DUPN, x) != 42);
+    }
+
+    function checkImmediateEncoding(uint256) public {
+        (bool ok,) = INVALID_IMMEDIATE.call("");
+        assertFalse(ok);
+        (ok,) = JUMP_INTO_IMMEDIATE.call("");
+        assertTrue(ok);
+    }
+
+    function checkHaltBeforeAmsterdam(uint256) public {
+        (bool ok,) = SLOTNUM.call("");
+        assertFalse(ok);
+        (ok,) = DUPN.call(abi.encode(uint256(1)));
+        assertFalse(ok);
+        (ok,) = address(vm).call(abi.encodeCall(VmSlot.rollSlot, (1)));
+        assertFalse(ok);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--evm-version",
+        "amsterdam",
+        "--experimental",
+        "--match-test",
+        "checkSlotNumber|checkStackOpcodes|checkDupnFindsCounterexample|checkImmediateEncoding",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/SymbolicAmsterdamOpcodes.t.sol:SymbolicAmsterdamOpcodes
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkDupnFindsCounterexample(uint256) ([METRICS])
+[PASS] checkImmediateEncoding(uint256) ([METRICS])
+[PASS] checkSlotNumber(uint64) ([METRICS])
+[PASS] checkStackOpcodes(uint256) ([METRICS])
+Suite result: FAILED. 3 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    assert_symbolic_witness(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--evm-version",
+        "osaka",
+        "--match-test",
+        "checkHaltBeforeAmsterdam",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicAmsterdamOpcodes.t.sol:SymbolicAmsterdamOpcodes
+[PASS] checkHaltBeforeAmsterdam(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}

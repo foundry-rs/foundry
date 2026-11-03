@@ -36,6 +36,7 @@ pub(crate) struct ExecutorBlock {
     pub(crate) gas_limit: u64,
     pub(crate) basefee: u64,
     pub(crate) blob_basefee: u128,
+    pub(crate) slot_num: u64,
 }
 
 impl<'a> ExecutorView<'a> {
@@ -69,6 +70,7 @@ impl<'a> ExecutorView<'a> {
                 gas_limit: block.gas_limit(),
                 basefee: block.basefee(),
                 blob_basefee: block.blob_gasprice().unwrap_or_default(),
+                slot_num: block.slot_num(),
             },
             gas_price: cheats
                 .and_then(|cheats| cheats.gas_price)
