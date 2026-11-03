@@ -83,13 +83,15 @@ struct Cli {
 
     /// Comma-separated list of repositories to benchmark.
     ///
-    /// Each entry has the form `org/repo[:rev][ <extra args...>]`. Anything
-    /// after the first whitespace is appended to every benchmark command for
-    /// that repo (handy to skip a broken test contract via e.g.
+    /// Each entry has the form `org/repo[/subdir][:rev][ <extra args...>]`.
+    /// `subdir` selects the Foundry project inside a monorepo. Anything after
+    /// the first whitespace is appended to every benchmark command for that
+    /// repo (handy to skip a broken test contract via e.g.
     /// `--nmc BrokenTest`).
     ///
     /// Examples:
-    ///   `ithacaxyz/account:v0.5.7`
+    ///   `morpho-org/morpho-blue:9cf6d5b844625ba108e36d1cf911f5d2faf7c136`
+    ///   `tempoxyz/tempo/crates/zones/contracts`
     ///   `vectorized/solady:v0.1.26 --nmc 'LifebuoyTest|LibBitTest'`
     #[clap(long, value_delimiter = ',')]
     repos: Option<Vec<String>>,

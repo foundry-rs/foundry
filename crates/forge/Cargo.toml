@@ -69,7 +69,7 @@ tempo-alloy.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete.workspace = true
-ctrlc = "3"
+ctrlc = { version = "3", features = ["termination"] }
 dialoguer.workspace = true
 dunce.workspace = true
 flate2.workspace = true
@@ -78,6 +78,7 @@ heck.workspace = true
 indicatif.workspace = true
 inferno = { version = "0.12", default-features = false }
 itertools.workspace = true
+mpp.workspace = true
 parking_lot.workspace = true
 regex = { workspace = true, default-features = false }
 revm.workspace = true
