@@ -715,8 +715,6 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// payloads, so user-crafted `FOUNDRY::SKIP` revert data never skips a test on its own.
     pub skip_payloads: Vec<Bytes>,
 
-    /// All recorded ETH `deal`s.
-
     /// Writes that survive reverts of the enclosing calls, with the depth of the frame that made
     /// them and the journal length right after them, replayed when that frame or an enclosing one
     /// reverts and its rollback undid them.
@@ -3786,6 +3784,7 @@ fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
     }
     Ok(writes)
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

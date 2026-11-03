@@ -546,7 +546,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     } else {
         gas_params.get(GasId::Create)
     };
-    if version.features.contains(EvmFeatures::EIP3860) {
+    if version.feature(EvmFeatures::EIP3860) {
         if init_code_len > version.max_initcode_size {
             ccx.gas.spend_all();
             return Err(fmt_err!("initcode size limit exceeded"));
@@ -562,7 +562,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     // EIP-8037: charge the account creation state gas if the creation can proceed and the
     // destination is empty.
     let mut charged_create_state_gas = false;
-    if version.features.contains(EvmFeatures::EIP8037) {
+    if version.feature(EvmFeatures::EIP8037) {
         let (balance, nonce) = {
             let account = ccx.evm.state_mut().account(&caller)?;
             (account.balance(), account.nonce())
