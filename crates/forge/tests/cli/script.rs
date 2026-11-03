@@ -1202,9 +1202,12 @@ contract InvisibleSubmission is Script {
         .expect("forge did not finish");
         let output = child.kill_and_wait();
         assert!(output.status.success());
+        // Successors that time out before the first one is found dropped warn that they are
+        // still waited on.
         assert_data_eq!(
             String::from_utf8(output.stderr).unwrap(),
             str![[r#"
+...
 Warning: Some transactions were discarded by the RPC node. Use `--resume` to retry these transactions.
 ...
 "#]]
@@ -1385,6 +1388,12 @@ contract UnpolledReceipts is Script {
             .map(|receipt| receipt["transactionHash"].clone())
             .collect::<Vec<_>>();
         if revert {
+            // Transactions still waited on when a receipt timeout elapses warn about it first.
+            let stderr = stderr
+                .lines()
+                .filter(|line| !line.ends_with("still waiting for its receipt."))
+                .map(|line| format!("{line}\n"))
+                .collect::<String>();
             assert!(!output.status.success());
             assert_eq!(
                 stderr,
@@ -1400,6 +1409,7 @@ contract UnpolledReceipts is Script {
             assert_data_eq!(
                 stderr,
                 str![[r#"
+...
 Warning: Some transactions were discarded by the RPC node. Use `--resume` to retry these transactions.
 ...
 "#]]
@@ -1410,6 +1420,79 @@ Warning: Some transactions were discarded by the RPC node. Use `--resume` to ret
         // The invisible transactions are removed so that resume can replay them.
         assert!(sequence["pending"].as_array().unwrap().is_empty());
     }
+}
+
+// A transaction that stays pending past the receipt timeout is named once, without aborting or
+// changing the eventual result.
+#[forgetest_init]
+async fn broadcast_warns_once_while_waiting_for_receipt(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "WaitingReceipt.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract WaitingReceipt is Script {
+    function run() external {
+        vm.broadcast();
+        payable(address(0xBEEF)).transfer(1);
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    // Each receipt timeout is followed by a lookup that finds the transaction still pending.
+    let lookups = Arc::new(AtomicUsize::new(0));
+    let rpc = spawn_rpc_proxy_mapping_method(handle.http_endpoint(), "eth_getTransactionByHash", {
+        let lookups = lookups.clone();
+        move |_, result| {
+            if !result.is_null() {
+                lookups.fetch_add(1, Ordering::SeqCst);
+            }
+            result
+        }
+    })
+    .await;
+    prj.update_config(|config| config.transaction_timeout = 1);
+
+    cmd.arg("script").arg(&script).args([
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+    ]);
+    let mut child = KillOnDrop::spawn(cmd.cmd().env("RUST_LOG", "off"));
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while lookups.load(Ordering::SeqCst) < 2 {
+            assert!(child.is_running(), "a receipt timeout stopped the broadcast");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not keep waiting after receipt timeouts");
+
+    api.mine_one().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while child.is_running() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not finish after the transaction mined");
+    let output = child.kill_and_wait();
+    assert!(output.status.success());
+    let sequence: Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/WaitingReceipt.s.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        format!(
+            "Warning: Transaction {} has not been mined after 1s; still waiting for its receipt.\n",
+            sequence["transactions"][0]["hash"].as_str().unwrap()
+        )
+    );
 }
 
 // Other tools parse broadcast files, so renaming or removing a key breaks them. A new key only
@@ -1489,10 +1572,10 @@ additional contract: address, contractName, creatorCodeAddresses, exactArtifactM
     );
 }
 
-// A mined revert is recorded outside `receipts`, and resume warns about it, never resubmits it, and
-// continues with the operations after it.
+// A mined revert is recorded outside `receipts`. The script would have stopped at it, so resume
+// never resubmits it and refuses to send the operations planned after it.
 #[forgetest_init]
-async fn resume_skips_recorded_revert(prj: _, cmd: _) {
+async fn resume_refuses_operations_after_recorded_revert(prj: _, cmd: _) {
     let gate = address!("0x000000000000000000000000000000000000bEEF");
     let script = prj.add_script(
         "RevertedResume.s.sol",
@@ -1563,19 +1646,17 @@ contract RevertedResume is Script {
     assert_eq!(sequence["reverted"], serde_json::json!([reverted]));
     assert!(sequence["receipts"].as_array().unwrap().is_empty());
 
-    // Every resume skips the revert; the first submits the remaining calls, the second nothing.
+    // Every resume refuses without sending the transfers that `require(success)` blocks.
     let provider = handle.http_provider();
     for _ in 0..2 {
         cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--resume");
-        cmd.assert_success().stderr_eq(format!(
-            "Warning: Transaction {reverted} on chain 31337 reverted; resume will not resubmit it.\nWarning: ONCHAIN EXECUTION COMPLETE WITH REVERTED TRANSACTIONS:\nchain 31337: {reverted}\n"
+        cmd.assert_failure().stderr_eq(format!(
+            "Error: transaction {reverted} reverted, so the script would not have sent the operations after it; resume will not send them. Pass `--broadcast --start-fresh` to archive this broadcast and run the script again\n"
         ));
         let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
         assert_eq!(sequence["reverted"], serde_json::json!([reverted]));
-        let receipts = sequence["receipts"].as_array().unwrap();
-        assert_eq!(receipts.len(), 2);
-        assert!(receipts.iter().all(|receipt| receipt["status"] == "0x1"));
-        assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 3);
+        assert!(sequence["receipts"].as_array().unwrap().is_empty());
+        assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
     }
 }
 

@@ -4,9 +4,10 @@
 //! [`TempoConsensusState`] with nullable `finalized` and `notarized`; local mining only populates
 //! `finalized`. The certificate bytes are unprefixed hex.
 //!
-//! Identity rotation takes effect in the epoch after the next block's epoch, allowing its
-//! predecessor's boundary block to announce the new key before it signs. Snapshots restore pending
-//! rotations exactly; rollback restores the retained block's key schedule.
+//! Identity rotation takes effect two epochs after the next block's epoch. The first boundary
+//! announces a full DKG for the intervening epoch; its final boundary publishes the new key before
+//! it signs. Snapshots restore pending rotations exactly; rollback restores the retained block's
+//! key schedule.
 //!
 //! Locally mined fork blocks commit to a partial trie of the accounts and storage slots cached
 //! when the block was mined, rather than the complete upstream state. Non-pending `eth_getProof`
@@ -65,4 +66,23 @@ pub struct TempoConsensusState {
     pub finalized: Option<TempoCertifiedBlock>,
     /// Reserved by Tempo; local mining only produces finalizations.
     pub notarized: Option<TempoCertifiedBlock>,
+}
+
+/// A locally finalized block, matching Tempo's consensus subscription event.
+///
+/// The live stream is bounded and skips older events when a subscriber falls behind, matching
+/// Tempo's RPC behavior. Clients needing a complete canonical chain must reconcile block heights
+/// and hashes and query `consensus_getFinalization` while the missing history is still retained.
+/// Pruned or rewound history may be unavailable; subscriptions do not provide durable replay.
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum TempoConsensusEvent {
+    /// A complete block and its finalization certificate at canonical publication.
+    Finalized {
+        /// The certified block, independent of subsequent pruning or rewinds.
+        #[serde(flatten)]
+        block: TempoCertifiedBlock,
+        /// Unix timestamp in milliseconds when this finalization was observed.
+        seen: u64,
+    },
 }

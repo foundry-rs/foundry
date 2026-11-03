@@ -303,6 +303,8 @@ impl SymbolicExecutor {
         state.mapping_hook_keccak_preimages.clear();
         let code = state.world.extcode(&mut self.cx, executor, target)?;
         state.call_depth = 0;
+        // Like Forge, expectations end with the root call; only a met count 0 one can remain.
+        state.expected_emit = None;
         state.origin = sender;
         state.origin_word = SymExpr::constant(&mut self.cx, address_word(sender));
         let callvalue = SymExpr::zero(&mut self.cx);
