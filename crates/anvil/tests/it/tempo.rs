@@ -7486,8 +7486,15 @@ async fn tempo_consensus_fork_rejects_incompatible_epoch_length() {
         serde_json::json!({ "epochLength": 3 }),
     )
     .await;
+    let (malformed, _) = spawn_rpc_proxy_canned_method(
+        source.http_endpoint(),
+        "anvil_tempoConsensusIdentity",
+        serde_json::json!({ "epochLength": 0 }),
+    )
+    .await;
     for (endpoint, explicit, expected) in [
         (source.http_endpoint(), Some(3), "expected Tempo consensus anchor epoch 2, got 1"),
+        (malformed, Some(3), "expected Tempo consensus anchor epoch 2, got 1"),
         (hidden.clone(), Some(3), "expected Tempo consensus anchor epoch 2, got 1"),
         (inconsistent, None, "expected Tempo consensus anchor epoch 2, got 1"),
         (hidden, None, "expected Tempo consensus anchor epoch 0, got 1"),
@@ -8551,6 +8558,11 @@ async fn tempo_consensus_fork_epoch_metadata_and_fallbacks() {
             (21_600, false, None),
             (3, true, None),
             (3, true, Some(serde_json::json!({ "epochLength": 6 }))),
+            (3, true, Some(serde_json::json!({ "epochLength": 0 }))),
+            (3, true, Some(serde_json::json!({ "epochLength": -1 }))),
+            (3, true, Some(serde_json::json!({ "epochLength": "invalid" }))),
+            (3, true, Some(serde_json::json!({ "epochLength": "18446744073709551616" }))),
+            (3, true, Some(serde_json::json!({ "epochLength": null }))),
         ] {
             let endpoint = if let Some(metadata) = metadata {
                 spawn_rpc_proxy_canned_method(endpoint.clone(), method, metadata).await.0
@@ -8559,6 +8571,7 @@ async fn tempo_consensus_fork_epoch_metadata_and_fallbacks() {
             };
             let mut config = config
                 .clone()
+                .with_no_fork_node_info(method == "debug_chainConfig")
                 .with_eth_rpc_url(Some(endpoint.clone()))
                 .with_fork_block_number(Some(1u64));
             if explicit {
@@ -8568,16 +8581,44 @@ async fn tempo_consensus_fork_epoch_metadata_and_fallbacks() {
             let provider = handle.http_provider();
             let identity = tempo_consensus_identity(&provider).await;
             assert_eq!(identity.epoch_length, length);
-            if method == "anvil_tempoConsensusIdentity" {
-                let source_epoch = if explicit { 6 } else { length };
-                let (known, _) = spawn_rpc_proxy_canned_method(
+            if explicit {
+                api.anvil_reset(Some(Forking {
+                    json_rpc_url: Some(endpoint.clone()),
+                    block_number: Some(1),
+                }))
+                .await
+                .unwrap();
+                assert_eq!(tempo_consensus_identity(&provider).await, identity);
+            }
+            let source_epoch = if explicit { 6 } else { length };
+            let (known, _) = spawn_rpc_proxy_canned_method(
+                endpoint.clone(),
+                method,
+                serde_json::json!({ "epochLength": source_epoch }),
+            )
+            .await;
+            api.anvil_set_rpc_url(known).await.unwrap();
+            assert_eq!(tempo_consensus_identity(&provider).await, identity);
+            if explicit {
+                api.anvil_set_rpc_url(endpoint.clone()).await.unwrap();
+                let before =
+                    serde_json::to_value(api.serialized_state(false).await.unwrap()).unwrap();
+                let (conflicting, _) = spawn_rpc_proxy_canned_method(
                     endpoint,
                     method,
-                    serde_json::json!({ "epochLength": source_epoch }),
+                    serde_json::json!({ "epochLength": 9 }),
                 )
                 .await;
-                api.anvil_set_rpc_url(known).await.unwrap();
+                let error = api.anvil_set_rpc_url(conflicting).await.unwrap_err();
+                assert_eq!(
+                    error.to_string(),
+                    "replacement fork endpoint has an incompatible execution context"
+                );
                 assert_eq!(tempo_consensus_identity(&provider).await, identity);
+                assert_eq!(
+                    serde_json::to_value(api.serialized_state(false).await.unwrap()).unwrap(),
+                    before
+                );
             }
             api.mine_one().await.unwrap();
             assert_tempo_fork_round(&provider, &identity, 2, (0, 2, 1)).await;
@@ -8591,55 +8632,50 @@ async fn tempo_consensus_fork_rejects_malformed_epoch_metadata() {
     let (source_api, source) = spawn(config.clone()).await;
     source_api.mine_one().await.unwrap();
     let endpoints = tempo_epoch_metadata_endpoints(&source).await;
-    for config in [config.clone(), config.with_tempo_epoch_length(NonZeroU64::new(3).unwrap())] {
-        let (api, handle) = spawn(config.clone()).await;
-        let provider = handle.http_provider();
-        api.mine_one().await.unwrap();
-        let before = serde_json::to_value(api.serialized_state(false).await.unwrap()).unwrap();
-        let finalized = tempo_finalization(&provider, 1).await;
-        let identity = tempo_consensus_identity(&provider).await;
-        for (method, endpoint) in &endpoints {
-            for length in [
-                serde_json::json!(0),
-                serde_json::json!(-1),
-                serde_json::json!("invalid"),
-                serde_json::json!("18446744073709551616"),
-                serde_json::Value::Null,
-            ] {
-                let (endpoint, _) = spawn_rpc_proxy_canned_method(
-                    endpoint.clone(),
-                    method,
-                    serde_json::json!({ "epochLength": length }),
-                )
-                .await;
-                let error = try_spawn(
-                    config
-                        .clone()
-                        .with_eth_rpc_url(Some(endpoint.clone()))
-                        .with_fork_block_number(Some(1u64)),
-                )
+    let (api, handle) = spawn(config.clone()).await;
+    let provider = handle.http_provider();
+    api.mine_one().await.unwrap();
+    let before = serde_json::to_value(api.serialized_state(false).await.unwrap()).unwrap();
+    let finalized = tempo_finalization(&provider, 1).await;
+    let identity = tempo_consensus_identity(&provider).await;
+    for (method, endpoint) in &endpoints {
+        for length in [
+            serde_json::json!(0),
+            serde_json::json!(-1),
+            serde_json::json!("invalid"),
+            serde_json::json!("18446744073709551616"),
+            serde_json::Value::Null,
+        ] {
+            let (endpoint, _) = spawn_rpc_proxy_canned_method(
+                endpoint.clone(),
+                method,
+                serde_json::json!({ "epochLength": length }),
+            )
+            .await;
+            let error = try_spawn(
+                config
+                    .clone()
+                    .with_eth_rpc_url(Some(endpoint.clone()))
+                    .with_fork_block_number(Some(1u64)),
+            )
+            .await
+            .err()
+            .expect("a present invalid source epoch length must fail startup");
+            let guidance = format!(
+                "invalid Tempo epoch configuration from {method}; epochLength must be a nonzero u64"
+            );
+            assert_eq!(error.to_string(), guidance);
+            let error = api
+                .anvil_reset(Some(Forking { json_rpc_url: Some(endpoint), block_number: Some(1) }))
                 .await
-                .err()
-                .expect("a present invalid source epoch length must fail startup");
-                let guidance = format!(
-                    "invalid Tempo epoch configuration from {method}; epochLength must be a nonzero u64"
-                );
-                assert_eq!(error.to_string(), guidance);
-                let error = api
-                    .anvil_reset(Some(Forking {
-                        json_rpc_url: Some(endpoint),
-                        block_number: Some(1),
-                    }))
-                    .await
-                    .unwrap_err();
-                assert_eq!(error.to_string(), guidance);
-                assert_eq!(
-                    serde_json::to_value(api.serialized_state(false).await.unwrap()).unwrap(),
-                    before
-                );
-                assert_eq!(tempo_finalization(&provider, 1).await, finalized);
-                assert_eq!(tempo_consensus_identity(&provider).await, identity);
-            }
+                .unwrap_err();
+            assert_eq!(error.to_string(), guidance);
+            assert_eq!(
+                serde_json::to_value(api.serialized_state(false).await.unwrap()).unwrap(),
+                before
+            );
+            assert_eq!(tempo_finalization(&provider, 1).await, finalized);
+            assert_eq!(tempo_consensus_identity(&provider).await, identity);
         }
     }
 }

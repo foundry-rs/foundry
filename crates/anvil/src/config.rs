@@ -1908,7 +1908,7 @@ impl NodeConfig {
         ensure_fork_network_supported(identity.source_chain_id)?;
         if identity.network == Some(NetworkVariant::Tempo) {
             identity.tempo_epoch_length =
-                Self::fork_tempo_epoch_length(provider, identity.is_authoritative()).await?;
+                self.fork_tempo_epoch_length(provider, identity.is_authoritative()).await?;
         }
         Ok(identity)
     }
@@ -1916,8 +1916,9 @@ impl NodeConfig {
     /// Reads optional source configuration without making metadata RPC support mandatory.
     ///
     /// RPC errors and timeouts mean metadata is unavailable, even for identified Anvil sources.
-    /// A present invalid `epochLength` is rejected.
+    /// A present invalid `epochLength` is rejected unless an explicit epoch length is configured.
     async fn fork_tempo_epoch_length(
+        &self,
         provider: &RetryProvider,
         anvil: bool,
     ) -> Result<Option<NonZeroU64>> {
@@ -1937,7 +1938,10 @@ impl NodeConfig {
             "invalid Tempo epoch configuration from {method}; epochLength must be a nonzero u64"
         );
         let length = value.get("epochLength").cloned();
-        length.map(|value| alloy_serde::quantity::deserialize(value).wrap_err(guidance)).transpose()
+        match length.map(alloy_serde::quantity::deserialize).transpose() {
+            Err(_) if self.tempo_epoch_length.is_some() => Ok(None),
+            length => length.wrap_err(guidance),
+        }
     }
 
     pub(crate) async fn replacement_fork_provider(
