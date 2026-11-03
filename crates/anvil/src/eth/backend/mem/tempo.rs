@@ -14,6 +14,9 @@
 //! prepared height or key schedule. Only initialization before the backend is shared and private
 //! staged copies are exempt; publishing a staged copy still requires the database write lock.
 //! Readers of canonical consensus state acquire the database read lock before storage.
+//! Mining acquires the execution and proof history read guards before the storage write lock and
+//! retains them through checkpoint pruning. A path holding storage must not wait for either
+//! history lock unless it holds the database write lock, as reanchoring does.
 //! Subscription registration only needs storage to access the persistent event sender.
 //!
 //! Historical queries can use the trusted fork provider at or below its pinned height. They
@@ -216,9 +219,15 @@ impl TempoChain {
     /// trie, so no consumer can unwind to a height once both have left the bounded state
     /// histories. Certificates stay available for as long as their blocks. Explicit snapshots
     /// restore their own controller and are unaffected.
-    pub(super) fn prune(&mut self, hashes: &HashMap<u64, B256>, states: &InMemoryBlockStates) {
+    ///
+    /// The caller holds the execution and proof history read guards, acquired before storage.
+    pub(super) fn prune(
+        &mut self,
+        hashes: &HashMap<u64, B256>,
+        states: &InMemoryBlockStates,
+        proof_states: &InMemoryBlockStates,
+    ) {
         let Some((head, _)) = self.consensus.latest() else { return };
-        let proof_states = self.proof_states.read();
         let mut below = self.consensus.retained_height();
         while below < head
             && !hashes
@@ -227,7 +236,6 @@ impl TempoChain {
         {
             below += 1;
         }
-        drop(proof_states);
         self.consensus
             .prune_checkpoints(below)
             .expect("the pruning boundary never exceeds the head");
@@ -646,8 +654,12 @@ mod tests {
     use foundry_primitives::FoundryNetwork;
     use std::{
         num::NonZeroU64,
-        sync::atomic::{AtomicBool, Ordering},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        },
         task::Poll,
+        thread,
         time::Duration,
     };
     use tokio::{sync::Notify, time::timeout};
@@ -798,6 +810,53 @@ mod tests {
         assert_eq!(api.backend.best_number(), 10);
         assert_certified_head(&api);
         assert!(consensus(&api).retained_height() < floor);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn tempo_history_writers_do_not_block_storage_readers_while_mining() {
+        let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+        api.mine_one().await.unwrap();
+        // Historical reads hold a history write guard while they load and use an on-disk state.
+        let histories =
+            [Arc::clone(&api.backend.states), api.backend.tempo_proof_states().unwrap()];
+        for (head, history) in (1..).zip(histories) {
+            let hook = MiningCommitHook {
+                reached: Arc::new(Notify::new()),
+                resume: Arc::new(Notify::new()),
+            };
+            *api.backend.mining_commit_hook.lock() = Some(hook.clone());
+            let mining_api = api.clone();
+            let mining = tokio::spawn(async move { mining_api.mine_one().await });
+            timeout(Duration::from_secs(10), hook.reached.notified()).await.unwrap();
+            *api.backend.mining_commit_hook.lock() = None;
+
+            let (held_tx, held_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel::<()>();
+            let holder = thread::spawn(move || {
+                let _guard = history.write();
+                held_tx.send(()).unwrap();
+                let _ = release_rx.recv();
+            });
+            held_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+            hook.resume.notify_one();
+            thread::sleep(Duration::from_millis(500));
+
+            let backend = Arc::clone(&api.backend);
+            let (probe_tx, probe_rx) = mpsc::channel();
+            thread::spawn(move || {
+                let _ = probe_tx.send(backend.best_number());
+            });
+            let probe = probe_rx.recv_timeout(Duration::from_secs(2));
+            let waiting = !mining.is_finished();
+            drop(release_tx);
+            holder.join().unwrap();
+            // Mining waits for the history lock before publishing, not inside the storage lock.
+            assert_eq!(probe, Ok(head));
+            assert!(waiting);
+            timeout(Duration::from_secs(10), mining).await.unwrap().unwrap().unwrap();
+            assert_eq!(api.backend.best_number(), head + 1);
+            assert_certified_head(&api);
+        }
     }
 
     #[tokio::test(flavor = "multi_thread")]
