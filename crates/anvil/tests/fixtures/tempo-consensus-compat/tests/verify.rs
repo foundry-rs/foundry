@@ -220,7 +220,7 @@ async fn native_rotation_follows_authenticated_announcement() {
         assert_eq!(ceremony.epoch, 1);
         assert!(ceremony.is_next_full_dkg);
         assert_eq!(ceremony.network_identity().encode().as_ref(), initial.identity.as_ref());
-        assert_ne!(ceremony.next_players, ceremony.output.players().clone());
+        assert_ne!(ceremony.next_players, *ceremony.output.players());
         api.mine_one().await.unwrap();
         verify_block(&handle, 3, &initial.identity).await;
         api.mine_one().await.unwrap();
@@ -231,8 +231,8 @@ async fn native_rotation_follows_authenticated_announcement() {
             OnchainDkgOutcome::decode(boundary.block.header.inner.extra_data.as_ref()).unwrap();
         assert_eq!(announcement.epoch, scheduled.from_epoch);
         assert!(!announcement.is_next_full_dkg);
-        assert_eq!(ceremony.next_players, announcement.output.players().clone());
-        assert_eq!(announcement.next_players, announcement.output.players().clone());
+        assert_eq!(ceremony.next_players, *announcement.output.players());
+        assert_eq!(announcement.next_players, *announcement.output.players());
         let next_key = announcement.network_identity().encode();
         assert_eq!(next_key.as_ref(), scheduled.identity.as_ref());
         assert_eq!(consensus_identity(&handle).await.identity, initial.identity);

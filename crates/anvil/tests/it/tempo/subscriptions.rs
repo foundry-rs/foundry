@@ -248,12 +248,12 @@ async fn tempo_consensus_subscription_announces_full_dkg_before_rotation() {
                 assert_eq!(outcome.epoch, 1);
                 assert!(outcome.is_next_full_dkg);
                 assert_eq!(outcome.network_identity().encode().as_ref(), initial.identity.as_ref());
-                assert_ne!(outcome.next_players, outcome.output.players().clone());
+                assert_ne!(outcome.next_players, *outcome.output.players());
             } else {
                 assert_eq!(outcome.epoch, 2);
                 assert!(!outcome.is_next_full_dkg);
                 assert_eq!(outcome.network_identity().encode().as_ref(), rotated.identity.as_ref());
-                assert_eq!(outcome.next_players, outcome.output.players().clone());
+                assert_eq!(outcome.next_players, *outcome.output.players());
             }
         }
     }
