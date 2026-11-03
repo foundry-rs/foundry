@@ -394,10 +394,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
 
     /// Returns `true` if the account has no code.
     pub fn is_empty_code(&self, address: Address) -> BackendResult<bool> {
-        Ok(self
-            .backend()
-            .basic(address)?
-            .is_none_or(|acc| acc.code_hash == alloy_primitives::KECCAK256_EMPTY))
+        Ok(self.backend().basic(address)?.is_none_or(|acc| acc.is_empty_code_hash()))
     }
 
     #[inline]
@@ -1236,6 +1233,7 @@ fn execute<FEN: FoundryEvmNetwork>(
 }
 
 /// Returns the default environment of `FEN`.
+#[cfg(test)]
 pub(crate) fn default_env<FEN: FoundryEvmNetwork>() -> EvmEnvFor<FEN> {
     let spec = SpecFor::<FEN>::default();
     let chain_id = foundry_common::DEV_CHAIN_ID;
@@ -1409,6 +1407,7 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub(crate) post_execution_backend: Option<Box<Backend<FEN>>>,
 }
 
+#[cfg(test)]
 impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
     fn default() -> Self {
         Self {

@@ -20,7 +20,7 @@ use crate::{
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::{Function, StateMutability};
 use alloy_primitives::{
-    Address, Bytes, FixedBytes, I256, KECCAK256_EMPTY, Selector, U256,
+    Address, Bytes, FixedBytes, I256, Selector, U256,
     map::{AddressSet, HashMap},
 };
 use alloy_sol_types::{SolCall, sol};
@@ -2275,7 +2275,7 @@ fn collect_data<FEN: FoundryEvmNetwork>(
         // Skip the EOA sender's own nonce and balance changes.
         state_changeset.account_changes().filter(|changes| {
             changes.address != tx.sender
-                || changes.current.is_some_and(|info| info.code_hash != KECCAK256_EMPTY)
+                || changes.current.is_some_and(|info| !info.is_empty_code_hash())
         }),
         run_depth,
     );
