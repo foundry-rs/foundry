@@ -49,6 +49,9 @@ pub enum EtherscanConfigError {
     #[error(transparent)]
     Unresolved(#[from] UnresolvedEnvVarError),
 
+    #[error("could not read secret `ETHERSCAN_API_KEY`: {0}")]
+    Secret(String),
+
     #[error(
         "No known Etherscan API URL for chain `{1}`. To fix this, please:\n\
         1. Specify a `url` {0}\n\
@@ -99,25 +102,34 @@ impl EtherscanConfigs {
         chain: Option<Chain>,
     ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
         if let Some(alias) = alias
-            && self.contains_key(alias)
+            && let Some(config) = self.get(alias)
         {
-            return self.clone().resolved().remove(alias).transpose();
+            return config.clone().resolve(Some(alias)).map(Some);
         }
 
-        if let Some(res) = chain.and_then(|chain| self.clone().resolved().find_chain(chain)) {
-            match (res, api_key) {
-                (Ok(mut config), Some(key)) => {
-                    config.key = key.to_string();
-                    return Ok(Some(config));
-                }
-                (Ok(config), None) => return Ok(Some(config)),
-                (Err(err), None) => return Err(err),
+        if let Some(chain) = chain
+            && let Some((name, config)) = self.iter().find(|(name, config)| {
+                config.chain.or_else(|| chain_from_alias(name)) == Some(chain)
+            })
+        {
+            let mut config = config.clone();
+            if let Some(key) = api_key {
+                config.key = EtherscanApiKey::Key(key.to_string());
+            }
+            match config.resolve(Some(name)) {
+                Ok(config) => return Ok(Some(config)),
+                Err(err) if api_key.is_none() => return Err(err),
                 // Unresolvable entry, but there is a key to fall back on.
-                (Err(_), Some(_)) => {}
+                Err(_) => {}
             }
         }
 
         if let Some(key) = api_key {
+            return Ok(ResolvedEtherscanConfig::create(key, chain.unwrap_or_default()));
+        }
+        if let Some(key) =
+            crate::resolve::secret("ETHERSCAN_API_KEY").map_err(EtherscanConfigError::Secret)?
+        {
             return Ok(ResolvedEtherscanConfig::create(key, chain.unwrap_or_default()));
         }
         Ok(None)
@@ -238,19 +250,7 @@ impl EtherscanConfig {
         let (chain, alias) = match (chain, alias) {
             // fill one with the other
             (Some(chain), None) => (Some(chain), Some(chain.to_string())),
-            (None, Some(alias)) => {
-                // alloy chain is parsed as kebab case
-                (
-                    alias.to_kebab_case().parse().ok().or_else(|| {
-                        // if this didn't work try to parse as json because the deserialize impl
-                        // supports more aliases
-                        serde_json::from_str::<NamedChain>(&format!("\"{alias}\""))
-                            .map(Into::into)
-                            .ok()
-                    }),
-                    Some(alias.into()),
-                )
-            }
+            (None, Some(alias)) => (chain_from_alias(alias), Some(alias.into())),
             // leave as is
             (Some(chain), Some(alias)) => (Some(chain), Some(alias.into())),
             (None, None) => (None, None),
@@ -279,6 +279,12 @@ impl EtherscanConfig {
             }
         }
     }
+}
+
+fn chain_from_alias(alias: &str) -> Option<Chain> {
+    alias.to_kebab_case().parse().ok().or_else(|| {
+        serde_json::from_str::<NamedChain>(&format!("\"{alias}\"")).map(Into::into).ok()
+    })
 }
 
 /// Contains required url + api key to set up an etherscan client

@@ -778,8 +778,8 @@ impl AnvilEvmArgs {
         if let Ok(config) = Config::load_with_providers(FigmentProviders::Anvil) {
             let mut resolved_urls = Vec::new();
             for fork_url in &self.fork_url {
-                let mut endpoints = config.rpc_endpoints.clone().resolved();
-                if let Some(endpoint) = endpoints.remove(&fork_url.url) {
+                if let Some(endpoint) = config.rpc_endpoints.get(&fork_url.url) {
+                    let endpoint = endpoint.clone().resolve();
                     // Alias matched — expand all URLs from the endpoint config
                     match endpoint.all_urls() {
                         Ok(urls) => {
@@ -1745,5 +1745,44 @@ mod tests {
             .unwrap();
         assert_ne!(seeded.tempo_consensus_seed(), default.tempo_consensus_seed());
         assert_eq!(seeded.tempo_consensus_seed(), repeated.tempo_consensus_seed());
+    }
+
+    #[test]
+    fn fork_alias_resolution_does_not_unlock_unused_credentials() {
+        foundry_config::resolve::set_secret_resolver(|name| {
+            assert_ne!(name, "ANVIL_TEST_UNUSED_SECRET", "unused credential requested an unlock");
+            Ok(None)
+        });
+        foundry_config::figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [rpc_endpoints]
+                unused = "${ANVIL_TEST_UNUSED_SECRET}"
+                selected = { endpoints = ["https://primary.invalid", "https://backup.invalid"] }
+            "#,
+            )?;
+            let mut args = NodeArgs::parse_from([
+                "anvil",
+                "--fork-url",
+                "https://literal.invalid",
+                "--fork-url",
+                "selected@7",
+            ]);
+            args.evm.resolve_rpc_alias();
+            assert_eq!(
+                args.evm
+                    .fork_url
+                    .iter()
+                    .map(|url| (url.url.as_str(), url.block))
+                    .collect::<Vec<_>>(),
+                [
+                    ("https://literal.invalid", None),
+                    ("https://primary.invalid", Some(7)),
+                    ("https://backup.invalid", None),
+                ]
+            );
+            Ok(())
+        });
     }
 }

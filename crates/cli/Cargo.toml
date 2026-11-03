@@ -19,7 +19,6 @@ workspace = true
 foundry-cli-markdown.workspace = true
 foundry-common.workspace = true
 foundry-config.workspace = true
-rpassword = "7"
 foundry-evm.workspace = true
 foundry-evm-networks.workspace = true
 foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
@@ -54,6 +53,7 @@ mimalloc = { workspace = true, optional = true }
 path-slash.workspace = true
 rayon.workspace = true
 regex = { workspace = true, default-features = false }
+rpassword = "7"
 serde_json.workspace = true
 serde.workspace = true
 semver.workspace = true

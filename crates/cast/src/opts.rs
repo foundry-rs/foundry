@@ -1409,6 +1409,23 @@ pub enum MiscSubcommand {
     },
 
     /// Manage encrypted secrets, such as RPC URLs and API keys, used as `${NAME}` in foundry.toml.
+    ///
+    /// Store a value with `cast secret set NAME`, then reference it as `${NAME}` in an RPC endpoint
+    /// or Etherscan entry. Exported variables take precedence over stored values.
+    ///
+    /// Secrets live in ~/.foundry/secrets, overridden by FOUNDRY_SECRETS_DIR. Unlocking is lazy:
+    /// only a selected credential prompts for the store password, once per process. For
+    /// noninteractive use, set FOUNDRY_SECRETS_PASSWORD. A required stored RPC URL that cannot be
+    /// unlocked or decrypted fails resolution rather than selecting another RPC.
+    ///
+    /// Stored ETH_RPC_URL is Cast's fallback when no --rpc-url or environment value is given.
+    /// Stored ETHERSCAN_API_KEY is used when no explicit or configured explorer key is available.
+    /// Environment cheatcodes and raw URLs supplied by Solidity cannot read the store; configured
+    /// RPC aliases still return their resolved URLs to Solidity. Only run projects you trust.
+    ///
+    /// `get` prints plaintext. Back up the encrypted directory and remember its password: there
+    /// is no password recovery. To rotate it, decrypt and back up every value, remove the old
+    /// entries, then store them with the new password. Deleting the last entry resets the password.
     Secret {
         #[command(subcommand)]
         command: SecretSubcommand,

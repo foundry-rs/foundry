@@ -513,7 +513,7 @@ impl FigmentProvider for VerifyArgs {
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut dict = self.etherscan.dict();
-        dict.extend(self.rpc.dict());
+        dict.extend(self.rpc.dict()?);
 
         if let Some(root) = self.root.as_ref() {
             dict.insert("root".to_string(), Value::serialize(root)?);

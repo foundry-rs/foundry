@@ -8,9 +8,12 @@
 use crate::Config;
 use eth_keystore::KeystoreError;
 use std::{
-    fs,
+    fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 
 /// Environment variable that overrides the secret store directory.
 pub const SECRETS_DIR_ENV: &str = "FOUNDRY_SECRETS_DIR";
@@ -73,29 +76,42 @@ impl SecretStore {
 
     /// Returns the names of the stored secrets, sorted.
     pub fn names(&self) -> Result<Vec<String>, SecretStoreError> {
-        if !self.dir.is_dir() {
-            return Ok(Vec::new());
+        let entries = match fs::read_dir(&self.dir) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(err) => return Err(err.into()),
+        };
+        let mut names = Vec::new();
+        for entry in entries {
+            let entry = entry?;
+            if let Ok(name) = entry.file_name().into_string()
+                && is_valid_name(&name)
+                && entry.path().metadata()?.is_file()
+            {
+                names.push(name);
+            }
         }
-        let mut names = fs::read_dir(&self.dir)?
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| entry.path().is_file())
-            .filter_map(|entry| entry.file_name().into_string().ok())
-            .filter(|name| is_valid_name(name))
-            .collect::<Vec<_>>();
         names.sort();
         Ok(names)
     }
 
     /// Returns `true` if a secret called `name` is stored.
-    pub fn contains(&self, name: &str) -> bool {
-        is_valid_name(name) && self.path(name).is_file()
+    pub fn contains(&self, name: &str) -> Result<bool, SecretStoreError> {
+        if !is_valid_name(name) {
+            return Ok(false);
+        }
+        match fs::metadata(self.path(name)) {
+            Ok(metadata) => Ok(metadata.is_file()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(err) => Err(err.into()),
+        }
     }
 
     /// Decrypts the secret called `name`.
     pub fn get(&self, name: &str, password: &str) -> Result<String, SecretStoreError> {
         validate_name(name)?;
         let path = self.path(name);
-        if !path.is_file() {
+        if !self.contains(name)? {
             return Err(SecretStoreError::NotFound(name.to_string()));
         }
         let value = eth_keystore::decrypt_key(&path, password)?;
@@ -107,24 +123,31 @@ impl SecretStore {
     /// The password must match the one of the secrets already stored.
     pub fn set(&self, name: &str, value: &str, password: &str) -> Result<(), SecretStoreError> {
         validate_name(name)?;
+        let _lock = self.lock()?;
         self.check_password(password)?;
-        create_private_dir(&self.dir)?;
+        let temporary = tempfile::tempdir_in(&self.dir)?;
         eth_keystore::encrypt_key(
-            &self.dir,
+            temporary.path(),
             &mut rand_08::thread_rng(),
             value.as_bytes(),
             password,
             Some(name),
         )?;
-        restrict_permissions(&self.path(name))?;
+        let encrypted = temporary.path().join(name);
+        restrict_permissions(&encrypted)?;
+        File::options().write(true).open(&encrypted)?.sync_all()?;
+        fs::rename(encrypted, self.path(name))?;
+        #[cfg(unix)]
+        File::open(&self.dir)?.sync_all()?;
         Ok(())
     }
 
     /// Deletes the secret called `name`.
     pub fn remove(&self, name: &str) -> Result<(), SecretStoreError> {
         validate_name(name)?;
+        let _lock = self.lock()?;
         let path = self.path(name);
-        if !path.is_file() {
+        if !self.contains(name)? {
             return Err(SecretStoreError::NotFound(name.to_string()));
         }
         fs::remove_file(path)?;
@@ -142,6 +165,17 @@ impl SecretStore {
     fn path(&self, name: &str) -> PathBuf {
         self.dir.join(name)
     }
+
+    fn lock(&self) -> Result<File, SecretStoreError> {
+        create_private_dir(&self.dir)?;
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let file = options.open(self.dir.join(".lock"))?;
+        file.lock()?;
+        Ok(file)
+    }
 }
 
 /// Returns `true` if `name` can name a secret: an environment variable name.
@@ -156,10 +190,13 @@ fn validate_name(name: &str) -> Result<(), SecretStoreError> {
 }
 
 fn create_private_dir(dir: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(dir)?;
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    builder.mode(0o700);
+    builder.create(dir)?;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
     }
     Ok(())
@@ -168,7 +205,6 @@ fn create_private_dir(dir: &Path) -> std::io::Result<()> {
 fn restrict_permissions(_path: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(_path, fs::Permissions::from_mode(0o600))?;
     }
     Ok(())
@@ -177,6 +213,7 @@ fn restrict_permissions(_path: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Barrier};
 
     #[test]
     fn set_get_list_remove() {
@@ -189,7 +226,7 @@ mod tests {
         store.set("SEPOLIA_RPC_URL", url, "pw").unwrap();
         store.set("ETHERSCAN_KEY", "ABC123", "pw").unwrap();
         assert_eq!(store.names().unwrap(), ["ETHERSCAN_KEY", "SEPOLIA_RPC_URL"]);
-        assert!(store.contains("SEPOLIA_RPC_URL"));
+        assert!(store.contains("SEPOLIA_RPC_URL").unwrap());
         assert_eq!(store.get("SEPOLIA_RPC_URL", "pw").unwrap(), url);
 
         // The file holds no plaintext.
@@ -211,7 +248,7 @@ mod tests {
         store.set("A", "1", "pw").unwrap();
         assert!(matches!(store.get("A", "other"), Err(SecretStoreError::WrongPassword)));
         assert!(matches!(store.set("B", "2", "other"), Err(SecretStoreError::WrongPassword)));
-        assert!(!store.contains("B"));
+        assert!(!store.contains("B").unwrap());
     }
 
     #[test]
@@ -223,7 +260,7 @@ mod tests {
                 matches!(store.set(name, "v", "pw"), Err(SecretStoreError::InvalidName(_))),
                 "{name}"
             );
-            assert!(!store.contains(name), "{name}");
+            assert!(!store.contains(name).unwrap(), "{name}");
         }
         assert!(is_valid_name("_PRIVATE_1"));
     }
@@ -231,12 +268,50 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn files_are_private() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let store = SecretStore::new(dir.path().join("secrets"));
         store.set("A", "1", "pw").unwrap();
         let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(store.dir()), 0o700);
         assert_eq!(mode(&store.dir().join("A")), 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replacement_does_not_follow_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SecretStore::new(dir.path().join("secrets"));
+        store.set("A", "original", "pw").unwrap();
+        let original = dir.path().join("backup");
+        fs::rename(store.path("A"), &original).unwrap();
+        let before = fs::read(&original).unwrap();
+        std::os::unix::fs::symlink(&original, store.path("A")).unwrap();
+        store.set("A", "replacement", "pw").unwrap();
+        assert_eq!(store.get("A", "pw").unwrap(), "replacement");
+        assert_eq!(fs::read(original).unwrap(), before);
+        assert!(!store.path("A").is_symlink());
+    }
+
+    #[test]
+    fn concurrent_first_writers_share_one_password() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SecretStore::new(dir.path());
+        let barrier = Arc::new(Barrier::new(2));
+        std::thread::scope(|scope| {
+            let first = scope.spawn(|| {
+                barrier.wait();
+                store.set("A", "first", "password-a")
+            });
+            let second = scope.spawn(|| {
+                barrier.wait();
+                store.set("B", "second", "password-b")
+            });
+            let results = [first.join().unwrap(), second.join().unwrap()];
+            assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+            assert!(
+                results.iter().any(|result| matches!(result, Err(SecretStoreError::WrongPassword)))
+            );
+        });
+        assert_eq!(store.names().unwrap().len(), 1);
     }
 }

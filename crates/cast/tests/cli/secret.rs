@@ -25,7 +25,8 @@ fn secret_set_list_get_remove(prj: _, cmd: _) {
         .args(["secret", "set", "SEPOLIA_RPC_URL"])
         .stdin("https://rpc.example/v2/key123\n")
         .assert_success()
-        .stdout_eq(str![[r#"
+        .stdout_eq("")
+        .stderr_eq(str![[r#"
 Stored secret `SEPOLIA_RPC_URL` in [..]
 
 "#]]);
@@ -103,8 +104,7 @@ async fn rpc_alias_resolves_from_secret_store(prj: _, cmd: _) {
     // Without a password or a terminal, the store stays locked and says so.
     cast(&mut cmd, &dir, None).args(["chain-id", "--rpc-url", "local"]).assert_failure().stderr_eq(
         str![[r#"
-Warning: `FOUNDRY_TEST_LOCAL_RPC` is in the secret store, which is locked: set FOUNDRY_SECRETS_PASSWORD or run in a terminal
-Error: environment variable `FOUNDRY_TEST_LOCAL_RPC` not found
+Error: could not read secret `FOUNDRY_TEST_LOCAL_RPC`: `FOUNDRY_TEST_LOCAL_RPC` is in the secret store, which is locked: set FOUNDRY_SECRETS_PASSWORD or run in a terminal
 ...
 "#]],
     );
@@ -116,7 +116,8 @@ Error: environment variable `FOUNDRY_TEST_LOCAL_RPC` not found
 async fn eth_rpc_url_from_secret_store(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     let dir = prj.root().join("secrets");
-    fs::write(prj.root().join("foundry.toml"), "[profile.default]\n").unwrap();
+    fs::write(prj.root().join("foundry.toml"), "[rpc_endpoints]\nunused = \"${ETH_RPC_URL}\"\n")
+        .unwrap();
 
     cast(&mut cmd, &dir, Some(PASSWORD))
         .args(["secret", "set", "ETH_RPC_URL"])
@@ -134,4 +135,72 @@ async fn eth_rpc_url_from_secret_store(prj: _, cmd: _) {
     cast(&mut cmd, &dir, None);
     cmd.unset_env("ETH_RPC_URL");
     cmd.args(["chain-id", "--rpc-url", &handle.http_endpoint()]).assert_success().stderr_eq("");
+}
+
+#[casttest]
+async fn inaccessible_stored_rpc_never_uses_fallback(prj: _, cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let dir = prj.root().join("secrets");
+    fs::write(
+        prj.root().join("foundry.toml"),
+        format!("[profile.default]\neth_rpc_url = \"{}\"\n", handle.http_endpoint()),
+    )
+    .unwrap();
+    cast(&mut cmd, &dir, Some(PASSWORD))
+        .args(["secret", "set", "ETH_RPC_URL"])
+        .stdin("http://127.0.0.1:1\n")
+        .assert_success();
+
+    cast(&mut cmd, &dir, Some("wrong"));
+    cmd.unset_env("ETH_RPC_URL");
+    cmd.args(["chain-id"]).assert_failure().stdout_eq("").stderr_eq(str![[r#"
+Error: failed to extract foundry config:
+foundry config error: wrong password for the secret store
+
+"#]]);
+
+    cast(&mut cmd, &dir, None);
+    cmd.unset_env("ETH_RPC_URL");
+    cmd.args(["chain-id"]).assert_failure().stdout_eq("").stderr_eq(str![[r#"
+Error: failed to extract foundry config:
+foundry config error: `ETH_RPC_URL` is in the secret store, which is locked: set FOUNDRY_SECRETS_PASSWORD or run in a terminal
+
+"#]]);
+
+    fs::write(dir.join("ETH_RPC_URL"), "invalid json").unwrap();
+    cast(&mut cmd, &dir, Some(PASSWORD));
+    cmd.unset_env("ETH_RPC_URL");
+    cmd.args(["chain-id"]).assert_failure().stdout_eq("").stderr_eq(str![[r#"
+Error: failed to extract foundry config:
+foundry config error: secret store: serde-json: expected value at line 1 column 1
+
+"#]]);
+}
+
+#[cfg(unix)]
+#[casttest]
+fn interrupted_secret_update_preserves_previous_value(prj: _, cmd: _) {
+    let dir = prj.root().join("secrets");
+    cast(&mut cmd, &dir, Some(PASSWORD))
+        .args(["secret", "set", "A"])
+        .stdin("original\n")
+        .assert_success();
+    let original = fs::read(dir.join("A")).unwrap();
+
+    // Force a partial write and SIGXFSZ in the child, not in the test runner.
+    let mut limited = Command::new("sh");
+    limited
+        .args(["-c", "ulimit -f 1; exec \"$@\"", "sh"])
+        .arg(prj.ensure_foundry_bin("cast"))
+        .args(["secret", "set", "A"])
+        .env("FOUNDRY_SECRETS_DIR", &dir)
+        .env("FOUNDRY_SECRETS_PASSWORD", PASSWORD)
+        .current_dir(prj.root());
+    cmd.set_cmd(limited).stdin("replacement".repeat(1024)).assert_failure();
+
+    assert_eq!(fs::read(dir.join("A")).unwrap(), original);
+    cast(&mut cmd, &dir, Some(PASSWORD))
+        .args(["secret", "get", "A"])
+        .assert_success()
+        .stdout_eq("original\n");
 }

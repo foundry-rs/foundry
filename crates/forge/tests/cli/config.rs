@@ -3689,6 +3689,19 @@ contract SecretTest is Test {
         assertEq(vm.rpcUrl("private"), "https://rpc.example/v2/stored-key");
     }
 
+    function test_rawUrlCannotReadStore() public {
+        // Unlock a legitimately configured endpoint before probing an unrelated secret.
+        assertEq(vm.rpcUrl("private"), "https://rpc.example/v2/stored-key");
+        try vm.rpcUrl("http://${FOUNDRY_TEST_UNCONFIGURED_SECRET}") returns (string memory) {
+            revert("raw URL read a stored secret");
+        } catch {}
+    }
+
+    function test_rawUrlEnvironment() public {
+        vm.setEnv("FOUNDRY_TEST_RAW_RPC", "rpc.example");
+        assertEq(vm.rpcUrl("http://${FOUNDRY_TEST_RAW_RPC}"), "http://rpc.example");
+    }
+
     function test_envOr() public view {
         assertEq(vm.envOr("FOUNDRY_TEST_PRIVATE_RPC", string("unset")), "unset");
     }
@@ -3707,12 +3720,25 @@ contract SecretTest is Test {
     cmd.env("FOUNDRY_SECRETS_PASSWORD", "pw");
     cmd.stdin("https://rpc.example/v2/stored-key\n").assert_success();
 
+    cmd.cast_fuse().args(["secret", "set", "FOUNDRY_TEST_UNCONFIGURED_SECRET"]);
+    cmd.env("FOUNDRY_SECRETS_DIR", &secrets);
+    cmd.env("FOUNDRY_SECRETS_PASSWORD", "pw");
+    cmd.stdin("unrelated-explorer-key\n").assert_success();
+
+    // Unused configured endpoints must not try to unlock a locked store.
+    cmd.forge_fuse().args(["test", "--mt", "test_envOr"]);
+    cmd.env("FOUNDRY_SECRETS_DIR", &secrets);
+    cmd.unset_env("FOUNDRY_SECRETS_PASSWORD");
+    cmd.assert_success().stderr_eq("");
+
     cmd.forge_fuse().args(["test", "--mc", "SecretTest"]);
     cmd.env("FOUNDRY_SECRETS_DIR", &secrets);
     cmd.env("FOUNDRY_SECRETS_PASSWORD", "pw");
     cmd.assert_success().stdout_eq(str![[r#"
 ...
 [PASS] test_envOr() ([GAS])
+[PASS] test_rawUrlCannotReadStore() ([GAS])
+[PASS] test_rawUrlEnvironment() ([GAS])
 [PASS] test_resolveEnv() ([GAS])
 [PASS] test_rpcUrl() ([GAS])
 ...

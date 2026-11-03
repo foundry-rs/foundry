@@ -1994,9 +1994,8 @@ impl Config {
         &self,
         maybe_alias: &str,
     ) -> Option<Result<Cow<'_, str>, UnresolvedEnvVarError>> {
-        let mut endpoints = self.rpc_endpoints.clone().resolved();
-        if let Some(endpoint) = endpoints.remove(maybe_alias) {
-            return Some(endpoint.url().map(Cow::Owned));
+        if let Some(endpoint) = self.rpc_endpoints.get(maybe_alias) {
+            return Some(endpoint.clone().resolve().url().map(Cow::Owned));
         }
 
         if let Some(mesc_url) = self.get_rpc_url_from_mesc(maybe_alias) {
@@ -2108,20 +2107,11 @@ impl Config {
         &self,
         chain: Option<Chain>,
     ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
-        let chain = chain.or(self.chain);
-        let resolved = self.etherscan.resolve_for(
+        self.etherscan.resolve_for(
             self.etherscan_alias(),
             self.etherscan_api_key.as_deref(),
-            chain,
-        );
-        // No key from a flag, the environment or `[etherscan]`: it may be in the secret store.
-        if self.etherscan_api_key.is_none()
-            && !matches!(resolved, Ok(Some(_)))
-            && let Some(key) = resolve::secret("ETHERSCAN_API_KEY")
-        {
-            return self.etherscan.resolve_for(self.etherscan_alias(), Some(&key), chain);
-        }
-        resolved
+            chain.or(self.chain),
+        )
     }
 
     /// The `[etherscan]` entry to prefer over matching on chain id, if it names one.
@@ -4283,6 +4273,50 @@ mod tests {
                 config.get_etherscan_api_key(Some(Chain::mainnet())).as_deref(),
                 Some("stored-key")
             );
+            // Detached consumers use the same resolution path without retaining Config.
+            assert_eq!(
+                config
+                    .etherscan
+                    .clone()
+                    .resolve_for(None, None, Some(Chain::mainnet()))
+                    .unwrap()
+                    .unwrap()
+                    .key,
+                "stored-key"
+            );
+
+            // Selecting an entry must not unlock another chain's credentials.
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [etherscan]
+                mainnet = { key = "configured-key" }
+                bsc = { key = "${FOUNDRY_TEST_LOCKED_SECRET}", url = "https://custom-explorer.invalid/api" }
+            "#,
+            )?;
+            let configured = Config::load().unwrap();
+            assert_eq!(
+                configured.etherscan.resolve_for(Some("mainnet"), None, None).unwrap().unwrap().key,
+                "configured-key"
+            );
+            assert_eq!(
+                configured
+                    .etherscan
+                    .resolve_for(None, None, Some(Chain::mainnet()))
+                    .unwrap()
+                    .unwrap()
+                    .key,
+                "configured-key"
+            );
+
+            // An explicit key must not decrypt the key it overrides or lose the custom URL.
+            let overridden = configured
+                .etherscan
+                .resolve_for(None, Some("override"), Some(NamedChain::BinanceSmartChain.into()))
+                .unwrap()
+                .unwrap();
+            assert_eq!(overridden.key, "override");
+            assert_eq!(overridden.api_url, "https://custom-explorer.invalid/api");
 
             // The environment wins.
             jail.set_env("ETHERSCAN_API_KEY", "env-key");
@@ -4594,7 +4628,13 @@ mod tests {
             jail.set_env("TEST_RESOLVE_RPC_ALIAS_ARB_ONE", "123455");
             jail.set_env("TEST_RESOLVE_RPC_ALIAS_ARBISCAN", "123455");
 
-            let config = Config::load().unwrap();
+            let mut config = Config::load().unwrap();
+            // An unused entry is not resolved. Selecting the malformed alias still fails.
+            assert_eq!(
+                config.get_etherscan_config_with_chain(Some(NamedChain::Arbitrum.into())).unwrap(),
+                None
+            );
+            config.etherscan_api_key = Some("arbitrum_alias".to_string());
 
             let config = config.get_etherscan_config_with_chain(Some(NamedChain::Arbitrum.into()));
             assert!(config.is_err());

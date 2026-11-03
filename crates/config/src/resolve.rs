@@ -20,7 +20,7 @@ pub struct UnresolvedEnvVarError {
     /// Var that couldn't be resolved
     pub var: String,
     /// the `env::var` error
-    pub source: VarError,
+    pub source: LookupError,
 }
 
 impl UnresolvedEnvVarError {
@@ -33,11 +33,15 @@ impl UnresolvedEnvVarError {
 impl fmt::Display for UnresolvedEnvVarError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // The unresolved input is omitted because it can contain literal credentials.
-        write!(f, "environment variable `{}` ", self.var)?;
-        f.write_str(match self.source {
-            VarError::NotPresent => "not found",
-            VarError::NotUnicode(_) => "is not valid unicode",
-        })
+        match &self.source {
+            LookupError::Environment(VarError::NotPresent) => {
+                write!(f, "environment variable `{}` not found", self.var)
+            }
+            LookupError::Environment(VarError::NotUnicode(_)) => {
+                write!(f, "environment variable `{}` is not valid unicode", self.var)
+            }
+            LookupError::Secret(err) => write!(f, "could not read secret `{}`: {err}", self.var),
+        }
     }
 }
 
@@ -48,7 +52,7 @@ impl std::error::Error for UnresolvedEnvVarError {
 }
 
 /// Looks up a value that is not set in the environment, e.g. in an encrypted secret store.
-pub type SecretResolver = fn(&str) -> Option<String>;
+pub type SecretResolver = fn(&str) -> Result<Option<String>, String>;
 
 static SECRET_RESOLVER: OnceLock<SecretResolver> = OnceLock::new();
 
@@ -63,17 +67,17 @@ pub fn set_secret_resolver(resolver: SecretResolver) {
 ///
 /// For values that are read from the environment outside of `${NAME}` placeholders, such as
 /// `ETH_RPC_URL` and `ETHERSCAN_API_KEY`: callers check the environment first.
-pub fn secret(name: &str) -> Option<String> {
-    SECRET_RESOLVER.get().and_then(|resolve| resolve(name))
+pub fn secret(name: &str) -> Result<Option<String>, String> {
+    SECRET_RESOLVER.get().map_or(Ok(None), |resolve| resolve(name))
 }
 
 /// Returns the value of `var` from the environment, or else from the secret resolver.
-fn lookup(var: &str) -> Result<String, VarError> {
+fn lookup(var: &str) -> Result<String, LookupError> {
     match env::var(var) {
         Err(VarError::NotPresent) => {
-            SECRET_RESOLVER.get().and_then(|resolve| resolve(var)).ok_or(VarError::NotPresent)
+            secret(var).map_err(LookupError::Secret)?.ok_or_else(|| VarError::NotPresent.into())
         }
-        res => res,
+        res => res.map_err(Into::into),
     }
 }
 
@@ -87,12 +91,12 @@ pub fn interpolate(input: &str) -> Result<String, UnresolvedEnvVarError> {
 ///
 /// Used where the result reaches user code, such as the `resolveEnv` cheatcode.
 pub fn interpolate_env_only(input: &str) -> Result<String, UnresolvedEnvVarError> {
-    interpolate_with(input, |var| env::var(var))
+    interpolate_with(input, |var| env::var(var).map_err(Into::into))
 }
 
 fn interpolate_with(
     input: &str,
-    lookup: impl Fn(&str) -> Result<String, VarError>,
+    lookup: impl Fn(&str) -> Result<String, LookupError>,
 ) -> Result<String, UnresolvedEnvVarError> {
     let mut res = input.to_string();
 
@@ -110,17 +114,27 @@ fn interpolate_with(
     Ok(res)
 }
 
+/// A missing environment variable or an inaccessible stored secret.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum LookupError {
+    #[error(transparent)]
+    Environment(#[from] VarError),
+    #[error("{0}")]
+    Secret(String),
+}
+
 /// Secret resolver shared by tests, since only the first [`set_secret_resolver`] call counts.
 ///
 /// Knows `FOUNDRY_TEST_SECRET_A`/`_B`, and `ETHERSCAN_API_KEY` while
 /// `FOUNDRY_TEST_STORE_ETHERSCAN_KEY` is set, so that other tests see no stored key.
 #[cfg(test)]
-pub(crate) fn test_secret_resolver(var: &str) -> Option<String> {
-    match var {
+pub(crate) fn test_secret_resolver(var: &str) -> Result<Option<String>, String> {
+    Ok(match var {
         "FOUNDRY_TEST_SECRET_A" | "FOUNDRY_TEST_SECRET_B" => Some("from-store".to_string()),
         "ETHERSCAN_API_KEY" => env::var("FOUNDRY_TEST_STORE_ETHERSCAN_KEY").ok(),
+        "FOUNDRY_TEST_LOCKED_SECRET" => return Err("store is locked".to_string()),
         _ => None,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -142,6 +156,10 @@ mod tests {
         assert_eq!(err.var, "FOUNDRY_TEST_SECRET_A");
         // Names the resolver does not know stay unresolved.
         assert!(interpolate("${FOUNDRY_TEST_SECRET_UNKNOWN}").is_err());
+        assert_eq!(
+            interpolate("${FOUNDRY_TEST_LOCKED_SECRET}").unwrap_err().to_string(),
+            "could not read secret `FOUNDRY_TEST_LOCKED_SECRET`: store is locked"
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use clap::Parser;
 use eyre::{Result, bail};
-use foundry_common::sh_println;
+use foundry_common::{sh_println, sh_status};
 use foundry_config::secrets::SecretStore;
 use std::io::{IsTerminal, Read};
 
@@ -52,10 +52,10 @@ impl SecretSubcommand {
                 let value = read_value(&name)?;
                 let password = password(&store, true)?;
                 store.set(&name, &value, &password)?;
-                sh_println!("Stored secret `{name}` in {}", store.dir().display())?;
+                sh_status!("Stored secret `{name}` in {}", store.dir().display())?;
             }
             Self::Get { name } => {
-                if !store.contains(&name) {
+                if !store.contains(&name)? {
                     bail!("secret `{name}` not found");
                 }
                 let password = password(&store, false)?;
@@ -68,7 +68,7 @@ impl SecretSubcommand {
             }
             Self::Remove { name } => {
                 store.remove(&name)?;
-                sh_println!("Removed secret `{name}`")?;
+                sh_status!("Removed secret `{name}`")?;
             }
             Self::Path => sh_println!("{}", store.dir().display())?,
         }

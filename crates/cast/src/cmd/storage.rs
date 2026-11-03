@@ -88,7 +88,7 @@ impl figment::Provider for StorageArgs {
     fn data(&self) -> Result<figment::value::Map<Profile, Dict>, figment::Error> {
         let mut map = self.build.data()?;
         let dict = map.get_mut(&Config::selected_profile()).unwrap();
-        dict.extend(self.rpc.dict());
+        dict.extend(self.rpc.dict()?);
         dict.extend(self.etherscan.dict());
         Ok(map)
     }

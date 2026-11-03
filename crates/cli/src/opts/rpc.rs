@@ -59,7 +59,7 @@ impl figment::Provider for RpcOpts {
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
-        Ok(Map::from([(Config::selected_profile(), self.dict())]))
+        Ok(Map::from([(Config::selected_profile(), self.dict()?)]))
     }
 }
 
@@ -67,23 +67,25 @@ impl RpcOpts {
     /// Returns the RPC endpoint.
     pub fn url<'a>(&'a self, config: Option<&'a Config>) -> Result<Option<Cow<'a, str>>> {
         // `ETH_RPC_URL` from the environment, or else from the secret store.
-        self.url_with_env(config, || {
-            std::env::var("ETH_RPC_URL")
-                .ok()
-                .or_else(|| foundry_config::resolve::secret("ETH_RPC_URL"))
+        self.url_with_env(config, || match std::env::var("ETH_RPC_URL") {
+            Ok(url) => Ok(Some(url)),
+            Err(std::env::VarError::NotPresent) => {
+                foundry_config::resolve::secret("ETH_RPC_URL").map_err(eyre::Error::msg)
+            }
+            Err(err) => Err(err.into()),
         })
     }
 
     fn url_with_env<'a>(
         &'a self,
         config: Option<&'a Config>,
-        env_url: impl FnOnce() -> Option<String>,
+        env_url: impl FnOnce() -> Result<Option<String>>,
     ) -> Result<Option<Cow<'a, str>>> {
         if self.flashbots {
             Ok(Some(Cow::Borrowed(FLASHBOTS_URL)))
         } else if let Some(url) = self.common.rpc_url.as_deref() {
             Ok(Some(Cow::Borrowed(url)))
-        } else if let Some(url) = env_url() {
+        } else if let Some(url) = env_url()? {
             Ok(Some(Cow::Owned(url)))
         } else {
             self.common.url(config)
@@ -100,11 +102,11 @@ impl RpcOpts {
         Ok(jwt)
     }
 
-    pub fn dict(&self) -> Dict {
+    pub fn dict(&self) -> Result<Dict, figment::Error> {
         let mut dict = self.common.dict();
         // `self.url(None)` already accounts for `flashbots` and the `ETH_RPC_URL` env var,
         // so a single insert here covers both.
-        if let Ok(Some(url)) = self.url(None) {
+        if let Some(url) = self.url(None).map_err(|err| figment::Error::from(err.to_string()))? {
             dict.insert("eth_rpc_url".into(), url.into_owned().into());
         }
         if let Ok(Some(jwt)) = self.jwt(None) {
@@ -116,7 +118,7 @@ impl RpcOpts {
         if self.curl {
             dict.insert("eth_rpc_curl".into(), true.into());
         }
-        dict
+        Ok(dict)
     }
 
     pub fn into_figment(self, all: bool) -> Figment {
@@ -205,7 +207,7 @@ impl figment::Provider for EthereumOpts {
 
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut dict = self.etherscan.dict();
-        dict.extend(self.rpc.dict());
+        dict.extend(self.rpc.dict()?);
 
         if let Some(from) = self.wallet.from {
             dict.insert("sender".to_string(), from.to_string().into());
@@ -257,7 +259,7 @@ mod tests {
     fn rpc_url_resolves_eth_rpc_url_env() {
         let args = RpcOpts::default();
         let url = args
-            .url_with_env(None, || Some("http://127.0.0.1:8545".to_string()))
+            .url_with_env(None, || Ok(Some("http://127.0.0.1:8545".to_string())))
             .expect("url")
             .expect("url");
 
@@ -274,7 +276,7 @@ mod tests {
             ..Default::default()
         };
         let url = args
-            .url_with_env(None, || Some("http://127.0.0.1:8545".to_string()))
+            .url_with_env(None, || Ok(Some("http://127.0.0.1:8545".to_string())))
             .expect("url")
             .expect("url");
 
