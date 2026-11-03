@@ -1746,8 +1746,8 @@ impl Config {
     /// If `solc` is [`SolcReq::Version`] then this will download and install the solc version if
     /// it's missing, unless the `offline` flag is enabled, in which case an error is thrown.
     ///
-    /// If `solc` is [`SolcReq::Solar`] then this will download and install the Solar release if it's
-    /// missing, unless the `offline` flag is enabled, in which case an error is thrown.
+    /// If `solc` is [`SolcReq::Solar`] then this will download and install the Solar release if
+    /// it's missing, unless the `offline` flag is enabled, in which case an error is thrown.
     ///
     /// If `solc` is [`SolcReq::Local`] then this will ensure that the path exists.
     fn ensure_solc(&self) -> Result<Option<Solc>, SolcError> {

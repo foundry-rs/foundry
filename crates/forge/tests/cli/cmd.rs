@@ -1922,10 +1922,7 @@ fn deny_warnings_allows_solar_experimental_codegen(prj: _, cmd: _) {
 fn solar_pin_uses_installed_release(prj: _, cmd: _) {
     prj.add_source("A.sol", "contract A {}");
     let home = prj.root().join("home");
-    write_fake_solar(
-        &home.join(".foundry/solar/9.9.9/solar"),
-        "0.8.38+commit.3a70399.solar.9.9.9",
-    );
+    write_fake_solar(&home.join(".foundry/solar/9.9.9/solar"), "0.8.38+commit.3a70399.solar.9.9.9");
     prj.update_config(|config| {
         config.solc = Some("solar:9.9.9".into());
         config.deny = DenyLevel::Warnings;
@@ -1950,10 +1947,7 @@ Compiler run successful!
 fn solar_pin_offline_requires_installed_release(prj: _, cmd: _) {
     prj.add_source("A.sol", "contract A {}");
     let home = prj.root().join("home");
-    write_fake_solar(
-        &home.join(".foundry/solar/9.9.8/solar"),
-        "0.8.38+commit.3a70399.solar.9.9.8",
-    );
+    write_fake_solar(&home.join(".foundry/solar/9.9.8/solar"), "0.8.38+commit.3a70399.solar.9.9.8");
     prj.update_config(|config| config.solc = Some("solar:9.9.9".into()));
 
     cmd.env("HOME", &home);
