@@ -209,7 +209,7 @@ pub enum PersistentWrite {
 }
 
 /// The state a nested transaction left an existing account in before the transaction ended and
-/// destroyed it, which the running transaction keeps until it ends itself, as on master.
+/// destroyed it, which the running transaction keeps until it ends itself.
 #[derive(Clone, Debug)]
 pub struct DestructedAccount {
     info: AccountInfo,
@@ -279,7 +279,7 @@ impl PersistentWrite {
     }
 
     /// Applies `writes` in order like [`Self::apply`], except that the nonce deltas of each
-    /// account are summed and saturated once, as REVM's undo of the reverted nonce changes was.
+    /// account are summed and saturated once, instead of per write.
     pub fn apply_all<'w>(
         writes: impl IntoIterator<Item = &'w Self>,
         state: &mut State<'_>,
@@ -482,8 +482,8 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
             _ => context.cache = Some(Arc::new(local)),
         }
         context.ext = StoredExt::new(&ext);
-        // Like REVM's per-fork journals, inactive contexts keep what they loaded and created until
-        // they finish a transaction themselves, and the local context keeps seeding forks.
+        // Inactive contexts keep what they loaded and created until they finish a transaction
+        // themselves, and the local context keeps seeding forks.
         context.loaded.clear();
         context.created.clear();
         self.store_env(env);
@@ -525,7 +525,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
     ///
     /// Persistent accounts carry their accepted state into the target. Leaving the local context
     /// makes what the running transaction loaded and created there the initial state of every
-    /// fork, as REVM's initial fork journal did.
+    /// fork.
     pub fn select_fork(
         &mut self,
         evm: &mut Evm<'_, F::Types>,
@@ -599,7 +599,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
     /// and environment, optionally with `cache` as its accepted state.
     ///
     /// The fork's accepted state is discarded except for persistent accounts and accounts created
-    /// on it, and the fork starts over from the initial fork state, as in REVM.
+    /// on it, and the fork starts over from the initial fork state.
     pub fn replace_inactive(
         &mut self,
         id: Option<U256>,
@@ -656,8 +656,8 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         if let Some(prewarm) = &mut self.tx_prewarm {
             prewarm.remove(address);
         }
-        // Like REVM's fork switches, which copy the journaled state of persistent accounts into
-        // the selected fork, a persistent account resumes cold in every context.
+        // Fork switches carry the state of persistent accounts but not their warmth, so a
+        // persistent account resumes cold in every context.
         if self.forks.is_persistent(address) {
             self.forks.local.warm.remove(address);
             for entry in self.forks.forks.values_mut() {
@@ -686,8 +686,8 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
     }
 
     /// Takes the warmth of persistent accounts that contexts kept for the running transaction, so
-    /// that a nested transaction, such as an isolated call, resumes them cold in every context as
-    /// REVM's fresh journal did. Hand it back with [`Self::restore_persistent_warmth`] when the
+    /// that a nested transaction, such as an isolated call, resumes them cold in every context.
+    /// Hand it back with [`Self::restore_persistent_warmth`] when the
     /// nested transaction ends.
     pub fn take_persistent_warmth(&mut self) -> Vec<(Option<U256>, AddressMap<HashSet<U256>>)> {
         let ForkRegistry { local, forks, persistent, .. } = &mut self.forks;
@@ -766,8 +766,8 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
     /// Restores snapshot `id` and returns the running state it replaced, or `None` if it does not
     /// exist.
     ///
-    /// Logs emitted since the snapshot are kept. As on master, only the context that was active at
-    /// the snapshot gets its state back and becomes active again; other contexts, persistent
+    /// Logs emitted since the snapshot are kept. Only the context that was active at the snapshot
+    /// gets its state back and becomes active again; other contexts, persistent
     /// accounts and forks created after the snapshot are left as they are.
     /// The replaced state is materialized, so that a failing frame can reinstate it over a backing
     /// database with [`SnapshotRestores`](super::SnapshotRestores).
@@ -788,9 +788,8 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         let (replaced, logs) = if forks.active == self.forks.active {
             (None, evm.state().logs().to_vec())
         } else {
-            // Like master, other contexts are not part of the snapshot. The running context keeps
-            // what reached its state before the running transaction and drops the transaction's
-            // changes, as master drops the journal of the fork active at the revert.
+            // Other contexts are not part of the snapshot. The running context keeps what reached
+            // its state before the running transaction and drops the transaction's changes.
             let replaced = evm.state().snapshot();
             let state = evm.state_mut();
             let logs = mem::take(state.logs_mut());
@@ -997,9 +996,6 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
     /// Replaces the accounts the running transaction of `evm` loaded, except persistent ones,
     /// with their accepted state on the inactive fork `id`, or the local context for `None`, as
     /// journaled writes, such as after replaying transactions there.
-    ///
-    /// Like the REVM backend, which reloaded every account of the running journal from a fork's
-    /// database after replaying a transaction on it while another fork was active.
     pub fn rebase_onto_inactive(
         &self,
         evm: &mut Evm<'_, F::Types>,
@@ -1148,7 +1144,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         });
         context.created.extend(persistent_created);
         let created = context.created.clone();
-        // Like REVM's per-fork journals, a selected context resumes with its own warmth from this
+        // A selected context resumes with its own warmth from this
         // transaction, and a rolled one warms every account the running transaction loaded, with
         // slots for created and persistent accounts. Persistent accounts keep their warmth.
         let mut warm = mem::take(&mut context.warm);
@@ -1242,9 +1238,9 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
 
     /// Stores `env` as the active context's environment.
     ///
-    /// A fork keeps the chain ID it was created or rolled with, as REVM selected a fork with its
-    /// own chain ID: a running change such as `vm.chainId` does not follow the fork to its next
-    /// selection. The executor carries such a change to its next transaction instead.
+    /// A fork keeps the chain ID it was created or rolled with: a running change such as
+    /// `vm.chainId` does not follow the fork to its next selection. The executor carries such a
+    /// change to its next transaction instead.
     fn store_env(&mut self, mut env: EvmEnv<F::Types>) {
         let is_fork = self.forks.active().is_some();
         let context = self.active_mut();
@@ -1344,8 +1340,8 @@ pub fn merge_untracked_nested_changes<T: EvmTypesHost>(
     state: &mut State<'_>,
     executed: &ExecutedTx<'_, '_, T>,
 ) -> DbResult<Vec<PersistentWrite>> {
-    // As on master, which committed the transaction to the database, accounts and slots the
-    // running transaction has not loaded start from its writes.
+    // Accounts and slots the running transaction has not loaded start from the nested
+    // transaction's writes.
     let unloaded = unloaded_changes(state, executed.account_changes());
     state.commit_source(&unloaded);
     let mut persistent = Vec::new();
@@ -1388,8 +1384,8 @@ pub fn merge_untracked_pending_changes_with_warmth<T: EvmTypes>(
             state.set_storage_warm(&address, key, true);
         }
     }
-    // As on master, an existing account the nested transaction self-destructed keeps the state the
-    // transaction left it in until the running transaction ends and destroys it.
+    // An existing account the nested transaction self-destructed keeps the state the transaction
+    // left it in until the running transaction ends and destroys it.
     let destroyed = pending
         .account_changes()
         .filter(|change| change.selfdestructed && !change.created)
@@ -1601,8 +1597,7 @@ fn unloaded_changes<'c>(
 /// Replaces the accounts the running transaction in `state` loaded, except persistent ones, with
 /// their accepted state in `source`, as journaled writes: info and loaded storage slots.
 ///
-/// Like the REVM backend, which reloaded every account of the running journal from a fork's
-/// database after replaying a transaction on that fork while another one was active.
+/// Used after replaying transactions on a fork while another one is active.
 fn rebase_loaded_accounts(
     state: &mut State<'_>,
     source: &mut State<'_>,

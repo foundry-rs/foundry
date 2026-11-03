@@ -275,7 +275,7 @@ fn spec_changes_keep_foundry_policy() {
     db.insert_account_info(&delegated, info);
     let mut evm = FoundryEvmFactory::create_evm(&factory, db, env);
 
-    // Like REVM, an existing delegation resolves before Prague and runs in the delegating account.
+    // An existing delegation resolves before Prague and runs in the delegating account.
     let request = store_request::<EthEvmNetwork>(caller, delegated, 0, 42, 31337);
     assert!(
         evm.transact(&EthEvmNetwork::tx_from_request(request).unwrap()).unwrap().commit().status
