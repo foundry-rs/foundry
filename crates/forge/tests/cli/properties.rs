@@ -1627,7 +1627,7 @@ fi
     let solo = fs::read_to_string(control.join("solo-prompt.txt")).unwrap();
     assert!(solo.contains("src/TargetA.sol"), "{solo}");
 
-    let forge_bin = forge.clone();
+    let forge_bin = forge;
     let slow_args = common("slow", "src/TargetA.sol");
     let slow = thread::spawn(move || {
         std::process::Command::new(&forge_bin)
