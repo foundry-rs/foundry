@@ -643,7 +643,10 @@ mod tests {
     use alloy_network::Ethereum;
     use alloy_primitives::keccak256;
     use alloy_provider::builder;
-    use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking};
+    use alloy_rpc_types::{
+        BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking,
+        trace::geth::GethDebugTracingOptions,
+    };
     use alloy_serde::WithOtherFields;
     use alloy_trie::{Nibbles, TrieAccount, proof::verify_proof};
     use anvil_core::types::ReorgOptions;
@@ -857,6 +860,51 @@ mod tests {
             assert_eq!(api.backend.best_number(), head + 1);
             assert_certified_head(&api);
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn tempo_trace_of_on_disk_parent_does_not_deadlock_mining() {
+        let (api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+        api.backend.states.write().set_cache_limit(1);
+        let tx = queue_transfer(&api, handle.dev_wallets().next().unwrap().address()).await;
+        api.mine_one().await.unwrap();
+        api.mine_one().await.unwrap();
+        // Tracing must upgrade the execution history guard to load the parent state from disk.
+        let parent = api.backend.get_block(0).unwrap().header.hash_slow();
+        assert!(api.backend.states.read().get_state(&parent).is_none());
+
+        let hook =
+            MiningCommitHook { reached: Arc::new(Notify::new()), resume: Arc::new(Notify::new()) };
+        *api.backend.mining_commit_hook.lock() = Some(hook.clone());
+        let mining_api = api.clone();
+        let mining = tokio::spawn(async move { mining_api.mine_one().await });
+        timeout(Duration::from_secs(10), hook.reached.notified()).await.unwrap();
+        *api.backend.mining_commit_hook.lock() = None;
+        // Park mining after it takes the execution history read guard, before it takes storage.
+        let proof_states = api.backend.tempo_proof_states().unwrap();
+        let (held_tx, held_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let holder = thread::spawn(move || {
+            let _guard = proof_states.write();
+            held_tx.send(()).unwrap();
+            let _ = release_rx.recv();
+        });
+        held_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        hook.resume.notify_one();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let trace_api = api.clone();
+        let trace = tokio::spawn(async move {
+            let opts = GethDebugTracingOptions::call_tracer(Default::default());
+            trace_api.debug_trace_transaction(tx, opts).await
+        });
+        // Let tracing wait for its history upgrade before mining requests storage.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        drop(release_tx);
+        holder.join().unwrap();
+        timeout(Duration::from_secs(10), mining).await.unwrap().unwrap().unwrap();
+        timeout(Duration::from_secs(10), trace).await.unwrap().unwrap().unwrap();
+        assert_eq!(api.backend.best_number(), 3);
     }
 
     #[tokio::test(flavor = "multi_thread")]

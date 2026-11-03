@@ -8371,7 +8371,8 @@ where
         hash: B256,
         opts: GethDebugTracingOptions,
     ) -> Option<Result<GethTrace, BlockchainError>> {
-        self.blockchain.storage.read().transactions.get(&hash).map(|tx| self.geth_trace(tx, opts))
+        // Replay may wait for a state history lock, which mining holds while it waits for storage.
+        self.mined_transaction(hash).map(|tx| self.geth_trace(&tx, opts))
     }
 
     pub async fn transaction_receipt(
