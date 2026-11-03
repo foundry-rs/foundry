@@ -447,7 +447,7 @@ pub enum TempoConsensusError {
     /// The current height has no representable successor.
     #[error("Tempo consensus block height overflow")]
     HeightOverflow,
-    /// The next epoch cannot be represented.
+    /// A required epoch cannot be represented.
     #[error("Tempo consensus epoch overflow")]
     EpochOverflow,
     /// The header is not the strict successor of the local head.
