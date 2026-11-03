@@ -195,7 +195,8 @@ contract WithdrawalQueueTest is Test {
 }
 
 // The struct is only readable through a getter keyed by the caller, so it reaches the dictionary
-// only when view harvesting is enabled.
+// only when view harvesting is enabled. The 32 constant getters sort before `lastWithdrawal`, so
+// harvesting must rotate past the first 32 eligible views to reach it.
 #[forgetest_init]
 fn struct_from_view_is_reused_whole(prj: _, cmd: _) {
     prj.update_config(|config| {
@@ -220,6 +221,18 @@ contract ViewQueue {
     mapping(bytes32 => bool) public pending;
     uint256 public nonce;
     bool public completed;
+
+    uint256 public constant C00 = 0; uint256 public constant C01 = 0; uint256 public constant C02 = 0;
+    uint256 public constant C03 = 0; uint256 public constant C04 = 0; uint256 public constant C05 = 0;
+    uint256 public constant C06 = 0; uint256 public constant C07 = 0; uint256 public constant C08 = 0;
+    uint256 public constant C09 = 0; uint256 public constant C10 = 0; uint256 public constant C11 = 0;
+    uint256 public constant C12 = 0; uint256 public constant C13 = 0; uint256 public constant C14 = 0;
+    uint256 public constant C15 = 0; uint256 public constant C16 = 0; uint256 public constant C17 = 0;
+    uint256 public constant C18 = 0; uint256 public constant C19 = 0; uint256 public constant C20 = 0;
+    uint256 public constant C21 = 0; uint256 public constant C22 = 0; uint256 public constant C23 = 0;
+    uint256 public constant C24 = 0; uint256 public constant C25 = 0; uint256 public constant C26 = 0;
+    uint256 public constant C27 = 0; uint256 public constant C28 = 0; uint256 public constant C29 = 0;
+    uint256 public constant C30 = 0; uint256 public constant C31 = 0;
 
     function queue(uint256 amount) external {
         Withdrawal memory w = Withdrawal(msg.sender, nonce, uint256(keccak256(abi.encode(amount, nonce))));

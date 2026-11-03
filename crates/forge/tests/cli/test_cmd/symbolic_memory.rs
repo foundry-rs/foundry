@@ -1384,3 +1384,80 @@ contract SymbolicKeccakChain {
 ...
 "#]]);
 }
+
+// MSTORE8 keeps only the low byte of a full word, as Solady `LibString` does with hex tables, and
+// reads past the end of code or calldata are zero even at offsets near `u64::MAX`.
+#[forgetest_init]
+fn symbolic_byte_reads_match_evm_at_word_and_offset_limits(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_byte_reads_match_evm_at_word_and_offset_limits");
+
+    prj.add_test(
+        "SymbolicByteLimits.t.sol",
+        r#"
+contract CalldataReader {
+    function readFarPastEnd() external pure returns (uint256 word) {
+        assembly {
+            word := calldataload(0xffffffffffffffff)
+        }
+    }
+}
+
+contract SymbolicByteLimits {
+    CalldataReader reader;
+
+    function setUp() public {
+        reader = new CalldataReader();
+    }
+
+    function checkMstore8StoresLowByte() public pure {
+        uint256 stored;
+        assembly {
+            mstore(0x0f, 0x30313233343536373839616263646566)
+            mstore8(0x80, mload(11))
+            stored := byte(0, mload(0x80))
+        }
+        assert(stored == 0x62);
+    }
+
+    function checkCodecopyFarPastEndIsZero() public pure {
+        uint256 word;
+        assembly {
+            codecopy(0, 0xffffffffffffffff, 32)
+            word := mload(0)
+        }
+        assert(word == 0);
+    }
+
+    function checkCalldataloadFarPastEndIsZero(uint256 x) public {
+        address target = address(reader);
+        bytes4 selector = CalldataReader.readFarPastEnd.selector;
+        bool ok;
+        uint256 word;
+        assembly {
+            mstore(0, selector)
+            ok := call(gas(), target, 0, 0, add(4, and(x, 3)), 0, 32)
+            word := mload(0)
+        }
+        assert(ok && word == 0);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicByteLimits",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/SymbolicByteLimits.t.sol:SymbolicByteLimits
+[PASS] checkCalldataloadFarPastEndIsZero(uint256) ([METRICS])
+[PASS] checkCodecopyFarPastEndIsZero() ([METRICS])
+[PASS] checkMstore8StoresLowByte() ([METRICS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}

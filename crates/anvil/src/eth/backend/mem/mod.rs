@@ -1,5 +1,9 @@
 //! In-memory blockchain backend.
-use self::{in_memory_db::StateRootDb, state::trie_storage, tempo::TempoChain};
+use self::{
+    in_memory_db::StateRootDb,
+    state::trie_storage,
+    tempo::{SealedAccounts, TempoChain},
+};
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
     config::{ForkTransactionReplay, PruneStateHistoryConfig, source_hardfork},
@@ -124,9 +128,7 @@ use chrono::Datelike;
 use eyre::{Context, Result};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use foundry_evm::{
-    backend::{
-        BlockchainDb, DatabaseError, DatabaseResult, EmptyDBWrapper, RevertStateSnapshotAction,
-    },
+    backend::{BlockchainDb, DatabaseError, DatabaseResult, RevertStateSnapshotAction},
     constants::{DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE},
     core::precompiles::EC_RECOVER,
     decode::RevertDecoder,
@@ -2005,13 +2007,10 @@ impl<N: Network> Backend<N> {
             // Live execution may already contain unmined development edits.
             let states = states.upgradable_read();
             if let Some(state) = states.get_state(&hash) {
-                return state.maybe_as_full_db().cloned().map(Arc::new);
+                return state.maybe_shared_full_db();
             }
             let mut states = RwLockUpgradableReadGuard::upgrade(states);
-            states
-                .get_on_disk_state(&hash)
-                .and_then(|state| state.maybe_as_full_db().cloned())
-                .map(Arc::new)
+            states.get_on_disk_state(&hash).and_then(|state| state.maybe_shared_full_db())
         });
         if let Some(tempo) = &mut self.blockchain.storage.write().tempo {
             tempo.snapshot(id, proof_state);
@@ -5726,11 +5725,9 @@ impl<N: Network> Backend<N> {
             (removed_blocks, proof_state)
         };
         if let Some((states, accounts)) = proof_state {
-            let mut state = CacheDB::<EmptyDBWrapper>::new(Default::default());
-            state.cache.accounts = (*accounts).clone();
             let mut states = states.write();
             states.remove_block_states(&[hash]);
-            states.insert(hash, StateDb::new(state));
+            states.insert(hash, StateDb::new(SealedAccounts(accounts)));
         }
         let removed_hashes: Vec<_> = removed_blocks.iter().map(|b| b.header.hash_slow()).collect();
         self.states.write().remove_block_states(&removed_hashes);
@@ -6577,19 +6574,20 @@ where
                 if let Some(hook) = self.mining_state_root_hook.lock().as_ref() {
                     hook();
                 }
+                // The one copy of the live account cache, shared by proof history, the next
+                // seal's diff base, and EVM snapshots.
                 let proof_state = (matches!(block_info.block.header, FoundryHeader::Tempo(_))
                     && self.get_fork().is_some())
                 .then(|| {
-                    let mut state = CacheDB::<EmptyDBWrapper>::new(Default::default());
-                    state.cache.accounts = db
-                        .maybe_as_full_db()
-                        .expect("a fork database exposes its cached accounts")
-                        .clone();
-                    state
+                    Arc::new(
+                        db.maybe_as_full_db()
+                            .expect("a fork database exposes its cached accounts")
+                            .clone(),
+                    )
                 });
                 let state_root = proof_state.as_ref().map_or_else(
                     || db.maybe_state_root().unwrap_or_default(),
-                    |state| {
+                    |accounts| {
                         let proof_root = Arc::clone(
                             &self
                                 .blockchain
@@ -6602,9 +6600,9 @@ where
                         );
                         let (cache, previous) = &mut *proof_root.lock();
                         // Rehash only the paths that changed since the previous seal.
-                        cache.record_diff(&state.cache.accounts, previous);
-                        let root = cache.root(&state.cache.accounts);
-                        previous.clone_from(&state.cache.accounts);
+                        cache.record_diff(accounts, previous);
+                        let root = cache.root(accounts);
+                        *previous = Arc::clone(accounts);
                         root
                     },
                 );
@@ -6621,7 +6619,7 @@ where
                     let mut proof_states = proof_states.write();
                     // Re-mining after a rewind can produce an already cached hash.
                     proof_states.remove_block_states(&[block_hash]);
-                    proof_states.insert(block_hash, StateDb::new(proof_state));
+                    proof_states.insert(block_hash, StateDb::new(SealedAccounts(proof_state)));
                 }
                 db.insert_block_hash(U256::from(block_info.block.header.number()), block_hash);
                 self.time.commit_next_timestamp(pending_timestamp);
@@ -6691,6 +6689,12 @@ where
                 hook.reached.notify_one();
                 hook.resume.notified().await;
             }
+            // Pruning reads both state histories. Lock them before storage so a historical reader
+            // holding a history write guard delays this publication instead of every storage
+            // reader.
+            let proof_states = self.tempo_proof_states();
+            let history =
+                proof_states.as_ref().map(|proof_states| (self.states.read(), proof_states.read()));
             let mut storage = self.blockchain.storage.write();
             if let FoundryHeader::Tempo(header) = &header {
                 storage
@@ -6714,6 +6718,15 @@ where
             }
             storage.blocks.insert(block_hash, block);
             storage.hashes.insert(block_number, block_hash);
+            {
+                let storage = &mut *storage;
+                if let Some(tempo) = &mut storage.tempo
+                    && let Some((states, proof_states)) = &history
+                {
+                    tempo.prune(&storage.hashes, states, proof_states);
+                }
+            }
+            drop(history);
             if let Some(block_access_list) = block_access_list {
                 storage.block_access_lists.insert(block_hash, block_access_list);
             }
@@ -8358,7 +8371,8 @@ where
         hash: B256,
         opts: GethDebugTracingOptions,
     ) -> Option<Result<GethTrace, BlockchainError>> {
-        self.blockchain.storage.read().transactions.get(&hash).map(|tx| self.geth_trace(tx, opts))
+        // Replay may wait for a state history lock, which mining holds while it waits for storage.
+        self.mined_transaction(hash).map(|tx| self.geth_trace(&tx, opts))
     }
 
     pub async fn transaction_receipt(

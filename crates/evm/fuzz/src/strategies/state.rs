@@ -35,8 +35,9 @@ use revm::database::InMemoryDB;
 /// bytecode (as is the case with Solmate).
 const PUSH_BYTE_ANALYSIS_LIMIT: usize = 24 * 1024;
 
-/// The maximum encoded size of a dynamic `bytes` or `string` value kept whole in the composite
-/// dictionary. Larger values still contribute their nested words but are not replayed verbatim.
+/// The maximum length in bytes of a `bytes` or `string` value recorded whole on its own in the
+/// composite dictionary. Longer values are not recorded, since they have no word leaves; composites
+/// containing them are still recorded whole.
 const MAX_COMPOSITE_BYTES_LEN: usize = 1024;
 
 /// Immutable fuzz dictionary seed used by parallel stateless fuzz workers.
@@ -317,7 +318,9 @@ pub struct FuzzDictionary {
     /// Reusing a value whole keeps related fields consistent: a struct returned by a getter or
     /// emitted in an event can be passed back verbatim, which field-by-field generation almost
     /// never reconstructs. Persisted across invariant runs and bounded per type like
-    /// `sample_values`, evicting the oldest entry when full.
+    /// `sample_values`, evicting the oldest entry when full. Values whose type depends on an empty
+    /// dynamic array, such as a struct with an empty array field, have no derivable type and are
+    /// not recorded whole; their leaves still are.
     composite_values: HashMap<DynSolType, IndexMap<B256, DynSolValue>>,
     /// Persistent values from sancov trace-cmp that survive `revert()` across runs.
     persistent_values: B256IndexSet,
@@ -842,7 +845,7 @@ impl FuzzDictionary {
     /// Records a whole composite value under its canonical ABI type, evicting the oldest entry
     /// of that type once `limit` entries are stored.
     fn insert_composite_value(&mut self, value: DynSolValue, limit: u32) {
-        // Empty dynamic arrays have no element type to key on.
+        // A value whose type depends on an empty dynamic array has no element type to key on.
         let Some(ty) = value.as_type().map(canonical_type) else { return };
         let key = keccak256(value.abi_encode());
         let values = self.composite_values.entry(ty).or_default();

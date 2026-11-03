@@ -359,6 +359,7 @@ impl SymbolicExecutor {
                                 }
                                 let mut halted = state.clone();
                                 halted.constraints = out_of_bounds_constraints;
+                                halted.return_data = SymReturnData::empty(&mut self.cx);
                                 *completed_paths += 1;
                                 let status = self.successful_call_status(kind, &halted);
                                 outcomes.push(CallOutcome { status, state: halted });
@@ -380,6 +381,8 @@ impl SymbolicExecutor {
                             return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
                         }
                         *completed_paths += 1;
+                        // Running past the end of code stops like STOP, with no output.
+                        state.return_data = SymReturnData::empty(&mut self.cx);
                         let status = self.successful_call_status(kind, &state);
                         outcomes.push(CallOutcome { status, state });
                         break;
@@ -421,6 +424,8 @@ impl SymbolicExecutor {
                             return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
                         }
                         *completed_paths += 1;
+                        // An exceptional halt returns no output.
+                        state.return_data = SymReturnData::empty(&mut self.cx);
                         outcomes.push(CallOutcome { status: CallStatus::ExceptionalHalt, state });
                         break;
                     }

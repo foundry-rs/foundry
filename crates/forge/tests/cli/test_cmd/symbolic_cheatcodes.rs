@@ -7443,3 +7443,61 @@ Suite result: FAILED. 8 passed; 9 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
+
+// A complemented address keeps its complement within each byte: a callee whose low byte is
+// always `0xff` never matches the target, while `~x` can match it.
+#[forgetest_init]
+fn symbolic_expect_call_matches_complemented_address(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_expect_call_matches_complemented_address");
+
+    prj.add_test(
+        "SymbolicExpectCallComplement.t.sol",
+        r#"
+interface Vm {
+    function expectCall(address callee, bytes calldata data) external;
+    function expectCall(address callee, bytes calldata data, uint64 count) external;
+}
+
+contract Target {
+    function ping() external {}
+}
+
+contract SymbolicExpectCallComplement {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    Target target;
+
+    function setUp() public {
+        target = new Target();
+    }
+
+    function checkMaskedComplementCallee(uint256 x) public {
+        address callee = address(uint160(~(x & ~uint256(0xff))));
+        vm.expectCall(callee, abi.encodeWithSelector(Target.ping.selector), 0);
+        target.ping();
+    }
+
+    function checkComplementCalleeNeverCalled(uint256 x) public {
+        address callee = address(uint160(~x));
+        vm.expectCall(callee, abi.encodeWithSelector(Target.ping.selector), 0);
+        target.ping();
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicExpectCallComplement",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicExpectCallComplement.t.sol:SymbolicExpectCallComplement
+[FAIL: expected call to [..] with data 0x5c36b186 to be called 0 times, but was called 1 time; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkComplementCalleeNeverCalled(uint256) ([METRICS])
+[PASS] checkMaskedComplementCallee(uint256) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}

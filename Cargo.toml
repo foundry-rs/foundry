@@ -38,7 +38,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.8.8"
+version = "1.9.1"
 edition = "2024"
 rust-version = "1.98"
 authors = ["Foundry Contributors"]
@@ -361,10 +361,10 @@ foundry-compilers = { version = "0.21.0", default-features = false, features = [
 ] }
 foundry-fork-db = { version = "0.27.0", features = ["zstd"] }
 imbl = "7"
-solar = { package = "solar-compiler", version = "=0.2.0", default-features = false }
-solar-cli = { version = "=0.2.0", default-features = false }
-solar-lsp = { version = "=0.2.0", default-features = false }
-solar-lint = { version = "=0.2.0", default-features = false }
+solar = { package = "solar-compiler", version = "=0.3.0", default-features = false }
+solar-cli = { version = "=0.3.0", default-features = false }
+solar-lsp = { version = "=0.3.0", default-features = false }
+solar-lint = { version = "=0.3.0", default-features = false }
 svm = { package = "svm-rs", version = "0.5.30", default-features = false, features = [
     "rustls",
 ] }
@@ -600,16 +600,17 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "d00999a5c1dc5d105151234d0dd60f4a087f2fe6" }
-solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "d00999a5c1dc5d105151234d0dd60f4a087f2fe6" }
-solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "d00999a5c1dc5d105151234d0dd60f4a087f2fe6" }
-solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "d00999a5c1dc5d105151234d0dd60f4a087f2fe6" }
+# Always point solar at a release tag, never a branch revision.
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
+solar-cli = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
+solar-lsp = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
+solar-lint = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
 
 ## foundry-core
-foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "feef2fa2a543628bdb01575520df102850852d55" }
-foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "feef2fa2a543628bdb01575520df102850852d55" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "feef2fa2a543628bdb01575520df102850852d55" }
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "feef2fa2a543628bdb01575520df102850852d55" }
+foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "1534b92a9acaf436d5874e1808f9faeb7641718f" }
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "1534b92a9acaf436d5874e1808f9faeb7641718f" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "1534b92a9acaf436d5874e1808f9faeb7641718f" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "1534b92a9acaf436d5874e1808f9faeb7641718f" }
 
 ## alloy-core
 alloy-dyn-abi = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
