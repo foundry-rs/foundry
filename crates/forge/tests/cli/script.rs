@@ -8693,7 +8693,6 @@ async fn script_oversized_contract_without_terminal(prj: _, cmd: _) {
     write_large_runtime_deploy_script(&prj, 30_000);
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    cmd.set_current_dir(prj.root());
     for var in ["FOUNDRY_CODE_SIZE_LIMIT", "DAPP_CODE_SIZE_LIMIT", "DAPP_TEST_CODE_SIZE_LIMIT"] {
         cmd.unset_env(var);
     }
