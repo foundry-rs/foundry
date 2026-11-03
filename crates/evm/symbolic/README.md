@@ -791,7 +791,7 @@ The executor models byte-precise calldata, memory, returndata, logs, storage,
 and symbolic storage keys. Supported behavior includes:
 
 - arithmetic and bitwise operations, including symbolic-safe `EXP`,
-  `SIGNEXTEND`, `BYTE`, shifts, and checked wrapping behavior
+  `SIGNEXTEND`, `BYTE`, `CLZ`, shifts, and checked wrapping behavior
 - `CALLDATALOAD`, `CALLDATACOPY`, `CODECOPY`, `EXTCODECOPY`,
   `RETURNDATACOPY`, `MCOPY`, `MLOAD`, `MSTORE`, and `MSTORE8`
 - `CALL`, `STATICCALL`, `DELEGATECALL`, `CALLCODE`, `CREATE`, and `CREATE2`
