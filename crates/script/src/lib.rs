@@ -624,6 +624,14 @@ impl ScriptArgs {
                 .optimize_library_deployments()
                 .await?;
 
+            // Only the selected successful execution owns the command's exit code. Optimizer
+            // candidates and resume signer recovery must not publish their auxiliary results.
+            if pre_simulation.execution_result.success
+                && let Some(code) = pre_simulation.execution_result.exit_code
+            {
+                let _ = pre_simulation.args.exit_code.set(code);
+            }
+
             if pre_simulation.args.debug {
                 return match pre_simulation.args.dump.clone() {
                     Some(path) => pre_simulation.dump_debugger(&path).map(|_| None),

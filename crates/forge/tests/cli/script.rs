@@ -2173,6 +2173,10 @@ async fn resume_reports_failed_signer_rerun(prj: _, cmd: _) {
         r#"
 import "forge-std/Script.sol";
 
+interface ExitVm {
+    function setExitCode(uint8 code) external;
+}
+
 contract ResumeRerunTarget {}
 
 contract ResumeRerun is Script {
@@ -2186,6 +2190,7 @@ contract ResumeRerun is Script {
         vm.startBroadcast(key);
         new ResumeRerunTarget();
         vm.stopBroadcast();
+        ExitVm(address(vm)).setExitCode(7);
         require(vm.envOr("RESUME_RERUN_GO", false), "resume gate closed");
     }
 }
@@ -2195,7 +2200,7 @@ contract ResumeRerun is Script {
     cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc]);
     cmd.env("RESUME_RERUN_PK", private_key);
     cmd.env("RESUME_RERUN_GO", "true");
-    cmd.assert_success();
+    cmd.assert_code(7);
 
     // `setUp` fails before the signer is reached.
     cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--resume"]);
@@ -2214,6 +2219,19 @@ Warning: Resume re-ran the script to collect signers, but it failed: resume gate
 "#]]);
     let sender = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
     assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 1);
+
+    // A successful signer-recovery replay must not supply a new exit code either.
+    fs::remove_dir_all(prj.root().join("broadcast")).unwrap();
+    fs::remove_dir_all(prj.root().join("cache/ResumeRerun.s.sol")).unwrap();
+    cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc]);
+    cmd.env("RESUME_RERUN_PK", private_key);
+    cmd.env("RESUME_RERUN_GO", "true");
+    cmd.assert_code(7);
+    cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--resume"]);
+    cmd.env("RESUME_RERUN_PK", private_key);
+    cmd.env("RESUME_RERUN_GO", "true");
+    cmd.assert_success();
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 2);
 }
 
 #[forgetest]
@@ -8814,6 +8832,10 @@ async fn simulation_ignores_execution_only_state_on_fork(prj: _, cmd: _) {
         r#"
 import {Script} from "forge-std/Script.sol";
 
+interface ExitVm {
+    function setExitCode(uint8 code) external;
+}
+
 contract Vault {
     function withdraw() external {
         payable(msg.sender).transfer(1 ether);
@@ -8821,7 +8843,7 @@ contract Vault {
 }
 
 contract ExecutionOnlyState is Script {
-    function run() external {
+    function run(uint8 code) external {
         vm.broadcast();
         Vault vault = new Vault();
 
@@ -8831,6 +8853,7 @@ contract ExecutionOnlyState is Script {
 
         vm.broadcast();
         vault.withdraw();
+        ExitVm(address(vm)).setExitCode(code);
     }
 }
 "#,
@@ -8839,11 +8862,14 @@ contract ExecutionOnlyState is Script {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
 
-    for isolation in ["--isolate", "--no-isolate"] {
+    for (isolation, code) in [("--isolate", "0"), ("--no-isolate", "7")] {
         cmd.forge_fuse()
             .args([
                 "script",
                 "ExecutionOnlyState",
+                "--sig",
+                "run(uint8)",
+                code,
                 "--rpc-url",
                 endpoint.as_str(),
                 "--sender",
@@ -8851,7 +8877,7 @@ contract ExecutionOnlyState is Script {
                 "--unlocked",
                 isolation,
             ])
-            .assert_failure()
+            .assert_code(1)
             .stdout_eq(str![[r#"
 ...
 Script ran successfully.
@@ -9626,11 +9652,20 @@ contract SetUpCode is Script {
     function overrides() external {
         EXIT_VM.setExitCode(4);
     }
+
+    function clears() external {
+        EXIT_VM.setExitCode(0);
+    }
 }
 
 contract RevertsAfter is Script {
     function run() external {
         EXIT_VM.setExitCode(2);
+        revert("broken");
+    }
+
+    function zeroThenRevert() external {
+        EXIT_VM.setExitCode(0);
         revert("broken");
     }
 }
@@ -9670,11 +9705,20 @@ Script ran successfully.
   drift found
 ...
 "#]]);
-    cmd.forge_fuse().args(["script", &target("Drift"), "--json"]).assert_code(2);
+    cmd.forge_fuse()
+        .args(["script", &target("Drift"), "--json"])
+        .assert_json_stdout_with_status(
+            false,
+            str![[
+                r#"{ "logs": ["drift found"], "returns": {}, "success": true, "...": "{...}" }"#
+            ]],
+        )
+        .code(2);
 
     // Set in `setUp`, and overridden by the script function.
     cmd.forge_fuse().args(["script", &target("SetUpCode")]).assert_code(3);
     cmd.forge_fuse().args(["script", &target("SetUpCode"), "--sig", "overrides()"]).assert_code(4);
+    cmd.forge_fuse().args(["script", &target("SetUpCode"), "--sig", "clears()"]).assert_success();
 
     // A reverting script keeps forge's own failure.
     cmd.forge_fuse().args(["script", &target("RevertsAfter")]).assert_code(1).stderr_eq(str![[
@@ -9683,6 +9727,21 @@ Error: script failed: broken
 
 "#
     ]]);
+    cmd.forge_fuse()
+        .args(["script", &target("RevertsAfter"), "--sig", "zeroThenRevert()"])
+        .assert_code(1)
+        .stderr_eq(str![[r#"
+Error: script failed: broken
+
+"#]]);
+
+    // Debug dumps preserve their existing status, not a reverted execution's requested code.
+    let dump = prj.root().join("exit-code-dump.json");
+    cmd.forge_fuse()
+        .args(["script", &target("RevertsAfter"), "--debug", "--dump"])
+        .arg(&dump)
+        .assert_success();
+    assert!(dump.exists());
 
     // After a broadcast, the code is applied once the transactions are sent and saved.
     let (_api, handle) = spawn(NodeConfig::test()).await;
@@ -9703,6 +9762,8 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 ...
 "#]]);
     assert!(prj.root().join("broadcast/ExitCode.s.sol/31337/run-latest.json").exists());
+    let sender = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+    assert!(!handle.http_provider().get_code_at(sender.create(0)).await.unwrap().is_empty());
 
     // Outside `forge script` the cheatcode is an error.
     cmd.forge_fuse().args(["test", "--mc", "ExitCodeInTest"]).assert_failure().stdout_eq(str![[
@@ -9712,4 +9773,80 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 ...
 "#
     ]]);
+}
+
+#[forgetest_init]
+async fn script_set_exit_code_discards_optimizer_candidates(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let script = prj.add_script(
+        "CandidateExitCode.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+interface ExitVm {
+    function setExitCode(uint8 code) external;
+}
+
+library LocalLib { function value() external pure returns (uint256) { return 2; } }
+library RequiredLib { function value() external pure returns (uint256) { return 1; } }
+contract UsesRequiredLib { function value() external view returns (uint256) { return RequiredLib.value(); } }
+
+contract CandidateExitCode is Script {
+    address constant LOCAL_LIB = 0x5F65cD7D792E9746EF82929D60de9a1C526f93A5;
+
+    function run() external {
+        if (address(LocalLib) == LOCAL_LIB) {
+            ExitVm(address(vm)).setExitCode(uint8(vm.envOr("CANDIDATE_CODE", uint256(7))));
+            require(!vm.envOr("REVERT_CANDIDATE", false), "candidate only");
+        } else if (vm.envOr("BASELINE_CODE", false)) {
+            ExitVm(address(vm)).setExitCode(0);
+        }
+        vm.startBroadcast();
+        new UsesRequiredLib();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    // A reverting candidate must not leak its code. A successful candidate with a different code
+    // must not replace the baseline either, including when the baseline explicitly requested zero.
+    for baseline_code in [false, true] {
+        for revert_candidate in [true, false] {
+            cmd.forge_fuse().arg("script").arg(&script).args([
+                "--tc",
+                "CandidateExitCode",
+                "--rpc-url",
+                &handle.http_endpoint(),
+            ]);
+            cmd.env("BASELINE_CODE", baseline_code.to_string());
+            cmd.env("REVERT_CANDIDATE", revert_candidate.to_string());
+            cmd.assert_success();
+            let sequence = latest_dry_run_sequence(prj.root());
+            let names = sequence
+                .transactions
+                .iter()
+                .filter_map(|tx| tx.contract_name.as_deref())
+                .collect::<Vec<_>>();
+            assert_eq!(names, ["LocalLib", "RequiredLib", "UsesRequiredLib"]);
+        }
+    }
+
+    // Control: the same successful status allows optimization and removes the local-only library.
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "CandidateExitCode",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ]);
+    cmd.env("BASELINE_CODE", "true");
+    cmd.env("CANDIDATE_CODE", "0");
+    cmd.assert_success();
+    let sequence = latest_dry_run_sequence(prj.root());
+    let names = sequence
+        .transactions
+        .iter()
+        .filter_map(|tx| tx.contract_name.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["RequiredLib", "UsesRequiredLib"]);
 }

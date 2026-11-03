@@ -2581,7 +2581,9 @@ interface Vm {
     /// verification have finished. A script that reverts, or a forge error, keeps its own exit code.
     ///
     /// Lets a script report an outcome to CI, e.g. `2` when a check finds drift. Only available in
-    /// `forge script`.
+    /// `forge script`. The last call wins, including `0` to clear a previously requested failure.
+    /// `--resume` does not restore or recompute this code, even when it replays the script to
+    /// recover signers.
     #[cheatcode(group = Scripting)]
     function setExitCode(uint8 code) external;
 

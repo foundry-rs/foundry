@@ -11182,7 +11182,7 @@
     {
       "func": {
         "id": "setExitCode",
-        "description": "Sets the exit code of `forge script`, applied once the script and any broadcast and\nverification have finished. A script that reverts, or a forge error, keeps its own exit code.\nLets a script report an outcome to CI, e.g. `2` when a check finds drift. Only available in\n`forge script`.",
+        "description": "Sets the exit code of `forge script`, applied once the script and any broadcast and\nverification have finished. A script that reverts, or a forge error, keeps its own exit code.\nLets a script report an outcome to CI, e.g. `2` when a check finds drift. Only available in\n`forge script`. The last call wins, including `0` to clear a previously requested failure.\n`--resume` does not restore or recompute this code, even when it replays the script to\nrecover signers.",
         "declaration": "function setExitCode(uint8 code) external;",
         "visibility": "external",
         "mutability": "",

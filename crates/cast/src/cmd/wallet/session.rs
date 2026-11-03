@@ -176,16 +176,21 @@ impl SessionArgs {
                 .wrap_err(format!("also failed to retire local Tempo session: {retire_err}"))),
         };
 
-        // The inner command's error takes precedence over cleanup failures.
-        match (child_result, cleanup_result) {
-            (Ok(()), Err(cleanup_err)) => {
+        // Forward the child status only after cleanup succeeds. Operational errors, including
+        // cleanup failures, must not be hidden by a script's requested exit code.
+        let status = match (child_result, cleanup_result) {
+            (Ok(_), Err(cleanup_err)) => {
                 Err(cleanup_err.wrap_err("failed to clean up Tempo session after inner command"))
             }
             (Err(child_err), Err(cleanup_err)) => Err(child_err.wrap_err(format!(
                 "also failed to clean up Tempo session {session_id:?}: {cleanup_err}"
             ))),
             (child_result, Ok(())) => child_result,
+        }?;
+        if !status.success() {
+            std::process::exit(status.code().expect("signal termination is an error"));
         }
+        Ok(())
     }
 }
 
@@ -276,12 +281,12 @@ impl InnerCommand {
         Ok(Self { raw, program, args })
     }
 
-    async fn run(&self, session_id: B256) -> Result<()> {
+    async fn run(&self, session_id: B256) -> Result<ExitStatus> {
         let mut interrupt = SessionInterrupt::new()?;
         self.run_with_interrupt(session_id, interrupt.recv()).await
     }
 
-    async fn run_with_interrupt<I>(&self, session_id: B256, interrupt: I) -> Result<()>
+    async fn run_with_interrupt<I>(&self, session_id: B256, interrupt: I) -> Result<ExitStatus>
     where
         I: std::future::Future<Output = Result<&'static str>>,
     {
@@ -314,12 +319,9 @@ impl InnerCommand {
         command
     }
 
-    fn check_status(&self, status: ExitStatus) -> Result<()> {
-        if status.success() {
-            return Ok(());
-        }
+    fn check_status(&self, status: ExitStatus) -> Result<ExitStatus> {
         match status.code() {
-            Some(code) => eyre::bail!("inner command `{}` exited with code {code}", self.raw),
+            Some(_) => Ok(status),
             None => eyre::bail!("inner command `{}` terminated by a signal", self.raw),
         }
     }

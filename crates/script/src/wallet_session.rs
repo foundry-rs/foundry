@@ -210,16 +210,12 @@ impl ScriptArgs {
             )
         })?;
 
-        if status.success() {
-            Ok(())
-        } else {
-            match status.code() {
-                Some(code) => {
-                    eyre::bail!("forge script wallet session exited with code {code}");
-                }
-                None => {
-                    eyre::bail!("forge script wallet session terminated by a signal");
-                }
+        // Cast has completed session cleanup before returning the inner script's status.
+        match status.code() {
+            Some(0) => Ok(()),
+            Some(code) => std::process::exit(code),
+            None => {
+                eyre::bail!("forge script wallet session terminated by a signal");
             }
         }
     }

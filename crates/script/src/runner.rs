@@ -257,46 +257,35 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         self.extend_debug_bytecodes(&mut debug_bytecodes, constructor_debug_bytecodes);
 
         // Optionally call the `setUp` function
-        let (success, returned, exit_reason, gas_used, labeled_addresses, transactions, exit_code) =
-            if setup {
-                let result = match self.executor.setup(Some(self.evm_opts.sender), address, None) {
-                    Ok(result) => result,
-                    Err(EvmError::Execution(err)) => err.raw,
-                    Err(err) => return Err(err.into()),
-                };
-                let RawCallResult {
-                    reverted,
-                    result,
-                    exit_reason,
-                    traces: setup_traces,
-                    labels,
-                    logs: setup_logs,
-                    gas_used,
-                    debug_bytecodes: setup_debug_bytecodes,
-                    transactions: setup_transactions,
-                    cheatcodes,
-                    ..
-                } = result;
-                traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
-                logs.extend_from_slice(&setup_logs);
-                self.extend_debug_bytecodes(&mut debug_bytecodes, setup_debug_bytecodes);
-                if let Some(txs) = setup_transactions {
-                    library_transactions.extend(txs);
-                }
-                let exit_code = cheatcodes.and_then(|cheats| cheats.exit_code);
-                (
-                    !reverted,
-                    result,
-                    exit_reason,
-                    gas_used,
-                    labels,
-                    Some(library_transactions),
-                    exit_code,
-                )
-            } else {
-                self.executor.backend_mut().set_test_contract(address);
-                (true, Bytes::new(), None, 0, Default::default(), Some(library_transactions), None)
+        let (success, returned, exit_reason, gas_used, labeled_addresses, transactions) = if setup {
+            let result = match self.executor.setup(Some(self.evm_opts.sender), address, None) {
+                Ok(result) => result,
+                Err(EvmError::Execution(err)) => err.raw,
+                Err(err) => return Err(err.into()),
             };
+            let RawCallResult {
+                reverted,
+                result,
+                exit_reason,
+                traces: setup_traces,
+                labels,
+                logs: setup_logs,
+                gas_used,
+                debug_bytecodes: setup_debug_bytecodes,
+                transactions: setup_transactions,
+                ..
+            } = result;
+            traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
+            logs.extend_from_slice(&setup_logs);
+            self.extend_debug_bytecodes(&mut debug_bytecodes, setup_debug_bytecodes);
+            if let Some(txs) = setup_transactions {
+                library_transactions.extend(txs);
+            }
+            (!reverted, result, exit_reason, gas_used, labels, Some(library_transactions))
+        } else {
+            self.executor.backend_mut().set_test_contract(address);
+            (true, Bytes::new(), None, 0, Default::default(), Some(library_transactions))
+        };
 
         Ok((
             address,
@@ -311,7 +300,6 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                 logs,
                 traces,
                 address: None,
-                exit_code,
                 ..Default::default()
             },
         ))

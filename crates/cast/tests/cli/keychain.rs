@@ -283,6 +283,28 @@ fn assert_accounts_store_key_signable(tempo_home: &Path, context: &str) {
     assert!(!tempo_home.join("wallet/sessions.toml").exists());
 }
 
+fn assert_session_key_revoked(cmd: &mut TestCommand, tempo_home: &Path, rpc: &str) {
+    let store = TempoAccountsStore::open(tempo_home.join("wallet/store.json")).unwrap();
+    let keys = store.access_keys().unwrap();
+    assert_eq!(keys.len(), 1);
+    cmd.cast_fuse()
+        .args([
+            "keychain",
+            "check",
+            accounts::ADDR1,
+            &keys[0].address().to_string(),
+            "--rpc-url",
+            rpc,
+            "--json",
+        ])
+        .assert_json_stdout(str![[r#"
+{
+  "data": { "is_revoked": true, "provisioned": false, "...": "{...}" },
+  "...": "{...}"
+}
+"#]]);
+}
+
 fn assert_async_tx_hash(stdout: &str, command: &str) {
     assert!(
         stdout.trim().starts_with("0x"),
@@ -1866,6 +1888,10 @@ async fn wallet_session_run_for_forge_script_submits_with_session_key(prj: _, cm
             r#"
 import "forge-std/Script.sol";
 
+interface ExitVm {{
+    function setExitCode(uint8 code) external;
+}}
+
 interface PathUsdLike {{
     function transfer(address to, uint256 amount) external returns (bool);
 }}
@@ -1875,6 +1901,7 @@ contract SessionForgeScript is Script {{
         vm.startBroadcast();
         PathUsdLike({path_usd}).transfer({recipient}, 0);
         vm.stopBroadcast();
+        ExitVm(address(vm)).setExitCode(uint8(vm.envUint("SESSION_EXIT_CODE")));
     }}
 }}
 "#,
@@ -1892,6 +1919,7 @@ contract SessionForgeScript is Script {{
 
     cmd.cast_fuse();
     cmd.env("TEMPO_HOME", tempo_home.path());
+    cmd.env("SESSION_EXIT_CODE", "5");
     let assertion = cmd
         .args([
             "wallet",
@@ -1915,7 +1943,7 @@ contract SessionForgeScript is Script {{
             "--rpc-url",
             &rpc,
         ])
-        .assert_success();
+        .assert_code(5);
     let stdout = assertion.get_output().stdout_lossy();
     let stderr = assertion.get_output().stderr_lossy();
 
@@ -1950,6 +1978,47 @@ contract SessionForgeScript is Script {{
         "forge broadcast tx should have a submitted hash: {tx}"
     );
     assert_accounts_store_key_retired(tempo_home.path(), "revoked");
+    assert_session_key_revoked(&mut cmd, tempo_home.path(), &rpc);
+
+    // The outer Forge wrapper must preserve Cast's status too, after on-chain revocation.
+    let tempo_home = tempfile::tempdir().unwrap();
+    cmd.forge_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    cmd.env("SESSION_EXIT_CODE", "7");
+    cmd.arg("script")
+        .arg(&script)
+        .args([
+            "--tc",
+            "SessionForgeScript",
+            "--broadcast",
+            "--timeout",
+            "1",
+            "--rpc-url",
+            &rpc,
+            "--session",
+            "--session-root",
+            accounts::ADDR1,
+            "--session-expires",
+            "10m",
+            "--session-target",
+            &path_usd,
+            "--session-selector",
+            "transfer(address,uint256)",
+            "--session-spend-limit",
+            "PathUSD=1000000",
+            "--session-spend-limit",
+            "AlphaUSD=1000000",
+            "--session-private-key",
+            accounts::PK1,
+        ])
+        .assert_code(7)
+        .stdout_eq(str![[r#"
+...
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+...
+"#]]);
+    assert_accounts_store_key_retired(tempo_home.path(), "revoked after custom exit");
+    assert_session_key_revoked(&mut cmd, tempo_home.path(), &rpc);
 }
 
 #[casttest]
@@ -2927,7 +2996,7 @@ exit 7
 
     cmd.cast_fuse();
     cmd.env("TEMPO_HOME", tempo_home.path());
-    let stderr = cmd
+    cmd
         .args([
             "wallet",
             "session",
@@ -2944,10 +3013,14 @@ exit 7
             "--rpc-url",
             &rpc,
         ])
-        .assert_failure()
-        .get_output()
-        .stderr_lossy();
-    assert!(stderr.contains("exited with code 7"), "unexpected stderr:\n{stderr}");
+        .assert_code(1)
+        .stderr_eq(str![[r#"
+Error: failed to clean up Tempo session after inner command
+
+Context:
+- session key is not provisioned on-chain yet; pending transactions from the wrapped command may still provision it. Wait for pending transactions to settle, then run `cast wallet session revoke 0x[..]`.
+
+"#]]);
     assert_accounts_store_key_retired(tempo_home.path(), "failed");
 }
 

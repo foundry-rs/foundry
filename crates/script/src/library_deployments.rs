@@ -139,6 +139,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         let Ok(candidate) = candidate else { return Ok(self) };
         if self.execution_result.returned != candidate.execution_result.returned
             || self.execution_result.logs != candidate.execution_result.logs
+            || self.execution_result.exit_code != candidate.execution_result.exit_code
             || !self.equivalent_candidate(&candidate, &artifacts, &rpc, baseline_count)
         {
             return Ok(self);
