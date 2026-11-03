@@ -1535,11 +1535,12 @@ impl Config {
         let parse_path = |path: &PathBuf| path.strip_prefix("./").unwrap_or(path).to_path_buf();
 
         // Solar warns on every build that its code generation is experimental. Configuring Solar
-        // already chose that, so the notice is not a project warning, including under `deny`.
-        let solar_codes = self
-            .solc_version()
-            .is_some_and(|version| version.build.as_str().contains("solar"))
-            .then_some(2264);
+        // already chose that, so the notice is not a project warning, including under `deny`. A
+        // Solar pin counts before its first install, since the compiler is resolved after
+        // this.
+        let solar_codes = (matches!(self.solc, Some(SolcReq::Solar(_)))
+            || self.solc_version().is_some_and(|version| version.build.as_str().contains("solar")))
+        .then_some(2264);
 
         let mut builder = ProjectBuilder::<C>::default()
             .artifacts(self.configured_artifacts_handler())
@@ -1745,6 +1746,9 @@ impl Config {
     /// If `solc` is [`SolcReq::Version`] then this will download and install the solc version if
     /// it's missing, unless the `offline` flag is enabled, in which case an error is thrown.
     ///
+    /// If `solc` is [`SolcReq::Solar`] then this will download and install the Solar release if
+    /// it's missing, unless the `offline` flag is enabled, in which case an error is thrown.
+    ///
     /// If `solc` is [`SolcReq::Local`] then this will ensure that the path exists.
     fn ensure_solc(&self) -> Result<Option<Solc>, SolcError> {
         if let Some(solc) = &self.solc {
@@ -1759,6 +1763,18 @@ impl Config {
                             )));
                         }
                         Solc::blocking_install(version)?
+                    }
+                }
+                SolcReq::Solar(version) => {
+                    if let Some(solar) = Solc::find_installed_solar(version) {
+                        solar
+                    } else {
+                        if self.offline {
+                            return Err(SolcError::msg(format!(
+                                "can't install missing solar {version} in offline mode"
+                            )));
+                        }
+                        Solc::blocking_install_solar(version)?
                     }
                 }
                 SolcReq::Local(solc) => Solc::new(resolve_solc_path(solc)?)?,
@@ -3413,13 +3429,46 @@ pub enum SolcReq {
     /// Requires a specific solc version, that's either already installed (via `svm`) or will be
     /// auto installed (via `svm`)
     Version(Version),
+    /// Requires an exact Solar release, written as `solar:<version>`.
+    ///
+    /// Uses the release installed in `~/.foundry/solar/<version>`, and otherwise downloads and
+    /// verifies it.
+    Solar(
+        #[serde(
+            serialize_with = "serialize_solar_req",
+            deserialize_with = "deserialize_solar_req"
+        )]
+        Version,
+    ),
     /// Path to an existing local solc installation, or an executable name on `PATH`.
     Local(PathBuf),
+}
+
+fn serialize_solar_req<S: Serializer>(version: &Version, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.collect_str(&format_args!("solar:{version}"))
+}
+
+fn deserialize_solar_req<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Version, D::Error> {
+    let req = String::deserialize(deserializer)?;
+    parse_solar_pin(&req).ok_or_else(|| de::Error::custom("not a Solar pin"))
+}
+
+/// Parses `solar:<version>`, which must name a downloadable release that reports its Solar
+/// version, so 0.2.0 or later without pre-release or build metadata.
+fn parse_solar_pin(req: &str) -> Option<Version> {
+    let version = Version::parse(req.strip_prefix("solar:")?).ok()?;
+    (version >= Version::new(0, 2, 0) && version.pre.is_empty() && version.build.is_empty())
+        .then_some(version)
 }
 
 fn resolve_solc_path(solc: &Path) -> Result<PathBuf, SolcError> {
     if solc.is_file() {
         Ok(solc.to_path_buf())
+    } else if solc.to_str().is_some_and(|solc| solc.starts_with("solar:")) {
+        Err(SolcError::msg(format!(
+            "invalid Solar pin {solc:?}, expected `solar:<version>` naming a release 0.2.0 or \
+             later, without pre-release or build metadata"
+        )))
     } else {
         which::which(solc).map_err(|_| SolcError::msg(format!("`solc` {solc:?} does not exist")))
     }
@@ -3429,10 +3478,14 @@ impl SolcReq {
     /// Tries to get the solc version from the `SolcReq`
     ///
     /// If the `SolcReq` is a `Version` it will return the version, if it's a path to a binary it
-    /// will try to get the version from the binary.
+    /// will try to get the version from the binary. A Solar pin returns the version of the
+    /// installed release, and never downloads it.
     pub fn try_version(&self) -> Result<Version, SolcError> {
         match self {
             Self::Version(version) => Ok(version.clone()),
+            Self::Solar(version) => Solc::find_installed_solar(version)
+                .map(|solar| solar.version)
+                .ok_or_else(|| SolcError::msg(format!("solar {version} is not installed"))),
             Self::Local(path) => Solc::new(resolve_solc_path(path)?).map(|solc| solc.version),
         }
     }
@@ -3441,7 +3494,13 @@ impl SolcReq {
 impl<T: AsRef<str>> From<T> for SolcReq {
     fn from(s: T) -> Self {
         let s = s.as_ref();
-        if let Ok(v) = Version::from_str(s) { Self::Version(v) } else { Self::Local(s.into()) }
+        if let Ok(v) = Version::from_str(s) {
+            Self::Version(v)
+        } else if let Some(v) = parse_solar_pin(s) {
+            Self::Solar(v)
+        } else {
+            Self::Local(s.into())
+        }
     }
 }
 
@@ -5118,6 +5177,25 @@ mod tests {
 
             let config = Config::load().unwrap();
             assert_eq!(config.solc, Some(SolcReq::Local("path/to/local/solc".into())));
+
+            // A Solar pin survives a round trip, while bare `solar` and malformed pins stay
+            // executable names.
+            for (solc, expected) in [
+                ("solar:0.3.0", SolcReq::Solar(Version::new(0, 3, 0))),
+                ("solar:0.3.0-dev", SolcReq::Local("solar:0.3.0-dev".into())),
+                ("solar:0.1.8", SolcReq::Local("solar:0.1.8".into())),
+                ("solar", SolcReq::Local("solar".into())),
+                ("solar:0.3", SolcReq::Local("solar:0.3".into())),
+            ] {
+                jail.create_file("foundry.toml", &format!("[profile.default]\nsolc = {solc:?}"))?;
+                let config = Config::load().unwrap();
+                assert_eq!(config.solc, Some(expected.clone()));
+                assert_eq!(SolcReq::from(solc), expected);
+                assert_eq!(Config::from_provider(&config).unwrap().solc, Some(expected));
+            }
+            jail.set_env("FOUNDRY_SOLC_VERSION", "solar:0.3.0");
+            let config = Config::load().unwrap();
+            assert_eq!(config.solc, Some(SolcReq::Solar(Version::new(0, 3, 0))));
 
             jail.set_env("FOUNDRY_SOLC_VERSION", "0.6.6");
             let config = Config::load().unwrap();
