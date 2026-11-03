@@ -24,7 +24,7 @@ pub use evm2::SpecId;
 
 /// Excess blob gas of a block and the blob gas price derived from it.
 ///
-/// Serializes like the block environment of Anvil state dumps written before the evm2 migration.
+/// Its serde layout is part of the `block` field of Anvil state dumps and must stay stable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct BlobExcessGasAndPrice {
     /// The excess blob gas of the block.
@@ -49,7 +49,7 @@ impl BlobExcessGasAndPrice {
 
 /// The block environment of the next block or of a replayed block.
 ///
-/// Serializes like the block environment of Anvil state dumps written before the evm2 migration.
+/// Its serde layout is part of the `block` field of Anvil state dumps and must stay stable.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct BlockEnv {
     /// Block number.

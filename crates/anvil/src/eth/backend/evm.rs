@@ -18,8 +18,11 @@ use crate::{
         error::BlockchainError,
     },
 };
-use alloy_consensus::{Signed, transaction::Recovered};
-use alloy_eips::{Decodable2718, Encodable2718};
+use alloy_consensus::{Signed, Transaction as _, transaction::Recovered};
+use alloy_eips::{
+    Decodable2718, Encodable2718,
+    eip7702::{RecoveredAuthority, RecoveredAuthorization},
+};
 use alloy_primitives::{
     Address, B256, Bytes, U256,
     map::{AddressMap, AddressSet},
@@ -27,6 +30,7 @@ use alloy_primitives::{
 use evm2::{
     Evm, EvmFeatures, EvmTypesHost, Inspector, PrecompileError,
     env::BlockEnv as NetBlockEnv,
+    ethereum::LazyAuthorization,
     evm::{PendingState, TxResult, TxResultExt, precompile::PrecompileProvider},
     interpreter::{GasTracker, Message},
     precompiles::{MovePrecompileError, PrecompileId, PrecompileResult},
@@ -39,7 +43,7 @@ use foundry_evm_hardforks::FoundryHardfork;
 use foundry_evm_networks::{
     NetworkConfigs,
     arbitrum::{ARB_BLOCK_NUMBER_SELECTOR, ARB_SYS_ADDRESS, arb_block_number_call},
-    celo::transfer::CELO_TRANSFER_ADDRESS,
+    celo::transfer::{CELO_TRANSFER_ADDRESS, CELO_TRANSFER_PRECOMPILE_NAME},
 };
 use foundry_primitives::FoundryTxEnvelope;
 use std::{fmt, sync::Arc};
@@ -264,8 +268,6 @@ pub fn authority_overrides(
     tx: &FoundryTxEnvelope,
     cheats: &CheatsManager,
 ) -> Vec<(usize, Address)> {
-    use alloy_consensus::Transaction;
-
     if !cheats.has_recover_overrides() {
         return Vec::new();
     }
@@ -283,9 +285,6 @@ pub fn authority_overrides(
 
 /// Applies authority overrides to an evm2 EIP-7702 transaction.
 fn override_authorities(tx: &mut evm2::ethereum::LazyTxEip7702, overrides: &[(usize, Address)]) {
-    use alloy_eips::eip7702::{RecoveredAuthority, RecoveredAuthorization};
-    use evm2::ethereum::LazyAuthorization;
-
     for (index, authority) in overrides {
         if let Some(auth) = tx.authorization_list.get_mut(*index) {
             *auth = LazyAuthorization::Recovered(RecoveredAuthorization::new_unchecked(
@@ -506,10 +505,10 @@ pub fn version<N: AnvilEvmNetwork>(
     for (disabled, feature) in [
         (!cfg.tx_chain_id_check, EvmFeatures::TX_CHAIN_ID_CHECK),
         (cfg.disable_nonce_check, EvmFeatures::NONCE_CHECK),
-        // evm2's sender balance check includes the gas fee even when the fee is not charged, while
-        // REVM's only covered the value without a fee charge.
+        // evm2's sender balance check includes the gas fee even when the fee is not charged, so it
+        // is skipped without a fee charge.
         (cfg.disable_balance_check || cfg.disable_fee_charge, EvmFeatures::BALANCE_CHECK),
-        // Without a fee charge, REVM left the sender balance as is instead of topping it up.
+        // Without a fee charge, the sender balance is left as is instead of topped up.
         (cfg.disable_fee_charge, EvmFeatures::BALANCE_TOP_UP),
         (cfg.disable_block_gas_limit, EvmFeatures::BLOCK_GAS_LIMIT_CHECK),
         (cfg.disable_eip3607, EvmFeatures::EIP3607),
@@ -585,19 +584,18 @@ pub fn evm_tx<N: AnvilEvmNetwork>(
     payload: TxPayload,
     cheats: Option<&CheatsManager>,
 ) -> Result<Recovered<TxFor<N>>, BlockchainError> {
-    let tx_ref = tx;
     let envelope = decode_envelope::<N>(tx)?;
-    let mut tx = N::evm_tx(envelope, sender, payload)
+    let mut evm_tx = N::evm_tx(envelope, sender, payload)
         .map_err(|err| BlockchainError::Message(err.to_string()))?;
     if let Some(cheats) = cheats {
-        let overrides = authority_overrides(tx_ref, cheats);
+        let overrides = authority_overrides(tx, cheats);
         if !overrides.is_empty() {
-            let (mut inner, signer) = tx.into_parts();
+            let (mut inner, signer) = evm_tx.into_parts();
             N::apply_authority_overrides(&mut inner, &overrides);
-            tx = Recovered::new_unchecked(inner, signer);
+            evm_tx = Recovered::new_unchecked(inner, signer);
         }
     }
-    Ok(tx)
+    Ok(evm_tx)
 }
 
 /// Executes `prepared` on `evm` and detaches its state changes.
@@ -793,7 +791,9 @@ impl<T: evm2::EvmTypes> PrecompileProvider<T> for AnvilPrecompiles<'_, T> {
                 ExtraPrecompile::User(id, _) => id.clone(),
                 ExtraPrecompile::ArbSys(_) => PrecompileId::custom("ArbSys"),
                 ExtraPrecompile::P256 { .. } => PrecompileId::P256Verify,
-                ExtraPrecompile::CeloTransfer => PrecompileId::custom("celo transfer"),
+                ExtraPrecompile::CeloTransfer => {
+                    PrecompileId::custom(CELO_TRANSFER_PRECOMPILE_NAME)
+                }
             };
             (*address, id)
         }));

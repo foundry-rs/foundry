@@ -15,9 +15,7 @@ use crate::eth::{
 use alloy_consensus::{Signed, TxLegacy};
 use alloy_eips::{Decodable2718, Encodable2718};
 use alloy_network::Network;
-use alloy_primitives::{
-    Address, B256, Bytes, KECCAK256_EMPTY, Signature, TxKind, U256, address, b256, hex, uint,
-};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, address, b256, hex, uint};
 use anvil_core::eth::transaction::PendingTransaction;
 use base_common_consensus::Predeploys;
 use base_common_genesis::RollupConfig;
@@ -213,10 +211,7 @@ pub(super) fn system_transactions(
 /// Executes the pinned upgrade's constructor to obtain its runtime instead of carrying a second
 /// bytecode artifact. Existing fork deployments and their storage are left intact.
 pub(super) fn ensure_l1_block_predeploy(db: &mut dyn Db) -> Result<(), DatabaseError> {
-    if db
-        .basic_ref(Predeploys::L1_BLOCK_INFO)?
-        .is_some_and(|info| info.code_hash != KECCAK256_EMPTY)
-    {
+    if db.basic_ref(Predeploys::L1_BLOCK_INFO)?.is_some_and(|info| !info.is_empty_code_hash()) {
         return Ok(());
     }
     let create = TxLegacy {
@@ -258,7 +253,7 @@ pub(super) fn ensure_base_time_predeploy(
 ) -> Result<(), DatabaseError> {
     ensure_l1_block_predeploy(db)?;
     let mut proxy = db.basic_ref(Predeploys::BASE_TIME)?.unwrap_or_default();
-    let missing_code = proxy.code_hash == KECCAK256_EMPTY;
+    let missing_code = proxy.is_empty_code_hash();
     if missing_code {
         proxy.set_code(Bytecode::new_raw(decode_artifact(PROXY_BYTECODE)));
         db.insert_account(Predeploys::BASE_TIME, proxy);
@@ -300,7 +295,7 @@ pub(super) fn ensure_create2_deployer(db: &mut dyn Db) -> Result<(), DatabaseErr
 /// Plants Zenith's code stub on code-less EIP-8130 system accounts so state clearing keeps them.
 pub(super) fn ensure_eip8130_system_accounts(db: &mut dyn Db) -> Result<(), DatabaseError> {
     let mut info = db.basic_ref(EIP8130_NONCE_MANAGER_ADDRESS)?.unwrap_or_default();
-    if info.code_hash != KECCAK256_EMPTY {
+    if !info.is_empty_code_hash() {
         return Ok(());
     }
     info.set_code(Bytecode::new_legacy(Bytes::from_static(&EIP8130_SYSTEM_ACCOUNT_STUB)));
@@ -364,6 +359,6 @@ mod tests {
         let mut db = crate::eth::backend::mem::in_memory_db::MemDb::default();
         ensure_l1_block_predeploy(&mut db).unwrap();
         let info = db.basic_ref(Predeploys::L1_BLOCK_INFO).unwrap().unwrap();
-        assert_ne!(info.code_hash, KECCAK256_EMPTY);
+        assert!(!info.is_empty_code_hash());
     }
 }

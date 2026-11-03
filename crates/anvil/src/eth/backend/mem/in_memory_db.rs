@@ -680,8 +680,7 @@ impl MaybeForkedDatabase for MemDb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eth::backend::db::KECCAK_EMPTY;
-    use alloy_primitives::{Bytes, address};
+    use alloy_primitives::{Bytes, KECCAK256_EMPTY, address};
     use std::collections::BTreeMap;
 
     // verifies that all substantial aspects of a loaded account remain the same after an account
@@ -697,7 +696,7 @@ mod tests {
             test_addr,
             AccountInfo {
                 balance: U256::from(123456),
-                code_hash: KECCAK_EMPTY,
+                code_hash: KECCAK256_EMPTY,
                 code: Some(contract_code.clone()),
                 nonce: 1234,
                 ..Default::default()
@@ -738,7 +737,7 @@ mod tests {
             test_addr,
             AccountInfo {
                 balance: U256::from(123456),
-                code_hash: KECCAK_EMPTY,
+                code_hash: KECCAK256_EMPTY,
                 code: Some(contract_code.clone()),
                 nonce: 1234,
                 ..Default::default()

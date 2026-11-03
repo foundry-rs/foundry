@@ -174,7 +174,7 @@ impl From<RpcError> for BlockchainError {
 impl From<evm2::DatabaseError> for BlockchainError {
     fn from(err: evm2::DatabaseError) -> Self {
         // Remote fork failures keep their typed error so RPC callers see the fork error.
-        match err.downcast_ref::<DatabaseError>().and_then(clone_database_error) {
+        match err.downcast_ref::<DatabaseError>().map(clone_database_error) {
             Some(err) => Self::DatabaseError(err),
             None => Self::Message(err.to_string()),
         }
@@ -182,8 +182,8 @@ impl From<evm2::DatabaseError> for BlockchainError {
 }
 
 /// Clones a fork database error, which does not implement `Clone`.
-pub(crate) fn clone_database_error(err: &DatabaseError) -> Option<DatabaseError> {
-    Some(match err {
+fn clone_database_error(err: &DatabaseError) -> DatabaseError {
+    match err {
         DatabaseError::MissingCode(hash) => DatabaseError::MissingCode(*hash),
         DatabaseError::BlockNumberOverflow(number) => DatabaseError::BlockNumberOverflow(*number),
         DatabaseError::GetAccount(address, err) => DatabaseError::GetAccount(*address, err.clone()),
@@ -201,7 +201,7 @@ pub(crate) fn clone_database_error(err: &DatabaseError) -> Option<DatabaseError>
         DatabaseError::AnyRequest(err) => DatabaseError::AnyRequest(err.clone()),
         DatabaseError::Recv(err) => DatabaseError::Recv(*err),
         DatabaseError::Send(err) => DatabaseError::Send(err.clone()),
-    })
+    }
 }
 
 impl From<HandlerError> for BlockchainError {
