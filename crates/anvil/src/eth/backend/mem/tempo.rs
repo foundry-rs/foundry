@@ -965,8 +965,7 @@ mod tests {
         // The exact snapshot retains the pending key and derivation counter.
         let mut restored = consensus(&api);
         assert_eq!(restored.rotate().unwrap(), replaced);
-        api.mine_one().await.unwrap();
-        api.mine_one().await.unwrap();
+        api.anvil_mine(Some(U256::from(5)), None).await.unwrap();
         assert_eq!(consensus(&api).identity(), scheduled);
         assert_certified_head(&api);
     }
@@ -1265,7 +1264,7 @@ mod tests {
             assert_eq!(consensus(&api).rotate().unwrap(), next_rotation);
             assert_eq!(api.balance(account, None).await.unwrap(), U256::from(2));
             assert_certified_head(&api);
-            api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
+            api.anvil_mine(Some(U256::from(6)), None).await.unwrap();
             assert_eq!(consensus(&api).identity(), scheduled);
             assert!(api.evm_revert(snapshot).await.unwrap());
             assert_eq!(api.balance(account, None).await.unwrap(), U256::ONE);
