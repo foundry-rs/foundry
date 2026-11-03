@@ -220,6 +220,10 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Conversion(ConversionSubcommand::ToInt256 { value }) => {
             let n = NumberWithBase::parse_int(&stdin::unwrap_line(value)?, None)?;
+            eyre::ensure!(
+                !n.is_nonnegative() || n.number() <= I256::MAX.into_raw(),
+                "value out of range for a signed 256-bit integer"
+            );
             print_scalar(format!("{n:#066x}"))?;
         }
         CastSubcommand::Conversion(ConversionSubcommand::ToUnit { value, unit }) => {
