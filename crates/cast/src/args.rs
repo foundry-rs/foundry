@@ -36,7 +36,7 @@ use foundry_cli::{
 use foundry_common::{
     abi::{
         abi_decode_calldata, abi_decode_event_data, encode_function_args,
-        encode_function_args_packed, get_error, get_event, get_func,
+        encode_function_args_packed, encode_function_args_raw, get_error, get_event, get_func,
     },
     fmt::{UIfmt, UIfmtSignatureExt, format_uint_exp, get_pretty_block_attr, get_pretty_tx_attr},
     fs,
@@ -376,11 +376,11 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 hex::encode_prefixed(encoded)
             } else {
                 let func = get_func(&sig)?;
-                let encoded = encode_function_args(&func, &args).map_err(|e| {
+                let encoded = encode_function_args_raw(&func, &args).map_err(|e| {
                     let e = with_trailing_flag_hint(e, func.inputs.len(), &args);
                     eyre::eyre!("Could not ABI encode the function and arguments: {e}")
                 })?;
-                hex::encode_prefixed(&encoded[4..])
+                hex::encode_prefixed(encoded)
             };
             print_scalar(out)?;
         }
@@ -1685,7 +1685,7 @@ fn strip_0x(s: &str) -> &str {
 /// The variadic ABI arguments accept hyphen values so that negative numbers work, which also
 /// captures flags written after the arguments.
 fn with_trailing_flag_hint(err: eyre::Report, expected: usize, args: &[String]) -> eyre::Report {
-    match args.get(expected..).and_then(|extra| extra.iter().find(|arg| arg.starts_with("--"))) {
+    match args.iter().skip(expected).find(|arg| arg.starts_with("--")) {
         Some(flag) => {
             eyre::eyre!("{err}; `{flag}` was read as an argument; put flags before the signature")
         }
