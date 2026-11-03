@@ -171,15 +171,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                     )?;
                 }
 
-                let mut transaction = builder.build();
-                // Name created contracts after their `vm.label`.
-                if transaction.call_kind.is_any_create() {
-                    transaction.label = transaction
-                        .contract_address
-                        .and_then(|address| self.execution_result.labeled_addresses.get(&address))
-                        .cloned();
-                }
-                Ok(transaction)
+                Ok(builder.build())
             })
             .collect::<Result<VecDeque<_>>>()?;
 
@@ -188,8 +180,21 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
 
     fn into_filled(
         self,
-        transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
+        mut transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
     ) -> FilledTransactionsState<FEN> {
+        // Use the final script labels, including labels set after a deployment. Additional
+        // contracts are only known after transaction simulation.
+        let labels = &self.execution_result.labeled_addresses;
+        for transaction in &mut transactions {
+            if transaction.call_kind.is_any_create() {
+                transaction.label =
+                    transaction.contract_address.and_then(|address| labels.get(&address)).cloned();
+            }
+            for contract in &mut transaction.additional_contracts {
+                contract.label = labels.get(&contract.address).cloned();
+            }
+        }
+
         FilledTransactionsState {
             args: self.args,
             script_config: self.script_config,

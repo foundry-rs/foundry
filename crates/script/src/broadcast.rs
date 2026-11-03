@@ -1237,11 +1237,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         } else if !shell::is_json() {
             sh_println!("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
         }
-        if !shell::is_json() {
-            for deployment in self.sequence.sequences() {
-                print_deployed_contracts(deployment)?;
-            }
-        }
 
         Ok(BroadcastedState {
             args: self.args,
@@ -1989,43 +1984,69 @@ fn resume_script_failure(error: &str) -> String {
     format!("Resume re-ran the script to collect signers, but it failed: {error}")
 }
 
-/// Prints the contracts a broadcast created on one chain, named by their `vm.label` if any.
-///
-/// Only creations with a successful receipt are listed.
-fn print_deployed_contracts<N: Network>(sequence: &ScriptSequence<N>) -> Result<()> {
-    let mined = sequence
-        .receipts
-        .iter()
-        .map(|receipt| receipt.transaction_hash())
-        .collect::<std::collections::HashSet<_>>();
-    let rows = sequence
-        .transactions
-        .iter()
-        .filter(|tx| tx.call_kind.is_any_create() && tx.hash.is_some_and(|h| mined.contains(&h)))
-        .filter_map(|tx| {
-            let name = tx.contract_name.as_deref().filter(|name| !name.is_empty()).unwrap_or("-");
-            Some((tx.label.as_deref(), name, tx.contract_address?))
-        })
-        .collect::<Vec<_>>();
-    if rows.is_empty() {
-        return Ok(());
-    }
-
-    let has_labels = rows.iter().any(|(label, ..)| label.is_some());
-    let label_width = rows.iter().map(|(label, ..)| label.map_or(1, str::len)).max().unwrap_or(0);
-    let name_width = rows.iter().map(|(_, name, _)| name.len()).max().unwrap_or(0);
-    sh_println!("\nDeployed contracts (chain {}):", sequence.chain)?;
-    for (label, name, address) in rows {
-        if has_labels {
-            sh_println!(
-                "  {:<label_width$}  {name:<name_width$}  {address}",
-                label.unwrap_or("-")
-            )?;
-        } else {
-            sh_println!("  {name:<name_width$}  {address}")?;
+impl<FEN: FoundryEvmNetwork> BroadcastedState<FEN> {
+    /// Prints recorded creations with successful receipts, including factory deployments.
+    pub(crate) fn print_deployed_contracts(&self) -> Result<()> {
+        if shell::is_json() {
+            return Ok(());
         }
+
+        for sequence in self.sequence.sequences() {
+            let mined = sequence
+                .receipts
+                .iter()
+                .map(|receipt| receipt.transaction_hash())
+                .collect::<HashSet<_>>();
+            let rows = sequence
+                .transactions
+                .iter()
+                .filter(|tx| tx.hash.is_some_and(|hash| mined.contains(&hash)))
+                .flat_map(|tx| {
+                    let direct = tx.call_kind.is_any_create().then_some(tx).and_then(|tx| {
+                        Some((
+                            tx.label.as_deref(),
+                            tx.contract_name.as_deref(),
+                            tx.contract_address?,
+                        ))
+                    });
+                    direct.into_iter().chain(tx.additional_contracts.iter().map(|contract| {
+                        (
+                            contract.label.as_deref(),
+                            contract.contract_name.as_deref(),
+                            contract.address,
+                        )
+                    }))
+                })
+                .map(|(label, name, address)| {
+                    (label, name.filter(|name| !name.is_empty()).unwrap_or("-"), address)
+                })
+                .collect::<Vec<_>>();
+            if rows.is_empty() {
+                continue;
+            }
+
+            let has_labels = rows.iter().any(|(label, ..)| label.is_some());
+            let label_width = rows
+                .iter()
+                .map(|(label, ..)| label.map_or(1, |label| label.chars().count()))
+                .max()
+                .unwrap_or(0);
+            let name_width =
+                rows.iter().map(|(_, name, _)| name.chars().count()).max().unwrap_or(0);
+            sh_status!("\nDeployed contracts (chain {}):", sequence.chain)?;
+            for (label, name, address) in rows {
+                if has_labels {
+                    sh_status!(
+                        "  {:<label_width$}  {name:<name_width$}  {address}",
+                        label.unwrap_or("-")
+                    )?;
+                } else {
+                    sh_status!("  {name:<name_width$}  {address}")?;
+                }
+            }
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 #[cfg(test)]

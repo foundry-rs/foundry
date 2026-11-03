@@ -18,6 +18,9 @@ pub struct AdditionalContract {
     pub init_code: Bytes,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub creator_code_addresses: Vec<Address>,
+    /// The final `vm.label` of the created contract, if the script set one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -128,6 +131,7 @@ mod tests {
             address: Address::repeat_byte(0x33),
             init_code: Bytes::new(),
             creator_code_addresses: vec![creator],
+            label: None,
         };
         assert_eq!(
             serde_json::to_value(contract).unwrap()["creatorCodeAddresses"],

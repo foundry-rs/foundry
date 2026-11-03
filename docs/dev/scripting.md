@@ -100,6 +100,13 @@ A `ScriptSequence` compatibility artifact stores:
 - chain ID, libraries, script returns, source commit, and timestamp;
 - each transaction's RPC URL in a separate sensitive-cache file.
 
+Direct creations and recorded `additionalContracts` carry an optional `label` from the script's final
+`vm.label` map. Unlabelled creations omit the field, and old artifacts without it remain readable.
+After an ordinary or Tempo batch broadcast, including resume, a human-readable deployment summary
+lists recorded creations whose parent transaction has a successful receipt. It is written to stderr
+and suppressed by `--json` and `--quiet`. With `--skip-simulation`, additional creations are not
+collected, so only direct deployments can be listed.
+
 Each `TransactionWithMetadata` has an optional transaction hash. The authoritative recovery plan
 wraps these transactions with stable operation IDs, immutable attempt records, and recovery state.
 Ordinary recovery selects incomplete operations by their own hash associations. Batch recovery
