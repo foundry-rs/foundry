@@ -8911,8 +8911,6 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [profile.default]
-
                 [profile.default.rpc_endpoints]
                 local = { endpoint = "http://localhost:8545", retriez = 3 }
 
