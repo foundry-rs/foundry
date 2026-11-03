@@ -33,6 +33,19 @@ impl SymbolicCalldata {
         })
     }
 
+    /// Builds `len` bytes of unconstrained raw calldata that is not tied to any ABI.
+    pub(super) fn raw(cx: &mut SymCx, len: usize, prefix: &str) -> Self {
+        let words = (0..len.div_ceil(32))
+            .map(|idx| {
+                let word = SymExpr::var(cx, &format!("{prefix}_raw{len}_{idx}"));
+                SymBytes::word(cx, word)
+            })
+            .collect::<Vec<_>>();
+        let bytes = SymBytes::concat(cx, words);
+        let bytes = bytes.slice_concrete(cx, 0, len);
+        Self { bytes, inputs: Vec::new(), constraints: Vec::new() }
+    }
+
     pub(super) fn variants_with_prefix(
         function: &Function,
         config: &SymbolicConfig,
@@ -152,6 +165,15 @@ impl SymbolicCalldata {
         model: &(impl SymbolicModelLookup + ?Sized),
     ) -> Result<Vec<DynSolValue>, SymbolicError> {
         self.inputs.iter().map(|input| input.value.model_value(cx, model)).collect()
+    }
+
+    /// Evaluates the full calldata bytes under a solver model.
+    pub(super) fn model_to_bytes(
+        &self,
+        cx: &mut SymCx,
+        model: &(impl SymbolicModelLookup + ?Sized),
+    ) -> Result<Vec<u8>, SymbolicError> {
+        self.bytes.eval_model(cx, model)
     }
 
     pub(super) fn seed_model(

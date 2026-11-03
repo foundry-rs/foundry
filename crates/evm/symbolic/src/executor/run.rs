@@ -22,7 +22,7 @@ impl SymbolicExecutor {
         }
     }
 
-    fn reset_run_state(&mut self, use_wall_clock_deadline: bool) {
+    pub(super) fn reset_run_state(&mut self, use_wall_clock_deadline: bool) {
         self.deferred_incomplete = None;
         self.nested_deferred_mode = DeferredPathMode::Skip;
         self.stateless_retry_safe = true;
@@ -96,7 +96,7 @@ impl SymbolicExecutor {
     }
 
     /// Returns any deferred incomplete reason.
-    fn deferred_incomplete(&self) -> Option<(SymbolicStopReason, String)> {
+    pub(super) fn deferred_incomplete(&self) -> Option<(SymbolicStopReason, String)> {
         match self.deferred_incomplete? {
             DeferredIncomplete::Unsupported(reason) => Some((
                 SymbolicStopReason::Stuck,

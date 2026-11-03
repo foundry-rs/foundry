@@ -1592,3 +1592,47 @@ Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
 
     assert!(!stdout.contains("symbolic CALLCODE value"), "{stdout}");
 }
+
+#[forgetest_init]
+fn symbolic_call_stop_after_subcall_returns_no_data(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_call_stop_after_subcall_returns_no_data");
+
+    prj.add_test(
+        "SymbolicStopAfterSubcall.t.sol",
+        r#"
+contract Echo {
+    fallback(bytes calldata) external returns (bytes memory) {
+        return hex"deadbeef";
+    }
+}
+
+contract StopAfterSubcall {
+    address immutable echo;
+
+    constructor(address echo_) {
+        echo = echo_;
+    }
+
+    fallback() external {
+        (bool ok,) = echo.call("");
+        require(ok);
+        assembly ("memory-safe") {
+            stop()
+        }
+    }
+}
+
+contract SymbolicStopAfterSubcall {
+    function checkStopAfterSubcallReturnsNoData() public {
+        StopAfterSubcall child = new StopAfterSubcall(address(new Echo()));
+        (bool success, bytes memory output) = address(child).call("");
+        assert(success);
+        assert(output.length == 0);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "checkStopAfterSubcallReturnsNoData"])
+        .assert_success();
+}

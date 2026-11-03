@@ -571,6 +571,38 @@ symbolic execution. Dependency storage keyed by symbolic calldata is still
 explored symbolically, but it can replay-filter to `Incomplete` or `mismatch`
 instead of a confirmed counterexample if the required slot is not concrete.
 
+## Equivalence Checking
+
+`forge equivalence` checks whether two runtime bytecodes behave the same for
+every input, like `hevm equivalence`. It runs both codes at one address from the
+same pre-state on shared symbolic calldata and compares, on every pair of
+feasible paths:
+
+- whether the call succeeded or reverted,
+- the return or revert data,
+- when both succeed, every storage slot either code wrote.
+
+```sh
+forge equivalence --code-a "$(forge inspect A deployedBytecode)" \
+  --code-b "$(forge inspect B deployedBytecode)"
+forge equivalence --code-a-file a.hex --code-b-file b.hex --sig "transfer(address,uint256)"
+```
+
+Without `--sig`, calldata is fully symbolic at each length in
+`--calldata-lengths` (default `0,4,36,68,100,132` bytes). With `--sig`, it is
+limited to ABI-encoded calls of that function. Storage starts empty, as for a
+freshly deployed contract; `--symbolic-storage` starts from arbitrary storage
+instead, which finds differences such as a checked increment that reverts at
+`type(uint256).max` where an unchecked one wraps.
+
+A counterexample is replayed through the concrete executor and printed with
+both results and any storage slots that differ; the command then exits with a
+non-zero status. `--json` prints the same result as JSON. Like `forge test
+--symbolic`, `Equivalent` is scoped to the modeled EVM surface and configured
+bounds, and a check that cannot finish reports an incomplete result instead.
+Logs, balances and other accounts' state are not compared, and the call value
+is zero.
+
 ## Configuration
 
 The primary configuration path is native Foundry config.

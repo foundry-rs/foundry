@@ -8,6 +8,7 @@ mod calls;
 mod cheatcodes;
 mod constraints;
 mod create;
+mod equivalence;
 mod invariant;
 mod opcodes;
 mod run;
@@ -345,6 +346,7 @@ impl SymbolicExecutor {
                                 }
                                 let mut halted = state.clone();
                                 halted.constraints = out_of_bounds_constraints;
+                                halted.return_data = SymReturnData::empty(&mut self.cx);
                                 *completed_paths += 1;
                                 let status = self.successful_call_status(kind, &halted);
                                 outcomes.push(CallOutcome { status, state: halted });
@@ -362,6 +364,8 @@ impl SymbolicExecutor {
                 let op = match op {
                     CallPathOpcode::Execute(op) => op,
                     CallPathOpcode::Halt => {
+                        // Running off the end of the code is an implicit STOP with no output.
+                        state.return_data = SymReturnData::empty(&mut self.cx);
                         if *completed_paths >= path_limit {
                             return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
                         }

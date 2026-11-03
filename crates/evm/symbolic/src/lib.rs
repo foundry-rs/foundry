@@ -341,6 +341,56 @@ pub struct SymbolicInvariantStep {
     pub calldata: Bytes,
 }
 
+/// Input for a symbolic equivalence check of two runtime bytecodes.
+pub struct SymbolicEquivalenceInput<'a> {
+    /// Read-only view of the concrete Foundry executor that supplies the environment and the
+    /// pre-state both codes start from.
+    pub executor: ExecutorView<'a>,
+    /// Address both codes run at, so they share one storage pre-state.
+    pub address: Address,
+    /// Runtime bytecode of the first contract.
+    pub code_a: Bytes,
+    /// Runtime bytecode of the second contract.
+    pub code_b: Bytes,
+    /// Sender of the top-level call.
+    pub sender: Address,
+    /// When set, calldata is limited to ABI-encoded calls of this function.
+    pub function: Option<&'a Function>,
+    /// Lengths of unconstrained raw calldata to explore when `function` is `None`.
+    pub calldata_lengths: Vec<usize>,
+}
+
+/// Outcome of a symbolic equivalence check.
+#[derive(Clone, Debug)]
+pub enum SymbolicEquivalenceResult {
+    /// Every explored pair of paths agreed on success, output and storage.
+    Equivalent {
+        /// Execution counters collected during the run.
+        stats: SymbolicStats,
+    },
+    /// The solver found an input on which the two codes differ. Callers must replay it
+    /// concretely before reporting it.
+    Counterexample {
+        /// Calldata that distinguishes the two codes.
+        calldata: Bytes,
+        /// ABI-typed arguments, when the check was limited to a function.
+        args: Vec<DynSolValue>,
+        /// Pre-state storage values the counterexample needs.
+        storage: Vec<SymbolicStorageAssignment>,
+        /// Execution counters collected before the counterexample was found.
+        stats: SymbolicStats,
+    },
+    /// The check stopped before it could establish equivalence.
+    Incomplete {
+        /// Category describing why the check stopped.
+        kind: SymbolicStopReason,
+        /// Human-readable explanation.
+        reason: String,
+        /// Execution counters collected before the check stopped.
+        stats: SymbolicStats,
+    },
+}
+
 /// High-level reason a symbolic run stopped without a proof or replayed counterexample.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SymbolicStopReason {

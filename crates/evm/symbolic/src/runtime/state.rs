@@ -1712,6 +1712,17 @@ impl SymbolicWorld {
         Arc::make_mut(&mut self.state).storage.push(StorageWrite::new(address, key, value));
     }
 
+    /// Returns the distinct storage keys written to `address` in this world, oldest first.
+    pub(crate) fn storage_write_keys(&self, address: Address) -> Vec<SymExpr> {
+        let mut keys = Vec::new();
+        for write in self.storage.iter().filter(|write| write.address == address) {
+            if !keys.contains(&write.key) {
+                keys.push(write.key.clone());
+            }
+        }
+        keys
+    }
+
     pub(crate) fn tload(&self, cx: &mut SymCx, address: Address, key: SymExpr) -> SymExpr {
         let base = SymExpr::zero(cx);
         StorageWrite::select_from(cx, &self.transient_storage, address, key, base)
