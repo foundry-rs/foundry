@@ -275,7 +275,7 @@ fn spec_changes_keep_foundry_policy() {
     db.insert_account_info(&delegated, info);
     let mut evm = FoundryEvmFactory::create_evm(&factory, db, env);
 
-    // Like REVM, an existing delegation resolves before Prague and runs in the delegating account.
+    // An existing delegation resolves before Prague and runs in the delegating account.
     let request = store_request::<EthEvmNetwork>(caller, delegated, 0, 42, 31337);
     assert!(
         evm.transact(&EthEvmNetwork::tx_from_request(request).unwrap()).unwrap().commit().status
@@ -474,7 +474,7 @@ fn base_factory_plants_precompile_sentinels() {
     for address in foundry_evm_networks::BASE_CODE_SENTINEL_ADDRESSES {
         let info = evm.read_account_info(address).unwrap();
         let active = foundry_evm_networks::is_base_precompile_active_at(*address, spec.upgrade());
-        let has_code = info.is_some_and(|info| info.code_hash != alloy_primitives::KECCAK256_EMPTY);
+        let has_code = info.is_some_and(|info| !info.is_empty_code_hash());
         assert_eq!(has_code, active, "{address}");
         planted += usize::from(has_code);
     }

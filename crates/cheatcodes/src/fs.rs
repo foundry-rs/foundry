@@ -546,7 +546,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     } else {
         gas_params.get(GasId::Create)
     };
-    if version.features.contains(EvmFeatures::EIP3860) {
+    if version.feature(EvmFeatures::EIP3860) {
         if init_code_len > version.max_initcode_size {
             ccx.gas.spend_all();
             return Err(fmt_err!("initcode size limit exceeded"));
@@ -562,7 +562,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     // EIP-8037: charge the account creation state gas if the creation can proceed and the
     // destination is empty.
     let mut charged_create_state_gas = false;
-    if version.features.contains(EvmFeatures::EIP8037) {
+    if version.feature(EvmFeatures::EIP8037) {
         let (balance, nonce) = {
             let account = ccx.evm.state_mut().account(&caller)?;
             (account.balance(), account.nonce())
@@ -579,11 +579,10 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
         }
     }
 
-    let mut gas_limit = ccx.gas.remaining();
-    if version.features.contains(EvmFeatures::EIP150) {
-        gas_limit = gas_params.call_stipend_reduction(gas_limit);
-    }
-    // Forward the gas to the create frame; this cannot fail as it does not exceed `remaining`.
+    // The call to the cheatcode already kept back 1/64 of the caller's gas, as the CREATE opcode
+    // would, so forward all of the remaining gas to the create frame.
+    let gas_limit = ccx.gas.remaining();
+    // This cannot fail as it does not exceed `remaining`.
     let _ = ccx.gas.spend(gas_limit);
 
     // Broadcast the synthetic create only if it was requested by the broadcaster at the broadcast
@@ -628,7 +627,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     ccx.state.deploy_code_depth = outer_deploy_code_depth;
     ccx.state.deploy_code_create_state_gas = outer_create_state_gas;
     // A create that runs isolated as the root of its own nested transaction returns no data from
-    // a failed code deposit, as on master.
+    // a failed code deposit.
     let returned = mem::replace(&mut ccx.state.deploy_code_output, outer_output)
         .filter(|(_, isolated)| *isolated == ccx.state.in_isolation_context)
         .map(|(output, _)| output);
@@ -665,7 +664,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     }
 
     if !outcome.is_success() {
-        // As on master, a constructor whose returned code could not be deposited reverts with it.
+        // A constructor whose returned code could not be deposited reverts with it.
         return Err(crate::Error::from(returned.unwrap_or(outcome.output)));
     }
 

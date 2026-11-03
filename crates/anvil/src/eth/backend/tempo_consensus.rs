@@ -22,14 +22,17 @@
 //! execution hardforks still use the pinned certificate/DKG codec, not historical Commonware
 //! codecs.
 //!
-//! Cloning snapshots the complete controller, including pending rotations. Unwind instead restores
-//! the retained height's checkpoint and discards later certificates and rotations. Checkpoints
-//! retain only their active and future committees. Callers can bound retained history with
-//! [`TempoConsensus::prune`]; unwind cannot cross the pruning boundary. Reset restores the unsigned
-//! initial anchor, including its original rewind floor. Re-signing replacement history can produce
-//! valid certificates for conflicting headers at the same height: this development rewind behavior
-//! is not consensus safety. Callers own canonical commit, execution/body validation, archive
-//! pruning, and persistence; this module has no mining, RPC, CLI, or fork-routing integration.
+//! Cloning snapshots the complete controller, including pending rotations; certificates are
+//! structurally shared, so a clone does not copy them. Unwind instead restores the retained
+//! height's checkpoint and discards later certificates and rotations. Checkpoints retain only
+//! their active and future committees. Callers can bound retained history with
+//! [`TempoConsensus::prune`], or only the rewind history with
+//! [`TempoConsensus::prune_checkpoints`]; unwind cannot cross either boundary. Reset restores the
+//! unsigned initial anchor, including its original rewind floor. Re-signing replacement history can
+//! produce valid certificates for conflicting headers at the same height: this development rewind
+//! behavior is not consensus safety. Callers own canonical commit, execution/body validation,
+//! archive pruning, and persistence; this module has no mining, RPC, CLI, or fork-routing
+//! integration.
 //!
 //! [tip1031]: https://github.com/tempoxyz/tempo/blob/b34e701ecc69d91d72ffb3e77114958bb4f8bc38/crates/commonware-node/src/consensus/application/actor.rs
 
@@ -46,6 +49,7 @@ use commonware_cryptography::{
 };
 use commonware_math::algebra::Random;
 use commonware_utils::{N3f1, TryFromIterator, ordered};
+use imbl::OrdMap;
 use rand_chacha::{ChaCha20Rng, rand_core::SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, num::NonZeroU64, sync::Arc};
@@ -63,7 +67,8 @@ pub struct TempoConsensus {
     initial: Checkpoint,
     state: Checkpoint,
     checkpoints: BTreeMap<u64, Checkpoint>,
-    finalizations: BTreeMap<u64, TempoFinalization>,
+    /// Certificates, which may extend below the rewind floor; shared between clones.
+    finalizations: OrdMap<u64, TempoFinalization>,
     retained_height: u64,
 }
 
@@ -212,7 +217,7 @@ impl TempoConsensus {
 
     /// Returns the latest signed height and its certificate.
     pub fn latest(&self) -> Option<(u64, &TempoFinalization)> {
-        self.finalizations.last_key_value().map(|(&height, certificate)| (height, certificate))
+        self.finalizations.get_max().map(|(height, certificate)| (*height, certificate))
     }
 
     fn identity_at(&self, epoch: u64) -> TempoConsensusIdentity {
@@ -308,7 +313,10 @@ impl TempoConsensus {
             self.checkpoints.get(&height).expect("retained signed heights have checkpoints").clone()
         };
         self.checkpoints.retain(|&number, _| number <= height);
-        self.finalizations.retain(|&number, _| number <= height);
+        let unwound = self.finalizations.range(height + 1..).map(|(&number, _)| number);
+        for number in unwound.collect::<Vec<_>>() {
+            self.finalizations.remove(&number);
+        }
         Ok(())
     }
 
@@ -316,7 +324,7 @@ impl TempoConsensus {
     pub fn reset(&mut self) {
         self.state = self.initial.clone();
         self.checkpoints.clear();
-        self.finalizations.clear();
+        self.finalizations = OrdMap::new();
         self.retained_height = self.initial.height;
     }
 
@@ -333,9 +341,23 @@ impl TempoConsensus {
     ///
     /// The current head and pending rotations are unchanged. Any checkpoint and certificate at
     /// `below` remain available, so pruning at the head retains its finalized state. Requests at
-    /// or below the existing floor are no-ops; requests above the head fail without changing state.
+    /// or below the existing floor only remove certificates kept by [`Self::prune_checkpoints`];
+    /// requests above the head fail without changing state.
     /// [`Self::reset`] still restores the original unsigned anchor and clears the pruning boundary.
     pub fn prune(&mut self, below: u64) -> Result<(), TempoConsensusError> {
+        self.prune_checkpoints(below)?;
+        let pruned = self.finalizations.range(..below).map(|(&number, _)| number);
+        for number in pruned.collect::<Vec<_>>() {
+            self.finalizations.remove(&number);
+        }
+        Ok(())
+    }
+
+    /// Like [`Self::prune`], but keeps certificates below `below` available.
+    ///
+    /// Only the checkpoints that unwind restores are removed, so the rewind floor advances while
+    /// retained blocks can still be served with their certificates.
+    pub fn prune_checkpoints(&mut self, below: u64) -> Result<(), TempoConsensusError> {
         if below > self.state.height {
             return Err(TempoConsensusError::InvalidPrune {
                 head: self.state.height,
@@ -344,7 +366,6 @@ impl TempoConsensus {
         }
         if below > self.retained_height {
             self.checkpoints = self.checkpoints.split_off(&below);
-            self.finalizations = self.finalizations.split_off(&below);
             self.retained_height = below;
         }
         Ok(())
@@ -353,6 +374,11 @@ impl TempoConsensus {
     /// Returns the unsigned initial height, independently of the pruning boundary.
     pub(super) const fn anchor_height(&self) -> u64 {
         self.initial.height
+    }
+
+    /// Returns the earliest height that unwind can restore.
+    pub(super) const fn retained_height(&self) -> u64 {
+        self.retained_height
     }
 
     /// Starts a new unsigned segment using this controller's configuration and a native anchor.
@@ -385,7 +411,7 @@ impl TempoConsensus {
             initial: initial.clone(),
             state: initial,
             checkpoints: BTreeMap::new(),
-            finalizations: BTreeMap::new(),
+            finalizations: OrdMap::new(),
             retained_height: height,
         }
     }
@@ -505,7 +531,8 @@ impl Committee {
 
 const fn ensure_supported_hardfork(hardfork: TempoHardfork) -> Result<(), TempoConsensusError> {
     // Upstream appends new hardforks; extending support requires a wire-format review.
-    if hardfork as u64 <= TempoHardfork::T14 as u64 {
+    // T15 leaves the consensus wire format unchanged.
+    if hardfork as u64 <= TempoHardfork::T15 as u64 {
         Ok(())
     } else {
         Err(TempoConsensusError::UnsupportedHardfork(hardfork))

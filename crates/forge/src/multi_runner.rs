@@ -323,7 +323,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         } else {
             db.clone()
         };
-        // Built from the shared config, as before: the runner applies the contract's config before
+        // Built from the shared config: the runner applies the contract's config before
         // `setUp` and keeps the shared trace and live-log settings.
         let executor = self.tcfg.executor(
             self.known_contracts.clone(),

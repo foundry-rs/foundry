@@ -45,7 +45,10 @@ use crate::{
     config::DEFAULT_TEMPO_EPOCH_LENGTH,
     eth::{
         backend::{
-            db::{DbAccount, MaybeFullDatabase},
+            db::{
+                AccountInfo, AccountState, Bytecode, CacheDB, DatabaseRef, DatabaseResult,
+                DbAccount, EmptyDb, MaybeFullDatabase, StateSnapshot,
+            },
             fork::ClientFork,
             tempo_consensus::{
                 TempoConsensus, TempoConsensusError, TempoConsensusIdentity, TempoFinalization,
@@ -85,7 +88,7 @@ pub(crate) struct TempoChain {
     /// Immutable local tries sealed by locally mined fork blocks, with bounded retention.
     pub(super) proof_states: Arc<RwLock<InMemoryBlockStates>>,
     /// Incremental trie of the latest sealed account set, updated by diffing the next seal.
-    pub(super) proof_root: Arc<Mutex<(StateRootCache, AddressMap<DbAccount>)>>,
+    pub(super) proof_root: Arc<Mutex<(StateRootCache, Arc<AddressMap<DbAccount>>)>>,
     /// Live subscribers survive snapshots, imports, rewinds and resets.
     events: broadcast::Sender<Arc<TempoConsensusEvent>>,
 }
@@ -203,6 +206,29 @@ impl TempoChain {
         self.latest_block = Some(Arc::new(block.clone()));
     }
 
+    /// Prunes checkpoints below the oldest height that rollback or a fork proof can still reach.
+    ///
+    /// Rollback and reorg need the target's execution state, and fork proofs need its sealed
+    /// trie, so no consumer can unwind to a height once both have left the bounded state
+    /// histories. Certificates stay available for as long as their blocks. Explicit snapshots
+    /// restore their own controller and are unaffected.
+    pub(super) fn prune(&mut self, hashes: &HashMap<u64, B256>, states: &InMemoryBlockStates) {
+        let Some((head, _)) = self.consensus.latest() else { return };
+        let proof_states = self.proof_states.read();
+        let mut below = self.consensus.retained_height();
+        while below < head
+            && !hashes
+                .get(&below)
+                .is_some_and(|hash| states.contains(hash) || proof_states.contains(hash))
+        {
+            below += 1;
+        }
+        drop(proof_states);
+        self.consensus
+            .prune_checkpoints(below)
+            .expect("the pruning boundary never exceeds the head");
+    }
+
     /// Captures notification inputs after canonical state has been committed.
     pub(super) fn pending_finalization(
         &self,
@@ -277,6 +303,80 @@ impl TempoChain {
     /// Starts an unsigned local segment without inferring fork metadata.
     pub(super) fn local_consensus(config: &NodeConfig, height: u64) -> TempoConsensus {
         TempoConsensus::at_height(config.tempo_consensus_seed(), config.tempo_epoch_length, height)
+    }
+}
+
+/// Accounts sealed by a locally mined fork block.
+///
+/// Proof history, the incremental state root's diff base, and EVM snapshots share one copy.
+#[derive(Debug, Default)]
+pub(super) struct SealedAccounts(pub(super) Arc<AddressMap<DbAccount>>);
+
+impl DatabaseRef for SealedAccounts {
+    fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
+        match self.0.get(&address) {
+            Some(account) => Ok(account.info()),
+            None => EmptyDb.basic_ref(address),
+        }
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
+        EmptyDb.code_by_hash_ref(code_hash)
+    }
+
+    fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
+        Ok(self
+            .0
+            .get(&address)
+            .and_then(|account| account.storage.get(&index).copied())
+            .unwrap_or_default())
+    }
+
+    fn block_hash_ref(&self, number: u64) -> DatabaseResult<B256> {
+        EmptyDb.block_hash_ref(number)
+    }
+}
+
+impl MaybeFullDatabase for SealedAccounts {
+    fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
+        Some(&self.0)
+    }
+
+    fn maybe_shared_full_db(&self) -> Option<Arc<AddressMap<DbAccount>>> {
+        Some(Arc::clone(&self.0))
+    }
+
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
+        let snapshot = self.read_as_state_snapshot();
+        self.clear();
+        snapshot
+    }
+
+    fn read_as_state_snapshot(&self) -> StateSnapshot {
+        // Sealed tries only commit to code hashes, so the code itself is not persisted.
+        let mut snapshot = StateSnapshot::default();
+        let account_states = snapshot.account_states.insert(Default::default());
+        for (&address, account) in self.0.iter() {
+            snapshot.storage.insert(address, account.storage.clone());
+            if matches!(
+                account.account_state,
+                AccountState::NotExisting | AccountState::StorageCleared
+            ) {
+                account_states.insert(address, account.account_state.clone());
+            }
+            snapshot.accounts.insert(address, AccountInfo { code: None, ..account.info.clone() });
+        }
+        snapshot
+    }
+
+    fn clear(&mut self) {
+        self.0 = Default::default();
+    }
+
+    fn init_from_state_snapshot(&mut self, snapshot: StateSnapshot) {
+        let mut db = CacheDB::new(EmptyDb);
+        db.init_from_state_snapshot(snapshot);
+        self.0 = Arc::new(db.cache.accounts);
     }
 }
 
@@ -520,7 +620,7 @@ mod tests {
         eth::{
             api::EthApi,
             backend::{
-                db::{AccountState, SerializableState, StateDb},
+                db::{SerializableState, StateDb},
                 mem::{MiningCommitHook, in_memory_db::MemDb},
             },
         },
@@ -648,6 +748,47 @@ mod tests {
         assert!(consensus(&api).finalization(2).is_none());
         api.anvil_rollback(Some(0)).await.unwrap();
         assert_certified_head(&api);
+    }
+
+    #[tokio::test]
+    async fn tempo_pruning_keeps_rewindable_history() {
+        let config =
+            NodeConfig::test_tempo().with_no_mining(true).set_pruned_history(Some(Some(3)));
+        let (api, _handle) = spawn(config).await;
+        api.anvil_mine(Some(U256::from(10)), None).await.unwrap();
+        let snapshot = api.evm_snapshot().await.unwrap();
+        api.anvil_mine(Some(U256::from(5)), None).await.unwrap();
+
+        let head = api.backend.best_number();
+        let pruned = consensus(&api);
+        let floor = pruned.retained_height();
+        assert!(0 < floor && floor < head, "floor {floor}, head {head}");
+        // The rewind floor is the oldest height whose execution state is still retained.
+        for height in 1..head {
+            let hash = api.backend.get_block(height).unwrap().header.hash_slow();
+            let rewindable = api.backend.states.read().contains(&hash);
+            assert_eq!(height >= floor, rewindable, "height {height}");
+            // Certificates outlive state history, as retained blocks can still be certified.
+            assert_eq!(
+                api.backend.tempo_finalization(Some(height)).await.unwrap().finalization,
+                pruned.finalization(height).unwrap().clone(),
+            );
+        }
+        assert_certified_head(&api);
+
+        // Rollback could never reach pruned heights, and still reaches the oldest retained one.
+        assert!(api.anvil_rollback(Some(head - floor + 1)).await.is_err());
+        api.anvil_rollback(Some(head - floor)).await.unwrap();
+        assert_eq!(api.backend.best_number(), floor);
+        assert_certified_head(&api);
+        api.mine_one().await.unwrap();
+        assert_certified_head(&api);
+
+        // A snapshot restores its own history, including certificates pruned after it was taken.
+        assert!(api.evm_revert(snapshot).await.unwrap());
+        assert_eq!(api.backend.best_number(), 10);
+        assert_certified_head(&api);
+        assert!(consensus(&api).retained_height() < floor);
     }
 
     #[tokio::test(flavor = "multi_thread")]

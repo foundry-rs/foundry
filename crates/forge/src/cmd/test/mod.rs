@@ -68,7 +68,7 @@ use foundry_config::{
     filter::GlobMatcher,
     fs_permissions::FsAccessPermission,
 };
-use foundry_debugger::DebuggerBuilder;
+use foundry_debugger::{DebuggerBuilder, ensure_dump_dir};
 use foundry_evm::{
     backend::Backend,
     core::evm::{EthEvmNetwork, EvmFactoryFor, FoundryEvmNetwork, TempoEvmNetwork},
@@ -87,10 +87,10 @@ use rand::Rng;
 use regex::Regex;
 use solar::ast::{ContractKind as SolarContractKind, ItemKind};
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     fmt::Write,
     path::{Path, PathBuf},
-    sync::{Arc, LazyLock, Mutex, mpsc::channel},
+    sync::{Arc, Mutex, mpsc::channel},
     time::{Duration, Instant},
 };
 use tempfile::TempDir;
@@ -567,7 +567,7 @@ pub struct TestArgs {
     #[arg(
         long,
         requires = "debug",
-        value_hint = ValueHint::FilePath,
+        value_hint = ValueHint::DirPath,
         value_name = "PATH"
     )]
     dump: Option<PathBuf>,
@@ -1617,6 +1617,9 @@ impl TestArgs {
     /// Returns the test results for all matching tests.
     pub async fn compile_and_run(&mut self) -> Result<TestOutcome> {
         self.ensure_mutation_mode_compatible(false)?;
+        if let Some(dir) = &self.dump {
+            ensure_dump_dir(dir)?;
+        }
         let compiled = self.compile_project().await?;
         self.run_tests(
             &compiled.project_root,
@@ -3203,10 +3206,7 @@ fn spawn_backend<FEN: FoundryEvmNetwork>(
 }
 
 fn parse_opcode(s: &str) -> Result<OpCode, String> {
-    static OPCODES: LazyLock<HashMap<&str, OpCode>> = LazyLock::new(|| {
-        (0..=u8::MAX).filter_map(OpCode::new).map(|op| (op.as_str(), op)).collect()
-    });
-    OPCODES.get(s).copied().ok_or_else(|| format!("invalid opcode: {s}"))
+    OpCode::parse(s).ok_or_else(|| format!("invalid opcode: {s}"))
 }
 
 const fn apply_mutation_compiler_overrides(config: &mut Config) {

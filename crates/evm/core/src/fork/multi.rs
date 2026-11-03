@@ -8,7 +8,9 @@ use crate::{evm::EthEvmNetwork, opts::ForkContext};
 use alloy_eips::{BlockNumHash, eip7928::BlockAccessList};
 use alloy_network::AnyNetwork;
 use alloy_primitives::map::HashMap;
+use foundry_common::sh_warn;
 use foundry_config::Config;
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use foundry_fork_db::{
     BackendHandler, BlockchainDb, ForkBlock, SharedBackend, cache::BlockchainDbMeta,
 };
@@ -20,10 +22,11 @@ use futures::{
 };
 use revm::{context::BlockEnv, context_interface::block::BlobExcessGasAndPrice};
 use std::{
+    collections::BTreeSet,
     fmt::{self, Write},
     pin::Pin,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc::{Sender as OneshotSender, channel as oneshot_channel},
     },
@@ -243,26 +246,6 @@ impl MultiFork {
         Ok(rx.recv()?)
     }
 
-    /// Returns the immutable remote fork owned by the selected backend.
-    pub fn get_fork_info(&self, id: impl Into<ForkId>) -> eyre::Result<Option<Fork>> {
-        let (sender, rx) = oneshot_channel();
-        self.handler
-            .clone()
-            .try_send(Request::GetForkInfo(id.into(), sender))
-            .map_err(|e| eyre::eyre!("{e:?}"))?;
-        Ok(rx.recv()?)
-    }
-
-    /// Returns the corresponding fork url if it exists.
-    ///
-    /// Returns `None` if no matching fork is available.
-    pub fn get_fork_url(&self, id: impl Into<ForkId>) -> eyre::Result<Option<String>> {
-        let (sender, rx) = oneshot_channel();
-        let req = Request::GetForkUrl(id.into(), sender);
-        self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
-        Ok(rx.recv()?)
-    }
-
     /// Returns the options used to create the corresponding fork if it exists.
     ///
     /// Returns `None` if no matching fork is available.
@@ -303,9 +286,6 @@ enum Request {
     RollForkExact(ForkId, BlockNumHash, bool, CreateSender),
     /// Shutdowns the entire `MultiForkHandler`, see `ShutDownMultiFork`
     ShutDown(OneshotSender<()>),
-    /// Returns the Fork Url for the `ForkId` if it exists.
-    GetForkUrl(ForkId, OneshotSender<Option<String>>),
-    GetForkInfo(ForkId, OneshotSender<Option<Fork>>),
     /// Returns the options used to create the `ForkId` if it exists.
     GetForkOptions(ForkId, OneshotSender<Option<CreateFork>>),
 }
@@ -520,13 +500,6 @@ impl MultiForkHandler {
                     prefetch.stop();
                 }
                 let _ = sender.send(());
-            }
-            Request::GetForkInfo(fork_id, sender) => {
-                let _ = sender.send(self.forks.get(&fork_id).map(|fork| fork.fork.clone()));
-            }
-            Request::GetForkUrl(fork_id, sender) => {
-                let fork = self.forks.get(&fork_id).map(|f| f.opts.url.clone());
-                let _ = sender.send(fork);
             }
             Request::GetForkOptions(fork_id, sender) => {
                 let fork = self.forks.get(&fork_id).map(|f| f.opts.clone());
@@ -817,14 +790,31 @@ async fn create_fork(
         fork_context.source_chain_id,
         &resolved.block,
     );
-    if require_endpoint_family_match
-        && !execution_networks.supports_fork_source(&fork_context.network_profile)
-    {
-        eyre::bail!(
-            "cannot create a `{}` fork with an EVM instantiated for `{}`; run the script with --rpc-url pointing to the forked chain to select its EVM",
-            fork_context.network,
-            execution_networks.execution_network()
+    // An endpoint without Anvil node info takes an explicitly selected network as its profile, so
+    // its recognized chain ID decides the family it belongs to. Fork contexts require a recognized
+    // hardfork, so a reported hardfork means node info reported the family.
+    let chain = fork_context.source_chain_id;
+    let source = match NetworkVariant::from_known_chain_id(chain) {
+        Ok(Some(network)) if fork_context.hardfork.is_none() => {
+            NetworkConfigs::default().with_rpc_identity(network, chain)
+        }
+        _ => fork_context.network_profile,
+    };
+    if !execution_networks.supports_fork_source(&source) {
+        let (fork, selected) =
+            (source.execution_profile_name(), execution_networks.execution_profile_name());
+        eyre::ensure!(
+            !require_endpoint_family_match,
+            "cannot create a `{fork}` fork with an EVM instantiated for `{selected}`; run the script with --rpc-url pointing to the forked chain to select its EVM"
         );
+        // An explicit network selection is kept even when the fork belongs to another family, so
+        // warn once per source chain and family pair instead of failing.
+        static WARNED: Mutex<BTreeSet<(u64, &str, &str)>> = Mutex::new(BTreeSet::new());
+        if WARNED.lock().unwrap().insert((chain, fork, selected)) {
+            let _ = sh_warn!(
+                "fork of chain {chain} belongs to `{fork}`, but the selected network is `{selected}`, so the fork runs with `{selected}` rules"
+            );
+        }
     }
     if let Some(expected) = expected_identity {
         eyre::ensure!(
@@ -919,7 +909,6 @@ mod tests {
     use alloy_provider::{Provider, ProviderBuilder, mock::Asserter};
     use alloy_rpc_types::{Block, TransactionRequest};
     use alloy_serde::WithOtherFields;
-    use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
     use foundry_fork_db::AccountFetchPolicy;
     use foundry_test_utils::rpc::{
         spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_recording_method,
@@ -1499,7 +1488,7 @@ mod tests {
             cache_block_env(&env.block, block.header.excess_blob_gas)
         };
 
-        // Master recorded REVM's blob price for the header's excess blob gas.
+        // The cache records revm's blob price for the header's excess blob gas.
         let mut expected = BlockEnv::default();
         expected.set_blob_excess_gas_and_price(62_652_416, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE);
         assert_eq!(

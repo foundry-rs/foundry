@@ -63,6 +63,14 @@ contract LargeRuntimeContract {
     }
 }
 
+contract GasleftConstructor {
+    uint256 public gasAtStart;
+
+    constructor() {
+        gasAtStart = gasleft();
+    }
+}
+
 contract DeployCodeTest is Test {
     address public constant overrideAddress = 0x0000000000000000000000000000000000000064;
 
@@ -218,6 +226,22 @@ contract DeployCodeTest is Test {
 
     function deployLargeRuntimeContract() external {
         vm.deployCode("cheats/DeployCode.t.sol:LargeRuntimeContract");
+    }
+
+    function testDeployCodeForwardsNativeCreateGas() public {
+        uint256 nativeGas = this.constructorGasWithNew{gas: 10_000_000}();
+        uint256 deployCodeGas = this.constructorGasWithDeployCode{gas: 10_000_000}();
+        // The constructor gets the gas a native CREATE forwards, less the cost of the cheatcode
+        // call and the 1/64 of the CREATE cost the cheatcode frame cannot keep back.
+        assertLt(nativeGas - deployCodeGas, 5000);
+    }
+
+    function constructorGasWithNew() external returns (uint256) {
+        return new GasleftConstructor().gasAtStart();
+    }
+
+    function constructorGasWithDeployCode() external returns (uint256) {
+        return GasleftConstructor(vm.deployCode("cheats/DeployCode.t.sol:GasleftConstructor")).gasAtStart();
     }
 }
 

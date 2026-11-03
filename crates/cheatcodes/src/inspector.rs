@@ -715,8 +715,6 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// payloads, so user-crafted `FOUNDRY::SKIP` revert data never skips a test on its own.
     pub skip_payloads: Vec<Bytes>,
 
-    /// All recorded ETH `deal`s.
-
     /// Writes that survive reverts of the enclosing calls, with the depth of the frame that made
     /// them and the journal length right after them, replayed when that frame or an enclosing one
     /// reverts and its rollback undid them.
@@ -808,8 +806,8 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// depositing it fails, and whether the constructor ran in an isolated call.
     pub deploy_code_output: Option<(Bytes, bool)>,
 
-    /// The `vm.accessList` the running transaction last applied to a call or create. As on
-    /// master, it replaces the transaction's access list when computing its stipend.
+    /// The `vm.accessList` the running transaction last applied to a call or create. It replaces
+    /// the transaction's access list when computing its stipend.
     pub applied_access_list: Option<AccessList>,
 }
 
@@ -1258,8 +1256,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.origin_override = (origin != tx_origin).then_some(origin);
     }
 
-    /// Applies the configured `vm.accessList` to the running transaction, as master did on every
-    /// call and create. Access lists do not exist before Berlin, and nested transactions, such as
+    /// Applies the configured `vm.accessList` to the running transaction on every call and
+    /// create. Access lists do not exist before Berlin, and nested transactions, such as
     /// isolated calls, keep their own.
     fn apply_access_list(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
         if let Some(access_list) = &self.core.access_list
@@ -3786,6 +3784,7 @@ fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
     }
     Ok(writes)
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

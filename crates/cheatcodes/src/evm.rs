@@ -7,7 +7,7 @@ use crate::{
 use alloy_consensus::{Transaction as _, Typed2718, transaction::SignerRecoverable};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{
-    Address, B256, Bytes, KECCAK256_EMPTY, U256, hex, keccak256,
+    Address, B256, Bytes, U256, hex, keccak256,
     map::{AddressMap, AddressSet, B256Map, HashMap},
 };
 use alloy_rlp::Decodable;
@@ -389,7 +389,7 @@ impl Cheatcode for cloneAccountCall {
         let Self { source, target } = self;
 
         ccx.evm.state_mut().account(source)?.warm();
-        let slots = ccx.backend.backend().lifecycle().loaded_storage(ccx.evm.state(), source);
+        let slots = ccx.db().lifecycle().loaded_storage(ccx.evm.state(), source);
         let genesis = genesis_account(ccx.evm.state_mut(), source, slots)?;
         EvmFactoryFor::<FEN>::default().sync_transaction(ccx.evm);
         let (evm, db) = ccx.evm_db_mut();
@@ -856,9 +856,8 @@ impl Cheatcode for resetNonceCall {
         let mut account = ccx.evm.state_mut().account(&address)?;
         // Per EIP-161, contract nonces start at 1. EOAs, including EIP-7702 delegated ones, start
         // at 0.
-        let code_hash = account.code_hash();
-        let is_eoa = code_hash == KECCAK256_EMPTY
-            || code_hash.is_zero()
+        let is_eoa = account.is_empty_code_hash()
+            || account.code_hash().is_zero()
             || account.load_code()?.is_eip7702();
         drop(account);
         let nonce = if is_eoa { 0 } else { 1 };
@@ -928,9 +927,9 @@ impl Cheatcode for setLogoURICall {
 impl Cheatcode for coolCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target } = self;
-        let slots = ccx.backend.backend().lifecycle().loaded_storage(ccx.evm.state(), target);
-        // Like REVM's `WarmAddresses`, precompiles and the addresses the transaction warmed for
-        // its coinbase, access list and chain stay warm. The rest of the transaction-base
+        let slots = ccx.db().lifecycle().loaded_storage(ccx.evm.state(), target);
+        // Precompiles and the addresses the transaction warmed for its coinbase, access list and
+        // chain stay warm. The rest of the transaction-base
         // warmth, such as the recipient, is cooled.
         let keep = ccx.is_precompile(target) || ccx.state.tx_warm_addresses.contains(target);
         if !keep {
@@ -975,7 +974,7 @@ impl Cheatcode for noAccessListCall {
 impl Cheatcode for warmSlotCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target, slot } = *self;
-        set_cold_slot(ccx, target, slot.into(), false);
+        ccx.evm.state_mut().set_storage_warm(&target, slot.into(), true);
         Ok(Default::default())
     }
 }
@@ -983,7 +982,7 @@ impl Cheatcode for warmSlotCall {
 impl Cheatcode for coolSlotCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target, slot } = *self;
-        set_cold_slot(ccx, target, slot.into(), true);
+        ccx.evm.state_mut().set_storage_warm(&target, slot.into(), false);
         Ok(Default::default())
     }
 }
@@ -1451,7 +1450,7 @@ impl Cheatcode for executeTransactionCall {
         env.block.basefee = U256::ZERO;
         env.set_feature(EvmFeatures::FEE_CHARGE, false);
         env.set_feature(EvmFeatures::NONCE_CHECK, true);
-        // As on master, which zeroes the gas price, the sender only needs to afford the value.
+        // The transaction pays no fees, so the sender only needs to afford the value.
         env.set_feature(EvmFeatures::BALANCE_CHECK, false);
         env.set_feature(EvmFeatures::BALANCE_TOP_UP, false);
         let balance = ccx
@@ -2467,16 +2466,6 @@ fn get_contract_data<'a, FEN: FoundryEvmNetwork>(
 
     // Fallback to fuzzy matching if exact match fails
     artifacts.find_by_deployed_code(&code_bytes)
-}
-
-/// Helper function to set / unset cold storage slot of the target address.
-fn set_cold_slot<FEN: FoundryEvmNetwork>(
-    ccx: &mut CheatsCtxt<'_, '_, FEN>,
-    target: Address,
-    slot: U256,
-    cold: bool,
-) {
-    ccx.evm.state_mut().set_storage_warm(&target, slot, !cold);
 }
 
 #[cfg(test)]

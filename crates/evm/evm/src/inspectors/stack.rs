@@ -1476,7 +1476,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             .collect::<AddressSet>();
         let merged = if replaced {
             // Across another state replacement the running transaction keeps its warmth, and the
-            // nested transaction's on success. As on master, a restored snapshot keeps the
+            // nested transaction's on success. A restored snapshot keeps the
             // running transaction's base warmth, a fork switch brings the nested transaction's
             // warmth, and a switch back to the starting fork keeps both.
             let warmth = if restored {

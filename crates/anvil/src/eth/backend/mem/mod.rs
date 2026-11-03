@@ -1,5 +1,9 @@
 //! In-memory blockchain backend.
-use self::{in_memory_db::StateRootDb, state::trie_storage, tempo::TempoChain};
+use self::{
+    in_memory_db::StateRootDb,
+    state::trie_storage,
+    tempo::{SealedAccounts, TempoChain},
+};
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
     config::{ForkTransactionReplay, PruneStateHistoryConfig, source_hardfork},
@@ -8,7 +12,7 @@ use crate::{
             cheats::{CheatsManager, NextBlockOverrides},
             db::{
                 AccountState, BLOCKHASH_HISTORY, BlockChanges, BlockchainDb, CacheDB, DatabaseRef,
-                Db, DbAccount, EmptyDb, EvmDb, MaybeFullDatabase, RevertStateSnapshotAction,
+                Db, DbAccount, EvmDb, MaybeFullDatabase, RevertStateSnapshotAction,
                 SerializableState, StateDb, apply_block_overrides, apply_state_overrides,
             },
             env::{
@@ -705,7 +709,7 @@ fn uses_protocol_call_nonce(tx: &FoundryTxEnvelope) -> bool {
     }
 }
 
-/// Describes an exceptional halt with REVM's `HaltReason` messages.
+/// Describes an exceptional halt with Anvil's RPC halt messages.
 // TODO: move these messages upstream as `impl Display for InstrStop` in evm2.
 pub(crate) fn halt_reason(stop: InstrStop) -> String {
     match stop {
@@ -832,7 +836,8 @@ fn mock_tempo_signature(
     is_t1c: bool,
 ) -> TempoSignature {
     let signature = match key_type {
-        SignatureType::Secp256k1 => {
+        // The simulation path rejects configurable accounts before mocking a signature.
+        SignatureType::Secp256k1 | SignatureType::ConfigurableAccount => {
             PrimitiveSignature::Secp256k1(Signature::new(U256::ZERO, U256::ZERO, false))
         }
         SignatureType::P256 => PrimitiveSignature::P256(P256SignatureWithPreHash {
@@ -1921,13 +1926,10 @@ impl<N: Network> Backend<N> {
             // Live execution may already contain unmined development edits.
             let states = states.upgradable_read();
             if let Some(state) = states.get_state(&hash) {
-                return state.maybe_as_full_db().cloned().map(Arc::new);
+                return state.maybe_shared_full_db();
             }
             let mut states = RwLockUpgradableReadGuard::upgrade(states);
-            states
-                .get_on_disk_state(&hash)
-                .and_then(|state| state.maybe_as_full_db().cloned())
-                .map(Arc::new)
+            states.get_on_disk_state(&hash).and_then(|state| state.maybe_shared_full_db())
         });
         if let Some(tempo) = &mut self.blockchain.storage.write().tempo {
             tempo.snapshot(id, proof_state);
@@ -3357,6 +3359,18 @@ impl<N: Network> Backend<N> {
             .map_err(|err| BlockchainError::InvalidTransactionRequest(err.to_string()))?;
         let response_tx = aa.clone().into_signed(TempoSignature::default());
         let key_type = request.key_type.unwrap_or(SignatureType::Secp256k1);
+        // A configurable account approves with an owner quorum whose verification gas, commitment
+        // checks and first-use registration a primitive placeholder cannot model, so estimating
+        // with one would under-report gas. A simulation witness implies such a quorum even when
+        // the request omits keyType.
+        if key_type == SignatureType::ConfigurableAccount
+            || request.configurable_account_simulation.is_some()
+            || request.key_authorization_simulation.is_some()
+        {
+            return Err(BlockchainError::InvalidTransactionRequest(
+                "configurable account signatures are not supported for simulation".to_string(),
+            ));
+        }
         let signature = mock_tempo_signature(
             key_type,
             request.key_data.clone(),
@@ -5435,11 +5449,9 @@ impl<N: Network> Backend<N> {
             (removed_blocks, proof_state)
         };
         if let Some((states, accounts)) = proof_state {
-            let mut state = CacheDB::new(EmptyDb);
-            state.cache.accounts = (*accounts).clone();
             let mut states = states.write();
             states.remove_block_states(&[hash]);
-            states.insert(hash, StateDb::new(state));
+            states.insert(hash, StateDb::new(SealedAccounts(accounts)));
         }
         let removed_hashes: Vec<_> = removed_blocks.iter().map(|b| b.header.hash_slow()).collect();
         self.states.write().remove_block_states(&removed_hashes);
@@ -6240,19 +6252,20 @@ where
                 if let Some(hook) = self.mining_state_root_hook.lock().as_ref() {
                     hook();
                 }
+                // The one copy of the live account cache, shared by proof history, the next
+                // seal's diff base, and EVM snapshots.
                 let proof_state = (matches!(block_info.block.header, FoundryHeader::Tempo(_))
                     && self.get_fork().is_some())
                 .then(|| {
-                    let mut state = CacheDB::new(EmptyDb);
-                    state.cache.accounts = db
-                        .maybe_as_full_db()
-                        .expect("a fork database exposes its cached accounts")
-                        .clone();
-                    state
+                    Arc::new(
+                        db.maybe_as_full_db()
+                            .expect("a fork database exposes its cached accounts")
+                            .clone(),
+                    )
                 });
                 let state_root = proof_state.as_ref().map_or_else(
                     || db.maybe_state_root().unwrap_or_default(),
-                    |state| {
+                    |accounts| {
                         let proof_root = Arc::clone(
                             &self
                                 .blockchain
@@ -6265,9 +6278,9 @@ where
                         );
                         let (cache, previous) = &mut *proof_root.lock();
                         // Rehash only the paths that changed since the previous seal.
-                        cache.record_diff(&state.cache.accounts, previous);
-                        let root = cache.root(&state.cache.accounts);
-                        previous.clone_from(&state.cache.accounts);
+                        cache.record_diff(accounts, previous);
+                        let root = cache.root(accounts);
+                        *previous = Arc::clone(accounts);
                         root
                     },
                 );
@@ -6284,7 +6297,7 @@ where
                     let mut proof_states = proof_states.write();
                     // Re-mining after a rewind can produce an already cached hash.
                     proof_states.remove_block_states(&[block_hash]);
-                    proof_states.insert(block_hash, StateDb::new(proof_state));
+                    proof_states.insert(block_hash, StateDb::new(SealedAccounts(proof_state)));
                 }
                 db.insert_block_hash(U256::from(block_info.block.header.number()), block_hash);
                 self.time.commit_next_timestamp(pending_timestamp);
@@ -6371,6 +6384,12 @@ where
             }
             storage.blocks.insert(block_hash, block);
             storage.hashes.insert(block_number, block_hash);
+            {
+                let storage = &mut *storage;
+                if let Some(tempo) = &mut storage.tempo {
+                    tempo.prune(&storage.hashes, &self.states.read());
+                }
+            }
             if let Some(block_access_list) = block_access_list {
                 storage.block_access_lists.insert(block_hash, block_access_list);
             }
@@ -7483,9 +7502,7 @@ where
                 for slot in account.storage.keys() {
                     keys.push(Bytes::from(slot.to_be_bytes::<32>()));
                 }
-                if account.info.code_hash != KECCAK256_EMPTY
-                    && seen_codes.insert(account.info.code_hash)
-                {
+                if !account.info.is_empty_code_hash() && seen_codes.insert(account.info.code_hash) {
                     let code = match &account.info.code {
                         Some(code) => code.original_bytes(),
                         None => state.code_by_hash_ref(account.info.code_hash)?.original_bytes(),

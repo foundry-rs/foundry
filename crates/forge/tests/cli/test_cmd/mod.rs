@@ -5035,6 +5035,18 @@ contract Dummy {
     cmd.assert_success();
 
     assert!(dump_path.exists());
+
+    // A file, such as a dump in the single-file format of 1.8, is rejected before the run.
+    let file_path = prj.root().join("old_dump.json");
+    std::fs::write(&file_path, "{}").unwrap();
+    cmd.forge_fuse()
+        .args(["test", "--mt", "testDummy", "--debug", "--dump", file_path.to_str().unwrap()])
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Error: --dump now takes a directory, but [..]old_dump.json is not one; remove it or pass a directory path
+
+"#]]);
 }
 
 #[forgetest]

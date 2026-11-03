@@ -8,7 +8,7 @@
 //! initialization logic from `foundry-evm-core`; the changed state is written back to the `Db`.
 
 use super::{
-    db::{AccountInfo, DatabaseRef, Db, KECCAK_EMPTY},
+    db::{AccountInfo, DatabaseRef, Db},
     env::EvmEnv,
     evm::{EvmOptions, TempoEvmNetwork, build_evm},
 };
@@ -87,7 +87,7 @@ fn overlay_changes(
             continue;
         }
         let mut info = info.clone();
-        if info.code.is_none() && info.code_hash != KECCAK_EMPTY {
+        if info.code.is_none() && !info.is_empty_code_hash() {
             info.code = cache.contracts.get(&info.code_hash).cloned();
         }
         changes.accounts.push((*address, info));
@@ -148,6 +148,9 @@ fn initialize_tempo_genesis(
             // Seed tx_origin so ensure_admin_caller passes on T2+ (requires
             // tx_origin != zero && tx_origin == msg_sender).
             keychain.set_tx_origin(account)?;
+            // From T14 `authorize_key` reads the caller's account without loading it, as a
+            // transaction's sender is already warm; load it here the same way.
+            StorageCtx.with_account_info(account, |_| Ok(()))?;
             keychain.authorize_key(
                 account, // msg_sender (root account authorizes its own key)
                 account, // key ID = account address for secp256k1

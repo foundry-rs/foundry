@@ -103,7 +103,7 @@ impl FuzzRunIdentifiedContracts {
         let mut targets_changed = false;
         for changes in state_changes {
             let address = changes.address;
-            // Like REVM's touched flag, an account a call touched without changing it counts.
+            // An account a call touched without changing it counts.
             if setup_contracts.contains_key(&address) || !(changes.is_changed() || changes.touched)
             {
                 continue;

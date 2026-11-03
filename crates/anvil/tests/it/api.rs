@@ -487,7 +487,7 @@ async fn rejects_call_with_undersized_max_fee_per_gas() {
     );
 }
 
-// Halts and invalid state overrides are reported with REVM's messages and error codes.
+// Halts and invalid state overrides are reported with their messages and error codes.
 #[tokio::test(flavor = "multi_thread")]
 async fn reports_halt_and_state_override_errors() {
     let (api, handle) = spawn(NodeConfig::test()).await;

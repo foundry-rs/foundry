@@ -153,7 +153,7 @@ pub(super) struct MonadRollbackProfile {
 }
 
 impl MonadRollbackProfile {
-    /// Rewinds cfg/spec, gas params, and the retained block's fee environment.
+    /// Rewinds the spec and the retained block's blob fee environment.
     pub(super) fn apply_env(&self, env: &mut EvmEnv) {
         env.cfg_env.spec = SpecId::from(self.hardfork);
         env.block_env.blob_excess_gas_and_price = self.block_blob_excess_gas_and_price;

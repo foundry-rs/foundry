@@ -4,12 +4,12 @@
 //! in a [`Cache`]) over an optional remote fork. Execution reads it through [`EvmDb`], an evm2
 //! [`DynDatabase`] adapter, and writes back the accumulated changes with [`Db::commit`].
 
-use crate::mem::storage::MinedTransaction;
+use crate::{eth::error::BlockchainError, mem::storage::MinedTransaction};
 use alloy_consensus::BlockBody;
 use alloy_eips::{eip4895::Withdrawals, eip7691::BLOB_GASPRICE_UPDATE_FRACTION_PECTRA};
 use alloy_network::Network;
 use alloy_primitives::{
-    Address, B256, Bytes, U256, keccak256,
+    Address, B256, Bytes, KECCAK256_EMPTY, U256, keccak256,
     map::{AddressMap, B256Map, U256Map},
 };
 use alloy_rpc_types::{BlockId, BlockOverrides, state::AccountOverride};
@@ -36,10 +36,10 @@ use std::{
     fs::File,
     io::BufReader,
     path::Path,
+    sync::Arc,
 };
 
 pub use super::env::{BlobExcessGasAndPrice, BlockEnv, SpecId};
-pub use alloy_primitives::KECCAK256_EMPTY as KECCAK_EMPTY;
 pub use evm2::{AccountInfo, bytecode::Bytecode};
 pub use foundry_evm_core::{backend::RevertStateSnapshotAction, state_snapshot::StateSnapshots};
 pub use foundry_fork_db::{DatabaseError, DatabaseResult};
@@ -226,8 +226,7 @@ fn deserialize_snapshot_accounts<'de, D: Deserializer<'de>>(
     Ok(accounts.into_iter().map(|(address, account)| (address, account.into())).collect())
 }
 
-/// Deserializes bytecode written as raw bytes, or in the tagged form of dumps written before the
-/// evm2 migration.
+/// Deserializes bytecode written as raw bytes, or in the older tagged form of state dumps.
 fn deserialize_snapshot_code<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<Bytes>, D::Error> {
@@ -267,8 +266,8 @@ fn deserialize_snapshot_code<'de, D: Deserializer<'de>>(
 
 /// Read access to Anvil state.
 ///
-/// Like REVM's `DatabaseRef`, a missing account of a local database is reported as an existing
-/// empty account; [`EvmDb`] maps it to evm2's absent account where execution requires it.
+/// A missing account of a local database is reported as an existing empty account; [`EvmDb`]
+/// maps it to evm2's absent account where execution requires it.
 #[auto_impl::auto_impl(&, Box)]
 pub trait DatabaseRef: Debug {
     /// Returns the account at `address`, with its bytecode when available.
@@ -320,7 +319,7 @@ pub struct Cache {
 impl Default for Cache {
     fn default() -> Self {
         let mut contracts = B256Map::default();
-        contracts.insert(KECCAK_EMPTY, Bytecode::default());
+        contracts.insert(KECCAK256_EMPTY, Bytecode::default());
         contracts.insert(B256::ZERO, Bytecode::default());
         Self { accounts: Default::default(), contracts, block_hashes: Default::default() }
     }
@@ -346,13 +345,13 @@ impl<ExtDB> CacheDB<ExtDB> {
         if let Some(code) = &info.code
             && !code.is_empty()
         {
-            if info.code_hash == KECCAK_EMPTY {
+            if info.code_hash == KECCAK256_EMPTY {
                 info.code_hash = code.hash_slow();
             }
             self.cache.contracts.entry(info.code_hash).or_insert_with(|| code.clone());
         }
         if info.code_hash.is_zero() {
-            info.code_hash = KECCAK_EMPTY;
+            info.code_hash = KECCAK256_EMPTY;
         }
     }
 
@@ -424,9 +423,7 @@ impl<ExtDB: DatabaseRef> CacheDB<ExtDB> {
 pub fn apply_state_overrides<ExtDB: DatabaseRef>(
     overrides: impl IntoIterator<Item = (Address, AccountOverride)>,
     db: &mut CacheDB<ExtDB>,
-) -> Result<(), crate::eth::error::BlockchainError> {
-    use crate::eth::error::BlockchainError;
-
+) -> Result<(), BlockchainError> {
     for (address, account_override) in overrides {
         let mut info = db.load_account(address)?.info.clone();
         if let Some(nonce) = account_override.nonce {
@@ -435,8 +432,7 @@ pub fn apply_state_overrides<ExtDB: DatabaseRef>(
         if let Some(code) = account_override.code {
             let code = Bytecode::new_raw_checked(code)
                 .map_err(|err| BlockchainError::StateOverrideError(err.to_string()))?;
-            info.code_hash = code.hash_slow();
-            info.code = Some(code);
+            info.set_code(code);
         }
         if let Some(balance) = account_override.balance {
             info.balance = balance;
@@ -751,6 +747,11 @@ pub trait MaybeFullDatabase: DatabaseRef {
         self.maybe_as_full_db().cloned()
     }
 
+    /// Returns the accounts if they are stored behind a shared, immutable allocation.
+    fn maybe_shared_full_db(&self) -> Option<Arc<AddressMap<DbAccount>>> {
+        None
+    }
+
     /// Returns whether snapshots of this database use structural sharing.
     fn is_persistent(&self) -> bool {
         false
@@ -810,6 +811,10 @@ impl<T: MaybeFullDatabase + ?Sized> MaybeFullDatabase for Box<T> {
         T::maybe_full_db(self)
     }
 
+    fn maybe_shared_full_db(&self) -> Option<Arc<AddressMap<DbAccount>>> {
+        T::maybe_shared_full_db(self)
+    }
+
     fn is_persistent(&self) -> bool {
         T::is_persistent(self)
     }
@@ -865,7 +870,7 @@ pub trait Db: MaybeFullDatabase + MaybeForkedDatabase + Send + Sync {
     fn set_code(&mut self, address: Address, code: Bytes) -> DatabaseResult<()> {
         let mut info = self.basic_ref(address)?.unwrap_or_default();
         if code.is_empty() {
-            info.code_hash = KECCAK_EMPTY;
+            info.code_hash = KECCAK256_EMPTY;
             info.code = None;
         } else {
             info.code_hash = keccak256(&code);
@@ -911,7 +916,7 @@ pub trait Db: MaybeFullDatabase + MaybeForkedDatabase + Send + Sync {
                     account.balance,
                     nonce,
                     // set automatically from the code
-                    KECCAK_EMPTY,
+                    KECCAK256_EMPTY,
                     (!account.code.is_empty()).then(|| Bytecode::new_raw(account.code)),
                 ),
             );
@@ -1170,6 +1175,10 @@ impl MaybeFullDatabase for StateDb {
 
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
         self.0.maybe_full_db()
+    }
+
+    fn maybe_shared_full_db(&self) -> Option<Arc<AddressMap<DbAccount>>> {
+        self.0.maybe_shared_full_db()
     }
 
     fn is_persistent(&self) -> bool {

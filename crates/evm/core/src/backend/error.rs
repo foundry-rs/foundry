@@ -25,7 +25,7 @@ pub fn handler_error(err: HandlerError) -> eyre::Report {
 
 /// Returns a report for a transaction evm2 rejected or failed to execute.
 ///
-/// Transaction validation errors keep the wording users saw before the evm2 migration.
+/// Transaction validation errors use Foundry's own wording instead of evm2's.
 pub fn transaction_error(err: HandlerError) -> eyre::Report {
     let reason = match &err {
         HandlerError::InvalidNonce { expected, got } if got > expected => {

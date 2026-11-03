@@ -595,6 +595,7 @@ const fn key_type_name(t: KeyType) -> &'static str {
         KeyType::Secp256k1 => "secp256k1",
         KeyType::P256 => "p256",
         KeyType::WebAuthn => "webauthn",
+        KeyType::ConfigurableAccount => "configurableaccount",
     }
 }
 
@@ -603,6 +604,7 @@ const fn key_type_label(t: KeyType) -> &'static str {
         KeyType::Secp256k1 => "Secp256k1",
         KeyType::P256 => "P256",
         KeyType::WebAuthn => "WebAuthn",
+        KeyType::ConfigurableAccount => "ConfigurableAccount",
     }
 }
 

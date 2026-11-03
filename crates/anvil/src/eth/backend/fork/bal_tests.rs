@@ -298,13 +298,8 @@ fn fork_bal_seed_preserves_cached_values_and_merges_slots() {
             vec![StorageChange::new(index(1), U256::from(22))],
         ));
     let db = database(hash);
-    // The fork cache stores REVM-typed accounts, so the entry is edited in place.
-    let cached_account = {
-        let mut accounts = db.accounts().write();
-        let account = accounts.entry(address).or_default();
-        account.balance = U256::from(99);
-        account.clone()
-    };
+    let cached_account = evm2::AccountInfo::default().with_balance(U256::from(99));
+    db.accounts().write().insert(address, cached_account.clone());
     db.storage().write().insert(
         address,
         [(U256::ONE, U256::from(101)), (U256::from(3), U256::from(303))].into_iter().collect(),
