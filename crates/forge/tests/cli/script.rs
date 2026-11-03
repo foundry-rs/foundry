@@ -16,6 +16,7 @@ use alloy_signer::SignerSync;
 use anvil::{NodeConfig, spawn};
 use axum::{Router, body::Bytes as BodyBytes, http::StatusCode, response::IntoResponse};
 use forge_script_sequence::ScriptSequence;
+use foundry_common::abi::{encode_function_args, get_func};
 use foundry_compilers::{PathStyle, artifacts::EvmVersion};
 use foundry_evm::{constants::CALLER, hardfork::TempoHardfork};
 use foundry_test_utils::{
@@ -9616,6 +9617,11 @@ contract NamedArgs is Script {
     function run(string memory chain, uint256 capacity, uint256 rate) external pure {
         console.log(chain, capacity, rate);
     }
+
+    /// @custom:defaults amount=5 text="two words"
+    function allDefaults(uint256 amount, string memory text) external pure {
+        console.log(text, amount);
+    }
 }"#,
     );
     let target = format!("{}:NamedArgs", script.display());
@@ -9646,6 +9652,26 @@ Error: unknown argument `chian`, missing argument `chain` for run(string,uint256
         .stderr_eq(str![[r#"
 error: the argument '[ARGS]...' cannot be used with '--arg <NAME=VALUE>'
 ...
+"#]]);
+
+    cmd.forge_fuse().args(["script", &target, "--sig", "allDefaults"]).assert_success().stdout_eq(
+        str![[r#"
+...
+== Logs ==
+  two words 5
+
+"#]],
+    );
+
+    // Positional arguments still override the documented defaults.
+    cmd.forge_fuse()
+        .args(["script", &target, "--sig", "allDefaults(uint256,string)", "9", "custom"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+== Logs ==
+  custom 9
+
 "#]]);
 }
 
@@ -9714,13 +9740,14 @@ contract AllTypes {
         require(callback.selector == bytes4(0xdeadbeef), "fn selector");
     }
 
-    /// @custom:defaults mode=1 text="two words, quoted" lane="(7,0x000000000000000000000000000000000000beef,(1,2),[0x0000000000000000000000000000000000000000000000000000000000000009])" nested=[[1,2],[3]]
-    function defaults(Mode mode, string memory text, Lane memory lane, uint8[][] memory nested, uint256 given) external pure {
+    /// @custom:defaults mode=1 text="two words, quoted" lane="(7,0x000000000000000000000000000000000000beef,(1,2),[0x0000000000000000000000000000000000000000000000000000000000000009])" nested=[[1,2],[3]] labels='["a,b","","[c]"]'
+    function defaults(Mode mode, string memory text, Lane memory lane, uint8[][] memory nested, uint256 given, string[] memory labels) external pure {
         require(mode == Mode.Lock, "mode");
         require(eq(bytes(text), bytes("two words, quoted")), "text");
         require(lane.selector == 7 && lane.limit.rate == 2 && lane.tags.length == 1, "lane");
         require(nested.length == 2 && nested[1][0] == 3, "nested");
         require(given == 42, "given");
+        require(labels.length == 3 && eq(bytes(labels[0]), bytes("a,b")) && bytes(labels[1]).length == 0 && eq(bytes(labels[2]), bytes("[c]")), "labels");
     }
 }"#,
     );
@@ -9801,5 +9828,86 @@ Error: script failed: mode
         .stderr_eq(str![[r#"
 Error: argument `callback` (function): [..]
 ...
+"#]]);
+}
+
+#[forgetest_init]
+fn script_named_arguments_human_readable_signature(prj: _, cmd: _) {
+    let script = prj.add_source(
+        "Named.s.sol",
+        r#"
+contract NamedArgs {
+    function run(uint256 amount) external pure {
+        require(amount == 9, "amount");
+    }
+}"#,
+    );
+    let target = format!("{}:NamedArgs", script.display());
+
+    for sig in ["run(uint)", "run(uint256 amount)", "function run(uint256 amount) external"] {
+        cmd.forge_fuse()
+            .args(["script", &target, "--sig", sig, "--arg", "amount=9"])
+            .assert_success();
+    }
+}
+
+#[forgetest_init]
+fn script_named_arguments_conflict_with_calldata(prj: _, cmd: _) {
+    let script = prj.add_source(
+        "Named.s.sol",
+        r#"
+contract NamedArgs {
+    function run(uint256 amount) external pure {
+        require(amount == 1, "amount");
+    }
+}"#,
+    );
+    let target = format!("{}:NamedArgs", script.display());
+    let calldata = hex::encode_prefixed(
+        encode_function_args(&get_func("run(uint256)").unwrap(), ["1"]).unwrap(),
+    );
+
+    cmd.args(["script", &target, "--sig", &calldata]).assert_success();
+    cmd.forge_fuse()
+        .args(["script", &target, "--sig", &calldata, "--arg", "amount=2"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: --arg cannot be used with raw calldata in --sig
+
+"#]]);
+}
+
+#[forgetest_init]
+fn script_named_arguments_overload_with_invalid_defaults(prj: _, cmd: _) {
+    let script = prj.add_source(
+        "Named.s.sol",
+        r#"
+contract NamedArgs {
+    /// @custom:defaults recipient
+    function run(address recipient) external pure {
+        revert("wrong overload");
+    }
+
+    function run(uint256 amount) external pure {
+        require(amount == 7, "amount");
+    }
+}"#,
+    );
+    let target = format!("{}:NamedArgs", script.display());
+
+    cmd.args(["script", &target, "--arg", "amount=7"]).assert_success();
+    cmd.forge_fuse()
+        .args([
+            "script",
+            &target,
+            "--sig",
+            "run(address)",
+            "--arg",
+            "recipient=0x0000000000000000000000000000000000000001",
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: invalid `@custom:defaults` on `run(address)`: entry `recipient` is not NAME=VALUE
+
 "#]]);
 }

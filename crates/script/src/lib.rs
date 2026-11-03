@@ -126,6 +126,9 @@ pub struct ScriptArgs {
     ///
     /// Order does not matter. Arguments left out take the values of the function's
     /// `@custom:defaults` NatSpec tag, e.g. `/// @custom:defaults amount=5 recipient=0xabc...`.
+    /// Omit all arguments to use all defaults. Cannot be combined with raw calldata in `--sig`.
+    /// Defaults use shell quoting; preserve quotes inside compound values, e.g.
+    /// `/// @custom:defaults labels='["a,b",""]'`.
     #[arg(long = "arg", value_name = "NAME=VALUE", conflicts_with = "args")]
     pub named_args: Vec<String>,
 
@@ -766,6 +769,10 @@ impl ScriptArgs {
         if let Ok(decoded) = hex::decode(&self.sig)
             && let Some(selector) = decoded.get(..SELECTOR_LEN)
         {
+            eyre::ensure!(
+                self.named_args.is_empty(),
+                "--arg cannot be used with raw calldata in --sig"
+            );
             let func =
                 abi.functions().find(|func| selector == &func.selector()[..]).ok_or_else(|| {
                     eyre::eyre!(
@@ -803,6 +810,13 @@ impl ScriptArgs {
                 }
             }
         };
+
+        // Keep function selection unchanged for positional calls, including zero-argument scripts.
+        // Once selected, a function with no supplied values can use all its defaults.
+        if self.args.is_empty() && !func.inputs.is_empty() {
+            let (func, data) = named_args::method_and_calldata(&self.sig, abi, raw_metadata, &[])?;
+            return Ok((func, data.into()));
+        }
         let data = encode_function_args(func, &self.args)?;
 
         Ok((func.clone(), data.into()))

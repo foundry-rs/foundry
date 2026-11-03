@@ -2,11 +2,13 @@
 //!
 //! Missing arguments take the values of the function's `@custom:defaults` NatSpec tag, a list of
 //! `name=value` pairs, e.g. `/// @custom:defaults capacity=1000000000000000000 rate=1000`.
+//! Defaults use shell quoting: quote values containing spaces, and preserve ABI string quotes
+//! inside compound values with an outer quote, e.g. `labels='["a,b","","[c]"]'`.
 
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Function, JsonAbi};
 use eyre::{Result, bail, eyre};
-use foundry_common::abi::coerce_value;
+use foundry_common::abi::{coerce_value, get_func};
 use std::{collections::BTreeMap, fmt::Write};
 
 /// NatSpec of one function: `@param` descriptions and `@custom:defaults` values.
@@ -72,9 +74,12 @@ pub(crate) fn method_and_calldata(
     named_args: &[String],
 ) -> Result<(Function, Vec<u8>)> {
     let given = parse_pairs(named_args.iter().cloned(), "argument")?;
+    let selector = if sig.contains('(') { Some(get_func(sig)?.selector()) } else { None };
     let candidates = abi
         .functions()
-        .filter(|func| if sig.contains('(') { func.signature() == sig } else { func.name == sig })
+        .filter(|func| {
+            selector.map_or_else(|| func.name == sig, |selector| func.selector() == selector)
+        })
         .collect::<Vec<_>>();
     if candidates.is_empty() {
         bail!("Function `{sig}` not found in the ABI");
@@ -83,8 +88,10 @@ pub(crate) fn method_and_calldata(
     let mut fitting = Vec::new();
     let mut errors = Vec::new();
     for func in candidates {
-        let docs = FunctionDocs::new(raw_metadata, func)?;
-        match ordered_values(func, &docs, &given) {
+        let values = FunctionDocs::new(raw_metadata, func)
+            .map_err(|err| err.to_string())
+            .and_then(|docs| ordered_values(func, &docs, &given));
+        match values {
             Ok(values) => fitting.push((func, values)),
             Err(err) => errors.push(err),
         }
@@ -212,6 +219,21 @@ mod tests {
         assert_eq!(func.signature(), "run(string,uint256)");
         let (func, _) = method_and_calldata("run", &abi, None, &args(&["chain=a"])).unwrap();
         assert_eq!(func.signature(), "run(string)");
+
+        let meta = metadata("run(string,uint256)", "capacity=1000");
+        let err = method_and_calldata("run", &abi, Some(&meta), &args(&["chain=a"]))
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            err,
+            "the arguments fit several functions: run(string), run(string,uint256); pass the full signature with --sig"
+        );
+        let (_, data) =
+            method_and_calldata("run(string,uint256)", &abi, Some(&meta), &args(&["chain=a"]))
+                .unwrap();
+        let expected =
+            encode_function_args(&get_func("run(string,uint256)").unwrap(), ["a", "1000"]).unwrap();
+        assert_eq!(data, expected);
     }
 
     #[test]
