@@ -237,34 +237,6 @@ jobs:
       rust-toolchain: nightly
       flags: --all-features --locked
 
-  codeql:
-    name: analyze (${{ matrix.language }})
-    runs-on: ubuntu-latest
-    permissions:
-      security-events: write
-      actions: read
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - language: actions
-            build-mode: none
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
-        with:
-          languages: ${{ matrix.language }}
-          build-mode: ${{ matrix.build-mode }}
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
-        with:
-          category: "/language:${{matrix.language}}"
-
   workflow-validation:
     name: Workflow Validation
     uses: tempoxyz/gh-actions/.github/workflows/scan-github-actions.yml@2ab28a31ae569be9f780c7675b684471060afa40
@@ -295,7 +267,6 @@ jobs:
       - rustfmt
       - forge-fmt
       - deny
-      - codeql
       - workflow-validation
     timeout-minutes: 30
     steps:
