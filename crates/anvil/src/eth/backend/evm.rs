@@ -41,7 +41,6 @@ use foundry_evm_core::{
 };
 use foundry_evm_hardforks::FoundryHardfork;
 use foundry_evm_networks::{
-    NetworkConfigs,
     arbitrum::{ARB_BLOCK_NUMBER_SELECTOR, ARB_SYS_ADDRESS, arb_block_number_call},
     celo::transfer::{CELO_TRANSFER_ADDRESS, CELO_TRANSFER_PRECOMPILE_NAME},
 };
@@ -62,72 +61,34 @@ pub use foundry_evm_core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 pub use foundry_evm_core::evm::OpEvmNetwork;
 
-/// The evm2 type family a network executes with.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum EvmFamily {
-    /// Ethereum and Ethereum-equivalent chains, including Celo.
-    #[default]
-    Eth,
-    /// OP Stack chains.
-    #[cfg(feature = "optimism")]
-    Op,
-    /// Base.
-    #[cfg(feature = "base")]
-    Base,
-    /// Monad.
-    #[cfg(feature = "monad")]
-    Monad,
-    /// Tempo.
-    Tempo,
-}
-
-impl EvmFamily {
-    /// Returns the family executing `networks`.
-    pub const fn from_networks(networks: &NetworkConfigs) -> Self {
-        #[cfg(feature = "base")]
-        if networks.is_base() {
-            return Self::Base;
-        }
-        #[cfg(feature = "optimism")]
-        if networks.is_optimism() {
-            return Self::Op;
-        }
-        #[cfg(feature = "monad")]
-        if networks.is_monad() {
-            return Self::Monad;
-        }
-        if networks.is_tempo() {
-            return Self::Tempo;
-        }
-        Self::Eth
-    }
-}
-
-/// Runs `$body` with `$N` bound to the [`AnvilEvmNetwork`] of `$family`.
+/// Runs `$body` with `$N` bound to the [`AnvilEvmNetwork`] executing `$network`, a
+/// [`NetworkVariant`](foundry_evm_networks::NetworkVariant).
 macro_rules! with_evm_network {
-    ($family:expr, $N:ident => $body:expr) => {
-        match $family {
-            $crate::eth::backend::evm::EvmFamily::Eth => {
-                type $N = $crate::eth::backend::evm::EthEvmNetwork;
-                $body
-            }
+    ($network:expr, $N:ident => $body:expr) => {
+        match $network {
             #[cfg(feature = "optimism")]
-            $crate::eth::backend::evm::EvmFamily::Op => {
+            foundry_evm_networks::NetworkVariant::Optimism => {
                 type $N = $crate::eth::backend::evm::OpEvmNetwork;
                 $body
             }
             #[cfg(feature = "base")]
-            $crate::eth::backend::evm::EvmFamily::Base => {
+            foundry_evm_networks::NetworkVariant::Base => {
                 type $N = $crate::eth::backend::evm::BaseEvmNetwork;
                 $body
             }
             #[cfg(feature = "monad")]
-            $crate::eth::backend::evm::EvmFamily::Monad => {
+            foundry_evm_networks::NetworkVariant::Monad => {
                 type $N = $crate::eth::backend::evm::MonadEvmNetwork;
                 $body
             }
-            $crate::eth::backend::evm::EvmFamily::Tempo => {
+            foundry_evm_networks::NetworkVariant::Tempo => {
                 type $N = $crate::eth::backend::evm::TempoEvmNetwork;
+                $body
+            }
+            // Ethereum, and networks this build of Anvil has no execution support for.
+            #[allow(unreachable_patterns)]
+            _ => {
+                type $N = $crate::eth::backend::evm::EthEvmNetwork;
                 $body
             }
         }
