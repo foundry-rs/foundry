@@ -254,6 +254,8 @@ fn json_to_toml_value(json: JsonValue) -> TomlValue {
         JsonValue::String(s) => TomlValue::String(s),
         JsonValue::Number(n) => match n.as_i64() {
             Some(i) => TomlValue::Integer(i),
+            // TOML integers are i64, keep larger ones as strings instead of lossy floats.
+            None if n.is_u64() => TomlValue::String(n.to_string()),
             None => match n.as_f64() {
                 Some(f) => TomlValue::Float(f),
                 None => TomlValue::String(n.to_string()),
@@ -446,6 +448,19 @@ chain_id = 8453
         let mut document = parse_toml_document(toml)?;
         upsert_toml_value(&mut document, value, key)?;
         Ok(document.to_string())
+    }
+
+    #[test]
+    fn write_toml_keeps_u64_above_i64_max() {
+        let toml = format_json_to_toml(serde_json::json!({ "amount": u64::MAX })).unwrap();
+        assert_eq!(toml, "amount = \"18446744073709551615\"\n");
+        let value = parse_toml_coerce(&toml, ".amount", &DynSolType::Uint(256)).unwrap();
+        assert_eq!(value, alloy_primitives::U256::from(u64::MAX).abi_encode());
+
+        assert_eq!(
+            upsert("", "9223372036854775809", ".amount").unwrap(),
+            "amount = \"9223372036854775809\"\n"
+        );
     }
 
     #[test]

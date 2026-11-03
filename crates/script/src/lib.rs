@@ -44,6 +44,7 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
+use foundry_debugger::ensure_dump_dir;
 use foundry_evm::{
     backend::Backend,
     core::{
@@ -250,7 +251,7 @@ pub struct ScriptArgs {
     #[arg(
         long,
         requires = "debug",
-        value_hint = ValueHint::FilePath,
+        value_hint = ValueHint::DirPath,
         value_name = "PATH"
     )]
     pub dump: Option<PathBuf>,
@@ -455,6 +456,10 @@ impl ScriptArgs {
                 "--sponsor-url is not supported by forge script; use --tempo.sponsor with \
                  --tempo.sponsor-signer or --tempo.sponsor-sig"
             );
+        }
+
+        if let Some(dir) = &self.dump {
+            ensure_dump_dir(dir)?;
         }
 
         if self.wallet_session.enabled {
