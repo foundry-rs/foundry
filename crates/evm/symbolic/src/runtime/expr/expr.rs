@@ -50,9 +50,14 @@ impl SymExpr {
                 let large_read_offset = storage_offset_is_large(cx, &read_offset);
                 let large_write_offset = storage_offset_is_large(cx, &write_offset);
                 let large_offset = SymBoolExpr::or(cx, vec![large_read_offset, large_write_offset]);
-                let read_base = read_base
-                    .storage_base_eq(cx, &write_base)
-                    .unwrap_or_else(|| SymBoolExpr::eq(cx, read_base, write_base));
+                // Large offsets on two concrete hash bases are compared exactly.
+                if large_offset.as_const() != Some(false)
+                    && read_base.as_const().is_some()
+                    && write_base.as_const().is_some()
+                {
+                    return SymBoolExpr::eq(cx, self.clone(), write_key.clone());
+                }
+                let read_base = read_base.storage_base_eq(cx, &write_base);
                 let read_offset = SymBoolExpr::eq(cx, read_offset, write_offset);
                 let same_layout_slot = SymBoolExpr::and(cx, vec![read_base, read_offset]);
                 if large_offset.as_const() == Some(false) {
@@ -69,6 +74,9 @@ impl SymExpr {
                     && (self.as_const().is_some() || write_key.as_const().is_some()) =>
             {
                 let large_offset = storage_offset_is_large(cx, &offset);
+                if large_offset.as_const() == Some(false) {
+                    return SymBoolExpr::constant(cx, false);
+                }
                 let words_eq = SymBoolExpr::eq(cx, self.clone(), write_key.clone());
                 SymBoolExpr::and(cx, vec![large_offset, words_eq])
             }
@@ -76,20 +84,29 @@ impl SymExpr {
         }
     }
 
-    fn storage_base_eq(&self, cx: &mut SymCx, other: &Self) -> Option<SymBoolExpr> {
-        let read = self.storage_mapping_key(cx)?;
-        let write = other.storage_mapping_key(cx)?;
+    /// Compares two storage hash bases, assuming different Keccak preimages never collide.
+    fn storage_base_eq(&self, cx: &mut SymCx, other: &Self) -> SymBoolExpr {
+        // Dynamic array data slots `keccak(slot)` are equal when their slots are.
+        if let (Some(read), Some(write)) =
+            (self.keccak_preimage(cx, 32), other.keccak_preimage(cx, 32))
+        {
+            let read = Self::from_bytes(cx, read[..32].iter().cloned());
+            let write = Self::from_bytes(cx, write[..32].iter().cloned());
+            return read.storage_base_eq(cx, &write);
+        }
+        let (Some(read), Some(write)) =
+            (self.storage_mapping_key(cx), other.storage_mapping_key(cx))
+        else {
+            return SymBoolExpr::eq(cx, self.clone(), other.clone());
+        };
 
         let key_eq = storage_mapping_key_eq(cx, &read, &write);
-        let slot_eq = read
-            .slot
-            .storage_base_eq(cx, &write.slot)
-            .unwrap_or_else(|| SymBoolExpr::eq(cx, read.slot, write.slot));
-        Some(SymBoolExpr::and(cx, vec![key_eq, slot_eq]))
+        let slot_eq = read.slot.storage_base_eq(cx, &write.slot);
+        SymBoolExpr::and(cx, vec![key_eq, slot_eq])
     }
 
     pub(crate) fn storage_mapping_key(&self, cx: &mut SymCx) -> Option<StorageMappingKey> {
-        let bytes = self.storage_mapping_key_bytes(cx)?;
+        let bytes = self.keccak_preimage(cx, 64)?;
         let key_bytes = &bytes[..32];
         let preserve_key_bytes = (!key_bytes.iter().all(|byte| byte.as_const().is_some())
             && word_from_extracted_bytes(key_bytes).is_none())
@@ -131,10 +148,10 @@ impl SymExpr {
     }
 
     fn storage_mapping_root_slot(&self, cx: &mut SymCx) -> Option<U256> {
-        let bytes = self.storage_mapping_key_bytes(cx)?;
+        let bytes = self.keccak_preimage(cx, 64)?;
         let slot = Self::from_bytes(cx, bytes[32..64].iter().cloned());
         match slot.kind() {
-            SymExprKind::Const(value) if cx.concrete_keccak_preimage(*value).is_some() => {
+            SymExprKind::Const(_) if slot.keccak_preimage(cx, 64).is_some() => {
                 slot.storage_mapping_root_slot(cx)
             }
             SymExprKind::Const(slot) => Some(*slot),
@@ -143,14 +160,16 @@ impl SymExpr {
         }
     }
 
-    fn storage_mapping_key_bytes(&self, cx: &SymCx) -> Option<Arc<[Self]>> {
+    fn keccak_preimage(&self, cx: &SymCx, len: usize) -> Option<Arc<[Self]>> {
         match self.kind() {
-            SymExprKind::Keccak { len, bytes, .. }
-                if len.as_const() == Some(U256::from(64)) && bytes.len() >= 64 =>
+            SymExprKind::Keccak { len: hashed, bytes, .. }
+                if hashed.as_const() == Some(U256::from(len)) && bytes.len() >= len =>
             {
                 Some(bytes.clone())
             }
-            SymExprKind::Const(hash) => cx.concrete_keccak_preimage(*hash),
+            SymExprKind::Const(hash) => {
+                cx.concrete_keccak_preimage(*hash).filter(|bytes| bytes.len() == len)
+            }
             _ => None,
         }
     }
@@ -158,9 +177,6 @@ impl SymExpr {
     fn storage_layout_key(&self, cx: &mut SymCx) -> Option<(Self, Self)> {
         match self.kind() {
             SymExprKind::Keccak { .. } => Some((self.clone(), Self::zero(cx))),
-            SymExprKind::Const(hash) if cx.concrete_keccak_preimage(*hash).is_some() => {
-                Some((self.clone(), Self::zero(cx)))
-            }
             // Constant folding turns `keccak(7, s) + 1` into an unrecorded constant.
             SymExprKind::Const(value) => {
                 let hash = cx.concrete_keccak_base(*value, STORAGE_LAYOUT_OFFSET_BITS)?;
@@ -2326,7 +2342,7 @@ pub(crate) fn keccak_word_with_len(cx: &mut SymCx, bytes: Vec<SymExpr>, len: Sym
         && let Ok(concrete) = concrete_expr_bytes(&bytes[..len], "symbolic keccak input")
     {
         let hash = Into::<U256>::into(keccak256(concrete));
-        if len == 64 {
+        if len == 32 || len == 64 {
             cx.record_concrete_keccak_preimage(hash, bytes[..len].to_vec().into());
         }
         return SymExpr::constant(cx, hash);
