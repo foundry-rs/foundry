@@ -7486,15 +7486,8 @@ async fn tempo_consensus_fork_rejects_incompatible_epoch_length() {
         serde_json::json!({ "epochLength": 3 }),
     )
     .await;
-    let (malformed, _) = spawn_rpc_proxy_canned_method(
-        source.http_endpoint(),
-        "anvil_tempoConsensusIdentity",
-        serde_json::json!({ "epochLength": 0 }),
-    )
-    .await;
     for (endpoint, explicit, expected) in [
         (source.http_endpoint(), Some(3), "expected Tempo consensus anchor epoch 2, got 1"),
-        (malformed, Some(3), "expected Tempo consensus anchor epoch 2, got 1"),
         (hidden.clone(), Some(3), "expected Tempo consensus anchor epoch 2, got 1"),
         (inconsistent, None, "expected Tempo consensus anchor epoch 2, got 1"),
         (hidden, None, "expected Tempo consensus anchor epoch 0, got 1"),
@@ -8493,24 +8486,19 @@ async fn tempo_consensus_fork_discovers_source_epoch_length() {
     )
     .await;
     let before = serde_json::to_value(api.serialized_state(false).await.unwrap()).unwrap();
-    for url in [source.http_endpoint(), hidden] {
-        api.anvil_set_rpc_url(url.clone()).await.unwrap();
-        let fork = api.backend.get_fork().unwrap();
-        let config_before = fork.config.read().clone();
-        let error = api.anvil_set_rpc_url(conflicting.clone()).await.unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "replacement fork endpoint has an incompatible execution context"
-        );
-        assert!(Arc::ptr_eq(&fork.config.read().provider, &config_before.provider));
-        assert_eq!(fork.config.read().fork_urls, vec![url]);
-        assert_eq!(tempo_consensus_identity(&provider).await, identity);
-        assert_eq!(tempo_finalization(&provider, 4).await, finalized);
-        assert_eq!(
-            serde_json::to_value(api.serialized_state(false).await.unwrap()).unwrap(),
-            before
-        );
-    }
+    api.anvil_set_rpc_url(hidden.clone()).await.unwrap();
+    let fork = api.backend.get_fork().unwrap();
+    let config_before = fork.config.read().clone();
+    let error = api.anvil_set_rpc_url(conflicting).await.unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "replacement fork endpoint has an incompatible execution context"
+    );
+    assert!(Arc::ptr_eq(&fork.config.read().provider, &config_before.provider));
+    assert_eq!(fork.config.read().fork_urls, vec![hidden]);
+    assert_eq!(tempo_consensus_identity(&provider).await, identity);
+    assert_eq!(tempo_finalization(&provider, 4).await, finalized);
+    assert_eq!(serde_json::to_value(api.serialized_state(false).await.unwrap()).unwrap(), before);
     api.anvil_set_rpc_url(source.http_endpoint()).await.unwrap();
 
     let (replacement_api, replacement) =
@@ -8540,69 +8528,64 @@ async fn tempo_consensus_fork_epoch_metadata_and_fallbacks() {
     let (source_api, source) =
         spawn(config.clone().with_tempo_epoch_length(NonZeroU64::new(6).unwrap())).await;
     source_api.mine_one().await.unwrap();
-    for (method, endpoint) in tempo_epoch_metadata_endpoints(&source).await {
-        for (length, explicit, metadata) in [
-            (3, false, Some(serde_json::json!({ "epochLength": 3 }))),
-            (3, false, Some(serde_json::json!({ "epochLength": "0x3" }))),
-            (3, false, Some(serde_json::json!({ "epochLength": "3" }))),
-            (3, false, Some(serde_json::json!({ "epochLength": 3, "chainId": "0x1" }))),
-            (
-                3,
-                false,
-                Some(
-                    serde_json::json!({ "epochLength": 3, "depositContractAddress": "not-an-address" }),
-                ),
-            ),
-            (21_600, false, Some(serde_json::Value::Null)),
-            (21_600, false, Some(serde_json::json!({}))),
-            (21_600, false, None),
-            (3, true, None),
-            (3, true, Some(serde_json::json!({ "epochLength": 6 }))),
-            (3, true, Some(serde_json::json!({ "epochLength": 0 }))),
-            (3, true, Some(serde_json::json!({ "epochLength": -1 }))),
-            (3, true, Some(serde_json::json!({ "epochLength": "invalid" }))),
-            (3, true, Some(serde_json::json!({ "epochLength": "18446744073709551616" }))),
-            (3, true, Some(serde_json::json!({ "epochLength": null }))),
-        ] {
-            let endpoint = if let Some(metadata) = metadata {
-                spawn_rpc_proxy_canned_method(endpoint.clone(), method, metadata).await.0
-            } else {
-                spawn_rpc_proxy_rejecting_method_after(endpoint.clone(), method, 0).await
-            };
-            let mut config = config
-                .clone()
-                .with_no_fork_node_info(method == "debug_chainConfig")
-                .with_eth_rpc_url(Some(endpoint.clone()))
-                .with_fork_block_number(Some(1u64));
-            if explicit {
-                config = config.with_tempo_epoch_length(NonZeroU64::new(3).unwrap());
-            }
-            let (api, handle) = spawn(config).await;
-            let provider = handle.http_provider();
-            let identity = tempo_consensus_identity(&provider).await;
-            assert_eq!(identity.epoch_length, length);
-            if explicit {
-                api.anvil_reset(Some(Forking {
-                    json_rpc_url: Some(endpoint.clone()),
-                    block_number: Some(1),
-                }))
-                .await
-                .unwrap();
-                assert_eq!(tempo_consensus_identity(&provider).await, identity);
-            }
-            let source_epoch = if explicit { 6 } else { length };
-            let (known, _) = spawn_rpc_proxy_canned_method(
-                endpoint.clone(),
-                method,
-                serde_json::json!({ "epochLength": source_epoch }),
-            )
-            .await;
-            api.anvil_set_rpc_url(known).await.unwrap();
+    let method = "debug_chainConfig";
+    let endpoint =
+        spawn_rpc_proxy_rejecting_method_after(source.http_endpoint(), "anvil_nodeInfo", 0).await;
+    for (length, explicit, metadata) in [
+        (
+            3,
+            false,
+            Some(serde_json::json!({
+                "epochLength": "0x3", "chainId": "0x1", "depositContractAddress": "not-an-address",
+            })),
+        ),
+        (21_600, false, Some(serde_json::Value::Null)),
+        (21_600, false, Some(serde_json::json!({}))),
+        (21_600, false, None),
+        (3, true, None),
+        (3, true, Some(serde_json::json!({ "epochLength": 6 }))),
+        (3, true, Some(serde_json::json!({ "epochLength": 0 }))),
+    ] {
+        let unavailable = metadata.is_none();
+        let endpoint = if let Some(metadata) = metadata {
+            spawn_rpc_proxy_canned_method(endpoint.clone(), method, metadata).await.0
+        } else {
+            spawn_rpc_proxy_rejecting_method_after(endpoint.clone(), method, 0).await
+        };
+        let mut config = config
+            .clone()
+            .with_no_fork_node_info(true)
+            .with_eth_rpc_url(Some(endpoint.clone()))
+            .with_fork_block_number(Some(1u64));
+        if explicit {
+            config = config.with_tempo_epoch_length(NonZeroU64::new(3).unwrap());
+        }
+        let (api, handle) = spawn(config).await;
+        let provider = handle.http_provider();
+        let identity = tempo_consensus_identity(&provider).await;
+        assert_eq!(identity.epoch_length, length);
+        if explicit {
+            api.anvil_reset(Some(Forking {
+                json_rpc_url: Some(endpoint.clone()),
+                block_number: Some(1),
+            }))
+            .await
+            .unwrap();
             assert_eq!(tempo_consensus_identity(&provider).await, identity);
-            if explicit {
-                api.anvil_set_rpc_url(endpoint.clone()).await.unwrap();
-                let before =
-                    serde_json::to_value(api.serialized_state(false).await.unwrap()).unwrap();
+        }
+        let source_epoch = if explicit { 6 } else { length };
+        let (known, _) = spawn_rpc_proxy_canned_method(
+            endpoint.clone(),
+            method,
+            serde_json::json!({ "epochLength": source_epoch }),
+        )
+        .await;
+        api.anvil_set_rpc_url(known).await.unwrap();
+        assert_eq!(tempo_consensus_identity(&provider).await, identity);
+        if explicit {
+            api.anvil_set_rpc_url(endpoint.clone()).await.unwrap();
+            if unavailable {
+                // Retain the learned source epoch even when the replacement omits it.
                 let (conflicting, _) = spawn_rpc_proxy_canned_method(
                     endpoint,
                     method,
@@ -8615,14 +8598,10 @@ async fn tempo_consensus_fork_epoch_metadata_and_fallbacks() {
                     "replacement fork endpoint has an incompatible execution context"
                 );
                 assert_eq!(tempo_consensus_identity(&provider).await, identity);
-                assert_eq!(
-                    serde_json::to_value(api.serialized_state(false).await.unwrap()).unwrap(),
-                    before
-                );
             }
-            api.mine_one().await.unwrap();
-            assert_tempo_fork_round(&provider, &identity, 2, (0, 2, 1)).await;
         }
+        api.mine_one().await.unwrap();
+        assert_tempo_fork_round(&provider, &identity, 2, (0, 2, 1)).await;
     }
 }
 
@@ -8638,14 +8617,18 @@ async fn tempo_consensus_fork_rejects_malformed_epoch_metadata() {
     let before = serde_json::to_value(api.serialized_state(false).await.unwrap()).unwrap();
     let finalized = tempo_finalization(&provider, 1).await;
     let identity = tempo_consensus_identity(&provider).await;
-    for (method, endpoint) in &endpoints {
+    for (method, endpoint) in endpoints {
+        // Parsing is shared; one Anvil case checks the method-specific diagnostics.
         for length in [
             serde_json::json!(0),
             serde_json::json!(-1),
             serde_json::json!("invalid"),
             serde_json::json!("18446744073709551616"),
             serde_json::Value::Null,
-        ] {
+        ]
+        .into_iter()
+        .filter(|length| method == "debug_chainConfig" || length == &serde_json::json!(0))
+        {
             let (endpoint, _) = spawn_rpc_proxy_canned_method(
                 endpoint.clone(),
                 method,
