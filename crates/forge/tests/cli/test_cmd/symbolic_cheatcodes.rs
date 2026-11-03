@@ -681,8 +681,8 @@ contract SymbolicAssumeNoRevert is Test {
 
     function checkAssumeNoRevertPrunes(uint256 x) public {
         vm.assumeNoRevert();
-        (bool ok,) = address(target).call(abi.encodeWithSelector(target.maybeRevert.selector, x));
-        assertTrue(ok);
+        target.maybeRevert(x);
+        assertTrue(x != 7);
     }
 }
 "#,
@@ -3111,6 +3111,502 @@ Suite result: FAILED. 5 passed; 1 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
+// Like Forge, the reverter of a `vm.expectRevert` is the first call or reverting CREATE that failed
+// below it, even when that failure was caught, or the call itself when a count is expected. A
+// DELEGATECALL reverts as the caller, a halting CREATE leaves no reverter to check, and a halting
+// `vm.deployCode` reverts as the cheatcode.
+#[forgetest_init]
+fn symbolic_vm_expect_revert_reverter_like_forge(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_expect_revert_reverter_like_forge");
+
+    prj.add_test(
+        "SymbolicExpectRevertReverter.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Inner {
+    function boom() external pure {
+        revert("boom");
+    }
+
+    function ping() external {}
+}
+
+contract Outer {
+    Inner public inner;
+
+    constructor(Inner inner_) {
+        inner = inner_;
+    }
+
+    function bubble() external view {
+        inner.boom();
+    }
+
+    function catchThenRevert() external view {
+        try inner.boom() {} catch {}
+        revert("own");
+    }
+
+    function callPing() external {
+        inner.ping();
+    }
+
+    function payInner() external {
+        (bool ok,) = address(inner).call{value: 1}("");
+        require(ok, "unpaid");
+    }
+}
+
+contract RevertingConstructor {
+    constructor(Inner inner) {
+        inner.boom();
+    }
+}
+
+contract HaltingConstructor {
+    constructor() {
+        assembly {
+            invalid()
+        }
+    }
+}
+
+library RevertingLibrary {
+    function boom() external pure {
+        revert("boom");
+    }
+}
+
+contract SymbolicExpectRevertReverter is Test {
+    Inner inner;
+    Outer outer;
+
+    function setUp() public {
+        inner = new Inner();
+        outer = new Outer(inner);
+    }
+
+    function checkNestedInner() public {
+        vm.expectRevert(address(inner));
+        outer.bubble();
+    }
+
+    function checkNestedOuter() public {
+        vm.expectRevert(address(outer));
+        outer.bubble();
+    }
+
+    function checkCaughtInner() public {
+        vm.expectRevert(address(inner));
+        outer.catchThenRevert();
+    }
+
+    function checkCaughtOuter() public {
+        vm.expectRevert(address(outer));
+        outer.catchThenRevert();
+    }
+
+    function checkMockedInner() public {
+        vm.mockCallRevert(address(inner), abi.encodeCall(Inner.ping, ()), bytes("mocked"));
+        vm.expectRevert(address(inner));
+        outer.callPing();
+    }
+
+    function checkMockedOuter() public {
+        vm.mockCallRevert(address(inner), abi.encodeCall(Inner.ping, ()), bytes("mocked"));
+        vm.expectRevert(address(outer));
+        outer.callPing();
+    }
+
+    function checkCountOuter() public {
+        vm.expectRevert(bytes("boom"), address(outer), 2);
+        outer.bubble();
+        outer.bubble();
+    }
+
+    function checkCountInner() public {
+        vm.expectRevert(bytes("boom"), address(inner), 2);
+        outer.bubble();
+        outer.bubble();
+    }
+
+    function checkCreateInner() public {
+        vm.expectRevert(address(inner));
+        new RevertingConstructor(inner);
+    }
+
+    function checkCreateOuter() public {
+        vm.expectRevert(vm.computeCreateAddress(address(this), vm.getNonce(address(this))));
+        new RevertingConstructor(inner);
+    }
+
+    function checkCreateHaltAnyReverter() public {
+        vm.expectRevert(address(0xdead));
+        new HaltingConstructor();
+    }
+
+    function checkDeployCodeHaltCheatcode() public {
+        vm.expectRevert(address(vm));
+        vm.deployCode("SymbolicExpectRevertReverter.t.sol:HaltingConstructor");
+    }
+
+    function checkDeployCodeHaltOther() public {
+        vm.expectRevert(address(0xdead));
+        vm.deployCode("SymbolicExpectRevertReverter.t.sol:HaltingConstructor");
+    }
+
+    function checkValueTransferInner() public {
+        vm.expectRevert(address(inner));
+        outer.payInner();
+    }
+
+    function checkValueTransferOuter() public {
+        vm.expectRevert(address(outer));
+        outer.payInner();
+    }
+
+    function checkDelegateCaller() public {
+        vm.expectRevert(address(this));
+        (bool ok,) = address(RevertingLibrary).delegatecall(abi.encodeWithSignature("boom()"));
+        assertTrue(ok);
+    }
+
+    function checkDelegateLibrary() public {
+        vm.expectRevert(address(RevertingLibrary));
+        (bool ok,) = address(RevertingLibrary).delegatecall(abi.encodeWithSignature("boom()"));
+        assertTrue(ok);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicExpectRevertReverter",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 17 tests for test/SymbolicExpectRevertReverter.t.sol:SymbolicExpectRevertReverter
+[PASS] checkCaughtInner() ([METRICS])
+[FAIL: Reverter != expected reverter: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f != 0x2e234DAe75C793f67A35089C9d99245E1C58470b; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCaughtOuter() ([METRICS])
+[FAIL: Reverter != expected reverter: 0x2e234DAe75C793f67A35089C9d99245E1C58470b != 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCountInner() ([METRICS])
+[PASS] checkCountOuter() ([METRICS])
+[PASS] checkCreateHaltAnyReverter() ([METRICS])
+[PASS] checkCreateInner() ([METRICS])
+[FAIL: Reverter != expected reverter: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f != 0xF62849F9A0B5Bf2913b396098F7c7019b51A820a; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCreateOuter() ([METRICS])
+[PASS] checkDelegateCaller() ([METRICS])
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkDelegateLibrary() ([METRICS])
+[PASS] checkDeployCodeHaltCheatcode() ([METRICS])
+[FAIL: Reverter != expected reverter: 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D != 0x000000000000000000000000000000000000dEaD; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkDeployCodeHaltOther() ([METRICS])
+[PASS] checkMockedInner() ([METRICS])
+[FAIL: Reverter != expected reverter: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f != 0x2e234DAe75C793f67A35089C9d99245E1C58470b; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockedOuter() ([METRICS])
+[PASS] checkNestedInner() ([METRICS])
+[FAIL: Reverter != expected reverter: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f != 0x2e234DAe75C793f67A35089C9d99245E1C58470b; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkNestedOuter() ([METRICS])
+[PASS] checkValueTransferInner() ([METRICS])
+[FAIL: Reverter != expected reverter: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f != 0x2e234DAe75C793f67A35089C9d99245E1C58470b; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkValueTransferOuter() ([METRICS])
+Suite result: FAILED. 9 passed; 8 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// Like revm, a value transfer fails with a revert when the sender is short and with a halt when the
+// recipient balance would overflow, so only the former matches `vm.assumeNoRevert`.
+#[forgetest_init]
+fn symbolic_vm_assume_no_revert_transfer_overflow_halts(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_assume_no_revert_transfer_overflow_halts");
+
+    prj.add_test(
+        "SymbolicTransferOverflow.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicTransferOverflow is Test {
+    address constant DST = address(0x1234);
+
+    function checkOverflow() public {
+        vm.deal(address(this), 2);
+        vm.deal(DST, type(uint256).max);
+        vm.assumeNoRevert();
+        (bool ok, bytes memory data) = DST.call{value: 1}("");
+        assertFalse(ok);
+        assertEq(data.length, 0);
+    }
+
+    function checkSymbolicValue(uint256 value) public {
+        vm.deal(address(this), 2);
+        vm.deal(DST, type(uint256).max - 1);
+        vm.assumeNoRevert();
+        (bool ok, bytes memory data) = DST.call{value: value}("");
+        assertEq(ok, value < 2);
+        assertEq(data.length == 0, value <= 2);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicTransferOverflow",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicTransferOverflow.t.sol:SymbolicTransferOverflow
+[PASS] checkOverflow() ([METRICS])
+[PASS] checkSymbolicValue(uint256) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// Like Forge, the next call consumes `vm.expectRevert` and `vm.assumeNoRevert` even when it runs no
+// callee code: a mock, a precompile, an account without code or a failed value transfer.
+#[forgetest_init]
+fn symbolic_vm_expect_revert_applies_to_codeless_calls(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_expect_revert_applies_to_codeless_calls");
+
+    prj.add_test(
+        "SymbolicExpectRevertCodeless.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract CodelessTarget {
+    function ping() external {}
+
+    function f(uint256) external pure returns (uint256) {
+        return 1;
+    }
+
+    function deny() external pure {
+        revert("denied");
+    }
+}
+
+contract SymbolicExpectRevertCodeless is Test {
+    CodelessTarget target;
+
+    function setUp() public {
+        target = new CodelessTarget();
+    }
+
+    function checkNoCode() public {
+        vm.expectRevert();
+        (bool ok,) = address(0x1234).call("");
+        assertFalse(ok);
+        (bool denied,) = address(target).call(abi.encodeCall(CodelessTarget.deny, ()));
+        assertFalse(denied);
+    }
+
+    function checkAssumeNoRevertNoCode() public {
+        vm.assumeNoRevert();
+        (bool ok,) = address(0x1234).call("");
+        assertTrue(ok);
+        (bool denied,) = address(target).call(abi.encodeCall(CodelessTarget.deny, ()));
+        assertFalse(denied);
+    }
+
+    function checkMockedSuccess() public {
+        vm.mockCall(address(target), abi.encodeCall(CodelessTarget.ping, ()), "");
+        vm.expectRevert();
+        (bool ok,) = address(target).call(abi.encodeCall(CodelessTarget.ping, ()));
+        assertFalse(ok);
+    }
+
+    function checkMockedRevert() public {
+        vm.mockCallRevert(address(target), abi.encodeCall(CodelessTarget.ping, ()), bytes("mocked"));
+        vm.expectRevert(bytes("mocked"));
+        target.ping();
+    }
+
+    function checkMockedRevertWrongReverter() public {
+        vm.mockCallRevert(address(target), abi.encodeCall(CodelessTarget.ping, ()), bytes("mocked"));
+        vm.expectRevert(bytes("mocked"), address(0xdead));
+        target.ping();
+    }
+
+    function checkMockedRevertMismatch() public {
+        vm.mockCallRevert(address(target), abi.encodeCall(CodelessTarget.ping, ()), bytes("actual"));
+        vm.expectRevert(bytes("expected"));
+        target.ping();
+    }
+
+    function checkPrecompileSuccess() public {
+        vm.expectRevert();
+        (bool ok,) = address(4).call("x");
+        assertFalse(ok);
+    }
+
+    function checkPrecompileFailure() public {
+        vm.expectRevert();
+        (bool ok,) = address(6).call(abi.encode(1, 3, 0, 0));
+        assertTrue(ok);
+    }
+
+    function checkKzgFailure() public {
+        vm.expectRevert();
+        (bool ok,) = address(0x0a).call("");
+        assertTrue(ok);
+    }
+
+    function checkValueTransfer(uint256 value) public {
+        vm.deal(address(this), 1 ether);
+        vm.expectRevert();
+        (bool ok,) = address(0x1234).call{value: value}("");
+        assertEq(ok, value > 1 ether);
+    }
+
+    function checkAssumeNoRevertKeepsExpectRevert() public {
+        vm.mockCallRevert(address(target), abi.encodeCall(CodelessTarget.ping, ()), bytes("m"));
+        vm.assumeNoRevert();
+        vm.expectRevert(bytes("m"));
+        (bool ok,) = address(target).call(abi.encodeCall(CodelessTarget.ping, ()));
+        assertTrue(ok);
+    }
+
+    function checkAssumeNoRevertMockData(uint256 x) public {
+        vm.mockCallRevert(address(target), abi.encodeCall(CodelessTarget.f, (1)), bytes("mocked"));
+        vm.assumeNoRevert();
+        (, bytes memory data) = address(target).call(abi.encodeCall(CodelessTarget.f, (x)));
+        assertNotEq(data, bytes("FOUNDRY::ASSUME"));
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicExpectRevertCodeless",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 12 tests for test/SymbolicExpectRevertCodeless.t.sol:SymbolicExpectRevertCodeless
+[FAIL: Error != expected error: assertion failed != m; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertKeepsExpectRevert() ([METRICS])
+[FAIL: assertion failed: 0x464f554e4452593a3a415353554d45 == 0x464f554e4452593a3a415353554d45; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertMockData(uint256) ([METRICS])
+[PASS] checkAssumeNoRevertNoCode() ([METRICS])
+[PASS] checkKzgFailure() ([METRICS])
+[PASS] checkMockedRevert() ([METRICS])
+[FAIL: Error != expected error: actual != expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockedRevertMismatch() ([METRICS])
+[FAIL: Reverter != expected reverter: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f != 0x000000000000000000000000000000000000dEaD; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockedRevertWrongReverter() ([METRICS])
+[PASS] checkMockedSuccess() ([METRICS])
+[PASS] checkNoCode() ([METRICS])
+[PASS] checkPrecompileFailure() ([METRICS])
+[PASS] checkPrecompileSuccess() ([METRICS])
+[PASS] checkValueTransfer(uint256) ([METRICS])
+Suite result: FAILED. 8 passed; 4 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// Like Forge, a CREATE that fails before its frame runs consumes a pending `vm.expectRevert` with
+// a depth error, so a later revert cannot match it.
+#[forgetest_init]
+fn symbolic_vm_expect_revert_create_failing_before_frame(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_expect_revert_create_failing_before_frame");
+
+    prj.add_test(
+        "SymbolicExpectRevertCreateFailure.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract PayableChild {
+    constructor() payable {}
+}
+
+contract Boom {
+    function boom() external pure {
+        revert("boom");
+    }
+}
+
+contract SymbolicExpectRevertCreateFailure is Test {
+    Boom target;
+
+    function setUp() public {
+        target = new Boom();
+        vm.deal(address(this), 0);
+    }
+
+    function checkBalanceFailurePayload() public {
+        vm.expectRevert();
+        try new PayableChild{value: 1}() {
+            fail();
+        } catch (bytes memory err) {
+            assertEq(
+                err,
+                abi.encodeWithSignature(
+                    "CheatcodeError(string)",
+                    "call didn't revert at a lower depth than cheatcode call depth"
+                )
+            );
+        }
+    }
+
+    function checkBalanceFailureConsumesCount() public {
+        vm.expectRevert(2);
+        try new PayableChild{value: 1}() {} catch {}
+        (bool ok,) = address(target).call(abi.encodeCall(Boom.boom, ()));
+        assertTrue(ok);
+    }
+
+    function checkSymbolicValueCaught(uint256 value) public {
+        vm.expectRevert();
+        try new PayableChild{value: value}() {} catch {}
+    }
+
+    function checkSymbolicValueUncaught(uint256 value) public {
+        vm.assume(value > 0);
+        vm.expectRevert();
+        new PayableChild{value: value}();
+    }
+
+    function checkCollisionConsumesExpectation() public {
+        new PayableChild{salt: bytes32(uint256(1))}();
+        vm.expectRevert();
+        try new PayableChild{salt: bytes32(uint256(1))}() {} catch {}
+        (bool ok,) = address(target).call(abi.encodeCall(Boom.boom, ()));
+        assertTrue(ok);
+    }
+
+    function checkPartlyMatchedCount() public {
+        vm.expectRevert(2);
+        (bool ok,) = address(target).call(abi.encodeCall(Boom.boom, ()));
+        assertTrue(ok);
+        try new PayableChild{value: 1}() {} catch {}
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicExpectRevertCreateFailure",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 6 tests for test/SymbolicExpectRevertCreateFailure.t.sol:SymbolicExpectRevertCreateFailure
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkBalanceFailureConsumesCount() ([METRICS])
+[PASS] checkBalanceFailurePayload() ([METRICS])
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCollisionConsumesExpectation() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectRevert on CREATE that fails before running] checkPartlyMatchedCount() ([METRICS])
+[PASS] checkSymbolicValueCaught(uint256) ([METRICS])
+[FAIL: call didn't revert at a lower depth than cheatcode call depth; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicValueUncaught(uint256) ([METRICS])
+Suite result: FAILED. 2 passed; 4 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
 #[forgetest_init]
 fn symbolic_vm_expect_emit_matches_external_logs(prj: _, cmd: _) {
     if !z3_available() {
@@ -4616,6 +5112,7 @@ fn symbolic_vm_assume_no_revert_filters_revert_matches(prj: _, cmd: _) {
         );
         return;
     }
+    prj.update_config(|config| config.invariant.runs = 0);
 
     prj.add_test(
         "SymbolicAssumeNoRevertFilters.t.sol",
@@ -4646,6 +5143,16 @@ contract SymbolicAssumeNoRevertFilterTarget {
         if (x == 7) revert Expected(x);
         if (x == 9) revert Other(x);
     }
+
+    function anyExpected(uint256 x) external pure {
+        revert Expected(x);
+    }
+}
+
+contract SymbolicAssumeNoRevertRevertingCreate {
+    constructor(uint256 x) {
+        if (x == 7) revert Expected(7);
+    }
 }
 
 contract SymbolicAssumeNoRevertOtherTarget {
@@ -4671,8 +5178,8 @@ contract SymbolicAssumeNoRevertFilters is Test {
             revertData: abi.encodeWithSelector(Expected.selector, uint256(7))
         }));
 
-        (bool ok,) = address(target).call(abi.encodeWithSelector(target.onlyExpected.selector, x));
-        assertTrue(ok);
+        target.onlyExpected(x);
+        assertTrue(x != 7);
     }
 
     function checkAssumeNoRevertArrayFilterPrunes(uint256 x) public {
@@ -4689,8 +5196,52 @@ contract SymbolicAssumeNoRevertFilters is Test {
         });
         symbolicVm.assumeNoRevert(filters);
 
-        (bool ok,) = address(target).call(abi.encodeWithSelector(target.twoReverts.selector, x));
+        target.twoReverts(x);
+        assertTrue(x != 7 && x != 9);
+    }
+
+    function checkAssumeNoRevertCaughtFails(uint256 x) public {
+        vm.assumeNoRevert();
+        (bool ok,) = address(target).call(abi.encodeWithSelector(target.onlyExpected.selector, x));
         assertTrue(ok);
+    }
+
+    function checkAssumeNoRevertFilteredCaughtFails(uint256 x) public {
+        symbolicVm.assumeNoRevert(SymbolicVm.PotentialRevert({
+            reverter: address(target),
+            partialMatch: false,
+            revertData: abi.encodeWithSelector(Expected.selector, uint256(7))
+        }));
+
+        (bool ok,) = address(target).call(abi.encodeWithSelector(target.onlyExpected.selector, x));
+        assertTrue(ok);
+    }
+
+    function checkAssumeNoRevertCaughtReturnsMagic(uint256 x) public {
+        vm.assumeNoRevert();
+        (bool ok, bytes memory data) =
+            address(target).call(abi.encodeWithSelector(target.onlyExpected.selector, x));
+        assertTrue(ok || keccak256(data) == keccak256("FOUNDRY::ASSUME"));
+    }
+
+    function checkAssumeNoRevertSkipsCreate(uint256 x) public {
+        vm.assumeNoRevert();
+        try new SymbolicAssumeNoRevertRevertingCreate(x) {} catch (bytes memory data) {
+            assertTrue(keccak256(data) == keccak256(abi.encodeWithSelector(Expected.selector, uint256(7))));
+        }
+        (bool ok, bytes memory callData) =
+            address(target).call(abi.encodeWithSelector(target.onlyExpected.selector, x));
+        assertTrue(ok || keccak256(callData) == keccak256("FOUNDRY::ASSUME"));
+    }
+
+    function checkAssumeNoRevertAmbiguousMatchIncomplete(uint256 x) public {
+        symbolicVm.assumeNoRevert(SymbolicVm.PotentialRevert({
+            reverter: address(target),
+            partialMatch: false,
+            revertData: abi.encodeWithSelector(Expected.selector, uint256(7))
+        }));
+
+        target.anyExpected(x);
     }
 
     function checkAssumeNoRevertWrongDataFails(uint256 x) public {
@@ -4701,8 +5252,9 @@ contract SymbolicAssumeNoRevertFilters is Test {
             revertData: abi.encodeWithSelector(Other.selector, uint256(8))
         }));
 
-        (bool ok,) = address(target).call(abi.encodeWithSelector(target.twoReverts.selector, x));
-        assertTrue(ok);
+        (bool ok, bytes memory data) =
+            address(target).call(abi.encodeWithSelector(target.twoReverts.selector, x));
+        assertTrue(ok || keccak256(data) == keccak256("FOUNDRY::ASSUME"));
     }
 
     function checkAssumeNoRevertWrongReverterFails(uint256 x) public {
@@ -4717,6 +5269,32 @@ contract SymbolicAssumeNoRevertFilters is Test {
         assertTrue(ok);
     }
 }
+
+contract SymbolicAssumeNoRevertHandler {
+    uint256 public value;
+
+    function set(uint256 x) external {
+        value = x;
+    }
+}
+
+contract SymbolicAssumeNoRevertPredicate is Test {
+    SymbolicAssumeNoRevertFilterTarget target;
+    SymbolicAssumeNoRevertHandler handler;
+
+    function setUp() public {
+        target = new SymbolicAssumeNoRevertFilterTarget();
+        handler = new SymbolicAssumeNoRevertHandler();
+        targetContract(address(handler));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_assumeNoRevertInPredicateBreaks() public view {
+        uint256 value = handler.value();
+        vm.assumeNoRevert();
+        target.onlyExpected(value);
+    }
+}
 "#,
     );
 
@@ -4724,15 +5302,17 @@ contract SymbolicAssumeNoRevertFilters is Test {
         "test",
         "--symbolic",
         "--match-test",
-        "checkAssumeNoRevert.*Prunes",
+        "^checkAssumeNoRevert(.*Prunes|CaughtReturnsMagic|SkipsCreate)\\(",
     ]))
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicAssumeNoRevertFilters.t.sol:SymbolicAssumeNoRevertFilters
+Ran 4 tests for test/SymbolicAssumeNoRevertFilters.t.sol:SymbolicAssumeNoRevertFilters
 [PASS] checkAssumeNoRevertArrayFilterPrunes(uint256) ([METRICS])
+[PASS] checkAssumeNoRevertCaughtReturnsMagic(uint256) ([METRICS])
 [PASS] checkAssumeNoRevertExactFilterPrunes(uint256) ([METRICS])
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+[PASS] checkAssumeNoRevertSkipsCreate(uint256) ([METRICS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -4745,16 +5325,18 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
         "test",
         "--symbolic",
         "--match-test",
-        "^(checkAssumeNoRevertWrongDataFails|checkAssumeNoRevertWrongReverterFails)\\(",
+        "^checkAssumeNoRevert(Caught|FilteredCaught|WrongData|WrongReverter)Fails\\(",
     ]))
     .failure()
     .stdout_eq(
         str![[r#"
 ...
-Ran 2 tests for test/SymbolicAssumeNoRevertFilters.t.sol:SymbolicAssumeNoRevertFilters
+Ran 4 tests for test/SymbolicAssumeNoRevertFilters.t.sol:SymbolicAssumeNoRevertFilters
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertCaughtFails(uint256) ([METRICS])
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertFilteredCaughtFails(uint256) ([METRICS])
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertWrongDataFails(uint256) ([METRICS])
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertWrongReverterFails(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
 "#]]
         .unordered(),
@@ -4764,6 +5346,33 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
     for reason in ["symbolic vm.assumeNoRevert", "symbolic Foundry cheatcode"] {
         assert!(!stdout.contains(reason), "{stdout}");
     }
+
+    // Like Forge, an invariant predicate that reverts with `FOUNDRY::ASSUME` is broken, and an
+    // ambiguous symbolic match is reported as incomplete instead of being narrowed.
+    assert_symbolic_witness(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(invariant_assumeNoRevertInPredicateBreaks|checkAssumeNoRevertAmbiguousMatchIncomplete)\\(",
+    ]))
+    .failure()
+    .stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/SymbolicAssumeNoRevertFilters.t.sol:SymbolicAssumeNoRevertFilters
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: ambiguous symbolic vm.assumeNoRevert match] checkAssumeNoRevertAmbiguousMatchIncomplete(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicAssumeNoRevertFilters.t.sol:SymbolicAssumeNoRevertPredicate
+[FAIL: FOUNDRY::ASSUME]
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=set(uint256) [ARGS]
+ invariant_assumeNoRevertInPredicateBreaks() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]
+        .unordered(),
+    );
 }
 
 // The `vm.prank(address, bool delegateCall)` overload diverges from concrete
@@ -6555,4 +7164,340 @@ contract SymbolicMappingStorageHooksSymbolicSize is Test {
         "{}",
         result["symbolic"]
     );
+}
+
+// Like Forge, `vm.stopRecord` pauses recording but keeps the accesses for `vm.accesses`, and
+// `vm.expectEmit(emitter, 0)` reverts the frame that emits a matching log.
+#[forgetest_init]
+fn symbolic_stop_record_and_expect_emit_count_zero_match_forge(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_stop_record_and_expect_emit_count_zero_match_forge");
+
+    prj.add_test(
+        "SymbolicRecordAndEmitCount.t.sol",
+        r#"
+interface Vm {
+    function record() external;
+    function stopRecord() external;
+    function accesses(address target) external returns (bytes32[] memory, bytes32[] memory);
+    function expectEmit() external;
+    function expectEmit(address emitter, uint64 count) external;
+    function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData)
+        external;
+    function expectRevert() external;
+    function mockCall(address callee, bytes calldata data, bytes calldata returnData) external;
+}
+
+contract Store {
+    uint256 public a;
+    uint256 public b;
+    event Set(uint256 value);
+    event Other(uint256 value);
+    event Anon(uint256 value) anonymous;
+
+    function setA(uint256 value) external {
+        a = value;
+        emit Set(value);
+    }
+
+    function setB(uint256 value) external {
+        b = value;
+        emit Other(value);
+    }
+
+    function noop() external {}
+
+    function revertWithoutEmit() external pure {
+        revert();
+    }
+
+    function setAThenRevert(uint256 value) external {
+        emit Set(value);
+        revert();
+    }
+
+    function emitAnon(uint256 value) external {
+        emit Anon(value);
+    }
+
+    function halt() external {
+        assembly {
+            invalid()
+        }
+    }
+}
+
+contract SymbolicRecordAndEmitCount {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    event Set(uint256 value);
+    event Other(uint256 value);
+    event Anon(uint256 value) anonymous;
+    Store store;
+
+    function setUp() public {
+        store = new Store();
+    }
+
+    function checkStopRecordKeepsAndPausesAccesses(uint256 value) public {
+        vm.record();
+        store.setA(value);
+        vm.stopRecord();
+        store.setB(value);
+        (, bytes32[] memory writes) = vm.accesses(address(store));
+        assert(writes.length == 1);
+    }
+
+    function checkExpectNoEmitFailsWhenEmitted(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        store.setA(value);
+    }
+
+    function checkExpectNoEmitAllowsOtherEvent(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        store.setB(value);
+    }
+
+    // Like Forge, only the matching log reverts, so the path where `value != 1` continues.
+    function checkExpectNoEmitKeepsNonMatchingPath(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(1);
+        try store.setA(value) {} catch {}
+        assert(value != 2);
+    }
+
+    // Like Forge, the revert of the emitting frame can be caught.
+    function checkExpectNoEmitCaught(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        try store.setA(value) {} catch {}
+    }
+
+    // Like Forge, `vm.expectRevert` sees the revert of the emitting frame.
+    function checkExpectNoEmitUnderExpectRevert(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        vm.expectRevert();
+        store.setA(value);
+    }
+
+    function checkExpectNoEmitEndsAfterNextCall(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        store.noop();
+        store.setA(value);
+    }
+
+    function checkExpectNoEmitEndsAfterCodelessCall(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        (bool success,) = address(0xdead).call("");
+        assert(success);
+        store.setA(value);
+    }
+
+    function checkExpectNoEmitEndsAfterMockedCall(uint256 value) public {
+        vm.mockCall(address(store), abi.encodeCall(Store.noop, ()), "");
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        store.noop();
+        store.setA(value);
+    }
+
+    function checkExpectNoEmitEndsAfterHaltedCall(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        (bool success,) = address(store).call(abi.encodeCall(Store.halt, ()));
+        assert(!success);
+        store.setA(value);
+    }
+
+    // Like Forge, a reverted call does not end the expectation.
+    function checkExpectNoEmitKeptAcrossRevertedCall(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        try store.revertWithoutEmit() {} catch {}
+        store.setA(value);
+    }
+
+    // Like Forge, logs with different topic counts never match, even on unchecked topics.
+    function checkExpectEmitRequiresSameTopicCount(uint256 value) public {
+        vm.expectEmit(false, false, false, true);
+        bytes32 topic = Set.selector;
+        assembly {
+            mstore(0, value)
+            log2(0, 32, topic, value)
+        }
+        store.setA(value);
+    }
+
+    // Like Forge, a static call does not end the expectation.
+    function checkExpectNoEmitKeptAcrossStaticCall(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        store.a();
+        store.setA(value);
+    }
+
+    // Forge queues expectations; a second pending one is reported as unsupported instead of
+    // replacing the first.
+    function checkQueuedExpectEmitFailsClosed(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        vm.expectEmit();
+        emit Other(value);
+        store.setB(value);
+        store.setA(value);
+    }
+
+    // Like Forge, a log without topics cannot be the template of a count 0 expectation.
+    function checkExpectNoEmitAnonymousTemplate(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Anon(value);
+        store.setA(value);
+    }
+
+    // Forge keeps a template set inside a reverted call, so this is reported as unsupported.
+    function checkExpectNoEmitTemplateFromRevertedCall(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        try store.setAThenRevert(value) {} catch {}
+        store.setA(value);
+    }
+
+    // Forge drops the expectation inside a reverted call, so this is reported as unsupported.
+    function checkExpectNoEmitAnonymousInRevertedCall(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        try store.emitAnon(value) {} catch {}
+        store.setA(value);
+    }
+
+    function testStopRecordKeepsAndPausesAccesses() public {
+        checkStopRecordKeepsAndPausesAccesses(1);
+    }
+
+    function testExpectNoEmitAllowsOtherEvent() public {
+        checkExpectNoEmitAllowsOtherEvent(1);
+    }
+
+    function testExpectNoEmitCaught() public {
+        checkExpectNoEmitCaught(1);
+    }
+
+    function testExpectNoEmitUnderExpectRevert() public {
+        checkExpectNoEmitUnderExpectRevert(1);
+    }
+
+    function testExpectNoEmitEndsAfterNextCall() public {
+        checkExpectNoEmitEndsAfterNextCall(1);
+    }
+
+    function testExpectNoEmitEndsAfterCodelessCall() public {
+        checkExpectNoEmitEndsAfterCodelessCall(1);
+    }
+
+    function testExpectNoEmitEndsAfterMockedCall() public {
+        checkExpectNoEmitEndsAfterMockedCall(1);
+    }
+
+    function testExpectNoEmitEndsAfterHaltedCall() public {
+        checkExpectNoEmitEndsAfterHaltedCall(1);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-contract", "SymbolicRecordAndEmitCount", "--match-test", "^test"])
+        .assert_success();
+    cmd.forge_fuse();
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicRecordAndEmitCount",
+        "--match-test",
+        "^check",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 17 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCount
+[FAIL: Set indexed topic count mismatch: expected 1, got 0; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitRequiresSameTopicCount(uint256) ([METRICS])
+[PASS] checkExpectNoEmitAllowsOtherEvent(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit count 0 across a failed call] checkExpectNoEmitAnonymousInRevertedCall(uint256) ([METRICS])
+[FAIL: use vm.expectEmitAnonymous to match anonymous events; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectNoEmitAnonymousTemplate(uint256) ([METRICS])
+[PASS] checkExpectNoEmitCaught(uint256) ([METRICS])
+[PASS] checkExpectNoEmitEndsAfterCodelessCall(uint256) ([METRICS])
+[PASS] checkExpectNoEmitEndsAfterHaltedCall(uint256) ([METRICS])
+[PASS] checkExpectNoEmitEndsAfterMockedCall(uint256) ([METRICS])
+[PASS] checkExpectNoEmitEndsAfterNextCall(uint256) ([METRICS])
+[FAIL: log emitted but expected 0 times; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectNoEmitFailsWhenEmitted(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectNoEmitKeepsNonMatchingPath(uint256) ([METRICS])
+[FAIL: log emitted but expected 0 times; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectNoEmitKeptAcrossRevertedCall(uint256) ([METRICS])
+[FAIL: log emitted but expected 0 times; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectNoEmitKeptAcrossStaticCall(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit count 0 across a failed call] checkExpectNoEmitTemplateFromRevertedCall(uint256) ([METRICS])
+[PASS] checkExpectNoEmitUnderExpectRevert(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit with a pending expectation] checkQueuedExpectEmitFailsClosed(uint256) ([METRICS])
+[PASS] checkStopRecordKeepsAndPausesAccesses(uint256) ([METRICS])
+Suite result: FAILED. 8 passed; 9 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// A complemented address keeps its complement within each byte: a callee whose low byte is
+// always `0xff` never matches the target, while `~x` can match it.
+#[forgetest_init]
+fn symbolic_expect_call_matches_complemented_address(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_expect_call_matches_complemented_address");
+
+    prj.add_test(
+        "SymbolicExpectCallComplement.t.sol",
+        r#"
+interface Vm {
+    function expectCall(address callee, bytes calldata data) external;
+    function expectCall(address callee, bytes calldata data, uint64 count) external;
+}
+
+contract Target {
+    function ping() external {}
+}
+
+contract SymbolicExpectCallComplement {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    Target target;
+
+    function setUp() public {
+        target = new Target();
+    }
+
+    function checkMaskedComplementCallee(uint256 x) public {
+        address callee = address(uint160(~(x & ~uint256(0xff))));
+        vm.expectCall(callee, abi.encodeWithSelector(Target.ping.selector), 0);
+        target.ping();
+    }
+
+    function checkComplementCalleeNeverCalled(uint256 x) public {
+        address callee = address(uint160(~x));
+        vm.expectCall(callee, abi.encodeWithSelector(Target.ping.selector), 0);
+        target.ping();
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicExpectCallComplement",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicExpectCallComplement.t.sol:SymbolicExpectCallComplement
+[FAIL: expected call to [..] with data 0x5c36b186 to be called 0 times, but was called 1 time; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkComplementCalleeNeverCalled(uint256) ([METRICS])
+[PASS] checkMaskedComplementCallee(uint256) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }

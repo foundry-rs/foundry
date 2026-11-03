@@ -285,6 +285,20 @@ AnotherValueTooHigh(uint256,address)
 0x0000000000000000000000000000000000D0004F
 
 "#]]);
+
+    // --json must not print the looked-up signature before the JSON payload (Fixes #17914).
+    cmd.cast_fuse()
+        .args([
+            "decode-error",
+            "0x7191bc6200000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000D0004F",
+            "--json",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{"schema_version":1,"success":true,"data":["101","0x0000000000000000000000000000000000D0004F"],"errors":[],"warnings":[]}
+
+"#]]);
+
     // Assert cast can decode event with local cache.
     cmd.cast_fuse()
         .args(["decode-event", "0xbd3699995dcc867b64dbb607be2c33be38df9134bef1178df13bfb9446e73104000000000000000000000000000000000000000000000000000000000000004e00000000000000000000000000000000000000000000000000000dd00000004e"])
@@ -293,6 +307,19 @@ AnotherValueTooHigh(uint256,address)
 MyUniqueEventWithinLocalProject(uint256,address)
 78
 0x00000000000000000000000000000DD00000004e
+
+"#]]);
+
+    // --json must not print the looked-up signature before the JSON payload (Fixes #17914).
+    cmd.cast_fuse()
+        .args([
+            "decode-event",
+            "0xbd3699995dcc867b64dbb607be2c33be38df9134bef1178df13bfb9446e73104000000000000000000000000000000000000000000000000000000000000004e00000000000000000000000000000000000000000000000000000dd00000004e",
+            "--json",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{"schema_version":1,"success":true,"data":["78","0x00000000000000000000000000000DD00000004e"],"errors":[],"warnings":[]}
 
 "#]]);
 }

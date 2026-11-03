@@ -1,6 +1,6 @@
 //! Support for multiple RPC-endpoints
 
-use crate::resolve::{RE_PLACEHOLDER, UnresolvedEnvVarError, interpolate};
+use crate::resolve::{RE_PLACEHOLDER, UnresolvedEnvVarError, interpolate, interpolate_env_only};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, ser::SerializeMap};
 use std::{
     collections::BTreeMap,
@@ -296,10 +296,29 @@ impl RpcEndpoint {
 
     /// Resolves environment variables in fields into their raw values
     pub fn resolve(self) -> ResolvedRpcEndpoint {
+        self.resolve_with(interpolate)
+    }
+
+    /// Resolves fields using only environment variables, without consulting the secret store.
+    pub fn resolve_env_only(self) -> ResolvedRpcEndpoint {
+        self.resolve_with(interpolate_env_only)
+    }
+
+    fn resolve_with(
+        self,
+        interpolate: impl Fn(&str) -> Result<String, UnresolvedEnvVarError>,
+    ) -> ResolvedRpcEndpoint {
+        let resolve_url = |url| match url {
+            RpcEndpointUrl::Url(url) => Ok(url),
+            RpcEndpointUrl::Env(url) => interpolate(&url),
+        };
         ResolvedRpcEndpoint {
-            endpoint: self.endpoint.resolve(),
-            extra_endpoints: self.extra_endpoints.into_iter().map(|e| e.resolve()).collect(),
-            auth: self.auth.map(|auth| auth.resolve()),
+            endpoint: resolve_url(self.endpoint),
+            extra_endpoints: self.extra_endpoints.into_iter().map(resolve_url).collect(),
+            auth: self.auth.map(|auth| match auth {
+                RpcAuth::Raw(auth) => Ok(auth),
+                RpcAuth::Env(auth) => interpolate(&auth),
+            }),
             config: self.config,
         }
     }

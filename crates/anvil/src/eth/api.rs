@@ -711,7 +711,7 @@ impl<N: Network> EthApi<N> {
             // A new URL replaces an offline discovery hint. Resolve the actual source identity so
             // unsupported networks cannot be hidden behind the previous endpoint's hint.
             validation_config.fork_chain_id = None;
-            let (provider, endpoint_identity) = validation_config
+            let (provider, endpoint_identity, tempo_epoch_length) = validation_config
                 .replacement_fork_provider(
                     &url,
                     expected_identity,
@@ -720,6 +720,16 @@ impl<N: Network> EthApi<N> {
                     self.instance_id(),
                 )
                 .await?;
+            // Consensus is already built, so a replacement cannot change its schedule.
+            if let Some(epoch_length) = tempo_epoch_length
+                && epoch_length.get() != self.backend.tempo_consensus_identity().await?.epoch_length
+            {
+                return Err(BlockchainError::Message(
+                    "replacement fork endpoint reveals a different Tempo epoch length; use \
+                     anvil_reset to rebuild consensus"
+                        .to_string(),
+                ));
+            }
             Some((fork, provider, endpoint_identity))
         } else {
             None
@@ -5663,7 +5673,10 @@ impl EthApi<FoundryNetwork> {
         self.backend.tempo_consensus_identity().await
     }
 
-    /// Schedules a new identity for the epoch following the next block's epoch.
+    /// Schedules a new identity two epochs after the next block's epoch.
+    ///
+    /// The first boundary announces a full DKG; the following boundary publishes the new key.
+    /// The returned `fromEpoch` is the first epoch that uses it.
     ///
     /// Handler for `anvil_tempoRotateConsensusIdentity`; unavailable on non-Tempo networks.
     pub async fn anvil_tempo_rotate_consensus_identity(&self) -> Result<TempoConsensusIdentity> {
