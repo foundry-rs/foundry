@@ -232,7 +232,7 @@ interface Vm {
     struct HttpRequest {
         /// The method, such as `GET` or `POST`.
         string method;
-        /// The URL. It must start with an entry of `http_allowlist`.
+        /// The URL. It must match an entry of `http_allowlist`.
         string url;
         /// The request headers, each as `Name: value`.
         string[] headers;
@@ -2351,13 +2351,15 @@ interface Vm {
     // -------- HTTP --------
 
     /// Sends an HTTP request and returns the response, whatever its status.
-    /// The URL must start with an entry of `http_allowlist` in `foundry.toml`, which is empty by
-    /// default. Reverts on network errors and timeouts.
+    /// The URL must match `http_allowlist` in `foundry.toml`, which is empty by default.
+    /// Matches scheme, host, port and a slash-delimited path prefix. Percent-encoded paths and
+    /// semicolon path parameters are rejected. Reverts on network errors, a 30-second timeout,
+    /// or responses larger than 10 MiB. Redirects must have the same origin and also be allowed.
     #[cheatcode(group = Filesystem)]
     function httpRequest(HttpRequest calldata request) external returns (HttpResponse memory response);
 
     /// Sends an HTTP GET request to `url` and returns the response, whatever its status.
-    /// The URL must start with an entry of `http_allowlist` in `foundry.toml`.
+    /// Uses the same allowlist, redirect restrictions, timeout and body limit as `httpRequest`.
     #[cheatcode(group = Filesystem)]
     function httpGet(string calldata url) external returns (HttpResponse memory response);
 

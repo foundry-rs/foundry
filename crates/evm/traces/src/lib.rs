@@ -11,11 +11,14 @@ extern crate foundry_common;
 #[macro_use]
 extern crate tracing;
 
+use alloy_sol_types::SolCall;
+use foundry_cheatcodes_spec::Vm;
 use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     shell,
 };
 use foundry_config::{Chain, Config};
+use foundry_evm_core::constants::CHEATCODE_ADDRESS;
 use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use revm::bytecode::opcode::OpCode;
@@ -168,8 +171,24 @@ impl Serialize for SparsedTraceArena {
             ignored: &'a HashMap<(usize, usize), (usize, usize)>,
         }
 
-        ResolvedArena { arena: &self.resolve_diagnostics(), ignored: &self.ignored }
-            .serialize(serializer)
+        let mut arena = self.resolve_diagnostics();
+        for i in 0..arena.nodes().len() {
+            let trace = &arena.nodes()[i].trace;
+            if trace.address == CHEATCODE_ADDRESS
+                && matches!(
+                    trace.data.get(..4),
+                    Some(selector) if selector == Vm::httpRequestCall::SELECTOR
+                        || selector == Vm::httpGetCall::SELECTOR
+                )
+            {
+                // Display redaction alone leaves credentials recoverable from JSON's ABI bytes.
+                // Only sanitize the exported copy; execution and debugger traces remain intact.
+                let trace = &mut arena.to_mut().nodes_mut()[i].trace;
+                trace.data = trace.data.slice(..4);
+                trace.output = Default::default();
+            }
+        }
+        ResolvedArena { arena: &arena, ignored: &self.ignored }.serialize(serializer)
     }
 }
 

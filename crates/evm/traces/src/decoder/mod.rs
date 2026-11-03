@@ -1255,7 +1255,10 @@ impl CallTraceDecoder {
         match func.name.as_str() {
             // Headers, bodies, paths and queries may hold credentials: show the method and origin.
             "httpRequest" | "httpGet" => {
-                let decoded = func.abi_decode_input(data.get(SELECTOR_LEN..)?).ok()?;
+                let Ok(decoded) = func.abi_decode_input(data.get(SELECTOR_LEN..).unwrap_or_default())
+                else {
+                    return Some(vec!["<redacted>".to_string()]);
+                };
                 let (method, url) = match decoded.first()? {
                     DynSolValue::Tuple(fields) | DynSolValue::CustomStruct { tuple: fields, .. } => {
                         (fields.first()?.as_str()?, fields.get(1)?.as_str()?)
@@ -1909,28 +1912,16 @@ fn constructor_signature(constructor: &Constructor) -> String {
 }
 
 /// Returns `scheme://host[:port]` of `url`, without credentials, path or query.
-fn url_origin(url: &str) -> &str {
-    let Some(scheme_end) = url.find("://").map(|i| i + 3) else { return "<url>" };
-    let authority_end =
-        url[scheme_end..].find(['/', '\\', '?', '#']).map_or(url.len(), |i| scheme_end + i);
-    match url[scheme_end..authority_end].rfind('@') {
-        Some(_) => "<url with credentials>",
-        None => &url[..authority_end],
-    }
+fn url_origin(url: &str) -> String {
+    reqwest::Url::parse(url)
+        .ok()
+        .filter(|url| matches!(url.scheme(), "http" | "https"))
+        .map_or_else(|| "<url>".to_string(), |url| url.origin().ascii_serialization())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn url_origin_hides_path_and_credentials() {
-        assert_eq!(url_origin("https://api.example.com/v1/key?k=1"), "https://api.example.com");
-        assert_eq!(url_origin("https://api.example.com\\v1\\key"), "https://api.example.com");
-        assert_eq!(url_origin("http://127.0.0.1:8545?x"), "http://127.0.0.1:8545");
-        assert_eq!(url_origin("https://user:pw@host/"), "<url with credentials>");
-        assert_eq!(url_origin("not a url"), "<url>");
-    }
     use crate::CallKind;
     use alloy_primitives::{address, aliases::U96, bytes, hex};
     use alloy_sol_types::{SolCall, SolError, SolEvent};
@@ -4632,5 +4623,72 @@ mod tests {
             Some(143),
             Some(MonadHardfork::MonadNine.into()),
         ));
+    }
+
+    #[tokio::test]
+    async fn http_trace_json_redacts_raw_credentials() {
+        let decoder = CallTraceDecoder::new();
+        let request = Vm::httpRequestCall {
+            request: Vm::HttpRequest {
+                method: "POST".into(),
+                url: "https://user:password@example.com/api/path-key?query-key=secret".into(),
+                headers: vec!["Authorization: Bearer header-secret".into()],
+                body: b"body-secret".to_vec().into(),
+            },
+        };
+        let response = Vm::HttpResponse {
+            status: U256::from(200),
+            headers: vec!["set-cookie: response-secret".into()],
+            body: b"response-body-secret".to_vec().into(),
+        };
+        for (data, args, return_data) in [
+            (request.abi_encode(), vec!["POST https://example.com"], Some("<http response>")),
+            (
+                Vm::httpGetCall { url: request.request.url.clone() }.abi_encode(),
+                vec!["GET https://example.com"],
+                Some("<http response>"),
+            ),
+            // Even malformed input must not fall back to generic or raw rendering.
+            (
+                [Vm::httpRequestCall::SELECTOR.as_slice(), b"malformed-secret"].concat(),
+                vec!["<redacted>"],
+                None,
+            ),
+        ] {
+            let mut arena = CallTraceArena::default();
+            arena.nodes_mut()[0].trace = CallTrace {
+                address: CHEATCODE_ADDRESS,
+                data: data.clone().into(),
+                output: response.abi_encode().into(),
+                success: true,
+                ..Default::default()
+            };
+            decoder.populate_traces(arena.nodes_mut()).await;
+            let traces = crate::SparsedTraceArena {
+                arena,
+                ignored: Default::default(),
+                diagnostics: Default::default(),
+                debug_steps: None,
+            };
+            let exported = serde_json::to_value(&traces).unwrap();
+            let trace = &exported["arena"][0]["trace"];
+            assert_eq!(trace["data"], hex::encode_prefixed(&data[..4]));
+            assert_eq!(trace["output"], "0x");
+            assert_eq!(trace["decoded"]["call_data"]["args"], serde_json::json!(args));
+            assert_eq!(trace["decoded"]["return_data"], serde_json::json!(return_data));
+            // Export redaction must not destroy the trace used by execution or the debugger.
+            assert_eq!(traces.nodes()[0].trace.data.as_ref(), data);
+            assert_eq!(traces.nodes()[0].trace.output.as_ref(), response.abi_encode());
+        }
+    }
+
+    #[test]
+    fn url_origin_hides_path_and_credentials() {
+        assert_eq!(url_origin("https://api.example.com/v1/key?k=1"), "https://api.example.com");
+        assert_eq!(url_origin("https://api.example.com\\v1\\key"), "https://api.example.com");
+        assert_eq!(url_origin("http://127.0.0.1:8545?x"), "http://127.0.0.1:8545");
+        assert_eq!(url_origin("https://user:pw@host/"), "https://host");
+        assert_eq!(url_origin("https://user:pw\\@host/"), "<url>");
+        assert_eq!(url_origin("not a url"), "<url>");
     }
 }

@@ -115,14 +115,24 @@ fn send(
 
 /// Whether `url` matches an entry of `allowlist`: same scheme, host and port, and a path under
 /// the entry's path. An entry whose host starts with `*.` matches the subdomains of the rest of
-/// the host. Entries with a query or fragment match nothing.
+/// the host. Entries with a query or fragment match nothing. Percent-encoded paths and path
+/// parameters are rejected: servers may decode or strip them before resolving dot segments.
 fn is_allowed(allowlist: &[String], url: &Url) -> bool {
+    if !matches!(url.scheme(), "http" | "https") || url.path().contains(['%', ';']) {
+        return false;
+    }
     allowlist.iter().any(|entry| {
-        let Ok(allowed) = Url::parse(&entry.replacen("://*.", "://", 1)) else { return false };
-        if allowed.query().is_some() || allowed.fragment().is_some() {
+        let Some((scheme, authority)) = entry.split_once("://") else { return false };
+        let wildcard = authority.starts_with("*.");
+        let entry =
+            if wildcard { format!("{scheme}://{}", &authority[2..]) } else { entry.clone() };
+        let Ok(allowed) = Url::parse(&entry) else { return false };
+        if allowed.query().is_some()
+            || allowed.fragment().is_some()
+            || allowed.path().contains(['%', ';'])
+        {
             return false;
         }
-        let wildcard = entry.contains("://*.");
         let (Some(host), Some(allowed_host)) = (url.host_str(), allowed.host_str()) else {
             return false;
         };
@@ -175,5 +185,21 @@ mod tests {
         assert!(!allowed("https://api.example.com/v1beta"));
         assert!(!allowed("https://api.example.com/v1-internal/x"));
         assert!(!allowed("https://q.io/?k=a"));
+
+        for path in [
+            "/v1/..%2fprivate",
+            "/v1/%2e%2e%2Fprivate",
+            "/v1/..%5cprivate",
+            "/v1/%252e%252e%252fprivate",
+            "/v1/..;/private",
+            "/v1/%2e%2e/private",
+        ] {
+            assert!(!allowed(&format!("https://api.example.com{path}")), "{path}");
+        }
+        assert!(allowed("https://api.example.com/v1/prices?name=some%20token"));
+        assert!(!is_allowed(
+            &["https://api.example.com/v1/://*.example".into()],
+            &Url::parse("https://sub.api.example.com/v1/://example").unwrap(),
+        ));
     }
 }

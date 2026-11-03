@@ -133,6 +133,12 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
         // If we have a new sender from execution, we need to use it to deploy libraries and relink
         // contracts.
         if let Some(new_sender) = self.maybe_new_sender(result.transactions.as_ref())? {
+            // HTTP requests cannot be rolled back along with the local EVM. Require an explicit
+            // sender rather than executing potentially non-idempotent requests a second time.
+            eyre::ensure!(
+                self.script_config.config.http_allowlist.is_empty(),
+                "Cannot rerun a script with HTTP enabled to relink libraries. Run again with --sender {new_sender} to avoid repeating HTTP requests."
+            );
             self.script_config.update_sender(new_sender).await?;
 
             // Rollback to rerun linking with the new sender.

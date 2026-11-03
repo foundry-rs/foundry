@@ -418,8 +418,10 @@ pub struct Config {
     pub eip1559_fee_estimate: Eip1559FeeEstimatePreset,
     /// Sets a timeout in seconds for vm.prompt cheatcodes
     pub prompt_timeout: u64,
-    /// URL prefixes that `vm.httpRequest` and `vm.httpGet` may call. Empty by default, which
-    /// disables them. A host starting with `*.` matches its subdomains.
+    /// URLs that `vm.httpRequest` and `vm.httpGet` may call. Empty by default, which disables
+    /// them. Entries match the scheme, host, port and path prefix on a slash boundary; `*.` hosts
+    /// match subdomains only. Entries with a query or fragment never match. Percent-encoded paths
+    /// and semicolon path parameters are unsupported; query strings may contain percent encoding.
     pub http_allowlist: Vec<String>,
     /// The address which will be executing all tests
     pub sender: Address,
@@ -10033,6 +10035,38 @@ mod tests {
             let config = Config::load_with_root(jail.directory()).unwrap();
             assert!(config.allow_linked_libraries);
             assert!(!config.solc_settings().unwrap().settings.libraries.libs.is_empty());
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_http_allowlist_config() {
+        figment::Jail::expect_with(|jail| {
+            assert!(Config::load().unwrap().http_allowlist.is_empty());
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                http_allowlist = ["https://api.example.com/v1/", "https://*.example.org/"]
+                [profile.ci]
+                http_allowlist = []
+                "#,
+            )?;
+            let config = Config::load().unwrap();
+            assert_eq!(
+                config.http_allowlist,
+                ["https://api.example.com/v1/", "https://*.example.org/"]
+            );
+            assert_eq!(
+                Config::from_provider(&config).unwrap().http_allowlist,
+                config.http_allowlist
+            );
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            assert!(Config::load().unwrap().http_allowlist.is_empty());
+            jail.set_env("FOUNDRY_HTTP_ALLOWLIST", r#"["https://env.example.com/"]"#);
+            assert_eq!(Config::load().unwrap().http_allowlist, ["https://env.example.com/"]);
+            jail.set_env("FOUNDRY_HTTP_ALLOWLIST", "42");
+            assert!(Config::load().is_err());
             Ok(())
         });
     }

@@ -406,7 +406,7 @@
         {
           "name": "url",
           "ty": "string",
-          "description": "The URL. It must start with an entry of `http_allowlist`."
+          "description": "The URL. It must match an entry of `http_allowlist`."
         },
         {
           "name": "headers",
@@ -7181,7 +7181,7 @@
     {
       "func": {
         "id": "httpGet",
-        "description": "Sends an HTTP GET request to `url` and returns the response, whatever its status.\nThe URL must start with an entry of `http_allowlist` in `foundry.toml`.",
+        "description": "Sends an HTTP GET request to `url` and returns the response, whatever its status.\nUses the same allowlist, redirect restrictions, timeout and body limit as `httpRequest`.",
         "declaration": "function httpGet(string calldata url) external returns (HttpResponse memory response);",
         "visibility": "external",
         "mutability": "",
@@ -7201,7 +7201,7 @@
     {
       "func": {
         "id": "httpRequest",
-        "description": "Sends an HTTP request and returns the response, whatever its status.\nThe URL must start with an entry of `http_allowlist` in `foundry.toml`, which is empty by\ndefault. Reverts on network errors and timeouts.",
+        "description": "Sends an HTTP request and returns the response, whatever its status.\nThe URL must match `http_allowlist` in `foundry.toml`, which is empty by default.\nMatches scheme, host, port and a slash-delimited path prefix. Percent-encoded paths and\nsemicolon path parameters are rejected. Reverts on network errors, a 30-second timeout,\nor responses larger than 10 MiB. Redirects must have the same origin and also be allowed.",
         "declaration": "function httpRequest(HttpRequest calldata request) external returns (HttpResponse memory response);",
         "visibility": "external",
         "mutability": "",
