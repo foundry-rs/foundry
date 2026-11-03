@@ -138,14 +138,14 @@ async fn alternating_epoch_metadata(
     .await
 }
 
-/// Reveals metadata after the pinned root is fetched for the first staged replacement.
-/// The returned counter tracks full root reads so tests can assert that staging was retried.
+/// Reveals metadata after the pinned fork root is fetched.
+/// The returned counter tracks full root reads so tests can detect repeated initialization.
 pub(super) async fn epoch_metadata_after_fork_root(
     endpoint: String,
     block_number: u64,
 ) -> (String, Arc<AtomicUsize>) {
     let root_reads = Arc::new(AtomicUsize::new(0));
-    let endpoint = spawn_rpc_proxy_mapping_method(endpoint, "anvil_tempoConsensusIdentity", {
+    let mut endpoint = spawn_rpc_proxy_mapping_method(endpoint, "anvil_tempoConsensusIdentity", {
         let root_reads = Arc::clone(&root_reads);
         move |_, value| {
             if root_reads.load(Ordering::Relaxed) == 0 { serde_json::Value::Null } else { value }
@@ -153,18 +153,90 @@ pub(super) async fn epoch_metadata_after_fork_root(
     })
     .await;
     let root_number = serde_json::to_value(BlockNumberOrTag::Number(block_number)).unwrap();
-    let endpoint = spawn_rpc_proxy_mapping_method(endpoint, "eth_getBlockByNumber", {
-        let root_reads = Arc::clone(&root_reads);
-        move |params, value| {
-            if params.get(0) == Some(&root_number)
-                && params.get(1).and_then(serde_json::Value::as_bool) == Some(true)
-                && !value.is_null()
-            {
-                root_reads.fetch_add(1, Ordering::Relaxed);
+    for method in ["eth_getBlockByNumber", "eth_getBlockByHash"] {
+        endpoint = spawn_rpc_proxy_mapping_method(endpoint, method, {
+            let root_reads = Arc::clone(&root_reads);
+            let root_number = root_number.clone();
+            move |params, value| {
+                if params.get(1).and_then(serde_json::Value::as_bool) == Some(true)
+                    && value.get("number") == Some(&root_number)
+                {
+                    root_reads.fetch_add(1, Ordering::Relaxed);
+                }
+                value
             }
-            value
-        }
-    })
-    .await;
+        })
+        .await;
+    }
     (endpoint, root_reads)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_fork_accepts_late_epoch_metadata_with_unchanged_schedule() {
+    let config = NodeConfig::test_tempo().with_no_mining(true);
+    for (source_length, override_length) in [(3, Some(3)), (6, Some(3)), (21_600, None)] {
+        let (source_api, source) =
+            spawn(config.clone().with_tempo_epoch_length(NonZeroU64::new(source_length).unwrap()))
+                .await;
+        source_api.mine_one().await.unwrap();
+        let (endpoint, root_reads) =
+            epoch_metadata_after_fork_root(source.http_endpoint(), 1).await;
+        let mut fork_config =
+            config.clone().with_eth_rpc_url(Some(endpoint)).with_fork_block_number(Some(1u64));
+        if let Some(length) = override_length {
+            fork_config = fork_config.with_tempo_epoch_length(NonZeroU64::new(length).unwrap());
+        }
+        let (api, handle) = try_spawn(fork_config)
+            .await
+            .expect("late source metadata must not reject an unchanged consensus schedule");
+        let provider = handle.http_provider();
+        let identity = tempo_consensus_identity(&provider).await;
+        assert_eq!(identity.epoch_length, override_length.unwrap_or(source_length));
+        assert_eq!(root_reads.load(Ordering::Relaxed), 1);
+
+        let (conflicting, _) = spawn_rpc_proxy_canned_method(
+            source.http_endpoint(),
+            "anvil_tempoConsensusIdentity",
+            serde_json::json!({ "epochLength": 9 }),
+        )
+        .await;
+        for reset in [false, true] {
+            if reset {
+                let (endpoint, root_reads) =
+                    epoch_metadata_after_fork_root(source.http_endpoint(), 1).await;
+                api.anvil_reset(Some(Forking {
+                    json_rpc_url: Some(endpoint),
+                    block_number: Some(1),
+                }))
+                .await
+                .unwrap();
+                assert_eq!(root_reads.load(Ordering::Relaxed), 1);
+                assert_eq!(tempo_consensus_identity(&provider).await, identity);
+            }
+            let error = api.anvil_set_rpc_url(conflicting.clone()).await.unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "replacement fork endpoint has an incompatible execution context"
+            );
+            assert_eq!(tempo_consensus_identity(&provider).await, identity);
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_fork_rejects_late_epoch_metadata_that_changes_schedule() {
+    let config = NodeConfig::test_tempo().with_no_mining(true);
+    let (source_api, source) =
+        spawn(config.clone().with_tempo_epoch_length(NonZeroU64::new(3).unwrap())).await;
+    source_api.mine_one().await.unwrap();
+    let (endpoint, root_reads) = epoch_metadata_after_fork_root(source.http_endpoint(), 1).await;
+    let error =
+        try_spawn(config.with_eth_rpc_url(Some(endpoint)).with_fork_block_number(Some(1u64)))
+            .await
+            .err()
+            .expect(
+                "late source metadata must reject consensus built with a different epoch length",
+            );
+    assert_eq!(error.to_string(), "fork endpoint changed while Anvil was being initialized");
+    assert_eq!(root_reads.load(Ordering::Relaxed), 1);
 }

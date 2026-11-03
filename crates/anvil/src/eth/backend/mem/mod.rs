@@ -1262,6 +1262,9 @@ impl<N: Network> Backend<N> {
 
     /// Marks startup fork-cache writes as belonging to the validated live backend.
     pub(crate) fn commit_startup_fork_cache(&self) {
+        if let Some(fork) = self.get_fork() {
+            *self.last_fork_cache_source.write() = ForkCacheSource::from_fork(&fork);
+        }
         self.startup_fork_cache_user.cache_lease.disarm();
     }
 
@@ -5218,7 +5221,7 @@ impl<N: Network> Backend<N> {
         let mut staged_env = self.evm_env.read().clone();
         staged_config.apply_tempo_fork_beneficiary_default(&mut staged_env);
         let staged_fees = self.fees.detached();
-        let (mut staged_db, staged_client_config) = staged_config
+        let (mut staged_db, mut staged_client_config) = staged_config
             .setup_fork_db_config_for_reset(
                 target_rpc_url.clone(),
                 &mut staged_env,
@@ -5313,7 +5316,7 @@ impl<N: Network> Backend<N> {
             if !staged_config
                 .fork_urls_match_context(
                     target_rpc_urls,
-                    staged_client_config.endpoint_identity,
+                    &mut staged_client_config.endpoint_identity,
                     staged_client_config.block_number,
                     staged_client_config.block_hash,
                 )

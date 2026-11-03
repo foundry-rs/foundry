@@ -1678,11 +1678,11 @@ impl NodeConfig {
         }
 
         if let Some(fork) = backend.get_fork() {
-            let config = fork.config.read().clone();
+            let mut config = fork.config.read().clone();
             if !self
                 .fork_urls_match_context(
                     &config.fork_urls,
-                    config.endpoint_identity,
+                    &mut config.endpoint_identity,
                     config.block_number,
                     config.block_hash,
                 )
@@ -1690,6 +1690,7 @@ impl NodeConfig {
             {
                 eyre::bail!("fork endpoint changed while Anvil was being initialized");
             }
+            fork.config.write().endpoint_identity = config.endpoint_identity;
         }
         Ok((backend, fork_transaction_replay))
     }
@@ -2093,24 +2094,31 @@ impl NodeConfig {
     pub(crate) async fn fork_urls_match_context(
         &self,
         fork_urls: &[String],
-        mut expected: ForkEndpointIdentity,
+        expected: &mut ForkEndpointIdentity,
         block_number: u64,
         block_hash: B256,
     ) -> Result<bool> {
-        let original = expected;
-        for eth_rpc_url in Self::fork_urls_requiring_revalidation(fork_urls, expected) {
+        let mut observed = *expected;
+        for eth_rpc_url in Self::fork_urls_requiring_revalidation(fork_urls, observed) {
             if !self
-                .fork_context_matches(eth_rpc_url, &mut expected, block_number, block_hash)
+                .fork_context_matches(eth_rpc_url, &mut observed, block_number, block_hash)
                 .await?
             {
                 return Ok(false);
             }
         }
-        // Consensus has already been built from the original schedule, so updating only the
-        // identity could leave it inconsistent. Reset retries from a fresh snapshot and must
-        // rediscover the schedule before building consensus; repeated late discoveries exhaust
-        // its bounded retries without changing live state.
-        Ok(expected == original)
+        // Consensus has already been built, so retain newly learned metadata only if the effective
+        // schedule is unchanged. Startup rejects actual changes; reset retries from a fresh
+        // snapshot to rediscover the schedule before rebuilding consensus, without changing
+        // live state.
+        let epoch_length = |source_length| {
+            self.tempo_epoch_length.or(source_length).unwrap_or(DEFAULT_TEMPO_EPOCH_LENGTH)
+        };
+        if epoch_length(observed.tempo_epoch_length) != epoch_length(expected.tempo_epoch_length) {
+            return Ok(false);
+        }
+        *expected = observed;
+        Ok(true)
     }
 
     const fn fork_urls_requiring_revalidation(
