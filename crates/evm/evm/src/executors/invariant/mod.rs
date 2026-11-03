@@ -63,6 +63,7 @@ use result::{assert_after_invariant, can_continue, invariant_preflight_check};
 use revm::state::Account;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use snapshot::StateSnapshots;
 use std::{
     collections::{HashMap as Map, HashSet, btree_map::Entry},
     sync::Arc,
@@ -84,14 +85,13 @@ mod result;
 pub use result::{InvariantFuzzTestResult, did_fail_on_assert};
 
 mod shrink;
-
-mod snapshot;
 pub use shrink::{
     CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome, HandlerReplayOutcome,
     SequenceShrink, ShrinkCandidateKeys, ShrinkRun, ShrinkRunStats, check_sequence,
     check_sequence_value, replay_handler_failure_sequence, shrink_sequence_by_removing,
 };
-use snapshot::StateSnapshots;
+
+mod snapshot;
 
 /// Minimum number of logical runs assigned to each auto invariant worker at the default invariant
 /// depth.
@@ -1141,7 +1141,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let mut runs = 0;
         // Where the next view harvesting window starts; kept across runs so it keeps rotating.
         let mut view_cursor = 0;
-        let mut snapshots = StateSnapshots::new(config.depth);
+        let mut snapshots = StateSnapshots::new(config.depth, &executor, worker_count);
         campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
         // Report invariants that already fail in the initial state. Later runs only report
         // failures that they add.
@@ -1560,7 +1560,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
             // Extend corpus only after the run and its optional hook have completed.
             if let Some(frontier_run) = &frontier_run {
-                frontier_recorder.capture_sequence(&frontier_run.inputs, &frontier_run.cmp_seq);
+                // Frontiers past the depth are dropped by frontier seeding, so a resumed run's
+                // deeper calls must not displace the ones it can use.
+                let len = frontier_run.cmp_seq.len().min(config.depth.max(1) as usize);
+                frontier_recorder
+                    .capture_sequence(&frontier_run.inputs, &frontier_run.cmp_seq[..len]);
             }
             let optimization = current_run.optimization_value.map(|v| {
                 let prefix = current_run.inputs[..current_run.optimization_prefix_len].to_vec();

@@ -25,6 +25,10 @@ use std::{hash::BuildHasher, sync::Arc};
 
 /// Most snapshots kept per worker.
 const MAX_SNAPSHOTS: usize = 64;
+/// Storage slots that the snapshots of all workers may copy together. Each snapshot holds a full
+/// copy of the backend, so workers keep fewer snapshots as the post-setUp state grows, but at least
+/// two, so a run resumed from one snapshot can still replace the other.
+const SNAPSHOT_SLOT_BUDGET: usize = 1 << 20;
 /// Snapshots are only taken while the reproducing sequence is at most this many run depths long.
 const MAX_PREFIX_DEPTHS: usize = 4;
 /// Distinct values a slot may take before it is treated as a distribution rather than a set.
@@ -76,6 +80,7 @@ pub(super) struct RunStart<FEN: FoundryEvmNetwork> {
 
 /// Per-worker pool of snapshots and the state features seen so far.
 pub(super) struct StateSnapshots<FEN: FoundryEvmNetwork> {
+    max_snapshots: usize,
     max_prefix: usize,
     hasher: DefaultHashBuilder,
     /// Feature -> number of calls that reached it.
@@ -92,8 +97,18 @@ pub(super) struct StateSnapshots<FEN: FoundryEvmNetwork> {
 }
 
 impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
-    pub(super) fn new(depth: u32) -> Self {
+    /// Creates the pool of one of `workers` workers, whose runs start from `setup`.
+    pub(super) fn new(depth: u32, setup: &Executor<FEN>, workers: usize) -> Self {
+        let backend = setup.backend();
+        let mut slots =
+            backend.mem_db().cache.accounts.values().map(|a| a.storage.len()).sum::<usize>();
+        if let Some(db) = backend.active_fork_db() {
+            slots += db.cache.accounts.values().map(|a| a.storage.len()).sum::<usize>();
+        }
+        let max_snapshots = (SNAPSHOT_SLOT_BUDGET / slots.max(1).saturating_mul(workers.max(1)))
+            .clamp(2, MAX_SNAPSHOTS);
         Self {
+            max_snapshots,
             max_prefix: (depth as usize).saturating_mul(MAX_PREFIX_DEPTHS),
             hasher: DefaultHashBuilder::default(),
             hits: HashMap::default(),
@@ -243,7 +258,7 @@ impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
             features: novel,
             energy: Energy::default(),
         };
-        if self.snapshots.len() < MAX_SNAPSHOTS {
+        if self.snapshots.len() < self.max_snapshots {
             self.snapshots.push(snapshot);
             return;
         }
@@ -283,8 +298,12 @@ impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_evm_core::evm::EthEvmNetwork;
-    use revm::state::EvmStorageSlot;
+    use crate::executors::ExecutorBuilder;
+    use alloy_evm::EvmEnv;
+    use alloy_primitives::Bytes;
+    use foundry_evm_core::{backend::Backend, evm::EthEvmNetwork};
+    use foundry_evm_fuzz::CallDetails;
+    use revm::{context::TxEnv, state::EvmStorageSlot};
 
     fn write(slot: U256, original: U256, present: U256) -> AddressMap<Account> {
         let mut account = Account::default();
@@ -294,8 +313,18 @@ mod tests {
         AddressMap::from_iter([(Address::repeat_byte(0x11), account)])
     }
 
+    fn executor() -> Executor<EthEvmNetwork> {
+        let backend = Backend::spawn(None).unwrap();
+        ExecutorBuilder::default().build(
+            EvmEnv::default(),
+            TxEnv::default(),
+            backend,
+            Default::default(),
+        )
+    }
+
     fn snapshots() -> StateSnapshots<EthEvmNetwork> {
-        StateSnapshots::new(10)
+        StateSnapshots::new(10, &executor(), 1)
     }
 
     #[test]
@@ -342,5 +371,42 @@ mod tests {
         assert_eq!(log2_bin(U256::MAX), 512);
         assert_eq!(log2_bin(U256::MAX - U256::from(255)), 504);
         assert!(log2_bin(U256::MAX) > log2_bin(U256::from(1) << 254));
+    }
+
+    #[test]
+    fn snapshot_pool_shrinks_as_setup_state_grows() {
+        let mut setup = executor();
+        assert_eq!(StateSnapshots::new(10, &setup, 1).max_snapshots, MAX_SNAPSHOTS);
+        for slot in 0..1u64 << 15 {
+            setup
+                .set_storage_slot(Address::repeat_byte(0x22), U256::from(slot), U256::ONE)
+                .unwrap();
+        }
+        // 2^20 slots shared by 4 workers copying 2^15 slots each.
+        assert_eq!(StateSnapshots::new(10, &setup, 4).max_snapshots, 8);
+
+        // Every worker keeps at least two snapshots, and a full pool keeps its size.
+        let mut pool = StateSnapshots::new(10, &setup, 64);
+        assert_eq!(pool.max_snapshots, 2);
+        let tx = BasicTxDetails {
+            warp: None,
+            roll: None,
+            sender: Address::ZERO,
+            call_details: CallDetails {
+                target: Address::ZERO,
+                calldata: Bytes::new(),
+                value: None,
+            },
+        };
+        for feature in 1..=3 {
+            pool.capture(&setup, std::slice::from_ref(&tx), vec![feature]);
+        }
+        assert_eq!(pool.snapshots.len(), 2);
+        // A run resumed from a snapshot keeps it and replaces the other one.
+        pool.current = Start::Snapshot(0);
+        let start = pool.snapshots[0].features.clone();
+        pool.capture(&setup, std::slice::from_ref(&tx), vec![4]);
+        assert_eq!(pool.snapshots[0].features, start);
+        assert_eq!(pool.snapshots[1].features, [4]);
     }
 }
