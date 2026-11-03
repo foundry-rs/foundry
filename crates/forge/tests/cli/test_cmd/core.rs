@@ -2,6 +2,7 @@
 
 use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
 use foundry_test_utils::{str, util::OutputExt};
+use regex::Regex;
 use serde_json::Value;
 
 #[forgetest_init]
@@ -632,7 +633,7 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 }
 
 #[forgetest_init]
-fn rerun_with_only_setup_failure_runs_all_tests(prj: _, cmd: _) {
+fn rerun_with_only_setup_failure_runs_failed_suite(prj: _, cmd: _) {
     prj.add_test(
         "RerunSetupFail.t.sol",
         r#"
@@ -674,6 +675,7 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 // A failed `setUp()` is rerun along with the failed tests of other suites.
 #[forgetest_init]
 fn rerun_includes_setup_failure_next_to_test_failures(prj: _, cmd: _) {
+    prj.update_config(|config| config.test_pattern = Some(Regex::new("^testC").unwrap().into()));
     prj.add_test(
         "RerunMixed.t.sol",
         r#"
@@ -697,7 +699,8 @@ contract TestFails is Test {
 "#,
     );
 
-    cmd.args(["test", "-j1"]).assert_failure();
+    // Rerun selection must override the configured pattern, just as the initial CLI filter does.
+    cmd.args(["test", "--match-test", "^test[AB]", "-j1"]).assert_failure();
     cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure().stdout_eq(str![[r#"
 No files changed, compilation skipped
 
@@ -710,6 +713,56 @@ Ran 1 test for test/RerunMixed.t.sol:TestFails
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 2 test suites [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn rerun_includes_all_suite_failures(prj: _, cmd: _) {
+    prj.add_test(
+        "RerunSuites.t.sol",
+        r#"
+contract ConstructorFails {
+    constructor() {
+        revert("constructor failed");
+    }
+
+    function testA() public {}
+}
+
+contract InvalidHook {
+    function afterInvariant() public {}
+    function afterinvariant() public {}
+    function testB() public {}
+}
+
+contract SetupFails {
+    function setUp() public {
+        revert("setup failed");
+    }
+
+    function testC() public {}
+}
+"#,
+    );
+
+    cmd.args(["test", "-j1"]).assert_failure();
+    cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/RerunSuites.t.sol:ConstructorFails
+[FAIL: constructor failed] constructor() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/RerunSuites.t.sol:InvalidHook
+[FAIL: multiple afterInvariant functions] afterInvariant() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/RerunSuites.t.sol:SetupFails
+[FAIL: setup failed] setUp() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 3 test suites [ELAPSED]: 0 tests passed, 3 failed, 0 skipped (3 total tests)
 ...
 "#]]);
 }

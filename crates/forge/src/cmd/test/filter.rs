@@ -16,16 +16,15 @@ pub struct RerunFailure {
 }
 
 impl RerunFailure {
-    /// Whether the failure is the suite's `setUp` or constructor, which run before any test: any
-    /// test of the suite reruns it.
+    /// Whether the failure occurs before tests run, so any test of the suite reruns it.
     pub fn is_suite_failure(&self) -> bool {
         is_suite_failure(&self.test)
     }
 }
 
-/// Returns `true` for the failure names of a suite's `setUp` and constructor.
+/// Returns `true` for failure names emitted before a suite's tests run.
 pub(crate) fn is_suite_failure(name: &str) -> bool {
-    matches!(name, "setUp" | "constructor")
+    matches!(name, "setUp" | "constructor" | "afterInvariant")
 }
 
 /// Persisted `forge test --rerun` failures.
