@@ -627,7 +627,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     ccx.state.deploy_code_depth = outer_deploy_code_depth;
     ccx.state.deploy_code_create_state_gas = outer_create_state_gas;
     // A create that runs isolated as the root of its own nested transaction returns no data from
-    // a failed code deposit, as on master.
+    // a failed code deposit.
     let returned = mem::replace(&mut ccx.state.deploy_code_output, outer_output)
         .filter(|(_, isolated)| *isolated == ccx.state.in_isolation_context)
         .map(|(output, _)| output);
@@ -664,7 +664,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     }
 
     if !outcome.is_success() {
-        // As on master, a constructor whose returned code could not be deposited reverts with it.
+        // A constructor whose returned code could not be deposited reverts with it.
         return Err(crate::Error::from(returned.unwrap_or(outcome.output)));
     }
 

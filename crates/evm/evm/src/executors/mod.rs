@@ -670,7 +670,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         self.call_tx_with_init(evm_env, tx, ext, None)
     }
 
-    /// Like [`Self::call_tx`], recording `init`'s caller and test contract, as on master, if the
+    /// Like [`Self::call_tx`], recording `init`'s caller and test contract, if the
     /// call modifies the backend.
     fn call_tx_with_init(
         &self,
@@ -701,7 +701,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         evm_env: EvmEnvFor<FEN>,
         tx: TransactionRequestFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        // As on master, every transaction records its caller and test contract.
+        // Every transaction records its caller and test contract.
         if let (Some(caller), Some(kind)) = (tx.from(), tx.kind()) {
             self.backend_mut().initialize(caller, kind);
         }
@@ -1588,7 +1588,7 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
     }
 
     /// Sets the stipend to the intrinsic gas of `tx` in `evm_env`, with the access list cheatcodes
-    /// applied to it, as on master.
+    /// applied to it.
     fn set_stipend(&mut self, evm_env: &EvmEnvFor<FEN>, mut tx: TransactionRequestFor<FEN>) {
         if let Some(access_list) =
             self.cheatcodes.as_ref().and_then(|cheats| cheats.applied_access_list.clone())

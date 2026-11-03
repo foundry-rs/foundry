@@ -1451,7 +1451,7 @@ impl Cheatcode for executeTransactionCall {
         env.block.basefee = U256::ZERO;
         env.set_feature(EvmFeatures::FEE_CHARGE, false);
         env.set_feature(EvmFeatures::NONCE_CHECK, true);
-        // As on master, which zeroes the gas price, the sender only needs to afford the value.
+        // The transaction pays no fees, so the sender only needs to afford the value.
         env.set_feature(EvmFeatures::BALANCE_CHECK, false);
         env.set_feature(EvmFeatures::BALANCE_TOP_UP, false);
         let balance = ccx

@@ -216,8 +216,7 @@ impl DynDatabase for AcceptedView {
             None => self.backing.get_account(address)?,
         };
         // Storage written to an absent account, such as by `vm.store`, is accepted without the
-        // account. evm2 reads no storage for an absent account, so report it as an empty one, as
-        // the REVM cache kept it.
+        // account. evm2 reads no storage for an absent account, so report it as an empty one.
         if account.is_none()
             && self
                 .cache

@@ -1518,7 +1518,7 @@ mod tests {
             cache_block_env(&env.block, block.header.excess_blob_gas)
         };
 
-        // Master recorded REVM's blob price for the header's excess blob gas.
+        // The cache records revm's blob price for the header's excess blob gas.
         let mut expected = BlockEnv::default();
         expected.set_blob_excess_gas_and_price(62_652_416, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE);
         assert_eq!(

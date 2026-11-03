@@ -810,7 +810,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
     /// Moves fork `id` onto `db` and `env` in the lifecycle.
     ///
-    /// As on master, rolling the active fork keeps the test caller's state like a persistent
+    /// Rolling the active fork keeps the test caller's state like a persistent
     /// account's, so a sender that is not persistent keeps changes such as `vm.deal`.
     fn roll_lifecycle_fork(
         &mut self,
@@ -1204,8 +1204,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// RPC mutation, and updates the running context with it.
     ///
     /// A slot the running transaction already loaded takes the refreshed value across reverts of
-    /// the enclosing calls, as on master, where the refresh replaced the journaled slot's present
-    /// value. Its transaction-start original is kept.
+    /// the enclosing calls. Its transaction-start original is kept.
     pub fn refresh_fork_storage(
         &mut self,
         address: Address,

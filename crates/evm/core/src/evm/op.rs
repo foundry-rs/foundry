@@ -31,7 +31,7 @@ const _: fn() = || {
 impl FoundryEvmExt<OpTxEnvelope> for OpEvmExt {
     fn replace_while_executing(&mut self, ext: Self) {
         // Only the block-level L1 info comes from `ext`; everything else, including the cached L1
-        // cost, describes the running transaction, as when REVM kept this state in its context.
+        // cost, describes the running transaction.
         let tx_l1_cost = self.l1_block_info.tx_l1_cost;
         self.l1_block_info = ext.l1_block_info;
         self.l1_block_info.tx_l1_cost = tx_l1_cost;

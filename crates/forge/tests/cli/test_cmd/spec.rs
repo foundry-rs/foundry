@@ -2590,7 +2590,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     }
 }
 
-// As on master, the reported test gas subtracts the intrinsic gas of the access list
+// The reported test gas subtracts the intrinsic gas of the access list
 // `vm.accessList` applied to the test transaction, which its execution never pays, but not of one
 // only a nested transaction's calls applied.
 #[forgetest]
