@@ -436,6 +436,65 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 #[cfg(feature = "monad")]
 #[forgetest]
+async fn explicit_network_warns_on_fork_of_another_family(prj: _, cmd: _) {
+    prj.add_test(
+        "ForkNetworkMismatch.t.sol",
+        r#"
+contract ForkNetworkMismatchTest {
+    function test_runs() public {}
+}
+   "#,
+    );
+
+    let (_api, ethereum) = anvil::spawn(anvil::NodeConfig::test()).await;
+    cmd.args(["test", "--network", "monad", "--fork-url", &ethereum.http_endpoint()])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: fork of chain 31337 belongs to `ethereum`, but the selected network is `monad`, so the fork runs with `monad` rules
+
+"#]]);
+
+    // An endpoint without Anvil metadata belongs to the family of its recognized chain ID.
+    let (_api, mainnet) = anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(1u64))).await;
+    let mainnet =
+        rpc::spawn_rpc_proxy_rejecting_method_after(mainnet.http_endpoint(), "anvil_nodeInfo", 0)
+            .await;
+    cmd.forge_fuse()
+        .args(["test", "--network", "monad", "--fork-url", &mainnet])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: fork of chain 1 belongs to `ethereum`, but the selected network is `monad`, so the fork runs with `monad` rules
+
+"#]]);
+
+    // The Ethereum EVM can serve an OP Stack fork, so a different family alone does not warn.
+    let (_api, op) = anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(10u64))).await;
+    let op =
+        rpc::spawn_rpc_proxy_rejecting_method_after(op.http_endpoint(), "anvil_nodeInfo", 0).await;
+    cmd.forge_fuse()
+        .args(["test", "--network", "ethereum", "--fork-url", &op])
+        .assert_success()
+        .stderr_eq(str![""]);
+
+    // Node info reports the family even when `anvil_metadata` is unavailable, so the chain ID
+    // does not override it.
+    let (_api, monad) =
+        anvil::spawn(anvil::NodeConfig::test_monad().with_chain_id(Some(1u64))).await;
+    let monad = rpc::spawn_rpc_proxy_method_not_found_before(
+        monad.http_endpoint(),
+        "anvil_metadata",
+        usize::MAX,
+    )
+    .await;
+    cmd.forge_fuse().args(["test", "--fork-url", &monad]).assert_success().stderr_eq(str![""]);
+    cmd.forge_fuse()
+        .args(["test", "--network", "monad", "--fork-url", &monad])
+        .assert_success()
+        .stderr_eq(str![""]);
+}
+
+#[cfg(feature = "monad")]
+#[forgetest]
 async fn fork_resolves_monad_hardfork_from_timestamp(prj: _, cmd: _) {
     let monad_nine_activation =
         foundry_evm::hardforks::MonadHardfork::MonadNine.mainnet_activation_timestamp().unwrap();

@@ -66,7 +66,7 @@ use foundry_config::{
     filter::GlobMatcher,
     fs_permissions::FsAccessPermission,
 };
-use foundry_debugger::DebuggerBuilder;
+use foundry_debugger::{DebuggerBuilder, ensure_dump_dir};
 use foundry_evm::{
     backend::Backend,
     core::evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
@@ -566,7 +566,7 @@ pub struct TestArgs {
     #[arg(
         long,
         requires = "debug",
-        value_hint = ValueHint::FilePath,
+        value_hint = ValueHint::DirPath,
         value_name = "PATH"
     )]
     dump: Option<PathBuf>,
@@ -1616,6 +1616,9 @@ impl TestArgs {
     /// Returns the test results for all matching tests.
     pub async fn compile_and_run(&mut self) -> Result<TestOutcome> {
         self.ensure_mutation_mode_compatible(false)?;
+        if let Some(dir) = &self.dump {
+            ensure_dump_dir(dir)?;
+        }
         let compiled = self.compile_project().await?;
         self.run_tests(
             &compiled.project_root,
