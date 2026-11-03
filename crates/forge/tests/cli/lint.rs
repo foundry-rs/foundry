@@ -2067,15 +2067,39 @@ contract Old {}
         r#"
 pragma solidity ^0.8.0;
 
-contract New {}
+contract New {
+    uint256 constant limit = 10;
+}
 "#,
     );
     prj.update_config(|config| {
-        config.lint = LinterConfig { lint_on_build: true, ..Default::default() };
+        config.lint = LinterConfig { lint_on_build: true, severity: vec![], ..Default::default() };
     });
 
     cmd.arg("build").assert_success().stderr_eq(str![[r#"
-Warning: unable to lint src/Old.sol. Solar only supports Solidity versions >=0.8.0
+Warning: unable to lint src/Old.sol: AST source not found
+note[screaming-snake-case-const]: constant name is not `SCREAMING_SNAKE_CASE`
+  [FILE]:6:22
+  │
+6 │     uint256 constant limit = 10;
+  │                      ━━━━━ help: consider using: `LIMIT`
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/screaming-snake-case-const
+
+
+"#]]);
+}
+
+#[forgetest]
+fn build_lint_names_skipped_supported_types_file(prj: _, cmd: _) {
+    prj.add_source("New.sol", "pragma solidity ^0.8.0; contract New {}");
+    prj.add_source("Types.sol", "pragma solidity ^0.8.0; struct Position { uint256 amount; }");
+    prj.update_config(|config| {
+        config.lint.lint_on_build = true;
+    });
+
+    cmd.arg("build").assert_success().stderr_eq(str![[r#"
+Warning: unable to lint src/Types.sol: AST source not found
 
 "#]]);
 }
@@ -2114,6 +2138,97 @@ note[screaming-snake-case-const]: constant name is not `SCREAMING_SNAKE_CASE`
 
 
 "#]]);
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn lint_symlinked_tests_and_scripts(prj: _, cmd: _) {
+    std::fs::create_dir_all(prj.root().join("shared")).unwrap();
+    std::fs::write(
+        prj.root().join("shared/Linked.sol"),
+        r#"
+pragma solidity ^0.8.0;
+interface Vm {
+    function readFile(string calldata path) external returns (string memory);
+}
+contract Linked {
+    uint256 constant limit = 10;
+    function read(Vm vm) external {
+        vm.readFile("input.txt");
+    }
+}
+"#,
+    )
+    .unwrap();
+    prj.update_config(|config| {
+        config.lint = LinterConfig { lint_on_build: true, severity: vec![], ..Default::default() };
+    });
+    let expected = str![[r#"
+note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
+  [FILE]:9:12
+  │
+9 │         vm.readFile("input.txt");
+  │            ━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/unsafe-cheatcode
+
+
+"#]];
+
+    for dir in ["test", "script"] {
+        std::fs::create_dir_all(prj.root().join(dir)).unwrap();
+        let path = prj.root().join(dir).join("Linked.sol");
+        std::os::unix::fs::symlink("../shared/Linked.sol", &path).unwrap();
+
+        cmd.forge_fuse().arg("build").assert_success().stderr_eq(expected.clone());
+        cmd.forge_fuse()
+            .args(["lint", "--only-lint", "screaming-snake-case-const", "-D", "notes"])
+            .assert_success()
+            .stderr_eq("");
+        cmd.forge_fuse()
+            .args(["lint", "--only-lint", "unsafe-cheatcode"])
+            .assert_success()
+            .stderr_eq(expected.clone());
+
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn lint_symlinked_aliases_merge_policy(prj: _, cmd: _) {
+    prj.add_source(
+        "Linked.sol",
+        r#"
+pragma solidity ^0.8.0;
+
+contract Linked {
+    uint256 constant limit = 10;
+}
+"#,
+    );
+    std::fs::create_dir_all(prj.root().join("test")).unwrap();
+    std::os::unix::fs::symlink("../src/Linked.sol", prj.root().join("test/Linked.sol")).unwrap();
+
+    for paths in [["test/Linked.sol", "src/Linked.sol"], ["src/Linked.sol", "test/Linked.sol"]] {
+        cmd.forge_fuse()
+            .arg("lint")
+            .args(paths)
+            .args(["--only-lint", "screaming-snake-case-const", "-D", "notes"])
+            .assert_failure()
+            .stderr_eq(str![[r#"
+note[screaming-snake-case-const]: constant name is not `SCREAMING_SNAKE_CASE`
+  [FILE]:6:22
+  │
+6 │     uint256 constant limit = 10;
+  │                      ━━━━━ help: consider using: `LIMIT`
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/screaming-snake-case-const
+
+Error: aborting due to 1 linter note(s)
+
+"#]]);
+    }
 }
 
 const PRAGMA_INCONSISTENT_ALPHA: &str = r#"
