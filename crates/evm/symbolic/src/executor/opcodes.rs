@@ -540,7 +540,7 @@ impl SymbolicExecutor {
                 state.stack.swap(n)?;
             }
             opcode::STOP => {
-                // STOP returns no output; drop the buffer left by an earlier sub-call.
+                // STOP returns no output; drop the return data of the frame's last call.
                 state.return_data = SymReturnData::empty(&mut self.cx);
                 return Ok(StepOutcome::Halt);
             }

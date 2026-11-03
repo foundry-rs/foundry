@@ -1209,7 +1209,7 @@ impl SymExpr {
 
     pub(crate) fn low_byte(self, cx: &mut SymCx) -> Self {
         if let Some(word) = self.as_const() {
-            return Self::constant(cx, U256::from(word.to::<u8>()));
+            return Self::constant(cx, U256::from(word.byte(0)));
         }
         let mask = Self::constant(cx, U256::from(0xff));
         Self::binop(cx, SymBinOp::And, self, mask)
@@ -1700,8 +1700,10 @@ impl SymExpr {
             | SymExprKind::Keccak { .. }
             | SymExprKind::Hash { .. } => Some(self.extracted_byte(cx, index)),
             SymExprKind::Not(value) => {
+                // Complement within the byte, as a full-word `Not` would set the upper bits.
                 let value = value.byte_term(cx, index)?;
-                Some(Self::not(cx, value))
+                let mask = Self::constant(cx, U256::from(0xff));
+                Some(Self::binop(cx, SymBinOp::Xor, value, mask))
             }
             SymExprKind::Ite(cond, then_expr, else_expr) => {
                 let then_expr = then_expr.byte_term(cx, index)?;

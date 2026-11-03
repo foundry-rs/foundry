@@ -22,7 +22,10 @@ import "forge-std/Test.sol";
 
 contract MathSymbolicTest is Test {
     function check_average(uint256 a, uint256 b) external pure {
-        uint256 average = (a + b) / 2;
+        uint256 average;
+        unchecked {
+            average = (a + b) / 2;
+        }
 
         // Forge should find an overflow counterexample.
         assertGe(average, a <= b ? a : b);
@@ -454,6 +457,12 @@ In this style:
   properties to disprove.
 - User reverts terminate the current path. If every path reverts, Forge reports
   a revert-all result instead of a proof.
+- Solidity panics other than `assert` failures (Panic 0x01), such as arithmetic
+  overflow or underflow (0x11), division or modulo by zero (0x12), and
+  out-of-bounds array access (0x32), are reverts too. They prune the path
+  instead of failing the test. To check for overflow, compute in an `unchecked`
+  block and assert the property explicitly; `unchecked` does not disable the
+  division-by-zero or bounds checks.
 
 Dynamic ABI inputs are bounded. Use `forge-config:` inline annotations or
 `foundry.toml` to choose lengths.
@@ -965,6 +974,10 @@ cryptographic preimage/collision properties. If the property should have a
 counterexample within the modeled surface, reduce the example and try raising
 `symbolic.max_paths`, `symbolic.max_depth`, `symbolic.max_solver_queries`, or
 the relevant dynamic length / invariant depth settings.
+
+In `check*` and `prove*` tests, checked-arithmetic and other non-`assert` panics
+prune paths like `require`, so a property that only fails through an overflow
+can pass unless the arithmetic is `unchecked`.
 
 ### `Incomplete` is not a proof
 
