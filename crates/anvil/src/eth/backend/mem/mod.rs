@@ -836,7 +836,9 @@ fn mock_tempo_signature(
     is_t1c: bool,
 ) -> TempoSignature {
     let signature = match key_type {
-        SignatureType::Secp256k1 => {
+        // A configurable account approves with a quorum of primitive owner signatures; a single
+        // secp256k1 placeholder stands in for it here.
+        SignatureType::Secp256k1 | SignatureType::ConfigurableAccount => {
             PrimitiveSignature::Secp256k1(Signature::new(U256::ZERO, U256::ZERO, false))
         }
         SignatureType::P256 => PrimitiveSignature::P256(P256SignatureWithPreHash {

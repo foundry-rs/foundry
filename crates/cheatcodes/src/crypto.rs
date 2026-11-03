@@ -734,7 +734,10 @@ mod tests {
         account_keychain::{AccountKeychain, IAccountKeychain, KeyRestrictions, SignatureType},
         error::Result as PrecompileResult,
         signature_verifier::SignatureVerifier,
-        storage::{PrecompileStorageProvider, StorageCtx, hashmap::HashMapStorageProvider},
+        storage::{
+            ConfigCommitmentWriteGas, PrecompileStorageProvider, StorageCtx,
+            hashmap::HashMapStorageProvider,
+        },
     };
     use tempo_primitives::TempoBlockEnv;
 
@@ -775,6 +778,14 @@ mod tests {
             f: &mut dyn FnMut(&AccountInfo),
         ) -> PrecompileResult<()> {
             self.inner.with_account_info(address, f)
+        }
+
+        fn with_warm_caller_info(
+            &mut self,
+            address: Address,
+            f: &mut dyn FnMut(&AccountInfo),
+        ) -> PrecompileResult<()> {
+            self.inner.with_warm_caller_info(address, f)
         }
 
         fn sload(&mut self, address: Address, key: U256) -> PrecompileResult<U256> {
@@ -855,6 +866,19 @@ mod tests {
 
         fn set_tip1060_storage_credits(&mut self, enabled: bool) {
             self.inner.set_tip1060_storage_credits(enabled)
+        }
+
+        fn config_commitment(&mut self, address: Address) -> PrecompileResult<B256> {
+            self.inner.config_commitment(address)
+        }
+
+        fn set_config_commitment(
+            &mut self,
+            address: Address,
+            commitment: B256,
+            gas: ConfigCommitmentWriteGas,
+        ) -> PrecompileResult<()> {
+            self.inner.set_config_commitment(address, commitment, gas)
         }
     }
 

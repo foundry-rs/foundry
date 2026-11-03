@@ -1053,6 +1053,8 @@ mod tests {
             valid_before: NonZeroU64::new(100),
             valid_after: NonZeroU64::new(10),
             fee_payer_signature: Some(signature),
+            configurable_account_simulation: None,
+            key_authorization_simulation: None,
         };
         let request = serde_json::from_value::<WithOtherFields<TransactionRequest>>(
             serde_json::to_value(&expected).unwrap(),
