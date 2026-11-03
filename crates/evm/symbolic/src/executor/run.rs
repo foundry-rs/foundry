@@ -19,7 +19,18 @@ impl SymbolicExecutor {
             deadline: None,
             nested_deferred_mode: DeferredPathMode::Skip,
             stateless_retry_safe: true,
+            equivalence: None,
         }
+    }
+
+    /// Whether an equivalence check leaves out inputs that run out of gas.
+    pub(super) fn ignores_out_of_gas(&self) -> bool {
+        self.equivalence.is_some_and(|mode| mode.ignore_out_of_gas)
+    }
+
+    /// Whether `GAS` is an ordinary unconstrained symbol, as in an equivalence check.
+    pub(super) const fn symbolic_gas(&self) -> bool {
+        self.equivalence.is_some()
     }
 
     pub(super) fn reset_run_state(&mut self, use_wall_clock_deadline: bool) {

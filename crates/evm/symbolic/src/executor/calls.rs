@@ -34,11 +34,12 @@ impl SymbolicExecutor {
         }
 
         let gas = state.stack.pop()?;
-        if !gas.is_raw_gasleft() {
+        // The equivalence check does not model the callee's gas, so explicit limits are kept.
+        if !gas.is_raw_gasleft() && !self.symbolic_gas() {
             return Err(SymbolicError::Unsupported("explicit CALL gas limit not modeled"));
         }
         let target = state.stack.pop()?;
-        ensure_expr_not_gasleft(&target)?;
+        self.ensure_gas_modeled(&target)?;
         let target_address = state.world.resolve_address(&target);
         let value = match (kind, target_address) {
             (CallKind::Call, Some(to))
@@ -53,11 +54,11 @@ impl SymbolicExecutor {
             (CallKind::CallCode, _) => state.stack.pop()?,
             (CallKind::StaticCall | CallKind::DelegateCall, _) => SymExpr::zero(&mut self.cx),
         };
-        ensure_expr_not_gasleft(&value)?;
+        self.ensure_gas_modeled(&value)?;
         let in_offset = state.stack.pop()?;
-        ensure_expr_not_gasleft(&in_offset)?;
+        self.ensure_gas_modeled(&in_offset)?;
         let in_size = state.stack.pop()?;
-        ensure_expr_not_gasleft(&in_size)?;
+        self.ensure_gas_modeled(&in_size)?;
         let in_size = match state.constrained_usize_checked(&mut self.cx, &in_size) {
             Some(Ok(size)) => BoundedCopySize::Concrete(size),
             Some(Err(_)) => {
@@ -75,9 +76,9 @@ impl SymbolicExecutor {
             }
         };
         let out_offset = state.stack.pop()?;
-        ensure_expr_not_gasleft(&out_offset)?;
+        self.ensure_gas_modeled(&out_offset)?;
         let out_size = state.stack.pop()?;
-        ensure_expr_not_gasleft(&out_size)?;
+        self.ensure_gas_modeled(&out_size)?;
         let out_size = match state.constrained_usize_checked(&mut self.cx, &out_size) {
             Some(Ok(size)) => BoundedCopySize::Concrete(size),
             Some(Err(_)) => {
@@ -140,7 +141,7 @@ impl SymbolicExecutor {
         let call_input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset.clone());
         // Gas is not modeled, so calldata derived from `GAS` / `gasleft()` must fail closed instead
         // of handing the callee a fabricated gas value.
-        if call_input.contains_gasleft(&mut self.cx) {
+        if !self.symbolic_gas() && call_input.contains_gasleft(&mut self.cx) {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
 
@@ -1019,6 +1020,27 @@ impl SymbolicExecutor {
             );
         }
 
+        if self.equivalence.is_some()
+            && state.world.is_unknown_account(&mut self.cx, executor, code_address)?
+        {
+            let target =
+                target_word.unwrap_or_else(|| SymExpr::constant(&mut self.cx, address_word(to)));
+            let input_len = in_size.size_word(&mut self.cx);
+            return self.call_unknown_code(
+                executor,
+                state,
+                kind,
+                to,
+                call_caller,
+                target,
+                value,
+                call_input,
+                input_len,
+                out_offset,
+                &out_size,
+            );
+        }
+
         let child_code = state.world.extcode(&mut self.cx, executor, code_address)?;
         if child_code.is_empty() {
             self.apply_call_value_transfer(executor, state, kind, to, call_caller, value);
@@ -1502,10 +1524,14 @@ impl SymbolicExecutor {
         out_size: BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
         let mut candidates = state.world.symbolic_call_targets(&mut self.cx, executor)?;
-        candidates.extend(active_precompiles(executor.spec_id).addresses().copied());
+        // An equivalence check abstracts a target that is no known contract as one unknown
+        // function of the call's inputs, which also covers every precompile.
+        if self.equivalence.is_none() {
+            candidates.extend(active_precompiles(executor.spec_id).addresses().copied());
+        }
         candidates.sort();
         candidates.dedup();
-        if candidates.is_empty() {
+        if candidates.is_empty() && self.equivalence.is_none() {
             return Err(SymbolicError::Unsupported(
                 "symbolic CALL target has no known contract candidates",
             ));
@@ -1524,7 +1550,7 @@ impl SymbolicExecutor {
         );
         let outside_sat = self.is_sat_with_state(state, &outside_constraints)?;
 
-        if !self.config.symbolic_call_targets && outside_sat {
+        if !self.config.symbolic_call_targets && self.equivalence.is_none() && outside_sat {
             return Err(SymbolicError::Unsupported("symbolic CALL target"));
         }
 
@@ -1540,63 +1566,115 @@ impl SymbolicExecutor {
             if matches!(kind, CallKind::Call) && branch.starts_isolated_transaction(executor) {
                 branch.world.increment_nonce(executor, call_caller)?;
             }
-            let mut outcome = None;
-            if matches!(kind, CallKind::Call | CallKind::CallCode) {
-                let transfer_to = if matches!(kind, CallKind::Call) {
-                    // A failed transfer would report this placeholder, not the symbolic target, as
-                    // the reverter.
-                    if branch.expected_revert.as_ref().is_some_and(ExpectedRevert::has_reverter) {
-                        return Err(SymbolicError::Unsupported(
-                            "symbolic vm.expectRevert reverter on symbolic CALL target",
-                        ));
-                    }
-                    branch.world.symbolic_address_slot(target)
-                } else {
-                    branch.address
-                };
-                outcome = self.prepare_value_transfer(
-                    executor,
-                    &mut branch,
-                    &mut parents,
-                    call_caller,
-                    transfer_to,
-                    value.clone(),
-                    out_offset.clone(),
-                    &out_size,
-                )?;
-                if outcome.is_none() {
-                    branch.world.transfer(
-                        &mut self.cx,
-                        executor,
-                        call_caller,
-                        transfer_to,
-                        value.clone(),
-                    );
-                }
-            }
-            let outcome = match outcome {
-                Some(outcome) => outcome,
-                None => {
-                    // A successful call has no reverter to match.
-                    let return_data = SymReturnData::empty(&mut self.cx);
-                    let reverter = branch.address;
-                    self.finish_codeless_call(
+            if self.equivalence.is_some() {
+                // A target that is none of the known contracts is unknown code.
+                let to = branch.world.symbolic_address_slot(target.clone());
+                let outcome = if matches!(kind, CallKind::Call) {
+                    self.prepare_value_transfer(
                         executor,
                         &mut branch,
-                        CallStatus::Success,
-                        return_data,
-                        reverter,
+                        &mut parents,
+                        call_caller,
+                        to,
+                        value.clone(),
                         out_offset.clone(),
                         &out_size,
                     )?
+                } else {
+                    None
+                };
+                let outcome = match outcome {
+                    Some(outcome) => outcome,
+                    None => {
+                        let input = in_size.read_from_memory(
+                            &mut self.cx,
+                            &branch.memory,
+                            in_offset.clone(),
+                        );
+                        let input_len = in_size.size_word(&mut self.cx);
+                        self.call_unknown_code(
+                            executor,
+                            &mut branch,
+                            kind,
+                            to,
+                            call_caller,
+                            target,
+                            value.clone(),
+                            input,
+                            input_len,
+                            out_offset.clone(),
+                            &out_size,
+                        )?
+                    }
+                };
+                match outcome {
+                    StepOutcome::Continue => parents.push_back(branch),
+                    StepOutcome::AssumeRejected => {}
+                    outcome => {
+                        *state = branch;
+                        return Ok(outcome);
+                    }
                 }
-            };
-            match outcome {
-                StepOutcome::Continue => parents.push_back(branch),
-                StepOutcome::AssumeRejected => {}
-                outcome => {
-                    *state = branch;
-                    return Ok(outcome);
+            } else {
+                let mut outcome = None;
+                if matches!(kind, CallKind::Call | CallKind::CallCode) {
+                    let transfer_to = if matches!(kind, CallKind::Call) {
+                        // A failed transfer would report this placeholder, not the symbolic target,
+                        // as the reverter.
+                        if branch.expected_revert.as_ref().is_some_and(ExpectedRevert::has_reverter)
+                        {
+                            return Err(SymbolicError::Unsupported(
+                                "symbolic vm.expectRevert reverter on symbolic CALL target",
+                            ));
+                        }
+                        branch.world.symbolic_address_slot(target)
+                    } else {
+                        branch.address
+                    };
+                    outcome = self.prepare_value_transfer(
+                        executor,
+                        &mut branch,
+                        &mut parents,
+                        call_caller,
+                        transfer_to,
+                        value.clone(),
+                        out_offset.clone(),
+                        &out_size,
+                    )?;
+                    if outcome.is_none() {
+                        branch.world.transfer(
+                            &mut self.cx,
+                            executor,
+                            call_caller,
+                            transfer_to,
+                            value.clone(),
+                        );
+                    }
+                }
+                let outcome = match outcome {
+                    Some(outcome) => outcome,
+                    None => {
+                        // A successful call has no reverter to match.
+                        let return_data = SymReturnData::empty(&mut self.cx);
+                        let reverter = branch.address;
+                        self.finish_codeless_call(
+                            executor,
+                            &mut branch,
+                            CallStatus::Success,
+                            return_data,
+                            reverter,
+                            out_offset.clone(),
+                            &out_size,
+                        )?
+                    }
+                };
+                match outcome {
+                    StepOutcome::Continue => parents.push_back(branch),
+                    StepOutcome::AssumeRejected => {}
+                    outcome => {
+                        *state = branch;
+                        return Ok(outcome);
+                    }
                 }
             }
         }
@@ -2062,10 +2140,12 @@ fn constrained_byte(cx: &mut SymCx, state: &PathState, byte: &SymExpr) -> Option
     state.constrained_word(cx, byte).and_then(|byte| u8::try_from(byte).ok())
 }
 
-fn ensure_expr_not_gasleft(expr: &SymExpr) -> Result<(), SymbolicError> {
-    if expr.contains_gasleft() {
-        Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"))
-    } else {
-        Ok(())
+impl SymbolicExecutor {
+    fn ensure_gas_modeled(&self, expr: &SymExpr) -> Result<(), SymbolicError> {
+        if !self.symbolic_gas() && expr.contains_gasleft() {
+            Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"))
+        } else {
+            Ok(())
+        }
     }
 }

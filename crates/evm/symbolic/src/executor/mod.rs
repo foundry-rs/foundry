@@ -379,7 +379,7 @@ impl SymbolicExecutor {
 
                 let _step_span = matches!(kind, CallPathKind::Sequence)
                     .then(|| trace_span!("symbolic_step", pc = state.pc, op).entered());
-                match self.step(
+                let step = self.step(
                     executor,
                     code,
                     code.jump_table(),
@@ -387,7 +387,28 @@ impl SymbolicExecutor {
                     &mut *worklist,
                     completed_paths,
                     op,
-                )? {
+                );
+                let step = match step {
+                    Ok(step) => step,
+                    // An equivalence check ends the frame on the conditions revm halts on.
+                    Err(
+                        SymbolicError::StackOverflow
+                        | SymbolicError::StackUnderflow
+                        | SymbolicError::InvalidJump(_),
+                    ) if self.equivalence.is_some() => {
+                        state.return_data = SymReturnData::empty(&mut self.cx);
+                        StepOutcome::ExceptionalHalt
+                    }
+                    Err(SymbolicError::UnsupportedOpcode(undefined))
+                        if self.equivalence.is_some()
+                            && opcode::OpCode::new(undefined).is_none() =>
+                    {
+                        state.return_data = SymReturnData::empty(&mut self.cx);
+                        StepOutcome::ExceptionalHalt
+                    }
+                    Err(err) => return Err(err),
+                };
+                match step {
                     StepOutcome::Continue => {}
                     StepOutcome::Halt => {
                         if *completed_paths >= path_limit {

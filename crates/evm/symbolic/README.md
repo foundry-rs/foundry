@@ -574,15 +574,14 @@ instead of a confirmed counterexample if the required slot is not concrete.
 ## Equivalence Checking
 
 `forge equivalence` checks whether two runtime bytecodes behave the same for
-every input, like `hevm equivalence`. It runs both codes at one address from the
-same pre-state on shared symbolic calldata and compares, on every pair of
-feasible paths:
+every input, like `hevm equivalence`. Both codes run at one account from the
+same pre-state, on shared symbolic calldata and a shared symbolic environment.
+On every pair of feasible paths it compares:
 
 - whether the call succeeded or reverted,
 - the return or revert data,
-- when both succeed, every storage slot either code wrote, the emitted logs
-  (emitter, topics and data, in order), and every ETH balance either code
-  changed.
+- when both succeed, the emitted logs (emitter, topics and data, in order) and
+  the storage, balance, nonce and code of every account either code changed.
 
 ```sh
 forge equivalence --code-a "$(forge inspect A deployedBytecode)" \
@@ -590,23 +589,50 @@ forge equivalence --code-a "$(forge inspect A deployedBytecode)" \
 forge equivalence --code-a-file a.hex --code-b-file b.hex --sig "transfer(address,uint256)"
 ```
 
-Without `--sig`, calldata is fully symbolic at each length in
-`--calldata-lengths` (default `0,4,36,68,100,132` bytes). With `--sig`, it is
-limited to ABI-encoded calls of that function. Storage starts empty, as for a
-freshly deployed contract; `--symbolic-storage` starts from arbitrary storage
-instead, which finds differences such as a checked increment that reverts at
-`type(uint256).max` where an unchecked one wraps.
+The model matches hevm's:
 
-A counterexample is replayed through the concrete executor and printed with
-both results and any storage slots that differ; the command then exits with a
-non-zero status. `--json` prints the same result as JSON. Like `forge test
---symbolic`, `Equivalent` is scoped to the modeled EVM surface and configured
-bounds, and a check that cannot finish reports an incomplete result instead.
+- Calldata has a symbolic length of at most `--max-calldata` bytes (default
+  1024), and reads past its end are zero. `--sig` limits it to ABI-encoded calls
+  of one function, and `--calldata-lengths` to fixed lengths.
+- Storage starts arbitrary; `--empty-storage` starts it empty, as for a freshly
+  deployed contract.
+- The sender, the origin, the call value (unless `--value` fixes it), the
+  block number, timestamp, prevrandao, gas limit, base fee, chain ID and
+  coinbase, the gas price, and the balances, code sizes and code hashes of
+  accounts without known code are symbolic. The contracts run at one fixed
+  address, so an address read from calldata can be their own, where each sees
+  its own code.
+- Each code reads its own unconstrained `GAS`.
+- Calls into unknown code answer with fresh success flags and return data (at
+  most `--max-returndata` bytes), as one fixed unknown function of the call's
+  inputs: the n-th call of either code with the same target, value, calldata,
+  caller storage and balance, and state of unknown code gets the same answer. A
+  `STATICCALL` is always abstracted. A state-changing `CALL` may re-enter, so
+  it stops the check unless `--promise-no-reent` promises that it doesn't; the
+  callee then gets the value if it succeeds and may send ether back.
+  `DELEGATECALL` and `CALLCODE` into unknown code stop the check.
+- Stack overflow and underflow, invalid jumps and undefined opcodes end the call
+  as exceptional halts, and `PUSH` data past the end of code reads as zero.
+- `keccak256` of a region whose size may exceed the modeled bound is a symbol
+  named by the whole memory, the offset and the size.
+
 Gas is not priced, so balances only move by value transfers and
-self-destructs: code that spends more gas to do the same thing is equivalent.
-`--value` sets the call value and `--balance` the contract's starting balance,
-both in wei and zero by default. Other accounts' storage and code are not
-compared.
+self-destructs, and code that spends more gas to do the same thing is
+equivalent. Running out of memory gas is modeled, so a code that runs out of
+gas where the other doesn't is not equivalent; `--ignore-out-of-gas` leaves
+those inputs out, which compares the codes modulo gas as hevm and the Solidity
+optimizer do.
+
+A counterexample is replayed through the concrete executor with the model's
+environment and pre-state, and printed with both results and every storage
+slot, balance, nonce and code that differs; the command then exits with a
+non-zero status. A model that answers calls into unknown code, depends on
+`GAS`, or needs `tx.origin` to differ from the sender is reported as
+unconfirmed when plain execution does not reproduce it, as hevm does. `--json`
+prints the same result as JSON. `Equivalent` is scoped to the modeled EVM
+surface and the configured bounds (calldata and return-data sizes, loop
+iterations, depth and paths); a check that cannot finish reports an incomplete
+result instead.
 
 ## Configuration
 
