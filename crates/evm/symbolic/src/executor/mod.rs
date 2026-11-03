@@ -410,6 +410,8 @@ impl SymbolicExecutor {
                             return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
                         }
                         *completed_paths += 1;
+                        // An exceptional halt returns no output.
+                        state.return_data = SymReturnData::empty(&mut self.cx);
                         outcomes.push(CallOutcome { status: CallStatus::ExceptionalHalt, state });
                         break;
                     }

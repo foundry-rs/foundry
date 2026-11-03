@@ -42,7 +42,8 @@ contract SymbolicInvalidChildCall {
 }
 
 // A callee that stops, by STOP or by running past the end of its code, after a call of its own
-// returns no data, not the return data of that call. Initcode that does the same deploys no code.
+// returns no data, not the return data of that call. Initcode that does the same deploys no code,
+// and a callee that hits INVALID after a call reverts with no data.
 #[forgetest_init]
 fn symbolic_stopped_callee_returns_no_data(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_stopped_callee_returns_no_data");
@@ -62,15 +63,26 @@ contract Outer {
     function callInner(Inner inner) external {
         inner.value();
     }
+
+    function callInnerThenInvalid(Inner inner) external {
+        inner.value();
+        assembly ("memory-safe") {
+            invalid()
+        }
+    }
 }
 
 contract SymbolicStoppedCallee is Test {
     function checkStoppedCalleeReturnsNoData(uint256 size) public {
         Outer outer = new Outer();
+        Inner inner = new Inner();
         (bool success, bytes memory output) =
-            address(outer).call(abi.encodeCall(Outer.callInner, (new Inner())));
+            address(outer).call(abi.encodeCall(Outer.callInner, (inner)));
         assert(success);
         assert(output.length == 0);
+
+        vm.expectRevert(bytes(""));
+        outer.callInnerThenInvalid(inner);
 
         // Runtime code that calls the identity precompile with 32 bytes, then runs past its end.
         bytes memory initcode = hex"6012600c60003960126000f3602a600052600060006020600060045afa50";
