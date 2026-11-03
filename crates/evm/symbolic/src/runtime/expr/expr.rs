@@ -6,7 +6,8 @@ use foundry_evm::revm::interpreter::instructions::i256::{i256_div, i256_mod};
 const MAX_BITWISE_BOOL_WORD_VISITS: usize = 256;
 const MAX_CONSTANT_DIFFERENCE_VISITS: usize = 256;
 // Storage layout keys `keccak(..) + offset` are assumed not to alias fixed slots or other hash
-// bases only while the offset stays below `2^64`, the range Solidity layouts use.
+// bases only while the offset stays below `2^64`, the bound Solidity's `push` enforces on
+// dynamic array lengths.
 const STORAGE_LAYOUT_OFFSET_BITS: usize = 64;
 
 impl SymExpr {
@@ -29,6 +30,9 @@ impl SymExpr {
     }
 
     pub(crate) fn storage_key_eq(&self, cx: &mut SymCx, write_key: &Self) -> SymBoolExpr {
+        if let (Some(read), Some(write)) = (self.as_const(), write_key.as_const()) {
+            return SymBoolExpr::constant(cx, read == write);
+        }
         if let (Some(read_root), Some(write_root)) =
             (self.storage_mapping_root_slot(cx), write_key.storage_mapping_root_slot(cx))
             && read_root != write_root
@@ -39,6 +43,10 @@ impl SymExpr {
         // `slot - keccak(..)` reaches any slot, so large offsets keep real word equality.
         match (self.storage_layout_key(cx), write_key.storage_layout_key(cx)) {
             (Some((read_base, read_offset)), Some((write_base, write_offset))) => {
+                // On one base, `base + i == base + j` iff `i == j`, so only distinct bases alias.
+                if read_base == write_base {
+                    return SymBoolExpr::eq(cx, read_offset, write_offset);
+                }
                 let large_read_offset = storage_offset_is_large(cx, &read_offset);
                 let large_write_offset = storage_offset_is_large(cx, &write_offset);
                 let large_offset = SymBoolExpr::or(cx, vec![large_read_offset, large_write_offset]);
@@ -47,20 +55,21 @@ impl SymExpr {
                     .unwrap_or_else(|| SymBoolExpr::eq(cx, read_base, write_base));
                 let read_offset = SymBoolExpr::eq(cx, read_offset, write_offset);
                 let same_layout_slot = SymBoolExpr::and(cx, vec![read_base, read_offset]);
+                if large_offset.as_const() == Some(false) {
+                    return same_layout_slot;
+                }
                 let words_eq = SymBoolExpr::eq(cx, self.clone(), write_key.clone());
                 let aliased = SymBoolExpr::and(cx, vec![large_offset, words_eq]);
                 SymBoolExpr::or(cx, vec![same_layout_slot, aliased])
             }
-            // Against a constant, which may be a folded `keccak(..) + 1`, a concrete hash base is
-            // compared exactly; a symbolic hash base only reaches it through a large offset.
+            // A constant that is not a hash base or near one is a fixed slot, which a symbolic
+            // hash base only reaches through a large offset.
             (Some((base, offset)), None) | (None, Some((base, offset)))
-                if self.as_const().is_some() || write_key.as_const().is_some() =>
+                if base.as_const().is_none()
+                    && (self.as_const().is_some() || write_key.as_const().is_some()) =>
             {
-                let words_eq = SymBoolExpr::eq(cx, self.clone(), write_key.clone());
-                if base.as_const().is_some() {
-                    return words_eq;
-                }
                 let large_offset = storage_offset_is_large(cx, &offset);
+                let words_eq = SymBoolExpr::eq(cx, self.clone(), write_key.clone());
                 SymBoolExpr::and(cx, vec![large_offset, words_eq])
             }
             _ => SymBoolExpr::eq(cx, self.clone(), write_key.clone()),
@@ -151,6 +160,11 @@ impl SymExpr {
             SymExprKind::Keccak { .. } => Some((self.clone(), Self::zero(cx))),
             SymExprKind::Const(hash) if cx.concrete_keccak_preimage(*hash).is_some() => {
                 Some((self.clone(), Self::zero(cx)))
+            }
+            // Constant folding turns `keccak(7, s) + 1` into an unrecorded constant.
+            SymExprKind::Const(value) => {
+                let hash = cx.concrete_keccak_base(*value, STORAGE_LAYOUT_OFFSET_BITS)?;
+                Some((Self::constant(cx, hash), Self::constant(cx, *value - hash)))
             }
             SymExprKind::BinOp(SymBinOp::Add, left, right) => {
                 if let Some((base, offset)) = left.storage_layout_key(cx)
