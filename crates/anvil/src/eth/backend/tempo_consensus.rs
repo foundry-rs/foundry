@@ -531,7 +531,8 @@ impl Committee {
 
 const fn ensure_supported_hardfork(hardfork: TempoHardfork) -> Result<(), TempoConsensusError> {
     // Upstream appends new hardforks; extending support requires a wire-format review.
-    if hardfork as u64 <= TempoHardfork::T14 as u64 {
+    // T15 leaves the consensus wire format unchanged.
+    if hardfork as u64 <= TempoHardfork::T15 as u64 {
         Ok(())
     } else {
         Err(TempoConsensusError::UnsupportedHardfork(hardfork))

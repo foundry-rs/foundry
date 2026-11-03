@@ -256,9 +256,11 @@ async fn test_tempo_canary_fork_aa_tip20_transfer() {
 /// Sponsored AA transfers must keep replaying, see [`AA_SPONSORED_TRANSFER_WITH_MEMO`].
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_canary_fork_aa_sponsored_transfer_with_memo() {
+    // From T14 the handler validates configurable-account state before warming the transaction's
+    // accounts, which charges one extra cold account access (2,600) on this sponsored transfer.
     replay(AA_SPONSORED_TRANSFER_WITH_MEMO, TempoHardfork::latest())
         .await
-        .assert_matches_source(GasCheck::Exact);
+        .assert_matches_source(GasCheck::Offset(2_600));
 }
 
 /// Allowance pulls must keep replaying, see [`AA_TIP20_TRANSFER_FROM`].
