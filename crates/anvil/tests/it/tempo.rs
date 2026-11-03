@@ -3681,7 +3681,10 @@ async fn test_tempo_simulate_rejects_expiring_nonce_replay_with_different_fee_pa
         .raw_request::<_, serde_json::Value>("eth_simulateV1".into(), (payload,))
         .await
         .unwrap_err();
-    assert!(error.to_string().contains("ExpiringNonceReplay"), "unexpected error: {error}");
+    assert!(
+        error.to_string().contains("expiring nonce transaction already included"),
+        "unexpected error: {error}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

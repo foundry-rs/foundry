@@ -836,7 +836,8 @@ fn mock_tempo_signature(
     is_t1c: bool,
 ) -> TempoSignature {
     let signature = match key_type {
-        SignatureType::Secp256k1 => {
+        // The simulation path rejects configurable accounts before mocking a signature.
+        SignatureType::Secp256k1 | SignatureType::ConfigurableAccount => {
             PrimitiveSignature::Secp256k1(Signature::new(U256::ZERO, U256::ZERO, false))
         }
         SignatureType::P256 => PrimitiveSignature::P256(P256SignatureWithPreHash {
@@ -3358,6 +3359,18 @@ impl<N: Network> Backend<N> {
             .map_err(|err| BlockchainError::InvalidTransactionRequest(err.to_string()))?;
         let response_tx = aa.clone().into_signed(TempoSignature::default());
         let key_type = request.key_type.unwrap_or(SignatureType::Secp256k1);
+        // A configurable account approves with an owner quorum whose verification gas, commitment
+        // checks and first-use registration a primitive placeholder cannot model, so estimating
+        // with one would under-report gas. A simulation witness implies such a quorum even when
+        // the request omits keyType.
+        if key_type == SignatureType::ConfigurableAccount
+            || request.configurable_account_simulation.is_some()
+            || request.key_authorization_simulation.is_some()
+        {
+            return Err(BlockchainError::InvalidTransactionRequest(
+                "configurable account key type is not supported for simulation".to_string(),
+            ));
+        }
         let signature = mock_tempo_signature(
             key_type,
             request.key_data.clone(),
