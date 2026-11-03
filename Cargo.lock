@@ -1076,7 +1076,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport-mpp"
 version = "0.2.0"
-source = "git+https://github.com/tempoxyz/mpp-rs?rev=965692a8a5457896b22698a177a371875b73cfc5#965692a8a5457896b22698a177a371875b73cfc5"
+source = "git+https://github.com/tempoxyz/mpp-rs?rev=f7c72dc7bbacb3cd943e72a89ac5f4b0458c11ae#f7c72dc7bbacb3cd943e72a89ac5f4b0458c11ae"
 dependencies = [
  "alloy-json-rpc",
  "alloy-pubsub",
@@ -8698,8 +8698,8 @@ dependencies = [
 
 [[package]]
 name = "mpp"
-version = "0.12.0"
-source = "git+https://github.com/tempoxyz/mpp-rs?rev=965692a8a5457896b22698a177a371875b73cfc5#965692a8a5457896b22698a177a371875b73cfc5"
+version = "0.18.2"
+source = "git+https://github.com/tempoxyz/mpp-rs?rev=f7c72dc7bbacb3cd943e72a89ac5f4b0458c11ae#f7c72dc7bbacb3cd943e72a89ac5f4b0458c11ae"
 dependencies = [
  "alloy",
  "async-stream",
@@ -8712,7 +8712,6 @@ dependencies = [
  "hmac 0.13.0",
  "http 1.5.0",
  "p256 0.13.2",
- "rand 0.10.3",
  "reqwest 0.13.5",
  "rusqlite",
  "serde",
@@ -8724,7 +8723,6 @@ dependencies = [
  "thiserror 2.0.21",
  "time",
  "tokio",
- "tokio-tungstenite",
  "uuid 1.28.0",
 ]
 
@@ -10108,7 +10106,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -12736,7 +12734,7 @@ dependencies = [
  "derive_more",
  "dunce",
  "inturn",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "once_map",
  "rayon",
  "scoped-tls",
@@ -12836,7 +12834,7 @@ dependencies = [
  "alloy-primitives",
  "bitflags 2.13.2",
  "bumpalo",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "memchr",
  "num-bigint 0.5.1",
  "num-rational",
