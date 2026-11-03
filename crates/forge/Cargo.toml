@@ -89,6 +89,7 @@ solar-lsp.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time", "signal", "process"] }
 toml_edit.workspace = true
+walkdir.workspace = true
 watchexec = "8.0"
 watchexec-events = "6.0"
 watchexec-signals = "5.0"
@@ -109,7 +110,7 @@ quick-junit = "0.7.0"
 tempfile.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1", features = ["process"] }
+rustix = { version = "1", features = ["fs", "process"] }
 
 [dev-dependencies]
 alloy-rpc-types.workspace = true

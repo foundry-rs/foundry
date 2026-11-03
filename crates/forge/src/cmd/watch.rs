@@ -7,11 +7,13 @@ use alloy_primitives::map::{HashMap, HashSet};
 use clap::{CommandFactory, Parser};
 use eyre::Result;
 use foundry_cli::utils::{self, FoundryPathExt, LoadConfig};
+use foundry_common::fs::normalize_path;
 use foundry_config::Config;
 use parking_lot::Mutex;
 use std::{
     ffi::{OsStr, OsString},
-    io::IsTerminal,
+    hash::Hasher,
+    io::{IsTerminal, Read},
     path::{Path, PathBuf},
     sync::{
         Arc, OnceLock, Weak,
@@ -33,6 +35,9 @@ use watchexec_events::{
 };
 use watchexec_signals::Signal;
 use yansi::{Color, Paint};
+
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 
 type SpawnHook = Arc<dyn Fn(&[Event], &mut TokioCommand) + Send + Sync + 'static>;
 type KeyboardConfig = Arc<OnceLock<Weak<watchexec::Config>>>;
@@ -184,9 +189,8 @@ impl WatchArgs {
         let stop_signal = Signal::Terminate;
         // Used to tell a real edit apart from an editor rewriting an unmodified buffer
         // (`:w` in vim, save-on-focus, formatters, `touch`, ...).
-        let content_hashes = Arc::new(Mutex::new(ContentHashes::seeded(paths)));
+        let content_hashes = Arc::new(Mutex::new(ContentHashes::seeded(paths)?));
         config.on_action(move |mut action| {
-            let content_hashes = content_hashes.clone();
             let base_command = base_command.clone();
             let job = action.get_or_create_job(id, move || base_command.clone());
 
@@ -270,32 +274,30 @@ impl WatchArgs {
                 }
             }
 
-            // Skip the re-run when the filesystem events carry no actual content change, so that
-            // saving an unmodified buffer (or a tool touching the file) does not re-run the suite.
-            // Keyboard-triggered reruns and synthetic events always go through.
-            if keyboard_action != Some(KeyboardAction::Rerun)
-                && !action.events.iter().any(|e| e.is_empty())
-            {
-                let any_change = content_hashes
-                    .lock()
-                    .any_changed(action.events.iter().flat_map(|e| e.paths()).map(|(p, _)| p));
-                if !any_change {
-                    debug!("filesystem events carry no content change, skip without doing more");
-                    return action;
-                }
-            }
-
-            // Let the child own stdin while it runs. This keeps prompts and the debugger from
-            // racing Watchexec's keyboard event source for terminal input.
-            set_keyboard_events(&keyboard_config, false);
-
             job.run({
                 let job = job.clone();
                 let keyboard_config = keyboard_config.clone();
+                let content_hashes = content_hashes.clone();
+                let events = action.events.clone();
                 move |context| {
                     if context.current.is_running() && no_restart {
                         return;
                     }
+
+                    // Only remember edits when accepting a run, not when --no-restart discards it.
+                    // Keyboard-triggered reruns and synthetic events always go through.
+                    if keyboard_action != Some(KeyboardAction::Rerun)
+                        && !events.iter().any(|e| e.is_empty())
+                        && !content_hashes.lock().any_changed(
+                            events.iter().flat_map(|e| e.paths()).map(|(p, _)| p),
+                        )
+                    {
+                        debug!("filesystem events carry no content change, skip without doing more");
+                        return;
+                    }
+
+                    // Let the child own stdin while it runs, without racing keyboard events.
+                    set_keyboard_events(&keyboard_config, false);
                     job.restart_with_signal(stop_signal, stop_timeout);
                     job.run({
                         let job = job.clone();
@@ -325,47 +327,71 @@ impl ContentHashes {
     ///
     /// The initial watch run carries no filesystem events, so without seeding every file would
     /// look new on the first save after startup.
-    fn seeded(roots: &[PathBuf]) -> Self {
+    fn seeded(roots: &[PathBuf]) -> std::io::Result<Self> {
         let mut hashes = HashMap::<PathBuf, u64>::default();
         for root in roots {
-            let files = foundry_common::fs::files_with_ext(root, "sol")
-                .chain(foundry_common::fs::files_with_ext(root, "toml"));
-            for path in files {
-                if let Ok(bytes) = std::fs::read(&path) {
-                    hashes.insert(path, hash_contents(&bytes));
+            // Match Watchexec's absolute, lexically normalized event paths without resolving
+            // symlinks, and include non-Solidity inputs such as documentation and deployments.
+            let root = normalize_path(&std::path::absolute(root)?);
+            for entry in
+                walkdir::WalkDir::new(root).follow_links(true).into_iter().filter_map(Result::ok)
+            {
+                if let Ok(hash) = hash_file(entry.path()) {
+                    hashes.insert(entry.into_path(), hash);
                 }
             }
         }
-        Self { hashes }
+        Ok(Self { hashes })
     }
 
     /// Updates the cache for `paths` and returns whether any of them changed on disk.
     ///
-    /// Paths that cannot be read (removed, or not a regular file) always count as changed so
-    /// that deletions are never swallowed.
+    /// Missing tracked paths invalidate their cached contents. Missing untracked paths are ignored:
+    /// atomic saves often create temporary files that disappear before the events are processed.
+    /// Other unreadable paths and non-regular files conservatively count as changed.
     fn any_changed<P: AsRef<Path>>(&mut self, paths: impl IntoIterator<Item = P>) -> bool {
         let mut any_changed = false;
         for path in paths {
             let path = path.as_ref();
-            let Ok(bytes) = std::fs::read(path) else {
-                any_changed = true;
-                continue;
-            };
-            let hash = hash_contents(&bytes);
-            if self.hashes.insert(path.to_path_buf(), hash) != Some(hash) {
-                any_changed = true;
+            match hash_file(path) {
+                Ok(hash) => {
+                    any_changed |= self.hashes.insert(path.to_path_buf(), hash) != Some(hash);
+                }
+                Err(err) => {
+                    let len = self.hashes.len();
+                    // Directory removals and renames also invalidate all cached descendants.
+                    self.hashes.retain(|cached, _| !cached.starts_with(path));
+                    any_changed |=
+                        self.hashes.len() != len || err.kind() != std::io::ErrorKind::NotFound;
+                }
             }
         }
         any_changed
     }
 }
 
-/// Hashes a file's contents, used by watch mode to tell a real edit from a no-op save.
-fn hash_contents(bytes: &[u8]) -> u64 {
-    use std::hash::{Hash, Hasher};
+/// Hashes regular files only; opening a FIFO for reading would block the watch handler.
+fn hash_file(path: &Path) -> std::io::Result<u64> {
+    let mut options = std::fs::File::options();
+    options.read(true);
+    // Check the opened handle, not just the path: an editor can replace it between stat and open.
+    #[cfg(unix)]
+    options.custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32);
+    let mut file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::other("not a regular file"));
+    }
+
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    hasher.finish()
+    let mut buffer = [0; 8192];
+    loop {
+        let len = file.read(&mut buffer)?;
+        if len == 0 {
+            break;
+        }
+        hasher.write(&buffer[..len]);
+    }
+    Ok(hasher.finish())
 }
 
 fn setup_process(job: Job, _command: &Command, keyboard_config: Option<KeyboardConfig>) {
@@ -799,20 +825,24 @@ mod tests {
     #[test]
     fn content_hashes_detect_real_edits_only() {
         let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("A.sol");
-        std::fs::write(&file, "contract A {}").unwrap();
+        for name in ["A.sol", "README.md", "deployment.json"] {
+            let file = dir.path().join(name);
+            std::fs::write(&file, "initial").unwrap();
 
-        let mut hashes = ContentHashes::seeded(&[dir.path().to_path_buf()]);
+            // Also cover explicit file roots, which doc watch uses for the homepage.
+            for root in [dir.path(), file.as_path()] {
+                let mut hashes = ContentHashes::seeded(&[root.to_path_buf()]).unwrap();
 
-        // An editor rewriting an unmodified buffer must not look like a change.
-        std::fs::write(&file, "contract A {}").unwrap();
-        assert!(!hashes.any_changed([&file]));
+                // An editor rewriting an unmodified buffer must not look like a change.
+                std::fs::write(&file, "initial").unwrap();
+                assert!(!hashes.any_changed([&file]));
 
-        std::fs::write(&file, "contract A { }").unwrap();
-        assert!(hashes.any_changed([&file]));
-
-        // Seeing the same content again is not a change either.
-        assert!(!hashes.any_changed([&file]));
+                std::fs::write(&file, "edited").unwrap();
+                assert!(hashes.any_changed([&file]));
+                assert!(!hashes.any_changed([&file]));
+                std::fs::write(&file, "initial").unwrap();
+            }
+        }
     }
 
     #[test]
@@ -820,15 +850,37 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("B.sol");
         std::fs::write(&file, "contract B {}").unwrap();
+        let nested = dir.path().join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        let nested_file = nested.join("C.sol");
+        std::fs::write(&nested_file, "contract C {}").unwrap();
 
-        let mut hashes = ContentHashes::seeded(&[dir.path().to_path_buf()]);
+        let mut hashes = ContentHashes::seeded(&[dir.path().to_path_buf()]).unwrap();
+
+        // A temporary path that has already disappeared must not force an atomic-save rerun.
+        assert!(!hashes.any_changed([dir.path().join(".B.sol.tmp"), file.clone()]));
 
         // A file created after startup is new content.
-        assert!(hashes.any_changed([dir.path().join("New.sol")]));
+        let new_file = dir.path().join("New.sol");
+        std::fs::write(&new_file, "contract New {}").unwrap();
+        assert!(hashes.any_changed([&new_file]));
+        assert!(!hashes.any_changed([&new_file]));
 
         // A removed file must never be swallowed.
         std::fs::remove_file(&file).unwrap();
         assert!(hashes.any_changed([&file]));
+
+        // Restoring the same bytes after a deletion still changes the watched inputs.
+        std::fs::write(&file, "contract B {}").unwrap();
+        assert!(hashes.any_changed([&file]));
+        assert!(!hashes.any_changed([&file]));
+
+        // A removed directory invalidates descendants even if only its own path is reported.
+        std::fs::remove_dir_all(&nested).unwrap();
+        assert!(hashes.any_changed([&nested]));
+        std::fs::create_dir(&nested).unwrap();
+        std::fs::write(&nested_file, "contract C {}").unwrap();
+        assert!(hashes.any_changed([&nested_file]));
     }
 
     #[test]
