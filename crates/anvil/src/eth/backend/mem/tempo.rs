@@ -330,17 +330,20 @@ impl TempoChain {
         )
     }
 
-    /// Reports fallback only after the fork's final metadata and consensus have been committed.
-    pub(super) fn warn_if_epoch_length_fallback(config: &NodeConfig, fork: &ClientFork) {
-        if !config.silent
+    /// Captures a fallback diagnostic from the fork's final metadata for output after commit.
+    pub(super) fn epoch_length_fallback_warning(
+        config: &NodeConfig,
+        fork: &ClientFork,
+    ) -> Option<String> {
+        (!config.silent
             && config.tempo_epoch_length.is_none()
-            && fork.config.read().tempo_epoch_length.is_none()
-        {
-            let _ = foundry_common::sh_warn!(
+            && fork.config.read().tempo_epoch_length.is_none())
+        .then(|| {
+            format!(
                 "Tempo fork epoch length is unavailable; using {DEFAULT_TEMPO_EPOCH_LENGTH}. \
                  Set --tempo.epoch-length to match the source."
-            );
-        }
+            )
+        })
     }
 }
 
@@ -611,15 +614,16 @@ impl<N: Network> Backend<N> {
         Ok(Some(super::prove_account(&accounts, address, keys)))
     }
 
-    /// Reports a successful Tempo fork startup that could not discover the source epoch length.
-    pub(crate) async fn warn_if_tempo_epoch_length_fallback(&self) {
+    /// Captures the startup diagnostic before the backend is exposed to concurrent resets.
+    pub(crate) async fn tempo_epoch_length_fallback_warning(&self) -> Option<String> {
         let config = self.node_config.read().await;
-        let _db = self.db.read().await;
         let storage = self.blockchain.storage.read();
         if storage.tempo.is_some()
             && let Some(fork) = self.get_fork()
         {
-            TempoChain::warn_if_epoch_length_fallback(&config, &fork);
+            TempoChain::epoch_length_fallback_warning(&config, &fork)
+        } else {
+            None
         }
     }
 }
