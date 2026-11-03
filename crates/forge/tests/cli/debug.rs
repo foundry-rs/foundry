@@ -651,7 +651,7 @@ test/Child.t.sol:6  (step 0/440, pc 0, PUSH1, gas 1073679004)
 Breakpoint #1 set at src/Child.sol:8
 Breakpoint #2 set at src/Child.sol:12
 Breakpoint #1 hit at step 160, src/Child.sol:8
-src/Child.sol:8 in constructor  (step 160/440, pc 16, PUSH1, gas 1040394615)
+src/Child.sol:8 in constructor  (step 160/440, pc 16, PUSH1, gas 1056908815)
     8 |         number = 41;
 #0  constructor at src/Child.sol:8  step 160, PC 16
 #1  Child at src/Child.sol:4  step 152, PC 4

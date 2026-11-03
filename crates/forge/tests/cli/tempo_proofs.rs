@@ -51,7 +51,7 @@ async fn tempo_proofs(prj: _, cmd: _) {
         NodeConfig::test_tempo()
             .with_no_mining(true)
             .with_hardfork(Some(TempoHardfork::T14.into()))
-            .with_tempo_epoch_length(NonZeroU64::new(4).unwrap()),
+            .with_tempo_epoch_length(NonZeroU64::new(4)),
     )
     .await;
     let proof = timeout(

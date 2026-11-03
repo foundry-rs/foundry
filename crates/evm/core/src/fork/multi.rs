@@ -9,7 +9,9 @@ use alloy_eips::{BlockNumHash, eip7928::BlockAccessList};
 use alloy_evm::EvmEnv;
 use alloy_network::{AnyNetwork, Network};
 use alloy_primitives::map::HashMap;
+use foundry_common::sh_warn;
 use foundry_config::Config;
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use foundry_fork_db::{
     BackendHandler, BlockchainDb, ForkBlock, ForkBlockEnv, SharedBackend, cache::BlockchainDbMeta,
 };
@@ -21,10 +23,11 @@ use futures::{
 };
 use revm::primitives::hardfork::SpecId;
 use std::{
+    collections::BTreeSet,
     fmt::{self, Write},
     pin::Pin,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc::{Sender as OneshotSender, channel as oneshot_channel},
     },
@@ -870,14 +873,31 @@ async fn create_fork<
         fork_context.source_chain_id,
         &resolved.block,
     );
-    if require_endpoint_family_match
-        && !execution_networks.supports_fork_source(&fork_context.network_profile)
-    {
-        eyre::bail!(
-            "cannot create a `{}` fork with an EVM instantiated for `{}`; run the script with --rpc-url pointing to the forked chain to select its EVM",
-            fork_context.network,
-            execution_networks.execution_network()
+    // An endpoint without Anvil node info takes an explicitly selected network as its profile, so
+    // its recognized chain ID decides the family it belongs to. Fork contexts require a recognized
+    // hardfork, so a reported hardfork means node info reported the family.
+    let chain = fork_context.source_chain_id;
+    let source = match NetworkVariant::from_known_chain_id(chain) {
+        Ok(Some(network)) if fork_context.hardfork.is_none() => {
+            NetworkConfigs::default().with_rpc_identity(network, chain)
+        }
+        _ => fork_context.network_profile,
+    };
+    if !execution_networks.supports_fork_source(&source) {
+        let (fork, selected) =
+            (source.execution_profile_name(), execution_networks.execution_profile_name());
+        eyre::ensure!(
+            !require_endpoint_family_match,
+            "cannot create a `{fork}` fork with an EVM instantiated for `{selected}`; run the script with --rpc-url pointing to the forked chain to select its EVM"
         );
+        // An explicit network selection is kept even when the fork belongs to another family, so
+        // warn once per source chain and family pair instead of failing.
+        static WARNED: Mutex<BTreeSet<(u64, &str, &str)>> = Mutex::new(BTreeSet::new());
+        if WARNED.lock().unwrap().insert((chain, fork, selected)) {
+            let _ = sh_warn!(
+                "fork of chain {chain} belongs to `{fork}`, but the selected network is `{selected}`, so the fork runs with `{selected}` rules"
+            );
+        }
     }
     if let Some(expected) = expected_identity {
         eyre::ensure!(
@@ -946,7 +966,6 @@ mod tests {
     use alloy_provider::{Provider, ProviderBuilder, mock::Asserter};
     use alloy_rpc_types::TransactionRequest;
     use alloy_serde::WithOtherFields;
-    use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
     use foundry_fork_db::AccountFetchPolicy;
     use foundry_test_utils::rpc::{
         spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_recording_method,

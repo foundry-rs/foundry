@@ -428,8 +428,13 @@ fn create_fork_request<FEN: FoundryEvmNetwork>(
     let mut evm_opts = ccx.state.core.config.evm_opts.clone();
     evm_opts.fork_block_number = block;
     evm_opts.fork_block_number_is_inferred = false;
-    evm_opts.fork_retries = rpc_endpoint.config.retries;
-    evm_opts.fork_retry_backoff = rpc_endpoint.config.retry_backoff;
+    // The endpoint's retry settings override the run's only where the endpoint sets them. Its
+    // compute units apply only where the run sets none, as `--no-rpc-rate-limit` also wins.
+    let config = &rpc_endpoint.config;
+    evm_opts.fork_retries = config.retries.or(evm_opts.fork_retries);
+    evm_opts.fork_retry_backoff = config.retry_backoff.or(evm_opts.fork_retry_backoff);
+    evm_opts.compute_units_per_second =
+        evm_opts.compute_units_per_second.or(config.compute_units_per_second);
     if let Some(Ok(auth)) = rpc_endpoint.auth {
         let fork_headers = Some(vec![format!("Authorization: {auth}")]);
         // The cached identity was discovered with other credentials, which may reach another

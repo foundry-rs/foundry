@@ -63,15 +63,17 @@ pub struct EvmArgs {
 
     /// Number of retries.
     ///
-    /// See --rpc-url.
-    #[arg(long, requires = "rpc_url", value_name = "RETRIES")]
+    /// Applies to the fork created by --rpc-url, and to forks created by cheatcodes unless their
+    /// `rpc_endpoints` entry sets `retries`.
+    #[arg(long, value_name = "RETRIES")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_retries: Option<u32>,
 
     /// Initial retry backoff on encountering errors.
     ///
-    /// See --rpc-url.
-    #[arg(long, requires = "rpc_url", value_name = "BACKOFF")]
+    /// Applies to the fork created by --rpc-url, and to forks created by cheatcodes unless their
+    /// `rpc_endpoints` entry sets `retry_backoff`.
+    #[arg(long, value_name = "BACKOFF")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_retry_backoff: Option<u64>,
 
