@@ -8,7 +8,7 @@
 //! initialization logic from `foundry-evm-core`; the changed state is written back to the `Db`.
 
 use super::{
-    db::{AccountInfo, DatabaseRef, Db, KECCAK_EMPTY},
+    db::{AccountInfo, DatabaseRef, Db},
     env::EvmEnv,
     evm::{EvmOptions, TempoEvmNetwork, build_evm},
 };
@@ -87,7 +87,7 @@ fn overlay_changes(
             continue;
         }
         let mut info = info.clone();
-        if info.code.is_none() && info.code_hash != KECCAK_EMPTY {
+        if info.code.is_none() && !info.is_empty_code_hash() {
             info.code = cache.contracts.get(&info.code_hash).cloned();
         }
         changes.accounts.push((*address, info));

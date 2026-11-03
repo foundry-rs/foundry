@@ -1555,7 +1555,7 @@ async fn manual_mining_rpcs_preserve_controls_on_failure() {
     }
 }
 
-// A halting request system call is reported with alloy-evm's message, as before evm2.
+// A halting request system call fails mining with its halt reason.
 #[tokio::test(flavor = "multi_thread")]
 async fn halting_request_system_call_fails_mining() {
     let config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));

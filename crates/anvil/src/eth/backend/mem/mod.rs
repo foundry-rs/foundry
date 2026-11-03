@@ -709,7 +709,7 @@ fn uses_protocol_call_nonce(tx: &FoundryTxEnvelope) -> bool {
     }
 }
 
-/// Describes an exceptional halt with REVM's `HaltReason` messages.
+/// Describes an exceptional halt with Anvil's RPC halt messages.
 // TODO: move these messages upstream as `impl Display for InstrStop` in evm2.
 pub(crate) fn halt_reason(stop: InstrStop) -> String {
     match stop {
@@ -7502,9 +7502,7 @@ where
                 for slot in account.storage.keys() {
                     keys.push(Bytes::from(slot.to_be_bytes::<32>()));
                 }
-                if account.info.code_hash != KECCAK256_EMPTY
-                    && seen_codes.insert(account.info.code_hash)
-                {
+                if !account.info.is_empty_code_hash() && seen_codes.insert(account.info.code_hash) {
                     let code = match &account.info.code {
                         Some(code) => code.original_bytes(),
                         None => state.code_by_hash_ref(account.info.code_hash)?.original_bytes(),

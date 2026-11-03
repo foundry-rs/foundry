@@ -766,8 +766,8 @@ pub(crate) const fn block_blob_gas_limit(
     if optimism_jovian { block_gas_limit } else { max_blob_gas_per_block }
 }
 
-/// Formats an exceptional halt as REVM's `HaltReason` debug output, which alloy-evm's system call
-/// errors printed.
+/// Formats an exceptional halt for system call errors in `HaltReason` debug form, such as
+/// `OutOfGas(Basic)`.
 fn halt_reason_debug(stop: InstrStop) -> String {
     let out_of_gas = match stop {
         InstrStop::OutOfGas => "Basic",

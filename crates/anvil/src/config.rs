@@ -756,12 +756,11 @@ impl NodeConfig {
         }
     }
 
-    /// Sets the execution spec, its mainnet gas parameters, and the transaction gas limit cap.
+    /// Sets the execution spec and the transaction gas limit cap.
     ///
-    /// The Amsterdam gas features follow the spec in both directions, so switching to an earlier
-    /// spec disables them. The EIP-7825 cap is lifted unless `enable_tx_gas_limit` is set, except
-    /// under EIP-8037, where the cap divides a transaction's gas into regular gas and the state
-    /// gas reservoir instead of limiting it.
+    /// The EIP-7825 cap is lifted unless `enable_tx_gas_limit` is set, except under EIP-8037, where
+    /// the cap divides a transaction's gas into regular gas and the state gas reservoir instead of
+    /// limiting it.
     pub(crate) fn set_cfg_spec(&self, cfg: &mut CfgEnv, spec: SpecId) {
         cfg.spec = spec;
         let is_amsterdam = spec >= SpecId::AMSTERDAM;
