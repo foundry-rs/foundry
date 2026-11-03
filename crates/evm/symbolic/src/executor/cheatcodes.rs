@@ -181,7 +181,13 @@ impl SymbolicExecutor {
             })
             .transpose()?
             .unwrap_or(1);
-        state.expected_emit = Some(ExpectedEmit::new(checks, emitter, remaining));
+        // Forge queues expectations; replacing a pending one would silently drop it.
+        if state.expected_emit.is_some() {
+            return Err(SymbolicError::Unsupported(
+                "symbolic vm.expectEmit with a pending expectation",
+            ));
+        }
+        state.expected_emit = Some(ExpectedEmit::new(checks, emitter, remaining, state.call_depth));
         Ok(CheatcodeOutcome::Continue(Vec::new()))
     }
 
@@ -659,7 +665,9 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             stopRecordCall::SELECTOR => {
-                state.access_record = None;
+                if let Some(record) = &mut state.access_record {
+                    record.stop();
+                }
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             accessesCall::SELECTOR => {

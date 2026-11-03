@@ -14,6 +14,9 @@
 //! prepared height or key schedule. Only initialization before the backend is shared and private
 //! staged copies are exempt; publishing a staged copy still requires the database write lock.
 //! Readers of canonical consensus state acquire the database read lock before storage.
+//! Mining acquires the execution and proof history read guards before the storage write lock and
+//! retains them through checkpoint pruning. A path holding storage must not wait for either
+//! history lock unless it holds the database write lock, as reanchoring does.
 //! Subscription registration only needs storage to access the persistent event sender.
 //!
 //! Historical queries can use the trusted fork provider at or below its pinned height. They
@@ -42,7 +45,6 @@ use super::{
 };
 use crate::{
     NodeConfig,
-    config::DEFAULT_TEMPO_EPOCH_LENGTH,
     eth::{
         backend::{
             db::MaybeFullDatabase,
@@ -216,9 +218,15 @@ impl TempoChain {
     /// trie, so no consumer can unwind to a height once both have left the bounded state
     /// histories. Certificates stay available for as long as their blocks. Explicit snapshots
     /// restore their own controller and are unaffected.
-    pub(super) fn prune(&mut self, hashes: &HashMap<u64, B256>, states: &InMemoryBlockStates) {
+    ///
+    /// The caller holds the execution and proof history read guards, acquired before storage.
+    pub(super) fn prune(
+        &mut self,
+        hashes: &HashMap<u64, B256>,
+        states: &InMemoryBlockStates,
+        proof_states: &InMemoryBlockStates,
+    ) {
         let Some((head, _)) = self.consensus.latest() else { return };
-        let proof_states = self.proof_states.read();
         let mut below = self.consensus.retained_height();
         while below < head
             && !hashes
@@ -227,7 +235,6 @@ impl TempoChain {
         {
             below += 1;
         }
-        drop(proof_states);
         self.consensus
             .prune_checkpoints(below)
             .expect("the pruning boundary never exceeds the head");
@@ -279,16 +286,25 @@ impl TempoChain {
             FoundryHeader::Tempo(_) => header,
             FoundryHeader::Ethereum(inner) => FoundryHeader::tempo(inner),
         };
+        let source_epoch_length = fork.config.read().tempo_epoch_length;
+        let epoch_length = config.effective_tempo_epoch_length(source_epoch_length);
         TempoConsensus::at_fork_header(
             config.tempo_consensus_seed(),
-            config.tempo_epoch_length,
+            epoch_length,
             header.as_tempo().expect("the fork anchor is a Tempo header"),
         )
         .map_err(|error| {
             let message = if matches!(error, TempoConsensusError::InvalidAnchorEpoch { .. }) {
+                let origin = if config.tempo_epoch_length.is_some() {
+                    "--tempo.epoch-length"
+                } else if source_epoch_length.is_some() {
+                    "the fork source"
+                } else {
+                    "the default"
+                };
                 format!(
-                    "{error}; set --tempo.epoch-length to match the fork source \
-                     (default: {DEFAULT_TEMPO_EPOCH_LENGTH})"
+                    "{error} (epoch length {epoch_length} from {origin}); \
+                     set --tempo.epoch-length to match the fork source"
                 )
             } else {
                 error.to_string()
@@ -306,7 +322,11 @@ impl TempoChain {
 
     /// Starts an unsigned local segment without inferring fork metadata.
     pub(super) fn local_consensus(config: &NodeConfig, height: u64) -> TempoConsensus {
-        TempoConsensus::at_height(config.tempo_consensus_seed(), config.tempo_epoch_length, height)
+        TempoConsensus::at_height(
+            config.tempo_consensus_seed(),
+            config.effective_tempo_epoch_length(None),
+            height,
+        )
     }
 }
 
@@ -635,7 +655,10 @@ mod tests {
     use alloy_network::Ethereum;
     use alloy_primitives::keccak256;
     use alloy_provider::builder;
-    use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking};
+    use alloy_rpc_types::{
+        BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking,
+        trace::geth::GethDebugTracingOptions,
+    };
     use alloy_serde::WithOtherFields;
     use alloy_trie::{Nibbles, TrieAccount, proof::verify_proof};
     use anvil_core::types::ReorgOptions;
@@ -646,8 +669,12 @@ mod tests {
     use foundry_primitives::FoundryNetwork;
     use std::{
         num::NonZeroU64,
-        sync::atomic::{AtomicBool, Ordering},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        },
         task::Poll,
+        thread,
         time::Duration,
     };
     use tokio::{sync::Notify, time::timeout};
@@ -798,6 +825,99 @@ mod tests {
         assert_eq!(api.backend.best_number(), 10);
         assert_certified_head(&api);
         assert!(consensus(&api).retained_height() < floor);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn tempo_history_writers_do_not_block_storage_readers_while_mining() {
+        let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+        api.mine_one().await.unwrap();
+        // Historical reads hold a history write guard while they load and use an on-disk state.
+        let histories =
+            [Arc::clone(&api.backend.states), api.backend.tempo_proof_states().unwrap()];
+        for (head, history) in (1..).zip(histories) {
+            let hook = MiningCommitHook {
+                reached: Arc::new(Notify::new()),
+                resume: Arc::new(Notify::new()),
+            };
+            *api.backend.mining_commit_hook.lock() = Some(hook.clone());
+            let mining_api = api.clone();
+            let mining = tokio::spawn(async move { mining_api.mine_one().await });
+            timeout(Duration::from_secs(10), hook.reached.notified()).await.unwrap();
+            *api.backend.mining_commit_hook.lock() = None;
+
+            let (held_tx, held_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel::<()>();
+            let holder = thread::spawn(move || {
+                let _guard = history.write();
+                held_tx.send(()).unwrap();
+                let _ = release_rx.recv();
+            });
+            held_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+            hook.resume.notify_one();
+            thread::sleep(Duration::from_millis(500));
+
+            let backend = Arc::clone(&api.backend);
+            let (probe_tx, probe_rx) = mpsc::channel();
+            thread::spawn(move || {
+                let _ = probe_tx.send(backend.best_number());
+            });
+            let probe = probe_rx.recv_timeout(Duration::from_secs(2));
+            let waiting = !mining.is_finished();
+            drop(release_tx);
+            holder.join().unwrap();
+            // Mining waits for the history lock before publishing, not inside the storage lock.
+            assert_eq!(probe, Ok(head));
+            assert!(waiting);
+            timeout(Duration::from_secs(10), mining).await.unwrap().unwrap().unwrap();
+            assert_eq!(api.backend.best_number(), head + 1);
+            assert_certified_head(&api);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn tempo_trace_of_on_disk_parent_does_not_deadlock_mining() {
+        let (api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+        api.backend.states.write().set_cache_limit(1);
+        let tx = queue_transfer(&api, handle.dev_wallets().next().unwrap().address()).await;
+        api.mine_one().await.unwrap();
+        api.mine_one().await.unwrap();
+        // Tracing must upgrade the execution history guard to load the parent state from disk.
+        let parent = api.backend.get_block(0).unwrap().header.hash_slow();
+        assert!(api.backend.states.read().get_state(&parent).is_none());
+
+        let hook =
+            MiningCommitHook { reached: Arc::new(Notify::new()), resume: Arc::new(Notify::new()) };
+        *api.backend.mining_commit_hook.lock() = Some(hook.clone());
+        let mining_api = api.clone();
+        let mining = tokio::spawn(async move { mining_api.mine_one().await });
+        timeout(Duration::from_secs(10), hook.reached.notified()).await.unwrap();
+        *api.backend.mining_commit_hook.lock() = None;
+        // Park mining after it takes the execution history read guard, before it takes storage.
+        let proof_states = api.backend.tempo_proof_states().unwrap();
+        let (held_tx, held_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let holder = thread::spawn(move || {
+            let _guard = proof_states.write();
+            held_tx.send(()).unwrap();
+            let _ = release_rx.recv();
+        });
+        held_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        hook.resume.notify_one();
+        // Blocked mining and tracing can occupy every Tokio worker, so wait without the runtime.
+        thread::sleep(Duration::from_millis(500));
+
+        let trace_api = api.clone();
+        let trace = tokio::spawn(async move {
+            let opts = GethDebugTracingOptions::call_tracer(Default::default());
+            trace_api.debug_trace_transaction(tx, opts).await
+        });
+        // Let tracing wait for its history upgrade before mining requests storage.
+        thread::sleep(Duration::from_millis(500));
+        drop(release_tx);
+        holder.join().unwrap();
+        timeout(Duration::from_secs(10), mining).await.unwrap().unwrap().unwrap();
+        timeout(Duration::from_secs(10), trace).await.unwrap().unwrap().unwrap();
+        assert_eq!(api.backend.best_number(), 3);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1301,7 +1421,7 @@ mod tests {
     fn tempo_config(epoch_length: u64) -> NodeConfig {
         NodeConfig::test_tempo()
             .with_no_mining(true)
-            .with_tempo_epoch_length(NonZeroU64::new(epoch_length).unwrap())
+            .with_tempo_epoch_length(NonZeroU64::new(epoch_length))
     }
 
     async fn queue_transfer(api: &EthApi<FoundryNetwork>, sender: Address) -> B256 {
