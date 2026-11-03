@@ -1384,6 +1384,7 @@ impl SymbolicExecutor {
                 }
                 return self.handle_log(
                     state,
+                    worklist,
                     SymbolicLog::new(log_topics, data_len, data, state.address),
                 );
             }
