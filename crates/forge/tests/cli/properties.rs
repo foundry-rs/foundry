@@ -332,7 +332,7 @@ SOL
 no generated test file was kept
 
 "#]]).stderr_eq(str![[r#"
-Warning: 3 failing test(s) used something that Forge blocks (ffi, environment, network, or inline config), so they are not possible bugs: see cache/properties/report.json
+Warning: 3 failing test(s) used something that Forge blocks (ffi, environment, network, or inline config), so they are not possible bugs: see cache/properties/run-1/report.json
 
 "#]]);
     assert!(!marker.exists());
@@ -353,7 +353,7 @@ Warning: 3 failing test(s) used something that Forge blocks (ffi, environment, n
 
     cmd.forge_fuse().args(&args).args(["--agents", "1", "--allow-ffi"]).assert_success();
     assert!(marker.exists());
-    assert!(prj.root().join("test/generated/run-1-agent-1/Ffi.t.sol").exists());
+    assert!(prj.root().join("test/generated/run-2-agent-1/Ffi.t.sol").exists());
 }
 
 // Generated tests cannot read Forge's environment or open network connections. Their failures
@@ -384,7 +384,7 @@ SOL
 no generated test file was kept
 
 "#]]).stderr_eq(str![[r#"
-Warning: 4 failing test(s) used something that Forge blocks (ffi, environment, network, or inline config), so they are not possible bugs: see cache/properties/report.json
+Warning: 4 failing test(s) used something that Forge blocks (ffi, environment, network, or inline config), so they are not possible bugs: see cache/properties/run-1/report.json
 
 "#]]);
 
@@ -687,12 +687,12 @@ possible bug (1/1 agents): FeeInvariantTest::invariant_totalStaysZero
 possible bug (1/1 agents): HandlerInvariantTest::invariant_one
   agent 1: HandlerInvariantTest::invariant_one (seed 24301: handler test/generated/run-1-agent-1/Handler.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..]; seed 12648430: handler test/generated/run-1-agent-1/Handler.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..])
     file: cache/properties/run-1/agent-1/tests/Handler.t.sol
-1 generated test file(s) did not compile or were not allowed: see cache/properties/report.json
+1 generated test file(s) did not compile or were not allowed: see cache/properties/run-1/report.json
 added 1 generated test file(s):
   test/generated/run-1-agent-1/FeeCheck.t.sol
 
 "#]]).stderr_eq(str![[r#"
-Warning: 1 failing test(s) used something that Forge blocks (ffi, environment, network, or inline config), so they are not possible bugs: see cache/properties/report.json
+Warning: 1 failing test(s) used something that Forge blocks (ffi, environment, network, or inline config), so they are not possible bugs: see cache/properties/run-1/report.json
 
 "#]]);
     assert_data_eq!(
@@ -718,7 +718,7 @@ no generated test file was kept
 "#]]);
     assert_eq!(
         report(&prj)["duplicates"].to_string(),
-        r#"["test/generated/run-2-agent-1/FeeCheck.t.sol"]"#
+        r#"["test/generated/run-3-agent-1/FeeCheck.t.sol"]"#
     );
 }
 
@@ -872,7 +872,7 @@ SOL
 "#,
     );
     cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
-1 generated test file(s) did not compile or were not allowed: see cache/properties/report.json
+1 generated test file(s) did not compile or were not allowed: see cache/properties/run-1/report.json
 added 1 generated test file(s):
   test/generated/run-1-agent-1/Passing.t.sol
 
@@ -1025,7 +1025,7 @@ possible bug (1/1 agents): FeeCapTest::testDocumentedCap
 "#]],
     )
     .stderr_eq(str![[r#"
-Error: 1 project file(s) changed while the agents ran, so Forge kept no generated test: see cache/properties/report.json
+Error: 1 project file(s) changed while the agents ran, so Forge kept no generated test: see cache/properties/run-1/report.json
 
 "#]]);
 
@@ -1467,7 +1467,7 @@ possible bug (1/1 agents): CycleATest::testA
 possible bug (1/1 agents): CycleBTest::testB
   agent 1: CycleBTest::testB (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     file: cache/properties/run-1/agent-1/tests/CycleB.t.sol
-1 generated test file(s) did not compile or were not allowed: see cache/properties/report.json
+1 generated test file(s) did not compile or were not allowed: see cache/properties/run-1/report.json
 added 2 generated test file(s):
   test/generated/run-1-agent-1/Kept.t.sol
   test/generated/run-1-agent-1/KeptHelper.sol
@@ -1528,79 +1528,29 @@ library Echo {
     let args = properties_args(
         &prj,
         r#"
-case "$1" in
-whitespace)
-  cat > "$out/Case1.t.sol" <<'SOL'
+for index in 1 2; do
+  case "$1:$index" in
+    whitespace:1 | duplicate:*) value="ab" ;;
+    whitespace:2) value="a b" ;;
+    urls:1) value="https://one.example" ;;
+    urls:2) value="https://two.example" ;;
+    *) exit 2 ;;
+  esac
+  cat > "$out/Case$index.t.sol" <<SOL
 pragma solidity ^0.8.20;
 import {Echo} from "../../../src/Echo.sol";
+// Fixture case $index.
 contract EchoSpecTest {
   function testEcho() public pure {
-    require(keccak256(bytes(Echo.echo("ab"))) == keccak256(bytes("ab")), "echo changed");
+    require(keccak256(bytes(Echo.echo("$value"))) == keccak256(bytes("$value")), "echo changed");
   }
 }
 SOL
-  cat > "$out/Case2.t.sol" <<'SOL'
-pragma solidity ^0.8.20;
-import {Echo} from "../../../src/Echo.sol";
-contract EchoSpecTest {
-  function testEcho() public pure {
-    require(keccak256(bytes(Echo.echo("a b"))) == keccak256(bytes("a b")), "echo changed");
-  }
-}
-SOL
-  ;;
-urls)
-  cat > "$out/Case1.t.sol" <<'SOL'
-pragma solidity ^0.8.20;
-import {Echo} from "../../../src/Echo.sol";
-contract EchoSpecTest {
-  function testEcho() public pure {
-    require(keccak256(bytes(Echo.echo("https://one.example"))) == keccak256(bytes("https://one.example")), "echo changed");
-  }
-}
-SOL
-  cat > "$out/Case2.t.sol" <<'SOL'
-pragma solidity ^0.8.20;
-import {Echo} from "../../../src/Echo.sol";
-contract EchoSpecTest {
-  function testEcho() public pure {
-    require(keccak256(bytes(Echo.echo("https://two.example"))) == keccak256(bytes("https://two.example")), "echo changed");
-  }
-}
-SOL
-  ;;
-duplicate)
-  cat > "$out/Case1.t.sol" <<'SOL'
-pragma solidity ^0.8.20;
-import {Echo} from "../../../src/Echo.sol";
-// first
-contract EchoSpecTest {
-  function testEcho() public pure {
-    require(keccak256(bytes(Echo.echo("ab"))) == keccak256(bytes("ab")), "echo changed");
-  }
-}
-SOL
-  cat > "$out/Case2.t.sol" <<'SOL'
-pragma solidity ^0.8.20;
-import {Echo} from "../../../src/Echo.sol";
-// second
-contract EchoSpecTest {
-  function testEcho() public pure {
-    require(keccak256(bytes(Echo.echo("ab"))) == keccak256(bytes("ab")), "echo changed");
-  }
-}
-SOL
-  ;;
-*) exit 2 ;;
-esac
+done
 "#,
     );
 
-    for (mode, kept, duplicates) in [
-        ("duplicate", 1usize, 1usize),
-        ("whitespace", 2, 0),
-        ("urls", 2, 0),
-    ] {
+    for (mode, kept, duplicates) in [("duplicate", 1, 1), ("whitespace", 2, 0), ("urls", 2, 0)] {
         // Fresh generated dirs between modes.
         let generated = prj.root().join("test/generated");
         if generated.exists() {
@@ -1703,13 +1653,84 @@ fi
         observed.contains("src/TargetA.sol") && !observed.contains("src/TargetB.sol"),
         "slow campaign lost its prompt isolation:\n{observed}"
     );
-    // Two run caches must exist; the slow campaign is run-1, the fast one run-2 (or vice versa
-    // only if reservation order flipped — both should be present).
+    // Even the empty solo campaign keeps its own cache. The barrier fixes reservation order.
     let properties = prj.root().join("cache/properties");
-    let runs = fs::read_dir(&properties)
-        .unwrap()
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_name().to_string_lossy().starts_with("run-"))
-        .count();
-    assert!(runs >= 2, "expected per-run caches, found {runs} under {}", properties.display());
+    let slow_report = serde_json::from_slice::<serde_json::Value>(
+        &fs::read(properties.join("run-2/report.json")).unwrap(),
+    )
+    .unwrap();
+    let fast_report = serde_json::from_slice::<serde_json::Value>(
+        &fs::read(properties.join("run-3/report.json")).unwrap(),
+    )
+    .unwrap();
+    assert_data_eq!(slow_report["usage"].to_string(), str![["[]"]]);
+    assert_data_eq!(
+        fast_report["usage"].to_string(),
+        str![[r#"[{"agent":1,"usage":{"input_tokens":22,"output_tokens":0,"cost_usd":0.0}}]"#]]
+    );
+    assert_eq!(report(&prj), slow_report);
+}
+
+// A campaign that keeps no tests must not leave outputs that a later campaign reads as its own.
+#[forgetest_init]
+fn properties_does_not_reuse_usage_or_verdicts(prj: _, cmd: _) {
+    prj.add_source("Fee.sol", FEE);
+    let mut args = properties_args(
+        &prj,
+        r#"
+if [ "$1" = first ]; then
+  printf '{"input_tokens":22,"output_tokens":0,"cost_usd":0}' > "$FORGE_PROPERTIES_USAGE"
+fi
+cat > "$out/Bug.t.sol" <<SOL
+pragma solidity ^0.8.20;
+contract BugTest {
+    function test_$1() public pure { require(false); }
+}
+SOL
+"#,
+    );
+    args.extend(verifier_args(
+        &prj,
+        r#"
+if [ "$2" = first ]; then
+  printf '{"verdict":"confirmed","reason":"Earlier campaign","evidence":[]}' > "$FORGE_PROPERTIES_VERDICT"
+  printf '{"input_tokens":33,"output_tokens":0,"cost_usd":0}' > "$FORGE_PROPERTIES_USAGE"
+fi
+"#,
+    ));
+    args.extend(["--agents".into(), "1".into()]);
+
+    cmd.args(&args).args(["--agent-arg", "first", "--verifier-arg", "first"]).assert_success();
+    let first = report(&prj);
+    assert_data_eq!(first["kept"].to_string(), str![["[]"]]);
+    assert_data_eq!(
+        first["usage"].to_string(),
+        str![[r#"[{"agent":1,"usage":{"input_tokens":22,"output_tokens":0,"cost_usd":0.0}}]"#]]
+    );
+    assert_data_eq!(
+        first["possible_bugs"][0]["verification"].to_string(),
+        str![[
+            r#"{"verdict":"confirmed","reason":"Earlier campaign","evidence":[],"usage":{"input_tokens":33,"output_tokens":0,"cost_usd":0.0}}"#
+        ]]
+    );
+    assert!(!prj.root().join("test/generated/run-1-agent-1").exists());
+
+    cmd.forge_fuse()
+        .args(&args)
+        .args(["--agent-arg", "second", "--verifier-arg", "second"])
+        .assert_success();
+    let second = report(&prj);
+    assert_data_eq!(
+        second["possible_bugs"][0]["verification"].to_string(),
+        str![[
+            r#"{"verdict":"needs_validation","reason":"","evidence":[],"error":"the verifier wrote no verdict: see cache/properties/run-2/verify-1/verifier.log"}"#
+        ]]
+    );
+    assert_data_eq!(second["usage"].to_string(), str![["[]"]]);
+    // Earlier reports and their evidence remain intact even though their test dirs were empty.
+    let preserved = serde_json::from_slice::<serde_json::Value>(
+        &fs::read(prj.root().join("cache/properties/run-1/report.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(preserved, first);
 }

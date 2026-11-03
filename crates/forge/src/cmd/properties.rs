@@ -28,6 +28,7 @@ use foundry_config::{Config, DenyLevel, impl_figment_convert};
 use foundry_evm::fuzz::CounterExample;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use solar::parse::Cursor;
 use std::{
     cmp::Reverse,
     collections::{BTreeMap, BTreeSet, HashSet},
@@ -479,8 +480,10 @@ impl PropertiesArgs {
         ensure_inside(&config.root, &generated_dir, &generated_tests)?;
         fs::create_dir_all(&generated_dir)
             .wrap_err_with(|| format!("failed to create {}", generated_dir.display()))?;
+        let properties_cache = config.cache_path.join("properties");
+        fs::create_dir_all(&properties_cache)?;
         let mut run = 1;
-        let run_dirs = loop {
+        let (run_dirs, cache_root) = loop {
             let mut dirs = RunDirs(Vec::new());
             for id in 1..=self.agents {
                 let dir = generated_dir.join(format!("run-{run}-agent-{id}"));
@@ -494,13 +497,20 @@ impl PropertiesArgs {
                 }
             }
             if dirs.0.len() == self.agents {
-                break dirs;
+                // Empty generated directories are removed on drop, but campaign caches remain.
+                // Reserve the cache too, so a later run never reads an earlier run's outputs.
+                let cache = properties_cache.join(format!("run-{run}"));
+                match fs::create_dir(&cache) {
+                    Ok(()) => break (dirs, cache),
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                    Err(error) => {
+                        return Err(error)
+                            .wrap_err_with(|| format!("failed to create {}", cache.display()));
+                    }
+                }
             }
             run += 1;
         };
-        // Per-run cache, same number as the reserved generated-test dirs, so concurrent CLI
-        // invocations on one project do not share or wipe each other's prompts, logs, or usage.
-        let cache_root = config.cache_path.join("properties").join(format!("run-{run}"));
         let verifier_command = self
             .verifier_command
             .as_ref()
@@ -609,9 +619,6 @@ impl Campaign<'_> {
             self.args.target.clone()
         };
         let inputs = AgentInputs { agent_command, targets, context };
-        // This campaign's cache is freshly reserved with the run number; do not clear the parent
-        // `cache/properties` root, or a concurrent campaign loses its live prompt/usage files.
-        fs::create_dir_all(&self.cache_root)?;
         // Agents work in copies of the project, but the copies link the entries of dependency
         // directories. A shared file that changes while they run taints the run.
         let fingerprint = project_fingerprint(self.config, &self.sandbox.dependencies());
@@ -722,8 +729,9 @@ impl Campaign<'_> {
         // unless a written file of its agent imports it or it imports one, so every written test
         // compiles against the files that it ran with. Nothing is kept when files that the
         // workspaces share with the project changed while the agents ran.
-        let mut seen = collect_tests(&self.config.root, &self.generated_tests, 0, &mut vec![])
-            .unwrap_or_default()
+        let existing = collect_tests(&self.config.root, &self.generated_tests, 0, &mut vec![])
+            .unwrap_or_default();
+        let mut seen = existing
             .iter()
             .map(|file| normalize_test_content(&file.content))
             .collect::<HashSet<_>>();
@@ -842,12 +850,12 @@ impl Campaign<'_> {
         });
         let report_bytes = serde_json::to_vec_pretty(&report)?;
         fs::write(&report_path, &report_bytes)?;
-        // Convenience pointer for tools that still look at `cache/properties/report.json`. Last
-        // finished campaign on the project wins; each run keeps its own copy under `run-<n>/`.
-        if let Some(properties_root) = self.cache_root.parent() {
-            fs::create_dir_all(properties_root)?;
-            fs::write(properties_root.join("report.json"), &report_bytes)?;
-        }
+        // Publish the convenience copy atomically: concurrent campaigns must not interleave
+        // writes into one report. Each campaign also keeps its own copy under `run-<n>/`.
+        let properties_root = self.cache_root.parent().expect("campaign cache has a parent");
+        let mut latest = tempfile::NamedTempFile::new_in(properties_root)?;
+        latest.write_all(&report_bytes)?;
+        latest.persist(properties_root.join("report.json")).map_err(|error| error.error)?;
 
         // Agents can reach the project's dependencies through their copies, so a change can come
         // from an agent, and no result of the run can be trusted.
@@ -1533,113 +1541,14 @@ fn collect_tests(
     Ok(files)
 }
 
-/// Normalizes generated Solidity for duplicate detection: strip comments outside string literals,
-/// keep string contents byte-for-byte (including whitespace and `//` inside URLs), and drop
-/// insignificant whitespace only in non-string code so comment-only differences still collapse.
-fn normalize_test_content(source: &str) -> String {
-    #[derive(Clone, Copy)]
-    enum State {
-        Code,
-        LineComment,
-        BlockComment,
-        String { quote: u8 },
-        HexString,
-    }
-
-    let bytes = source.as_bytes();
-    let mut out = String::with_capacity(source.len());
-    let mut state = State::Code;
-    let mut i = 0;
-    let mut code_buf = String::new();
-
-    let flush_code = |buf: &mut String, out: &mut String| {
-        if buf.is_empty() {
-            return;
-        }
-        out.extend(buf.split_whitespace());
-        buf.clear();
-    };
-
-    while i < bytes.len() {
-        let b = bytes[i];
-        match state {
-            State::Code => {
-                if b == b'/' && i + 1 < bytes.len() {
-                    match bytes[i + 1] {
-                        b'/' => {
-                            flush_code(&mut code_buf, &mut out);
-                            state = State::LineComment;
-                            i += 2;
-                            continue;
-                        }
-                        b'*' => {
-                            flush_code(&mut code_buf, &mut out);
-                            state = State::BlockComment;
-                            i += 2;
-                            continue;
-                        }
-                        _ => {}
-                    }
-                }
-                if b == b'"' || b == b'\'' {
-                    flush_code(&mut code_buf, &mut out);
-                    out.push(b as char);
-                    state = State::String { quote: b };
-                    i += 1;
-                    continue;
-                }
-                if (b == b'h' || b == b'H')
-                    && i + 1 < bytes.len()
-                    && bytes[i + 1] == b'"'
-                    && (i == 0 || !bytes[i - 1].is_ascii_alphanumeric() && bytes[i - 1] != b'_')
-                {
-                    flush_code(&mut code_buf, &mut out);
-                    out.push(b as char);
-                    out.push('"');
-                    state = State::HexString;
-                    i += 2;
-                    continue;
-                }
-                code_buf.push(b as char);
-                i += 1;
-            }
-            State::LineComment => {
-                if b == b'\n' {
-                    state = State::Code;
-                }
-                i += 1;
-            }
-            State::BlockComment => {
-                if b == b'*' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
-                    state = State::Code;
-                    i += 2;
-                } else {
-                    i += 1;
-                }
-            }
-            State::String { quote } => {
-                out.push(b as char);
-                if b == b'\\' && i + 1 < bytes.len() {
-                    out.push(bytes[i + 1] as char);
-                    i += 2;
-                    continue;
-                }
-                if b == quote {
-                    state = State::Code;
-                }
-                i += 1;
-            }
-            State::HexString => {
-                out.push(b as char);
-                if b == b'"' {
-                    state = State::Code;
-                }
-                i += 1;
-            }
-        }
-    }
-    flush_code(&mut code_buf, &mut out);
-    out
+/// Compares Solidity tokens without comments or whitespace, preserving literal bytes and token
+/// boundaries so different expressions cannot collapse into the same comparison key.
+fn normalize_test_content(source: &str) -> Vec<&str> {
+    Cursor::new(source)
+        .with_position()
+        .filter(|(_, token)| !token.kind.is_trivial())
+        .map(|(pos, token)| &source[pos..pos + token.len as usize])
+        .collect()
 }
 
 /// Returns the comment right above a test function, without comment markers, as one line. The
@@ -2349,13 +2258,19 @@ contract OtherTest {
         "#;
         let url_one = r#"require(Echo.echo("https://one.example") == "https://one.example");"#;
         let url_two = r#"require(Echo.echo("https://two.example") == "https://two.example");"#;
-        let comment_only_a = "contract T { function testA() public pure { /* note */ require(true); } }";
-        let comment_only_b = "contract T { function testA() public pure { require(true); // note\n } }";
+        let comment_only_a =
+            "contract T { function testA() public pure { /* note */ require(true); } }";
+        let comment_only_b =
+            "contract T { function testA() public pure { require(true); // note\n } }";
 
         assert_ne!(normalize_test_content(with_space), normalize_test_content(without_space));
         assert_ne!(normalize_test_content(url_one), normalize_test_content(url_two));
         assert_eq!(normalize_test_content(comment_only_a), normalize_test_content(comment_only_b));
-        // `//` inside a string must not start a line comment.
-        assert!(normalize_test_content(url_one).contains("https://one.example"));
+        for literal in
+            [r#""https://one.example""#, r#"'a\' /* b */'"#, r#"unicode"été //""#, r#"hex"abcd""#]
+        {
+            assert_eq!(normalize_test_content(literal), [literal]);
+        }
+        assert_ne!(normalize_test_content("a + ++b"), normalize_test_content("a++ + b"));
     }
 }
