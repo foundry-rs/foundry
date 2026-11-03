@@ -1973,6 +1973,25 @@ Error: invalid Solar pin "solar:9.9", expected `solar:<version>` naming a releas
 "#]]);
 }
 
+// Solar gets the thread count from `-j`.
+#[cfg(unix)]
+#[forgetest]
+fn solar_receives_threads(prj: _, cmd: _) {
+    prj.add_source("A.sol", "contract A {}");
+    let solar = prj.root().join("solar");
+    write_fake_solar(&solar, "0.8.38+commit.3a70399.solar.0.2.0");
+    let args = prj.root().join("solar-args");
+    let script = fs::read_to_string(&solar)
+        .unwrap()
+        .replace("cat >/dev/null", &format!("echo \"$@\" > {}\ncat >/dev/null", args.display()));
+    fs::write(&solar, script).unwrap();
+    prj.update_config(|config| config.solc = Some(SolcReq::Local(solar)));
+
+    cmd.args(["build", "-j", "3"]).assert_success();
+    let args = fs::read_to_string(args).unwrap();
+    assert!(args.split_whitespace().any(|arg| arg == "--threads=3"), "{args}");
+}
+
 /// Writes a fake `solar` that reports the solc-compatible `version` and emits only the experimental
 /// codegen warning (2264).
 #[cfg(unix)]
