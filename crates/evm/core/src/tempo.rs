@@ -14,7 +14,7 @@ use tempo_contracts::{
 use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     error::TempoPrecompileError,
-    storage::{PrecompileStorageProvider, StorageCtx},
+    storage::StorageCtx,
     tip20::{ITIP20, TIP20Token},
     tip20_factory::TIP20Factory,
     validator_config,
@@ -46,16 +46,6 @@ pub use tempo_precompiles::{
 
 /// All well-known TIP20 fee token addresses on Tempo networks.
 pub const TEMPO_TIP20_TOKENS: &[Address] = &[PATH_USD_ADDRESS];
-
-/// Initialize Tempo precompiles and contracts for a specific active hardfork.
-pub fn initialize_tempo_genesis_at_hardfork(
-    storage: &mut impl PrecompileStorageProvider,
-    admin: Address,
-    recipient: Address,
-    hardfork: TempoHardfork,
-) -> Result<(), TempoPrecompileError> {
-    StorageCtx::enter(storage, || initialize_tempo_genesis_inner(admin, recipient, hardfork))
-}
 
 /// Inner genesis initialization logic. Must be called within a [`StorageCtx`] scope
 /// (either via [`StorageCtx::enter`] or [`StorageCtx::enter_evm`]).

@@ -246,26 +246,6 @@ impl MultiFork {
         Ok(rx.recv()?)
     }
 
-    /// Returns the immutable remote fork owned by the selected backend.
-    pub fn get_fork_info(&self, id: impl Into<ForkId>) -> eyre::Result<Option<Fork>> {
-        let (sender, rx) = oneshot_channel();
-        self.handler
-            .clone()
-            .try_send(Request::GetForkInfo(id.into(), sender))
-            .map_err(|e| eyre::eyre!("{e:?}"))?;
-        Ok(rx.recv()?)
-    }
-
-    /// Returns the corresponding fork url if it exists.
-    ///
-    /// Returns `None` if no matching fork is available.
-    pub fn get_fork_url(&self, id: impl Into<ForkId>) -> eyre::Result<Option<String>> {
-        let (sender, rx) = oneshot_channel();
-        let req = Request::GetForkUrl(id.into(), sender);
-        self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
-        Ok(rx.recv()?)
-    }
-
     /// Returns the options used to create the corresponding fork if it exists.
     ///
     /// Returns `None` if no matching fork is available.
@@ -306,9 +286,6 @@ enum Request {
     RollForkExact(ForkId, BlockNumHash, bool, CreateSender),
     /// Shutdowns the entire `MultiForkHandler`, see `ShutDownMultiFork`
     ShutDown(OneshotSender<()>),
-    /// Returns the Fork Url for the `ForkId` if it exists.
-    GetForkUrl(ForkId, OneshotSender<Option<String>>),
-    GetForkInfo(ForkId, OneshotSender<Option<Fork>>),
     /// Returns the options used to create the `ForkId` if it exists.
     GetForkOptions(ForkId, OneshotSender<Option<CreateFork>>),
 }
@@ -523,13 +500,6 @@ impl MultiForkHandler {
                     prefetch.stop();
                 }
                 let _ = sender.send(());
-            }
-            Request::GetForkInfo(fork_id, sender) => {
-                let _ = sender.send(self.forks.get(&fork_id).map(|fork| fork.fork.clone()));
-            }
-            Request::GetForkUrl(fork_id, sender) => {
-                let fork = self.forks.get(&fork_id).map(|f| f.opts.url.clone());
-                let _ = sender.send(fork);
             }
             Request::GetForkOptions(fork_id, sender) => {
                 let fork = self.forks.get(&fork_id).map(|f| f.opts.clone());

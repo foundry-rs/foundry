@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::evm::{
-    EvmEnv, TransactionRequestFor,
+    EvmEnv,
     tests::{ETHER, STORE, STORE_ADDRESS, balance, db_with, nonce, slot, store_request},
 };
 use alloy_consensus::{Signed, TxEnvelope, TxLegacy};
