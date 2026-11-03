@@ -485,7 +485,11 @@ impl SymbolicExecutor {
                 let n = (op - opcode::SWAP1 + 1) as usize;
                 state.stack.swap(n)?;
             }
-            opcode::STOP => return Ok(StepOutcome::Halt),
+            opcode::STOP => {
+                // STOP returns no output; drop the return data of the frame's last call.
+                state.return_data = SymReturnData::empty(&mut self.cx);
+                return Ok(StepOutcome::Halt);
+            }
             opcode::ADD | opcode::SUB | opcode::MUL | opcode::AND | opcode::OR | opcode::XOR => {
                 let bin_op = match op {
                     opcode::ADD => SymBinOp::Add,
@@ -1380,6 +1384,7 @@ impl SymbolicExecutor {
                 }
                 return self.handle_log(
                     state,
+                    worklist,
                     SymbolicLog::new(log_topics, data_len, data, state.address),
                 );
             }

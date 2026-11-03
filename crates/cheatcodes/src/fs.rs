@@ -575,11 +575,10 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
         }
     }
 
-    let mut gas_limit = ccx.gas.remaining();
-    if spec.is_enabled_in(SpecId::TANGERINE) {
-        gas_limit = ccx.ecx.cfg().gas_params().call_stipend_reduction(gas_limit);
-    }
-    // Forward the gas to the create frame; this cannot fail as it does not exceed `remaining`.
+    // The call to the cheatcode already kept back 1/64 of the caller's gas, as the CREATE opcode
+    // would, so forward all of the remaining gas to the create frame.
+    let gas_limit = ccx.gas.remaining();
+    // This cannot fail as it does not exceed `remaining`.
     let _ = ccx.gas.record_regular_cost(gas_limit);
     inputs.set_gas_limit(gas_limit);
     inputs.set_reservoir(ccx.gas.reservoir());
