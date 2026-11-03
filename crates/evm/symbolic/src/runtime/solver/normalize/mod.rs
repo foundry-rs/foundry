@@ -374,8 +374,16 @@ pub(super) fn sorted_bool_exprs_are_subset(
 }
 
 /// Normalizes one boolean expression into an equivalent, solver-friendlier form.
+///
+/// The result is memoized per context: nested `ite` conditions normalize the same subterms many
+/// times otherwise.
 pub(crate) fn normalize_bool_for_solver(cx: &mut SymCx, expr: SymBoolExpr) -> SymBoolExpr {
-    expr.fold(cx, &mut normalize_bool_node_for_solver)
+    if let Some(normalized) = cx.normalized_bool(&expr) {
+        return normalized;
+    }
+    let normalized = expr.fold(cx, &mut normalize_bool_node_for_solver);
+    cx.memoize_normalized_bool(expr, normalized.clone());
+    normalized
 }
 
 impl SymBoolExpr {
@@ -1445,7 +1453,15 @@ fn const_side_bound<'a>(left: &'a SymExpr, right: &'a SymExpr) -> Option<(&'a Sy
 
 /// Normalizes one word expression into an equivalent, solver-friendlier form.
 pub(crate) fn normalize_expr_for_solver(cx: &mut SymCx, expr: SymExpr) -> SymExpr {
-    if expr.contains_ite() { expr.fold(cx, &mut normalize_expr_node_for_solver) } else { expr }
+    if !expr.contains_ite() {
+        return expr;
+    }
+    if let Some(normalized) = cx.normalized_word(&expr) {
+        return normalized;
+    }
+    let normalized = expr.fold(cx, &mut normalize_expr_node_for_solver);
+    cx.memoize_normalized_word(expr, normalized.clone());
+    normalized
 }
 
 fn normalize_expr_node_for_solver(cx: &mut SymCx, expr: SymExpr) -> SymExpr {
@@ -1762,6 +1778,16 @@ impl SymExpr {
     }
 
     fn normalize_eq_zero_for_solver(&self, cx: &mut SymCx) -> Option<SymBoolExpr> {
+        // Ite chains share subtrees, which an unmemoized walk would revisit exponentially often.
+        if let Some(normalized) = cx.normalized_zero_test(self, true) {
+            return normalized;
+        }
+        let normalized = self.normalize_eq_zero_for_solver_uncached(cx);
+        cx.memoize_normalized_zero_test(self.clone(), true, normalized.clone());
+        normalized
+    }
+
+    fn normalize_eq_zero_for_solver_uncached(&self, cx: &mut SymCx) -> Option<SymBoolExpr> {
         if let Some((numerator, denominator)) = self.udiv_operands() {
             // `a / b == 0 => b == 0 || a < b`.
             return Some(Self::udiv_zero_condition(cx, numerator, denominator));
@@ -1797,6 +1823,16 @@ impl SymExpr {
     }
 
     fn normalize_ne_zero_for_solver(&self, cx: &mut SymCx) -> Option<SymBoolExpr> {
+        // Ite chains share subtrees, which an unmemoized walk would revisit exponentially often.
+        if let Some(normalized) = cx.normalized_zero_test(self, false) {
+            return normalized;
+        }
+        let normalized = self.normalize_ne_zero_for_solver_uncached(cx);
+        cx.memoize_normalized_zero_test(self.clone(), false, normalized.clone());
+        normalized
+    }
+
+    fn normalize_ne_zero_for_solver_uncached(&self, cx: &mut SymCx) -> Option<SymBoolExpr> {
         if let Some((numerator, denominator)) = self.udiv_operands() {
             // `a / b != 0 => b != 0 && a >= b`.
             return Some(Self::udiv_nonzero_condition(cx, numerator, denominator));

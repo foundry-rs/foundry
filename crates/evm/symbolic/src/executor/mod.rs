@@ -144,6 +144,7 @@ impl SymbolicExecutor {
                     .timeout
                     .filter(|seconds| *seconds > 0)
                     .map(|seconds| Instant::now() + Duration::from_secs(seconds.into()));
+                self.solver.set_deadline(self.deadline);
             }
             self.check_timeout()?;
             trace!("escalating deferred hard arithmetic branch to SMT solver");

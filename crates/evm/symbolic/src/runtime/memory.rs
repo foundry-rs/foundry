@@ -28,6 +28,28 @@ impl SymStack {
             .ok_or(SymbolicError::StackUnderflow)
     }
 
+    pub(crate) const fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns the stack whose slots are `ite(condition, self, other)`, for stacks of one depth.
+    pub(crate) fn merge(&self, cx: &mut SymCx, condition: &SymBoolExpr, other: &Self) -> Self {
+        debug_assert_eq!(self.0.len(), other.0.len());
+        Self(
+            self.0
+                .iter()
+                .zip(&other.0)
+                .map(|(then, otherwise)| {
+                    if then == otherwise {
+                        then.clone()
+                    } else {
+                        SymExpr::ite(cx, condition.clone(), then.clone(), otherwise.clone())
+                    }
+                })
+                .collect(),
+        )
+    }
+
     pub(crate) fn swap(&mut self, index_from_top: usize) -> Result<(), SymbolicError> {
         let len = self.0.len();
         let other = len.checked_sub(index_from_top + 1).ok_or(SymbolicError::StackUnderflow)?;

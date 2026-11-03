@@ -73,10 +73,25 @@ pub struct EquivalenceArgs {
     #[arg(long)]
     pub ignore_out_of_gas: bool,
 
-    /// Solver to use, such as z3, cvc5, yices or bitwuzla. Defaults to bitwuzla when it is
-    /// installed and `symbolic.solver` is left at its default, and to `symbolic.solver` otherwise.
+    /// Solver to use, such as z3, cvc5, yices or bitwuzla. When neither this nor a solver setting
+    /// is given, the check races the installed solvers among bitwuzla, cvc5 and z3, picking the
+    /// order per query.
     #[arg(long, value_name = "SOLVER")]
     pub solver: Option<String>,
+
+    /// Merge each forward jump over a short run of pure instructions into one path, like hevm,
+    /// instead of exploring both sides. Fewer paths, but larger expressions.
+    #[arg(long)]
+    pub merge_states: bool,
+
+    /// Explore each contract once and compare every pair of end states, like hevm, instead of
+    /// exploring the second contract once under each path of the first.
+    #[arg(long, hide = true)]
+    pub pair_independently: bool,
+
+    /// Solver queries to run at once. Defaults to the number of CPUs.
+    #[arg(long, value_name = "N")]
+    pub solver_jobs: Option<usize>,
 
     /// Timeout for the whole check, in seconds. Defaults to `symbolic.timeout`.
     #[arg(long, value_name = "SECONDS")]
@@ -114,11 +129,26 @@ impl EquivalenceArgs {
         } else if symbolic.solver == SymbolicConfig::default().solver
             && symbolic.solver_command.as_deref().is_none_or(str::is_empty)
             && symbolic.solver_portfolio.is_empty()
-            && bitwuzla_available()
         {
-            // Like hevm, prefer bitwuzla, which answers equivalence queries several times faster
-            // than z3.
-            symbolic.solver = "bitwuzla".to_string();
+            // No single solver wins on every query, so race the installed ones: bitwuzla for most
+            // queries, cvc5 with integer blasting for nonlinear arithmetic, z3 as a fallback.
+            let mut portfolio = [("bitwuzla", "bitwuzla"), ("cvc5", "cvc5-int"), ("z3", "z3")]
+                .into_iter()
+                .filter(|(program, _)| solver_available(program))
+                .map(|(_, name)| name.to_string())
+                .collect::<Vec<_>>();
+            // Without bitwuzla, race z3's one-shot and incremental solvers, which win on
+            // different queries.
+            if !portfolio.iter().any(|name| name == "bitwuzla")
+                && portfolio.iter().any(|name| name == "z3")
+            {
+                portfolio.push("z3-inc".to_string());
+            }
+            if portfolio.len() > 1 {
+                symbolic.solver_portfolio = portfolio;
+            } else if let Some(solver) = portfolio.into_iter().next() {
+                symbolic.solver = solver;
+            }
         }
         if let Some(timeout) = self.timeout {
             symbolic.timeout = Some(timeout);
@@ -152,6 +182,11 @@ impl EquivalenceArgs {
             max_returndata: self.max_returndata,
             promise_no_reent: self.promise_no_reent,
             ignore_out_of_gas: self.ignore_out_of_gas,
+            pair_independently: self.pair_independently,
+            merge_states: self.merge_states,
+            jobs: self
+                .solver_jobs
+                .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get())),
         });
 
         let (calldata, args, storage, env, unknown_calls, reads_gas, stats) = match result {
@@ -394,14 +429,11 @@ impl AccountMap {
     }
 }
 
-/// Returns whether a bitwuzla binary runs.
-fn bitwuzla_available() -> bool {
-    std::process::Command::new("bitwuzla")
-        .arg("--version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
+/// Returns whether a solver binary runs.
+fn solver_available(program: &str) -> bool {
+    // A PATH lookup, not a `--version` run: spawning each solver would cost every check several
+    // milliseconds before any query.
+    which::which(program).is_ok()
 }
 
 /// Reads hex bytecode from a flag or a file.

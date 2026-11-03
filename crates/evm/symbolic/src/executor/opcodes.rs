@@ -785,6 +785,22 @@ impl SymbolicExecutor {
             }
             opcode::CALLDATALOAD => {
                 let offset = state.stack.pop()?;
+                // A read the path proves lies within symbolic-length calldata needs no size
+                // checks, which keeps the solver queries of decoded arguments small.
+                if let Some(start) =
+                    offset.as_const().and_then(|offset| usize::try_from(offset).ok())
+                    && let Some((low, high)) = state.calldata_size_range()
+                {
+                    if start.saturating_add(32) <= low {
+                        let value = state.calldata.load_word_in_range(&mut self.cx, start);
+                        state.stack.push(value)?;
+                        return Ok(StepOutcome::Continue);
+                    }
+                    if high <= start {
+                        state.stack.push(SymExpr::zero(&mut self.cx))?;
+                        return Ok(StepOutcome::Continue);
+                    }
+                }
                 let value = state.calldata.load_word(&mut self.cx, offset);
                 state.stack.push(value)?;
             }
@@ -1181,6 +1197,17 @@ impl SymbolicExecutor {
                                 return Ok(StepOutcome::Continue);
                             }
                         };
+                        if self.merges_states()
+                            && dest > state.pc
+                            && let Some(stack) = self.try_merge_forward_jump(
+                                executor, code, jumpdests, state, &true_cond, dest,
+                            )
+                        {
+                            trace!(dest, "merged forward jump");
+                            state.stack = stack;
+                            state.pc = dest;
+                            return Ok(StepOutcome::Continue);
+                        }
                         let op_pc = state.pc.saturating_sub(1);
                         let _branch_span = trace_span!("jumpi_branch", pc = op_pc, dest).entered();
                         let false_cond = true_cond.clone().not(&mut self.cx);
@@ -1482,6 +1509,53 @@ impl SymbolicExecutor {
         Ok(StepOutcome::Continue)
     }
 
+    /// Merges a forward `JUMPI` into one path, like hevm, when its fall-through side is a short
+    /// run of pure instructions that reaches the jump target with the stack at the same depth:
+    /// returns the stack at the target, each slot `ite(taken, jumped, fell through)`.
+    ///
+    /// Only instructions that read the stack, calldata or the call environment and write only the
+    /// stack are run, so the two sides can differ only in their stacks, and a merge that would
+    /// add a constraint, a symbol or a branch is given up.
+    fn try_merge_forward_jump(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        code: &SymCode,
+        jumpdests: &JumpTable,
+        state: &PathState,
+        taken: &SymBoolExpr,
+        dest: usize,
+    ) -> Option<SymStack> {
+        let mut fallthrough = state.clone();
+        let mut worklist = VecDeque::new();
+        let mut paths = 0usize;
+        for _ in 0..MERGE_FORWARD_JUMP_BUDGET {
+            if fallthrough.pc == dest {
+                break;
+            }
+            let op = code.opcode(&mut self.cx, fallthrough.pc).ok()??;
+            if !is_mergeable_opcode(op) {
+                return None;
+            }
+            match self.step(
+                executor,
+                code,
+                jumpdests,
+                &mut fallthrough,
+                &mut worklist,
+                &mut paths,
+                op,
+            ) {
+                Ok(StepOutcome::Continue) if worklist.is_empty() => {}
+                _ => return None,
+            }
+        }
+        let unchanged = fallthrough.pc == dest
+            && fallthrough.stack.len() == state.stack.len()
+            && fallthrough.constraints.len() == state.constraints.len()
+            && fallthrough.next_symbol == state.next_symbol;
+        unchanged.then(|| state.stack.merge(&mut self.cx, taken, &fallthrough.stack))
+    }
+
     fn resolve_jump_destination(
         &mut self,
         state: &PathState,
@@ -1622,4 +1696,27 @@ const fn opcode_activation(op: u8) -> SpecId {
         }
         _ => SpecId::FRONTIER,
     }
+}
+
+/// Most instructions the fall-through side of a forward jump may run to be merged.
+const MERGE_FORWARD_JUMP_BUDGET: usize = 100;
+
+/// Returns whether `op` reads only the stack, calldata or the call environment and writes only
+/// the stack, so running it speculatively leaves no other trace.
+const fn is_mergeable_opcode(op: u8) -> bool {
+    matches!(
+        op,
+        opcode::ADD..=opcode::SIGNEXTEND
+            | opcode::LT..=opcode::SAR
+            | opcode::ADDRESS
+            | opcode::CALLER
+            | opcode::CALLVALUE
+            | opcode::CALLDATALOAD
+            | opcode::CALLDATASIZE
+            | opcode::POP
+            | opcode::JUMPDEST
+            | opcode::PUSH0..=opcode::PUSH32
+            | opcode::DUP1..=opcode::DUP16
+            | opcode::SWAP1..=opcode::SWAP16
+    )
 }

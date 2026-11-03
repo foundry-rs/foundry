@@ -632,9 +632,27 @@ gas where the other doesn't is not equivalent; `--ignore-out-of-gas` leaves
 those inputs out, which compares the codes modulo gas as hevm and the Solidity
 optimizer do.
 
-Like hevm, the check uses bitwuzla when it is installed and no other solver is
-configured, since it answers these bit-vector queries several times faster than
-z3; \`--solver\` picks another.
+When no solver is configured, the check races the installed solvers among
+bitwuzla, cvc5 (with integer blasting) and z3, and orders them per query: cvc5
+first for queries that multiply or divide two symbolic words, bitwuzla first for
+the rest, adjusted by how each solver did on earlier queries of the same kind.
+Without bitwuzla it also races z3 in incremental mode (`z3-inc`), since z3's
+one-shot and incremental solvers each answer some queries far faster than the
+other. `--solver` picks one solver instead. Solvers run as long-lived processes that
+answer one query after another, and pair queries are solved up to
+`--solver-jobs` at a time (the number of CPUs by default).
+
+Without `--sig`, calldata is split into one job per function selector the
+dispatchers compare against, plus one job for calldata that matches none of
+them. A selector job's calldata is the selector followed by fresh words, so each
+ABI argument is one symbol, and a `CALLDATALOAD` that the path proves lies
+within the calldata reads that symbol without size checks. Each path of the
+first code is paired with the paths the second code takes under the same
+constraints; models of earlier satisfiable queries are tried before the solver,
+and a model whose Keccak values are not the real hashes of its preimages is
+refined with the real values and solved again. `--merge-states` merges forward
+jumps over short runs of pure instructions into one path, like hevm, which
+trades paths for larger expressions.
 
 A counterexample is replayed through the concrete executor with the model's
 environment and pre-state, and printed with both results and every storage
@@ -733,9 +751,14 @@ the first entry starts immediately, the second starts shortly after if the query
 is still unresolved, and later entries are treated as rescue solvers. If a solver
 finishes without a decisive result and no other solver is running, the next
 pending entry starts immediately. The first `sat` response wins after its model
-is validated for model-producing queries. `unsat` responses are used only after
-all configured solvers that were needed to rule out `sat` have finished, and
-`unknown` results only win if no configured solver returns a decisive response.
+is validated for model-producing queries, and the first `unsat` response wins
+too; either cancels the other solvers. `unknown` results only win if no configured
+solver returns a decisive response. Known solvers (z3, bitwuzla, cvc5) run as
+long-lived processes that answer queries one after another inside
+`(push 1)`/`(pop 1)`, which saves their start-up time on every query; the
+solver order of each query depends on whether it multiplies or divides symbolic
+words, is `ite`-heavy, or neither, and on how each solver did on earlier queries
+of that kind.
 A nonempty `symbolic.solver_command` overrides both
 `symbolic.solver_portfolio` and `symbolic.solver`; otherwise a nonempty
 portfolio overrides `symbolic.solver`. Portfolio entries without whitespace,

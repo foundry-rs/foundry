@@ -28,6 +28,12 @@ impl SymbolicExecutor {
         self.equivalence.is_some_and(|mode| mode.ignore_out_of_gas)
     }
 
+    /// Whether forward jumps over pure instructions merge into one path, as an equivalence check
+    /// may ask for.
+    pub(super) fn merges_states(&self) -> bool {
+        self.equivalence.is_some_and(|mode| mode.merge_states)
+    }
+
     /// Whether `GAS` is an ordinary unconstrained symbol, as in an equivalence check.
     pub(super) const fn symbolic_gas(&self) -> bool {
         self.equivalence.is_some()
@@ -45,6 +51,7 @@ impl SymbolicExecutor {
         } else {
             None
         };
+        self.solver.set_deadline(self.deadline);
     }
 
     pub(super) fn check_timeout(&self) -> Result<(), SymbolicError> {

@@ -22,6 +22,20 @@ impl SymCalldata {
         self.size_word.clone()
     }
 
+    /// Returns the symbol of a symbolic size and the most bytes the calldata may hold.
+    pub(crate) fn symbolic_size(&self) -> Option<(Symbol, usize)> {
+        match self.size_word.kind() {
+            SymExprKind::Var(symbol) => Some((*symbol, self.size)),
+            _ => None,
+        }
+    }
+
+    /// Reads the word at `offset` as if every byte up to the largest size were present, for a
+    /// read the path proves lies within the calldata.
+    pub(crate) fn load_word_in_range(&self, cx: &mut SymCx, offset: usize) -> SymExpr {
+        self.bytes.without_size().word_at(cx, offset)
+    }
+
     pub(crate) fn load_word(&self, cx: &mut SymCx, offset: SymExpr) -> SymExpr {
         if let Some(offset) = offset.as_const() {
             let Ok(offset) = usize::try_from(offset) else {

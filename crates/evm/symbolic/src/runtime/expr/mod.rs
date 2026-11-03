@@ -263,6 +263,120 @@ impl<'a, M: SymbolicModelLookup + ?Sized> ModelEvaluator<'a, M> {
     }
 }
 
+/// Most hash nodes per kind whose pairs get congruence lemmas.
+const MAX_CONGRUENT_HASHES: usize = 48;
+
+/// Returns congruence lemmas for the Keccak and other hash nodes in `constraints`: two nodes of
+/// one algorithm hash to equal values exactly when their preimages are equal.
+///
+/// Each node is a symbol named by its preimage's structure, so the solver otherwise treats
+/// structurally different but equal preimages, as two programs compute them, as unrelated.
+pub(crate) fn hash_congruence_lemmas(
+    cx: &mut SymCx,
+    constraints: &[SymBoolExpr],
+) -> Vec<SymBoolExpr> {
+    let mut nodes = Vec::<SymExpr>::new();
+    let mut seen = HashSet::<SymExpr>::default();
+    for constraint in constraints {
+        let _ = visit_unique::<()>(None, Some(constraint), |expr| {
+            if matches!(expr.kind(), SymExprKind::Keccak { .. } | SymExprKind::Hash { .. })
+                && seen.insert(expr.clone())
+            {
+                nodes.push(expr.clone());
+            }
+            ControlFlow::Continue(())
+        });
+    }
+    let mut groups = HashMap::<&'static str, Vec<SymExpr>>::default();
+    for node in nodes {
+        let algorithm = match node.kind() {
+            SymExprKind::Keccak { .. } => "keccak",
+            SymExprKind::Hash { algorithm, .. } => algorithm,
+            _ => continue,
+        };
+        let group = groups.entry(algorithm).or_default();
+        if group.len() < MAX_CONGRUENT_HASHES {
+            group.push(node);
+        }
+    }
+    let mut lemmas = Vec::new();
+    for group in groups.values() {
+        for (index, left) in group.iter().enumerate() {
+            for right in &group[index + 1..] {
+                let (Some(left_name), Some(right_name)) =
+                    (left.kind().get_var(), right.kind().get_var())
+                else {
+                    continue;
+                };
+                if left_name == right_name {
+                    continue;
+                }
+                let same_input = same_hash_input(cx, left, right);
+                // Compare the hashes as the solver sees them, as symbols: equality of two hash
+                // nodes would simplify to equality of their preimages.
+                let left = SymExpr::get_var(cx, left_name);
+                let right = SymExpr::get_var(cx, right_name);
+                let same_output = SymBoolExpr::eq(cx, left, right);
+                let differ_output = same_output.clone().not(cx);
+                // Hashes are collision free: equal outputs mean equal inputs, so a model never
+                // makes two different preimages collide, which concrete replay would refute.
+                let Some(same_input) = same_input else {
+                    lemmas.push(differ_output);
+                    continue;
+                };
+                let differ_input = same_input.clone().not(cx);
+                lemmas.push(SymBoolExpr::or(cx, vec![differ_input, same_output]));
+                lemmas.push(SymBoolExpr::or(cx, vec![same_input, differ_output]));
+            }
+        }
+    }
+    lemmas
+}
+
+/// Returns the condition under which two hash nodes have equal preimages, or `None` when they
+/// never can.
+fn same_hash_input(cx: &mut SymCx, left: &SymExpr, right: &SymExpr) -> Option<SymBoolExpr> {
+    match (left.kind(), right.kind()) {
+        (
+            SymExprKind::Keccak { len: left_len, bytes: left_bytes, .. },
+            SymExprKind::Keccak { len: right_len, bytes: right_bytes, .. },
+        ) => {
+            let shared = left_bytes.len().min(right_bytes.len());
+            let mut same = vec![SymBoolExpr::eq(cx, left_len.clone(), right_len.clone())];
+            if left_bytes.len() != right_bytes.len() {
+                same.push(SymBoolExpr::cmp_word_const(
+                    cx,
+                    SymCmpOp::Ule,
+                    left_len,
+                    U256::from(shared),
+                ));
+            }
+            for index in 0..shared {
+                let past_end =
+                    SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ule, left_len, U256::from(index));
+                let equal =
+                    SymBoolExpr::eq(cx, left_bytes[index].clone(), right_bytes[index].clone());
+                same.push(SymBoolExpr::or(cx, vec![past_end, equal]));
+            }
+            let same = SymBoolExpr::and(cx, same);
+            (same.as_const() != Some(false)).then_some(same)
+        }
+        (
+            SymExprKind::Hash { bytes: left_bytes, .. },
+            SymExprKind::Hash { bytes: right_bytes, .. },
+        ) if left_bytes.len() == right_bytes.len() => {
+            let same = left_bytes
+                .iter()
+                .zip(right_bytes.iter())
+                .map(|(left, right)| SymBoolExpr::eq(cx, left.clone(), right.clone()))
+                .collect::<Vec<_>>();
+            let same = SymBoolExpr::and(cx, same);
+            (same.as_const() != Some(false)).then_some(same)
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn eval_model_constraints<M: SymbolicModelLookup + ?Sized>(
     constraints: &[SymBoolExpr],
     model: &M,

@@ -59,6 +59,61 @@ impl SymbolicCalldata {
         Self { bytes, inputs: Vec::new(), constraints: vec![fits], size: Some(size) }
     }
 
+    /// Splits symbolic-length raw calldata into one variant per function selector in
+    /// `selectors`, plus one for calldata that is shorter than four bytes or starts with none of
+    /// them. Returns the calldata unchanged otherwise.
+    ///
+    /// A selector's variant is the selector followed by fresh words, so each ABI argument at
+    /// offset `4 + 32 * k` is one symbol rather than parts of two unaligned words.
+    pub(super) fn split_by_selector(
+        self,
+        cx: &mut SymCx,
+        selectors: &[[u8; 4]],
+        prefix: &str,
+    ) -> Vec<Self> {
+        let Some(size) = self.size.clone() else { return vec![self] };
+        let max = self.bytes.len();
+        if selectors.is_empty() || max < 4 {
+            return vec![self];
+        }
+        let fits = SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ule, &size, U256::from(max));
+        let long_enough = SymBoolExpr::cmp_word_const(cx, SymCmpOp::Uge, &size, U256::from(4));
+        let mut variants = Vec::with_capacity(selectors.len() + 1);
+        for selector in selectors {
+            let mut parts = vec![SymBytes::concrete(cx, selector.to_vec())];
+            for index in 0..(max - 4).div_ceil(32) {
+                let word = SymExpr::var(cx, &format!("{prefix}_arg{index}"));
+                parts.push(SymBytes::word(cx, word));
+            }
+            let bytes = SymBytes::concat(cx, parts).slice_concrete(cx, 0, max);
+            let bytes = SymBytes::sized(cx, bytes, size.clone(), max);
+            variants.push(Self {
+                bytes,
+                inputs: Vec::new(),
+                constraints: vec![fits.clone(), long_enough.clone()],
+                size: Some(size.clone()),
+            });
+        }
+
+        let raw = self.bytes.without_size();
+        let first_word = raw.word_at(cx, 0);
+        let shift = SymExpr::constant(cx, U256::from(224));
+        let leading = SymExpr::binop(cx, SymBinOp::Shr, first_word, shift);
+        let none_match = selectors
+            .iter()
+            .map(|selector| {
+                let value = U256::from(u32::from_be_bytes(*selector));
+                SymBoolExpr::eq_word_const(cx, &leading, value).not(cx)
+            })
+            .collect::<Vec<_>>();
+        let too_short = long_enough.not(cx);
+        let none_match = SymBoolExpr::and(cx, none_match);
+        let mut rest = self;
+        rest.constraints.push(SymBoolExpr::or(cx, vec![too_short, none_match]));
+        variants.push(rest);
+        variants
+    }
+
     pub(super) fn variants_with_prefix(
         function: &Function,
         config: &SymbolicConfig,

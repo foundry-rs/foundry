@@ -54,6 +54,9 @@ pub(crate) struct PathState {
     pub(crate) unknown_calls: Vec<UnknownCall>,
     /// Abstract state of all unknown code, advanced by each state-changing call into it.
     pub(crate) unknown_world: Option<SymExpr>,
+    /// Cached feasible range of a symbolic calldata size: the constraint count it was computed
+    /// from, then the smallest and largest size the univariate constraints on it allow.
+    calldata_size_range: Option<(usize, usize, usize)>,
 }
 
 impl PathState {
@@ -129,7 +132,43 @@ impl PathState {
             pending_storage_hook_revert: false,
             unknown_calls: Vec::new(),
             unknown_world: None,
+            calldata_size_range: None,
         }
+    }
+
+    /// Returns the smallest and largest calldata size the path allows, judging only by the
+    /// constraints on the size alone, or `None` when the size is not symbolic or no size fits.
+    ///
+    /// The size ranges over a small domain, so this evaluates those constraints at every size,
+    /// which is exact for them however they are phrased (signed, wrapping or masked comparisons).
+    pub(crate) fn calldata_size_range(&mut self) -> Option<(usize, usize)> {
+        let (symbol, max) = self.frame.calldata.symbolic_size()?;
+        if max > MAX_CALLDATA_SIZE_RANGE_SCAN {
+            return None;
+        }
+        if let Some((count, low, high)) = self.calldata_size_range
+            && count == self.constraints.len()
+        {
+            return Some((low, high));
+        }
+        let univariate = self
+            .constraints
+            .iter()
+            .filter(|constraint| {
+                let mut vars = SymbolicVars::default();
+                constraint.collect_eval_vars(&mut vars);
+                vars.len() == 1 && vars.contains(&symbol)
+            })
+            .collect::<Vec<_>>();
+        let mut model = SymbolicModel::default();
+        let mut fits = (0..=max).filter(|size| {
+            model.insert(symbol, U256::from(*size));
+            univariate.iter().all(|constraint| constraint.eval_model(&model).unwrap_or(true))
+        });
+        let low = fits.next()?;
+        let high = fits.last().unwrap_or(low);
+        self.calldata_size_range = Some((self.constraints.len(), low, high));
+        Some((low, high))
     }
 
     pub(crate) fn apply_executor_env(&mut self, cx: &mut SymCx, executor: &ExecutorView<'_>) {
@@ -2106,6 +2145,23 @@ impl SymbolicWorld {
         Some(value)
     }
 
+    /// Returns every symbolic pre-state storage value this world read, as the symbol, the account
+    /// and the slot expression it was read at.
+    pub(crate) fn storage_base_reads(&self, cx: &mut SymCx) -> Vec<(Symbol, Address, SymExpr)> {
+        let mut reads = Vec::new();
+        for (symbol, slots) in &self.replay_storage_slots {
+            for slot in slots {
+                reads.push((*symbol, slot.address, SymExpr::constant(cx, slot.slot)));
+            }
+        }
+        for (symbol, keys) in &self.replay_symbolic_storage_keys {
+            for (address, key) in keys {
+                reads.push((*symbol, *address, key.clone()));
+            }
+        }
+        reads
+    }
+
     fn record_replay_storage_slot(&mut self, symbol: Symbol, address: Address, slot: U256) {
         if self.replay_storage_slots.get(&symbol).is_some_and(|slots| {
             slots.iter().any(|existing| existing.address == address && existing.slot == slot)
@@ -2137,7 +2193,7 @@ impl SymbolicWorld {
             .push((address, key.clone()));
     }
 
-    fn merge_replay_metadata_from(&mut self, other: &Self) {
+    pub(crate) fn merge_replay_metadata_from(&mut self, other: &Self) {
         for (symbol, slots) in &other.replay_storage_slots {
             for slot in slots {
                 self.record_replay_storage_slot(*symbol, slot.address, slot.slot);

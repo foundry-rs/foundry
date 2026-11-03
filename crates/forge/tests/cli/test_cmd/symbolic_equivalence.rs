@@ -392,3 +392,137 @@ fn equivalence_relates_calldata_reads_at_symbolic_offsets(cmd: _) {
         .stdout_lossy();
     assert!(out.contains("storage slot 0x0: code-a "), "{out}");
 }
+
+#[forgetest]
+fn equivalence_checks_whole_contracts_by_selector(prj: _, cmd: _) {
+    skip_unless_z3!("equivalence_checks_whole_contracts_by_selector");
+    prj.add_source(
+        "Library.sol",
+        r#"
+contract Checked {
+    function average(uint256 a, uint256 b) external pure returns (uint256) {
+        return a / 2 + b / 2 + (a % 2 + b % 2) / 2;
+    }
+    function max3(uint256 a, uint256 b, uint256 c) external pure returns (uint256) {
+        uint256 m = a > b ? a : b;
+        return m > c ? m : c;
+    }
+    function isZero(uint256 a) external pure returns (bool) { return a == 0; }
+}
+
+contract Assembly {
+    function average(uint256 a, uint256 b) external pure returns (uint256 r) {
+        assembly { r := add(and(a, b), shr(1, xor(a, b))) }
+    }
+    function max3(uint256 a, uint256 b, uint256 c) external pure returns (uint256 r) {
+        assembly {
+            r := a
+            if gt(b, r) { r := b }
+            if gt(c, r) { r := c }
+        }
+    }
+    function isZero(uint256 a) external pure returns (bool r) { assembly { r := iszero(a) } }
+}
+
+contract Wrong {
+    function average(uint256 a, uint256 b) external pure returns (uint256 r) {
+        assembly { r := add(and(a, b), shr(1, xor(a, b))) }
+    }
+    function max3(uint256 a, uint256 b, uint256 c) external pure returns (uint256 r) {
+        assembly {
+            r := a
+            if gt(b, r) { r := b }
+            if gt(r, c) { r := c }
+        }
+    }
+    function isZero(uint256 a) external pure returns (bool r) { assembly { r := iszero(a) } }
+}
+"#,
+    );
+    let checked = deployed_bytecode(&mut cmd, "Checked");
+    let assembly = deployed_bytecode(&mut cmd, "Assembly");
+    let wrong = deployed_bytecode(&mut cmd, "Wrong");
+    cmd.forge_fuse()
+        .args(["equivalence", "--code-a", &checked, "--code-b", &assembly, "--empty-storage"])
+        .assert_success();
+    let out = cmd
+        .forge_fuse()
+        .args([
+            "equivalence",
+            "--code-a",
+            &checked,
+            "--code-b",
+            &wrong,
+            "--empty-storage",
+            "--json",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(json["status"], "not_equivalent");
+    assert_eq!(json["replayed"], true);
+    // The counterexample calls max3.
+    assert!(json["calldata"].as_str().unwrap().starts_with("0x"), "{json}");
+}
+
+#[forgetest]
+fn equivalence_merges_forward_jumps_on_request(cmd: _) {
+    skip_unless_z3!("equivalence_merges_forward_jumps_on_request");
+    // sstore(0, iszero(iszero(calldataload(0)))) vs the same through a forward jump:
+    // x := 0; if calldataload(0) { x := 1 }; sstore(0, x).
+    let direct = "0x5f35151560005500";
+    let branchy = "0x5f5f3515600a575060015b5f5500";
+    // The same, with x := 2 in the branch.
+    let wrong = "0x5f5f3515600a575060025b5f5500";
+    for flags in [&[][..], &["--merge-states"][..]] {
+        cmd.forge_fuse()
+            .args(["equivalence", "--code-a", direct, "--code-b", branchy])
+            .args(flags)
+            .assert_success();
+        cmd.forge_fuse()
+            .args(["equivalence", "--code-a", direct, "--code-b", wrong])
+            .args(flags)
+            .assert_failure();
+    }
+}
+
+#[forgetest]
+fn equivalence_refines_keccak_models(prj: _, cmd: _) {
+    skip_unless_z3!("equivalence_refines_keccak_models");
+    prj.add_source(
+        "Maps.sol",
+        r#"
+contract Plain {
+    mapping(uint256 => uint256) internal values;
+    function set(uint256 key, uint256 value) external { values[key] = value; }
+    function get(uint256 key) external view returns (uint256) { return values[key]; }
+}
+
+contract Shifted {
+    mapping(uint256 => uint256) internal values;
+    function set(uint256 key, uint256 value) external { values[key + 1] = value; }
+    function get(uint256 key) external view returns (uint256) { return values[key]; }
+}
+"#,
+    );
+    let plain = deployed_bytecode(&mut cmd, "Plain");
+    let shifted = deployed_bytecode(&mut cmd, "Shifted");
+    let out = cmd
+        .forge_fuse()
+        .args([
+            "equivalence",
+            "--code-a",
+            &plain,
+            "--code-b",
+            &shifted,
+            "--empty-storage",
+            "--json",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(json["status"], "not_equivalent");
+    assert_eq!(json["replayed"], true);
+}

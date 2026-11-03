@@ -371,6 +371,14 @@ pub struct SymbolicEquivalenceInput<'a> {
     /// Compare the programs modulo gas, like hevm: inputs on which either program runs out of
     /// memory gas are left out instead of counting as a difference.
     pub ignore_out_of_gas: bool,
+    /// Solver queries to run at once.
+    pub jobs: usize,
+    /// Explore each program once and compare every pair of end states, like hevm, instead of
+    /// exploring B once under each path of A.
+    pub pair_independently: bool,
+    /// Merge each forward jump over a short run of pure instructions into one path with `ite`
+    /// stack values, like hevm, instead of exploring both sides.
+    pub merge_states: bool,
 }
 
 /// Concrete transaction and block environment of an equivalence counterexample.
@@ -497,6 +505,9 @@ pub struct SymbolicStats {
     /// Longest single backend solver subprocess query, in milliseconds.
     #[serde(default)]
     pub smt_max_query_time_ms: u64,
+    /// Number of satisfiability checks settled by a model of an earlier query.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub model_reuse_hits: usize,
 }
 
 /// SMT-LIB-backed symbolic executor.
@@ -528,6 +539,10 @@ struct EquivalenceMode {
     reads_gas: bool,
     /// Leave out inputs on which a program runs out of memory gas.
     ignore_out_of_gas: bool,
+    /// Solver queries to run at once.
+    jobs: usize,
+    /// Merge forward jumps over pure instructions into one path.
+    merge_states: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -542,4 +557,8 @@ enum DeferredIncomplete {
     Unsupported(&'static str),
     SolverUnknown,
     HardArithmetic,
+}
+
+const fn is_zero(value: &usize) -> bool {
+    *value == 0
 }

@@ -8,6 +8,9 @@ struct EquivalenceEnd {
     return_data: SymReturnData,
 }
 
+/// One completed path of one program and how it ended.
+type ProgramEnd = (EquivalenceEnd, PathState);
+
 /// Symbolic transaction and block environment shared by both programs.
 struct EquivalenceEnv {
     address: SymExpr,
@@ -84,6 +87,72 @@ impl EquivalenceEnv {
     }
 }
 
+/// Returns the distinct `PUSH4` immediates of the codes, which include every selector a
+/// Solidity or Vyper dispatcher compares calldata against. Returns none when there are too many
+/// for splitting by selector to pay off.
+fn dispatcher_selectors(codes: &[&Bytes]) -> Vec<[u8; 4]> {
+    let mut selectors = Vec::new();
+    for code in codes {
+        let mut pc = 0;
+        while pc < code.len() {
+            let op = code[pc];
+            if op == opcode::PUSH4
+                && let Some(value) = code.get(pc + 1..pc + 5)
+            {
+                let value: [u8; 4] = value.try_into().expect("four bytes");
+                if !selectors.contains(&value) {
+                    selectors.push(value);
+                }
+            }
+            pc += 1 + if (opcode::PUSH1..=opcode::PUSH32).contains(&op) {
+                usize::from(op - opcode::PUSH1 + 1)
+            } else {
+                0
+            };
+        }
+    }
+    if selectors.len() > MAX_SELECTOR_JOBS { Vec::new() } else { selectors }
+}
+
+/// Most selector jobs an equivalence check splits calldata into.
+const MAX_SELECTOR_JOBS: usize = 64;
+
+/// First fresh-symbol index of program B, apart from program A's.
+const B_SYMBOL_OFFSET: usize = 1 << 40;
+
+/// Most pre-state storage reads whose pairs get congruence lemmas.
+const MAX_CONGRUENT_STORAGE_READS: usize = 64;
+
+/// Pair queries collected per solver job before a batch is solved.
+const PAIRS_PER_JOB: usize = 1;
+
+/// Error text of a model query on a path that turned out unsatisfiable.
+pub(super) const PATH_BECAME_UNSAT: &str = "counterexample path became unsat";
+
+/// Returns whether two paths' constraints cannot both hold because they pin one word to different
+/// constants, as different function selectors do. This is a cheap syntactic filter: pairs it keeps
+/// still go to the solver.
+fn constraints_conflict(left: &[SymBoolExpr], right: &[SymBoolExpr]) -> bool {
+    let mut pinned = HashMap::<SymExpr, U256>::default();
+    let mut excluded = HashSet::<(SymExpr, U256)>::default();
+    for constraint in left.iter().chain(right) {
+        let Some((word, value, holds)) = constraint.word_const_equality() else { continue };
+        if holds {
+            if pinned.insert(word.clone(), value).is_some_and(|previous| previous != value)
+                || excluded.contains(&(word.clone(), value))
+            {
+                return true;
+            }
+        } else {
+            if pinned.get(word) == Some(&value) {
+                return true;
+            }
+            excluded.insert((word.clone(), value));
+        }
+    }
+    false
+}
+
 struct SymbolicEquivalenceCounterexample {
     calldata: Bytes,
     args: Vec<DynSolValue>,
@@ -130,10 +199,15 @@ impl SymbolicExecutor {
             max_returndata: input.max_returndata,
             reads_gas: false,
             ignore_out_of_gas: input.ignore_out_of_gas,
+            jobs: input.jobs.max(1),
+            merge_states: input.merge_states,
         });
+        self.solver.set_jobs(input.jobs);
+        self.solver.set_reuse_models(true);
         let mut completed_paths = 0;
         let result = self.run_equivalence_inner(&input, &mut completed_paths);
         let reads_gas = self.equivalence.take().is_some_and(|mode| mode.reads_gas);
+        self.solver.set_reuse_models(false);
         match result {
             Ok(Some(counterexample)) => SymbolicEquivalenceResult::Counterexample {
                 calldata: counterexample.calldata,
@@ -180,7 +254,12 @@ impl SymbolicExecutor {
                         "symbolic calldata size exceeds configured max",
                     ));
                 }
-                vec![SymbolicCalldata::symbolic_size(&mut self.cx, input.max_calldata, "calldata")]
+                let calldata =
+                    SymbolicCalldata::symbolic_size(&mut self.cx, input.max_calldata, "calldata");
+                // One job per function selector keeps each job's paths, and the pairs between
+                // them, to one function.
+                let selectors = dispatcher_selectors(&[&input.code_a, &input.code_b]);
+                calldata.split_by_selector(&mut self.cx, &selectors, "calldata")
             }
             None => {
                 if input.calldata_lengths.iter().any(|len| *len > max) {
@@ -196,73 +275,324 @@ impl SymbolicExecutor {
             }
         };
 
-        for calldata in calldatas {
+        let jobs = calldatas.len();
+        for (job, calldata) in calldatas.into_iter().enumerate() {
             self.check_timeout()?;
-            let root_a = self.equivalence_root(input, &env, calldata.clone(), &code_a);
-            let mut side_a = SequenceCall {
-                code: code_a.clone(),
-                worklist: VecDeque::from([root_a]),
+            let job_started = Instant::now();
+            let paths_before = *completed_paths;
+            debug!(job, jobs, "equivalence job started");
+            let found = if input.pair_independently {
+                self.check_pairs_independently(
+                    input,
+                    &env,
+                    &calldata,
+                    (&code_a, &code_b),
+                    completed_paths,
+                )?
+            } else {
+                self.check_pairs_constrained(
+                    input,
+                    &env,
+                    &calldata,
+                    (&code_a, &code_b),
+                    completed_paths,
+                )?
+            };
+            debug!(
+                job,
+                elapsed = ?job_started.elapsed(),
+                paths = *completed_paths - paths_before,
+                "equivalence job finished"
+            );
+            if let Some(found) = found {
+                return Ok(Some(found));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Runs B once under each path of A, so B's exploration sees A's constraints, and compares the
+    /// two end states of each resulting pair.
+    fn check_pairs_constrained(
+        &mut self,
+        input: &SymbolicEquivalenceInput<'_>,
+        env: &EquivalenceEnv,
+        calldata: &SymbolicCalldata,
+        (code_a, code_b): (&SymCode, &SymCode),
+        completed_paths: &mut usize,
+    ) -> Result<Option<SymbolicEquivalenceCounterexample>, SymbolicError> {
+        let root_a = self.equivalence_root(input, env, calldata.clone(), code_a);
+        let mut side_a = SequenceCall {
+            code: code_a.clone(),
+            worklist: VecDeque::from([root_a]),
+            deferred_worklist: VecDeque::new(),
+        };
+        let batch = self.solver_jobs().saturating_mul(PAIRS_PER_JOB).max(1);
+        while let Some(outcome_a) =
+            self.execute_sequence_call_next(&input.executor, &mut side_a, completed_paths)?
+        {
+            let end_a = self.equivalence_end(&outcome_a);
+            let state_a = outcome_a.state;
+            let mut ends_a = vec![(end_a, state_a)];
+            // B starts from the same pre-state, constrained to A's path, and its fresh symbols
+            // come after A's.
+            let mut root_b = self.equivalence_root(input, env, calldata.clone(), code_b);
+            root_b.take_noncommitting_check_state(&mut ends_a[0].1.clone());
+            let mut side_b = SequenceCall {
+                code: code_b.clone(),
+                worklist: VecDeque::from([root_b]),
                 deferred_worklist: VecDeque::new(),
             };
-            while let Some(outcome_a) =
-                self.execute_sequence_call_next(&input.executor, &mut side_a, completed_paths)?
+            let mut ends_b = Vec::new();
+            let mut pending = Vec::new();
+            while let Some(outcome_b) =
+                self.execute_sequence_call_next(&input.executor, &mut side_b, completed_paths)?
             {
-                let end_a = self.equivalence_end(&outcome_a);
-                let mut state_a = outcome_a.state;
-
-                // B starts from the same pre-state, constrained to A's path, and its fresh
-                // symbols come after A's.
-                let mut root_b = self.equivalence_root(input, &env, calldata.clone(), &code_b);
-                root_b.take_noncommitting_check_state(&mut state_a.clone());
-                let mut side_b = SequenceCall {
-                    code: code_b.clone(),
-                    worklist: VecDeque::from([root_b]),
-                    deferred_worklist: VecDeque::new(),
-                };
-                while let Some(outcome_b) =
-                    self.execute_sequence_call_next(&input.executor, &mut side_b, completed_paths)?
+                self.check_timeout()?;
+                let end_b = self.equivalence_end(&outcome_b);
+                ends_b.push((end_b, outcome_b.state));
+                let index_b = ends_b.len() - 1;
+                if let Some(query) =
+                    self.pair_query(input, &mut ends_a[0], &mut ends_b[index_b], true)?
                 {
-                    self.check_timeout()?;
-                    let end_b = self.equivalence_end(&outcome_b);
-                    let mut state_b = outcome_b.state;
-                    let mismatch = self.equivalence_mismatch(
-                        &input.executor,
-                        &mut state_a,
-                        &end_a,
-                        &mut state_b,
-                        &end_b,
-                    )?;
-                    if mismatch.as_const() == Some(false) {
-                        continue;
-                    }
-                    let mut constraints = state_b.constraints.clone();
-                    constraints.extend(self.unknown_call_axioms(
-                        &input.executor,
-                        &state_a.unknown_calls,
-                        &state_b.unknown_calls,
-                    )?);
-                    constraints.push(mismatch);
-                    match self.is_sat_with_state(&state_b, &constraints) {
-                        Ok(true) => {
-                            let unknown_calls =
-                                state_a.unknown_calls.len() + state_b.unknown_calls.len();
-                            return self
-                                .materialize_equivalence(
-                                    input,
-                                    &env,
-                                    &calldata,
-                                    (&state_a, &state_b),
-                                    &constraints,
-                                    unknown_calls,
-                                )
-                                .map(Some);
-                        }
-                        Ok(false) => {}
-                        Err(SymbolicError::SolverUnknown) => self.defer_solver_unknown(),
-                        Err(err) => return Err(err),
-                    }
+                    pending.push((0, index_b, query.0, query.1));
+                }
+                if pending.len() >= batch
+                    && let Some(found) = self.solve_equivalence_pairs(
+                        input,
+                        env,
+                        calldata,
+                        (&ends_a, &ends_b),
+                        &mut pending,
+                    )?
+                {
+                    return Ok(Some(found));
                 }
             }
+            if let Some(found) = self.solve_equivalence_pairs(
+                input,
+                env,
+                calldata,
+                (&ends_a, &ends_b),
+                &mut pending,
+            )? {
+                return Ok(Some(found));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Like hevm, explores each program once and compares every pair of end states whose path
+    /// constraints may hold together.
+    fn check_pairs_independently(
+        &mut self,
+        input: &SymbolicEquivalenceInput<'_>,
+        env: &EquivalenceEnv,
+        calldata: &SymbolicCalldata,
+        (code_a, code_b): (&SymCode, &SymCode),
+        completed_paths: &mut usize,
+    ) -> Result<Option<SymbolicEquivalenceCounterexample>, SymbolicError> {
+        let mut ends_a =
+            self.explore_equivalence_side(input, env, calldata, code_a, 0, completed_paths)?;
+        let mut ends_b = self.explore_equivalence_side(
+            input,
+            env,
+            calldata,
+            code_b,
+            B_SYMBOL_OFFSET,
+            completed_paths,
+        )?;
+        let batch = self.solver_jobs().saturating_mul(PAIRS_PER_JOB).max(1);
+        let mut pending = Vec::new();
+        for index_a in 0..ends_a.len() {
+            for index_b in 0..ends_b.len() {
+                self.check_timeout()?;
+                let (left, right) = (&mut ends_a[index_a], &mut ends_b[index_b]);
+                if let Some(query) = self.pair_query(input, left, right, false)? {
+                    pending.push((index_a, index_b, query.0, query.1));
+                }
+                if pending.len() >= batch
+                    && let Some(found) = self.solve_equivalence_pairs(
+                        input,
+                        env,
+                        calldata,
+                        (&ends_a, &ends_b),
+                        &mut pending,
+                    )?
+                {
+                    return Ok(Some(found));
+                }
+            }
+        }
+        self.solve_equivalence_pairs(input, env, calldata, (&ends_a, &ends_b), &mut pending)
+    }
+
+    /// Returns the query whose satisfiability means the two end states differ on some input
+    /// both paths take, with the replayable storage symbols of both paths, or `None` when they
+    /// cannot differ. `b_extends_a` says B's path constraints already include A's.
+    fn pair_query(
+        &mut self,
+        input: &SymbolicEquivalenceInput<'_>,
+        (end_a, state_a): &mut ProgramEnd,
+        (end_b, state_b): &mut ProgramEnd,
+        b_extends_a: bool,
+    ) -> Result<Option<(Vec<SymBoolExpr>, SymbolicVars)>, SymbolicError> {
+        if !b_extends_a && constraints_conflict(&state_a.constraints, &state_b.constraints) {
+            return Ok(None);
+        }
+        let mismatch =
+            self.equivalence_mismatch(&input.executor, state_a, end_a, state_b, end_b)?;
+        if mismatch.as_const() == Some(false) {
+            return Ok(None);
+        }
+        let mut constraints = if b_extends_a { Vec::new() } else { state_a.constraints.clone() };
+        constraints.extend(state_b.constraints.iter().cloned());
+        constraints.extend(self.unknown_call_axioms(
+            &input.executor,
+            &state_a.unknown_calls,
+            &state_b.unknown_calls,
+        )?);
+        constraints.push(mismatch);
+        let congruence = hash_congruence_lemmas(&mut self.cx, &constraints);
+        constraints.extend(congruence);
+        let storage = self.storage_congruence_lemmas(&state_a.world, &state_b.world);
+        constraints.extend(storage);
+        let mut replayable = state_a.world.replay_storage_symbols();
+        replayable.extend(state_b.world.replay_storage_symbols());
+        Ok(Some((constraints, replayable)))
+    }
+
+    /// Returns lemmas that make the pre-state storage one function of account and slot: two reads
+    /// of one account at equal slots see the same value.
+    ///
+    /// Each read at a symbolic slot is a symbol named by the slot expression's structure, so two
+    /// programs that compute one slot differently would otherwise read unrelated values.
+    fn storage_congruence_lemmas(
+        &mut self,
+        world_a: &SymbolicWorld,
+        world_b: &SymbolicWorld,
+    ) -> Vec<SymBoolExpr> {
+        let mut reads = world_a.storage_base_reads(&mut self.cx);
+        for read in world_b.storage_base_reads(&mut self.cx) {
+            if !reads.iter().any(|(symbol, address, key)| {
+                *symbol == read.0 && *address == read.1 && *key == read.2
+            }) {
+                reads.push(read);
+            }
+        }
+        reads.truncate(MAX_CONGRUENT_STORAGE_READS);
+        let mut lemmas = Vec::new();
+        for (index, (left_symbol, left_address, left_key)) in reads.iter().enumerate() {
+            for (right_symbol, right_address, right_key) in &reads[index + 1..] {
+                if left_symbol == right_symbol || left_address != right_address {
+                    continue;
+                }
+                if let (Some(left), Some(right)) = (left_key.as_const(), right_key.as_const())
+                    && left != right
+                {
+                    continue;
+                }
+                let cx = &mut self.cx;
+                let same_slot = SymBoolExpr::eq(cx, left_key.clone(), right_key.clone());
+                let left = SymExpr::get_var(cx, *left_symbol);
+                let right = SymExpr::get_var(cx, *right_symbol);
+                let same_value = SymBoolExpr::eq(cx, left, right);
+                let different_slot = same_slot.not(cx);
+                lemmas.push(SymBoolExpr::or(cx, vec![different_slot, same_value]));
+            }
+        }
+        lemmas
+    }
+
+    /// Returns how many solver queries an equivalence check runs at once.
+    fn solver_jobs(&self) -> usize {
+        self.equivalence.map_or(1, |mode| mode.jobs)
+    }
+
+    /// Explores every path of one program and returns how each one ended.
+    ///
+    /// `symbol_offset` starts the program's fresh symbols apart from the other program's.
+    fn explore_equivalence_side(
+        &mut self,
+        input: &SymbolicEquivalenceInput<'_>,
+        env: &EquivalenceEnv,
+        calldata: &SymbolicCalldata,
+        code: &SymCode,
+        symbol_offset: usize,
+        completed_paths: &mut usize,
+    ) -> Result<Vec<ProgramEnd>, SymbolicError> {
+        let mut root = self.equivalence_root(input, env, calldata.clone(), code);
+        root.next_symbol = root.next_symbol.max(symbol_offset);
+        let mut side = SequenceCall {
+            code: code.clone(),
+            worklist: VecDeque::from([root]),
+            deferred_worklist: VecDeque::new(),
+        };
+        let mut ends = Vec::new();
+        while let Some(outcome) =
+            self.execute_sequence_call_next(&input.executor, &mut side, completed_paths)?
+        {
+            self.check_timeout()?;
+            let end = self.equivalence_end(&outcome);
+            ends.push((end, outcome.state));
+        }
+        Ok(ends)
+    }
+
+    /// Solves the pending pair queries in order, at most [`Self::solver_jobs`] at a time, and
+    /// returns the first counterexample.
+    fn solve_equivalence_pairs(
+        &mut self,
+        input: &SymbolicEquivalenceInput<'_>,
+        env: &EquivalenceEnv,
+        calldata: &SymbolicCalldata,
+        (ends_a, ends_b): (&[ProgramEnd], &[ProgramEnd]),
+        pending: &mut Vec<(usize, usize, Vec<SymBoolExpr>, SymbolicVars)>,
+    ) -> Result<Option<SymbolicEquivalenceCounterexample>, SymbolicError> {
+        if pending.is_empty() {
+            return Ok(None);
+        }
+        let mut batch = std::mem::take(pending);
+        // The first satisfiable pair stops the rest of the batch; pairs it stopped run again only
+        // when that pair's counterexample turns out to be spurious.
+        while !batch.is_empty() {
+            let queries = batch
+                .iter()
+                .map(|(_, _, constraints, replayable)| (constraints.clone(), replayable.clone()))
+                .collect::<Vec<_>>();
+            let results = self.solver.is_sat_batch(&mut self.cx, &queries, true);
+            let mut stopped = Vec::new();
+            for (pair, result) in batch.into_iter().zip(results) {
+                let (index_a, index_b, constraints, _) = &pair;
+                match result {
+                    Ok(true) => {
+                        let (_, state_a) = &ends_a[*index_a];
+                        let (_, state_b) = &ends_b[*index_b];
+                        let unknown_calls =
+                            state_a.unknown_calls.len() + state_b.unknown_calls.len();
+                        match self.materialize_equivalence(
+                            input,
+                            env,
+                            calldata,
+                            (state_a, state_b),
+                            constraints,
+                            unknown_calls,
+                        ) {
+                            Ok(found) => return Ok(Some(found)),
+                            // Keccak refinement can show a satisfiable abstraction to be spurious.
+                            Err(SymbolicError::Solver(reason)) if reason == PATH_BECAME_UNSAT => {}
+                            Err(err) => return Err(err),
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(SymbolicError::Solver(reason)) if reason == BATCH_STOPPED => {
+                        stopped.push(pair);
+                    }
+                    Err(SymbolicError::SolverUnknown) => self.defer_solver_unknown(),
+                    Err(err) => return Err(err),
+                }
+            }
+            batch = stopped;
         }
         Ok(None)
     }
@@ -633,7 +963,10 @@ impl SymbolicExecutor {
         constraints: &[SymBoolExpr],
         unknown_calls: usize,
     ) -> Result<SymbolicEquivalenceCounterexample, SymbolicError> {
-        let replayable_storage = state_b.world.replay_storage_symbols();
+        // Storage either program read must replay, so the world carries both programs' slots.
+        let mut world = state_b.world.clone();
+        world.merge_replay_metadata_from(&state_a.world);
+        let replayable_storage = world.replay_storage_symbols();
         let model = self.solver.model_with_replayable_storage(
             &mut self.cx,
             constraints,
@@ -644,7 +977,7 @@ impl SymbolicExecutor {
             Some(_) => calldata.model_to_args(&mut self.cx, &model)?,
             None => Vec::new(),
         };
-        let storage = state_b.world.replay_storage_assignments(&model)?;
+        let storage = world.replay_storage_assignments(&model)?;
         let word = |expr: &SymExpr| -> Result<U256, SymbolicError> {
             Ok(expr.eval_model_if_complete(&model)?.unwrap_or_default())
         };

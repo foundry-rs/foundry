@@ -508,6 +508,21 @@ impl SymBoolExpr {
         }
     }
 
+    /// Returns `(word, value, true)` when this predicate is `word == value` for a symbolic
+    /// word and a constant value, and `(word, value, false)` when it is the negation of one.
+    pub(crate) fn word_const_equality(&self) -> Option<(&SymExpr, U256, bool)> {
+        let (cmp, holds) = match self.kind() {
+            SymBoolExprKind::Not(inner) => (inner, false),
+            _ => (self, true),
+        };
+        let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = cmp.kind() else { return None };
+        match (left.as_const(), right.as_const()) {
+            (None, Some(value)) => Some((left, value, holds)),
+            (Some(value), None) => Some((right, value, holds)),
+            _ => None,
+        }
+    }
+
     pub(crate) fn contains_keccak(&self) -> bool {
         self.flags() & FLAG_KECCAK != 0
     }
