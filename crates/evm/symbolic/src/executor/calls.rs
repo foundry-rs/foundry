@@ -563,6 +563,7 @@ impl SymbolicExecutor {
         &mut self,
         executor: &ExecutorView<'_>,
         state: &mut PathState,
+        kind: CallKind,
         status: CallStatus,
         mut return_data: SymReturnData,
         reverter: Address,
@@ -570,6 +571,13 @@ impl SymbolicExecutor {
         out_size: &BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
         let mut success = status == CallStatus::Success;
+        // Like Forge, a call that does not revert ends a `count = 0` `vm.expectEmit` unless
+        // `vm.expectRevert` handles it.
+        if !matches!(status, CallStatus::Revert)
+            && (state.expected_revert.is_none() || (success && executor.internal_expect_revert))
+        {
+            state.end_expected_emit_after_call(kind);
+        }
         let assumption = state.assume_no_revert_next_call.take();
         let assumed_revert = status == CallStatus::Revert && assumption.is_some();
         if let Some(assumption) = &assumption
@@ -698,6 +706,7 @@ impl SymbolicExecutor {
     pub(super) fn handle_log(
         &mut self,
         state: &mut PathState,
+        worklist: &mut VecDeque<PathState>,
         log: SymbolicLog,
     ) -> Result<StepOutcome, SymbolicError> {
         let Some(mut expected) = state.expected_emit.take() else {
@@ -707,44 +716,48 @@ impl SymbolicExecutor {
 
         if let Some(template) = expected.template().cloned() {
             if expected.is_forbidden() {
-                // Like Forge, a `count = 0` expectation fails on any log that matches it.
-                let condition = match expected.match_condition(&mut self.cx, &template, &log) {
-                    Some(condition) => Some(condition),
-                    None if template.has_concrete_data_len() && log.has_concrete_data_len() => None,
-                    None => {
-                        return Err(SymbolicError::Unsupported(
-                            "symbolic vm.expectEmit count 0 with symbolic log size",
-                        ));
-                    }
+                // Like Forge, a log matching a `count = 0` expectation reverts the emitting frame.
+                let Some(condition) = expected.match_condition(&mut self.cx, &template, &log)
+                else {
+                    return Err(SymbolicError::Unsupported(
+                        "symbolic vm.expectEmit count 0 with symbolic log size",
+                    ));
                 };
-                let matching = match condition {
-                    Some(condition) => self.constraints_for_condition(state, condition)?,
-                    None => None,
-                };
-                state.expected_emit = Some(expected);
-                state.record_log(log);
-                if let Some(constraints) = matching {
-                    state.constraints = constraints;
-                    return Ok(StepOutcome::Failure);
+                let (match_constraints, match_sat) =
+                    self.constraints_with_condition(state, condition.clone())?;
+                if !match_sat {
+                    state.expected_emit = Some(expected);
+                    state.record_log(log);
+                    return Ok(StepOutcome::Continue);
                 }
-                return Ok(StepOutcome::Continue);
+                let mismatch = condition.not(&mut self.cx);
+                if let Some(constraints) = self.constraints_for_condition(state, mismatch)? {
+                    let mut mismatch_state = state.clone();
+                    mismatch_state.constraints = constraints;
+                    mismatch_state.expected_emit = Some(expected.clone());
+                    mismatch_state.record_log(log);
+                    worklist.push_back(mismatch_state);
+                }
+                state.constraints = match_constraints;
+                state.expected_emit = Some(expected);
+                return self.revert_expect_emit(state, "log emitted but expected 0 times");
             }
             if !self.expected_emit_matches(state, &expected, &template, &log)? {
                 state.expected_emit = Some(expected);
                 state.record_log(log);
                 return Ok(StepOutcome::Failure);
             }
-            expected.consume_one();
-            if !expected.is_satisfied() {
+            if !expected.consume_one() {
                 state.expected_emit = Some(expected);
             }
         } else {
             // Like Forge, a log without topics cannot fill a non-anonymous template, which every
-            // count 0 expectation is.
+            // count 0 expectation is, and reverts the emitting frame.
             if expected.is_forbidden() && !log.has_topics() {
-                state.expected_emit = Some(expected);
-                state.record_log(log);
-                return Ok(StepOutcome::Failure);
+                return self.revert_expect_emit(
+                    state,
+                    "use vm.expectEmitAnonymous to match anonymous events",
+                );
             }
             expected.set_template(log.clone());
             state.expected_emit = Some(expected);
@@ -752,6 +765,17 @@ impl SymbolicExecutor {
 
         state.record_log(log);
         Ok(StepOutcome::Continue)
+    }
+
+    /// Reverts the current frame with a `vm.expectEmit` failure, as Forge does for the emitting
+    /// frame.
+    fn revert_expect_emit(
+        &mut self,
+        state: &mut PathState,
+        reason: &str,
+    ) -> Result<StepOutcome, SymbolicError> {
+        state.return_data = error_string_return_data(&mut self.cx, reason);
+        self.classify_revert(state)
     }
 
     /// Returns whether `expected_emit_matches` holds.
@@ -979,6 +1003,7 @@ impl SymbolicExecutor {
                 executor,
                 state,
                 worklist,
+                kind,
                 call_caller,
                 transfer_to,
                 value.clone(),
@@ -1000,6 +1025,7 @@ impl SymbolicExecutor {
                 return self.finish_codeless_call(
                     executor,
                     state,
+                    kind,
                     if reverts { CallStatus::Revert } else { CallStatus::Success },
                     return_data,
                     transfer_to,
@@ -1056,6 +1082,7 @@ impl SymbolicExecutor {
             return self.finish_codeless_call(
                 executor,
                 state,
+                kind,
                 CallStatus::Success,
                 return_data,
                 transfer_to,
@@ -1161,6 +1188,7 @@ impl SymbolicExecutor {
                 }
                 JoinedCallOutcome::ExceptionalHalt(mut parent) => {
                     parent.world = original_world.clone();
+                    parent.end_expected_emit_after_call(kind);
                     parent.return_data = SymReturnData::empty(&mut self.cx);
                     parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;
@@ -1182,12 +1210,10 @@ impl SymbolicExecutor {
                     if isolated {
                         parent.world.restore_transient_storage(&original_world);
                     }
-                    parent.expected_emit = child.expected_emit.filter(|expected| {
-                        unmet_expected_revert
-                            || parent.is_static
-                            || matches!(kind, CallKind::StaticCall)
-                            || !expected.ends_after_call_from(parent.call_depth)
-                    });
+                    parent.expected_emit = child.expected_emit;
+                    if !unmet_expected_revert {
+                        parent.end_expected_emit_after_call(kind);
+                    }
                     parent.expected_creates = child.expected_creates;
                     parent.return_data = if unmet_expected_revert {
                         error_string_return_data(
@@ -1363,6 +1389,7 @@ impl SymbolicExecutor {
         self.finish_codeless_call(
             executor,
             state,
+            kind,
             status,
             return_data,
             reverter,
@@ -1394,6 +1421,7 @@ impl SymbolicExecutor {
         executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
+        kind: CallKind,
         from: Address,
         to: Address,
         value: SymExpr,
@@ -1441,6 +1469,7 @@ impl SymbolicExecutor {
             match self.finish_codeless_call(
                 executor,
                 &mut failure,
+                kind,
                 status,
                 return_data,
                 to,
@@ -1463,8 +1492,17 @@ impl SymbolicExecutor {
         };
         state.constraints = constraints;
         let return_data = SymReturnData::empty(&mut self.cx);
-        self.finish_codeless_call(executor, state, status, return_data, to, out_offset, out_size)
-            .map(Some)
+        self.finish_codeless_call(
+            executor,
+            state,
+            kind,
+            status,
+            return_data,
+            to,
+            out_offset,
+            out_size,
+        )
+        .map(Some)
     }
 
     pub(super) fn prepare_create_value_transfer(
@@ -1593,6 +1631,7 @@ impl SymbolicExecutor {
                     executor,
                     &mut branch,
                     &mut parents,
+                    kind,
                     call_caller,
                     transfer_to,
                     value.clone(),
@@ -1618,6 +1657,7 @@ impl SymbolicExecutor {
                     self.finish_codeless_call(
                         executor,
                         &mut branch,
+                        kind,
                         CallStatus::Success,
                         return_data,
                         reverter,

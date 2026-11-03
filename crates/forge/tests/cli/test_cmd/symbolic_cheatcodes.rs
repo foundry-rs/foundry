@@ -7167,7 +7167,7 @@ contract SymbolicMappingStorageHooksSymbolicSize is Test {
 }
 
 // Like Forge, `vm.stopRecord` pauses recording but keeps the accesses for `vm.accesses`, and
-// `vm.expectEmit(emitter, 0)` fails when a matching log is emitted.
+// `vm.expectEmit(emitter, 0)` reverts the frame that emits a matching log.
 #[forgetest_init]
 fn symbolic_stop_record_and_expect_emit_count_zero_match_forge(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_stop_record_and_expect_emit_count_zero_match_forge");
@@ -7182,6 +7182,7 @@ interface Vm {
     function expectEmit() external;
     function expectEmit(address emitter, uint64 count) external;
     function expectRevert() external;
+    function mockCall(address callee, bytes calldata data, bytes calldata returnData) external;
 }
 
 contract Store {
@@ -7189,6 +7190,7 @@ contract Store {
     uint256 public b;
     event Set(uint256 value);
     event Other(uint256 value);
+    event Anon(uint256 value) anonymous;
 
     function setA(uint256 value) external {
         a = value;
@@ -7205,6 +7207,16 @@ contract Store {
     function setAThenRevert(uint256 value) external {
         emit Set(value);
         revert();
+    }
+
+    function emitAnon(uint256 value) external {
+        emit Anon(value);
+    }
+
+    function halt() external {
+        assembly {
+            invalid()
+        }
     }
 }
 
@@ -7228,14 +7240,6 @@ contract SymbolicRecordAndEmitCount {
         assert(writes.length == 1);
     }
 
-    function checkStoppedRecordReportsWrite(uint256 value) public {
-        vm.record();
-        store.setA(value);
-        vm.stopRecord();
-        (, bytes32[] memory writes) = vm.accesses(address(store));
-        assert(writes.length == 0);
-    }
-
     function checkExpectNoEmitFailsWhenEmitted(uint256 value) public {
         vm.expectEmit(address(store), 0);
         emit Set(value);
@@ -7248,16 +7252,65 @@ contract SymbolicRecordAndEmitCount {
         store.setB(value);
     }
 
-    function checkExpectNoEmitAllowsNoEvent(uint256 value) public {
+    // Like Forge, only the matching log reverts, so the path where `value != 1` continues.
+    function checkExpectNoEmitKeepsNonMatchingPath(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(1);
+        try store.setA(value) {} catch {}
+        assert(value != 2);
+    }
+
+    // Like Forge, the revert of the emitting frame can be caught.
+    function checkExpectNoEmitCaught(uint256 value) public {
         vm.expectEmit(address(store), 0);
         emit Set(value);
-        store.noop();
+        try store.setA(value) {} catch {}
+    }
+
+    // Like Forge, `vm.expectRevert` sees the revert of the emitting frame.
+    function checkExpectNoEmitUnderExpectRevert(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        vm.expectRevert();
+        store.setA(value);
     }
 
     function checkExpectNoEmitEndsAfterNextCall(uint256 value) public {
         vm.expectEmit(address(store), 0);
         emit Set(value);
         store.noop();
+        store.setA(value);
+    }
+
+    function checkExpectNoEmitEndsAfterCodelessCall(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        (bool success,) = address(0xdead).call("");
+        assert(success);
+        store.setA(value);
+    }
+
+    function checkExpectNoEmitEndsAfterMockedCall(uint256 value) public {
+        vm.mockCall(address(store), abi.encodeCall(Store.noop, ()), "");
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        store.noop();
+        store.setA(value);
+    }
+
+    function checkExpectNoEmitEndsAfterHaltedCall(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        (bool success,) = address(store).call(abi.encodeCall(Store.halt, ()));
+        assert(!success);
+        store.setA(value);
+    }
+
+    // Like Forge, a static call does not end the expectation.
+    function checkExpectNoEmitKeptAcrossStaticCall(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        store.a();
         store.setA(value);
     }
 
@@ -7269,14 +7322,6 @@ contract SymbolicRecordAndEmitCount {
         vm.expectEmit();
         emit Other(value);
         store.setB(value);
-        store.setA(value);
-    }
-
-    // Forge reverts the emitting frame, which `vm.expectRevert` sees, so this is unsupported.
-    function checkExpectNoEmitUnderExpectRevert(uint256 value) public {
-        vm.expectEmit(address(store), 0);
-        emit Set(1);
-        vm.expectRevert();
         store.setA(value);
     }
 
@@ -7293,31 +7338,81 @@ contract SymbolicRecordAndEmitCount {
         try store.setAThenRevert(value) {} catch {}
         store.setA(value);
     }
+
+    // Forge drops the expectation inside a reverted call, so this is reported as unsupported.
+    function checkExpectNoEmitAnonymousInRevertedCall(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        try store.emitAnon(value) {} catch {}
+        store.setA(value);
+    }
+
+    function testStopRecordKeepsAndPausesAccesses() public {
+        checkStopRecordKeepsAndPausesAccesses(1);
+    }
+
+    function testExpectNoEmitAllowsOtherEvent() public {
+        checkExpectNoEmitAllowsOtherEvent(1);
+    }
+
+    function testExpectNoEmitCaught() public {
+        checkExpectNoEmitCaught(1);
+    }
+
+    function testExpectNoEmitUnderExpectRevert() public {
+        checkExpectNoEmitUnderExpectRevert(1);
+    }
+
+    function testExpectNoEmitEndsAfterNextCall() public {
+        checkExpectNoEmitEndsAfterNextCall(1);
+    }
+
+    function testExpectNoEmitEndsAfterCodelessCall() public {
+        checkExpectNoEmitEndsAfterCodelessCall(1);
+    }
+
+    function testExpectNoEmitEndsAfterMockedCall() public {
+        checkExpectNoEmitEndsAfterMockedCall(1);
+    }
+
+    function testExpectNoEmitEndsAfterHaltedCall() public {
+        checkExpectNoEmitEndsAfterHaltedCall(1);
+    }
 }
 "#,
     );
+
+    cmd.args(["test", "--match-contract", "SymbolicRecordAndEmitCount", "--match-test", "^test"])
+        .assert_success();
+    cmd.forge_fuse();
 
     assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
         "--match-contract",
         "SymbolicRecordAndEmitCount",
+        "--match-test",
+        "^check",
     ]))
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 10 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCount
-[PASS] checkExpectNoEmitAllowsNoEvent(uint256) ([METRICS])
+Ran 15 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCount
 [PASS] checkExpectNoEmitAllowsOtherEvent(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit count 0 across a failed call] checkExpectNoEmitAnonymousInRevertedCall(uint256) ([METRICS])
 [FAIL: use vm.expectEmitAnonymous to match anonymous events; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectNoEmitAnonymousTemplate(uint256) ([METRICS])
+[PASS] checkExpectNoEmitCaught(uint256) ([METRICS])
+[PASS] checkExpectNoEmitEndsAfterCodelessCall(uint256) ([METRICS])
+[PASS] checkExpectNoEmitEndsAfterHaltedCall(uint256) ([METRICS])
+[PASS] checkExpectNoEmitEndsAfterMockedCall(uint256) ([METRICS])
 [PASS] checkExpectNoEmitEndsAfterNextCall(uint256) ([METRICS])
 [FAIL: log emitted but expected 0 times; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectNoEmitFailsWhenEmitted(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectNoEmitKeepsNonMatchingPath(uint256) ([METRICS])
+[FAIL: log emitted but expected 0 times; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectNoEmitKeptAcrossStaticCall(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit count 0 across a failed call] checkExpectNoEmitTemplateFromRevertedCall(uint256) ([METRICS])
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit count 0 across a failed call] checkExpectNoEmitUnderExpectRevert(uint256) ([METRICS])
+[PASS] checkExpectNoEmitUnderExpectRevert(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit with a pending expectation] checkQueuedExpectEmitFailsClosed(uint256) ([METRICS])
 [PASS] checkStopRecordKeepsAndPausesAccesses(uint256) ([METRICS])
-[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkStoppedRecordReportsWrite(uint256) ([METRICS])
-Suite result: FAILED. 4 passed; 6 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 8 passed; 7 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

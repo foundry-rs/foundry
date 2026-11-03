@@ -661,7 +661,7 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             recordCall::SELECTOR => {
-                state.access_record = Some(AccessRecord::recording());
+                state.access_record = Some(AccessRecord::default());
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             stopRecordCall::SELECTOR => {
