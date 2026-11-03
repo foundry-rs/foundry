@@ -703,6 +703,7 @@ impl<N: Network> EthApi<N> {
         let _reset = self.reset_lock.lock().await;
         let staged_fork = if let Some(fork) = self.backend.get_fork() {
             let mut validation_config = self.backend.node_config.read().await.clone();
+            validation_config.warn_if_fork_headers_withheld(&url);
             let (expected_identity, block_number, block_hash) = {
                 let config = fork.config.read();
                 (config.endpoint_identity, config.block_number, config.block_hash)
@@ -710,7 +711,7 @@ impl<N: Network> EthApi<N> {
             // A new URL replaces an offline discovery hint. Resolve the actual source identity so
             // unsupported networks cannot be hidden behind the previous endpoint's hint.
             validation_config.fork_chain_id = None;
-            let (provider, endpoint_identity) = validation_config
+            let (provider, endpoint_identity, tempo_epoch_length) = validation_config
                 .replacement_fork_provider(
                     &url,
                     expected_identity,
@@ -719,6 +720,16 @@ impl<N: Network> EthApi<N> {
                     self.instance_id(),
                 )
                 .await?;
+            // Consensus is already built, so a replacement cannot change its schedule.
+            if let Some(epoch_length) = tempo_epoch_length
+                && epoch_length.get() != self.backend.tempo_consensus_identity().await?.epoch_length
+            {
+                return Err(BlockchainError::Message(
+                    "replacement fork endpoint reveals a different Tempo epoch length; use \
+                     anvil_reset to rebuild consensus"
+                        .to_string(),
+                ));
+            }
             Some((fork, provider, endpoint_identity))
         } else {
             None
@@ -805,6 +816,11 @@ impl<N: Network> EthApi<N> {
     /// Returns a new listeners for ready transactions
     pub fn new_ready_transactions(&self) -> Receiver<TxHash> {
         self.pool.add_ready_listener()
+    }
+
+    /// Returns a ready-transaction stream that ends if its bounded listener overflows.
+    pub(crate) fn new_ready_transaction_subscription(&self) -> Receiver<TxHash> {
+        self.pool.add_ready_subscription_listener()
     }
 
     /// Returns true if forked
@@ -1590,16 +1606,7 @@ impl<N: Network> EthApi<N> {
     {
         node_info!("trace_call");
         let block_id = block_id.unwrap_or_default();
-        let block_request = match &block_id {
-            BlockId::Number(BlockNumber::Pending) => {
-                let pending_txs = self.pool.ready_transactions().collect();
-                BlockRequest::Pending(pending_txs)
-            }
-            _ => {
-                let number = self.backend.ensure_block_number(Some(block_id)).await?;
-                BlockRequest::Number(number)
-            }
-        };
+        let block_request = self.trace_block_request(block_id).await?;
         let inner = request.as_ref();
         let fees = FeeDetails::new(
             inner.gas_price,
@@ -1661,7 +1668,7 @@ impl<N: Network> EthApi<N> {
         &self,
         block: BlockNumber,
         trace_types: HashSet<TraceType>,
-    ) -> Result<Option<Vec<TraceResultsWithTransactionHash>>> {
+    ) -> Result<Vec<TraceResultsWithTransactionHash>> {
         node_info!("trace_replayBlockTransactions");
         self.backend.trace_replay_block_transactions(block, trace_types).await
     }
@@ -1676,6 +1683,20 @@ impl<N: Network> EthApi<N> {
     ) -> Result<Option<TraceResultsWithTransactionHash>> {
         node_info!("trace_replayTransaction");
         self.backend.trace_replay_transaction(transaction, trace_types).await
+    }
+
+    /// Returns the block request a trace method executes against.
+    async fn trace_block_request(
+        &self,
+        block_id: BlockId,
+    ) -> Result<BlockRequest<FoundryTxEnvelope>>
+    where
+        N: Network<TxEnvelope = FoundryTxEnvelope>,
+    {
+        if block_id.is_pending() {
+            return Ok(BlockRequest::Pending(self.pool.ready_transactions().collect()));
+        }
+        Ok(BlockRequest::Number(self.backend.ensure_trace_block_number(block_id).await?))
     }
 }
 
@@ -1828,7 +1849,7 @@ impl EthApi<FoundryNetwork> {
             }
             BlockchainError::RecoveryError(error)
         })?;
-        let block_request = self.block_request(block_number).await?;
+        let block_request = self.trace_block_request(block_number.unwrap_or_default()).await?;
 
         self.backend
             .trace_raw_transaction(pending_transaction, trace_types, Some(block_request))
@@ -4295,7 +4316,7 @@ impl EthApi<FoundryNetwork> {
         block_number: Option<BlockId>,
     ) -> Result<Vec<TraceResults>> {
         node_info!("trace_callMany");
-        let block_request = self.block_request(block_number).await?;
+        let block_request = self.trace_block_request(block_number.unwrap_or_default()).await?;
 
         self.backend.trace_call_many(calls, Some(block_request)).await
     }
@@ -5018,7 +5039,7 @@ impl EthApi<FoundryNetwork> {
     /// Returns a listener for pending transactions, yielding full transactions
     pub fn full_pending_transactions(&self) -> UnboundedReceiver<AnyRpcTransaction> {
         let (tx, rx) = unbounded_channel();
-        let mut hashes = self.new_ready_transactions();
+        let mut hashes = self.new_ready_transaction_subscription();
 
         let this = self.clone();
 
@@ -5652,7 +5673,10 @@ impl EthApi<FoundryNetwork> {
         self.backend.tempo_consensus_identity().await
     }
 
-    /// Schedules a new identity for the epoch following the next block's epoch.
+    /// Schedules a new identity two epochs after the next block's epoch.
+    ///
+    /// The first boundary announces a full DKG; the following boundary publishes the new key.
+    /// The returned `fromEpoch` is the first epoch that uses it.
     ///
     /// Handler for `anvil_tempoRotateConsensusIdentity`; unavailable on non-Tempo networks.
     pub async fn anvil_tempo_rotate_consensus_identity(&self) -> Result<TempoConsensusIdentity> {

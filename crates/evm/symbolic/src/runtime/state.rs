@@ -1,4 +1,5 @@
 use super::*;
+use alloy_sol_types::{Revert, SolError};
 use foundry_evm::revm::context_interface::cfg::gas::CALL_STIPEND;
 
 const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
@@ -31,6 +32,9 @@ pub(crate) struct PathState {
     needs_feasibility_check: bool,
     pub(crate) loop_jumps: HashMap<usize, u32>,
     pub(crate) expected_revert: Option<ExpectedRevert>,
+    /// Account of the first call, or reverting CREATE, that failed in or below this frame since
+    /// it was entered or since its last `vm.expectRevert`, which Forge reports as the reverter.
+    pub(crate) first_failed_callee: Option<Address>,
     pub(crate) assume_no_revert_next_call: Option<AssumeNoRevert>,
     pub(crate) expected_emit: Option<ExpectedEmit>,
     pub(crate) expected_calls: Vec<ExpectedCall>,
@@ -103,6 +107,7 @@ impl PathState {
             needs_feasibility_check: false,
             loop_jumps: HashMap::default(),
             expected_revert: None,
+            first_failed_callee: None,
             assume_no_revert_next_call: None,
             expected_emit: None,
             expected_calls: Vec::new(),
@@ -145,6 +150,7 @@ impl PathState {
         child.prank = SymbolicPrank::default();
         child.loop_jumps.clear();
         child.expected_revert = None;
+        child.first_failed_callee = None;
         child.assume_no_revert_next_call = None;
         child
     }
@@ -339,6 +345,7 @@ impl PathState {
         self.discard_failed_call_logs(recorded_logs_len, recorded_logs_generation);
         self.access_record = reverted.access_record;
         self.expected_revert = reverted.expected_revert;
+        self.first_failed_callee = reverted.first_failed_callee;
         self.assume_no_revert_next_call = reverted.assume_no_revert_next_call;
         self.expected_emit = reverted.expected_emit;
         self.expected_calls = reverted.expected_calls;
@@ -933,20 +940,40 @@ impl PathState {
     }
 
     pub(crate) fn record_sload(&mut self, address: Address, slot: SymExpr) {
-        if let Some(record) = &mut self.access_record {
+        if let Some(record) = &mut self.access_record
+            && !record.stopped
+        {
             record.read(address, slot);
         }
     }
 
     pub(crate) fn record_sstore(&mut self, address: Address, slot: SymExpr) {
-        if let Some(record) = &mut self.access_record {
+        if let Some(record) = &mut self.access_record
+            && !record.stopped
+        {
             record.write(address, slot);
+        }
+    }
+
+    /// Ends a `count = 0` `vm.expectEmit` declared in this frame after a call from it returns
+    /// without reverting.
+    ///
+    /// Like Forge's `call_end`, static calls keep it. Callers skip calls that `vm.expectRevert`
+    /// handles, which also keep it.
+    pub(crate) fn end_expected_emit_after_call(&mut self, kind: CallKind) {
+        if !self.is_static
+            && !matches!(kind, CallKind::StaticCall)
+            && self.expected_emit.as_ref().is_some_and(|expected| {
+                expected.is_forbidden() && expected.depth == self.call_depth
+            })
+        {
+            self.expected_emit = None;
         }
     }
 
     pub(crate) fn expectations_satisfied(&self) -> bool {
         self.expected_revert.is_none()
-            && self.expected_emit.as_ref().is_none_or(ExpectedEmit::is_satisfied)
+            && self.expected_emit.as_ref().is_none_or(ExpectedEmit::is_forbidden)
             && self.expected_calls.iter().all(ExpectedCall::is_satisfied)
             && self.expected_creates.is_empty()
     }
@@ -979,15 +1006,26 @@ impl SymbolicLog {
     pub(crate) fn into_parts(self) -> (Arc<[SymExpr]>, SymExpr, SymBytes, Address) {
         (self.topics, self.data_len, self.data, self.emitter)
     }
+
+    pub(crate) fn has_topics(&self) -> bool {
+        !self.topics.is_empty()
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct AccessRecord {
     reads: HashMap<Address, Vec<SymExpr>>,
     writes: HashMap<Address, Vec<SymExpr>>,
+    /// Set by `vm.stopRecord`, which keeps the recorded accesses but stops collecting new ones.
+    stopped: bool,
 }
 
 impl AccessRecord {
+    /// Stops collecting accesses while keeping the recorded ones, as `vm.stopRecord` does.
+    pub(crate) const fn stop(&mut self) {
+        self.stopped = true;
+    }
+
     pub(crate) fn read(&mut self, address: Address, slot: SymExpr) {
         Self::push_unique_slot(self.reads.entry(address).or_default(), slot);
     }
@@ -1025,12 +1063,18 @@ impl AccessRecord {
 pub(crate) struct ExpectedRevert {
     data: ExpectedRevertData,
     reverter: Option<SymExpr>,
+    count: u64,
     remaining: u64,
 }
 
 impl ExpectedRevert {
-    pub(crate) fn new(data: ExpectedRevertData, reverter: Option<SymExpr>, remaining: u64) -> Self {
-        Self { data, reverter, remaining: remaining.max(1) }
+    pub(crate) fn new(data: ExpectedRevertData, reverter: Option<SymExpr>, count: u64) -> Self {
+        let count = count.max(1);
+        Self { data, reverter, count, remaining: count }
+    }
+
+    pub(crate) const fn has_reverter(&self) -> bool {
+        self.reverter.is_some()
     }
 
     pub(crate) const fn consume_one(&mut self) -> bool {
@@ -1038,14 +1082,39 @@ impl ExpectedRevert {
         self.remaining == 0
     }
 
+    /// Returns whether Forge checks a reverter for a revert expected more than once, where it
+    /// reports the last failing call, which is the call itself unless it is a CREATE.
+    pub(crate) const fn repeats_with_reverter(&self) -> bool {
+        self.count > 1 && self.reverter.is_some()
+    }
+
+    /// Returns the reverter that Forge reports for a failed call: the call itself, `callee`, for
+    /// a revert expected more than once, otherwise the first call that failed since
+    /// `vm.expectRevert`.
+    pub(crate) const fn reverted_by(
+        &self,
+        callee: Option<Address>,
+        first_failed_callee: Option<Address>,
+    ) -> Option<Address> {
+        if self.count > 1 { callee } else { first_failed_callee }
+    }
+
+    /// Returns whether at least one expected revert has already matched.
+    pub(crate) const fn matched_any(&self) -> bool {
+        self.remaining < self.count
+    }
+
     pub(crate) fn match_condition(
         &self,
         cx: &mut SymCx,
-        reverter: Address,
+        reverter: Option<Address>,
         return_data: &SymReturnData,
     ) -> Option<SymBoolExpr> {
         let mut conditions = Vec::new();
-        if let Some(expected_reverter) = &self.reverter {
+        // Like Forge, skip the reverter check when no failing call or reverting CREATE was seen.
+        if let Some(expected_reverter) = &self.reverter
+            && let Some(reverter) = reverter
+        {
             conditions.push(expected_reverter.address_match_condition(cx, reverter));
         }
         match &self.data {
@@ -1068,16 +1137,27 @@ impl ExpectedRevert {
                 }));
             }
             ExpectedRevertData::Exact(data) => {
-                if return_data.len() < data.len() {
+                // Like Forge, also accept the expected bytes as the message of canonical
+                // `Error(string)` or `CheatcodeError(string)` revert data.
+                let message = SymbolicAbiValue::String { bytes: data.clone() };
+                let message = encode_sequence(cx, [&message]);
+                let mut candidates = vec![data.clone()];
+                for selector in [Revert::SELECTOR, Vm::CheatcodeError::SELECTOR] {
+                    let selector = SymBytes::concrete(cx, selector.to_vec());
+                    candidates.push(SymBytes::concat(cx, [selector, message.clone()]));
+                }
+                let mut matches = Vec::new();
+                for candidate in candidates {
+                    if let Some(bytes_match) = return_data.bytes.prefix_condition(cx, &candidate) {
+                        let len = SymExpr::constant(cx, U256::from(candidate.len()));
+                        let len_match = SymBoolExpr::eq(cx, return_data.len_word.clone(), len);
+                        matches.push(SymBoolExpr::and(cx, vec![len_match, bytes_match]));
+                    }
+                }
+                if matches.is_empty() {
                     return None;
                 }
-                let len = SymExpr::constant(cx, U256::from(data.len()));
-                conditions.push(SymBoolExpr::eq(cx, return_data.len_word.clone(), len));
-                conditions.extend((0..data.len()).map(|offset| {
-                    let expected = data.byte(cx, offset);
-                    let actual = return_data.byte(cx, offset);
-                    SymBoolExpr::eq(cx, actual, expected)
-                }));
+                conditions.push(SymBoolExpr::or(cx, matches));
             }
         }
         Some(SymBoolExpr::and(cx, conditions))
@@ -1351,19 +1431,26 @@ pub(crate) struct ExpectedEmit {
     emitter: Option<SymExpr>,
     remaining: u64,
     template: Option<SymbolicLog>,
+    /// Call depth of the frame that declared the expectation.
+    depth: usize,
 }
 
 impl ExpectedEmit {
-    pub(crate) fn new(
+    pub(crate) const fn new(
         checks: ExpectedEmitChecks,
         emitter: Option<SymExpr>,
         remaining: u64,
+        depth: usize,
     ) -> Self {
-        Self { checks, emitter, remaining: remaining.max(1), template: None }
+        Self { checks, emitter, remaining, template: None, depth }
     }
 
-    pub(crate) const fn is_satisfied(&self) -> bool {
-        self.template.is_none() && self.remaining == 0
+    /// Returns whether this expectation forbids logs matching its template (`count = 0`).
+    ///
+    /// A `count >= 1` expectation is dropped once consumed, so a stored expectation with nothing
+    /// remaining is a `count = 0` expectation, which is met while no log matches it.
+    pub(crate) const fn is_forbidden(&self) -> bool {
+        self.remaining == 0
     }
 
     pub(crate) const fn template(&self) -> Option<&SymbolicLog> {
@@ -1374,14 +1461,10 @@ impl ExpectedEmit {
         self.template = Some(log);
     }
 
-    pub(crate) fn consume_one(&mut self) -> bool {
+    /// Consumes one matching log and returns whether the expectation is met.
+    pub(crate) const fn consume_one(&mut self) -> bool {
         self.remaining = self.remaining.saturating_sub(1);
-        if self.remaining == 0 {
-            self.template = None;
-            true
-        } else {
-            false
-        }
+        self.remaining == 0
     }
 
     pub(crate) fn match_condition(
@@ -1394,16 +1477,15 @@ impl ExpectedEmit {
         if let Some(expected_emitter) = &self.emitter {
             conditions.push(expected_emitter.address_match_condition(cx, actual.emitter));
         }
-        for (idx, &check_topic) in self.checks.topics.iter().enumerate() {
-            if !check_topic {
-                continue;
-            }
-            match (template.topics.get(idx), actual.topics.get(idx)) {
-                (Some(left), Some(right)) => {
-                    conditions.push(SymBoolExpr::eq(cx, left.clone(), right.clone()));
-                }
-                (None, None) => {}
-                _ => return None,
+        // Like Forge, logs with different topic counts never match.
+        if template.topics.len() != actual.topics.len() {
+            return Some(SymBoolExpr::constant(cx, false));
+        }
+        for ((left, right), check) in
+            template.topics.iter().zip(actual.topics.iter()).zip(self.checks.topics)
+        {
+            if check {
+                conditions.push(SymBoolExpr::eq(cx, left.clone(), right.clone()));
             }
         }
 
@@ -1414,7 +1496,11 @@ impl ExpectedEmit {
                 actual.data_len.clone(),
             ));
             if template.data.len() != actual.data.len() {
-                return None;
+                // Different concrete sizes never match; buffers of a symbolic size cannot be
+                // compared byte by byte.
+                let concrete =
+                    template.data_len.as_const().is_some() && actual.data_len.as_const().is_some();
+                return concrete.then(|| SymBoolExpr::constant(cx, false));
             }
             conditions.extend((0..template.data.len()).map(|idx| {
                 let template = template.data.byte(cx, idx);
@@ -1993,13 +2079,13 @@ impl SymbolicWorld {
         let expr = address_expr;
         let representative = expr.representative_symbolic_address();
         let mut result = self.balance_word_for_address(cx, executor, representative);
-        for (address, balance) in &self.balances {
-            if self.destroyed_accounts.contains(address) {
-                continue;
-            }
-            let address = SymExpr::constant(cx, address_word(*address));
+        // Cheatcode accounts can hold balances even though they are not code candidates.
+        let cheatcode_addresses = [CHEATCODE_ADDRESS, SYMBOLIC_VM_COMPAT_ADDRESS];
+        for address in self.known_addresses(executor).into_iter().chain(cheatcode_addresses) {
+            let balance = self.balance_word_for_address(cx, executor, address);
+            let address = SymExpr::constant(cx, address_word(address));
             let condition = SymBoolExpr::eq(cx, expr.clone(), address);
-            result = SymExpr::ite(cx, condition, balance.clone(), result);
+            result = SymExpr::ite(cx, condition, balance, result);
         }
 
         Ok(result)
@@ -2264,13 +2350,11 @@ impl SymbolicWorld {
         let representative = expr.representative_symbolic_address();
         let len = self.extcode(cx, executor, representative)?.len();
         let mut result = SymExpr::constant(cx, U256::from(len));
-        for (address, code) in &self.code_cache {
-            if self.destroyed_accounts.contains(address) {
-                continue;
-            }
-            let address = SymExpr::constant(cx, address_word(*address));
+        for address in self.known_addresses(executor) {
+            let len = self.extcode(cx, executor, address)?.len();
+            let address = SymExpr::constant(cx, address_word(address));
             let condition = SymBoolExpr::eq(cx, expr.clone(), address);
-            let len = SymExpr::constant(cx, U256::from(code.len()));
+            let len = SymExpr::constant(cx, U256::from(len));
             result = SymExpr::ite(cx, condition, len, result);
         }
 
@@ -2290,9 +2374,7 @@ impl SymbolicWorld {
         let expr = address_expr;
         let representative = expr.representative_symbolic_address();
         let mut result = self.extcode_hash_for_address(cx, executor, representative)?;
-        // Cached code does not imply existence: empty accounts hash to zero.
-        let cached_addresses = self.code_cache.keys().copied().collect::<Vec<_>>();
-        for address in cached_addresses.into_iter().rev() {
+        for address in self.known_addresses(executor) {
             let hash = self.extcode_hash_for_address(cx, executor, address)?;
             let address = SymExpr::constant(cx, address_word(address));
             let condition = SymBoolExpr::eq(cx, expr.clone(), address);
@@ -2321,14 +2403,13 @@ impl SymbolicWorld {
             offset.clone(),
             size,
         );
-        let cached_codes = self.code_cache.iter().collect::<Vec<_>>();
-        for (address, code) in cached_codes.into_iter().rev() {
-            let bytes = if self.destroyed_accounts.contains(address) {
-                vec![SymExpr::zero(cx); size]
-            } else {
-                code.read_byte_exprs_offset(cx, offset.clone(), size)
-            };
-            let address = SymExpr::constant(cx, address_word(*address));
+        for address in self.known_addresses(executor) {
+            let bytes = self.extcode(cx, executor, address)?.read_byte_exprs_offset(
+                cx,
+                offset.clone(),
+                size,
+            );
+            let address = SymExpr::constant(cx, address_word(address));
             let condition = SymBoolExpr::eq(cx, expr.clone(), address);
             for (idx, byte) in bytes.into_iter().enumerate() {
                 result[idx] = SymExpr::ite(cx, condition.clone(), byte, result[idx].clone());
@@ -2343,20 +2424,9 @@ impl SymbolicWorld {
         cx: &mut SymCx,
         executor: &ExecutorView<'_>,
     ) -> Result<Vec<Address>, SymbolicError> {
-        let mut addresses = HashSet::<Address>::default();
-        addresses.extend(self.code_cache.keys().copied());
-        addresses.extend(self.existing_accounts.iter().copied());
-        addresses.extend(executor.account_addresses.iter().copied());
-        let mut addresses = addresses.into_iter().collect::<Vec<_>>();
-        addresses.sort_unstable();
-
         let mut targets = Vec::new();
-        let spec_id = executor.spec_id;
-        for address in addresses {
-            if address == CHEATCODE_ADDRESS
-                || address == SYMBOLIC_VM_COMPAT_ADDRESS
-                || is_precompile_for_spec(address, spec_id)
-            {
+        for address in self.known_addresses(executor) {
+            if is_precompile_for_spec(address, executor.spec_id) {
                 continue;
             }
             if !self.extcode(cx, executor, address)?.is_empty() {
@@ -2364,6 +2434,27 @@ impl SymbolicWorld {
             }
         }
         Ok(targets)
+    }
+
+    /// Returns the concrete accounts a symbolic address may alias, in address order.
+    ///
+    /// Includes accounts that exist only in the backend, such as contracts deployed in `setUp`,
+    /// which the world caches only once touched. Cheatcode addresses are excluded.
+    fn known_addresses(&self, executor: &ExecutorView<'_>) -> Vec<Address> {
+        let mut addresses = self
+            .code_cache
+            .keys()
+            .chain(self.balances.keys())
+            .chain(&self.existing_accounts)
+            .chain(&executor.account_addresses)
+            .copied()
+            .filter(|address| {
+                *address != CHEATCODE_ADDRESS && *address != SYMBOLIC_VM_COMPAT_ADDRESS
+            })
+            .collect::<Vec<_>>();
+        addresses.sort_unstable();
+        addresses.dedup();
+        addresses
     }
 }
 

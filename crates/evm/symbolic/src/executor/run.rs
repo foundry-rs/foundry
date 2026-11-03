@@ -621,7 +621,7 @@ impl SymbolicExecutor {
         if symbolic_invariant_should_check(0, input.depth, input.check_interval) {
             for outcome in self.execute_invariant_check(
                 &input.executor,
-                initial.state.clone(),
+                &initial.state,
                 input.invariant_address,
                 input.sender,
                 input.invariant,
@@ -730,7 +730,7 @@ impl SymbolicExecutor {
                                 ) {
                                     for mut invariant_outcome in self.execute_invariant_check(
                                         &input.executor,
-                                        post_state.clone(),
+                                        &post_state,
                                         input.invariant_address,
                                         input.sender,
                                         input.invariant,

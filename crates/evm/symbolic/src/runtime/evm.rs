@@ -134,6 +134,17 @@ pub(crate) fn is_assertion_revert(data: &[u8]) -> bool {
         || is_revert_assertion_failure(data)
 }
 
+pub(crate) fn cheatcode_error_revert_condition(
+    cx: &mut SymCx,
+    data: &SymReturnData,
+) -> Option<SymBoolExpr> {
+    let selector = SymBytes::concrete(cx, Vm::CheatcodeError::SELECTOR.to_vec());
+    let prefix = data.bytes.prefix_condition(cx, &selector)?;
+    let selector_len = SymExpr::constant(cx, U256::from(selector.len()));
+    let has_selector = SymBoolExpr::cmp_word_expr(cx, SymCmpOp::Uge, &data.len_word, selector_len);
+    Some(SymBoolExpr::and(cx, vec![has_selector, prefix]))
+}
+
 pub(crate) fn is_revert_assertion_failure(data: &[u8]) -> bool {
     if data.len() < ERROR_DATA_MIN_LEN {
         return false;

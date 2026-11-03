@@ -21,6 +21,7 @@ use serde_json::{Value, json};
 struct Identity {
     identity: Bytes,
     epoch_length: u64,
+    from_epoch: u64,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -53,10 +54,12 @@ pub(super) async fn collect(
         .request::<_, Identity>("anvil_tempoRotateConsensusIdentity", ())
         .await
         .unwrap();
+    assert_eq!(next_identity.from_epoch, 2);
+    // Height 3 announces the full DKG in epoch 1; height 7 publishes epoch 2's key.
+    provider.anvil_mine(Some(5), None).await.unwrap();
+    let boundary = record(provider, 7, None).await;
     mine(provider).await;
-    let boundary = record(provider, 3, None).await;
-    mine(provider).await;
-    let successor = record(provider, 4, Some(account)).await;
+    let successor = record(provider, 8, Some(account)).await;
     json!({
         "initialKey": key_coordinates(&identity.identity),
         "nextKey": key_coordinates(&next_identity.identity),

@@ -285,6 +285,20 @@ AnotherValueTooHigh(uint256,address)
 0x0000000000000000000000000000000000D0004F
 
 "#]]);
+
+    // --json must not print the looked-up signature before the JSON payload (Fixes #17914).
+    cmd.cast_fuse()
+        .args([
+            "decode-error",
+            "0x7191bc6200000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000D0004F",
+            "--json",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{"schema_version":1,"success":true,"data":["101","0x0000000000000000000000000000000000D0004F"],"errors":[],"warnings":[]}
+
+"#]]);
+
     // Assert cast can decode event with local cache.
     cmd.cast_fuse()
         .args(["decode-event", "0xbd3699995dcc867b64dbb607be2c33be38df9134bef1178df13bfb9446e73104000000000000000000000000000000000000000000000000000000000000004e00000000000000000000000000000000000000000000000000000dd00000004e"])
@@ -293,6 +307,98 @@ AnotherValueTooHigh(uint256,address)
 MyUniqueEventWithinLocalProject(uint256,address)
 78
 0x00000000000000000000000000000DD00000004e
+
+"#]]);
+
+    // --json must not print the looked-up signature before the JSON payload (Fixes #17914).
+    cmd.cast_fuse()
+        .args([
+            "decode-event",
+            "0xbd3699995dcc867b64dbb607be2c33be38df9134bef1178df13bfb9446e73104000000000000000000000000000000000000000000000000000000000000004e00000000000000000000000000000000000000000000000000000dd00000004e",
+            "--json",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{"schema_version":1,"success":true,"data":["78","0x00000000000000000000000000000DD00000004e"],"errors":[],"warnings":[]}
+
+"#]]);
+}
+
+// `cast 4byte`, `4byte-calldata` and `4byte-event` find signatures in the local cache that
+// `forge build` populates, like `decode-error` and `decode-event`. Cached library signatures such
+// as `f(LocalFourByteLib.E)` are printed as stored, not as their parsed `f(uint8)` form.
+#[forgetest_init]
+fn flaky_fourbyte_with_cache(prj: _, cmd: _) {
+    prj.add_source(
+        "LocalFourByteContract",
+        r#"
+contract LocalFourByteContract {
+    event MyUniqueFourByteEventWithinLocalProject(uint256 a);
+
+    function myUniqueFunctionWithinLocalProject(uint256 a) external {
+        emit MyUniqueFourByteEventWithinLocalProject(a);
+    }
+}
+
+library LocalFourByteLib {
+    enum E { A }
+
+    struct S { uint256 a; uint256 b; }
+
+    function myUniqueLibFunctionWithinLocalProject(E) external pure {}
+
+    function myUniqueLibStructWithinLocalProject(S calldata) external pure {}
+}
+   "#,
+    );
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    cmd.cast_fuse().args(["4byte", "0x27e1683f"]).assert_success().stdout_eq(str![[r#"
+myUniqueFunctionWithinLocalProject(uint256)
+
+"#]]);
+    cmd.cast_fuse()
+        .args([
+            "4byte-calldata",
+            "0x27e1683f0000000000000000000000000000000000000000000000000000000000000065",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+1) "myUniqueFunctionWithinLocalProject(uint256)"
+101
+
+"#]]);
+    cmd.cast_fuse()
+        .args(["4byte-event", "0xeaf21cfaa6a9673327f6acfc4816bd0e1be30cfbb4bcf3bd6ac5a786aeba96a5"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+MyUniqueFourByteEventWithinLocalProject(uint256)
+
+"#]]);
+    cmd.cast_fuse().args(["4byte", "0x36e32338"]).assert_success().stdout_eq(str![[r#"
+myUniqueLibFunctionWithinLocalProject(LocalFourByteLib.E)
+
+"#]]);
+    cmd.cast_fuse()
+        .args([
+            "4byte-calldata",
+            "0x36e323380000000000000000000000000000000000000000000000000000000000000000",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+1) "myUniqueLibFunctionWithinLocalProject(LocalFourByteLib.E)"
+0
+
+"#]]);
+    // `LocalFourByteLib.S` parses as `uint8`, which would decode only the first struct field.
+    cmd.cast_fuse()
+        .args([
+            "4byte-calldata",
+            "0x1c422ee300000000000000000000000000000000000000000000000000000000000003e80000000000000000000000000000000000000000000000000000000000000007",
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: No signatures found
 
 "#]]);
 }

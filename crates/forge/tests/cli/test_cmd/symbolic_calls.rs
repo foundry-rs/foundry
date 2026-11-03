@@ -41,6 +41,88 @@ contract SymbolicInvalidChildCall {
     cmd.args(["test", "--symbolic", "--match-test", "checkInvalidChildCall"]).assert_success();
 }
 
+// A callee that stops, by STOP or by running past the end of its code, after a call of its own
+// returns no data, not the return data of that call. Initcode that does the same deploys no code,
+// and a callee that hits INVALID after a call reverts with no data.
+#[forgetest_init]
+fn symbolic_stopped_callee_returns_no_data(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_stopped_callee_returns_no_data");
+
+    prj.add_test(
+        "SymbolicStoppedCallee.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Inner {
+    function value() external pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract Outer {
+    function callInner(Inner inner) external {
+        inner.value();
+    }
+
+    function callInnerThenInvalid(Inner inner) external {
+        inner.value();
+        assembly ("memory-safe") {
+            invalid()
+        }
+    }
+}
+
+contract SymbolicStoppedCallee is Test {
+    function checkStoppedCalleeReturnsNoData(uint256 size) public {
+        Outer outer = new Outer();
+        Inner inner = new Inner();
+        (bool success, bytes memory output) =
+            address(outer).call(abi.encodeCall(Outer.callInner, (inner)));
+        assert(success);
+        assert(output.length == 0);
+
+        vm.expectRevert(bytes(""));
+        outer.callInnerThenInvalid(inner);
+
+        // Runtime code that calls the identity precompile with 32 bytes, then runs past its end.
+        bytes memory initcode = hex"6012600c60003960126000f3602a600052600060006020600060045afa50";
+        address endless;
+        assembly ("memory-safe") {
+            endless := create(0, add(initcode, 0x20), mload(initcode))
+        }
+        (success, output) = endless.call("");
+        assert(success);
+        assert(output.length == 0);
+
+        // Initcode `staticcall(gas(), 4, 3, 2, 1, 0)` to the identity precompile, which returns
+        // 2 bytes, then STOP.
+        initcode = hex"58585858585afa5000";
+        address created;
+        assembly ("memory-safe") {
+            created := create(0, add(initcode, 0x20), mload(initcode))
+        }
+        assert(created != address(0));
+        assert(created.code.length == 0);
+
+        // The same call with a symbolic initcode size: at size 8 the initcode runs past its end,
+        // and at size 9 it reaches INVALID. Bounds, not equalities, keep the size symbolic.
+        initcode = hex"58585858585afa50fe";
+        vm.assume(size >= 8);
+        vm.assume(size <= 9);
+        assembly ("memory-safe") {
+            created := create(0, add(initcode, 0x20), size)
+        }
+        assert(size == 9 || created != address(0));
+        assert(created.code.length == 0);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "checkStoppedCalleeReturnsNoData"])
+        .assert_success();
+}
+
 #[forgetest_init]
 fn symbolic_assume_no_revert_does_not_prune_invalid_child_halt(prj: _, cmd: _) {
     if !z3_available() {
@@ -698,6 +780,72 @@ Ran 2 tests for test/SymbolicTargetMockMismatch.t.sol:SymbolicTargetMockMismatch
 [PASS] checkMockedSymbolicTargetAlwaysHits(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockedSymbolicTargetMayMiss(address,address) ([METRICS])
 Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// A failure inside one symbolic-target candidate must keep that candidate's constraints, so the
+// counterexample picks the failing target and inputs and replays.
+#[forgetest_init]
+fn symbolic_call_target_failure_keeps_candidate_state(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_call_target_failure_keeps_candidate_state");
+
+    prj.add_test(
+        "SymbolicTargetFailureState.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Good {
+    function f(uint256 x) external pure returns (bool) {
+        if (x != 12345) revert();
+        return true;
+    }
+}
+
+contract Bad {
+    function f(uint256) external pure returns (bool) {
+        revert();
+    }
+}
+
+contract SymbolicTargetFailureState is Test {
+    Good good;
+    Bad bad;
+
+    function setUp() public {
+        good = new Good();
+        bad = new Bad();
+    }
+
+    function checkExpectRevertOnSymbolicTarget(address target, uint256 x) public {
+        vm.assume(target == address(good) || target == address(bad));
+        vm.expectRevert();
+        Good(target).f(x);
+    }
+
+    function checkForbiddenCallOnSymbolicTarget(address target, uint256 x) public {
+        vm.assume(target == address(good) || target == address(bad));
+        vm.expectCall(address(good), abi.encodeCall(Good.f, (12345)), 0);
+        (bool ok,) = target.call(abi.encodeCall(Good.f, (x)));
+        ok;
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicTargetFailureState",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicTargetFailureState.t.sol:SymbolicTargetFailureState
+[FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectRevertOnSymbolicTarget(address,uint256) ([METRICS])
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0xb3de648b0000000000000000000000000000000000000000000000000000000000003039 to be called 0 times, but was called 1 time; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkForbiddenCallOnSymbolicTarget(address,uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

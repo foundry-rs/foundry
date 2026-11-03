@@ -50,7 +50,7 @@ async fn tempo_proofs_fork(prj: _, cmd: _) {
     let config = NodeConfig::test_tempo()
         .with_no_mining(true)
         .with_hardfork(Some(TempoHardfork::T14.into()))
-        .with_tempo_epoch_length(NonZeroU64::new(4).unwrap());
+        .with_tempo_epoch_length(NonZeroU64::new(4));
     let (_api, handle) = spawn(config.clone()).await;
     let mut proof = timeout(
         Duration::from_secs(60),

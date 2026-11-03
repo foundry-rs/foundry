@@ -185,7 +185,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
         ..
     } = config.clone();
 
-    let pool = Arc::new(Pool::default());
+    let pool = Arc::new(Pool::new(backend.fees().clone()));
 
     let mode = if let Some(block_time) = block_time {
         if mixed_mining {
