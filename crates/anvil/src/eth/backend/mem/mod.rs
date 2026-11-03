@@ -20,9 +20,9 @@ use crate::{
                 apply_chain_specific_tx_replay_env_changes_for_chain, block_env_from_header,
             },
             evm::{
-                AnvilEvmNetwork, AnyInspector, EthEvmNetwork, EvmFamily, EvmOptions, Executed,
-                PreparedTx, TempoEvmNetwork, TempoSimulation, TxContext, TxPayload, bsc_p256,
-                build_evm, with_evm_network,
+                AnvilEvmNetwork, AnyInspector, EthEvmNetwork, EvmOptions, Executed, PreparedTx,
+                TempoEvmNetwork, TempoSimulation, TxContext, TxPayload, bsc_p256, build_evm,
+                with_evm_network,
             },
             executor::{
                 AnvilBlockExecutor, BlockExecutionKind, BlockExecutionResult,
@@ -1612,7 +1612,7 @@ impl<N: Network> Backend<N> {
         let evm_env = self.evm_env.read().clone();
         let opts = self.evm_options(&evm_env);
         let db = crate::eth::backend::db::EmptyDb;
-        let ids = with_evm_network!(self.evm_family(), E => {
+        let ids = with_evm_network!(self.networks.execution_network(), E => {
             build_evm::<E>(&db, &evm_env, &opts).map(|evm| evm.precompiles().precompile_ids())
         })
         .unwrap_or_default();
@@ -2637,11 +2637,6 @@ impl<N: Network> Backend<N> {
         }
     }
 
-    /// Returns the evm2 family executing this backend's network.
-    const fn evm_family(&self) -> EvmFamily {
-        EvmFamily::from_networks(&self.networks)
-    }
-
     /// Returns the hardfork executing a block at `timestamp` when `hardfork` is configured.
     #[cfg_attr(not(feature = "base"), allow(unused_variables))]
     fn execution_hardfork_at(&self, hardfork: FoundryHardfork, timestamp: u64) -> FoundryHardfork {
@@ -2706,7 +2701,7 @@ impl<N: Network> Backend<N> {
         context: &TxContext,
         inspector: &mut I,
     ) -> Result<Executed, BlockchainError> {
-        with_evm_network!(self.evm_family(), E => {
+        with_evm_network!(self.networks.execution_network(), E => {
             crate::eth::backend::evm::execute::<E, I>(db, evm_env, opts, tx, context, inspector)
         })
     }
@@ -2715,7 +2710,7 @@ impl<N: Network> Backend<N> {
     fn precompile_addresses(&self, evm_env: &EvmEnv) -> Result<Vec<Address>, BlockchainError> {
         let opts = self.evm_options(evm_env);
         let db = crate::eth::backend::db::EmptyDb;
-        with_evm_network!(self.evm_family(), E => {
+        with_evm_network!(self.networks.execution_network(), E => {
             let evm = build_evm::<E>(&db, evm_env, &opts)?;
             Ok(evm.precompiles().addresses())
         })
@@ -2737,7 +2732,7 @@ impl<N: Network> Backend<N> {
         if moves.is_empty() {
             return Ok(SimulationPrecompileOverrides::default());
         }
-        if self.evm_family() != EvmFamily::Eth {
+        if !self.networks.execution_network().is_ethereum() {
             return Err(simulate_rpc_error(
                 -32000,
                 "precompile moves are not supported on this network",
@@ -2894,7 +2889,7 @@ impl<N: Network> Backend<N> {
         #[cfg(feature = "monad")]
         let mut monad_context =
             self.is_monad().then(|| self.monad_context_for_child_of(parent_hash)).transpose()?;
-        with_evm_network!(self.evm_family(), E => {
+        with_evm_network!(self.networks.execution_network(), E => {
             let mut executor = self.block_executor::<E>(
                 db,
                 evm_env,
@@ -5968,7 +5963,7 @@ where
         if let Some(block_number) = arbitrum_rpc_block_number {
             opts.arbitrum_block_number = Some(block_number);
         }
-        with_evm_network!(self.evm_family(), E => {
+        with_evm_network!(self.networks.execution_network(), E => {
             // Historical replay has no local blob budget.
             let mut executor = self.block_executor::<E>(
                 db,
@@ -6953,7 +6948,7 @@ where
                         monad_context.as_mut().map(next_monad_context),
                         hardfork,
                     )?;
-                    with_evm_network!(self.evm_family(), E => {
+                    with_evm_network!(self.networks.execution_network(), E => {
                         js_trace_result::<E>(&mut inspector, executed, &tx, &evm_env, &cache_db)
                     })
                 }
@@ -7288,7 +7283,7 @@ where
                 hash,
                 inspector,
                 |executed, db, mut inspector, tx, env| {
-                    with_evm_network!(self.evm_family(), E => {
+                    with_evm_network!(self.networks.execution_network(), E => {
                         js_trace_result::<E>(&mut inspector, executed, &tx, &env, db)
                     })
                 },
