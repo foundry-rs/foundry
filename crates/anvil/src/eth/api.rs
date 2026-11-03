@@ -1951,8 +1951,12 @@ impl EthApi<FoundryNetwork> {
                     request,
                     fees,
                     block_env,
-                    GasEstimateCallOptions::new(gas_limit, false, monad_context)
-                        .console_logs(ConsoleLogs::OnFailure),
+                    GasEstimateCallOptions::new(
+                        gas_limit,
+                        false,
+                        monad_context,
+                        ConsoleLogs::OnFailure,
+                    ),
                 )
                 .try_into()?;
             return match result {
@@ -2066,8 +2070,8 @@ impl EthApi<FoundryNetwork> {
                         highest_gas_limit.min(MIN_TRANSACTION_GAS) as u64,
                         disable_fee_charge,
                         monad_context.clone(),
-                    )
-                    .console_logs(ConsoleLogs::Never),
+                        ConsoleLogs::Never,
+                    ),
                 );
                 if let Ok(GasEstimationCallResult::Success(gas)) = probe.try_into() {
                     return Ok(gas);
@@ -2087,8 +2091,8 @@ impl EthApi<FoundryNetwork> {
                 highest_gas_limit as u64,
                 disable_fee_charge,
                 monad_context.clone(),
-            )
-            .console_logs(ConsoleLogs::OnFailure),
+                ConsoleLogs::OnFailure,
+            ),
         );
 
         let gas_used = match ethres.try_into()? {
@@ -2130,8 +2134,8 @@ impl EthApi<FoundryNetwork> {
                     mid_gas_limit as u64,
                     disable_fee_charge,
                     monad_context.clone(),
-                )
-                .console_logs(ConsoleLogs::Never),
+                    ConsoleLogs::Never,
+                ),
             );
 
             match ethres.try_into()? {

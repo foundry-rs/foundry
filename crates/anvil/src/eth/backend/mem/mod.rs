@@ -739,7 +739,7 @@ struct TypedCallOverrides {
 ///
 /// This does not change whether the console collector is installed, because the collector can
 /// change execution.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Default)]
 pub(crate) enum ConsoleLogs {
     #[default]
     Always,
@@ -760,14 +760,9 @@ impl GasEstimateCallOptions {
         gas_limit: u64,
         disable_fee_charge: bool,
         monad_context: Option<MonadReplayContext>,
+        console_logs: ConsoleLogs,
     ) -> Self {
-        Self { gas_limit, disable_fee_charge, monad_context, console_logs: ConsoleLogs::Always }
-    }
-
-    /// Sets when the call prints its console logs.
-    pub(crate) const fn console_logs(mut self, console_logs: ConsoleLogs) -> Self {
-        self.console_logs = console_logs;
-        self
+        Self { gas_limit, disable_fee_charge, monad_context, console_logs }
     }
 }
 
