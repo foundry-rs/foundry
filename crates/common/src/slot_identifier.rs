@@ -153,8 +153,22 @@ impl SlotInfo {
             // A dynamic array's own slot holds its length; the elements live at keccak256(slot).
             DynSolType::Array(_) => DynSolType::Uint(256).abi_decode(&value.0).ok(),
             _ => {
-                // Decode based on the actual type
-                actual_type.abi_decode(&value.0).ok()
+                let bits = match *actual_type {
+                    DynSolType::Uint(bits) | DynSolType::Int(bits) => bits,
+                    DynSolType::FixedBytes(size) => size * 8,
+                    DynSolType::Bool => 8,
+                    _ => return actual_type.abi_decode(value.as_slice()).ok(),
+                };
+                // Storage does not sign-extend intN or left-align bytesN as ABI encoding does.
+                // Discard higher-order bytes before moving the value to its ABI position.
+                let shift = 256 - bits;
+                let value = Into::<U256>::into(value) << shift;
+                let value = match actual_type {
+                    DynSolType::Int(_) => I256::from_raw(value).asr(shift).into_raw(),
+                    DynSolType::FixedBytes(_) => value,
+                    _ => value >> shift,
+                };
+                actual_type.abi_decode(B256::from(value).as_slice()).ok()
             }
         }
     }
