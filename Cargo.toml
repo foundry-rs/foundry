@@ -656,7 +656,7 @@ reth-zstd-compressors = { git = "https://github.com/paradigmxyz/reth-core", rev 
 ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]
 
 # The single evm2 revision for the whole graph: `mablr/evm2` `mablr/upstream-main-873`, which is
-# alloy-rs/evm2 `main` plus alloy-rs/evm2#873 squashed. Tempo, reth and evm2-networks pin
+# alloy-rs/evm2 `main` at `abfd112` plus alloy-rs/evm2#873 up to `24868e5`, squashed. Tempo, reth and evm2-networks pin
 # `alloy-rs/evm2`, while foundry-core pins `mablr/evm2`. Cargo rejects a patch from the same
 # source, so both go through `DaniPopes/evm2`, a URL in the same fork network. evm2-networks is
 # pinned above to its `main` after foundry-rs/evm2-networks#13, which marks its message

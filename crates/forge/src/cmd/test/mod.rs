@@ -87,10 +87,10 @@ use rand::Rng;
 use regex::Regex;
 use solar::ast::{ContractKind as SolarContractKind, ItemKind};
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     fmt::Write,
     path::{Path, PathBuf},
-    sync::{Arc, LazyLock, Mutex, mpsc::channel},
+    sync::{Arc, Mutex, mpsc::channel},
     time::{Duration, Instant},
 };
 use tempfile::TempDir;
@@ -3206,10 +3206,7 @@ fn spawn_backend<FEN: FoundryEvmNetwork>(
 }
 
 fn parse_opcode(s: &str) -> Result<OpCode, String> {
-    static OPCODES: LazyLock<HashMap<&str, OpCode>> = LazyLock::new(|| {
-        (0..=u8::MAX).filter_map(OpCode::new).map(|op| (op.as_str(), op)).collect()
-    });
-    OPCODES.get(s).copied().ok_or_else(|| format!("invalid opcode: {s}"))
+    OpCode::parse(s).ok_or_else(|| format!("invalid opcode: {s}"))
 }
 
 const fn apply_mutation_compiler_overrides(config: &mut Config) {

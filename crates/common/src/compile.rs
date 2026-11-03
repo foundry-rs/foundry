@@ -15,7 +15,9 @@ use comfy_table::{
 };
 use evm2::{
     SpecId,
-    constants::{MAX_CODE_SIZE, MAX_INITCODE_SIZE},
+    constants::{
+        MAX_CODE_SIZE, MAX_CODE_SIZE_AMSTERDAM, MAX_INITCODE_SIZE, MAX_INITCODE_SIZE_AMSTERDAM,
+    },
 };
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::contract::Metadata;
@@ -571,8 +573,8 @@ const CONTRACT_RUNTIME_SIZE_LIMIT: usize = MAX_CODE_SIZE;
 const CONTRACT_INITCODE_SIZE_LIMIT: usize = MAX_INITCODE_SIZE;
 
 // https://eips.ethereum.org/EIPS/eip-7954
-const AMSTERDAM_CONTRACT_RUNTIME_SIZE_LIMIT: usize = 65_536;
-const AMSTERDAM_CONTRACT_INITCODE_SIZE_LIMIT: usize = 131_072;
+const AMSTERDAM_CONTRACT_RUNTIME_SIZE_LIMIT: usize = MAX_CODE_SIZE_AMSTERDAM;
+const AMSTERDAM_CONTRACT_INITCODE_SIZE_LIMIT: usize = MAX_INITCODE_SIZE_AMSTERDAM;
 
 const CONTRACT_RUNTIME_SIZE_WARN_THRESHOLD: usize = 18_000;
 const CONTRACT_INITCODE_SIZE_WARN_THRESHOLD: usize = 36_000;
