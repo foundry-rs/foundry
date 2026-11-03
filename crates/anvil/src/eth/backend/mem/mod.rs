@@ -3368,7 +3368,7 @@ impl<N: Network> Backend<N> {
             || request.key_authorization_simulation.is_some()
         {
             return Err(BlockchainError::InvalidTransactionRequest(
-                "configurable account key type is not supported for simulation".to_string(),
+                "configurable account signatures are not supported for simulation".to_string(),
             ));
         }
         let signature = mock_tempo_signature(
