@@ -106,7 +106,7 @@ async fn native_epoch_boundaries() {
             NodeConfig::test_tempo()
                 .with_no_mining(true)
                 .with_hardfork(Some(hardfork.into()))
-                .with_tempo_epoch_length(NonZeroU64::new(3).unwrap()),
+                .with_tempo_epoch_length(NonZeroU64::new(3)),
         )
         .await;
         let identity = consensus_identity(&handle).await;
@@ -200,7 +200,7 @@ async fn native_rotation_follows_authenticated_announcement() {
             NodeConfig::test_tempo()
                 .with_no_mining(true)
                 .with_hardfork(Some(hardfork.into()))
-                .with_tempo_epoch_length(NonZeroU64::new(3).unwrap()),
+                .with_tempo_epoch_length(NonZeroU64::new(3)),
         )
         .await;
         let provider = handle.http_provider();
@@ -248,9 +248,8 @@ async fn native_rotation_follows_authenticated_announcement() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn native_fork_inherits_skipped_views() {
-    let config = NodeConfig::test_tempo()
-        .with_no_mining(true)
-        .with_tempo_epoch_length(NonZeroU64::new(4).unwrap());
+    let config =
+        NodeConfig::test_tempo().with_no_mining(true).with_tempo_epoch_length(NonZeroU64::new(4));
     let (source_api, source) = spawn(config.clone()).await;
     source_api.anvil_mine(Some(U256::from(5)), None).await.unwrap();
     let mut state = source_api.serialized_state(false).await.unwrap();

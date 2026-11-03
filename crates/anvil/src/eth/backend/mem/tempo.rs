@@ -45,7 +45,6 @@ use super::{
 };
 use crate::{
     NodeConfig,
-    config::DEFAULT_TEMPO_EPOCH_LENGTH,
     eth::{
         backend::{
             db::MaybeFullDatabase,
@@ -287,16 +286,25 @@ impl TempoChain {
             FoundryHeader::Tempo(_) => header,
             FoundryHeader::Ethereum(inner) => FoundryHeader::tempo(inner),
         };
+        let source_epoch_length = fork.config.read().tempo_epoch_length;
+        let epoch_length = config.effective_tempo_epoch_length(source_epoch_length);
         TempoConsensus::at_fork_header(
             config.tempo_consensus_seed(),
-            config.tempo_epoch_length,
+            epoch_length,
             header.as_tempo().expect("the fork anchor is a Tempo header"),
         )
         .map_err(|error| {
             let message = if matches!(error, TempoConsensusError::InvalidAnchorEpoch { .. }) {
+                let origin = if config.tempo_epoch_length.is_some() {
+                    "--tempo.epoch-length"
+                } else if source_epoch_length.is_some() {
+                    "the fork source"
+                } else {
+                    "the default"
+                };
                 format!(
-                    "{error}; set --tempo.epoch-length to match the fork source \
-                     (default: {DEFAULT_TEMPO_EPOCH_LENGTH})"
+                    "{error} (epoch length {epoch_length} from {origin}); \
+                     set --tempo.epoch-length to match the fork source"
                 )
             } else {
                 error.to_string()
@@ -314,7 +322,11 @@ impl TempoChain {
 
     /// Starts an unsigned local segment without inferring fork metadata.
     pub(super) fn local_consensus(config: &NodeConfig, height: u64) -> TempoConsensus {
-        TempoConsensus::at_height(config.tempo_consensus_seed(), config.tempo_epoch_length, height)
+        TempoConsensus::at_height(
+            config.tempo_consensus_seed(),
+            config.effective_tempo_epoch_length(None),
+            height,
+        )
     }
 }
 
@@ -1409,7 +1421,7 @@ mod tests {
     fn tempo_config(epoch_length: u64) -> NodeConfig {
         NodeConfig::test_tempo()
             .with_no_mining(true)
-            .with_tempo_epoch_length(NonZeroU64::new(epoch_length).unwrap())
+            .with_tempo_epoch_length(NonZeroU64::new(epoch_length))
     }
 
     async fn queue_transfer(api: &EthApi<FoundryNetwork>, sender: Address) -> B256 {
