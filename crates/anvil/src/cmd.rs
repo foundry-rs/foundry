@@ -1,6 +1,6 @@
 use crate::{
     AccountGenerator, CHAIN_ID, NodeConfig,
-    config::{DEFAULT_MNEMONIC, DEFAULT_SLOTS_IN_AN_EPOCH, DEFAULT_TEMPO_EPOCH_LENGTH, ForkChoice},
+    config::{DEFAULT_MNEMONIC, DEFAULT_SLOTS_IN_AN_EPOCH, ForkChoice},
     eth::{
         EthApi, backend::db::SerializableState, miner::INSTANT_COALESCE_WINDOW,
         pool::transactions::TransactionOrder,
@@ -92,17 +92,9 @@ pub struct NodeArgs {
     pub tempo_fee_payer: Option<Address>,
 
     /// Number of block heights in a Tempo consensus epoch. Only used on Tempo networks.
-    #[arg(
-        long = "tempo.epoch-length",
-        value_name = "BLOCKS",
-        long_help = format!(
-            "Number of block heights in a Tempo consensus epoch. Only used on Tempo networks.\n\n\
-             Defaults to the fork source's epoch length when available, otherwise {}. \
-             An explicit value overrides source metadata and must be compatible with the fork \
-             block's consensus epoch.",
-            DEFAULT_TEMPO_EPOCH_LENGTH,
-        )
-    )]
+    ///
+    /// Defaults to the fork source's epoch length when it reports one, otherwise 21600.
+    #[arg(long = "tempo.epoch-length", value_name = "BLOCKS")]
     pub tempo_epoch_length: Option<NonZeroU64>,
 
     /// Development consensus seed for Tempo, as 32 bytes of hex.
@@ -320,7 +312,7 @@ impl NodeArgs {
             networks
         };
 
-        let mut config = NodeConfig::default()
+        let config = NodeConfig::default()
             .with_gas_limit(self.evm.gas_limit)
             .disable_block_gas_limit(self.evm.disable_block_gas_limit)
             .enable_tx_gas_limit(self.evm.enable_tx_gas_limit)
@@ -383,6 +375,7 @@ impl NodeArgs {
             // execution chain ID. Fork source discovery can refine an unresolved network later.
             .with_networks(networks)
             .with_tempo_fee_payer(self.tempo_fee_payer)
+            .with_tempo_epoch_length(self.tempo_epoch_length)
             .with_tempo_consensus_seed(self.tempo_consensus_seed)
             .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
             .with_disable_pool_balance_checks(self.evm.disable_pool_balance_checks)
@@ -390,9 +383,6 @@ impl NodeArgs {
             .with_memory_limit(self.evm.memory_limit)
             .with_cache_path(self.cache_path)
             .with_funded_accounts(funded_accounts);
-        if let Some(epoch_length) = self.tempo_epoch_length {
-            config = config.with_tempo_epoch_length(epoch_length);
-        }
         #[cfg(feature = "base")]
         let config = config.with_base_activation_admin(base_activation_admin);
         Ok(config)
@@ -1702,9 +1692,6 @@ mod tests {
 
     #[test]
     fn tempo_consensus_arguments() {
-        let default = NodeArgs::parse_from(["anvil", "--network", "tempo"]);
-        assert_eq!(default.tempo_epoch_length, None);
-        assert_eq!(default.into_node_config().unwrap().tempo_epoch_length, None);
         for epoch_length in ["1", "21600", "18446744073709551615"] {
             let config = NodeArgs::try_parse_from([
                 "anvil",
@@ -1718,10 +1705,7 @@ mod tests {
             .unwrap()
             .into_node_config()
             .unwrap();
-            assert_eq!(
-                config.tempo_epoch_length,
-                NonZeroU64::new(epoch_length.parse::<u64>().unwrap())
-            );
+            assert_eq!(config.tempo_epoch_length, epoch_length.parse().ok());
             assert_eq!(config.tempo_consensus_seed(), B256::repeat_byte(1));
         }
         for epoch_length in ["0", "-1", "18446744073709551616"] {
@@ -1737,6 +1721,7 @@ mod tests {
     #[test]
     fn tempo_consensus_seed_uses_effective_mnemonic() {
         let default = NodeArgs::parse_from(["anvil"]).into_node_config().unwrap();
+        assert_eq!(default.tempo_epoch_length, None);
         assert_eq!(default.tempo_consensus_seed(), NodeConfig::default().tempo_consensus_seed());
         let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
         let custom =

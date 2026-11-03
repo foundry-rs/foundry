@@ -63,8 +63,6 @@ pub(crate) struct ForkEndpointIdentity {
     pub(crate) instance_id: Option<B256>,
     pub(crate) source_fork_block_number: Option<u64>,
     pub(crate) source_fork_block_hash: Option<B256>,
-    /// Consensus epoch length learned from compatible sources, independent of local overrides.
-    pub(crate) tempo_epoch_length: Option<NonZeroU64>,
 }
 
 impl ForkEndpointIdentity {
@@ -73,8 +71,7 @@ impl ForkEndpointIdentity {
         self.hardfork.is_some()
     }
 
-    /// Returns whether two endpoints expose compatible fork execution contexts.
-    /// Missing optional epoch metadata does not establish a conflict.
+    /// Returns whether two endpoints expose the same fork execution context.
     pub(crate) fn context_eq(self, other: Self) -> bool {
         self.execution_chain_id == other.execution_chain_id
             && self.source_chain_id == other.source_chain_id
@@ -84,13 +81,6 @@ impl ForkEndpointIdentity {
             && self.blob_params == other.blob_params
             && self.source_fork_block_number == other.source_fork_block_number
             && self.source_fork_block_hash == other.source_fork_block_hash
-            && self.tempo_epoch_length.zip(other.tempo_epoch_length).is_none_or(|(a, b)| a == b)
-    }
-
-    /// Returns whether observations identify the same instance with compatible configuration.
-    /// Missing optional epoch metadata does not establish an identity change.
-    pub(crate) fn same_instance(self, other: Self) -> bool {
-        self.instance_id == other.instance_id && self.context_eq(other)
     }
 }
 
@@ -968,6 +958,8 @@ pub struct ClientForkConfig<N: Network = AnyNetwork> {
     pub(crate) endpoint_identity: ForkEndpointIdentity,
     /// Discovery identified a local node or could not rule out mutable source state.
     pub(crate) state_is_mutable: bool,
+    /// Tempo consensus epoch length reported by the fork source, if it exposes one.
+    pub(crate) tempo_epoch_length: Option<NonZeroU64>,
     /// The timestamp for the forked block
     pub timestamp: u64,
     /// The basefee of the forked block
