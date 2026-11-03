@@ -26,7 +26,7 @@ impl<'gcx> LateLintPass<'gcx> for DuplicateStorageNamespace {
             if structs.len() < 2 {
                 continue;
             }
-            let first = qualified_name(gcx, structs[0]);
+            let first = gcx.item_canonical_name(structs[0]);
             // Bases come first, so every struct declared here after the first occurrence collides.
             for &strukt in &structs[1..] {
                 let strukt = gcx.hir.strukt(strukt);
@@ -42,15 +42,17 @@ impl<'gcx> LateLintPass<'gcx> for DuplicateStorageNamespace {
             }
             // Inherited declarations collide here only if no single base already combines them;
             // otherwise the collision is reported in that base.
-            let inherited = structs
-                .iter()
-                .filter_map(|&strukt| gcx.hir.strukt(strukt).contract.map(|c| (strukt, c)))
-                .filter(|&(_, declared_in)| declared_in != id)
-                .collect::<Vec<_>>();
-            if let [(first, _), .., (last, _)] = inherited[..]
+            let inherited = &structs
+                [..structs.partition_point(|&strukt| gcx.hir.strukt(strukt).contract != Some(id))];
+            if let &[first, .., last] = inherited
                 && !bases.iter().any(|&base| {
                     let hierarchy = gcx.hir.contract(base).linearized_bases;
-                    inherited.iter().all(|(_, declared_in)| hierarchy.contains(declared_in))
+                    inherited.iter().all(|&strukt| {
+                        gcx.hir
+                            .strukt(strukt)
+                            .contract
+                            .is_some_and(|declared_in| hierarchy.contains(&declared_in))
+                    })
                 })
             {
                 ctx.emit_with_msg(
@@ -58,8 +60,8 @@ impl<'gcx> LateLintPass<'gcx> for DuplicateStorageNamespace {
                     contract.name.span,
                     format!(
                         "ERC-7201 namespace `{namespace}` is declared by both `{}` and `{}`",
-                        qualified_name(gcx, first),
-                        qualified_name(gcx, last)
+                        gcx.item_canonical_name(first),
+                        gcx.item_canonical_name(last)
                     ),
                 );
             }
@@ -84,12 +86,4 @@ fn namespaced_structs<'gcx>(
         }
     }
     namespaces
-}
-
-fn qualified_name(gcx: Gcx<'_>, id: hir::StructId) -> String {
-    let strukt = gcx.hir.strukt(id);
-    match strukt.contract {
-        Some(contract) => format!("{}.{}", gcx.hir.contract(contract).name, strukt.name),
-        None => strukt.name.to_string(),
-    }
 }
