@@ -891,7 +891,8 @@ mod tests {
         });
         held_rx.recv_timeout(Duration::from_secs(10)).unwrap();
         hook.resume.notify_one();
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // Blocked mining and tracing can occupy every Tokio worker, so wait without the runtime.
+        thread::sleep(Duration::from_millis(500));
 
         let trace_api = api.clone();
         let trace = tokio::spawn(async move {
@@ -899,7 +900,7 @@ mod tests {
             trace_api.debug_trace_transaction(tx, opts).await
         });
         // Let tracing wait for its history upgrade before mining requests storage.
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        thread::sleep(Duration::from_millis(500));
         drop(release_tx);
         holder.join().unwrap();
         timeout(Duration::from_secs(10), mining).await.unwrap().unwrap().unwrap();
