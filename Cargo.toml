@@ -362,7 +362,7 @@ evm2 = { git = "https://github.com/mablr/evm2", rev = "bee42cd84d9b9f9638c163609
 evm2-inspectors = { git = "https://github.com/mablr/evm2", rev = "bee42cd84d9b9f9638c1636098957f1013bea2cd", features = [
     "serde",
 ] }
-# Tempo's evm2 integration (tempoxyz/tempo#7871).
+# Tempo main with evm2 (tempoxyz/tempo#8887).
 tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "5c04fd51cef7e9054a6506b8375faeb240abf1b0", default-features = false }
 tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "5c04fd51cef7e9054a6506b8375faeb240abf1b0", default-features = false, features = [
     "serde",
@@ -646,11 +646,11 @@ tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "5c04fd51c
 tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "5c04fd51cef7e9054a6506b8375faeb240abf1b0" }
 tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "5c04fd51cef7e9054a6506b8375faeb240abf1b0" }
 
-## reth-core — as patched by tempoxyz/tempo#7871 and reth, whose root patches do not propagate
-reth-codecs = { git = "https://github.com/paradigmxyz/reth-core", rev = "bd0edad994bfbb1e5cea8ca5b4da5d8813baa5f1" }
-reth-codecs-derive = { git = "https://github.com/paradigmxyz/reth-core", rev = "bd0edad994bfbb1e5cea8ca5b4da5d8813baa5f1" }
-reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth-core", rev = "bd0edad994bfbb1e5cea8ca5b4da5d8813baa5f1" }
-reth-zstd-compressors = { git = "https://github.com/paradigmxyz/reth-core", rev = "bd0edad994bfbb1e5cea8ca5b4da5d8813baa5f1" }
+## reth-core — as patched by tempoxyz/tempo and reth, whose root patches do not propagate
+reth-codecs = { git = "https://github.com/paradigmxyz/reth-core", rev = "275ce4cf5befeb9f1e8acd935ff2882d2d25fc61" }
+reth-codecs-derive = { git = "https://github.com/paradigmxyz/reth-core", rev = "275ce4cf5befeb9f1e8acd935ff2882d2d25fc61" }
+reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth-core", rev = "275ce4cf5befeb9f1e8acd935ff2882d2d25fc61" }
+reth-zstd-compressors = { git = "https://github.com/paradigmxyz/reth-core", rev = "275ce4cf5befeb9f1e8acd935ff2882d2d25fc61" }
 
 [workspace.metadata.cargo-shear]
 ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]
