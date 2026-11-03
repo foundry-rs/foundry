@@ -2195,6 +2195,8 @@ contract OtherTest {
         write("helpers/Helper.sol", "library Helper {}");
         write("notes.md", "notes");
         write("A{B,C}.t.sol", "contract GlobTest {}");
+        // Windows does not allow `*` in file names.
+        #[cfg(unix)]
         write("dir*/Star.t.sol", "contract StarTest {}");
         #[cfg(unix)]
         std::os::unix::fs::symlink(
@@ -2205,26 +2207,28 @@ contract OtherTest {
 
         let mut rejected = Vec::new();
         let files = collect_tests(workspace.path(), out, 1, &mut rejected).unwrap();
+        // Paths compare by component, so the expected paths hold on Windows too.
         assert_eq!(
             files
                 .iter()
-                .map(|file| (file.path.to_str().unwrap(), file.content.as_str()))
+                .map(|file| (file.path.as_path(), file.content.as_str()))
                 .collect::<Vec<_>>(),
             [
-                ("test/generated/agent-1/Fee.t.sol", "contract FeeTest {}"),
-                ("test/generated/agent-1/helpers/Helper.sol", "library Helper {}"),
+                (Path::new("test/generated/agent-1/Fee.t.sol"), "contract FeeTest {}"),
+                (Path::new("test/generated/agent-1/helpers/Helper.sol"), "library Helper {}"),
             ]
         );
         rejected.sort_by(|a, b| a.paths.cmp(&b.paths));
         assert_eq!(
             rejected
                 .iter()
-                .map(|rejected| format!("{} {}", rejected.paths[0].display(), rejected.reason))
+                .map(|rejected| (rejected.paths[0].as_path(), rejected.reason.as_str()))
                 .collect::<Vec<_>>(),
-            [
-                "test/generated/agent-1/A{B,C}.t.sol the path has a glob character",
-                "test/generated/agent-1/dir*/Star.t.sol the path has a glob character",
-            ]
+            ["test/generated/agent-1/A{B,C}.t.sol"]
+                .into_iter()
+                .chain(cfg!(unix).then_some("test/generated/agent-1/dir*/Star.t.sol"))
+                .map(|path| (Path::new(path), "the path has a glob character"))
+                .collect::<Vec<_>>()
         );
 
         // The output directory itself must not be a link.
