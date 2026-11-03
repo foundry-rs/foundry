@@ -9141,7 +9141,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b685c8311c9171d1bd2895222965d25616b2de2cb5819dd3504ed9250df9fecd"
 dependencies = [
  "ahash",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.1",
  "parking_lot 0.12.5",
  "stable_deref_trait",
 ]
@@ -10798,7 +10798,7 @@ dependencies = [
 [[package]]
 name = "reth-codecs"
 version = "0.8.2"
-source = "git+https://github.com/paradigmxyz/reth-core?rev=bd0edad994bfbb1e5cea8ca5b4da5d8813baa5f1#bd0edad994bfbb1e5cea8ca5b4da5d8813baa5f1"
+source = "git+https://github.com/paradigmxyz/reth-core?rev=275ce4cf5befeb9f1e8acd935ff2882d2d25fc61#275ce4cf5befeb9f1e8acd935ff2882d2d25fc61"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -10838,7 +10838,7 @@ dependencies = [
 [[package]]
 name = "reth-codecs-derive"
 version = "0.8.2"
-source = "git+https://github.com/paradigmxyz/reth-core?rev=bd0edad994bfbb1e5cea8ca5b4da5d8813baa5f1#bd0edad994bfbb1e5cea8ca5b4da5d8813baa5f1"
+source = "git+https://github.com/paradigmxyz/reth-core?rev=275ce4cf5befeb9f1e8acd935ff2882d2d25fc61#275ce4cf5befeb9f1e8acd935ff2882d2d25fc61"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -11071,7 +11071,7 @@ dependencies = [
 [[package]]
 name = "reth-primitives-traits"
 version = "0.8.2"
-source = "git+https://github.com/paradigmxyz/reth-core?rev=bd0edad994bfbb1e5cea8ca5b4da5d8813baa5f1#bd0edad994bfbb1e5cea8ca5b4da5d8813baa5f1"
+source = "git+https://github.com/paradigmxyz/reth-core?rev=275ce4cf5befeb9f1e8acd935ff2882d2d25fc61#275ce4cf5befeb9f1e8acd935ff2882d2d25fc61"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
@@ -11233,9 +11233,9 @@ dependencies = [
 [[package]]
 name = "reth-zstd-compressors"
 version = "0.8.2"
-source = "git+https://github.com/paradigmxyz/reth-core?rev=bd0edad994bfbb1e5cea8ca5b4da5d8813baa5f1#bd0edad994bfbb1e5cea8ca5b4da5d8813baa5f1"
+source = "git+https://github.com/paradigmxyz/reth-core?rev=275ce4cf5befeb9f1e8acd935ff2882d2d25fc61#275ce4cf5befeb9f1e8acd935ff2882d2d25fc61"
 dependencies = [
- "zstd 0.13.3",
+ "zstd 0.14.3",
 ]
 
 [[package]]
