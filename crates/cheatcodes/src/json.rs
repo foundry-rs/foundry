@@ -920,9 +920,7 @@ fn split_json_value_key(key: &str) -> Result<Vec<String>> {
         } else {
             let end = path.find(['.', '[']).unwrap_or(path.len());
             let segment = &path[..end];
-            if segment.is_empty()
-                || segment.chars().any(|ch| matches!(ch, ']' | '*' | '?' | '\'' | '"'))
-            {
+            if segment.is_empty() || segment.chars().any(|ch| matches!(ch, ']' | '*' | '?')) {
                 return Err(invalid());
             }
             parts.push(segment.to_owned());
@@ -1015,7 +1013,7 @@ mod tests {
 
     #[test]
     fn test_write_json_quoted_object_keys() {
-        let mut data = json!({"a.b": 1, "x": {"0xAb.c": 2}});
+        let mut data = json!({"a.b": 1, "x": {"0xAb.c": 2}, "can't": 0, "a\"b": 0});
         for (path, number) in [
             (r#".["a.b"]"#, 3),
             ("$['a.b']", 4),
@@ -1025,6 +1023,9 @@ mod tests {
             (".parent.child.value", 8),
             (r#".["a\"b]"]"#, 9),
             (r#".['a\'b]']"#, 10),
+            (".can't", 11),
+            (r#".a"b"#, 12),
+            (".new.can't.value", 13),
         ] {
             upsert_json_value(&mut data, &number.to_string(), path).unwrap();
             assert_eq!(select(&data, path).unwrap(), vec![&json!(number)], "{path}");
@@ -1035,10 +1036,12 @@ mod tests {
             json!({
                 "a.b": 4,
                 "x": {"0xAb.c": 6},
-                "new": {"child.key": {"value": 7}},
+                "new": {"child.key": {"value": 7}, "can't": {"value": 13}},
                 "parent": {"child": {"value": 8}},
                 "a\"b]": 9,
                 "a'b]": 10,
+                "can't": 11,
+                "a\"b": 12,
             })
         );
     }
