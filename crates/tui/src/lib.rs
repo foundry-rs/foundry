@@ -1,6 +1,7 @@
 //! Shared terminal UI utilities for Foundry.
 
 use crossterm::{
+    cursor::Show,
     event::{DisableMouseCapture, EnableMouseCapture, Event, read},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -207,6 +208,27 @@ pub fn with_terminal<T>(f: impl FnMut(&mut CrosstermTerminal) -> T) -> IoResult<
     let backend = CrosstermBackend::new(stdout());
     let terminal = Terminal::new(backend)?;
     Ok(TerminalGuard::with(terminal, f))
+}
+
+/// Runs a closure that sets up its own raw-mode alternate screen, restoring the terminal before a
+/// panic message is displayed.
+///
+/// Release builds abort on panic, so the closure's own cleanup on drop never runs.
+pub fn restore_terminal_on_panic<T>(f: impl FnOnce() -> T) -> T {
+    let previous = Arc::new(take_hook());
+    let hook = previous.clone();
+    set_hook(Box::new(move |info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture, Show);
+        (hook)(info)
+    }));
+    let output = f();
+    drop(take_hook());
+    // The previous hook is still shared only if the closure kept this hook elsewhere.
+    if let Ok(previous) = Arc::try_unwrap(previous) {
+        set_hook(previous);
+    }
+    output
 }
 
 #[cfg(test)]

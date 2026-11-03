@@ -14,6 +14,9 @@
 //! prepared height or key schedule. Only initialization before the backend is shared and private
 //! staged copies are exempt; publishing a staged copy still requires the database write lock.
 //! Readers of canonical consensus state acquire the database read lock before storage.
+//! Mining acquires the execution and proof history read guards before the storage write lock and
+//! retains them through checkpoint pruning. A path holding storage must not wait for either
+//! history lock unless it holds the database write lock, as reanchoring does.
 //! Subscription registration only needs storage to access the persistent event sender.
 //!
 //! Historical queries can use the trusted fork provider at or below its pinned height. They
@@ -65,9 +68,15 @@ use alloy_provider::Provider;
 use alloy_rpc_types::EIP1186AccountProofResponse as AccountProof;
 use anvil_core::eth::block::{Block, canonical_block};
 use anvil_rpc::error::{ErrorCode, RpcError};
+use foundry_evm::backend::{DatabaseError, DatabaseResult, EmptyDBWrapper, StateSnapshot};
 use foundry_primitives::FoundryHeader;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
-use revm::database::DbAccount;
+use revm::{
+    DatabaseRef,
+    bytecode::Bytecode,
+    database::{AccountState, CacheDB, DbAccount},
+    state::AccountInfo,
+};
 use std::{
     fmt,
     sync::Arc,
@@ -86,7 +95,7 @@ pub(crate) struct TempoChain {
     /// Immutable local tries sealed by locally mined fork blocks, with bounded retention.
     pub(super) proof_states: Arc<RwLock<InMemoryBlockStates>>,
     /// Incremental trie of the latest sealed account set, updated by diffing the next seal.
-    pub(super) proof_root: Arc<Mutex<(StateRootCache, AddressMap<DbAccount>)>>,
+    pub(super) proof_root: Arc<Mutex<(StateRootCache, Arc<AddressMap<DbAccount>>)>>,
     /// Live subscribers survive snapshots, imports, rewinds and resets.
     events: broadcast::Sender<Arc<TempoConsensusEvent>>,
 }
@@ -204,6 +213,34 @@ impl TempoChain {
         self.latest_block = Some(Arc::new(block.clone()));
     }
 
+    /// Prunes checkpoints below the oldest height that rollback or a fork proof can still reach.
+    ///
+    /// Rollback and reorg need the target's execution state, and fork proofs need its sealed
+    /// trie, so no consumer can unwind to a height once both have left the bounded state
+    /// histories. Certificates stay available for as long as their blocks. Explicit snapshots
+    /// restore their own controller and are unaffected.
+    ///
+    /// The caller holds the execution and proof history read guards, acquired before storage.
+    pub(super) fn prune(
+        &mut self,
+        hashes: &HashMap<u64, B256>,
+        states: &InMemoryBlockStates,
+        proof_states: &InMemoryBlockStates,
+    ) {
+        let Some((head, _)) = self.consensus.latest() else { return };
+        let mut below = self.consensus.retained_height();
+        while below < head
+            && !hashes
+                .get(&below)
+                .is_some_and(|hash| states.contains(hash) || proof_states.contains(hash))
+        {
+            below += 1;
+        }
+        self.consensus
+            .prune_checkpoints(below)
+            .expect("the pruning boundary never exceeds the head");
+    }
+
     /// Captures notification inputs after canonical state has been committed.
     pub(super) fn pending_finalization(
         &self,
@@ -278,6 +315,82 @@ impl TempoChain {
     /// Starts an unsigned local segment without inferring fork metadata.
     pub(super) fn local_consensus(config: &NodeConfig, height: u64) -> TempoConsensus {
         TempoConsensus::at_height(config.tempo_consensus_seed(), config.tempo_epoch_length, height)
+    }
+}
+
+/// Accounts sealed by a locally mined fork block.
+///
+/// Proof history, the incremental state root's diff base, and EVM snapshots share one copy.
+#[derive(Debug, Default)]
+pub(super) struct SealedAccounts(pub(super) Arc<AddressMap<DbAccount>>);
+
+impl DatabaseRef for SealedAccounts {
+    type Error = DatabaseError;
+
+    fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
+        match self.0.get(&address) {
+            Some(account) => Ok(account.info()),
+            None => EmptyDBWrapper::default().basic_ref(address),
+        }
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
+        EmptyDBWrapper::default().code_by_hash_ref(code_hash)
+    }
+
+    fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
+        Ok(self
+            .0
+            .get(&address)
+            .and_then(|account| account.storage.get(&index).copied())
+            .unwrap_or_default())
+    }
+
+    fn block_hash_ref(&self, number: u64) -> DatabaseResult<B256> {
+        EmptyDBWrapper::default().block_hash_ref(number)
+    }
+}
+
+impl MaybeFullDatabase for SealedAccounts {
+    fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
+        Some(&self.0)
+    }
+
+    fn maybe_shared_full_db(&self) -> Option<Arc<AddressMap<DbAccount>>> {
+        Some(Arc::clone(&self.0))
+    }
+
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
+        let snapshot = self.read_as_state_snapshot();
+        self.clear();
+        snapshot
+    }
+
+    fn read_as_state_snapshot(&self) -> StateSnapshot {
+        // Sealed tries only commit to code hashes, so the code itself is not persisted.
+        let mut snapshot = StateSnapshot::default();
+        let account_states = snapshot.account_states.insert(Default::default());
+        for (&address, account) in self.0.iter() {
+            snapshot.storage.insert(address, account.storage.clone());
+            if matches!(
+                account.account_state,
+                AccountState::NotExisting | AccountState::StorageCleared
+            ) {
+                account_states.insert(address, account.account_state.clone());
+            }
+            snapshot.accounts.insert(address, AccountInfo { code: None, ..account.info.clone() });
+        }
+        snapshot
+    }
+
+    fn clear(&mut self) {
+        self.0 = Default::default();
+    }
+
+    fn init_from_state_snapshot(&mut self, snapshot: StateSnapshot) {
+        let mut db = CacheDB::new(EmptyDBWrapper::default());
+        db.init_from_state_snapshot(snapshot);
+        self.0 = Arc::new(db.cache.accounts);
     }
 }
 
@@ -530,7 +643,10 @@ mod tests {
     use alloy_network::Ethereum;
     use alloy_primitives::keccak256;
     use alloy_provider::builder;
-    use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking};
+    use alloy_rpc_types::{
+        BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking,
+        trace::geth::GethDebugTracingOptions,
+    };
     use alloy_serde::WithOtherFields;
     use alloy_trie::{Nibbles, TrieAccount, proof::verify_proof};
     use anvil_core::types::ReorgOptions;
@@ -539,11 +655,14 @@ mod tests {
         hardfork::{EthereumHardfork, FoundryHardfork},
     };
     use foundry_primitives::FoundryNetwork;
-    use revm::database::AccountState;
     use std::{
         num::NonZeroU64,
-        sync::atomic::{AtomicBool, Ordering},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        },
         task::Poll,
+        thread,
         time::Duration,
     };
     use tokio::{sync::Notify, time::timeout};
@@ -653,6 +772,140 @@ mod tests {
         assert!(consensus(&api).finalization(2).is_none());
         api.anvil_rollback(Some(0)).await.unwrap();
         assert_certified_head(&api);
+    }
+
+    #[tokio::test]
+    async fn tempo_pruning_keeps_rewindable_history() {
+        let config =
+            NodeConfig::test_tempo().with_no_mining(true).set_pruned_history(Some(Some(3)));
+        let (api, _handle) = spawn(config).await;
+        api.anvil_mine(Some(U256::from(10)), None).await.unwrap();
+        let snapshot = api.evm_snapshot().await.unwrap();
+        api.anvil_mine(Some(U256::from(5)), None).await.unwrap();
+
+        let head = api.backend.best_number();
+        let pruned = consensus(&api);
+        let floor = pruned.retained_height();
+        assert!(0 < floor && floor < head, "floor {floor}, head {head}");
+        // The rewind floor is the oldest height whose execution state is still retained.
+        for height in 1..head {
+            let hash = api.backend.get_block(height).unwrap().header.hash_slow();
+            let rewindable = api.backend.states.read().contains(&hash);
+            assert_eq!(height >= floor, rewindable, "height {height}");
+            // Certificates outlive state history, as retained blocks can still be certified.
+            assert_eq!(
+                api.backend.tempo_finalization(Some(height)).await.unwrap().finalization,
+                pruned.finalization(height).unwrap().clone(),
+            );
+        }
+        assert_certified_head(&api);
+
+        // Rollback could never reach pruned heights, and still reaches the oldest retained one.
+        assert!(api.anvil_rollback(Some(head - floor + 1)).await.is_err());
+        api.anvil_rollback(Some(head - floor)).await.unwrap();
+        assert_eq!(api.backend.best_number(), floor);
+        assert_certified_head(&api);
+        api.mine_one().await.unwrap();
+        assert_certified_head(&api);
+
+        // A snapshot restores its own history, including certificates pruned after it was taken.
+        assert!(api.evm_revert(snapshot).await.unwrap());
+        assert_eq!(api.backend.best_number(), 10);
+        assert_certified_head(&api);
+        assert!(consensus(&api).retained_height() < floor);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn tempo_history_writers_do_not_block_storage_readers_while_mining() {
+        let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+        api.mine_one().await.unwrap();
+        // Historical reads hold a history write guard while they load and use an on-disk state.
+        let histories =
+            [Arc::clone(&api.backend.states), api.backend.tempo_proof_states().unwrap()];
+        for (head, history) in (1..).zip(histories) {
+            let hook = MiningCommitHook {
+                reached: Arc::new(Notify::new()),
+                resume: Arc::new(Notify::new()),
+            };
+            *api.backend.mining_commit_hook.lock() = Some(hook.clone());
+            let mining_api = api.clone();
+            let mining = tokio::spawn(async move { mining_api.mine_one().await });
+            timeout(Duration::from_secs(10), hook.reached.notified()).await.unwrap();
+            *api.backend.mining_commit_hook.lock() = None;
+
+            let (held_tx, held_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel::<()>();
+            let holder = thread::spawn(move || {
+                let _guard = history.write();
+                held_tx.send(()).unwrap();
+                let _ = release_rx.recv();
+            });
+            held_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+            hook.resume.notify_one();
+            thread::sleep(Duration::from_millis(500));
+
+            let backend = Arc::clone(&api.backend);
+            let (probe_tx, probe_rx) = mpsc::channel();
+            thread::spawn(move || {
+                let _ = probe_tx.send(backend.best_number());
+            });
+            let probe = probe_rx.recv_timeout(Duration::from_secs(2));
+            let waiting = !mining.is_finished();
+            drop(release_tx);
+            holder.join().unwrap();
+            // Mining waits for the history lock before publishing, not inside the storage lock.
+            assert_eq!(probe, Ok(head));
+            assert!(waiting);
+            timeout(Duration::from_secs(10), mining).await.unwrap().unwrap().unwrap();
+            assert_eq!(api.backend.best_number(), head + 1);
+            assert_certified_head(&api);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn tempo_trace_of_on_disk_parent_does_not_deadlock_mining() {
+        let (api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+        api.backend.states.write().set_cache_limit(1);
+        let tx = queue_transfer(&api, handle.dev_wallets().next().unwrap().address()).await;
+        api.mine_one().await.unwrap();
+        api.mine_one().await.unwrap();
+        // Tracing must upgrade the execution history guard to load the parent state from disk.
+        let parent = api.backend.get_block(0).unwrap().header.hash_slow();
+        assert!(api.backend.states.read().get_state(&parent).is_none());
+
+        let hook =
+            MiningCommitHook { reached: Arc::new(Notify::new()), resume: Arc::new(Notify::new()) };
+        *api.backend.mining_commit_hook.lock() = Some(hook.clone());
+        let mining_api = api.clone();
+        let mining = tokio::spawn(async move { mining_api.mine_one().await });
+        timeout(Duration::from_secs(10), hook.reached.notified()).await.unwrap();
+        *api.backend.mining_commit_hook.lock() = None;
+        // Park mining after it takes the execution history read guard, before it takes storage.
+        let proof_states = api.backend.tempo_proof_states().unwrap();
+        let (held_tx, held_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let holder = thread::spawn(move || {
+            let _guard = proof_states.write();
+            held_tx.send(()).unwrap();
+            let _ = release_rx.recv();
+        });
+        held_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        hook.resume.notify_one();
+        // Blocked mining and tracing can occupy every Tokio worker, so wait without the runtime.
+        thread::sleep(Duration::from_millis(500));
+
+        let trace_api = api.clone();
+        let trace = tokio::spawn(async move {
+            let opts = GethDebugTracingOptions::call_tracer(Default::default());
+            trace_api.debug_trace_transaction(tx, opts).await
+        });
+        // Let tracing wait for its history upgrade before mining requests storage.
+        thread::sleep(Duration::from_millis(500));
+        drop(release_tx);
+        holder.join().unwrap();
+        timeout(Duration::from_secs(10), mining).await.unwrap().unwrap().unwrap();
+        timeout(Duration::from_secs(10), trace).await.unwrap().unwrap().unwrap();
+        assert_eq!(api.backend.best_number(), 3);
     }
 
     #[tokio::test(flavor = "multi_thread")]
