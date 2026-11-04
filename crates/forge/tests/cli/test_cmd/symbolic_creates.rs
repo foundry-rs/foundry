@@ -642,6 +642,32 @@ contract SymbolicExpectCreate is Test {
     function checkMissingCreateExpectation(uint256) public {
         vm.expectCreate(type(SymbolicExpectedCreateTarget).runtimeCode, address(this));
     }
+
+    function checkHaltedCallCreateExpectation(uint256) public {
+        SymbolicExpectCreateFactory factory = new SymbolicExpectCreateFactory(false);
+        vm.expectCreate(type(SymbolicExpectedCreateTarget).runtimeCode, address(factory));
+        (bool ok,) = address(factory).call(abi.encodeCall(factory.createThenHalt, ()));
+        assertFalse(ok);
+    }
+
+    function checkConstructorCreateExpectation(uint256) public {
+        address factory = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        vm.expectCreate(type(SymbolicExpectedCreateTarget).runtimeCode, factory);
+        new SymbolicExpectCreateFactory(true);
+    }
+}
+
+contract SymbolicExpectCreateFactory {
+    constructor(bool create) {
+        if (create) new SymbolicExpectedCreateTarget();
+    }
+
+    function createThenHalt() external {
+        new SymbolicExpectedCreateTarget();
+        assembly {
+            invalid()
+        }
+    }
 }
 "#,
     );
@@ -718,6 +744,23 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 Ran 1 test for test/SymbolicExpectCreate.t.sol:SymbolicExpectCreate
 [FAIL: expected CREATE call by address 0x7fa9385be102ac3eac297483dd6233d62b3e1496 for bytecode 0x[..] but not found; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMissingCreateExpectation(uint256) ([METRICS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // Like Forge, creates inside a constructor or a call that later halts still count.
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "check(HaltedCall|Constructor)CreateExpectation",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicExpectCreate.t.sol:SymbolicExpectCreate
+[PASS] checkConstructorCreateExpectation(uint256) ([METRICS])
+[PASS] checkHaltedCallCreateExpectation(uint256) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

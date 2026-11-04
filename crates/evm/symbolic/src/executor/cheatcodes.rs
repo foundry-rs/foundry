@@ -324,7 +324,6 @@ impl SymbolicExecutor {
         // Isolation runs a `deployCode` from the test frame as its own transaction.
         let isolated = state.starts_isolated_transaction(executor);
         let mut child = state.child(frame);
-        let pending_expected_creates = std::mem::take(&mut child.expected_creates);
         child.world = failure_world.clone();
         if isolated {
             child.world.clear_transient_storage();
@@ -366,8 +365,7 @@ impl SymbolicExecutor {
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;
                     parents.push_back(parent);
                 }
-                JoinedCallOutcome::ExpectedRevert { mut parent, .. } => {
-                    parent.expected_creates = pending_expected_creates.clone();
+                JoinedCallOutcome::ExpectedRevert(mut parent) => {
                     parent.world = failure_world.clone();
                     let zero = SymExpr::zero(&mut self.cx);
                     let return_data = SymReturnData::from_words(&mut self.cx, vec![zero]);
@@ -386,7 +384,6 @@ impl SymbolicExecutor {
                         parent.world.restore_transient_storage(&failure_world);
                     }
                     parent.expected_emit = child.expected_emit;
-                    parent.expected_creates = pending_expected_creates.clone();
                     self.observe_expected_create(
                         &mut parent,
                         state.address,

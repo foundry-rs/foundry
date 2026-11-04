@@ -322,6 +322,7 @@ impl PathState {
         // Inspector state survives child reverts and exceptional halts.
         self.block = child.block.clone();
         self.expected_calls = std::mem::take(&mut child.expected_calls);
+        self.expected_creates = std::mem::take(&mut child.expected_creates);
         self.call_mocks = std::mem::take(&mut child.call_mocks);
         self.function_mocks = std::mem::take(&mut child.function_mocks);
     }
