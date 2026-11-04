@@ -498,3 +498,51 @@ Error: invalid event signature: expected 0x42d43c8775dfae639a33729abbd197262a51e
 
 "#]]);
 }
+
+// Logs sharing a topic0 can index different parameters, like ERC-721, legacy and ERC-20
+// `Transfer`, so the cached indexed flags are only kept if the non-indexed parameters fill DATA.
+#[cfg(not(windows))]
+#[casttest]
+fn event_decode_checks_cached_indexed_flags_against_data(prj: _, cmd: _) {
+    let selector = keccak256("Transfer(address,address,uint256)");
+    let mut cache = SignaturesCache::default();
+    cache.insert(
+        SelectorKind::Event(selector),
+        "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)".into(),
+    );
+    cache.save(&prj.root().join(".foundry/cache/signatures"));
+
+    // ERC-721 logs index every parameter, so DATA is empty.
+    cmd.env("HOME", prj.root());
+    cmd.args(["decode-event", &selector.to_string()]).assert_success().stdout_eq(str![[r#"
+Transfer(address,address,uint256)
+
+"#]]);
+
+    // Legacy tokens index nothing, so every parameter is in DATA.
+    let data = (Address::with_last_byte(1), Address::with_last_byte(2), U256::from(5)).abi_encode();
+    cmd.cast_fuse().env("HOME", prj.root());
+    cmd.args(["decode-event", &format!("{selector}{}", hex::encode(data))])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Transfer(address,address,uint256)
+0x0000000000000000000000000000000000000001
+0x0000000000000000000000000000000000000002
+5
+
+"#]]);
+
+    // ERC-20 DATA has one word, which matches neither layout.
+    let data = format!("{selector}{}", hex::encode((U256::from(5),).abi_encode()));
+    cmd.cast_fuse().env("HOME", prj.root());
+    cmd.args(["decode-event", &data])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+Transfer(address,address,uint256)
+
+"#]])
+        .stderr_eq(str![[r#"
+Error: ABI decoding failed: buffer overrun while deserializing
+
+"#]]);
+}
