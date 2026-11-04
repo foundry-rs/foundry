@@ -404,8 +404,12 @@ impl<'ast> State<'_, 'ast> {
         // For calls with opts and args, which should break consistently, we need to skip the
         // wrapping cbox to prioritize call args breaking before the call opts. Because of that, we
         // must manually offset the breaks between args, so that they are properly indented.
-        let manual_opening =
-            format.is_consistent() && !format.with_delimiters && self.call_with_opts_and_args;
+        let first_cmnt_isolated = self
+            .peek_comment_before(get_span(&values[0]).lo())
+            .is_some_and(|cmnt| cmnt.style.is_isolated());
+        let manual_opening = !format.with_delimiters
+            && self.call_with_opts_and_args
+            && (format.is_consistent() || first_cmnt_isolated);
         // When there are comments, we can preserve the cbox, as they will make it break
         let manual_offset = !has_comments && manual_opening;
 
