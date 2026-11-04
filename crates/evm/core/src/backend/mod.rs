@@ -44,7 +44,7 @@ use revm::{
     state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
 };
 use std::{
-    collections::{BTreeMap, HashMap, hash_map::Entry},
+    collections::{BTreeMap, HashMap},
     fmt::Debug,
     time::Instant,
 };
@@ -3329,6 +3329,7 @@ fn merge_db_account_data<ExtDB: DatabaseRef, N: Network, B: ForkBlockEnv>(
     }
 
     // port account storage over
+    use std::collections::hash_map::Entry;
     match fork_db.cache.accounts.entry(addr) {
         Entry::Vacant(vacant) => {
             trace!("target account not present - inserting from active");
