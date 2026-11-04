@@ -1599,7 +1599,10 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Revert(error_string_return_data(&mut self.cx, message)))
             }
             rollSlotCall::SELECTOR => {
-                state.block.slot_num = state.memory.load_word(&mut self.cx, in_offset + 4)?;
+                // The concrete cheatcode decodes a `uint64`, which drops the high bits.
+                let slot = state.memory.load_word(&mut self.cx, in_offset + 4)?;
+                let mask = SymExpr::constant(&mut self.cx, U256::from(u64::MAX));
+                state.block.slot_num = SymExpr::binop(&mut self.cx, SymBinOp::And, slot, mask);
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             setBlockhashCall::SELECTOR => {

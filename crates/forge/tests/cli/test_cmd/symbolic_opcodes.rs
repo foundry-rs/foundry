@@ -906,6 +906,14 @@ contract SymbolicAmsterdamOpcodes is Test {
         assertEq(read(SLOTNUM, 0), slot);
     }
 
+    function checkRollSlotTruncatesHighBits(uint256) public {
+        // The cheatcode decodes a `uint64`, so the high bits of a raw argument are dropped.
+        uint256 raw = (uint256(1) << 64) | 7;
+        (bool ok,) = address(vm).call(abi.encodeWithSelector(VmSlot.rollSlot.selector, raw));
+        assertTrue(ok);
+        assertEq(read(SLOTNUM, 0), 7);
+    }
+
     function checkStackOpcodes(uint256 x) public {
         assertEq(read(DUPN, x), x);
         assertEq(read(SWAPN, x), x);
@@ -942,17 +950,18 @@ contract SymbolicAmsterdamOpcodes is Test {
         "amsterdam",
         "--experimental",
         "--match-test",
-        "checkSlotNumber|checkStackOpcodes|checkDupnFindsCounterexample|checkImmediateEncoding",
+        "checkSlotNumber|checkRollSlotTruncatesHighBits|checkStackOpcodes|checkDupnFindsCounterexample|checkImmediateEncoding",
     ]))
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 4 tests for test/SymbolicAmsterdamOpcodes.t.sol:SymbolicAmsterdamOpcodes
+Ran 5 tests for test/SymbolicAmsterdamOpcodes.t.sol:SymbolicAmsterdamOpcodes
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkDupnFindsCounterexample(uint256) ([METRICS])
 [PASS] checkImmediateEncoding(uint256) ([METRICS])
+[PASS] checkRollSlotTruncatesHighBits(uint256) ([METRICS])
 [PASS] checkSlotNumber(uint64) ([METRICS])
 [PASS] checkStackOpcodes(uint256) ([METRICS])
-Suite result: FAILED. 3 passed; 1 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 4 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 
