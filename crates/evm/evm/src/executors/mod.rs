@@ -27,8 +27,8 @@ use foundry_common::FoundryTransactionBuilder;
 use foundry_evm_core::{
     backend::{Backend, BackendResult, CowBackend, GLOBAL_FAIL_SLOT, handler_error},
     constants::{
-        CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
-        DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
+        CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_CODE,
+        DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
     decode::{RevertDecoder, SkipReason},
     eip2935::{
@@ -152,16 +152,15 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
 
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // do not fail.
-        // The code hash value does not matter, as long as it's not zero or `KECCAK_EMPTY`.
+        // evm2 requires the code hash to be the hash of the code.
         let stub = Bytecode::new_raw(Bytes::from_static(&[0]));
-        backend.insert_account_info(
-            CHEATCODE_ADDRESS,
-            AccountInfo::new(U256::ZERO, 0, CHEATCODE_CONTRACT_HASH, Some(stub.clone())),
-        );
-        for &address in extra_cheatcode_addresses {
+        let stub_hash = stub.hash_slow();
+        for address in
+            std::iter::once(CHEATCODE_ADDRESS).chain(extra_cheatcode_addresses.iter().copied())
+        {
             backend.insert_account_info(
                 address,
-                AccountInfo::new(U256::ZERO, 0, keccak256(address), Some(stub.clone())),
+                AccountInfo::new(U256::ZERO, 0, stub_hash, Some(stub.clone())),
             );
         }
 

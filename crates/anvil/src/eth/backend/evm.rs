@@ -18,11 +18,8 @@ use crate::{
         error::BlockchainError,
     },
 };
-use alloy_consensus::{Signed, Transaction as _, transaction::Recovered};
-use alloy_eips::{
-    Decodable2718, Encodable2718,
-    eip7702::{RecoveredAuthority, RecoveredAuthorization},
-};
+use alloy_consensus::{Signed, Transaction as _, TxEip7702, transaction::Recovered};
+use alloy_eips::{Decodable2718, Encodable2718};
 use alloy_primitives::{
     Address, B256, Bytes, U256,
     map::{AddressMap, AddressSet},
@@ -30,7 +27,6 @@ use alloy_primitives::{
 use evm2::{
     Evm, EvmFeatures, EvmTypesHost, Inspector, PrecompileError,
     env::BlockEnv as NetBlockEnv,
-    ethereum::LazyAuthorization,
     evm::{PendingState, TxResult, TxResultExt, precompile::PrecompileProvider},
     interpreter::{GasTracker, Message},
     precompiles::{MovePrecompileError, PrecompileId, PrecompileResult},
@@ -246,14 +242,26 @@ pub fn authority_overrides(
 
 /// Applies authority overrides to an evm2 EIP-7702 transaction.
 fn override_authorities(tx: &mut evm2::ethereum::LazyTxEip7702, overrides: &[(usize, Address)]) {
+    let mut authorities: Vec<_> = tx.authorizations().map(|auth| auth.authority()).collect();
     for (index, authority) in overrides {
-        if let Some(auth) = tx.authorization_list.get_mut(*index) {
-            *auth = LazyAuthorization::Recovered(RecoveredAuthorization::new_unchecked(
-                auth.inner().clone(),
-                RecoveredAuthority::Valid(*authority),
-            ));
+        if let Some(slot) = authorities.get_mut(*index) {
+            *slot = Some(*authority);
         }
     }
+    let consensus = TxEip7702 {
+        chain_id: tx.chain_id,
+        nonce: tx.nonce,
+        gas_limit: tx.gas_limit,
+        max_fee_per_gas: tx.max_fee_per_gas,
+        max_priority_fee_per_gas: tx.max_priority_fee_per_gas,
+        to: tx.to,
+        value: tx.value,
+        access_list: core::mem::take(&mut tx.access_list),
+        authorization_list: tx.authorization_list().unwrap_or_default().to_vec(),
+        input: core::mem::take(&mut tx.input),
+    };
+    *tx =
+        evm2::ethereum::LazyTxEip7702::from_cached_recovered_authorizations(consensus, authorities);
 }
 
 impl AnvilEvmNetwork for EthEvmNetwork {

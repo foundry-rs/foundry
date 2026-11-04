@@ -202,11 +202,15 @@ impl DebugRecorder {
         } else {
             None
         };
-        // As the tracer: the reentrancy sentry halts before any charge.
-        let gas_cost = if interp.result() == Err(InstrStop::ReentrancySentryOOG) {
+        // As the tracer: the reentrancy sentry halts before any charge, and any other out-of-gas
+        // step consumes the whole remainder it started with.
+        let result = interp.result();
+        let gas_cost = if result == Err(InstrStop::ReentrancySentryOOG) {
             0
+        } else if result.is_err_and(InstrStop::is_out_of_gas) {
+            step.gas
         } else {
-            interp.step_cost()
+            step.gas.saturating_sub(interp.gas().remaining_excluding_state_spill())
         };
         let after = interp.stack();
         let after = after.as_slice();
