@@ -1942,10 +1942,14 @@ mod tests {
     };
     use alloy_dyn_abi::DynSolValue;
     use alloy_evm::EvmEnv;
+    use alloy_json_abi::JsonAbi;
     use foundry_cheatcodes::{Cheatcodes, CheatsConfig};
     use foundry_config::FuzzDictionaryConfig;
     use foundry_evm_core::{backend::Backend, constants::MAGIC_ASSUME, evm::EthEvmNetwork};
-    use foundry_evm_fuzz::strategies::{EvmFuzzState, TxGenerator};
+    use foundry_evm_fuzz::{
+        invariant::TargetedContract,
+        strategies::{EvmFuzzState, TxGenerator},
+    };
     use proptest::prelude::{Just, Strategy};
     use rayon::prelude::*;
     use revm::{DatabaseRef, bytecode::Bytecode, context::TxEnv, database::InMemoryDB};
@@ -2113,9 +2117,6 @@ mod tests {
         functions: Vec<Function>,
         targeted_selectors: impl IntoIterator<Item = alloy_primitives::Selector>,
     ) -> FuzzRunIdentifiedContracts {
-        use alloy_json_abi::JsonAbi;
-        use foundry_evm_fuzz::invariant::TargetedContract;
-
         let mut abi = JsonAbi::new();
         for function in functions {
             abi.functions.entry(function.name.clone()).or_default().push(function);

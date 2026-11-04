@@ -578,12 +578,14 @@ pub fn generate_msg_value(test_runner: &mut TestRunner) -> U256 {
 
 #[cfg(test)]
 mod tests {
+    use super::{fuzz_msg_value, fuzz_param_from_state, mutate_param_value, select_random_address};
     use crate::{
         FuzzFixtures,
-        strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state},
+        invariant::SenderFilters,
+        strategies::{EvmFuzzState, LiteralMaps, fuzz_calldata, fuzz_calldata_from_state},
     };
     use alloy_dyn_abi::{DynSolType, DynSolValue};
-    use alloy_primitives::{B256, U256};
+    use alloy_primitives::{Address, B256, U256, keccak256};
     use foundry_common::abi::get_func;
     use foundry_config::FuzzDictionaryConfig;
     use proptest::{
@@ -595,8 +597,6 @@ mod tests {
 
     #[test]
     fn payable_value_weight_controls_non_zero_msg_value() {
-        use super::fuzz_msg_value;
-
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
         let mut runner = proptest::test_runner::TestRunner::new(cfg);
 
@@ -656,12 +656,6 @@ mod tests {
 
     #[test]
     fn can_fuzz_string_and_bytes_with_ast_literals_and_hashes() {
-        use super::fuzz_param_from_state;
-        use crate::strategies::LiteralMaps;
-        use alloy_dyn_abi::DynSolType;
-        use alloy_primitives::keccak256;
-        use proptest::strategy::Strategy;
-
         // Seed dict with string values and their hashes --> mimic `CheatcodeAnalysis` behavior.
         let mut literals = LiteralMaps::default();
         literals.strings.insert("hello".to_string());
@@ -714,10 +708,6 @@ mod tests {
 
     #[test]
     fn mutate_address_can_select_from_dictionary() {
-        use super::mutate_param_value;
-        use alloy_dyn_abi::{DynSolType, DynSolValue};
-        use alloy_primitives::Address;
-
         let mut state = EvmFuzzState::test();
 
         // Add addresses to dictionary via state values.
@@ -767,10 +757,6 @@ mod tests {
 
     #[test]
     fn mutate_address_prefers_targeted_senders() {
-        use super::select_random_address;
-        use crate::invariant::SenderFilters;
-        use alloy_primitives::Address;
-
         let mut state = EvmFuzzState::test();
 
         // Add addresses to dictionary (these should NOT be selected when targeted is set).
@@ -819,10 +805,6 @@ mod tests {
 
     #[test]
     fn mutate_address_respects_excluded_senders() {
-        use super::select_random_address;
-        use crate::invariant::SenderFilters;
-        use alloy_primitives::Address;
-
         let mut state = EvmFuzzState::test();
 
         // Add addresses to dictionary.
@@ -861,8 +843,6 @@ mod tests {
 
     #[test]
     fn reuses_whole_struct_from_dictionary() {
-        use alloy_primitives::Address;
-
         let value = DynSolValue::Tuple(vec![
             DynSolValue::Address(Address::repeat_byte(0x44)),
             DynSolValue::Uint(U256::from(123_456_789u64), 256),

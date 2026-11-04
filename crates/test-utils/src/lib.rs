@@ -41,10 +41,10 @@ pub use foundry_compilers;
 
 pub use foundry_test_macros::{casttest, forgetest, forgetest_init};
 pub use snapbox::{self, assert_data_eq, file, str};
+use std::sync::Once;
 
 /// Initializes tracing for tests.
 pub fn init_tracing() {
-    use std::sync::Once;
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         if std::env::var_os("RUST_BACKTRACE").is_none() {
