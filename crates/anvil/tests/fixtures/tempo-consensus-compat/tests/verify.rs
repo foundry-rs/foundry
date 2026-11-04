@@ -139,10 +139,12 @@ async fn verify_block(handle: &NodeHandle, height: u64, trusted_identity: &[u8])
     assert_eq!(raw.as_ref(), alloy_rlp::encode(header));
     assert_eq!(keccak256(&raw), finalization.digest);
     assert_eq!(block.header.hash, finalization.digest);
-    let identity = <MinSig as Variant>::Public::decode(trusted_identity).unwrap();
+    let identity =
+        <MinSig as Variant>::Public::decode(commonware_codec::Copying(trusted_identity)).unwrap();
     let verifier = Scheme::<PublicKey, MinSig>::certificate_verifier(b"TEMPO", identity);
     let bytes = hex::decode(&finalization.certificate).unwrap();
-    let certificate = NativeCertificate::decode(bytes.as_slice()).unwrap();
+    let certificate =
+        NativeCertificate::decode(commonware_codec::Copying(bytes.as_slice())).unwrap();
     assert_eq!(certificate.proposal.round.epoch().get(), finalization.epoch);
     assert_eq!(certificate.proposal.round.view().get(), finalization.view);
     assert_eq!(certificate.proposal.payload.0, finalization.digest.0);
@@ -214,8 +216,10 @@ async fn native_rotation_follows_authenticated_announcement() {
         api.mine_one().await.unwrap();
 
         let boundary = verify_block(&handle, 2, &initial.identity).await;
-        let announcement =
-            OnchainDkgOutcome::decode(boundary.block.header.inner.extra_data.as_ref()).unwrap();
+        let announcement = OnchainDkgOutcome::decode(commonware_codec::Copying(
+            boundary.block.header.inner.extra_data.as_ref(),
+        ))
+        .unwrap();
         assert_eq!(announcement.epoch, scheduled.from_epoch);
         let next_key = announcement.network_identity().encode();
         assert_eq!(next_key.as_ref(), scheduled.identity.as_ref());
@@ -226,8 +230,12 @@ async fn native_rotation_follows_authenticated_announcement() {
         assert_eq!(consensus_identity(&handle).await.identity.as_ref(), next_key.as_ref());
 
         let bytes = hex::decode(&next.certificate).unwrap();
-        let certificate = NativeCertificate::decode(bytes.as_slice()).unwrap();
-        let old_key = <MinSig as Variant>::Public::decode(initial.identity.as_ref()).unwrap();
+        let certificate =
+            NativeCertificate::decode(commonware_codec::Copying(bytes.as_slice())).unwrap();
+        let old_key = <MinSig as Variant>::Public::decode(commonware_codec::Copying(
+            initial.identity.as_ref(),
+        ))
+        .unwrap();
         let old_verifier = Scheme::<PublicKey, MinSig>::certificate_verifier(b"TEMPO", old_key);
         assert!(!certificate.verify(
             &mut ChaCha20Rng::from_seed([0; 32]),

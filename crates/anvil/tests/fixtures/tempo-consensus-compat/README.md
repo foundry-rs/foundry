@@ -1,7 +1,7 @@
 # Native Tempo certificate verification
 
 This test-only workspace member starts local Anvil nodes and decodes their HTTP
-responses using Commonware 2026.9.0's
+responses using Commonware 2026.10.0's
 `Finalization<Scheme<PublicKey, MinSig>, Digest>` and `tempo_primitives::Block`.
 It covers empty blocks, blocks containing Ethereum and Tempo transactions, and
 T3/T4 epoch boundaries. It checks byte-identical re-encoding, header and body

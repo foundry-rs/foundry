@@ -98,8 +98,12 @@ mod tests {
             assert_eq!(&certificate[prefix.len()..proposal_len], &[digest_byte; 32]);
             assert_eq!(certificate.len(), proposal_len + 96);
 
-            let vote = G1::decode(&certificate[proposal_len..proposal_len + 48]).unwrap();
-            let seed = G1::decode(&certificate[proposal_len + 48..]).unwrap();
+            let vote = G1::decode(commonware_codec::Copying(
+                &certificate[proposal_len..proposal_len + 48],
+            ))
+            .unwrap();
+            let seed =
+                G1::decode(commonware_codec::Copying(&certificate[proposal_len + 48..])).unwrap();
             let public = output.public().public();
             assert!(
                 ops::verify_message::<MinSig>(
@@ -128,7 +132,8 @@ mod tests {
     }
 
     fn committee(seed: u8) -> (Output<MinSig, PublicKey>, Share) {
-        let proposer = PrivateKey::decode(&[seed; 32][..]).unwrap().public_key();
+        let proposer =
+            PrivateKey::decode(commonware_codec::Copying(&[seed; 32][..])).unwrap().public_key();
         let (output, shares) = feldman_desmedt::deal::<MinSig, _, N3f1>(
             ChaCha20Rng::from_seed([seed; 32]),
             Mode::NonZeroCounter,

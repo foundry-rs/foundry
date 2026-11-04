@@ -7110,18 +7110,18 @@ async fn tempo_finalization(provider: &RetryProvider, height: u64) -> TempoCerti
 fn assert_tempo_certificate(identity: &TempoConsensusIdentity, certified: &TempoCertifiedBlock) {
     let bytes = hex::decode(&certified.certificate).unwrap();
     assert_eq!(certified.certificate, hex::encode(&bytes));
-    let mut cursor = bytes.as_slice();
+    let mut cursor = commonware_codec::Copying(bytes.as_slice());
     assert_eq!(UInt::<u64>::read(&mut cursor).unwrap().0, certified.epoch);
     assert_eq!(UInt::<u64>::read(&mut cursor).unwrap().0, certified.view);
-    let round_length = bytes.len() - cursor.len();
+    let round_length = bytes.len() - cursor.0.len();
     assert_eq!(UInt::<u64>::read(&mut cursor).unwrap().0, certified.view - 1);
-    assert_eq!(&cursor[..32], certified.digest.as_slice());
-    cursor = &cursor[32..];
-    let proposal_length = bytes.len() - cursor.len();
+    assert_eq!(&cursor.0[..32], certified.digest.as_slice());
+    cursor.0 = &cursor.0[32..];
+    let proposal_length = bytes.len() - cursor.0.len();
     let vote = G1::read(&mut cursor).unwrap();
     let seed = G1::read(&mut cursor).unwrap();
-    assert!(cursor.is_empty());
-    let public = G2::decode(identity.identity.as_ref()).unwrap();
+    assert!(cursor.0.is_empty());
+    let public = G2::decode(commonware_codec::Copying(identity.identity.as_ref())).unwrap();
     ops::verify_message::<MinSig>(&public, b"TEMPO_FINALIZE", &bytes[..proposal_length], &vote)
         .unwrap();
     ops::verify_message::<MinSig>(&public, b"TEMPO_SEED", &bytes[..round_length], &seed).unwrap();
@@ -7928,9 +7928,10 @@ async fn tempo_consensus_context_obeys_hardfork_boundary() {
             assert_eq!(finalization.block.header.consensus_context.is_some(), hardfork.is_t4());
             assert_tempo_certificate(&identity, &finalization);
             if height == 2 {
-                let outcome =
-                    OnchainDkgOutcome::decode(finalization.block.header.extra_data().as_ref())
-                        .unwrap();
+                let outcome = OnchainDkgOutcome::decode(commonware_codec::Copying(
+                    finalization.block.header.extra_data().as_ref(),
+                ))
+                .unwrap();
                 assert_eq!(outcome.epoch, 1);
                 assert_eq!(
                     outcome.network_identity().encode().as_ref(),
@@ -8096,7 +8097,10 @@ async fn tempo_consensus_rotation_after_boundary_waits_an_epoch() {
         assert_eq!(subscriptions::next_event(&mut events).await.certified, finalized);
     }
     let boundary = tempo_finalization(&provider, 5).await;
-    let outcome = OnchainDkgOutcome::decode(boundary.block.header.extra_data().as_ref()).unwrap();
+    let outcome = OnchainDkgOutcome::decode(commonware_codec::Copying(
+        boundary.block.header.extra_data().as_ref(),
+    ))
+    .unwrap();
     assert_eq!(outcome.epoch, 2);
     assert_eq!(outcome.network_identity().encode().as_ref(), rotated.identity.as_ref());
     assert_eq!(tempo_consensus_identity(&provider).await, initial);
@@ -8124,7 +8128,10 @@ async fn tempo_consensus_single_block_epochs_announce_before_rotation() {
     let boundary = tempo_finalization(&provider, 1).await;
     assert_eq!((boundary.epoch, boundary.view), (1, 1));
     assert_tempo_certificate(&initial, &boundary);
-    let outcome = OnchainDkgOutcome::decode(boundary.block.header.extra_data().as_ref()).unwrap();
+    let outcome = OnchainDkgOutcome::decode(commonware_codec::Copying(
+        boundary.block.header.extra_data().as_ref(),
+    ))
+    .unwrap();
     assert_eq!(outcome.epoch, 2);
     assert_eq!(outcome.network_identity().encode().as_ref(), rotated.identity.as_ref());
     assert_eq!(tempo_consensus_identity(&provider).await, initial);
