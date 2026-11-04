@@ -12,6 +12,7 @@ use foundry_common::{
     fs::{self, write_json_file},
 };
 use foundry_compilers::{
+    ArtifactId,
     artifacts::sourcemap::{Jump, SourceElement, SourceMap},
     multi::MultiCompilerLanguage,
 };
@@ -57,20 +58,20 @@ pub(crate) struct SoldbDebugger {
 }
 
 impl SoldbDebugger {
-    /// Converts `arenas`, whose node contracts are identified by `contract_names`.
+    /// Converts `arenas`, whose node contracts are identified by `contract_identities`.
     ///
     /// The steps are the ones `recordings` hold, one per arena, or the arenas' own steps when
     /// `recordings` is empty.
     pub(crate) fn new(
         mut arenas: Vec<CallTraceArena>,
         recordings: Vec<DebugRecording>,
-        contract_names: &[Vec<Option<String>>],
+        contract_identities: &[Vec<Option<ContractIdentity<'_>>>],
         sources: &ContractSources,
         known_contracts: &ContractsByArtifact,
         breakpoints: &Breakpoints,
     ) -> Result<Self> {
         let mut source_cache = SourceCache::default();
-        let contracts = executed_programs(&arenas, contract_names, sources, known_contracts)
+        let contracts = executed_programs(&arenas, contract_identities, sources, known_contracts)
             .iter()
             .filter_map(|program| contract_debug_info(program, &mut source_cache))
             .collect();
@@ -547,6 +548,25 @@ fn recorded_steps(recordings: &[DebugRecording]) -> Result<(StepTable, Vec<usize
     Ok((table, offsets))
 }
 
+/// The contract a frame runs.
+#[derive(Clone, Debug)]
+pub(crate) enum ContractIdentity<'a> {
+    /// A local artifact, which tells apart contracts that share a name.
+    Local(&'a ArtifactId),
+    /// A contract known only by name, such as one from Etherscan.
+    External(String),
+}
+
+impl ContractIdentity<'_> {
+    /// The name of the contract.
+    fn name(&self) -> &str {
+        match self {
+            Self::Local(id) => &id.name,
+            Self::External(name) => name,
+        }
+    }
+}
+
 /// A program the trace executes and the local artifact that describes it.
 struct ExecutedProgram<'a> {
     address: Address,
@@ -573,29 +593,26 @@ struct ExecutedProgram<'a> {
 /// The programs `arenas` run that local artifacts describe, once per address and environment.
 fn executed_programs<'a>(
     arenas: &'a [CallTraceArena],
-    contract_names: &'a [Vec<Option<String>>],
+    contract_identities: &'a [Vec<Option<ContractIdentity<'a>>>],
     sources: &'a ContractSources,
     known_contracts: &ContractsByArtifact,
 ) -> Vec<ExecutedProgram<'a>> {
     let mut seen = HashSet::<(Address, bool, B256)>::default();
     let mut programs = Vec::new();
-    for (node, name) in
-        arenas.iter().zip(contract_names).flat_map(|(arena, names)| arena.nodes().iter().zip(names))
+    for (node, identity) in arenas
+        .iter()
+        .zip(contract_identities)
+        .flat_map(|(arena, identities)| arena.nodes().iter().zip(identities))
     {
         let trace = &node.trace;
         let init = trace.kind.is_any_create();
-        if let Some(name) = name
+        if let Some(identity) = identity
+            && let name = identity.name()
             && let Some(code) = &trace.bytecode
             && let code_hash = keccak256(code)
             && seen.insert((trace.address, init, code_hash))
             && let Some(sources_for_name) = sources.get_sources(name)
-            && let Some((artifact, source)) = sources_for_name.into_iter().find(|(artifact, _)| {
-                if init {
-                    artifact.source_map.is_some()
-                } else {
-                    artifact.source_map_runtime.is_some()
-                }
-            })
+            && let Some((artifact, source)) = select_artifact(identity, sources_for_name, init)
             && let Some(build_sources) = sources.sources_by_id.get(&artifact.build_id)
         {
             let (source_map, pc_ic_map) = if init {
@@ -604,12 +621,13 @@ fn executed_programs<'a>(
                 (artifact.source_map_runtime.as_ref(), artifact.pc_ic_map_runtime.as_ref())
             };
             let Some(source_map) = source_map else { continue };
-            let storage_layout = known_contracts
-                .find_by_name_or_identifier(name)
-                .ok()
-                .flatten()
-                .and_then(|(_, contract)| contract.storage_layout.as_deref())
-                .and_then(|layout| serde_json::to_value(layout).ok());
+            let storage_layout = match identity {
+                ContractIdentity::Local(id) => known_contracts
+                    .get(*id)
+                    .and_then(|contract| contract.storage_layout.as_deref())
+                    .and_then(|layout| serde_json::to_value(layout).ok()),
+                ContractIdentity::External(_) => None,
+            };
             programs.push(ExecutedProgram {
                 address: trace.address,
                 name,
@@ -627,6 +645,25 @@ fn executed_programs<'a>(
         }
     }
     programs
+}
+
+/// Selects the artifact of `identity` among the `candidates` of its name, which must have a source
+/// map for the runtime or, if `init`, the creation code.
+fn select_artifact<'a>(
+    identity: &ContractIdentity<'_>,
+    candidates: impl Iterator<Item = (&'a ArtifactData, &'a SourceData)>,
+    init: bool,
+) -> Option<(&'a ArtifactData, &'a SourceData)> {
+    let mut candidates = candidates.filter(|(artifact, _)| {
+        if init { artifact.source_map.is_some() } else { artifact.source_map_runtime.is_some() }
+    });
+    let ContractIdentity::Local(id) = identity else { return candidates.next() };
+    // `id.source` can be absolute, so match by path suffix, where the longest match is the file.
+    candidates
+        .filter(|(artifact, source)| {
+            artifact.build_id == id.build_id && id.source.ends_with(&source.path)
+        })
+        .max_by_key(|(_, source)| source.path.components().count())
 }
 
 /// Adapts the source map of `program` to its instructions, in the ETHDebug shape soldb reads.
@@ -725,7 +762,7 @@ pub(crate) fn write_bundle(
     dir: &Path,
     mut arenas: Vec<CallTraceArena>,
     recordings: Vec<DebugRecording>,
-    contract_names: &[Vec<Option<String>>],
+    contract_identities: &[Vec<Option<ContractIdentity<'_>>>],
     sources: &ContractSources,
     known_contracts: &ContractsByArtifact,
 ) -> Result<()> {
@@ -733,7 +770,7 @@ pub(crate) fn write_bundle(
     // One entry per deployed code, so code replaced at an address keeps its own source maps.
     let mut contracts = BTreeMap::<(Address, B256), CombinedJson>::new();
     let mut written_sources = HashSet::<PathBuf>::default();
-    for program in executed_programs(&arenas, contract_names, sources, known_contracts) {
+    for program in executed_programs(&arenas, contract_identities, sources, known_contracts) {
         // soldb reads legacy source maps by instruction counter, which Vyper's are not.
         if !program.solc {
             continue;
@@ -1015,7 +1052,7 @@ mod tests {
 
     /// `PUSH1 0x80; JUMPDEST; STOP` as contract `C` at `0x0c..0c`. The last source map element
     /// points at a generated source.
-    fn executed_c() -> (ContractSources, CallTraceArena, Vec<Option<String>>) {
+    fn executed_c() -> (ContractSources, CallTraceArena, Vec<Option<ContractIdentity<'static>>>) {
         const CODE: [u8; 4] = [0x60, 0x80, 0x5b, 0x00];
         let mut sources = ContractSources::default();
         sources.sources_by_id.entry("build".to_string()).or_default().insert(
@@ -1045,7 +1082,7 @@ mod tests {
         root.bytecode = Some(Bytes::from_static(&CODE));
         root.steps = vec![step(0, OpCode::PUSH1, &[]), step(2, OpCode::JUMPDEST, &[0x80])];
         arena.nodes_mut()[0].ordering = vec![TraceMemberOrder::Step(0), TraceMemberOrder::Step(1)];
-        (sources, arena, vec![Some("C".to_string())])
+        (sources, arena, vec![Some(ContractIdentity::External("C".to_string()))])
     }
 
     #[test]
