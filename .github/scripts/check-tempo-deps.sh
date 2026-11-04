@@ -7,8 +7,9 @@ set -euo pipefail
 # tempo-* release, and foundry-wallets has no Tempo dependency, so Tempo releases and API changes
 # never have to compile through either crate. This fails if:
 #   - foundry-wallets depends on a tempo-* crate;
-#   - mpp-rs takes a tempo-* crate from anywhere but crates.io, for example through a
-#     [patch.crates-io] entry that forces it onto Foundry's Tempo revision;
+#   - mpp-rs, or a crates.io tempo-* crate it pulls, takes a tempo-* crate from anywhere but
+#     crates.io, for example through a [patch.crates-io] entry that forces tempo-alloy or
+#     tempo-primitives onto Foundry's Tempo revision;
 #   - anything other than mpp-rs, or crates.io tempo-* crates themselves, depends on crates.io
 #     tempo-* crates.
 #
@@ -28,7 +29,9 @@ violations="$(
       | (($parent.source // "") | startswith("registry+")) as $parent_from_registry
       | select(
           $parent.name == "foundry-wallets"
-          or (($parent.name | IN("mpp", "alloy-transport-mpp")) and ($dep_from_registry | not))
+          or ((($parent.name | IN("mpp", "alloy-transport-mpp"))
+               or (($parent.name | startswith("tempo-")) and $parent_from_registry))
+              and ($dep_from_registry | not))
           or ($dep_from_registry
               and ($parent.name | IN("mpp", "alloy-transport-mpp") | not)
               and (($parent.name | startswith("tempo-")) and $parent_from_registry | not))
