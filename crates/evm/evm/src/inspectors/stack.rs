@@ -768,6 +768,18 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         self.refresh_static_step_dispatch();
     }
 
+    /// Drops the inspectors that only feed fuzz guidance: edge coverage, the fuzzer value
+    /// collector, and sancov collection. Calls whose coverage and collected values are never
+    /// merged back, such as invariant predicate checks, run faster without them.
+    #[inline]
+    pub fn disable_fuzz_instrumentation(&mut self) {
+        self.edge_coverage = None;
+        self.fuzzer = None;
+        self.sancov_edges = false;
+        self.sancov_trace_cmp = false;
+        self.refresh_static_step_dispatch();
+    }
+
     /// Set whether to collect EVM comparison operands.
     #[inline]
     pub fn collect_evm_cmp_log(&mut self, yes: bool) {
