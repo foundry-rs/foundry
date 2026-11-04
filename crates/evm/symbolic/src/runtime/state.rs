@@ -940,20 +940,40 @@ impl PathState {
     }
 
     pub(crate) fn record_sload(&mut self, address: Address, slot: SymExpr) {
-        if let Some(record) = &mut self.access_record {
+        if let Some(record) = &mut self.access_record
+            && !record.stopped
+        {
             record.read(address, slot);
         }
     }
 
     pub(crate) fn record_sstore(&mut self, address: Address, slot: SymExpr) {
-        if let Some(record) = &mut self.access_record {
+        if let Some(record) = &mut self.access_record
+            && !record.stopped
+        {
             record.write(address, slot);
+        }
+    }
+
+    /// Ends a `count = 0` `vm.expectEmit` declared in this frame after a call from it returns
+    /// without reverting.
+    ///
+    /// Like Forge's `call_end`, static calls keep it. Callers skip calls that `vm.expectRevert`
+    /// handles, which also keep it.
+    pub(crate) fn end_expected_emit_after_call(&mut self, kind: CallKind) {
+        if !self.is_static
+            && !matches!(kind, CallKind::StaticCall)
+            && self.expected_emit.as_ref().is_some_and(|expected| {
+                expected.is_forbidden() && expected.depth == self.call_depth
+            })
+        {
+            self.expected_emit = None;
         }
     }
 
     pub(crate) fn expectations_satisfied(&self) -> bool {
         self.expected_revert.is_none()
-            && self.expected_emit.as_ref().is_none_or(ExpectedEmit::is_satisfied)
+            && self.expected_emit.as_ref().is_none_or(ExpectedEmit::is_forbidden)
             && self.expected_calls.iter().all(ExpectedCall::is_satisfied)
             && self.expected_creates.is_empty()
     }
@@ -986,22 +1006,33 @@ impl SymbolicLog {
     pub(crate) fn into_parts(self) -> (Arc<[SymExpr]>, SymExpr, SymBytes, Address) {
         (self.topics, self.data_len, self.data, self.emitter)
     }
+
+    pub(crate) fn has_topics(&self) -> bool {
+        !self.topics.is_empty()
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct AccessRecord {
     reads: HashMap<Address, Vec<SymExpr>>,
     writes: HashMap<Address, Vec<SymExpr>>,
+    /// Set by `vm.stopRecord`, which keeps the recorded accesses but stops collecting new ones.
+    stopped: bool,
 }
 
 impl AccessRecord {
+    /// Stops collecting accesses while keeping the recorded ones, as `vm.stopRecord` does.
+    pub(crate) const fn stop(&mut self) {
+        self.stopped = true;
+    }
+
     pub(crate) fn read(&mut self, address: Address, slot: SymExpr) {
-        Self::push_unique_slot(self.reads.entry(address).or_default(), slot);
+        self.reads.entry(address).or_default().push(slot);
     }
 
     pub(crate) fn write(&mut self, address: Address, slot: SymExpr) {
         self.read(address, slot.clone());
-        Self::push_unique_slot(self.writes.entry(address).or_default(), slot);
+        self.writes.entry(address).or_default().push(slot);
     }
 
     pub(crate) fn addresses(&self) -> Vec<Address> {
@@ -1019,12 +1050,6 @@ impl AccessRecord {
 
     pub(crate) fn write_slots(&self, address: Address) -> Vec<SymExpr> {
         self.writes.get(&address).cloned().unwrap_or_default()
-    }
-
-    fn push_unique_slot(slots: &mut Vec<SymExpr>, slot: SymExpr) {
-        if !slots.iter().any(|existing| existing == &slot) {
-            slots.push(slot);
-        }
     }
 }
 
@@ -1400,19 +1425,34 @@ pub(crate) struct ExpectedEmit {
     emitter: Option<SymExpr>,
     remaining: u64,
     template: Option<SymbolicLog>,
+    /// Set by `vm.expectEmitAnonymous`, which lets a log without topics fill the template.
+    anonymous: bool,
+    /// Call depth of the frame that declared the expectation.
+    depth: usize,
 }
 
 impl ExpectedEmit {
-    pub(crate) fn new(
+    pub(crate) const fn new(
         checks: ExpectedEmitChecks,
         emitter: Option<SymExpr>,
         remaining: u64,
+        anonymous: bool,
+        depth: usize,
     ) -> Self {
-        Self { checks, emitter, remaining: remaining.max(1), template: None }
+        Self { checks, emitter, remaining, template: None, anonymous, depth }
     }
 
-    pub(crate) const fn is_satisfied(&self) -> bool {
-        self.template.is_none() && self.remaining == 0
+    /// Returns whether this expectation forbids logs matching its template (`count = 0`).
+    ///
+    /// A `count >= 1` expectation is dropped once consumed, so a stored expectation with nothing
+    /// remaining is a `count = 0` expectation, which is met while no log matches it.
+    pub(crate) const fn is_forbidden(&self) -> bool {
+        self.remaining == 0
+    }
+
+    /// Returns whether this expectation was declared by `vm.expectEmitAnonymous`.
+    pub(crate) const fn is_anonymous(&self) -> bool {
+        self.anonymous
     }
 
     pub(crate) const fn template(&self) -> Option<&SymbolicLog> {
@@ -1423,14 +1463,10 @@ impl ExpectedEmit {
         self.template = Some(log);
     }
 
-    pub(crate) fn consume_one(&mut self) -> bool {
+    /// Consumes one matching log and returns whether the expectation is met.
+    pub(crate) const fn consume_one(&mut self) -> bool {
         self.remaining = self.remaining.saturating_sub(1);
-        if self.remaining == 0 {
-            self.template = None;
-            true
-        } else {
-            false
-        }
+        self.remaining == 0
     }
 
     pub(crate) fn match_condition(
@@ -1443,16 +1479,15 @@ impl ExpectedEmit {
         if let Some(expected_emitter) = &self.emitter {
             conditions.push(expected_emitter.address_match_condition(cx, actual.emitter));
         }
-        for (idx, &check_topic) in self.checks.topics.iter().enumerate() {
-            if !check_topic {
-                continue;
-            }
-            match (template.topics.get(idx), actual.topics.get(idx)) {
-                (Some(left), Some(right)) => {
-                    conditions.push(SymBoolExpr::eq(cx, left.clone(), right.clone()));
-                }
-                (None, None) => {}
-                _ => return None,
+        // Like Forge, logs with different topic counts never match.
+        if template.topics.len() != actual.topics.len() {
+            return Some(SymBoolExpr::constant(cx, false));
+        }
+        for ((left, right), check) in
+            template.topics.iter().zip(actual.topics.iter()).zip(self.checks.topics)
+        {
+            if check {
+                conditions.push(SymBoolExpr::eq(cx, left.clone(), right.clone()));
             }
         }
 
@@ -1463,7 +1498,11 @@ impl ExpectedEmit {
                 actual.data_len.clone(),
             ));
             if template.data.len() != actual.data.len() {
-                return None;
+                // Different concrete sizes never match; buffers of a symbolic size cannot be
+                // compared byte by byte.
+                let concrete =
+                    template.data_len.as_const().is_some() && actual.data_len.as_const().is_some();
+                return concrete.then(|| SymBoolExpr::constant(cx, false));
             }
             conditions.extend((0..template.data.len()).map(|idx| {
                 let template = template.data.byte(cx, idx);
