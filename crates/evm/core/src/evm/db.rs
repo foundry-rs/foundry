@@ -5,16 +5,15 @@
 //! [`ExecutionLifecycle`](super::ExecutionLifecycle), not here.
 
 use alloy_network::Network;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, map::B256Map};
 use evm2::{
     DatabaseError,
     bytecode::Bytecode,
-    evm::{
-        AccountInfo, Cache, DatabaseRef, DbResult, DynDatabase, EmptyDB, InMemoryDB, NonStaticAny,
-    },
+    evm::{AccountInfo, Cache, DbResult, DynDatabase, EmptyDB, InMemoryDB, NonStaticAny},
     interpreter::Word,
 };
 use foundry_fork_db::{ForkBlockEnv, SharedBackend};
+use parking_lot::RwLock;
 use std::{
     any::TypeId,
     sync::{
@@ -85,22 +84,66 @@ impl FoundryDatabase for Box<dyn BackingDb> {
     }
 }
 
+/// Converts accounts of the fork cache, which holds raw code, into evm2 accounts.
+///
+/// Each distinct code is built into [`Bytecode`] once and shared by every account and handle that
+/// reads it, so loads do not copy code and its jump analysis is reused.
+#[derive(Clone, Debug, Default)]
+pub struct ForkCode(Arc<RwLock<B256Map<Bytecode>>>);
+
+impl ForkCode {
+    /// Returns the fork cache's `account` as an evm2 account.
+    pub fn account(&self, account: foundry_fork_db::AccountInfo) -> AccountInfo {
+        let code = account.code.map(|code| self.bytecode(account.code_hash, code));
+        AccountInfo::new(account.balance, account.nonce, account.code_hash, code)
+    }
+
+    /// Returns the bytecode of `code`, whose hash is `code_hash`.
+    fn bytecode(&self, code_hash: B256, code: alloy_primitives::Bytes) -> Bytecode {
+        if code.is_empty() {
+            return Bytecode::new();
+        }
+        if let Some(bytecode) = self.0.read().get(&code_hash) {
+            return bytecode.clone();
+        }
+        self.0.write().entry(code_hash).or_insert_with(|| Bytecode::from_stored(code)).clone()
+    }
+
+    /// Returns the code with `code_hash` that an account of `db` holds.
+    pub fn code_by_hash(
+        &self,
+        db: &foundry_fork_db::cache::MemDb,
+        code_hash: B256,
+    ) -> Option<Bytecode> {
+        if let Some(bytecode) = self.0.read().get(&code_hash) {
+            return Some(bytecode.clone());
+        }
+        let code =
+            db.accounts.read().values().find_map(|info| {
+                (info.code_hash == code_hash).then(|| info.code.clone()).flatten()
+            })?;
+        Some(self.bytecode(code_hash, code))
+    }
+}
+
 /// A remote fork's backing database: Foundry's RPC-backed fork cache, read by evm2.
 ///
-/// The fork cache stores native evm2 accounts. This adapter supplies the source chain identity
-/// and the execution spec's empty-account policy.
+/// The fork cache stores raw remote accounts. This adapter converts them into evm2 accounts and
+/// supplies the source chain identity and the execution spec's empty-account policy.
 #[derive(Debug)]
 pub struct ForkDb<D> {
     db: D,
     source_chain_id: u64,
     /// Whether empty accounts do not exist (EIP-161), local to this execution's handle.
     eip161: AtomicBool,
+    /// Bytecode built from the fork cache, shared by every handle.
+    code: ForkCode,
 }
 
 impl<D> ForkDb<D> {
     /// Wraps a fork cache whose remote state belongs to `source_chain_id`.
-    pub const fn new(db: D, source_chain_id: u64) -> Self {
-        Self { db, source_chain_id, eip161: AtomicBool::new(true) }
+    pub fn new(db: D, source_chain_id: u64) -> Self {
+        Self { db, source_chain_id, eip161: AtomicBool::new(true), code: ForkCode::default() }
     }
 
     /// Returns the wrapped fork cache.
@@ -115,13 +158,14 @@ impl<D: Clone> Clone for ForkDb<D> {
             db: self.db.clone(),
             source_chain_id: self.source_chain_id,
             eip161: AtomicBool::new(self.eip161.load(Ordering::Relaxed)),
+            code: self.code.clone(),
         }
     }
 }
 
 impl<N: Network, B: ForkBlockEnv> DynDatabase for ForkDb<SharedBackend<N, B>> {
     fn get_account(&mut self, address: &Address) -> DbResult<Option<AccountInfo>> {
-        let info = self.db.get_account(address).map_err(fatal)?;
+        let info = self.db.account(*address).map_err(fatal)?.map(|info| self.code.account(info));
         // The fork cache reports accounts the remote does not hold as existing empty accounts.
         // From Spurious Dragon on an empty account does not exist (EIP-161), so load it as absent;
         // otherwise fresh EIP-7702 authorities would be refunded as existing ones. Before, the
@@ -132,22 +176,17 @@ impl<N: Network, B: ForkBlockEnv> DynDatabase for ForkDb<SharedBackend<N, B>> {
 
     fn get_code_by_hash(&mut self, code_hash: &B256) -> DbResult<Bytecode> {
         // RPC cannot fetch code by hash; the fork cache stores it inline.
-        if let Some(code) =
-            self.db.data().accounts.read().values().find_map(|info| {
-                (info.code_hash == *code_hash).then(|| info.code.clone()).flatten()
-            })
-        {
-            return Ok(code);
-        }
-        self.db.get_code_by_hash(code_hash).map_err(fatal)
+        self.code
+            .code_by_hash(&self.db.data(), *code_hash)
+            .ok_or_else(|| fatal(foundry_fork_db::DatabaseError::MissingCode(*code_hash)))
     }
 
     fn get_storage(&mut self, address: &Address, key: &U256) -> DbResult<U256> {
-        self.db.get_storage(address, key).map_err(fatal)
+        self.db.storage_at(*address, *key).map_err(fatal)
     }
 
     fn get_block_hash(&mut self, number: &U256) -> DbResult<B256> {
-        self.db.get_block_hash(number).map_err(fatal)
+        self.db.block_hash(u64::try_from(*number).map_err(fatal)?).map_err(fatal)
     }
 }
 
