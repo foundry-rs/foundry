@@ -1027,12 +1027,12 @@ impl AccessRecord {
     }
 
     pub(crate) fn read(&mut self, address: Address, slot: SymExpr) {
-        Self::push_unique_slot(self.reads.entry(address).or_default(), slot);
+        self.reads.entry(address).or_default().push(slot);
     }
 
     pub(crate) fn write(&mut self, address: Address, slot: SymExpr) {
         self.read(address, slot.clone());
-        Self::push_unique_slot(self.writes.entry(address).or_default(), slot);
+        self.writes.entry(address).or_default().push(slot);
     }
 
     pub(crate) fn addresses(&self) -> Vec<Address> {
@@ -1050,12 +1050,6 @@ impl AccessRecord {
 
     pub(crate) fn write_slots(&self, address: Address) -> Vec<SymExpr> {
         self.writes.get(&address).cloned().unwrap_or_default()
-    }
-
-    fn push_unique_slot(slots: &mut Vec<SymExpr>, slot: SymExpr) {
-        if !slots.iter().any(|existing| existing == &slot) {
-            slots.push(slot);
-        }
     }
 }
 

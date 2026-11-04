@@ -4769,6 +4769,12 @@ contract SymbolicRevertingStorageTarget {
         }
         revert();
     }
+
+    function loadTwiceThenStore(bytes32 slot) external {
+        assembly {
+            sstore(slot, add(sload(slot), sload(slot)))
+        }
+    }
 }
 
 contract SymbolicRecordAccesses is Test {
@@ -4783,9 +4789,10 @@ contract SymbolicRecordAccesses is Test {
 
         (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(this));
         assertEq(loadedSlot, stored);
-        assertEq(reads.length, 1);
+        assertEq(reads.length, 2);
         assertEq(writes.length, 1);
         assertEq(reads[0], slot);
+        assertEq(reads[1], slot);
         assertEq(writes[0], slot);
 
         vm.stopRecord();
@@ -4803,9 +4810,10 @@ contract SymbolicRecordAccesses is Test {
 
         (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(target);
         assertEq(loadedSlot, stored);
-        assertEq(reads.length, 1);
+        assertEq(reads.length, 2);
         assertEq(writes.length, 1);
         assertEq(reads[0], slot);
+        assertEq(reads[1], slot);
         assertEq(writes[0], slot);
 
         vm.stopRecord();
@@ -4825,9 +4833,10 @@ contract SymbolicRecordAccesses is Test {
         (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(target);
         assertEq(loadedSlot, stored);
         if (target == address(this)) {
-            assertEq(reads.length, 1);
+            assertEq(reads.length, 2);
             assertEq(writes.length, 1);
             assertEq(reads[0], slot);
+            assertEq(reads[1], slot);
             assertEq(writes[0], slot);
         } else {
             assertEq(reads.length, 0);
@@ -4861,11 +4870,38 @@ contract SymbolicRecordAccesses is Test {
         assertEq(reads[0], slot);
         assertEq(writes[0], slot);
     }
+
+    function testRecordRepeatedAndStaticAccesses() public {
+        recordRepeatedAndStaticAccesses();
+    }
+
+    function checkRecordAccessesRepeatedAndStatic() public {
+        recordRepeatedAndStaticAccesses();
+    }
+
+    // Like Forge, every access is recorded, including the write of an `SSTORE` that halts in a
+    // static call.
+    function recordRepeatedAndStaticAccesses() internal {
+        SymbolicRevertingStorageTarget target = new SymbolicRevertingStorageTarget();
+        bytes32 slot = bytes32(uint256(7));
+
+        vm.record();
+        (bool ok,) = address(target).staticcall(abi.encodeCall(target.loadTwiceThenStore, (slot)));
+        assertFalse(ok);
+
+        (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(target));
+        assertEq(reads.length, 3);
+        assertEq(writes.length, 1);
+        assertEq(reads[0], slot);
+        assertEq(reads[1], slot);
+        assertEq(reads[2], slot);
+        assertEq(writes[0], slot);
+    }
 }
 "#,
     );
 
-    cmd.args(["test", "--match-test", "testRecordRevertedChildAccesses"]).assert_success();
+    cmd.args(["test", "--match-test", "testRecord"]).assert_success();
     cmd.forge_fuse();
 
     let stdout = assert_symbolic_witness(cmd.args([
@@ -4877,12 +4913,13 @@ contract SymbolicRecordAccesses is Test {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 4 tests for test/SymbolicRecordAccesses.t.sol:SymbolicRecordAccesses
+Ran 5 tests for test/SymbolicRecordAccesses.t.sol:SymbolicRecordAccesses
 [PASS] checkRecordAccesses(bytes32,bytes32) ([METRICS])
+[PASS] checkRecordAccessesRepeatedAndStatic() ([METRICS])
 [PASS] checkRecordAccessesRevertedChild() ([METRICS])
 [PASS] checkRecordAccessesSymbolicTarget(address,bytes32,bytes32) ([METRICS])
 [PASS] checkRecordAccessesSymbolicTargetBranches(address,bytes32,bytes32) ([METRICS])
-Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
