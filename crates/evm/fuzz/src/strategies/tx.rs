@@ -8,7 +8,7 @@ use crate::{
 };
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, U256, keccak256};
 use eyre::{Result, eyre};
 use foundry_config::InvariantConfig;
 use proptest::{prelude::*, test_runner::TestRunner};
@@ -161,8 +161,9 @@ fn select_sender(
         ]
         .prop_map(move |value| {
             let mut sender = value.as_address().unwrap();
+            // Derive replacements from the excluded sender so a seed reproduces the campaign.
             while senders.excluded.contains(&sender) {
-                sender = Address::random();
+                sender = Address::from_word(keccak256(sender));
             }
             sender
         })

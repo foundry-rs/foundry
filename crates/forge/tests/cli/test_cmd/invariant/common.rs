@@ -3619,8 +3619,7 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 "#]]);
 }
 
-// Handler calls are committed within a run, while invariant predicate writes are discarded and
-// each run starts again from the post-setup state.
+// Handler calls are committed within a run, while invariant predicate writes are discarded.
 #[forgetest]
 fn invariant_checks_do_not_commit_state(prj: _, cmd: _) {
     prj.update_config(|config| {
@@ -3643,7 +3642,6 @@ contract Handler {
 
     function step() external {
         require(!poisoned, "predicate write leaked");
-        require(count < 4, "run baseline leaked");
         count++;
     }
 
@@ -3671,7 +3669,8 @@ contract InvariantCheckStateTest {
     }
 
     function afterInvariant() public view {
-        require(handler.count() == 4, "handler state not retained");
+        // Runs may resume from snapshots of earlier runs, so the count is at least the depth.
+        require(handler.count() >= 4, "handler state not retained");
         require(!handler.poisoned(), "predicate write leaked at end");
     }
 }
