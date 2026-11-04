@@ -300,6 +300,21 @@ pub struct CallTraceDecoder {
     pub compact_labels: bool,
 }
 
+/// The identities a [`CallTraceDecoder`] collected for addresses, see
+/// [`CallTraceDecoder::address_identities`].
+#[derive(Clone, Debug, Default)]
+pub struct AddressIdentities {
+    contracts: HashMap<Address, String>,
+    labels: HashMap<Address, String>,
+    receive_contracts: HashSet<Address>,
+    fallback_contracts: HashMap<Address, HashSet<Selector>>,
+    non_fallback_contracts: HashMap<Address, HashSet<Selector>>,
+    functions_by_address: HashMap<Address, HashMap<Selector, Vec<Function>>>,
+    constructors_by_address: HashMap<Address, Constructor>,
+    constructor_args_offsets: HashMap<Address, usize>,
+    events_by_address: Option<Box<AddressEvents>>,
+}
+
 impl CallTraceDecoder {
     fn register_celo_metadata(&mut self) {
         if precompiles::is_known_precompile(
@@ -512,6 +527,35 @@ impl CallTraceDecoder {
             hardfork: None,
             compact_labels: false,
         }
+    }
+
+    /// Returns a copy of everything [`Self::clear_addresses`] resets, so that
+    /// [`Self::restore_address_identities`] can bring the decoder back to this point.
+    pub fn address_identities(&self) -> AddressIdentities {
+        AddressIdentities {
+            contracts: self.contracts.clone(),
+            labels: self.labels.clone(),
+            receive_contracts: self.receive_contracts.clone(),
+            fallback_contracts: self.fallback_contracts.clone(),
+            non_fallback_contracts: self.non_fallback_contracts.clone(),
+            functions_by_address: self.functions_by_address.clone(),
+            constructors_by_address: self.constructors_by_address.clone(),
+            constructor_args_offsets: self.constructor_args_offsets.clone(),
+            events_by_address: self.events_by_address.clone(),
+        }
+    }
+
+    /// Restores the identities saved by [`Self::address_identities`].
+    pub fn restore_address_identities(&mut self, identities: &AddressIdentities) {
+        self.contracts.clone_from(&identities.contracts);
+        self.labels.clone_from(&identities.labels);
+        self.receive_contracts.clone_from(&identities.receive_contracts);
+        self.fallback_contracts.clone_from(&identities.fallback_contracts);
+        self.non_fallback_contracts.clone_from(&identities.non_fallback_contracts);
+        self.functions_by_address.clone_from(&identities.functions_by_address);
+        self.constructors_by_address.clone_from(&identities.constructors_by_address);
+        self.constructor_args_offsets.clone_from(&identities.constructor_args_offsets);
+        self.events_by_address.clone_from(&identities.events_by_address);
     }
 
     /// Clears all known addresses.
