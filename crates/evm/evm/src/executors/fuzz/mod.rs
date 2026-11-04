@@ -1016,9 +1016,11 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     }
                     FuzzOutcome::CounterExample(CounterExampleOutcome {
                         exit_reason: status,
-                        counterexample: outcome,
+                        counterexample: mut outcome,
                         ..
                     }) => {
+                        // Keep the lines the failing input ran, as a failing unit test does.
+                        HitMaps::merge_opt(&mut worker.coverage, outcome.1.line_coverage.take());
                         if !is_persisted_replay {
                             inc_runs();
                         }
