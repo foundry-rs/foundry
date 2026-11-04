@@ -163,6 +163,7 @@ impl SymbolicExecutor {
         state: &mut PathState,
         args_offset: usize,
         checks: ExpectedEmitChecks,
+        anonymous: bool,
         emitter_arg: Option<usize>,
         count_arg: Option<usize>,
     ) -> Result<CheatcodeOutcome, SymbolicError> {
@@ -187,7 +188,8 @@ impl SymbolicExecutor {
                 "symbolic vm.expectEmit with a pending expectation",
             ));
         }
-        state.expected_emit = Some(ExpectedEmit::new(checks, emitter, remaining, state.call_depth));
+        state.expected_emit =
+            Some(ExpectedEmit::new(checks, emitter, remaining, anonymous, state.call_depth));
         Ok(CheatcodeOutcome::Continue(Vec::new()))
     }
 
@@ -862,7 +864,14 @@ impl SymbolicExecutor {
                 };
                 let emitter = params.iter().position(|param| *param == DynSolType::Address);
                 let count = params.iter().position(|param| *param == DynSolType::Uint(64));
-                self.expect_emit_from_args(state, args_offset, checks, emitter, count)
+                let anonymous = matches!(
+                    selector,
+                    expectEmitAnonymous_0Call::SELECTOR
+                        | expectEmitAnonymous_1Call::SELECTOR
+                        | expectEmitAnonymous_2Call::SELECTOR
+                        | expectEmitAnonymous_3Call::SELECTOR
+                );
+                self.expect_emit_from_args(state, args_offset, checks, anonymous, emitter, count)
             }
             expectCall_0Call::SELECTOR
             | expectCall_1Call::SELECTOR
