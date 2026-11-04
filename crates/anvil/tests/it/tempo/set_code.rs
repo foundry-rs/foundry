@@ -165,7 +165,13 @@ async fn assert_set_code_allowed(provider: &RetryProvider, address: Address) {
 }
 
 fn rejection_message(address: Address, name: &str) -> String {
-    format!(
-        "cannot set code for native Tempo precompile {name} at {address}: calls are handled natively and do not execute account bytecode; code writes are rejected to preserve native account markers, including TIP20 initialization"
-    )
+    if name == "TIP20Token" {
+        format!(
+            "cannot set code for native Tempo precompile {name} at {address}: calls are handled natively and do not execute account bytecode; code writes are rejected to preserve native account markers, including TIP20 initialization; use anvil_tempoCreateToken to create a native TIP-20 token at an uninitialized TIP-20 address"
+        )
+    } else {
+        format!(
+            "cannot set code for native Tempo precompile {name} at {address}: calls are handled natively and do not execute account bytecode; code writes are rejected to preserve native account markers, including TIP20 initialization"
+        )
+    }
 }
