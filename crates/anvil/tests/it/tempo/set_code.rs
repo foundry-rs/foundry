@@ -1,4 +1,6 @@
 //! Native Tempo precompiles cannot be replaced with account bytecode.
+//!
+//! Empty and unchanged writes are rejected to protect native account markers.
 
 use super::*;
 use alloy_provider::MULTICALL3_ADDRESS;
@@ -15,9 +17,12 @@ const UNINITIALIZED_TIP20: Address = address!("0x20c0000000000000000000006a37da5
 async fn test_anvil_set_code_rejects_native_token() {
     let (api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
     let provider = handle.http_provider();
+    let original_code = provider.get_code_at(PATH_USD).await.unwrap();
+    assert!(!original_code.is_empty());
     assert!(provider.get_code_at(UNINITIALIZED_TIP20).await.unwrap().is_empty());
     let before: Bytes = provider.raw_request("anvil_dumpState".into(), ()).await.unwrap();
 
+    assert_set_code_rejected(&provider, PATH_USD, "TIP20Token", original_code).await;
     for address in [PATH_USD, UNINITIALIZED_TIP20] {
         for code in [bytes!("60006000f3"), Bytes::new()] {
             assert_set_code_rejected(&provider, address, "TIP20Token", code).await;
@@ -161,6 +166,6 @@ async fn assert_set_code_allowed(provider: &RetryProvider, address: Address) {
 
 fn rejection_message(address: Address, name: &str) -> String {
     format!(
-        "cannot set code for native Tempo precompile {name} at {address}: calls are handled natively and do not execute account bytecode"
+        "cannot set code for native Tempo precompile {name} at {address}: calls are handled natively and do not execute account bytecode; code writes are rejected to preserve native account markers, including TIP20 initialization"
     )
 }

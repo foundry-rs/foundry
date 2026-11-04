@@ -428,6 +428,9 @@ impl<N: Network> EthApi<N> {
 
     /// Sets the code of a contract.
     ///
+    /// Native Tempo precompiles reject empty and unchanged writes as well to preserve their account
+    /// markers. For TIP20, nonempty code marks the token as initialized.
+    ///
     /// Handler for RPC call: `anvil_setCode`
     pub async fn anvil_set_code(&self, address: Address, code: Bytes) -> Result<()> {
         node_info!("anvil_setCode");
@@ -437,7 +440,7 @@ impl<N: Network> EthApi<N> {
                 backend::tempo::native_precompile_name(address, self.backend.tempo_hardfork())
         {
             return Err(RpcError::invalid_params(format!(
-                "cannot set code for native Tempo precompile {name} at {address}: calls are handled natively and do not execute account bytecode"
+                "cannot set code for native Tempo precompile {name} at {address}: calls are handled natively and do not execute account bytecode; code writes are rejected to preserve native account markers, including TIP20 initialization"
             ))
             .into());
         }
