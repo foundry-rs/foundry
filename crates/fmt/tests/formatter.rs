@@ -1045,6 +1045,22 @@ fn try_mixed_comment_runs_are_idempotent() {
             "{} /* a */ // b",
             "        /* o */\n        /* p */\n            ",
         ),
+        (
+            "{\n            /* a */ /* b */ // c\n        }",
+            "{} /* a */ /* b */",
+            "        // c\n            ",
+        ),
+        ("/* a */ // b\n        {}", "{} /* a */ // b", "            "),
+        (
+            "/* note */ {\n            /* a */ // b\n        }",
+            "{} /* note */ /* a */",
+            "        // b\n            ",
+        ),
+        (
+            "/* a */ /* b */ {\n            // note\n        }",
+            "{} /* a */ /* b */",
+            "        // note\n            ",
+        ),
     ] {
         let source = format!(
             "contract C {{\n    function f() external {{\n        try this.f() {body} catch {{}}\n    }}\n}}\n"

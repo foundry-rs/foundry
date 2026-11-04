@@ -8,7 +8,10 @@ use crate::{
     pp::SIZE_INFINITY,
     state::{CallContext, common::LitExt},
 };
-use foundry_common::{comments::Comment, iter::IterDelimited};
+use foundry_common::{
+    comments::{Comment, CommentStyle},
+    iter::IterDelimited,
+};
 use foundry_config::fmt::{self as config, MultilineFuncHeaderStyle};
 use solar::{
     ast::BoxSlice,
@@ -2479,20 +2482,45 @@ impl<'ast> State<'_, 'ast> {
             }
             // A trailing comment inside an empty block goes after `}`, as it does on a second pass.
             // Leave disabled comment runs in place so their source cursor and braces stay intact.
-            let trailing_pos = if block.is_empty()
-                && self.peek_trailing_comment(block.span.lo(), Some(try_span.hi())).is_some()
+            let movable = block.is_empty()
                 && self
                     .comments
                     .iter()
                     .take_while(|cmnt| cmnt.pos() < try_span.hi())
-                    .all(|cmnt| !self.inline_config.is_disabled(cmnt.span))
-            {
+                    .all(|cmnt| !self.inline_config.is_disabled(cmnt.span));
+            // A leading mixed run that would end the `{` line of the empty block is reparsed as
+            // trailing on the next pass, so print it after `}` now.
+            let mut run_len = 0;
+            let trailing_pos = if !movable {
+                try_span.hi()
+            } else if self.peek_trailing_comment(block.span.lo(), Some(try_span.hi())).is_some() {
                 block.span.lo()
             } else {
-                try_span.hi()
+                let mut cmnts =
+                    self.comments.iter().take_while(|cmnt| cmnt.pos() < try_span.hi()).peekable();
+                let pos = cmnts.peek().map_or(try_span.hi(), |cmnt| cmnt.pos());
+                while cmnts.next_if(|cmnt| cmnt.style.is_mixed()).is_some() {
+                    run_len += 1;
+                }
+                let trailing =
+                    run_len > 0 && cmnts.next_if(|cmnt| cmnt.style.is_trailing()).is_some();
+                let ends_line = trailing || cmnts.any(|cmnt| !cmnt.style.is_blank());
+                run_len += usize::from(trailing);
+                // A comment printed on several lines pushes the rest of the run off the `}` line.
+                let single_line = self
+                    .comments
+                    .iter()
+                    .take(run_len.saturating_sub(1))
+                    .all(|cmnt| !cmnt.is_doc && cmnt.lines.len() == 1);
+                if run_len > 0 && ends_line && single_line {
+                    pos
+                } else {
+                    run_len = 0;
+                    try_span.hi()
+                }
             };
             if block.is_empty() {
-                self.print_block(block, try_span.with_hi(trailing_pos));
+                self.print_block(block, Span::new(trailing_pos, trailing_pos));
                 self.end();
             } else {
                 self.print_word("{");
@@ -2507,7 +2535,24 @@ impl<'ast> State<'_, 'ast> {
             }
 
             let mut skip_ind = false;
-            if self.print_trailing_comment(trailing_pos, other.first().map(|c| c.span.lo())) {
+            let printed = if run_len > 0 {
+                for i in 1..=run_len {
+                    let mut cmnt = self.next_comment().unwrap();
+                    if i == run_len {
+                        cmnt.style = CommentStyle::Trailing;
+                    }
+                    if let Some(cmnt) = self.handle_comment(cmnt, false) {
+                        self.print_comment(
+                            cmnt,
+                            CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
+                        );
+                    }
+                }
+                true
+            } else {
+                self.print_trailing_comment(trailing_pos, other.first().map(|c| c.span.lo()))
+            };
+            if printed {
                 // Keep comment runs outside the catch box when wrapping groups them, except for
                 // the final mixed suffix, which must stay attached to catch.
                 if block.is_empty()
