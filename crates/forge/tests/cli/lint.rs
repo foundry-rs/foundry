@@ -2140,13 +2140,14 @@ note[screaming-snake-case-const]: constant name is not `SCREAMING_SNAKE_CASE`
 "#]]);
 }
 
-// `[lint] ignore` excludes symlinked sources, whether an entry names the symlink, a symlinked
-// directory, or a directory containing symlinks.
+// `[lint] ignore` matches symlinked sources by project path. An entry naming the symlink, a
+// symlinked directory, or a directory containing symlinks ignores it, while an entry naming another
+// alias or the target does not. Inputs under a symlinked `src` are canonical, so entries also match
+// by their resolved path.
 #[cfg(unix)]
 #[forgetest]
 fn lint_ignore_symlinked_sources(prj: _, cmd: _) {
     std::fs::create_dir_all(prj.root().join("shared")).unwrap();
-    std::fs::create_dir_all(prj.root().join("src")).unwrap();
     std::fs::write(
         prj.root().join("shared/Linked.sol"),
         r#"
@@ -2158,24 +2159,57 @@ contract Linked {
 "#,
     )
     .unwrap();
-    std::os::unix::fs::symlink("../shared/Linked.sol", prj.root().join("src/Linked.sol")).unwrap();
-    std::os::unix::fs::symlink("../shared", prj.root().join("src/vendor")).unwrap();
+    let note = str![[r#"
+note[screaming-snake-case-const]: constant name is not `SCREAMING_SNAKE_CASE`
+  [FILE]:5:22
+  │
+5 │     uint256 constant limit = 10;
+  │                      ━━━━━ help: consider using: `LIMIT`
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/screaming-snake-case-const
 
-    for ignore in [vec!["src/Linked.sol", "src/vendor/**"], vec!["src/**"]] {
+
+"#]];
+
+    let file = ("src/Linked.sol", "../shared/Linked.sol");
+    let dir = ("src/vendor", "../shared");
+    let test = ("test/Linked.sol", "../shared/Linked.sol");
+    let src = ("src", "shared");
+    for (links, ignore, ignored) in [
+        (&[file][..], "src/Linked.sol", true),
+        (&[dir], "src/vendor/**", true),
+        (&[file, dir], "src/**", true),
+        (&[file, test], "test/Linked.sol", false),
+        (&[file], "shared/**", false),
+        (&[src], "src/**", true),
+    ] {
+        for name in ["src", "test"] {
+            let _ = std::fs::remove_dir_all(prj.root().join(name));
+        }
+        for (link, target) in links {
+            let link = prj.root().join(link);
+            std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(target, link).unwrap();
+        }
         prj.update_config(|config| {
-            config.deny = DenyLevel::Notes;
             config.lint = LinterConfig {
                 lint_on_build: true,
                 severity: vec![],
-                ignore: ignore.into_iter().map(String::from).collect(),
+                ignore: vec![ignore.to_string()],
                 ..Default::default()
             };
         });
-        cmd.forge_fuse().arg("build").assert_success().stderr_eq("");
-        cmd.forge_fuse().arg("lint").assert_success().stderr_eq(str![[r#"
+
+        if ignored {
+            cmd.forge_fuse().arg("build").assert_success().stderr_eq("");
+            cmd.forge_fuse().arg("lint").assert_success().stderr_eq(str![[r#"
 nothing to lint
 
 "#]]);
+        } else {
+            cmd.forge_fuse().arg("build").assert_success().stderr_eq(note.clone());
+            cmd.forge_fuse().arg("lint").assert_success().stderr_eq(note.clone());
+        }
     }
 }
 

@@ -27,7 +27,7 @@ use foundry_config::{
         error::Kind::InvalidType,
         value::{Dict, Map, Value},
     },
-    filter::{expand_globs, is_ignored_path},
+    filter::{expand_ignore_globs, is_ignored_path},
 };
 use serde::Serialize;
 use solar::{
@@ -190,11 +190,8 @@ impl BuildArgs {
                 })
                 .with_lint_specific(&config.lint.lint_specific);
 
-            // Expand ignore globs and canonicalize from the get go
-            let ignored = expand_globs(&config.root, config.lint.ignore.iter())?
-                .iter()
-                .flat_map(foundry_common::fs::canonicalize_path)
-                .collect::<Vec<_>>();
+            // Expand ignore globs, keeping project paths and their canonical forms.
+            let ignored = expand_ignore_globs(&config.root, config.lint.ignore.iter())?;
 
             let skip = SkipBuildFilters::new(config.skip.clone(), config.root.clone());
             let curr_dir = std::env::current_dir()?;
@@ -206,11 +203,7 @@ impl BuildArgs {
                     if let Some(files) = files {
                         return files.iter().any(|file| &curr_dir.join(file) == p);
                     }
-                    // Ignore entries are canonical, so check symlinked inputs by both paths.
-                    skip.is_match(p)
-                        && !is_ignored_path(p, &ignored, &curr_dir)
-                        && !foundry_common::fs::canonicalize_path(p)
-                            .is_ok_and(|p| is_ignored_path(&p, &ignored, &curr_dir))
+                    skip.is_match(p) && !is_ignored_path(p, &ignored, &curr_dir)
                 })
                 .collect::<Vec<_>>();
 
