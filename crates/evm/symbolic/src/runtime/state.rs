@@ -1431,6 +1431,8 @@ pub(crate) struct ExpectedEmit {
     emitter: Option<SymExpr>,
     remaining: u64,
     template: Option<SymbolicLog>,
+    /// Set by `vm.expectEmitAnonymous`, which lets a log without topics fill the template.
+    anonymous: bool,
     /// Call depth of the frame that declared the expectation.
     depth: usize,
 }
@@ -1440,9 +1442,10 @@ impl ExpectedEmit {
         checks: ExpectedEmitChecks,
         emitter: Option<SymExpr>,
         remaining: u64,
+        anonymous: bool,
         depth: usize,
     ) -> Self {
-        Self { checks, emitter, remaining, template: None, depth }
+        Self { checks, emitter, remaining, template: None, anonymous, depth }
     }
 
     /// Returns whether this expectation forbids logs matching its template (`count = 0`).
@@ -1451,6 +1454,11 @@ impl ExpectedEmit {
     /// remaining is a `count = 0` expectation, which is met while no log matches it.
     pub(crate) const fn is_forbidden(&self) -> bool {
         self.remaining == 0
+    }
+
+    /// Returns whether this expectation was declared by `vm.expectEmitAnonymous`.
+    pub(crate) const fn is_anonymous(&self) -> bool {
+        self.anonymous
     }
 
     pub(crate) const fn template(&self) -> Option<&SymbolicLog> {
