@@ -11,15 +11,6 @@ extern crate foundry_common;
 #[macro_use]
 extern crate tracing;
 
-// Unused. Kept to align dependency features across package selections; see Cargo.toml.
-use ahash as _;
-use hashbrown as _;
-use itertools014 as _;
-use num_bigint as _;
-use ruint as _;
-#[cfg(unix)]
-use rustix as _;
-
 pub mod clap;
 pub mod handler;
 pub mod install;
