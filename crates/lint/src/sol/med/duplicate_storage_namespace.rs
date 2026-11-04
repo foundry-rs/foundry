@@ -40,28 +40,34 @@ impl<'gcx> LateLintPass<'gcx> for DuplicateStorageNamespace {
                     );
                 }
             }
-            // Inherited declarations collide here only if no single base already combines them;
-            // otherwise the collision is reported in that base.
+            // Report the first inherited pair that no single base combines; a base that combines
+            // a pair already reports it.
             let inherited = &structs
                 [..structs.partition_point(|&strukt| gcx.hir.strukt(strukt).contract != Some(id))];
-            if let &[first, .., last] = inherited
-                && !bases.iter().any(|&base| {
+            let combined = |a: hir::StructId, b: hir::StructId| {
+                bases.iter().any(|&base| {
                     let hierarchy = gcx.hir.contract(base).linearized_bases;
-                    inherited.iter().all(|&strukt| {
+                    [a, b].into_iter().all(|strukt| {
                         gcx.hir
                             .strukt(strukt)
                             .contract
                             .is_some_and(|declared_in| hierarchy.contains(&declared_in))
                     })
                 })
-            {
+            };
+            if let Some((first, second)) = inherited.iter().enumerate().find_map(|(i, &first)| {
+                inherited[i + 1..]
+                    .iter()
+                    .find(|&&second| !combined(first, second))
+                    .map(|&second| (first, second))
+            }) {
                 ctx.emit_with_msg(
                     &DUPLICATE_STORAGE_NAMESPACE,
                     contract.name.span,
                     format!(
                         "ERC-7201 namespace `{namespace}` is declared by both `{}` and `{}`",
                         gcx.item_canonical_name(first),
-                        gcx.item_canonical_name(last)
+                        gcx.item_canonical_name(second)
                     ),
                 );
             }

@@ -133,3 +133,34 @@ contract MalformedAnnotation is TokenBase {
         uint256 value;
     }
 }
+
+// Combining a new declaration with a known collision names the new pair.
+contract CombinesRedeclaredBase is TokenBase, OtherTokenBase, RedeclaredInDerived {} //~WARN: ERC-7201 namespace `example.token` is declared by both `TokenBase.TokenStorage` and `OtherTokenBase.OtherTokenStorage`
+
+abstract contract PairA {
+    /// @custom:storage-location erc7201:example.pair
+    struct PairAStorage {
+        uint256 a;
+    }
+}
+
+abstract contract PairB {
+    /// @custom:storage-location erc7201:example.pair
+    struct PairBStorage {
+        uint256 b;
+    }
+}
+
+abstract contract PairC {
+    /// @custom:storage-location erc7201:example.pair
+    struct PairCStorage {
+        uint256 c;
+    }
+}
+
+abstract contract PairAB is PairA, PairB {} //~WARN: ERC-7201 namespace `example.pair` is declared by both `PairA.PairAStorage` and `PairB.PairBStorage`
+abstract contract PairAC is PairA, PairC {} //~WARN: ERC-7201 namespace `example.pair` is declared by both `PairA.PairAStorage` and `PairC.PairCStorage`
+abstract contract PairBC is PairB, PairC {} //~WARN: ERC-7201 namespace `example.pair` is declared by both `PairB.PairBStorage` and `PairC.PairCStorage`
+
+// Every pair already collides in a base, so combining them all is not reported again.
+contract CombinesAllPairs is PairAB, PairAC, PairBC {}

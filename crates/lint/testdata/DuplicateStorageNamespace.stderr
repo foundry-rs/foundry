@@ -78,3 +78,35 @@ LL │ contract CombinedAndRedeclared is TokenBase, OtherTokenBase {
    │
    ╰ help: https://getfoundry.sh/forge/linting/duplicate-storage-namespace
 
+warning[duplicate-storage-namespace]: ERC-7201 namespace `example.token` is declared by both `TokenBase.TokenStorage` and `OtherTokenBase.OtherTokenStorage`
+   ╭▸ ROOT/testdata/DuplicateStorageNamespace.sol:LL:CC
+   │
+LL │ contract CombinesRedeclaredBase is TokenBase, OtherTokenBase, RedeclaredInDerived {}
+   │          ━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/duplicate-storage-namespace
+
+warning[duplicate-storage-namespace]: ERC-7201 namespace `example.pair` is declared by both `PairA.PairAStorage` and `PairB.PairBStorage`
+   ╭▸ ROOT/testdata/DuplicateStorageNamespace.sol:LL:CC
+   │
+LL │ abstract contract PairAB is PairA, PairB {}
+   │                   ━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/duplicate-storage-namespace
+
+warning[duplicate-storage-namespace]: ERC-7201 namespace `example.pair` is declared by both `PairA.PairAStorage` and `PairC.PairCStorage`
+   ╭▸ ROOT/testdata/DuplicateStorageNamespace.sol:LL:CC
+   │
+LL │ abstract contract PairAC is PairA, PairC {}
+   │                   ━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/duplicate-storage-namespace
+
+warning[duplicate-storage-namespace]: ERC-7201 namespace `example.pair` is declared by both `PairB.PairBStorage` and `PairC.PairCStorage`
+   ╭▸ ROOT/testdata/DuplicateStorageNamespace.sol:LL:CC
+   │
+LL │ abstract contract PairBC is PairB, PairC {}
+   │                   ━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/duplicate-storage-namespace
+
