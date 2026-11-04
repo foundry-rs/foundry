@@ -9,9 +9,7 @@ use crate::{
     state::{CallContext, common::LitExt},
 };
 use foundry_common::{comments::Comment, iter::IterDelimited};
-use foundry_config::fmt::{
-    self as config, MultilineFuncHeaderStyle, NamespaceImportStyle as NIStyle,
-};
+use foundry_config::fmt::{self as config, MultilineFuncHeaderStyle};
 use solar::{
     ast::BoxSlice,
     interface::SpannedOption,
@@ -217,6 +215,8 @@ impl<'ast> State<'_, 'ast> {
     fn print_import(&mut self, import: &'ast ast::ImportDirective<'ast>) {
         let ast::ImportDirective { path, items } = import;
         self.word("import ");
+
+        use config::NamespaceImportStyle as NIStyle;
 
         match (items, self.config.namespace_import_style) {
             (ImportItems::Plain(None), _) => {

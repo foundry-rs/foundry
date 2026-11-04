@@ -849,14 +849,42 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     }
 
     /// Executes the transaction with explicit network-specific context without committing state.
-    #[instrument(name = "call", level = "debug", skip_all)]
     pub fn call_with_env_and_context(
+        &self,
+        evm_env: EvmEnvFor<FEN>,
+        tx_env: TxEnvFor<FEN>,
+        chain_context: ChainFor<FEN>,
+    ) -> eyre::Result<RawCallResult<FEN>> {
+        self.call_with_stack(evm_env, tx_env, chain_context, self.inspector().clone())
+    }
+
+    /// Performs a raw call like [`Self::call_raw`], but without the fuzz guidance inspectors.
+    ///
+    /// The call collects no edge coverage, comparison operands, or dictionary values, so use it
+    /// for calls whose instrumentation output is discarded, such as invariant predicate checks.
+    pub fn call_raw_without_fuzz_instrumentation(
+        &self,
+        from: Address,
+        to: Address,
+        calldata: Bytes,
+        value: U256,
+    ) -> eyre::Result<RawCallResult<FEN>> {
+        let (evm_env, tx_env) = self.prepare_call_env(from, TxKind::Call(to), calldata, value);
+        let chain_context = self.chain_context_for_synthetic_transaction(&tx_env)?;
+        let mut stack = self.inspector().clone();
+        stack.disable_fuzz_instrumentation();
+        self.call_with_stack(evm_env, tx_env, chain_context, stack)
+    }
+
+    /// Executes the transaction with the given inspector stack without committing state.
+    #[instrument(name = "call", level = "debug", skip_all)]
+    fn call_with_stack(
         &self,
         mut evm_env: EvmEnvFor<FEN>,
         mut tx_env: TxEnvFor<FEN>,
         chain_context: ChainFor<FEN>,
+        mut stack: InspectorStack<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let mut stack = self.inspector().clone();
         let sancov_edges = stack.inner.sancov_edges;
         let sancov_trace_cmp = stack.inner.sancov_trace_cmp;
         let sancov_active = sancov_edges || sancov_trace_cmp;

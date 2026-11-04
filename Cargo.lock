@@ -1483,6 +1483,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ar_archive_writer"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0c269894b6fe5e9d7ada0cf69b5bf847ff35bc25fc271f08e1d080fce80339a"
+dependencies = [
+ "object 0.32.2",
+]
+
+[[package]]
 name = "arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2501,7 +2510,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "miniz_oxide 0.8.9",
- "object",
+ "object 0.37.3",
  "rustc-demangle",
  "windows-link",
 ]
@@ -6091,6 +6100,7 @@ dependencies = [
  "alloy-provider",
  "alloy-rlp",
  "alloy-signer",
+ "alloy-transport",
  "cfg-if",
  "clap",
  "clap_complete",
@@ -6636,6 +6646,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shlex",
+ "stacker",
  "thiserror 2.0.21",
  "tracing",
  "wait-timeout",
@@ -9013,6 +9024,15 @@ dependencies = [
 
 [[package]]
 name = "object"
+version = "0.32.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6a622008b6e321afc04970976f62ee297fdbaa6f95318ca343e3eebb9648441"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
+name = "object"
 version = "0.37.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff76201f031d8863c38aa7f905eca4f53abbfa15f609db4277d44cd8938f33fe"
@@ -10122,6 +10142,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e36c2f31e0a47f9280fb347ef5e461ffcd2c52dd520d8e216b52f93b0b0d7d6"
 dependencies = [
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "psm"
+version = "0.1.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d11f2fedc3b7dafdc2851bc52f277377c5473d378859be234bc7ebb593144d01"
+dependencies = [
+ "ar_archive_writer",
+ "cc",
 ]
 
 [[package]]
@@ -13100,9 +13130,9 @@ dependencies = [
 
 [[package]]
 name = "soldb-core"
-version = "0.4.5"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70396322c0f84f1ff104f0b5815252500749b9f43fb2709baff41b9910d3d960"
+checksum = "17d9179daa521411b1b1b82928aeed4d9f1ba3ba8b206f191276b32695507e85"
 dependencies = [
  "bytes",
  "serde",
@@ -13111,9 +13141,9 @@ dependencies = [
 
 [[package]]
 name = "soldb-debugger"
-version = "0.4.5"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29da43bc7b4d2faad9768307bf6099de42b9e56796fec241051a5a67a1a3e1e5"
+checksum = "edd50524b5e057a8141a7241ce919df365c22b77d16c5b028292141d0057fe45"
 dependencies = [
  "rustc-hash",
  "serde",
@@ -13124,9 +13154,9 @@ dependencies = [
 
 [[package]]
 name = "soldb-ethdebug"
-version = "0.4.5"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8654a11366fa94283aa92e975d42f1ea63487237a284fc4b2ebdc33742ae6af4"
+checksum = "57ecddbde71ce9469bfc7a12781a21e3a35c404074dcd20290ba1544dcfb1705"
 dependencies = [
  "serde",
  "serde_json",
@@ -13135,9 +13165,9 @@ dependencies = [
 
 [[package]]
 name = "soldb-repl"
-version = "0.4.5"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "485d293b7e4a160f3cce365e1b5a112e61bc61edd62fc211b97f4e1249d78d65"
+checksum = "3a036fedf04effdbf9959ecad88ac4f58e1ad0d3749602194fa30f01d5cae867"
 dependencies = [
  "serde",
  "serde_json",
@@ -13147,9 +13177,9 @@ dependencies = [
 
 [[package]]
 name = "soldb-tui"
-version = "0.4.5"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c786f694b3a5d8612baae88e6c066bb2eba345e86b13dd8179e18e847c23f2c6"
+checksum = "2e4d353303f88b8ec4fa4da6039beba8ec7a3e1c1f61f535e780a3f6317e1cdf"
 dependencies = [
  "crossterm",
  "ratatui",
@@ -13271,6 +13301,19 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+
+[[package]]
+name = "stacker"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "707f49d46706bacf8a2b00d51dace3f9de527c13eec3778f570c411f89e69967"
+dependencies = [
+ "cc",
+ "cfg-if",
+ "libc",
+ "psm",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "static_assertions"

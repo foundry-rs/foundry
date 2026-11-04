@@ -1746,10 +1746,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
     /// Whether the given address has arbitrary storage.
     pub fn has_arbitrary_storage(&self, address: &Address) -> bool {
-        match &self.core.arbitrary_storage {
-            Some(storage) => storage.values.contains_key(address),
-            None => false,
-        }
+        self.core.arbitrary_storage.as_ref().is_some_and(|s| s.values.contains_key(address))
     }
 
     /// Whether the given slot of address with arbitrary storage should be overwritten.
@@ -1760,25 +1757,19 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         address: &Address,
         storage_slot: U256,
     ) -> bool {
-        match &self.core.arbitrary_storage {
-            Some(storage) => {
-                storage.overwrites.contains(address)
-                    && storage
-                        .values
-                        .get(address)
-                        .and_then(|arbitrary_values| arbitrary_values.get(&storage_slot))
-                        .is_none()
-            }
-            None => false,
-        }
+        self.core.arbitrary_storage.as_ref().is_some_and(|storage| {
+            storage.overwrites.contains(address)
+                && storage
+                    .values
+                    .get(address)
+                    .and_then(|arbitrary_values| arbitrary_values.get(&storage_slot))
+                    .is_none()
+        })
     }
 
     /// Whether the given address is a copy of an address with arbitrary storage.
     pub fn is_arbitrary_storage_copy(&self, address: &Address) -> bool {
-        match &self.core.arbitrary_storage {
-            Some(storage) => storage.copies.contains_key(address),
-            None => false,
-        }
+        self.core.arbitrary_storage.as_ref().is_some_and(|s| s.copies.contains_key(address))
     }
 
     /// Registers an SLOAD callback, replacing the existing callback for `target`.

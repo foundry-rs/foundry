@@ -253,7 +253,7 @@ impl ContractsByArtifact {
     ) -> Option<ArtifactWithContractRef<'_>> {
         self.iter()
             .filter_map(|(id, contract)| {
-                if let Some(deployed_bytecode) = get(contract) {
+                get(contract).and_then(|deployed_bytecode| {
                     let mut code = code;
                     if strip_ctor_args && code.len() > deployed_bytecode.len() {
                         // Try to decode ctor args with contract abi.
@@ -269,9 +269,7 @@ impl ContractsByArtifact {
 
                     let score = bytecode_diff_score(deployed_bytecode.as_ref(), code);
                     (score <= accepted_score).then_some((score, (id, contract)))
-                } else {
-                    None
-                }
+                })
             })
             .min_by(|(score1, _), (score2, _)| score1.total_cmp(score2))
             .map(|(_, data)| data)
