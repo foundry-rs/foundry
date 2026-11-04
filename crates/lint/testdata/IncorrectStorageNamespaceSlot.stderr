@@ -1,0 +1,32 @@
+warning[incorrect-storage-namespace-slot]: storage slot does not match the struct's ERC-7201 namespace
+   ╭▸ ROOT/testdata/IncorrectStorageNamespaceSlot.sol:LL:CC
+   │
+LL │             $.slot := ERC20_STORAGE
+   │                       ━━━━━━━━━━━━━ help: consider using the annotated namespace's ERC-7201 root: `0x52c63247e1f47db19d5ce0460030c497f067ca4cebf71ba98eeadabe20bace00`
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-storage-namespace-slot
+
+warning[incorrect-storage-namespace-slot]: storage slot does not match the struct's ERC-7201 namespace
+   ╭▸ ROOT/testdata/IncorrectStorageNamespaceSlot.sol:LL:CC
+   │
+LL │             $.slot := MAIN_STORAGE
+   │                       ━━━━━━━━━━━━ help: consider using the annotated namespace's ERC-7201 root: `0xcdf5e816634ebd9ce8c98f473659c5a6071cdb4b03165bf58b3492954a6e3900`
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-storage-namespace-slot
+
+warning[incorrect-storage-namespace-slot]: storage slot does not match the struct's ERC-7201 namespace
+   ╭▸ ROOT/testdata/IncorrectStorageNamespaceSlot.sol:LL:CC
+   │
+LL │             $.slot := STORAGE
+   │                       ━━━━━━━ help: consider using the annotated namespace's ERC-7201 root: `0x52c63247e1f47db19d5ce0460030c497f067ca4cebf71ba98eeadabe20bace00`
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-storage-namespace-slot
+
+warning[incorrect-storage-namespace-slot]: storage slot does not match the struct's ERC-7201 namespace
+   ╭▸ ROOT/testdata/IncorrectStorageNamespaceSlot.sol:LL:CC
+   │
+LL │             $.slot := 0x1234
+   │                       ━━━━━━ help: consider using the annotated namespace's ERC-7201 root: `0x83a52cf58708ceb635494288980d03063f2ee0001d5664f0ca93ec1ada91f200`
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-storage-namespace-slot
+

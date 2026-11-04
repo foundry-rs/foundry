@@ -163,6 +163,7 @@ impl SymbolicExecutor {
         state: &mut PathState,
         args_offset: usize,
         checks: ExpectedEmitChecks,
+        anonymous: bool,
         emitter_arg: Option<usize>,
         count_arg: Option<usize>,
     ) -> Result<CheatcodeOutcome, SymbolicError> {
@@ -181,7 +182,14 @@ impl SymbolicExecutor {
             })
             .transpose()?
             .unwrap_or(1);
-        state.expected_emit = Some(ExpectedEmit::new(checks, emitter, remaining));
+        // Forge queues expectations; replacing a pending one would silently drop it.
+        if state.expected_emit.is_some() {
+            return Err(SymbolicError::Unsupported(
+                "symbolic vm.expectEmit with a pending expectation",
+            ));
+        }
+        state.expected_emit =
+            Some(ExpectedEmit::new(checks, emitter, remaining, anonymous, state.call_depth));
         Ok(CheatcodeOutcome::Continue(Vec::new()))
     }
 
@@ -659,7 +667,9 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             stopRecordCall::SELECTOR => {
-                state.access_record = None;
+                if let Some(record) = &mut state.access_record {
+                    record.stop();
+                }
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             accessesCall::SELECTOR => {
@@ -854,7 +864,14 @@ impl SymbolicExecutor {
                 };
                 let emitter = params.iter().position(|param| *param == DynSolType::Address);
                 let count = params.iter().position(|param| *param == DynSolType::Uint(64));
-                self.expect_emit_from_args(state, args_offset, checks, emitter, count)
+                let anonymous = matches!(
+                    selector,
+                    expectEmitAnonymous_0Call::SELECTOR
+                        | expectEmitAnonymous_1Call::SELECTOR
+                        | expectEmitAnonymous_2Call::SELECTOR
+                        | expectEmitAnonymous_3Call::SELECTOR
+                );
+                self.expect_emit_from_args(state, args_offset, checks, anonymous, emitter, count)
             }
             expectCall_0Call::SELECTOR
             | expectCall_1Call::SELECTOR

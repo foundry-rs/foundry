@@ -50,39 +50,57 @@ fn finalized_boundary_authenticates_rotation_and_preserves_announced_key() {
     let mut consensus = TempoConsensus::new(B256::ZERO, NonZeroU64::new(3).unwrap());
     let initial = consensus.identity();
     finalize(&mut consensus, 1);
+    let superseded = consensus.rotate().unwrap();
     let first = consensus.rotate().unwrap();
+    assert_eq!(first.from_epoch, 2);
+    assert_ne!(first.identity, superseded.identity);
     let (boundary, certificate) = finalize(&mut consensus, 2);
     assert_eq!(consensus.identity(), initial);
     assert_certificate(&initial, &boundary, &certificate);
 
-    let outcome =
+    let ceremony =
         OnchainDkgOutcome::decode(commonware_codec::Copying(boundary.inner.extra_data.as_ref()))
             .unwrap();
-    assert_eq!(outcome.epoch, 1);
-    assert_eq!(outcome.network_identity().encode().as_ref(), first.identity.as_ref());
-    assert_eq!(outcome.output.quorum::<N3f1>(), 1);
-    assert_eq!(outcome.next_players, outcome.output.players().clone());
-    assert!(!outcome.is_next_full_dkg);
+    assert_eq!(ceremony.epoch, 1);
+    assert_eq!(ceremony.network_identity().encode().as_ref(), initial.identity.as_ref());
+    assert_eq!(ceremony.output.quorum::<N3f1>(), 1);
+    assert!(ceremony.is_next_full_dkg);
 
     let superseded = consensus.rotate().unwrap();
     let second = consensus.rotate().unwrap();
-    assert_eq!(second.from_epoch, 2);
+    assert_eq!(second.from_epoch, 3);
     assert_ne!(superseded.identity, second.identity);
-    let (header, certificate) = finalize(&mut consensus, 3);
+    for height in 3..=4 {
+        let (header, certificate) = finalize(&mut consensus, height);
+        assert_eq!(consensus.identity(), initial);
+        assert_certificate(&initial, &header, &certificate);
+    }
+    let (boundary, certificate) = finalize(&mut consensus, 5);
+    assert_certificate(&initial, &boundary, &certificate);
+    let outcome =
+        OnchainDkgOutcome::decode(commonware_codec::Copying(boundary.inner.extra_data.as_ref()))
+            .unwrap();
+    assert_eq!(outcome.epoch, 2);
+    assert_eq!(outcome.network_identity().encode().as_ref(), first.identity.as_ref());
+    assert_eq!(ceremony.next_players, *outcome.output.players());
+    assert!(outcome.is_next_full_dkg);
+    let (header, certificate) = finalize(&mut consensus, 6);
     assert_eq!(consensus.identity(), first);
     assert_certificate(&first, &header, &certificate);
     assert!(!certificate_verifies(&initial, &certificate));
     assert!(!certificate_verifies(&second, &certificate));
 
-    finalize(&mut consensus, 4);
-    let (boundary, certificate) = finalize(&mut consensus, 5);
+    finalize(&mut consensus, 7);
+    let (boundary, certificate) = finalize(&mut consensus, 8);
     assert_certificate(&first, &boundary, &certificate);
-    let outcome =
+    let next =
         OnchainDkgOutcome::decode(commonware_codec::Copying(boundary.inner.extra_data.as_ref()))
             .unwrap();
-    assert_eq!(outcome.epoch, 2);
-    assert_eq!(outcome.network_identity().encode().as_ref(), second.identity.as_ref());
-    let (header, certificate) = finalize(&mut consensus, 6);
+    assert_eq!(next.epoch, 3);
+    assert_eq!(next.network_identity().encode().as_ref(), second.identity.as_ref());
+    assert_eq!(outcome.next_players, *next.output.players());
+    assert!(!next.is_next_full_dkg);
+    let (header, certificate) = finalize(&mut consensus, 9);
     assert_eq!(consensus.identity(), second);
     assert_certificate(&second, &header, &certificate);
     assert!(!certificate_verifies(&first, &certificate));
@@ -94,27 +112,43 @@ fn single_block_epochs_announce_before_switching_identity() {
     let mut consensus = TempoConsensus::new(B256::ZERO, NonZeroU64::MIN);
     let initial = consensus.identity();
     let next = consensus.rotate().unwrap();
-    assert_eq!(next.from_epoch, 2);
+    assert_eq!(next.from_epoch, 3);
     let (boundary, certificate) = finalize(&mut consensus, 1);
     assert_eq!((certificate.epoch, certificate.view), (1, 1));
     assert_eq!(boundary.consensus_context.unwrap().parent_view, 0);
     assert_certificate(&initial, &boundary, &certificate);
-    let outcome =
+    let ceremony =
         OnchainDkgOutcome::decode(commonware_codec::Copying(boundary.inner.extra_data.as_ref()))
             .unwrap();
-    assert_eq!(outcome.epoch, 2);
-    assert_eq!(outcome.network_identity().encode().as_ref(), next.identity.as_ref());
+    assert_eq!(ceremony.epoch, 2);
+    assert!(ceremony.is_next_full_dkg);
+    assert_eq!(ceremony.network_identity().encode().as_ref(), initial.identity.as_ref());
 
     let later = consensus.rotate().unwrap();
-    assert_eq!(later.from_epoch, 3);
+    assert_eq!(later.from_epoch, 4);
     let (boundary, certificate) = finalize(&mut consensus, 2);
-    assert_eq!(consensus.identity(), next);
-    assert_certificate(&next, &boundary, &certificate);
+    assert_eq!(consensus.identity(), initial);
+    assert_certificate(&initial, &boundary, &certificate);
     let outcome =
         OnchainDkgOutcome::decode(commonware_codec::Copying(boundary.inner.extra_data.as_ref()))
             .unwrap();
     assert_eq!(outcome.epoch, 3);
-    assert_eq!(outcome.network_identity().encode().as_ref(), later.identity.as_ref());
+    assert!(outcome.is_next_full_dkg);
+    assert_eq!(outcome.network_identity().encode().as_ref(), next.identity.as_ref());
+    assert_eq!(ceremony.next_players, *outcome.output.players());
+    let (boundary, certificate) = finalize(&mut consensus, 3);
+    assert_eq!(consensus.identity(), next);
+    assert_certificate(&next, &boundary, &certificate);
+    let announcement =
+        OnchainDkgOutcome::decode(commonware_codec::Copying(boundary.inner.extra_data.as_ref()))
+            .unwrap();
+    assert_eq!(announcement.epoch, 4);
+    assert!(!announcement.is_next_full_dkg);
+    assert_eq!(announcement.network_identity().encode().as_ref(), later.identity.as_ref());
+    assert_eq!(outcome.next_players, *announcement.output.players());
+    let (header, certificate) = finalize(&mut consensus, 4);
+    assert_eq!(consensus.identity(), later);
+    assert_certificate(&later, &header, &certificate);
 }
 
 #[test]
@@ -134,7 +168,7 @@ fn nonzero_checkpoint_stays_unsigned_and_bounds_rewinds() {
         assert_eq!(consensus.finalize(&header, TempoHardfork::T4), Err(error));
     }
     let rotated = consensus.rotate().unwrap();
-    assert_eq!(rotated.from_epoch, 4);
+    assert_eq!(rotated.from_epoch, 5);
     let (header, certificate) = finalize(&mut consensus, 9);
     assert_certificate(&initial, &header, &certificate);
     for requested in [7, 10] {
@@ -162,15 +196,15 @@ fn cloned_checkpoint_restores_pending_rotation_and_counter() {
     let initial = consensus.identity();
     let first = consensus.rotate().unwrap();
     let checkpoint = consensus.clone();
-    let (_, boundary) = finalize(&mut consensus, 1);
-    let (_, activated) = finalize(&mut consensus, 2);
+    let certificates = (1..=4).map(|height| finalize(&mut consensus, height)).collect::<Vec<_>>();
     let second = consensus.rotate().unwrap();
 
     consensus = checkpoint;
     assert_eq!(consensus.identity(), initial);
     assert!(consensus.latest().is_none());
-    assert_eq!(finalize(&mut consensus, 1).1, boundary);
-    assert_eq!(finalize(&mut consensus, 2).1, activated);
+    for (height, expected) in (1..=4).zip(certificates) {
+        assert_eq!(finalize(&mut consensus, height), expected);
+    }
     assert_eq!(consensus.identity(), first);
     assert_eq!(consensus.rotate().unwrap(), second);
 }
@@ -196,8 +230,12 @@ fn unwind_restores_retained_key_schedule_and_discards_later_certificates() {
     consensus.prepare_header(&mut replacement, TempoHardfork::T4).unwrap();
     let new_certificate = consensus.finalize(&replacement, TempoHardfork::T4).unwrap();
     assert_ne!(new_certificate.digest, old_certificate.digest);
-    assert_certificate(&first, &old_header, &old_certificate);
-    assert_certificate(&first, &replacement, &new_certificate);
+    assert_certificate(&initial, &old_header, &old_certificate);
+    assert_certificate(&initial, &replacement, &new_certificate);
+    for height in 4..=6 {
+        finalize(&mut consensus, height);
+    }
+    assert_eq!(consensus.identity(), first);
     assert_eq!(consensus.finalization(3), Some(&new_certificate));
 }
 
@@ -259,13 +297,19 @@ fn stale_or_invalid_boundary_data_does_not_advance_consensus() {
             .unwrap();
     let mut wrong_epoch = outcome.clone();
     wrong_epoch.epoch += 1;
+    let mut wrong_players = outcome.clone();
+    wrong_players.next_players = outcome.output.players().clone();
     let mut wrong_flag = outcome;
-    wrong_flag.is_next_full_dkg = true;
+    wrong_flag.is_next_full_dkg = false;
     let mut trailing = header.inner.extra_data.to_vec();
     trailing.push(0);
-    for extra_data in
-        [Bytes::new(), wrong_epoch.encode().into(), wrong_flag.encode().into(), trailing.into()]
-    {
+    for extra_data in [
+        Bytes::new(),
+        wrong_epoch.encode().into(),
+        wrong_players.encode().into(),
+        wrong_flag.encode().into(),
+        trailing.into(),
+    ] {
         let mut invalid = header.clone();
         invalid.inner.extra_data = extra_data;
         assert_eq!(
@@ -278,7 +322,11 @@ fn stale_or_invalid_boundary_data_does_not_advance_consensus() {
     }
     let certificate = consensus.finalize(&header, TempoHardfork::T4).unwrap();
     assert_certificate(&initial, &header, &certificate);
-    let (header, certificate) = finalize(&mut consensus, 2);
+    for height in 2..=3 {
+        let (header, certificate) = finalize(&mut consensus, height);
+        assert_certificate(&initial, &header, &certificate);
+    }
+    let (header, certificate) = finalize(&mut consensus, 4);
     assert_eq!(consensus.identity(), rotated);
     assert_certificate(&rotated, &header, &certificate);
 }
@@ -469,6 +517,8 @@ fn rounds_start_after_genesis_and_restart_after_boundaries() {
                 ))
                 .unwrap();
                 assert_eq!(outcome.epoch, epoch);
+                assert!(!outcome.is_next_full_dkg);
+                assert_eq!(outcome.next_players, *outcome.output.players());
             } else {
                 assert!(header.inner.extra_data.is_empty());
             }
@@ -491,8 +541,8 @@ fn checkpoints_bound_committee_history_and_replay_rotations() {
     for height in 7..=18 {
         consensus.rotate().unwrap();
         certificates.push(finalize(&mut consensus, height).1);
-        assert!(consensus.state.committees.len() <= 2);
-        assert!(consensus.checkpoints.values().all(|checkpoint| checkpoint.committees.len() <= 2));
+        assert!(consensus.state.committees.len() <= 3);
+        assert!(consensus.checkpoints.values().all(|checkpoint| checkpoint.committees.len() <= 3));
     }
 
     consensus.unwind(8).unwrap();
@@ -502,11 +552,11 @@ fn checkpoints_bound_committee_history_and_replay_rotations() {
         assert_eq!(&finalize(&mut consensus, height).1, expected);
     }
 
-    finalize(&mut consensus, 19);
-    finalize(&mut consensus, 20);
-    finalize(&mut consensus, 21);
+    for height in 19..=24 {
+        finalize(&mut consensus, height);
+    }
     let last = consensus.identity();
-    for height in 22..=27 {
+    for height in 25..=30 {
         finalize(&mut consensus, height);
         assert_eq!(consensus.identity(), last);
         assert_eq!(consensus.state.committees.len(), 1);
@@ -533,7 +583,7 @@ fn pruning_preserves_head_and_retained_rotation_history() {
     }
     assert_eq!(consensus.latest(), unpruned.latest());
     assert_eq!(consensus.identity(), unpruned.identity());
-    for height in 9..=12 {
+    for height in 9..=15 {
         assert_eq!(finalize(&mut consensus, height), finalize(&mut unpruned, height));
     }
     assert_eq!(consensus.identity(), pending);
@@ -581,7 +631,7 @@ fn pruning_bounds_rewinds_and_reset_restores_nonzero_anchor() {
         assert_eq!(controller.identity(), unpruned.identity());
         assert_eq!(controller.checkpoints.keys().copied().collect::<Vec<_>>(), [9]);
     }
-    for height in 10..=12 {
+    for height in 10..=15 {
         let expected = finalize(&mut unpruned, height);
         assert_eq!(finalize(&mut consensus, height), expected);
         assert_eq!(finalize(&mut snapshot, height), expected);
@@ -590,9 +640,9 @@ fn pruning_bounds_rewinds_and_reset_restores_nonzero_anchor() {
     let next_identity = unpruned.rotate().unwrap();
     assert_eq!(consensus.rotate().unwrap(), next_identity);
     assert_eq!(snapshot.rotate().unwrap(), next_identity);
-    let next = finalize(&mut unpruned, 13);
-    assert_eq!(finalize(&mut consensus, 13), next);
-    assert_eq!(finalize(&mut snapshot, 13), next);
+    let next = finalize(&mut unpruned, 16);
+    assert_eq!(finalize(&mut consensus, 16), next);
+    assert_eq!(finalize(&mut snapshot, 16), next);
 
     consensus.unwind(9).unwrap();
     unpruned.unwind(9).unwrap();
@@ -623,7 +673,7 @@ fn repeated_pruning_bounds_retained_history() {
         assert_eq!(consensus.latest(), Some((height, &certificate)));
         assert!(consensus.checkpoints.len() <= 3);
         assert!(consensus.finalizations.len() <= 3);
-        assert!(consensus.checkpoints.values().all(|checkpoint| checkpoint.committees.len() <= 2));
+        assert!(consensus.checkpoints.values().all(|checkpoint| checkpoint.committees.len() <= 3));
     }
     assert_eq!(consensus.checkpoints.keys().copied().collect::<Vec<_>>(), [22, 23, 24]);
     consensus.unwind(22).unwrap();
@@ -795,4 +845,34 @@ fn fork_unsigned_successor_keeps_rounds_without_header_context() {
     assert_eq!(consensus.unsigned_successor().err(), Some(TempoConsensusError::ViewOverflow));
     let terminal = TempoConsensus::at_height(B256::ZERO, epoch_length, u64::MAX);
     assert_eq!(terminal.unsigned_successor().err(), Some(TempoConsensusError::HeightOverflow));
+}
+
+#[test]
+fn last_representable_dkg_outcome_preserves_announced_committee() {
+    let mut consensus = TempoConsensus::at_height(B256::ZERO, NonZeroU64::MIN, u64::MAX - 3);
+    let initial = consensus.identity();
+    let rotated = consensus.rotate().unwrap();
+    assert_eq!(rotated.from_epoch, u64::MAX);
+
+    let (header, certificate) = finalize(&mut consensus, u64::MAX - 2);
+    assert_certificate(&initial, &header, &certificate);
+    let ceremony =
+        OnchainDkgOutcome::decode(commonware_codec::Copying(header.inner.extra_data.as_ref()))
+            .unwrap();
+    assert_eq!(ceremony.epoch, u64::MAX - 1);
+    assert!(ceremony.is_next_full_dkg);
+    assert_eq!(consensus.rotate(), Err(TempoConsensusError::EpochOverflow));
+    assert_eq!(consensus.latest(), Some((u64::MAX - 2, &certificate)));
+    assert_eq!(consensus.identity(), initial);
+
+    let (header, certificate) = finalize(&mut consensus, u64::MAX - 1);
+    assert_certificate(&initial, &header, &certificate);
+    let outcome =
+        OnchainDkgOutcome::decode(commonware_codec::Copying(header.inner.extra_data.as_ref()))
+            .unwrap();
+    assert_eq!(outcome.epoch, u64::MAX);
+    assert!(!outcome.is_next_full_dkg);
+    assert_eq!(outcome.network_identity().encode().as_ref(), rotated.identity.as_ref());
+    assert_eq!(ceremony.next_players, *outcome.output.players());
+    assert_eq!(outcome.next_players, *outcome.output.players());
 }
