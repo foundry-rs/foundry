@@ -803,16 +803,14 @@ impl NodeConfig {
     }
 
     pub fn get_blob_excess_gas_and_price(&self) -> BlobExcessGasAndPrice {
-        if let Some(value) = self.blob_excess_gas_and_price {
-            value
-        } else {
+        self.blob_excess_gas_and_price.unwrap_or_else(|| {
             let excess_blob_gas =
                 self.genesis.as_ref().and_then(|g| g.excess_blob_gas).unwrap_or(0);
             BlobExcessGasAndPrice::new(
                 excess_blob_gas,
                 self.get_blob_params().update_fraction as u64,
             )
-        }
+        })
     }
 
     /// Returns the [`BlobParams`] that should be used.
@@ -1316,10 +1314,7 @@ impl NodeConfig {
 
     /// Returns the ipc path for the ipc endpoint if any
     pub fn get_ipc_path(&self) -> Option<String> {
-        match &self.ipc_path {
-            Some(path) => path.clone().or_else(|| Some(DEFAULT_IPC_ENDPOINT.to_string())),
-            None => None,
-        }
+        self.ipc_path.clone().map(|path| path.unwrap_or_else(|| DEFAULT_IPC_ENDPOINT.to_string()))
     }
 
     /// Prints the config info

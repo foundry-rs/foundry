@@ -2478,7 +2478,7 @@ mod tests {
     use crate::executors::ExecutorBuilder;
     use evm2::{bytecode::Bytecode, evm::InMemoryDB};
     use foundry_cheatcodes::CheatsConfig;
-    use foundry_config::FuzzDictionaryConfig;
+    use foundry_config::{FuzzCorpusMutationWeights, FuzzDictionaryConfig};
     use foundry_evm_core::evm::EthEvmNetwork;
     use foundry_evm_fuzz::CallDetails;
     use proptest::{
@@ -3161,8 +3161,6 @@ mod tests {
 
     #[test]
     fn invariant_worker_cmp_log_selection_uses_one_worker_per_campaign() {
-        use foundry_config::FuzzCorpusMutationWeights;
-
         let mut config = InvariantConfig::default();
         assert!(!invariant_worker_collects_evm_cmp_log(&config, 0, 1));
 

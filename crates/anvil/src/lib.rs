@@ -39,7 +39,7 @@ use tokio::{
     runtime::Handle,
     task::{JoinError, JoinHandle},
 };
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{EnvFilter, prelude::*};
 
 #[cfg(feature = "optimism")]
 use op_alloy_rpc_types as _;
@@ -489,8 +489,6 @@ impl Future for NodeHandle {
 
 #[doc(hidden)]
 pub fn init_tracing() -> LoggingManager {
-    use tracing_subscriber::prelude::*;
-
     let manager = LoggingManager::default();
 
     let _ = if let Ok(rust_log_val) = std::env::var("RUST_LOG")

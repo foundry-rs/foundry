@@ -1941,11 +1941,15 @@ mod tests {
         inspectors::{EdgeCovHit, EdgeCoverage, EdgeKey},
     };
     use alloy_dyn_abi::DynSolValue;
+    use alloy_json_abi::JsonAbi;
     use evm2::{bytecode::Bytecode, evm::InMemoryDB};
     use foundry_cheatcodes::{Cheatcodes, CheatsConfig};
     use foundry_config::FuzzDictionaryConfig;
     use foundry_evm_core::{constants::MAGIC_ASSUME, evm::EthEvmNetwork};
-    use foundry_evm_fuzz::strategies::{EvmFuzzState, TxGenerator};
+    use foundry_evm_fuzz::{
+        invariant::TargetedContract,
+        strategies::{EvmFuzzState, TxGenerator},
+    };
     use proptest::prelude::{Just, Strategy};
     use rayon::prelude::*;
     use std::fs;
@@ -2110,9 +2114,6 @@ mod tests {
         functions: Vec<Function>,
         targeted_selectors: impl IntoIterator<Item = alloy_primitives::Selector>,
     ) -> FuzzRunIdentifiedContracts {
-        use alloy_json_abi::JsonAbi;
-        use foundry_evm_fuzz::invariant::TargetedContract;
-
         let mut abi = JsonAbi::new();
         for function in functions {
             abi.functions.entry(function.name.clone()).or_default().push(function);

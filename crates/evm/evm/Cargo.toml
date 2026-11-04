@@ -58,6 +58,9 @@ uuid.workspace = true
 rayon.workspace = true
 tokio.workspace = true
 
+[dev-dependencies]
+foundry-test-utils.workspace = true
+
 [features]
 default = ["optimism"]
 monad = [

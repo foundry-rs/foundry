@@ -21,7 +21,7 @@ use foundry_cli::{
 use foundry_common::{ContractsByArtifact, compile::ProjectCompiler};
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{
-    Chain, Config,
+    Chain, Config, NamedChain,
     figment::{
         Error, Metadata, Profile, Provider as FigmentProvider,
         value::{Dict, Map, Value},
@@ -1050,7 +1050,6 @@ pub fn sourcify_api_url(chain: Chain) -> Option<String> {
 
 /// Returns `true` for local/dev chains.
 const fn is_dev_chain(chain: Chain) -> bool {
-    use foundry_config::NamedChain;
     matches!(chain.named(), Some(NamedChain::Dev | NamedChain::AnvilHardhat | NamedChain::Cannon))
 }
 

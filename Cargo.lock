@@ -6523,6 +6523,7 @@ dependencies = [
  "foundry-evm-networks",
  "foundry-evm-sancov",
  "foundry-evm-traces",
+ "foundry-test-utils",
  "indicatif",
  "parking_lot 0.12.5",
  "proptest",
@@ -13048,9 +13049,9 @@ dependencies = [
 
 [[package]]
 name = "soldb-core"
-version = "0.4.5"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70396322c0f84f1ff104f0b5815252500749b9f43fb2709baff41b9910d3d960"
+checksum = "17d9179daa521411b1b1b82928aeed4d9f1ba3ba8b206f191276b32695507e85"
 dependencies = [
  "bytes",
  "serde",
@@ -13059,9 +13060,9 @@ dependencies = [
 
 [[package]]
 name = "soldb-debugger"
-version = "0.4.5"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29da43bc7b4d2faad9768307bf6099de42b9e56796fec241051a5a67a1a3e1e5"
+checksum = "edd50524b5e057a8141a7241ce919df365c22b77d16c5b028292141d0057fe45"
 dependencies = [
  "rustc-hash",
  "serde",
@@ -13072,9 +13073,9 @@ dependencies = [
 
 [[package]]
 name = "soldb-ethdebug"
-version = "0.4.5"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8654a11366fa94283aa92e975d42f1ea63487237a284fc4b2ebdc33742ae6af4"
+checksum = "57ecddbde71ce9469bfc7a12781a21e3a35c404074dcd20290ba1544dcfb1705"
 dependencies = [
  "serde",
  "serde_json",
@@ -13083,9 +13084,9 @@ dependencies = [
 
 [[package]]
 name = "soldb-repl"
-version = "0.4.5"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "485d293b7e4a160f3cce365e1b5a112e61bc61edd62fc211b97f4e1249d78d65"
+checksum = "3a036fedf04effdbf9959ecad88ac4f58e1ad0d3749602194fa30f01d5cae867"
 dependencies = [
  "serde",
  "serde_json",
@@ -13095,9 +13096,9 @@ dependencies = [
 
 [[package]]
 name = "soldb-tui"
-version = "0.4.5"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c786f694b3a5d8612baae88e6c066bb2eba345e86b13dd8179e18e847c23f2c6"
+checksum = "2e4d353303f88b8ec4fa4da6039beba8ec7a3e1c1f61f535e780a3f6317e1cdf"
 dependencies = [
  "crossterm",
  "ratatui",
