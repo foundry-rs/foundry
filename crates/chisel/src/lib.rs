@@ -10,7 +10,7 @@ extern crate tracing;
 
 // Unused. Enables `revm/asm-keccak`; see Cargo.toml.
 #[cfg(feature = "asm-keccak")]
-use revm as _;
+extern crate revm as _;
 
 pub mod args;
 
