@@ -48,7 +48,7 @@ impl SymbolicExecutor {
         // A create beyond the call depth limit fails before it increments the creator's
         // nonce or transfers value. Concrete Forge settles a pending revert cheatcode against
         // such a create differently from a joined create outcome, depending on its config.
-        if state.call_depth >= CALL_STACK_LIMIT as usize {
+        if state.at_call_depth_limit() {
             if state.expected_revert.is_some() || state.assume_no_revert_next_call.is_some() {
                 return Err(SymbolicError::Unsupported(
                     "revert cheatcode on a CREATE beyond the call depth limit",
@@ -125,6 +125,7 @@ impl SymbolicExecutor {
         child.world = failure_world.clone();
         if isolated {
             child.world.clear_transient_storage();
+            child.call_depth_base = child.call_depth;
         }
         child.world.mark_current_transaction_created(created);
         child.world.set_nonce(created, 1);
