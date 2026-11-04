@@ -6091,6 +6091,7 @@ dependencies = [
  "alloy-provider",
  "alloy-rlp",
  "alloy-signer",
+ "alloy-transport",
  "cfg-if",
  "clap",
  "clap_complete",

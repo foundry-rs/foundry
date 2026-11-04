@@ -176,16 +176,15 @@ pub fn reconstruct_event_params(event: &Event, decoded: &DecodedEvent) -> Vec<Dy
     inputs
 }
 
-/// Given a function name, address, and args, tries to parse it as a `Function` by fetching the
-/// abi from etherscan. If the address is a proxy, fetches the ABI of the implementation contract.
-pub async fn get_func_etherscan(
+/// Fetches the overloads of `function_name` from the contract's Etherscan ABI. If the address is a
+/// proxy, fetches the ABI of the implementation contract.
+pub async fn get_funcs_etherscan(
     function_name: &str,
     contract: Address,
-    args: &[String],
     chain: Chain,
     etherscan_api_key: &str,
     etherscan_api_url: Option<&str>,
-) -> Result<Function> {
+) -> Result<Vec<Function>> {
     let client = if let Some(api_url) = etherscan_api_url {
         Client::builder()
             .with_api_key(etherscan_api_key)
@@ -199,16 +198,7 @@ pub async fn get_func_etherscan(
     let metadata = source.items.first().wrap_err("etherscan returned empty metadata")?;
 
     let mut abi = metadata.abi()?;
-    let funcs = abi.functions.remove(function_name).unwrap_or_default();
-
-    for func in funcs {
-        let res = encode_function_args(&func, args);
-        if res.is_ok() {
-            return Ok(func);
-        }
-    }
-
-    Err(eyre::eyre!("Function not found in abi"))
+    Ok(abi.functions.remove(function_name).unwrap_or_default())
 }
 
 /// If the code at `address` is a proxy, recurse until we find the implementation.
