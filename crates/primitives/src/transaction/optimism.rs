@@ -132,14 +132,13 @@ impl From<op_alloy_rpc_types::Transaction<FoundryTxEnvelope>> for FoundryTransac
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_consensus::transaction::SignerRecoverable;
     use alloy_network::eip2718::Encodable2718;
     use alloy_primitives::{TxHash, b256};
     use alloy_rlp::Decodable;
 
     #[test]
     fn test_from_recovered_tx_legacy_op() {
-        use alloy_consensus::transaction::SignerRecoverable;
-
         let tx = r#"
         {
             "type": "0x0",

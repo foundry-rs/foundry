@@ -1029,6 +1029,7 @@ mod test {
     use super::*;
     use crate::eth::backend::mem::fork_db::ForkedDatabase;
     use alloy_consensus::Header;
+    use alloy_eips::eip4895::Withdrawal;
     use alloy_network::AnyNetwork;
     use alloy_provider::ProviderBuilder;
     use alloy_transport::mock::Asserter;
@@ -1197,8 +1198,6 @@ mod test {
 
     #[test]
     fn test_block_withdrawals_preserved() {
-        use alloy_eips::eip4895::Withdrawal;
-
         // create a block with withdrawals (like post-Shanghai blocks)
         let withdrawal = Withdrawal {
             index: 42,

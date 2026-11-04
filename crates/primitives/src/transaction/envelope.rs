@@ -904,8 +904,6 @@ mod tests {
     // Blobscan: https://sepolia.blobscan.com/tx/0x9a22ccb0029bc8b0ddd073be1a1d923b7ae2b2ea52100bae0db4424f9107e9c0
     #[test]
     fn test_decode_live_4844_tx() {
-        use alloy_primitives::{address, b256};
-
         // https://sepolia.etherscan.io/getRawTx?tx=0x9a22ccb0029bc8b0ddd073be1a1d923b7ae2b2ea52100bae0db4424f9107e9c0
         let raw_tx = alloy_primitives::hex::decode("0x03f9011d83aa36a7820fa28477359400852e90edd0008252089411e9ca82a3a762b4b5bd264d4173a242e7a770648080c08504a817c800f8a5a0012ec3d6f66766bedb002a190126b3549fce0047de0d4c25cffce0dc1c57921aa00152d8e24762ff22b1cfd9f8c0683786a7ca63ba49973818b3d1e9512cd2cec4a0013b98c6c83e066d5b14af2b85199e3d4fc7d1e778dd53130d180f5077e2d1c7a001148b495d6e859114e670ca54fb6e2657f0cbae5b08063605093a4b3dc9f8f1a0011ac212f13c5dff2b2c6b600a79635103d6f580a4221079951181b25c7e654901a0c8de4cced43169f9aa3d36506363b2d2c44f6c49fc1fd91ea114c86f3757077ea01e11fdd0d1934eda0492606ee0bb80a7bf8f35cc5f86ec60fe5031ba48bfd544").unwrap();
         let res = FoundryTxEnvelope::decode(&mut raw_tx.as_slice()).unwrap();
@@ -1012,9 +1010,6 @@ mod tests {
     // https://explorer.testnet.tempo.xyz/tx/0x6d6d8c102064e6dee44abad2024a8b1d37959230baab80e70efbf9b0c739c4fd
     #[test]
     fn test_decode_encode_tempo_tx() {
-        use alloy_primitives::address;
-        use tempo_primitives::TEMPO_TX_TYPE_ID;
-
         let tx_hash: TxHash =
             b256!("0x6d6d8c102064e6dee44abad2024a8b1d37959230baab80e70efbf9b0c739c4fd");
 

@@ -338,8 +338,6 @@ async fn tempo_raw_header_and_block_use_tempo_rlp() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_fork_detects_hardfork_from_fork_timestamp() {
-    use tempo_hardfork::TempoHardfork;
-
     let fork_timestamp = TempoHardfork::T3.mainnet_activation_timestamp().unwrap();
     let (_source_api, source_handle) = spawn(
         NodeConfig::test()
@@ -852,8 +850,6 @@ sol! {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_precompiles_have_code() {
-    use tempo_hardfork::TempoHardfork;
-
     let (api, _handle) =
         spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
 
@@ -6358,8 +6354,6 @@ async fn test_gas_estimation_tempo_aa_expiring_nonce() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_gas_estimation_t1_nonce_costs() {
-    use tempo_hardfork::TempoHardfork;
-
     let (_api, handle) =
         spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T1.into()))).await;
     let provider = handle.http_provider();
