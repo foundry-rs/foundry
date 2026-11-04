@@ -394,6 +394,17 @@ async fn multi_resume_warns_that_rpc_url_is_not_used(prj: _, cmd: _) {
     tester.cmd.assert_success().stderr_eq(str![[r#"
 Warning: Multichain resume submits and checks transactions through the RPC endpoints saved by the original run; `--rpc-url` is not used for that.
 
+Deployed contracts (chain 31337):
+  NoLink  0x5FbDB2315678afecb367f032d93F642f64180aa3
+  NoLink  0x8464135c8F25Da09e49BC8782676a84730C318bC
+
+Deployed contracts (chain 31337):
+  NoLink  0x8464135c8F25Da09e49BC8782676a84730C318bC
+  NoLink  0x71C95911E9a5D330f4D621842EC243EE1343292e
+  NoLink  0x948B3c65b89DF0B4894ABE91E6D02FE579834F8F
+  NoLink  0x5FbDB2315678afecb367f032d93F642f64180aa3
+  NoLink  0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+
 "#]]);
     assert!(flag_submissions.lock().unwrap().is_empty());
     assert_eq!(chain2_submissions.lock().unwrap().len(), 5);
@@ -407,7 +418,20 @@ Warning: Multichain resume submits and checks transactions through the RPC endpo
         .add_sig("MultiChainBroadcastNoLink", "deploy(string memory,string memory)")
         .args(&[&handle1.http_endpoint(), &rpc2])
         .args(&["--multi", "--resume"]);
-    tester.cmd.assert_success().stderr_eq(str![[r#""#]]);
+    tester.cmd.assert_success().stderr_eq(str![[r#"
+
+Deployed contracts (chain 31337):
+  NoLink  0x5FbDB2315678afecb367f032d93F642f64180aa3
+  NoLink  0x8464135c8F25Da09e49BC8782676a84730C318bC
+
+Deployed contracts (chain 31337):
+  NoLink  0x8464135c8F25Da09e49BC8782676a84730C318bC
+  NoLink  0x71C95911E9a5D330f4D621842EC243EE1343292e
+  NoLink  0x948B3c65b89DF0B4894ABE91E6D02FE579834F8F
+  NoLink  0x5FbDB2315678afecb367f032d93F642f64180aa3
+  NoLink  0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+
+"#]]);
 }
 
 // A failing chain on `--multi --resume` does not stop later chains from being reconciled, and the

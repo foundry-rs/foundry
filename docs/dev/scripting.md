@@ -100,6 +100,13 @@ A `ScriptSequence` compatibility artifact stores:
 - chain ID, libraries, script returns, source commit, and timestamp;
 - each transaction's RPC URL in a separate sensitive-cache file.
 
+Direct creations and recorded `additionalContracts` carry an optional `label` from the script's final
+`vm.label` map. Unlabelled creations omit the field, and old artifacts without it remain readable.
+After an ordinary or Tempo batch broadcast, including resume, a human-readable deployment summary
+lists recorded creations whose parent transaction has a successful receipt. It is written to stderr
+and suppressed by `--json` and `--quiet`. With `--skip-simulation`, additional creations are not
+collected, so only direct deployments can be listed.
+
 Each `TransactionWithMetadata` has an optional transaction hash. The authoritative recovery plan
 wraps these transactions with stable operation IDs, immutable attempt records, and recovery state.
 Ordinary recovery selects incomplete operations by their own hash associations. Batch recovery
@@ -147,9 +154,11 @@ result is saved, and the errors are returned together, so this later check usual
 pending. In multichain runs, broadcast and reconcile errors name their chain, and the sequence
 number when several sequences share it. A confirmed success removes the hash from `pending` and
 appends its receipt. A revert removes the hash, records it in `reverted` rather than `receipts`,
-which consumers treat as successful, and returns an error. A later `--resume` warns about each
-recorded revert, never resubmits it, continues with the remaining operations, and replaces the final
-success message with a warning listing the reverts. Receipt-watcher timeouts keep retrying without
+which consumers treat as successful, and returns an error. A later `--resume` never resubmits a
+recorded revert. The script would have stopped at the failed call, so resume fails, pointing to
+`--broadcast --start-fresh`, while a sequence with a recorded revert still has operations without a
+receipt or recorded revert; otherwise it warns about each revert and replaces the final success
+message with a warning listing them. Receipt-watcher timeouts keep retrying without
 consuming the retry budget while the selected RPC still returns the transaction, so ordinary polling
 is unbounded; Tempo batches use `transaction_timeout`. Outside `--batch`, each polled hash prints
 one warning naming it after its first such timeout (hidden by `--quiet`), and waiting continues. If
