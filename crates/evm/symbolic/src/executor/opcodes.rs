@@ -560,6 +560,10 @@ impl SymbolicExecutor {
             opcode::SHL => state.shift_word(&mut self.cx, SymBinOp::Shl)?,
             opcode::SHR => state.shift_word(&mut self.cx, SymBinOp::Shr)?,
             opcode::SAR => state.shift_word(&mut self.cx, SymBinOp::Sar)?,
+            opcode::CLZ => {
+                let value = state.stack.pop()?;
+                state.stack.push(clz_word(&mut self.cx, value))?;
+            }
             opcode::KECCAK256 => {
                 let offset = state.stack.peek(0)?.clone();
                 let size = state.stack.peek(1)?.clone();
@@ -1532,6 +1536,7 @@ const fn opcode_activation(op: u8) -> SpecId {
         opcode::TLOAD | opcode::TSTORE | opcode::MCOPY | opcode::BLOBHASH | opcode::BLOBBASEFEE => {
             SpecId::CANCUN
         }
+        opcode::CLZ => SpecId::OSAKA,
         _ => SpecId::FRONTIER,
     }
 }
