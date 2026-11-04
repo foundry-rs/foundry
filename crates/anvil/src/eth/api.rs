@@ -431,6 +431,16 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `anvil_setCode`
     pub async fn anvil_set_code(&self, address: Address, code: Bytes) -> Result<()> {
         node_info!("anvil_setCode");
+        let _lifecycle = self.lifecycle_lock.read().await;
+        if self.backend.is_tempo()
+            && let Some(name) =
+                backend::tempo::native_precompile_name(address, self.backend.tempo_hardfork())
+        {
+            return Err(RpcError::invalid_params(format!(
+                "cannot set code for native Tempo precompile {name} at {address}: calls are handled natively and do not execute account bytecode"
+            ))
+            .into());
+        }
         self.backend.set_code(address, code).await?;
         #[cfg(feature = "base")]
         self.invalidate_base_eip8130_pool();
@@ -2201,6 +2211,7 @@ impl EthApi<FoundryNetwork> {
         let _lifecycle = if matches!(
             &request,
             EthRequest::Reset(_)
+                | EthRequest::SetCode(_, _)
                 | EthRequest::SetRpcUrl(_)
                 | EthRequest::NodeInfo(_)
                 | EthRequest::AnvilMetadata(_)
@@ -6150,5 +6161,19 @@ mod tests {
         assert_eq!(response.blob_gas_used_ratio.len(), 6);
         assert_eq!(response.base_fee_per_blob_gas.len(), 6);
         assert_eq!(rewards.len(), 6);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn set_code_waits_for_lifecycle_before_native_guard() {
+        let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+        let lifecycle = api.lifecycle_lock.write().await;
+        let mut write = std::pin::pin!(
+            api.anvil_set_code(foundry_evm::core::tempo::PATH_USD_ADDRESS, Bytes::new())
+        );
+
+        assert!(futures::poll!(write.as_mut()).is_pending());
+        drop(lifecycle);
+        let error = tokio::time::timeout(Duration::from_secs(5), write).await.unwrap().unwrap_err();
+        assert!(matches!(error, BlockchainError::RpcError(_)));
     }
 }
