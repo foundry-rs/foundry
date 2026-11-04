@@ -280,12 +280,10 @@ impl<T> PendingTransactions<T> {
             if let Some(waiting_tx) = self.waiting_queue.remove(&hash) {
                 self.waiting_markers.remove(&waiting_tx.transaction.provides);
                 for marker in waiting_tx.missing_markers {
-                    let remove = if let Some(required) = self.required_markers.get_mut(&marker) {
+                    let remove = self.required_markers.get_mut(&marker).is_some_and(|required| {
                         required.remove(&hash);
                         required.is_empty()
-                    } else {
-                        false
-                    };
+                    });
                     if remove {
                         self.required_markers.remove(&marker);
                     }

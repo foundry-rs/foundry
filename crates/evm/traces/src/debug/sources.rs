@@ -120,11 +120,8 @@ impl ArtifactData {
             };
 
             // Only parse bytecode if it's not empty, stripping placeholders if necessary.
-            let pc_ic_map = if let Some(bytes) = strip_bytecode_placeholders(&b.object) {
-                (!bytes.is_empty()).then(|| PcIcMap::new(bytes.as_ref()))
-            } else {
-                None
-            };
+            let pc_ic_map = strip_bytecode_placeholders(&b.object)
+                .and_then(|bytes| (!bytes.is_empty()).then(|| PcIcMap::new(bytes.as_ref())));
 
             source_map.map(|source_map| (source_map, pc_ic_map))
         };

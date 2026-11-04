@@ -167,11 +167,7 @@ pub fn get_solar_sources_from_compile_output(
     };
 
     let is_ignored = |path: &Path| -> bool {
-        if let Some(ignored) = ignored_paths {
-            ignored.iter().any(|ignored_path| path == ignored_path)
-        } else {
-            false
-        }
+        ignored_paths.is_some_and(|ignored| ignored.iter().any(|ignored_path| path == ignored_path))
     };
 
     // Collect source path targets
