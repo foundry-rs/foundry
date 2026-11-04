@@ -18,6 +18,7 @@ use foundry_common::{
     shell,
 };
 use foundry_config::{Chain, Config};
+use foundry_evm_core::constants::CHEATCODE_ADDRESS;
 use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use serde::{Deserialize, Serialize};
@@ -28,7 +29,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use alloy_primitives::{Address, U256, map::HashMap};
+use alloy_primitives::{Address, Bytes, U256, map::HashMap};
 use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
 
 /// Network context used to identify and decode execution traces.
@@ -320,6 +321,20 @@ pub fn prune_trace_depth(arena: &mut CallTraceArena, depth: usize) {
     for node in arena.nodes_mut() {
         if node.trace.depth >= depth {
             node.ordering.clear();
+        }
+    }
+}
+
+/// Drops the arguments and return data of cheatcode calls, keeping only their selectors.
+///
+/// Cheatcode calls carry secrets such as private keys and environment values in their raw
+/// calldata and return data. The decoded view redacts them, but serialized traces include the raw
+/// bytes, so call this before serializing traces.
+pub fn strip_cheatcode_call_data(arena: &mut CallTraceArena) {
+    for node in arena.nodes_mut() {
+        if node.trace.address == CHEATCODE_ADDRESS {
+            node.trace.data = node.trace.data.slice(..node.trace.data.len().min(4));
+            node.trace.output = Bytes::new();
         }
     }
 }
@@ -771,7 +786,6 @@ impl TraceRequirements {
 mod tests {
     use super::*;
     use alloy_network::TransactionBuilder;
-    use alloy_primitives::Bytes;
     use evm2::{
         bytecode::Bytecode,
         evm::{AccountInfo, InMemoryDB},

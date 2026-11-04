@@ -77,7 +77,7 @@ use foundry_evm::{
     opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
     traces::{
         backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth,
-        trace_arena_at_depth,
+        strip_cheatcode_call_data, trace_arena_at_depth,
     },
 };
 use foundry_evm_networks::NetworkVariant;
@@ -2931,6 +2931,7 @@ fn prepare_results_for_json(
                     step.decoded = None;
                 }
             }
+            strip_cheatcode_call_data(arena);
             if let Some(trace_depth) = trace_depth {
                 *arena = trace_arena_at_depth(arena, trace_depth);
             }

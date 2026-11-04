@@ -3991,6 +3991,55 @@ contract PrankCreateTrace is Script {
     );
 }
 
+#[forgetest_init]
+fn json_traces_do_not_leak_cheatcode_secrets(prj: _, cmd: _) {
+    let pk = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
+    prj.add_script(
+        "SecretScript",
+        r#"
+import "forge-std/Script.sol";
+
+contract SecretScript is Script {
+    function run() external {
+        uint256 pk = vm.envUint("JSON_TRACE_PK");
+        vm.startBroadcast(pk);
+        vm.stopBroadcast();
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "SecretTest",
+        r#"
+import "forge-std/Test.sol";
+
+contract SecretTest is Test {
+    function test_env() public view {
+        vm.envUint("JSON_TRACE_PK");
+    }
+}
+   "#,
+    );
+
+    cmd.env("JSON_TRACE_PK", pk);
+    let script =
+        cmd.args(["script", "SecretScript", "--json"]).assert_success().get_output().stdout.clone();
+    let script = String::from_utf8(script).unwrap();
+    assert!(script.contains("<pk>"));
+    assert!(!script.contains(&pk[2..]));
+
+    cmd.forge_fuse().env("JSON_TRACE_PK", pk);
+    let test = cmd
+        .args(["test", "--mc", "SecretTest", "--json", "-vvv"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let test = String::from_utf8(test).unwrap();
+    assert!(test.contains("\"arena\""));
+    assert!(!test.contains(&pk[2..]));
+}
+
 // https://github.com/foundry-rs/foundry/pull/7742
 #[forgetest_init]
 async fn unlocked_no_sender(prj: _, cmd: _) {

@@ -32,7 +32,8 @@ use foundry_evm::{
         debug::ContractSources,
         decode_trace_arena,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
-        prune_trace_depth, render_trace_arena_inner, trace_arena_at_depth,
+        prune_trace_depth, render_trace_arena_inner, strip_cheatcode_call_data,
+        trace_arena_at_depth,
     },
 };
 use foundry_wallets::wallet_browser::signer::BrowserSigner;
@@ -479,6 +480,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
 
         for (_, trace) in &mut result.traces {
             decode_trace_arena(trace, &self.execution_artifacts.decoder).await;
+            strip_cheatcode_call_data(trace);
             if let Some(trace_depth) = trace_depth {
                 *trace = trace_arena_at_depth(trace, trace_depth);
             }
