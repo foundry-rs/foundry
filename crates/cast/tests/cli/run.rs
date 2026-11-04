@@ -5,7 +5,7 @@ use alloy_primitives::bytes;
 use alloy_signer::SignerSync;
 use anvil::eth::pool::transactions::TransactionOrder;
 use foundry_common::HYPERLIQUID_SYSTEM_ADDRESS;
-use foundry_test_utils::rpc::spawn_rpc_proxy_canned_method;
+use foundry_test_utils::rpc::{spawn_rpc_proxy_canned_method, spawn_rpc_proxy_mapping_method};
 
 // <https://github.com/foundry-rs/foundry/issues/2705>
 #[casttest]
@@ -688,6 +688,30 @@ async fn cast_run_warns_on_skipped_system_transactions(cmd: _) {
             ])
             .assert_success()
             .stderr_eq("Executing previous transactions from the block.\n");
+
+        // ArbOS internal transactions are skipped without a warning on any chain, since Orbit
+        // chains are unknown to `alloy-chains`, and even with `--replay-system-txes`, since they
+        // cannot be converted for replay.
+        let endpoint = spawn_rpc_proxy_mapping_method(
+            endpoint.clone(),
+            "eth_getBlockByNumber",
+            move |_, mut block| {
+                if let Some(txs) = block["transactions"].as_array_mut() {
+                    for tx in txs.iter_mut().filter(|tx| tx["hash"] == json!(system_tx)) {
+                        tx["type"] = json!("0x6a");
+                    }
+                }
+                block
+            },
+        )
+        .await;
+        for flags in [&[][..], &["--replay-system-txes"][..]] {
+            cmd.cast_fuse()
+                .args(["run", &target.to_string(), "--rpc-url", &endpoint, "--no-bal"])
+                .args(flags)
+                .assert_success()
+                .stderr_eq("Executing previous transactions from the block.\n");
+        }
     }
 }
 

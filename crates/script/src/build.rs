@@ -1,6 +1,8 @@
 use crate::{
     ScriptArgs, ScriptConfig,
-    broadcast::{BundledState, remaining_unsigned_transactions_for_recovery},
+    broadcast::{
+        BundledState, remaining_operation_indices, remaining_unsigned_transactions_for_recovery,
+    },
     execute::LinkedState,
     multi_sequence::MultiChainSequence,
     progress::ScriptProgress,
@@ -439,7 +441,20 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 _ => eyre::bail!("{}", errors.iter().format("\n")),
             }
         }
-        for deployment in sequence.sequences() {
+        for (index, deployment) in sequence.sequences().iter().enumerate() {
+            // The script stops at a failed call, so it never planned to send the operations left
+            // after a revert, and resume must not send them for it.
+            if !deployment.reverted.is_empty()
+                && !remaining_operation_indices(&sequence, index).is_empty()
+            {
+                return Err(sequence.label_error(
+                    index,
+                    eyre::eyre!(
+                        "transaction {} reverted, so the script would not have sent the operations after it; resume will not send them. Pass `--broadcast --start-fresh` to archive this broadcast and run the script again",
+                        deployment.reverted.iter().format(", ")
+                    ),
+                ));
+            }
             for hash in &deployment.reverted {
                 sh_warn!(
                     "Transaction {hash} on chain {} reverted; resume will not resubmit it.",
