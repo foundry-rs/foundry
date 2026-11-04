@@ -7,9 +7,8 @@ use alloy_primitives::{Address, B256, Signature, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{TransactionRequest, serde_helpers::WithOtherFields};
 use eyre::Result;
-use foundry_wallets::TempoAccountsWallet;
 use std::num::NonZeroU64;
-use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
+use tempo_alloy::{TempoNetwork, accounts::TempoAccountsWallet, rpc::TempoTransactionRequest};
 use tempo_primitives::{SignatureType, TempoTxType, transaction::Call};
 
 #[cfg(feature = "base")]

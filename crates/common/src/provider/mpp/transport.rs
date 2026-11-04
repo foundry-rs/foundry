@@ -26,7 +26,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, PoisonError},
     task,
 };
-use tempo_alloy::accounts::{TempoAccountsError, TempoAccountsStore};
+use tempo_alloy::accounts::{TempoAccountsError, TempoAccountsStore, TempoAccountsWallet};
 use tower::Service;
 use url::Url;
 
@@ -381,7 +381,12 @@ async fn has_access_key_for_challenge(
     if challenge.intent.as_str() == "charge" {
         return provider.has_access_key_for_challenge(challenge).await;
     }
-    match provider.wallet().clone().with_chain_id(chain_id).active_access_key() {
+    // Read the store with Foundry's own `tempo-alloy` rather than through `provider.wallet()`:
+    // mpp may link a different `tempo-alloy`, whose error type Foundry cannot match on.
+    let wallet = TempoAccountsWallet::from_default_store().map_err(|error| {
+        MppError::InvalidConfig(format!("failed to open Tempo Accounts store: {error}"))
+    })?;
+    match wallet.with_chain_id(chain_id).active_access_key() {
         Ok(_) => Ok(true),
         Err(TempoAccountsError::MissingAccessKey { .. }) => Ok(false),
         Err(error) => Err(MppError::InvalidConfig(format!(
