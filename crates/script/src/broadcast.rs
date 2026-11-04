@@ -471,7 +471,7 @@ where
         .collect()
 }
 
-fn remaining_operation_indices<N: Network>(
+pub(crate) fn remaining_operation_indices<N: Network>(
     sequence: &ScriptSequenceKind<N>,
     sequence_index: usize,
 ) -> Vec<usize>
@@ -1982,6 +1982,71 @@ fn fee_totals(receipts: impl IntoIterator<Item = (u64, u128)>) -> (u64, Option<u
 /// Describes the failed script run that `--resume` performed to collect missing signers.
 fn resume_script_failure(error: &str) -> String {
     format!("Resume re-ran the script to collect signers, but it failed: {error}")
+}
+
+impl<FEN: FoundryEvmNetwork> BroadcastedState<FEN> {
+    /// Prints recorded creations with successful receipts, including factory deployments.
+    pub(crate) fn print_deployed_contracts(&self) -> Result<()> {
+        if shell::is_json() {
+            return Ok(());
+        }
+
+        for sequence in self.sequence.sequences() {
+            let mined = sequence
+                .receipts
+                .iter()
+                .map(|receipt| receipt.transaction_hash())
+                .collect::<HashSet<_>>();
+            let rows = sequence
+                .transactions
+                .iter()
+                .filter(|tx| tx.hash.is_some_and(|hash| mined.contains(&hash)))
+                .flat_map(|tx| {
+                    let direct = tx.call_kind.is_any_create().then_some(tx).and_then(|tx| {
+                        Some((
+                            tx.label.as_deref(),
+                            tx.contract_name.as_deref(),
+                            tx.contract_address?,
+                        ))
+                    });
+                    direct.into_iter().chain(tx.additional_contracts.iter().map(|contract| {
+                        (
+                            contract.label.as_deref(),
+                            contract.contract_name.as_deref(),
+                            contract.address,
+                        )
+                    }))
+                })
+                .map(|(label, name, address)| {
+                    (label, name.filter(|name| !name.is_empty()).unwrap_or("-"), address)
+                })
+                .collect::<Vec<_>>();
+            if rows.is_empty() {
+                continue;
+            }
+
+            let has_labels = rows.iter().any(|(label, ..)| label.is_some());
+            let label_width = rows
+                .iter()
+                .map(|(label, ..)| label.map_or(1, |label| label.chars().count()))
+                .max()
+                .unwrap_or(0);
+            let name_width =
+                rows.iter().map(|(_, name, _)| name.chars().count()).max().unwrap_or(0);
+            sh_status!("\nDeployed contracts (chain {}):", sequence.chain)?;
+            for (label, name, address) in rows {
+                if has_labels {
+                    sh_status!(
+                        "  {:<label_width$}  {name:<name_width$}  {address}",
+                        label.unwrap_or("-")
+                    )?;
+                } else {
+                    sh_status!("  {name:<name_width$}  {address}")?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

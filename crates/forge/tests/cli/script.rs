@@ -48,6 +48,60 @@ use rexpect::{Encoding, process::wait::WaitStatus, reader::Options, spawn_with_o
 use std::os::unix::process::ExitStatusExt;
 
 #[forgetest]
+fn script_non_interactive_help_covers_confirmations(cmd: _) {
+    cmd.args(["script", "--help"]).assert_success().stderr_eq(str![""]).stdout_eq(str![[r#"
+...
+      --non-interactive
+          Skips script confirmation prompts, including no-code targets and oversized contracts
+...
+"#]]);
+}
+
+#[forgetest]
+async fn script_no_code_target_without_terminal(prj: _, cmd: _) {
+    prj.add_script(
+        "NoCodeTarget.s.sol",
+        r#"
+interface Vm { function startBroadcast() external; }
+
+contract NoCodeTarget {
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        VM.startBroadcast();
+        (bool success,) = address(0xBEEF).call("");
+        require(success);
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let sender = handle.dev_wallets().next().unwrap().address();
+    let rpc = handle.http_endpoint();
+    let args = [
+        "script",
+        "NoCodeTarget",
+        "--rpc-url",
+        rpc.as_str(),
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+    ];
+
+    cmd.args(args).assert_failure().stderr_eq(str![[r#"
+...
+Warning: Script contains a transaction to 0x000000000000000000000000000000000000bEEF which does not contain any code.
+Error: transaction to 0x000000000000000000000000000000000000bEEF has no code; pass --non-interactive to continue without confirmation
+
+"#]]);
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 0);
+
+    cmd.forge_fuse().args(args).arg("--non-interactive").assert_success();
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 1);
+}
+
+#[forgetest]
 fn script_slow_help_explains_presimulation(cmd: _) {
     cmd.args(["script", "--help"]).assert_success().stderr_eq(str![""]).stdout_eq(str![[r#"
 ...
@@ -1202,9 +1256,12 @@ contract InvisibleSubmission is Script {
         .expect("forge did not finish");
         let output = child.kill_and_wait();
         assert!(output.status.success());
+        // Successors that time out before the first one is found dropped warn that they are
+        // still waited on.
         assert_data_eq!(
             String::from_utf8(output.stderr).unwrap(),
             str![[r#"
+...
 Warning: Some transactions were discarded by the RPC node. Use `--resume` to retry these transactions.
 ...
 "#]]
@@ -1250,7 +1307,12 @@ Warning: Some transactions were discarded by the RPC node. Use `--resume` to ret
             private_key,
             "--resume",
         ]);
-        cmd.assert_success().stderr_eq(str![""]);
+        let sender = handle.dev_accounts().next().unwrap();
+        let deployments = (0..12)
+            .map(|nonce| format!("  InvisibleSubmissionTarget  {}\n", sender.create(nonce)))
+            .collect::<String>();
+        cmd.assert_success()
+            .stderr_eq(format!("\nDeployed contracts (chain 31337):\n{deployments}"));
         let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
         assert_eq!(sequence["receipts"].as_array().unwrap().len(), 12);
         assert!(sequence["pending"].as_array().unwrap().is_empty());
@@ -1385,6 +1447,12 @@ contract UnpolledReceipts is Script {
             .map(|receipt| receipt["transactionHash"].clone())
             .collect::<Vec<_>>();
         if revert {
+            // Transactions still waited on when a receipt timeout elapses warn about it first.
+            let stderr = stderr
+                .lines()
+                .filter(|line| !line.ends_with("still waiting for its receipt."))
+                .map(|line| format!("{line}\n"))
+                .collect::<String>();
             assert!(!output.status.success());
             assert_eq!(
                 stderr,
@@ -1400,6 +1468,7 @@ contract UnpolledReceipts is Script {
             assert_data_eq!(
                 stderr,
                 str![[r#"
+...
 Warning: Some transactions were discarded by the RPC node. Use `--resume` to retry these transactions.
 ...
 "#]]
@@ -1410,6 +1479,79 @@ Warning: Some transactions were discarded by the RPC node. Use `--resume` to ret
         // The invisible transactions are removed so that resume can replay them.
         assert!(sequence["pending"].as_array().unwrap().is_empty());
     }
+}
+
+// A transaction that stays pending past the receipt timeout is named once, without aborting or
+// changing the eventual result.
+#[forgetest_init]
+async fn broadcast_warns_once_while_waiting_for_receipt(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "WaitingReceipt.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract WaitingReceipt is Script {
+    function run() external {
+        vm.broadcast();
+        payable(address(0xBEEF)).transfer(1);
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    // Each receipt timeout is followed by a lookup that finds the transaction still pending.
+    let lookups = Arc::new(AtomicUsize::new(0));
+    let rpc = spawn_rpc_proxy_mapping_method(handle.http_endpoint(), "eth_getTransactionByHash", {
+        let lookups = lookups.clone();
+        move |_, result| {
+            if !result.is_null() {
+                lookups.fetch_add(1, Ordering::SeqCst);
+            }
+            result
+        }
+    })
+    .await;
+    prj.update_config(|config| config.transaction_timeout = 1);
+
+    cmd.arg("script").arg(&script).args([
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+    ]);
+    let mut child = KillOnDrop::spawn(cmd.cmd().env("RUST_LOG", "off"));
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while lookups.load(Ordering::SeqCst) < 2 {
+            assert!(child.is_running(), "a receipt timeout stopped the broadcast");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not keep waiting after receipt timeouts");
+
+    api.mine_one().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while child.is_running() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not finish after the transaction mined");
+    let output = child.kill_and_wait();
+    assert!(output.status.success());
+    let sequence: Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/WaitingReceipt.s.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        format!(
+            "Warning: Transaction {} has not been mined after 1s; still waiting for its receipt.\n",
+            sequence["transactions"][0]["hash"].as_str().unwrap()
+        )
+    );
 }
 
 // Other tools parse broadcast files, so renaming or removing a key breaks them. A new key only
@@ -1444,6 +1586,7 @@ contract BroadcastKeys is Script {
 "#,
     );
     let (_api, handle) = spawn(NodeConfig::test()).await;
+    let factory = handle.dev_accounts().next().unwrap().create(0);
     cmd.args([
         "script",
         script.to_str().unwrap(),
@@ -1455,7 +1598,12 @@ contract BroadcastKeys is Script {
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
         "--broadcast",
     ])
-    .assert_success();
+    .assert_success()
+    .stderr_eq(format!(
+        "\nDeployed contracts (chain 31337):\n  Factory  {factory}\n  Child    {}\n  Child    {}\n",
+        factory.create(1),
+        factory.create(2),
+    ));
 
     let sequence: Value = foundry_common::fs::read_json_file(
         &prj.root().join("broadcast/BroadcastKeys.s.sol/31337/run-latest.json"),
@@ -1489,10 +1637,10 @@ additional contract: address, contractName, creatorCodeAddresses, exactArtifactM
     );
 }
 
-// A mined revert is recorded outside `receipts`, and resume warns about it, never resubmits it, and
-// continues with the operations after it.
+// A mined revert is recorded outside `receipts`. The script would have stopped at it, so resume
+// never resubmits it and refuses to send the operations planned after it.
 #[forgetest_init]
-async fn resume_skips_recorded_revert(prj: _, cmd: _) {
+async fn resume_refuses_operations_after_recorded_revert(prj: _, cmd: _) {
     let gate = address!("0x000000000000000000000000000000000000bEEF");
     let script = prj.add_script(
         "RevertedResume.s.sol",
@@ -1563,19 +1711,17 @@ contract RevertedResume is Script {
     assert_eq!(sequence["reverted"], serde_json::json!([reverted]));
     assert!(sequence["receipts"].as_array().unwrap().is_empty());
 
-    // Every resume skips the revert; the first submits the remaining calls, the second nothing.
+    // Every resume refuses without sending the transfers that `require(success)` blocks.
     let provider = handle.http_provider();
     for _ in 0..2 {
         cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--resume");
-        cmd.assert_success().stderr_eq(format!(
-            "Warning: Transaction {reverted} on chain 31337 reverted; resume will not resubmit it.\nWarning: ONCHAIN EXECUTION COMPLETE WITH REVERTED TRANSACTIONS:\nchain 31337: {reverted}\n"
+        cmd.assert_failure().stderr_eq(format!(
+            "Error: transaction {reverted} reverted, so the script would not have sent the operations after it; resume will not send them. Pass `--broadcast --start-fresh` to archive this broadcast and run the script again\n"
         ));
         let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
         assert_eq!(sequence["reverted"], serde_json::json!([reverted]));
-        let receipts = sequence["receipts"].as_array().unwrap();
-        assert_eq!(receipts.len(), 2);
-        assert!(receipts.iter().all(|receipt| receipt["status"] == "0x1"));
-        assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 3);
+        assert!(sequence["receipts"].as_array().unwrap().is_empty());
+        assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
     }
 }
 
@@ -1783,6 +1929,10 @@ Archived `[..]/cache/StartFresh.s.sol/31337/run-latest.json.recovery.json` to `[
 Archived `[..]/broadcast/StartFresh.s.sol/31337/run-latest.json` to `[..]/broadcast/StartFresh.s.sol/31337/run-latest.[..].json`
 Archived `[..]/cache/StartFresh.s.sol/31337/run-latest.json` to `[..]/cache/StartFresh.s.sol/31337/run-latest.[..].json`
 
+Deployed contracts (chain 31337):
+  StartFreshTarget  0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+  StartFreshTarget  0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
+
 "#]]);
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 3);
     let [archive] = archives().try_into().unwrap();
@@ -1792,7 +1942,11 @@ Archived `[..]/cache/StartFresh.s.sol/31337/run-latest.json` to `[..]/cache/Star
     assert_ne!(fresh["generation"], unfinished["generation"]);
 
     cmd.forge_fuse().arg("script").arg(&script).args(args);
-    cmd.assert_success().stderr_eq(str![""]);
+    cmd.assert_success().stderr_eq(format!(
+        "\nDeployed contracts (chain 31337):\n  StartFreshTarget  {}\n  StartFreshTarget  {}\n",
+        sender.create(3),
+        sender.create(4),
+    ));
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 5);
     assert_eq!(archives().len(), 1);
 }
@@ -2039,7 +2193,14 @@ Add `--resume` to your command to check them again and replay dropped signed tra
         private_key,
         "--resume",
     ]);
-    cmd.assert_success().stderr_eq(str![""]).stdout_eq(str![[r#"
+    cmd.assert_success()
+        .stderr_eq(str![[r#"
+
+Deployed contracts (chain 31337):
+  InvisibleSubmissionTarget  0x5FbDB2315678afecb367f032d93F642f64180aa3
+
+"#]])
+        .stdout_eq(str![[r#"
 ...
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 ...
@@ -2210,6 +2371,9 @@ Resume re-ran the script to collect signers, but it failed: vm.envUint: environm
     cmd.env("RESUME_RERUN_PK", private_key);
     cmd.assert_success().stderr_eq(str![[r#"
 Warning: Resume re-ran the script to collect signers, but it failed: resume gate closed
+
+Deployed contracts (chain 31337):
+  ResumeRerunTarget  0x5FbDB2315678afecb367f032d93F642f64180aa3
 
 "#]]);
     let sender = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
@@ -4247,7 +4411,7 @@ contract BlockGasLimitScript {{
         "--broadcast",
     ])
     .assert_success()
-    .stderr_eq(str![""])
+    .stderr_eq(format!("\nDeployed contracts (chain 31337):\n  BlockGasLimit  {target}\n"))
     .stdout_eq(str![[r#"
 ...
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
@@ -4404,7 +4568,11 @@ Error: Simulated execution failed.
                 .args(common)
                 .args(["--sig", "run(bytes)", &hex::encode_prefixed(transaction.encoded_2718())])
                 .assert_success()
-                .stderr_eq(str![""])
+                .stderr_eq(if create {
+                    format!("\nDeployed contracts (chain 31337):\n  -  {target}\n")
+                } else {
+                    String::new()
+                })
                 .stdout_eq(str![[r#"
 ...
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
@@ -6088,6 +6256,8 @@ contract Counter {
 import {Counter} from "./Counter.sol";
 
 contract Factory {
+    Counter public initial = new Counter();
+
     function deployCounter() public returns (Counter) {
         return new Counter();
     }
@@ -6114,6 +6284,8 @@ contract FactoryScript is Script {
         counter = factory.deployCounter();
 
         vm.stopBroadcast();
+        vm.label(address(factory.initial()), "ConstructorCounter");
+        vm.label(address(counter), "FactoryCounter");
     }
 }
    "#,
@@ -6121,6 +6293,7 @@ contract FactoryScript is Script {
 
     let deploy_contract = deploy_script.display().to_string() + ":FactoryScript";
     let (_api, handle) = spawn(NodeConfig::test()).await;
+    let factory = handle.dev_accounts().next().unwrap().create(0);
     cmd.args([
         "script",
         &deploy_contract,
@@ -6133,13 +6306,16 @@ contract FactoryScript is Script {
         "--private-key",
         "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
     ])
-    .assert_success();
+    .assert_success()
+    .stderr_eq(format!(
+        "\nDeployed contracts (chain 31337):\n  -                   Factory  {factory}\n  ConstructorCounter  Counter  {}\n  FactoryCounter      Counter  {}\n",
+        factory.create(1), factory.create(2),
+    ));
 
-    let broadcast_log = prj.root().join("broadcast/Factory.s.sol/31337/run-latest.json");
-    let script_sequence: ScriptSequence<Ethereum> = serde_json::from_reader(
-        fs::File::open(prj.artifacts().join(broadcast_log)).expect("no broadcast log"),
+    let script_sequence: ScriptSequence<Ethereum> = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/Factory.s.sol/31337/run-latest.json"),
     )
-    .expect("no script sequence");
+    .unwrap();
 
     let counter_contract = script_sequence
         .transactions
@@ -6149,6 +6325,11 @@ contract FactoryScript is Script {
         .first()
         .expect("no Counter contract");
     assert_eq!(counter_contract.contract_name, Some("Counter".to_string()));
+    assert_eq!(counter_contract.label.as_deref(), Some("FactoryCounter"));
+    assert_eq!(
+        script_sequence.transactions[0].additional_contracts[0].label.as_deref(),
+        Some("ConstructorCounter"),
+    );
 }
 
 // <https://github.com/foundry-rs/foundry/issues/11213>
@@ -7270,7 +7451,10 @@ async fn tempo_batch_resume_fee_token(
     cmd.assert_success();
 
     cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--resume").args(resume_args);
-    cmd.assert_success().stderr_eq(format!("Paying gas in {} ({})\n", expected.0, expected.1));
+    cmd.assert_success().stderr_eq(format!(
+        "Paying gas in {} ({})\n\nDeployed contracts (chain 31337):\n  A  0x[..]\n  B  0x[..]\n  C  0x[..]\n",
+        expected.0, expected.1,
+    ));
     let sequence: Value =
         foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
     let receipts = sequence["receipts"].as_array().unwrap();
@@ -7853,6 +8037,9 @@ contract TempoFeeToken is Script {
     cmd.assert_success().stderr_eq(str![[r#"
 Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
 
+Deployed contracts (chain 31337):
+  TempoFeeTokenTarget  0x5FbDB2315678afecb367f032d93F642f64180aa3
+
 "#]]);
     // CREATE requests stay Ethereum transactions; the protocol still charges the stored token.
     assert_eq!(
@@ -7873,6 +8060,9 @@ Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
     cmd.assert_success().stderr_eq(str![[r#"
 Warning: --batch rewrites CREATE → CREATE2 via the Arachnid factory; deployed addresses follow the CREATE2 formula and constructor msg.sender is the factory, not the EOA.
 Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
+
+Deployed contracts (chain 31337):
+  TempoFeeTokenTarget  0x[..]
 
 "#]]);
     assert_eq!(
@@ -7976,15 +8166,18 @@ contract DeployTempoBatch is Script {
         );
         ITempoBatchCodeDeployment(first).ping();
         vm.stopBroadcast();
+        vm.label(first, "First");
+        vm.label(second, "Second");
     }
 }
 "#,
     );
 
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
-    cmd.arg("script").arg(script).args([
+    let rpc = handle.http_endpoint();
+    let args = [
         "--rpc-url",
-        &handle.http_endpoint(),
+        &rpc,
         "--private-key",
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
         "--tc",
@@ -7993,8 +8186,16 @@ contract DeployTempoBatch is Script {
         "--batch",
         "--network",
         "tempo",
-    ]);
-    cmd.assert_success();
+    ];
+    let summary = str![[r#"
+...
+Deployed contracts (chain 31337):
+  First   TempoBatchCodeDeployment  0x[..]
+  Second  TempoBatchCodeDeployment  0x[..]
+  -       TempoBatchCodeDeployment  0x[..]
+
+"#]];
+    cmd.arg("script").arg(&script).args(args).assert_success().stderr_eq(summary.clone());
 
     let run_latest = latest_broadcast_path(prj.root());
     let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
@@ -8019,6 +8220,15 @@ contract DeployTempoBatch is Script {
         handle.http_provider().get_storage_at(deployed[0], U256::ZERO).await.unwrap(),
         U256::ONE
     );
+
+    cmd.forge_fuse()
+        .arg("script")
+        .arg(&script)
+        .args(args)
+        .arg("--resume")
+        .assert_success()
+        .stderr_eq(summary);
+    cmd.arg("--json").assert_success().stderr_eq(str![""]);
 }
 
 #[forgetest_init]
@@ -8632,6 +8842,32 @@ contract DeployLarge is Script {
 }
 "#,
     );
+}
+
+#[forgetest_init]
+async fn script_oversized_contract_without_terminal(prj: _, cmd: _) {
+    write_large_runtime_deploy_script(&prj, 30_000);
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    for var in ["FOUNDRY_CODE_SIZE_LIMIT", "DAPP_CODE_SIZE_LIMIT", "DAPP_TEST_CODE_SIZE_LIMIT"] {
+        cmd.unset_env(var);
+    }
+    cmd.args([
+        "script",
+        "DeployLarge",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+...
+Error: `LargeRuntime` is above the contract size limit ([..] > 24576).
+Error: contract above the code size limit requires confirmation; pass --non-interactive to continue without confirmation
+
+"#]]);
 }
 
 // Tests that `forge script` reports a contract-size violation against the default runtime limit
@@ -9597,4 +9833,93 @@ async fn script_broadcast_simulates_chain_hardfork_ahead_of_evm_version(prj: _, 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 ...
 "#]]);
+}
+
+// A broadcast lists the contracts it created, named by their `vm.label`, and records the labels in
+// the run file.
+#[forgetest_init]
+async fn broadcast_lists_deployed_contracts_with_labels(prj: _, cmd: _) {
+    let script = prj.add_source(
+        "DeployPools.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract Pool {}
+contract Router {}
+
+contract DeployPools is Script {
+    function run() external {
+        vm.startBroadcast();
+        Pool usdc = new Pool();
+        Pool weth = new Pool();
+        new Router();
+        vm.stopBroadcast();
+        vm.label(address(usdc), "UsdcPool");
+        vm.label(address(weth), "WethPool");
+    }
+}"#,
+    );
+    cmd.set_current_dir(prj.root());
+    let summary = str![[r#"
+
+Deployed contracts (chain 31337):
+  UsdcPool  Pool    0x5FbDB2315678afecb367f032d93F642f64180aa3
+  WethPool  Pool    0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+  -         Router  0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
+
+"#]];
+    let target = format!("{}:DeployPools", script.display());
+    for skip_simulation in [false, true] {
+        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let rpc = handle.http_endpoint();
+        let args = [
+            "script",
+            &target,
+            "--root",
+            prj.root().to_str().unwrap(),
+            "--rpc-url",
+            &rpc,
+            "--broadcast",
+            "--private-key",
+            "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        ];
+        cmd.forge_fuse().args(args);
+        if skip_simulation {
+            cmd.arg("--skip-simulation");
+        }
+        cmd.assert_success().stderr_eq(summary.clone());
+
+        let mut run: Value = foundry_common::fs::read_json_file(
+            &prj.root().join("broadcast/DeployPools.s.sol/31337/run-latest.json"),
+        )
+        .unwrap();
+        // Snapshot the label keys themselves so an absent label cannot pass as null or "-".
+        let transactions = run["transactions"].as_array_mut().unwrap();
+        for transaction in &mut *transactions {
+            transaction
+                .as_object_mut()
+                .unwrap()
+                .retain(|key, _| matches!(key.as_str(), "contractName" | "label"));
+        }
+        assert_data_eq!(
+            serde_json::to_string(transactions).unwrap().is_json(),
+            str![[r#"
+[
+  { "contractName": "Pool", "label": "UsdcPool" },
+  { "contractName": "Pool", "label": "WethPool" },
+  { "contractName": "Router" }
+]
+"#]]
+            .is_json(),
+        );
+
+        cmd.forge_fuse().args(args).arg("--resume").assert_success().stderr_eq(summary.clone());
+        for flag in ["--json", "--quiet"] {
+            cmd.forge_fuse()
+                .args(args)
+                .args(["--resume", flag])
+                .assert_success()
+                .stderr_eq(str![""]);
+        }
+    }
 }
