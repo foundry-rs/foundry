@@ -34,6 +34,10 @@ impl SymStack {
         self.0.swap(len - 1, other);
         Ok(())
     }
+
+    pub(crate) const fn len(&self) -> usize {
+        self.0.len()
+    }
 }
 
 #[derive(Clone, Debug)]
