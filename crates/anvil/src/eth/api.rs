@@ -2216,9 +2216,10 @@ impl EthApi<FoundryNetwork> {
         trace!(target: "rpc::api", "executing eth request");
         // Fork reset and RPC URL replacement take the write lock internally after their fallible
         // remote staging work. Memory reset takes it before staging because it snapshots live
-        // state. Identity, snapshot, and chain-rewind methods also lock internally to keep direct
-        // API callers safe without recursively acquiring this fair RwLock. Consensus queries
-        // snapshot their source under the backend DB lock before any upstream I/O.
+        // state. Identity, snapshot, chain-rewind, and SetCode methods also lock internally to keep
+        // direct API callers safe. Nested reads of this fair RwLock can deadlock behind a queued
+        // writer. Consensus queries snapshot their source under the backend DB lock before any
+        // upstream I/O.
         let _lifecycle = if matches!(
             &request,
             EthRequest::Reset(_)

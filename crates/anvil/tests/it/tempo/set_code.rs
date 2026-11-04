@@ -79,6 +79,8 @@ async fn test_anvil_set_code_rejects_native_precompiles() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_anvil_set_code_respects_native_activation() {
     for (address, name, before, active) in [
+        (ADDRESS_REGISTRY_ADDRESS, "AddressRegistry", TempoHardfork::T2, TempoHardfork::T3),
+        (SIGNATURE_VERIFIER_ADDRESS, "SignatureVerifier", TempoHardfork::T2, TempoHardfork::T3),
         (
             TIP20_CHANNEL_RESERVE_ADDRESS,
             "TIP20ChannelReserve",
@@ -86,6 +88,7 @@ async fn test_anvil_set_code_respects_native_activation() {
             TempoHardfork::T5,
         ),
         (RECEIVE_POLICY_GUARD_ADDRESS, "ReceivePolicyGuard", TempoHardfork::T5, TempoHardfork::T6),
+        (STORAGE_CREDITS_ADDRESS, "StorageCredits", TempoHardfork::T6, TempoHardfork::T7),
         (CURRENT_COMMITTEE_ADDRESS, "CurrentCommittee", TempoHardfork::T7, TempoHardfork::T8),
         (ZONE_FACTORY_ADDRESS, "ZoneFactory", TempoHardfork::T9, TempoHardfork::T10),
         (ZONE_VERIFIER_ADDRESS, "ZoneVerifier", TempoHardfork::T12, TempoHardfork::T13),

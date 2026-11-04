@@ -226,19 +226,6 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
     }
 }
 
-/// Returns the name of a native precompile using Tempo's execution lookup.
-pub(crate) fn native_precompile_name(address: Address, hardfork: TempoHardfork) -> Option<String> {
-    let cfg = CfgEnv::new_with_spec_and_gas_params(hardfork, tempo_gas_params(hardfork));
-    let mut precompiles = PrecompilesMap::new(Cow::Owned(Default::default()));
-    extend_tempo_precompiles(
-        &mut precompiles,
-        &cfg,
-        StorageActions::disabled(),
-        Default::default(),
-    );
-    precompiles.get(&address).map(|precompile| precompile.precompile_id().name().to_string())
-}
-
 /// Initialize Tempo precompiles and fee tokens for Anvil.
 ///
 /// This sets up the same precompiles and tokens as Tempo's genesis, enabling
@@ -347,4 +334,17 @@ pub fn initialize_tempo_precompiles(
     })?;
 
     Ok(())
+}
+
+/// Returns the name of a native precompile using Tempo's execution lookup.
+pub(crate) fn native_precompile_name(address: Address, hardfork: TempoHardfork) -> Option<String> {
+    let cfg = CfgEnv::new_with_spec_and_gas_params(hardfork, tempo_gas_params(hardfork));
+    let mut precompiles = PrecompilesMap::new(Cow::Owned(Default::default()));
+    extend_tempo_precompiles(
+        &mut precompiles,
+        &cfg,
+        StorageActions::disabled(),
+        Default::default(),
+    );
+    precompiles.get(&address).map(|precompile| precompile.precompile_id().name().to_string())
 }
