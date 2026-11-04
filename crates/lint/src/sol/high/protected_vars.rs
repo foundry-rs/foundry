@@ -654,10 +654,11 @@ impl<'gcx> EntryAnalyzer<'gcx> {
                 }
                 false
             }
-            StmtKind::Placeholder => match self.modifier_continuations.last().copied() {
-                Some(cont) => self.analyze_modifier_chain(cont.modifiers, cont.next, cont.body),
-                None => true,
-            },
+            StmtKind::Placeholder => self
+                .modifier_continuations
+                .last()
+                .copied()
+                .is_none_or(|c| self.analyze_modifier_chain(c.modifiers, c.next, c.body)),
             StmtKind::Err(_) => true,
         }
     }

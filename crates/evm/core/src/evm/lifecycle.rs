@@ -1197,7 +1197,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
             if let Ok(mut account) = evm.state_mut().account(address)
                 && account.exists()
             {
-                account.mark_created_keeping_storage();
+                account.mark_created();
             }
         }
         factory.refresh_switched_transaction(evm, &self.tx_original);

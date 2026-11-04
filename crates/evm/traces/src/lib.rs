@@ -12,7 +12,7 @@ extern crate foundry_common;
 extern crate tracing;
 
 use evm2::interpreter::opcode::OpCode;
-use evm2_inspectors::{ColorChoice, tracing::OpcodeFilter};
+use evm2_inspectors::ColorChoice;
 use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     shell,
@@ -756,10 +756,10 @@ impl TraceRequirements {
             record_opcodes_filter: match steps {
                 StepRecording::None | StepRecording::All => None,
                 StepRecording::Jumps => {
-                    Some(OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST))
+                    Some([OpCode::JUMP, OpCode::JUMPDEST].into_iter().map(OpCode::get).collect())
                 }
             },
-            exclude_precompile_calls: false,
+            record_precompile_calls: false,
             record_immediate_bytes: self.immediate_bytes,
             record_step_deltas: false,
         }
@@ -949,7 +949,6 @@ mod tests {
                 returndata: Bytes::new(),
                 gas_remaining: 0,
                 gas_refund_counter: 0,
-                gas_used: 0,
                 gas_cost: 0,
                 state_gas_cost: None,
                 state_gas_reservoir: None,
@@ -960,7 +959,6 @@ mod tests {
                     had_value: Some(U256::ONE),
                     reason: StorageChangeReason::SSTORE,
                 })),
-                storage_slot: None,
                 status: Some(InstrStop::Stop),
                 immediate_bytes: None,
                 decoded: None,

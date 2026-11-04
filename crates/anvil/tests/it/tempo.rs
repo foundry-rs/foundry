@@ -49,16 +49,23 @@ use commonware_cryptography::bls12381::primitives::{
     ops,
     variant::MinSig,
 };
-use foundry_common::{FoundryTransactionBuilder, provider::RetryProvider};
+use foundry_common::{
+    FoundryTransactionBuilder,
+    provider::{RetryProvider, redact_url},
+};
 use foundry_evm_core::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, ITIP20ChannelReserve, PATH_USD_ADDRESS,
     TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, THETA_USD_ADDRESS,
     active_tempo_precompile_addresses,
 };
+use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::{
     FoundryNetwork, FoundryReceiptEnvelope, FoundryTxEnvelope, TempoTransactionRequest,
 };
-use foundry_test_utils::rpc::{spawn_rpc_proxy_canned_method, spawn_rpc_proxy_mapping_method};
+use foundry_test_utils::rpc::{
+    spawn_rpc_proxy_canned_method, spawn_rpc_proxy_mapping_method,
+    spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_rejecting_method_after,
+};
 use futures::StreamExt;
 use serde::Deserialize;
 use std::{
@@ -332,8 +339,6 @@ async fn tempo_raw_header_and_block_use_tempo_rlp() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_fork_detects_hardfork_from_fork_timestamp() {
-    use tempo_hardfork::TempoHardfork;
-
     let fork_timestamp = TempoHardfork::T3.mainnet_activation_timestamp().unwrap();
     let (_source_api, source_handle) = spawn(
         NodeConfig::test()
@@ -846,8 +851,6 @@ sol! {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_precompiles_have_code() {
-    use tempo_hardfork::TempoHardfork;
-
     let (api, _handle) =
         spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
 
@@ -6393,8 +6396,6 @@ async fn test_gas_estimation_tempo_aa_expiring_nonce() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_gas_estimation_t1_nonce_costs() {
-    use tempo_hardfork::TempoHardfork;
-
     let (_api, handle) =
         spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T1.into()))).await;
     let provider = handle.http_provider();
@@ -7218,7 +7219,7 @@ async fn tempo_consensus_latest_survives_body_pruning_and_snapshot() {
 async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     let config = NodeConfig::test_tempo()
         .with_no_mining(true)
-        .with_tempo_epoch_length(NonZeroU64::new(4).unwrap())
+        .with_tempo_epoch_length(NonZeroU64::new(4))
         .with_hardfork(Some(TempoHardfork::T7.into()));
     let (source_api, source) = spawn(config.clone()).await;
     let source_provider = source.http_provider();
@@ -7337,7 +7338,7 @@ async fn tempo_consensus_fork_transaction_replay_keeps_skipped_views() {
     let config = NodeConfig::test_tempo()
         .with_no_mining(true)
         .with_hardfork(Some(TempoHardfork::T4.into()))
-        .with_tempo_epoch_length(NonZeroU64::new(6).unwrap());
+        .with_tempo_epoch_length(NonZeroU64::new(6));
     let (source_api, source) = spawn(config.clone()).await;
     source_api.mine_one().await.unwrap();
     let anchor = set_tempo_head_round(&source_api, 8896, 8870).await;
@@ -7451,9 +7452,8 @@ async fn test_tempo_fork_startup_rejects_invalid_root() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn tempo_consensus_fork_rejects_missing_context_without_resetting_live_state() {
-    let config = NodeConfig::test_tempo()
-        .with_no_mining(true)
-        .with_tempo_epoch_length(NonZeroU64::new(6).unwrap());
+    let config =
+        NodeConfig::test_tempo().with_no_mining(true).with_tempo_epoch_length(NonZeroU64::new(6));
     let (source_api, source) = spawn(config.clone()).await;
     source_api.anvil_mine(Some(U256::from(6)), None).await.unwrap();
     let root: serde_json::Value = source
@@ -7505,25 +7505,50 @@ async fn tempo_consensus_fork_rejects_missing_context_without_resetting_live_sta
 
 #[tokio::test(flavor = "multi_thread")]
 async fn tempo_consensus_fork_rejects_incompatible_epoch_length() {
-    let config = NodeConfig::test_tempo()
-        .with_no_mining(true)
-        .with_tempo_epoch_length(NonZeroU64::new(6).unwrap());
-    let (source_api, source) = spawn(config.clone()).await;
+    let config = NodeConfig::test_tempo().with_no_mining(true);
+    let (source_api, source) =
+        spawn(config.clone().with_tempo_epoch_length(NonZeroU64::new(6))).await;
     source_api.anvil_mine(Some(U256::from(6)), None).await.unwrap();
-
-    let error = try_spawn(
-        config
-            .with_tempo_epoch_length(NonZeroU64::new(3).unwrap())
-            .with_eth_rpc_url(Some(source.http_endpoint()))
-            .with_fork_block_number(Some(6u64)),
+    let method = "anvil_tempoConsensusIdentity";
+    let unsupported =
+        spawn_rpc_proxy_method_not_found_before(source.http_endpoint(), method, usize::MAX).await;
+    let (misreported, _) = spawn_rpc_proxy_canned_method(
+        source.http_endpoint(),
+        method,
+        serde_json::json!({ "epochLength": 3 }),
     )
-    .await
-    .err()
-    .expect("a fork epoch must agree with the configured epoch length");
-    assert_eq!(
-        error.to_string(),
-        "Internal error: \"expected Tempo consensus anchor epoch 2, got 1; set --tempo.epoch-length to match the fork source (default: 21600)\""
-    );
+    .await;
+    let rejected = spawn_rpc_proxy_rejecting_method_after(source.http_endpoint(), method, 0).await;
+    for (endpoint, explicit, expected) in [
+        (
+            source.http_endpoint(),
+            NonZeroU64::new(3),
+            "Internal error: \"expected Tempo consensus anchor epoch 2, got 1 (epoch length 3 from --tempo.epoch-length); set --tempo.epoch-length to match the fork source\"",
+        ),
+        (
+            misreported,
+            None,
+            "Internal error: \"expected Tempo consensus anchor epoch 2, got 1 (epoch length 3 from the fork source); set --tempo.epoch-length to match the fork source\"",
+        ),
+        (
+            unsupported,
+            None,
+            "Internal error: \"expected Tempo consensus anchor epoch 0, got 1 (epoch length 21600 from the default); set --tempo.epoch-length to match the fork source\"",
+        ),
+        (rejected, None, "failed to read Tempo epoch length from anvil_tempoConsensusIdentity"),
+    ] {
+        let error = try_spawn(
+            config
+                .clone()
+                .with_tempo_epoch_length(explicit)
+                .with_eth_rpc_url(Some(endpoint))
+                .with_fork_block_number(Some(6u64)),
+        )
+        .await
+        .err()
+        .expect("the fork anchor must match the effective epoch length");
+        assert_eq!(error.to_string(), expected);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -7917,7 +7942,7 @@ async fn tempo_consensus_context_obeys_hardfork_boundary() {
         let (api, handle) = spawn(
             NodeConfig::test_tempo()
                 .with_hardfork(Some(hardfork.into()))
-                .with_tempo_epoch_length(NonZeroU64::new(3).unwrap()),
+                .with_tempo_epoch_length(NonZeroU64::new(3)),
         )
         .await;
         let provider = handle.http_provider();
@@ -7973,29 +7998,29 @@ async fn tempo_consensus_rollback_reorg_and_reset_without_rotation() {
 
 async fn assert_tempo_consensus_rollback_reorg_and_reset(rotate: bool) {
     let (api, handle) =
-        spawn(NodeConfig::test_tempo().with_tempo_epoch_length(NonZeroU64::new(3).unwrap())).await;
+        spawn(NodeConfig::test_tempo().with_tempo_epoch_length(NonZeroU64::new(3))).await;
     let provider = handle.http_provider();
     let initial = tempo_consensus_identity(&provider).await;
     let rotated = if rotate { tempo_rotate_identity(&provider).await } else { initial.clone() };
-    api.anvil_mine(Some(U256::from(4)), None).await.unwrap();
+    api.anvil_mine(Some(U256::from(7)), None).await.unwrap();
     let first = tempo_finalization(&provider, 1).await;
-    provider.client().request::<_, serde_json::Value>("anvil_rollback", (3,)).await.unwrap();
+    provider.client().request::<_, serde_json::Value>("anvil_rollback", (6,)).await.unwrap();
     assert_eq!(tempo_finalization(&provider, 1).await, first);
-    assert_tempo_missing(&provider, serde_json::json!({ "height": 4 }), "certificate").await;
+    assert_tempo_missing(&provider, serde_json::json!({ "height": 7 }), "certificate").await;
     assert_eq!(tempo_consensus_identity(&provider).await, initial);
-    api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
-    let original = tempo_finalization(&provider, 3).await;
+    api.anvil_mine(Some(U256::from(5)), None).await.unwrap();
+    let original = tempo_finalization(&provider, 6).await;
     assert_tempo_certificate(&rotated, &original);
 
     api.anvil_set_coinbase(Address::repeat_byte(0x33)).await.unwrap();
-    api.anvil_reorg(ReorgOptions { depth: 2, tx_block_pairs: Vec::new() }).await.unwrap();
+    api.anvil_reorg(ReorgOptions { depth: 5, tx_block_pairs: Vec::new() }).await.unwrap();
     assert_eq!(tempo_finalization(&provider, 1).await, first);
-    let replacement = tempo_finalization(&provider, 3).await;
+    let replacement = tempo_finalization(&provider, 6).await;
     assert_ne!(replacement.digest, original.digest);
     let latest: TempoCertifiedBlock =
         provider.client().request("consensus_getFinalization", ("latest",)).await.unwrap();
     assert_eq!(latest, replacement);
-    for (height, identity) in [(2, &initial), (3, &rotated)] {
+    for (height, identity) in [(2, &initial), (5, &initial), (6, &rotated)] {
         let finalization = tempo_finalization(&provider, height).await;
         assert_tempo_certificate(identity, &finalization);
     }
@@ -8014,7 +8039,7 @@ async fn assert_tempo_consensus_rollback_reorg_and_reset(rotate: bool) {
 #[tokio::test(flavor = "multi_thread")]
 async fn tempo_consensus_imports_preserve_snapshots_and_unsigned_anchors() {
     let (api, handle) =
-        spawn(NodeConfig::test_tempo().with_tempo_epoch_length(NonZeroU64::new(3).unwrap())).await;
+        spawn(NodeConfig::test_tempo().with_tempo_epoch_length(NonZeroU64::new(3))).await;
     let provider = handle.http_provider();
     let initial = tempo_consensus_identity(&provider).await;
     api.mine_one().await.unwrap();
@@ -8076,9 +8101,9 @@ async fn tempo_rotate_identity(provider: &RetryProvider) -> TempoConsensusIdenti
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn tempo_consensus_rotation_after_boundary_waits_an_epoch() {
+async fn tempo_consensus_rotation_after_boundary_waits_for_full_dkg() {
     let (api, handle) =
-        spawn(NodeConfig::test_tempo().with_tempo_epoch_length(NonZeroU64::new(3).unwrap())).await;
+        spawn(NodeConfig::test_tempo().with_tempo_epoch_length(NonZeroU64::new(3))).await;
     let provider = handle.http_provider();
     let initial = tempo_consensus_identity(&provider).await;
     api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
@@ -8086,22 +8111,32 @@ async fn tempo_consensus_rotation_after_boundary_waits_an_epoch() {
     let ws = crate::utils::connect_pubsub(&handle.ws_endpoint()).await;
     let mut events = subscriptions::subscribe(&ws).await;
     let rotated = tempo_rotate_identity(&provider).await;
-    assert_eq!(rotated.from_epoch, 2);
+    assert_eq!(rotated.from_epoch, 3);
     assert_ne!(rotated.identity, initial.identity);
     assert_eq!(tempo_finalization(&provider, 2).await, published);
-    for height in 3..=5 {
+    for height in 3..=8 {
         api.mine_one().await.unwrap();
         let finalized = tempo_finalization(&provider, height).await;
         assert_tempo_certificate(&initial, &finalized);
+        assert_eq!(tempo_consensus_identity(&provider).await, initial);
         assert_eq!(subscriptions::next_event(&mut events).await.certified, finalized);
     }
     let boundary = tempo_finalization(&provider, 5).await;
+    let ceremony = OnchainDkgOutcome::decode(boundary.block.header.extra_data().as_ref()).unwrap();
+    assert_eq!(ceremony.epoch, 2);
+    assert!(ceremony.is_next_full_dkg);
+    assert_eq!(ceremony.network_identity().encode().as_ref(), initial.identity.as_ref());
+    assert_ne!(ceremony.next_players, *ceremony.output.players());
+    let boundary = tempo_finalization(&provider, 8).await;
     let outcome = OnchainDkgOutcome::decode(boundary.block.header.extra_data().as_ref()).unwrap();
-    assert_eq!(outcome.epoch, 2);
+    assert_eq!(outcome.epoch, 3);
+    assert!(!outcome.is_next_full_dkg);
     assert_eq!(outcome.network_identity().encode().as_ref(), rotated.identity.as_ref());
+    assert_eq!(ceremony.next_players, *outcome.output.players());
+    assert_eq!(outcome.next_players, *outcome.output.players());
     assert_eq!(tempo_consensus_identity(&provider).await, initial);
     api.mine_one().await.unwrap();
-    let finalized = tempo_finalization(&provider, 6).await;
+    let finalized = tempo_finalization(&provider, 9).await;
     assert_tempo_certificate(&rotated, &finalized);
     assert_eq!(subscriptions::next_event(&mut events).await.certified, finalized);
     assert_eq!(tempo_consensus_identity(&provider).await, rotated);
@@ -8115,22 +8150,31 @@ async fn tempo_consensus_rotation_rollback_reorg_and_reset() {
 #[tokio::test(flavor = "multi_thread")]
 async fn tempo_consensus_single_block_epochs_announce_before_rotation() {
     let (api, handle) =
-        spawn(NodeConfig::test_tempo().with_tempo_epoch_length(NonZeroU64::MIN)).await;
+        spawn(NodeConfig::test_tempo().with_tempo_epoch_length(Some(NonZeroU64::MIN))).await;
     let provider = handle.http_provider();
     let initial = tempo_consensus_identity(&provider).await;
     let rotated = tempo_rotate_identity(&provider).await;
-    assert_eq!(rotated.from_epoch, 2);
+    assert_eq!(rotated.from_epoch, 3);
     api.mine_one().await.unwrap();
     let boundary = tempo_finalization(&provider, 1).await;
     assert_eq!((boundary.epoch, boundary.view), (1, 1));
     assert_tempo_certificate(&initial, &boundary);
     let outcome = OnchainDkgOutcome::decode(boundary.block.header.extra_data().as_ref()).unwrap();
     assert_eq!(outcome.epoch, 2);
+    assert!(outcome.is_next_full_dkg);
+    assert_eq!(outcome.network_identity().encode().as_ref(), initial.identity.as_ref());
+    assert_eq!(tempo_consensus_identity(&provider).await, initial);
+    api.mine_one().await.unwrap();
+    let boundary = tempo_finalization(&provider, 2).await;
+    assert_tempo_certificate(&initial, &boundary);
+    let outcome = OnchainDkgOutcome::decode(boundary.block.header.extra_data().as_ref()).unwrap();
+    assert_eq!(outcome.epoch, 3);
+    assert!(!outcome.is_next_full_dkg);
     assert_eq!(outcome.network_identity().encode().as_ref(), rotated.identity.as_ref());
     assert_eq!(tempo_consensus_identity(&provider).await, initial);
     api.mine_one().await.unwrap();
-    let next_epoch = tempo_finalization(&provider, 2).await;
-    assert_eq!((next_epoch.epoch, next_epoch.view), (2, 1));
+    let next_epoch = tempo_finalization(&provider, 3).await;
+    assert_eq!((next_epoch.epoch, next_epoch.view), (3, 1));
     assert_tempo_certificate(&rotated, &next_epoch);
     assert_eq!(tempo_consensus_identity(&provider).await, rotated);
 }
@@ -8415,9 +8459,8 @@ async fn tempo_consensus_fork_dump_load_preserves_consensus() {
 }
 
 async fn assert_tempo_consensus_dump_load_preserves_consensus(fork: bool) {
-    let config = NodeConfig::test_tempo()
-        .with_no_mining(true)
-        .with_tempo_epoch_length(NonZeroU64::new(3).unwrap());
+    let config =
+        NodeConfig::test_tempo().with_no_mining(true).with_tempo_epoch_length(NonZeroU64::new(3));
     let source = if fork {
         let (api, handle) = spawn(config.clone()).await;
         api.mine_one().await.unwrap();
@@ -8471,4 +8514,129 @@ async fn assert_tempo_consensus_dump_load_preserves_consensus(fork: bool) {
     }
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_fork_infers_epoch_length_from_anvil() {
+    let config = NodeConfig::test_tempo().with_no_mining(true);
+    let (source_api, source) =
+        spawn(config.clone().with_tempo_epoch_length(NonZeroU64::new(3))).await;
+    source_api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
+    let (conflicting, _) = spawn_rpc_proxy_canned_method(
+        source.http_endpoint(),
+        "anvil_tempoConsensusIdentity",
+        serde_json::json!({ "epochLength": 6 }),
+    )
+    .await;
+    let error = try_spawn(
+        config
+            .clone()
+            .with_fork_urls(vec![source.http_endpoint(), conflicting.clone()])
+            .with_fork_block_number(Some(3u64)),
+    )
+    .await
+    .err()
+    .expect("mirrors must not report a different epoch length");
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "fork fallback endpoint `{}` reports Tempo epoch length 6, expected 3",
+            redact_url(&conflicting)
+        )
+    );
+
+    let (api, handle) = spawn(
+        config
+            .clone()
+            .with_eth_rpc_url(Some(source.http_endpoint()))
+            .with_fork_block_number(Some(3u64)),
+    )
+    .await;
+    let provider = handle.http_provider();
+    let identity = tempo_consensus_identity(&provider).await;
+    assert_eq!(identity.epoch_length, 3);
+    api.mine_one().await.unwrap();
+    let finalized = assert_tempo_fork_round(&provider, &identity, 4, (1, 2, 1)).await;
+
+    // Consensus is already built, so a replacement endpoint cannot change its schedule.
+    let error = api.anvil_set_rpc_url(conflicting.clone()).await.unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "replacement fork endpoint reveals a different Tempo epoch length; use anvil_reset to rebuild consensus"
+    );
+    assert_eq!(tempo_consensus_identity(&provider).await, identity);
+    assert_eq!(tempo_finalization(&provider, 4).await, finalized);
+    api.anvil_set_rpc_url(source.http_endpoint()).await.unwrap();
+    // Without local Tempo consensus, the source epoch length is irrelevant.
+    let (ethereum_api, _) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_ethereum())
+            .with_eth_rpc_url(Some(source.http_endpoint()))
+            .with_fork_block_number(Some(3u64)),
+    )
+    .await;
+    ethereum_api.anvil_set_rpc_url(conflicting).await.unwrap();
+
+    let (replacement_api, replacement) =
+        spawn(config.with_tempo_epoch_length(NonZeroU64::new(6))).await;
+    replacement_api.anvil_mine(Some(U256::from(6)), None).await.unwrap();
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(replacement.http_endpoint()),
+        block_number: Some(6),
+    }))
+    .await
+    .unwrap();
+    let identity = tempo_consensus_identity(&provider).await;
+    assert_eq!(identity.epoch_length, 6);
+    api.mine_one().await.unwrap();
+    assert_tempo_fork_round(&provider, &identity, 7, (1, 2, 1)).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_fork_infers_epoch_length_from_chain_config() {
+    let config = NodeConfig::test_tempo().with_no_mining(true);
+    let (source_api, source) =
+        spawn(config.clone().with_tempo_epoch_length(NonZeroU64::new(3))).await;
+    source_api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
+    // Hide Anvil identity so the source is treated as a native Tempo node.
+    let native =
+        spawn_rpc_proxy_rejecting_method_after(source.http_endpoint(), "anvil_nodeInfo", 0).await;
+    for (chain_config, explicit, expected) in [
+        (serde_json::json!({ "chainId": 1, "epochLength": 3 }), None, Ok(3)),
+        (serde_json::json!({ "epochLength": "0x3" }), None, Ok(3)),
+        (
+            serde_json::json!({ "epochLength": 0 }),
+            None,
+            Err(
+                "invalid Tempo epoch configuration from debug_chainConfig; epochLength must be a nonzero u64",
+            ),
+        ),
+        // An explicit epoch length skips the probe entirely.
+        (serde_json::json!({ "epochLength": 0 }), NonZeroU64::new(3), Ok(3)),
+    ] {
+        let (endpoint, _) =
+            spawn_rpc_proxy_canned_method(native.clone(), "debug_chainConfig", chain_config).await;
+        let result = try_spawn(
+            config
+                .clone()
+                .with_tempo_epoch_length(explicit)
+                .with_eth_rpc_url(Some(endpoint))
+                .with_fork_block_number(Some(3u64)),
+        )
+        .await;
+        match expected {
+            Ok(epoch_length) => {
+                let (api, handle) = result.unwrap();
+                let provider = handle.http_provider();
+                let identity = tempo_consensus_identity(&provider).await;
+                assert_eq!(identity.epoch_length, epoch_length);
+                api.mine_one().await.unwrap();
+                assert_tempo_fork_round(&provider, &identity, 4, (1, 2, 1)).await;
+            }
+            Err(expected) => assert_eq!(result.err().unwrap().to_string(), expected),
+        }
+    }
+}
+
 mod subscriptions;
+
+#[cfg(feature = "cli")]
+mod epoch_warning;

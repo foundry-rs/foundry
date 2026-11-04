@@ -10,13 +10,6 @@ pub use foundry_evm_networks::MONAD_CHEATCODE_ADDRESS;
 /// `address(bytes20(uint160(uint256(keccak256('hevm cheat code')))))`
 pub const CHEATCODE_ADDRESS: Address = address!("0x7109709ECfa91a80626fF3989D68f67F5b1DD12D");
 
-/// The contract hash at [`CHEATCODE_ADDRESS`].
-///
-/// This is calculated as:
-/// `keccak256(abi.encodePacked(CHEATCODE_ADDRESS))`.
-pub const CHEATCODE_CONTRACT_HASH: B256 =
-    b256!("0xb0450508e5a2349057c3b4c9c84524d62be4bb17e565dbe2df34725a26872291");
-
 /// The Hardhat console address.
 ///
 /// See: <https://github.com/NomicFoundation/hardhat/blob/main/v-next/hardhat/console.sol>

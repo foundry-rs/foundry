@@ -130,6 +130,7 @@ struct ForkOverrides {
 struct StableForkSnapshot {
     endpoint_identity: ForkEndpointIdentity,
     state_is_mutable: bool,
+    tempo_epoch_length: Option<NonZeroU64>,
     block_number: u64,
     transaction_replay: Option<ForkTransactionReplay>,
     block: Option<AnyRpcBlock>,
@@ -368,8 +369,9 @@ pub struct NodeConfig {
     ///
     /// Must be an unlocked signer account. Defaults to the last dev account on Tempo networks.
     pub tempo_fee_payer: Option<Address>,
-    /// Number of block heights in a Tempo consensus epoch.
-    pub tempo_epoch_length: NonZeroU64,
+    /// Explicit Tempo consensus epoch length; otherwise inferred from the fork source or
+    /// defaulted.
+    pub tempo_epoch_length: Option<NonZeroU64>,
     /// Optional development consensus seed; otherwise derived from the account mnemonic.
     pub tempo_consensus_seed: Option<B256>,
     /// Do not print log messages.
@@ -729,7 +731,7 @@ impl Default for NodeConfig {
             #[cfg(feature = "base")]
             base_activation_admin: None,
             tempo_fee_payer: None,
-            tempo_epoch_length: DEFAULT_TEMPO_EPOCH_LENGTH,
+            tempo_epoch_length: None,
             tempo_consensus_seed: None,
             silent: false,
             cache_path: None,
@@ -801,16 +803,14 @@ impl NodeConfig {
     }
 
     pub fn get_blob_excess_gas_and_price(&self) -> BlobExcessGasAndPrice {
-        if let Some(value) = self.blob_excess_gas_and_price {
-            value
-        } else {
+        self.blob_excess_gas_and_price.unwrap_or_else(|| {
             let excess_blob_gas =
                 self.genesis.as_ref().and_then(|g| g.excess_blob_gas).unwrap_or(0);
             BlobExcessGasAndPrice::new(
                 excess_blob_gas,
                 self.get_blob_params().update_fraction as u64,
             )
-        }
+        })
     }
 
     /// Returns the [`BlobParams`] that should be used.
@@ -1314,10 +1314,7 @@ impl NodeConfig {
 
     /// Returns the ipc path for the ipc endpoint if any
     pub fn get_ipc_path(&self) -> Option<String> {
-        match &self.ipc_path {
-            Some(path) => path.clone().or_else(|| Some(DEFAULT_IPC_ENDPOINT.to_string())),
-            None => None,
-        }
+        self.ipc_path.clone().map(|path| path.unwrap_or_else(|| DEFAULT_IPC_ENDPOINT.to_string()))
     }
 
     /// Prints the config info
@@ -1409,10 +1406,17 @@ impl NodeConfig {
     }
 
     /// Sets the number of block heights in a Tempo consensus epoch.
+    ///
+    /// `None` infers the length from the fork source, falling back to 21600.
     #[must_use]
-    pub const fn with_tempo_epoch_length(mut self, epoch_length: NonZeroU64) -> Self {
+    pub const fn with_tempo_epoch_length(mut self, epoch_length: Option<NonZeroU64>) -> Self {
         self.tempo_epoch_length = epoch_length;
         self
+    }
+
+    /// Returns the Tempo epoch length to use: explicit, else the fork source's, else the default.
+    pub(crate) fn effective_tempo_epoch_length(&self, source: Option<NonZeroU64>) -> NonZeroU64 {
+        self.tempo_epoch_length.or(source).unwrap_or(DEFAULT_TEMPO_EPOCH_LENGTH)
     }
 
     /// Overrides the development consensus seed on Tempo networks.
@@ -1896,6 +1900,54 @@ impl NodeConfig {
         Ok(identity)
     }
 
+    /// Reads the fork source's Tempo epoch length without making metadata RPC support mandatory.
+    ///
+    /// Skipped when an explicit epoch length or an explicit non-Tempo network is configured.
+    /// Timeouts and native endpoints that reject `debug_chainConfig` mean the length is unknown;
+    /// identified Anvil sources only treat method-not-found as unknown. A present invalid
+    /// `epochLength` is rejected.
+    async fn fork_tempo_epoch_length(
+        &self,
+        provider: &RetryProvider,
+        identity: ForkEndpointIdentity,
+    ) -> Result<Option<NonZeroU64>> {
+        if self.tempo_epoch_length.is_some()
+            || identity.network != Some(NetworkVariant::Tempo)
+            || (self.has_explicit_network_selection() && !self.networks.is_tempo())
+        {
+            return Ok(None);
+        }
+        let anvil = identity.is_authoritative();
+        let method = if anvil { "anvil_tempoConsensusIdentity" } else { "debug_chainConfig" };
+        let Ok(response) = tokio::time::timeout(
+            FORK_IDENTITY_PROBE_TIMEOUT,
+            provider.raw_request::<_, Value>(method.into(), ()),
+        )
+        .await
+        else {
+            return Ok(None);
+        };
+        let value = match response {
+            Ok(value) => value,
+            Err(error) if anvil && !is_rpc_method_not_found(&error) => {
+                return Err(error)
+                    .wrap_err_with(|| format!("failed to read Tempo epoch length from {method}"));
+            }
+            Err(_) => return Ok(None),
+        };
+        value
+            .get("epochLength")
+            .cloned()
+            .map(alloy_serde::quantity::deserialize)
+            .transpose()
+            .wrap_err_with(|| {
+                format!(
+                    "invalid Tempo epoch configuration from {method}; epochLength must be a nonzero u64"
+                )
+            })
+    }
+
+    /// Resolves a replacement endpoint for the active fork and the Tempo epoch length it reports.
     pub(crate) async fn replacement_fork_provider(
         &self,
         eth_rpc_url: &str,
@@ -1903,7 +1955,7 @@ impl NodeConfig {
         block_number: u64,
         block_hash: B256,
         serving_instance_id: B256,
-    ) -> Result<(Arc<RetryProvider>, ForkEndpointIdentity)> {
+    ) -> Result<(Arc<RetryProvider>, ForkEndpointIdentity, Option<NonZeroU64>)> {
         let provider = Arc::new(self.fork_provider(eth_rpc_url)?);
         let mut node_info_probe = self.node_info_probe(false);
         for _ in 0..3 {
@@ -1917,6 +1969,7 @@ impl NodeConfig {
                 .get_block(BlockId::number(block_number))
                 .await
                 .wrap_err("failed to confirm active fork block on replacement endpoint")?;
+            let tempo_epoch_length = self.fork_tempo_epoch_length(&provider, before).await?;
             let after =
                 self.resolved_fork_endpoint_identity(&provider, &mut node_info_probe).await?;
             if before != after {
@@ -1931,7 +1984,7 @@ impl NodeConfig {
                     "replacement fork endpoint does not contain active fork block {block_number} with hash {block_hash}"
                 );
             }
-            return Ok((provider, before));
+            return Ok((provider, before, tempo_epoch_length));
         }
         eyre::bail!(
             "fork endpoint changed while its identity and active fork block were being resolved"
@@ -1968,12 +2021,14 @@ impl NodeConfig {
             } else {
                 provider.get_gas_price().await.unwrap_or(INITIAL_GAS_PRICE)
             };
+            let tempo_epoch_length = self.fork_tempo_epoch_length(provider, before).await?;
             let after =
                 self.resolved_fork_endpoint_identity(provider, &mut node_info_probe).await?;
             if before == after {
                 return Ok(StableForkSnapshot {
                     endpoint_identity: before,
                     state_is_mutable: node_info_probe.identified || node_info_probe.inconclusive,
+                    tempo_epoch_length,
                     block_number,
                     transaction_replay,
                     block,
@@ -2125,6 +2180,7 @@ impl NodeConfig {
         let StableForkSnapshot {
             endpoint_identity: fork_identity,
             state_is_mutable,
+            mut tempo_epoch_length,
             block_number: fork_block_number,
             transaction_replay: fork_transaction_replay,
             block,
@@ -2344,6 +2400,19 @@ latest block number: {latest_block}"
                     redact_url(mirror_url)
                 );
             }
+            let provider = self.fork_provider(mirror_url)?;
+            let mirror_epoch_length =
+                self.fork_tempo_epoch_length(&provider, fork_identity).await?;
+            if let Some((expected, actual)) = tempo_epoch_length.zip(mirror_epoch_length)
+                && expected != actual
+            {
+                eyre::bail!(
+                    "fork fallback endpoint `{}` reports Tempo epoch length {actual}, expected \
+                     {expected}",
+                    redact_url(mirror_url)
+                );
+            }
+            tempo_epoch_length = tempo_epoch_length.or(mirror_epoch_length);
         }
         if self.requires_primary_fork_revalidation(fork_identity)
             && !self
@@ -2424,6 +2493,7 @@ latest block number: {latest_block}"
             hardfork: Some(effective_hardfork),
             endpoint_identity: fork_identity,
             state_is_mutable,
+            tempo_epoch_length,
             timestamp: block.header.timestamp(),
             base_fee: block.header.base_fee_per_gas().map(|g| g as u128),
             timeout: self.fork_request_timeout,
@@ -3161,16 +3231,22 @@ mod tests {
     #[test]
     fn tempo_consensus_configuration_defaults_and_overrides() {
         let config = NodeConfig::default();
-        assert_eq!(config.tempo_epoch_length.get(), 21_600);
+        assert_eq!(config.tempo_epoch_length, None);
+        assert_eq!(config.effective_tempo_epoch_length(None), DEFAULT_TEMPO_EPOCH_LENGTH);
+        assert_eq!(
+            config.effective_tempo_epoch_length(NonZeroU64::new(3)),
+            NonZeroU64::new(3).unwrap()
+        );
         assert_eq!(config.tempo_consensus_seed(), TempoConsensus::default_seed(DEFAULT_MNEMONIC));
         let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
         let config =
             config.with_account_generator(AccountGenerator::new(1).phrase(mnemonic)).unwrap();
         assert_eq!(config.tempo_consensus_seed(), TempoConsensus::default_seed(mnemonic));
         let seed = B256::repeat_byte(7);
-        let config =
-            config.with_tempo_epoch_length(NonZeroU64::MIN).with_tempo_consensus_seed(Some(seed));
-        assert_eq!(config.tempo_epoch_length, NonZeroU64::MIN);
+        let config = config
+            .with_tempo_epoch_length(Some(NonZeroU64::MIN))
+            .with_tempo_consensus_seed(Some(seed));
+        assert_eq!(config.effective_tempo_epoch_length(NonZeroU64::new(3)), NonZeroU64::MIN);
         assert_eq!(config.tempo_consensus_seed(), seed);
     }
 }

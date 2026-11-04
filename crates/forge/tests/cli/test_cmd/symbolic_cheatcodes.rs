@@ -4769,6 +4769,12 @@ contract SymbolicRevertingStorageTarget {
         }
         revert();
     }
+
+    function loadTwiceThenStore(bytes32 slot) external {
+        assembly {
+            sstore(slot, add(sload(slot), sload(slot)))
+        }
+    }
 }
 
 contract SymbolicRecordAccesses is Test {
@@ -4783,9 +4789,10 @@ contract SymbolicRecordAccesses is Test {
 
         (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(this));
         assertEq(loadedSlot, stored);
-        assertEq(reads.length, 1);
+        assertEq(reads.length, 2);
         assertEq(writes.length, 1);
         assertEq(reads[0], slot);
+        assertEq(reads[1], slot);
         assertEq(writes[0], slot);
 
         vm.stopRecord();
@@ -4803,9 +4810,10 @@ contract SymbolicRecordAccesses is Test {
 
         (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(target);
         assertEq(loadedSlot, stored);
-        assertEq(reads.length, 1);
+        assertEq(reads.length, 2);
         assertEq(writes.length, 1);
         assertEq(reads[0], slot);
+        assertEq(reads[1], slot);
         assertEq(writes[0], slot);
 
         vm.stopRecord();
@@ -4825,9 +4833,10 @@ contract SymbolicRecordAccesses is Test {
         (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(target);
         assertEq(loadedSlot, stored);
         if (target == address(this)) {
-            assertEq(reads.length, 1);
+            assertEq(reads.length, 2);
             assertEq(writes.length, 1);
             assertEq(reads[0], slot);
+            assertEq(reads[1], slot);
             assertEq(writes[0], slot);
         } else {
             assertEq(reads.length, 0);
@@ -4861,11 +4870,38 @@ contract SymbolicRecordAccesses is Test {
         assertEq(reads[0], slot);
         assertEq(writes[0], slot);
     }
+
+    function testRecordRepeatedAndStaticAccesses() public {
+        recordRepeatedAndStaticAccesses();
+    }
+
+    function checkRecordAccessesRepeatedAndStatic() public {
+        recordRepeatedAndStaticAccesses();
+    }
+
+    // Like Forge, every access is recorded, including the write of an `SSTORE` that halts in a
+    // static call.
+    function recordRepeatedAndStaticAccesses() internal {
+        SymbolicRevertingStorageTarget target = new SymbolicRevertingStorageTarget();
+        bytes32 slot = bytes32(uint256(7));
+
+        vm.record();
+        (bool ok,) = address(target).staticcall(abi.encodeCall(target.loadTwiceThenStore, (slot)));
+        assertFalse(ok);
+
+        (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(target));
+        assertEq(reads.length, 3);
+        assertEq(writes.length, 1);
+        assertEq(reads[0], slot);
+        assertEq(reads[1], slot);
+        assertEq(reads[2], slot);
+        assertEq(writes[0], slot);
+    }
 }
 "#,
     );
 
-    cmd.args(["test", "--match-test", "testRecordRevertedChildAccesses"]).assert_success();
+    cmd.args(["test", "--match-test", "testRecord"]).assert_success();
     cmd.forge_fuse();
 
     let stdout = assert_symbolic_witness(cmd.args([
@@ -4877,12 +4913,13 @@ contract SymbolicRecordAccesses is Test {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 4 tests for test/SymbolicRecordAccesses.t.sol:SymbolicRecordAccesses
+Ran 5 tests for test/SymbolicRecordAccesses.t.sol:SymbolicRecordAccesses
 [PASS] checkRecordAccesses(bytes32,bytes32) ([METRICS])
+[PASS] checkRecordAccessesRepeatedAndStatic() ([METRICS])
 [PASS] checkRecordAccessesRevertedChild() ([METRICS])
 [PASS] checkRecordAccessesSymbolicTarget(address,bytes32,bytes32) ([METRICS])
 [PASS] checkRecordAccessesSymbolicTargetBranches(address,bytes32,bytes32) ([METRICS])
-Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -7164,4 +7201,361 @@ contract SymbolicMappingStorageHooksSymbolicSize is Test {
         "{}",
         result["symbolic"]
     );
+}
+
+// Like Forge, `vm.stopRecord` pauses recording but keeps the accesses for `vm.accesses`,
+// `vm.expectEmit(emitter, 0)` reverts the frame that emits a matching log, and a log without
+// topics cannot fill the template of a non-anonymous `vm.expectEmit`.
+#[forgetest_init]
+fn symbolic_stop_record_and_expect_emit_count_zero_match_forge(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_stop_record_and_expect_emit_count_zero_match_forge");
+
+    prj.add_test(
+        "SymbolicRecordAndEmitCount.t.sol",
+        r#"
+interface Vm {
+    function record() external;
+    function stopRecord() external;
+    function accesses(address target) external returns (bytes32[] memory, bytes32[] memory);
+    function expectEmit() external;
+    function expectEmit(address emitter, uint64 count) external;
+    function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData)
+        external;
+    function expectEmitAnonymous() external;
+    function expectRevert() external;
+    function mockCall(address callee, bytes calldata data, bytes calldata returnData) external;
+}
+
+contract Store {
+    uint256 public a;
+    uint256 public b;
+    event Set(uint256 value);
+    event Other(uint256 value);
+    event Anon(uint256 value) anonymous;
+
+    function setA(uint256 value) external {
+        a = value;
+        emit Set(value);
+    }
+
+    function setB(uint256 value) external {
+        b = value;
+        emit Other(value);
+    }
+
+    function noop() external {}
+
+    function revertWithoutEmit() external pure {
+        revert();
+    }
+
+    function setAThenRevert(uint256 value) external {
+        emit Set(value);
+        revert();
+    }
+
+    function emitAnon(uint256 value) external {
+        emit Anon(value);
+    }
+
+    function halt() external {
+        assembly {
+            invalid()
+        }
+    }
+}
+
+contract SymbolicRecordAndEmitCount {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    event Set(uint256 value);
+    event Other(uint256 value);
+    event Anon(uint256 value) anonymous;
+    Store store;
+
+    function setUp() public {
+        store = new Store();
+    }
+
+    function checkStopRecordKeepsAndPausesAccesses(uint256 value) public {
+        vm.record();
+        store.setA(value);
+        vm.stopRecord();
+        store.setB(value);
+        (, bytes32[] memory writes) = vm.accesses(address(store));
+        assert(writes.length == 1);
+    }
+
+    function checkExpectNoEmitFailsWhenEmitted(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        store.setA(value);
+    }
+
+    function checkExpectNoEmitAllowsOtherEvent(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        store.setB(value);
+    }
+
+    // Like Forge, only the matching log reverts, so the path where `value != 1` continues.
+    function checkExpectNoEmitKeepsNonMatchingPath(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(1);
+        try store.setA(value) {} catch {}
+        assert(value != 2);
+    }
+
+    // Like Forge, the revert of the emitting frame can be caught.
+    function checkExpectNoEmitCaught(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        try store.setA(value) {} catch {}
+    }
+
+    // Like Forge, `vm.expectRevert` sees the revert of the emitting frame.
+    function checkExpectNoEmitUnderExpectRevert(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        vm.expectRevert();
+        store.setA(value);
+    }
+
+    function checkExpectNoEmitEndsAfterNextCall(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        store.noop();
+        store.setA(value);
+    }
+
+    function checkExpectNoEmitEndsAfterCodelessCall(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        (bool success,) = address(0xdead).call("");
+        assert(success);
+        store.setA(value);
+    }
+
+    function checkExpectNoEmitEndsAfterMockedCall(uint256 value) public {
+        vm.mockCall(address(store), abi.encodeCall(Store.noop, ()), "");
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        store.noop();
+        store.setA(value);
+    }
+
+    function checkExpectNoEmitEndsAfterHaltedCall(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        (bool success,) = address(store).call(abi.encodeCall(Store.halt, ()));
+        assert(!success);
+        store.setA(value);
+    }
+
+    // Like Forge, a reverted call does not end the expectation.
+    function checkExpectNoEmitKeptAcrossRevertedCall(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        try store.revertWithoutEmit() {} catch {}
+        store.setA(value);
+    }
+
+    // Like Forge, logs with different topic counts never match, even on unchecked topics.
+    function checkExpectEmitRequiresSameTopicCount(uint256 value) public {
+        vm.expectEmit(false, false, false, true);
+        bytes32 topic = Set.selector;
+        assembly {
+            mstore(0, value)
+            log2(0, 32, topic, value)
+        }
+        store.setA(value);
+    }
+
+    // Like Forge, a static call does not end the expectation.
+    function checkExpectNoEmitKeptAcrossStaticCall(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        store.a();
+        store.setA(value);
+    }
+
+    // Forge queues expectations; a second pending one is reported as unsupported instead of
+    // replacing the first.
+    function checkQueuedExpectEmitFailsClosed(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        vm.expectEmit();
+        emit Other(value);
+        store.setB(value);
+        store.setA(value);
+    }
+
+    // Like Forge, a log without topics cannot be the template of a count 0 expectation.
+    function checkExpectNoEmitAnonymousTemplate(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Anon(value);
+        store.setA(value);
+    }
+
+    // Forge keeps a template set inside a reverted call, so this is reported as unsupported.
+    function checkExpectNoEmitTemplateFromRevertedCall(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        try store.setAThenRevert(value) {} catch {}
+        store.setA(value);
+    }
+
+    // Forge drops the expectation inside a reverted call, so this is reported as unsupported.
+    function checkExpectNoEmitAnonymousInRevertedCall(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        try store.emitAnon(value) {} catch {}
+        store.setA(value);
+    }
+
+    // Like Forge, a log without topics cannot be the template of a non-anonymous expectation.
+    function checkExpectEmitAnonymousTemplate(uint256 value) public {
+        vm.expectEmit();
+        emit Anon(value);
+        store.emitAnon(value);
+    }
+
+    function checkExpectEmitAnonymousMatches(uint256 value) public {
+        vm.expectEmitAnonymous();
+        emit Anon(value);
+        store.emitAnon(value);
+    }
+
+    function testStopRecordKeepsAndPausesAccesses() public {
+        checkStopRecordKeepsAndPausesAccesses(1);
+    }
+
+    function testExpectNoEmitAllowsOtherEvent() public {
+        checkExpectNoEmitAllowsOtherEvent(1);
+    }
+
+    function testExpectNoEmitCaught() public {
+        checkExpectNoEmitCaught(1);
+    }
+
+    function testExpectNoEmitUnderExpectRevert() public {
+        checkExpectNoEmitUnderExpectRevert(1);
+    }
+
+    function testExpectNoEmitEndsAfterNextCall() public {
+        checkExpectNoEmitEndsAfterNextCall(1);
+    }
+
+    function testExpectNoEmitEndsAfterCodelessCall() public {
+        checkExpectNoEmitEndsAfterCodelessCall(1);
+    }
+
+    function testExpectNoEmitEndsAfterMockedCall() public {
+        checkExpectNoEmitEndsAfterMockedCall(1);
+    }
+
+    function testExpectNoEmitEndsAfterHaltedCall() public {
+        checkExpectNoEmitEndsAfterHaltedCall(1);
+    }
+
+    function testExpectEmitAnonymousMatches() public {
+        checkExpectEmitAnonymousMatches(1);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-contract", "SymbolicRecordAndEmitCount", "--match-test", "^test"])
+        .assert_success();
+    cmd.forge_fuse();
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicRecordAndEmitCount",
+        "--match-test",
+        "^check",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 19 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCount
+[PASS] checkExpectEmitAnonymousMatches(uint256) ([METRICS])
+[FAIL: use vm.expectEmitAnonymous to match anonymous events; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitAnonymousTemplate(uint256) ([METRICS])
+[FAIL: Set indexed topic count mismatch: expected 1, got 0; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitRequiresSameTopicCount(uint256) ([METRICS])
+[PASS] checkExpectNoEmitAllowsOtherEvent(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit count 0 across a failed call] checkExpectNoEmitAnonymousInRevertedCall(uint256) ([METRICS])
+[FAIL: use vm.expectEmitAnonymous to match anonymous events; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectNoEmitAnonymousTemplate(uint256) ([METRICS])
+[PASS] checkExpectNoEmitCaught(uint256) ([METRICS])
+[PASS] checkExpectNoEmitEndsAfterCodelessCall(uint256) ([METRICS])
+[PASS] checkExpectNoEmitEndsAfterHaltedCall(uint256) ([METRICS])
+[PASS] checkExpectNoEmitEndsAfterMockedCall(uint256) ([METRICS])
+[PASS] checkExpectNoEmitEndsAfterNextCall(uint256) ([METRICS])
+[FAIL: log emitted but expected 0 times; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectNoEmitFailsWhenEmitted(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectNoEmitKeepsNonMatchingPath(uint256) ([METRICS])
+[FAIL: log emitted but expected 0 times; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectNoEmitKeptAcrossRevertedCall(uint256) ([METRICS])
+[FAIL: log emitted but expected 0 times; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectNoEmitKeptAcrossStaticCall(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit count 0 across a failed call] checkExpectNoEmitTemplateFromRevertedCall(uint256) ([METRICS])
+[PASS] checkExpectNoEmitUnderExpectRevert(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit with a pending expectation] checkQueuedExpectEmitFailsClosed(uint256) ([METRICS])
+[PASS] checkStopRecordKeepsAndPausesAccesses(uint256) ([METRICS])
+Suite result: FAILED. 9 passed; 10 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// A complemented address keeps its complement within each byte: a callee whose low byte is
+// always `0xff` never matches the target, while `~x` can match it.
+#[forgetest_init]
+fn symbolic_expect_call_matches_complemented_address(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_expect_call_matches_complemented_address");
+
+    prj.add_test(
+        "SymbolicExpectCallComplement.t.sol",
+        r#"
+interface Vm {
+    function expectCall(address callee, bytes calldata data) external;
+    function expectCall(address callee, bytes calldata data, uint64 count) external;
+}
+
+contract Target {
+    function ping() external {}
+}
+
+contract SymbolicExpectCallComplement {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    Target target;
+
+    function setUp() public {
+        target = new Target();
+    }
+
+    function checkMaskedComplementCallee(uint256 x) public {
+        address callee = address(uint160(~(x & ~uint256(0xff))));
+        vm.expectCall(callee, abi.encodeWithSelector(Target.ping.selector), 0);
+        target.ping();
+    }
+
+    function checkComplementCalleeNeverCalled(uint256 x) public {
+        address callee = address(uint160(~x));
+        vm.expectCall(callee, abi.encodeWithSelector(Target.ping.selector), 0);
+        target.ping();
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicExpectCallComplement",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicExpectCallComplement.t.sol:SymbolicExpectCallComplement
+[FAIL: expected call to [..] with data 0x5c36b186 to be called 0 times, but was called 1 time; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkComplementCalleeNeverCalled(uint256) ([METRICS])
+[PASS] checkMaskedComplementCallee(uint256) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }

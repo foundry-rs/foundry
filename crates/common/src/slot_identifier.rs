@@ -8,7 +8,10 @@ use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{B256, U256, hex, keccak256, map::B256Map};
 use foundry_common_fmt::format_token_raw;
 use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
-use serde::Serialize;
+use serde::{
+    Serialize,
+    ser::{SerializeMap, SerializeStruct},
+};
 use std::{collections::BTreeMap, str::FromStr, sync::Arc};
 use tracing::trace;
 
@@ -348,8 +351,6 @@ fn serialize_mapping_keys<S>(keys: &Option<Vec<String>>, serializer: S) -> Resul
 where
     S: serde::Serializer,
 {
-    use serde::ser::SerializeMap;
-
     if let Some(keys) = keys {
         let len = if keys.is_empty() { 0 } else { 1 };
         let mut map = serializer.serialize_map(Some(len))?;
@@ -378,8 +379,6 @@ impl Serialize for DecodedSlotValues {
     where
         S: serde::Serializer,
     {
-        use serde::ser::SerializeStruct;
-
         let mut state = serializer.serialize_struct("DecodedSlotValues", 2)?;
         state.serialize_field("previousValue", &format_token_raw(&self.previous_value))?;
         state.serialize_field("newValue", &format_token_raw(&self.new_value))?;

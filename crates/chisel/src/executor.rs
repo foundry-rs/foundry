@@ -173,7 +173,9 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                                 let body = output.run_func_body();
                                 let Some(last) = body.last() else { return false };
                                 let StmtKind::Expr(expr) = last.kind else { return false };
-                                should_continue(expr)
+                                // A call that returns nothing cannot be inspected, but runs
+                                // like any statement: `revert("x")`, `require(...)`, `f()`.
+                                should_continue(expr) || matches!(expr.kind, ExprKind::Call(..))
                             })
                         })
                     })

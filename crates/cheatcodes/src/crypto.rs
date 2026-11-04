@@ -725,8 +725,8 @@ mod tests {
     use alloy_primitives::{Bytes, FixedBytes, LogData, hex::FromHex};
     use alloy_sol_types::SolCall;
     use evm2::evm::{AccountInfo, StateCheckpoint};
-    use k256::elliptic_curve::Curve;
-    use p256::ecdsa::signature::hazmat::PrehashVerifier;
+    use k256::{Secp256k1, elliptic_curve::Curve};
+    use p256::ecdsa::{VerifyingKey, signature::hazmat::PrehashVerifier};
     use tempo_contracts::precompiles::ISignatureVerifier;
     use tempo_hardfork::TempoHardfork;
     use tempo_precompiles::{
@@ -884,8 +884,6 @@ mod tests {
 
     #[test]
     fn test_sign_p256() {
-        use p256::ecdsa::VerifyingKey;
-
         let pk_u256: U256 = "1".parse().unwrap();
         let signing_key = P256SigningKey::from_bytes(&pk_u256.to_be_bytes().into()).unwrap();
         let digest = FixedBytes::from_hex(
@@ -975,7 +973,6 @@ mod tests {
     #[test]
     fn test_sign_with_nonce_nonce_ge_order_errors() {
         // nonce >= n should be rejected
-        use k256::Secp256k1;
         // Curve order n as U256
         let n_u256 = U256::from_be_slice(&Secp256k1::ORDER.to_be_byte_array());
 

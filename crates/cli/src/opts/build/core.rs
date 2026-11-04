@@ -84,9 +84,10 @@ pub struct BuildOpts {
     #[serde(skip)]
     pub no_auto_detect: bool,
 
-    /// Specify the solc version, path, or executable name on `PATH` to build with.
+    /// Specify the solc version, Solar version, path, or executable name on `PATH` to build with.
     ///
-    /// Valid values are in the format `x.y.z`, `solc:x.y.z`, `path/to/solc`, or `solc`.
+    /// Valid values are in the format `x.y.z`, `solc:x.y.z`, `solar:x.y.z`, `path/to/solc`, or
+    /// `solc`.
     #[arg(
         long = "use",
         alias = "compiler-version",
@@ -98,7 +99,7 @@ pub struct BuildOpts {
 
     /// Do not access the network.
     ///
-    /// Missing solc versions will not be installed.
+    /// Missing solc versions and Solar releases will not be installed.
     #[arg(help_heading = "Compiler options", long)]
     #[serde(skip)]
     pub offline: bool,

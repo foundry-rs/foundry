@@ -1,6 +1,6 @@
 use crate::{
     AccountGenerator, CHAIN_ID, NodeConfig,
-    config::{DEFAULT_MNEMONIC, DEFAULT_SLOTS_IN_AN_EPOCH, DEFAULT_TEMPO_EPOCH_LENGTH, ForkChoice},
+    config::{DEFAULT_MNEMONIC, DEFAULT_SLOTS_IN_AN_EPOCH, ForkChoice},
     eth::{
         EthApi, backend::db::SerializableState, miner::INSTANT_COALESCE_WINDOW,
         pool::transactions::TransactionOrder,
@@ -92,8 +92,10 @@ pub struct NodeArgs {
     pub tempo_fee_payer: Option<Address>,
 
     /// Number of block heights in a Tempo consensus epoch. Only used on Tempo networks.
-    #[arg(long = "tempo.epoch-length", default_value_t = DEFAULT_TEMPO_EPOCH_LENGTH, value_name = "BLOCKS")]
-    pub tempo_epoch_length: NonZeroU64,
+    ///
+    /// Defaults to the fork source's epoch length when it reports one, otherwise 21600.
+    #[arg(long = "tempo.epoch-length", value_name = "BLOCKS")]
+    pub tempo_epoch_length: Option<NonZeroU64>,
 
     /// Development consensus seed for Tempo, as 32 bytes of hex.
     ///
@@ -1703,7 +1705,7 @@ mod tests {
             .unwrap()
             .into_node_config()
             .unwrap();
-            assert_eq!(config.tempo_epoch_length.get(), epoch_length.parse::<u64>().unwrap());
+            assert_eq!(config.tempo_epoch_length, epoch_length.parse().ok());
             assert_eq!(config.tempo_consensus_seed(), B256::repeat_byte(1));
         }
         for epoch_length in ["0", "-1", "18446744073709551616"] {
@@ -1719,7 +1721,7 @@ mod tests {
     #[test]
     fn tempo_consensus_seed_uses_effective_mnemonic() {
         let default = NodeArgs::parse_from(["anvil"]).into_node_config().unwrap();
-        assert_eq!(default.tempo_epoch_length, DEFAULT_TEMPO_EPOCH_LENGTH);
+        assert_eq!(default.tempo_epoch_length, None);
         assert_eq!(default.tempo_consensus_seed(), NodeConfig::default().tempo_consensus_seed());
         let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
         let custom =

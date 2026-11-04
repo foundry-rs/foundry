@@ -18,9 +18,9 @@ use foundry_cli::{
     utils::{LoadConfig, resolve_lane},
 };
 use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
-use foundry_wallets::{TempoAccountsWallet, WalletSigner};
+use foundry_wallets::WalletSigner;
 use std::{path::PathBuf, str::FromStr};
-use tempo_alloy::TempoNetwork;
+use tempo_alloy::{TempoNetwork, accounts::TempoAccountsWallet};
 
 #[cfg(feature = "base")]
 use base_common_network::Base;
