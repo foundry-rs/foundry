@@ -3378,6 +3378,7 @@ fn merge_suite_results(
         if let Some(base_suite) = base.get_mut(&suite_id) {
             base_suite.test_results.extend(other_suite.test_results);
             base_suite.warnings.extend(other_suite.warnings);
+            base_suite.blocked_tests.extend(other_suite.blocked_tests);
             base_suite.duration = base_suite.duration.max(other_suite.duration);
         } else {
             base.insert(suite_id, other_suite);
@@ -3435,18 +3436,12 @@ fn last_run_failures(config: &Config) -> LastRunFailures {
         if failures.failures.is_empty() {
             return LastRunFailures { test_pattern: None, failures: None };
         }
-        // Suite failures rerun every test of their suite. An explicit match-all pattern prevents
-        // config filters from taking over; the contract-aware rerun filter selects the tests.
-        let test_pattern = if failures.failures.iter().any(RerunFailure::is_suite_failure) {
-            String::new()
-        } else {
-            failures
-                .failures
-                .iter()
-                .map(|failure| regex::escape(&failure.test))
-                .collect::<Vec<_>>()
-                .join("|")
-        };
+        let test_pattern = failures
+            .failures
+            .iter()
+            .map(|failure| regex::escape(&failure.test))
+            .collect::<Vec<_>>()
+            .join("|");
         let test_pattern = Regex::new(&test_pattern).ok();
         return LastRunFailures { test_pattern, failures: Some(failures.failures) };
     }
@@ -3469,12 +3464,20 @@ fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
             .results
             .iter()
             .flat_map(|(contract, suite)| {
-                suite.test_results.iter().filter(|(_, result)| result.status.is_failure()).flat_map(
-                    move |(test_name, test_result)| {
+                // Tests blocked by a suite failure, such as a failed `setUp()`, rerun by name.
+                let blocked_tests = suite
+                    .blocked_tests
+                    .iter()
+                    .map(|test| test.split('(').next().unwrap_or(test).to_owned());
+                suite
+                    .test_results
+                    .iter()
+                    .filter(|(_, result)| result.status.is_failure())
+                    .flat_map(|(test_name, test_result)| {
                         rerun_filter_matches(test_name, test_result)
-                            .map(move |test| RerunFailure { contract: contract.clone(), test })
-                    },
-                )
+                    })
+                    .chain(blocked_tests)
+                    .map(move |test| RerunFailure { contract: contract.clone(), test })
             })
             .collect::<Vec<_>>();
 
@@ -3493,9 +3496,7 @@ fn rerun_filter_matches<'a>(
     let predicate_failures =
         test_result.invariant_failures.iter().filter_map(|failure| failure.predicate_name());
     let has_predicate_failures = predicate_failures.clone().next().is_some();
-    // Suite failures are recorded by name so that `--rerun` runs their suite again.
-    let name = test_name.split('(').next().unwrap_or(test_name);
-    let fallback = (test_name.is_any_test() || filter::is_suite_failure(name)).then_some(name);
+    let fallback = test_name.is_any_test().then(|| test_name.split('(').next()).flatten();
     predicate_failures
         .chain(fallback.into_iter().filter(move |_| !has_predicate_failures))
         .map(str::to_owned)

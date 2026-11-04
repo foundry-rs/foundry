@@ -842,7 +842,8 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         let test_matcher = self.test_matcher();
         // Skip suites with no selected tests in this network pass before deploying the
         // contract or executing `setUp`. Fuzz-only mode also excludes unit and symbolic tests.
-        if !self.matching_test_functions(filter, &test_matcher).into_iter().any(|func| {
+        let selected_functions = self.matching_test_functions(filter, &test_matcher);
+        if !selected_functions.iter().any(|func| {
             !self.mcr.tcfg.fuzz_only
                 || matches!(
                     test_matcher.test_function_kind(self.name, func, generated_symbolic_regression),
@@ -871,6 +872,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             return self.failed_suite(
                 start,
                 warnings,
+                &selected_functions,
                 [("setUp()".to_string(), TestResult::fail("multiple setUp functions".to_string()))],
             );
         }
@@ -882,6 +884,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             return self.failed_suite(
                 start,
                 warnings,
+                &selected_functions,
                 [(
                     "afterInvariant()".to_string(),
                     TestResult::fail("multiple afterInvariant functions".to_string()),
@@ -924,7 +927,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             })
             .collect::<Vec<_>>();
         if !invalid_invariants.is_empty() {
-            return self.failed_suite(start, warnings, invalid_invariants);
+            return self.failed_suite(start, warnings, &selected_functions, invalid_invariants);
         }
 
         for invariant in &invariant_fns {
@@ -965,6 +968,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             return self.failed_suite(
                 start,
                 warnings,
+                &selected_functions,
                 [(name.to_string(), TestResult::setup_result(setup))],
             );
         }
@@ -1049,7 +1053,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             })
             .collect::<Vec<_>>();
         if !test_fail_results.is_empty() {
-            return self.failed_suite(start, warnings, test_fail_results);
+            return self.failed_suite(start, warnings, &functions, test_fail_results);
         }
 
         if functions.iter().any(|func| {
@@ -1163,14 +1167,23 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
     /// Returns a suite that failed before its tests could run, tripping the global fail-fast
     /// flag so sibling parallel suites (notably long-running invariant campaigns) observe
     /// `should_stop()` and exit at their next run boundary instead of running to their timeout.
+    ///
+    /// The `selected` tests without a result are recorded as blocked so `--rerun` runs them again.
     fn failed_suite(
         &self,
         start: Instant,
         warnings: Vec<String>,
+        selected: &[&Function],
         results: impl IntoIterator<Item = (String, TestResult)>,
     ) -> SuiteResult {
         self.tcfg.early_exit.record_failure();
-        SuiteResult::new(start.elapsed(), results.into_iter().collect(), warnings)
+        let mut suite = SuiteResult::new(start.elapsed(), results.into_iter().collect(), warnings);
+        suite.blocked_tests = selected
+            .iter()
+            .map(|func| func.signature())
+            .filter(|signature| !suite.test_results.contains_key(signature))
+            .collect();
+        suite
     }
 }
 

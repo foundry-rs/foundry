@@ -634,19 +634,22 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 #[forgetest_init]
 fn rerun_with_only_setup_failure_runs_failed_suite(prj: _, cmd: _) {
-    prj.add_test(
-        "RerunSetupFail.t.sol",
-        r#"
+    prj.update_config(|config| config.test_pattern = Some(Regex::new(r"^test\w*").unwrap().into()));
+    let source = r#"
 import "forge-std/Test.sol";
 
 contract OnlySetupFails is Test {
+    bool constant SETUP_OK = false;
+
     function setUp() public {
-        assertTrue(false);
+        assertTrue(SETUP_OK);
     }
 
     function testA() public {
         assertTrue(true);
     }
+
+    function invariant_excludedByConfig() public {}
 }
 
 contract HealthyContract is Test {
@@ -654,8 +657,8 @@ contract HealthyContract is Test {
         assertTrue(true);
     }
 }
-"#,
-    );
+"#;
+    prj.add_test("RerunSetupFail.t.sol", source);
 
     cmd.args(["test", "-j1"]).assert_failure();
 
@@ -670,6 +673,19 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 ...
 "#]]);
+
+    // Once `setUp()` passes, only the tests the configured pattern selected run again.
+    prj.add_test("RerunSetupFail.t.sol", &source.replace("SETUP_OK = false", "SETUP_OK = true"));
+    cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/RerunSetupFail.t.sol:OnlySetupFails
+[PASS] testA() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+    assert!(!prj.root().join("cache/test-failures").exists());
 }
 
 // A failed `setUp()` is rerun along with the failed tests of other suites.
@@ -678,17 +694,21 @@ fn rerun_includes_setup_failure_next_to_test_failures(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.test_pattern = Some(Regex::new(r"^testC\w*").unwrap().into())
     });
-    prj.add_test(
-        "RerunMixed.t.sol",
-        r#"
+    let source = r#"
 import "forge-std/Test.sol";
 
 contract SetupFails is Test {
+    bool constant SETUP_OK = false;
+
     function setUp() public {
-        assertTrue(false);
+        assertTrue(SETUP_OK);
     }
 
     function testA() public {}
+
+    function testZ() public {}
+
+    function invariant_excludedByFilter() public {}
 }
 
 contract TestFails is Test {
@@ -698,8 +718,8 @@ contract TestFails is Test {
 
     function testC() public {}
 }
-"#,
-    );
+"#;
+    prj.add_test("RerunMixed.t.sol", source);
 
     // Rerun selection must override the configured pattern, just as the initial CLI filter does.
     cmd.args(["test", "--match-test", "^test[AB]", "-j1"]).assert_failure();
@@ -715,6 +735,22 @@ Ran 1 test for test/RerunMixed.t.sol:TestFails
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 2 test suites [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
+...
+"#]]);
+
+    // Once `setUp()` passes, only the tests the original run selected run again.
+    prj.add_test("RerunMixed.t.sol", &source.replace("SETUP_OK = false", "SETUP_OK = true"));
+    cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/RerunMixed.t.sol:SetupFails
+[PASS] testA() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/RerunMixed.t.sol:TestFails
+[FAIL: assertion failed] testB() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 2 test suites [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
 ...
 "#]]);
 }
@@ -745,6 +781,18 @@ contract SetupFails {
 
     function testC() public {}
 }
+
+contract Healthy {
+    function testD() public {}
+}
+
+contract TestFails {
+    function testE() public {
+        revert("test failed");
+    }
+
+    function testF() public {}
+}
 "#,
     );
 
@@ -764,7 +812,11 @@ Ran 1 test for test/RerunSuites.t.sol:SetupFails
 [FAIL: setup failed] setUp() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
-Ran 3 test suites [ELAPSED]: 0 tests passed, 3 failed, 0 skipped (3 total tests)
+Ran 1 test for test/RerunSuites.t.sol:TestFails
+[FAIL: test failed] testE() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 4 test suites [ELAPSED]: 0 tests passed, 4 failed, 0 skipped (4 total tests)
 ...
 "#]]);
 }
