@@ -643,6 +643,211 @@ contract VariantTest {
     );
 }
 
+// Contracts that share a name keep their own sources and storage layouts, in creation and runtime
+// frames, whichever of them is first among the artifacts of that name.
+#[forgetest]
+fn debugger_soldb_same_contract_name(prj: _, cmd: _) {
+    prj.add_source(
+        "a/Token.sol",
+        r#"
+contract Token {
+    uint256 public alpha;
+
+    constructor(uint256 value) {
+        alpha = value;
+    }
+
+    function setAlpha(uint256 value) external {
+        alpha = value;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "b/Token.sol",
+        r#"
+contract Token {
+    uint256 public beta;
+    uint256 public betaTwo;
+
+    constructor(uint256 value) {
+        beta = value;
+    }
+
+    function setBeta(uint256 value) external {
+        beta = value;
+    }
+}
+"#,
+    );
+    // The path of this contract also ends with the path of the next one.
+    prj.add_lib(
+        "x/src/Token.sol",
+        r#"
+contract Token {
+    uint256 public longPath;
+
+    constructor(uint256 value) {
+        longPath = value;
+    }
+
+    function setLongPath(uint256 value) external {
+        longPath = value;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Token.sol",
+        r#"
+contract Token {
+    uint256 public shortPath;
+
+    constructor(uint256 value) {
+        shortPath = value;
+    }
+
+    function setShortPath(uint256 value) external {
+        shortPath = value;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "SameName.t.sol",
+        r#"
+import {Token as TokenA} from "../src/a/Token.sol";
+import {Token as TokenB} from "../src/b/Token.sol";
+import {Token as TokenLong} from "../lib/x/src/Token.sol";
+import {Token as TokenShort} from "../src/Token.sol";
+
+contract SameNameTest {
+    function test_a() public {
+        TokenA token = new TokenA(1);
+        token.setAlpha(2);
+    }
+
+    function test_b() public {
+        TokenB token = new TokenB(1);
+        token.setBeta(2);
+    }
+
+    function test_long() public {
+        TokenLong token = new TokenLong(1);
+        token.setLongPath(2);
+    }
+
+    function test_short() public {
+        TokenShort token = new TokenShort(1);
+        token.setShortPath(2);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--debug", "--mt", "^test_a\\("])
+        .stdin("break src/a/Token.sol:8\nbreak src/a/Token.sol:12\ncontinue\ncontinue\nprint alpha\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Breakpoint #1 set at src/a/Token.sol:8
+Breakpoint #2 set at src/a/Token.sol:12
+Breakpoint #1 hit at step [..], src/a/Token.sol:8
+src/a/Token.sol:8 in constructor  (step [..])
+    8 |         alpha = value;
+Breakpoint #2 hit at step [..], src/a/Token.sol:12
+src/a/Token.sol:12 in setAlpha  (step [..])
+   12 |         alpha = value;
+...
+uint256 alpha = 1 [slot 0x0]
+Exiting debugger.
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--debug", "--mt", "^test_b\\("])
+        .stdin("break src/b/Token.sol:9\nbreak src/b/Token.sol:13\ncontinue\ncontinue\nprint beta\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Breakpoint #1 set at src/b/Token.sol:9
+Breakpoint #2 set at src/b/Token.sol:13
+Breakpoint #1 hit at step [..], src/b/Token.sol:9
+src/b/Token.sol:9 in constructor  (step [..])
+    9 |         beta = value;
+Breakpoint #2 hit at step [..], src/b/Token.sol:13
+src/b/Token.sol:13 in setBeta  (step [..])
+   13 |         beta = value;
+...
+uint256 beta = 1 [slot 0x0]
+Exiting debugger.
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--debug", "--mt", "^test_long\\("])
+        .stdin("break lib/x/src/Token.sol:8\nbreak lib/x/src/Token.sol:12\ncontinue\ncontinue\nprint longPath\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Breakpoint #1 set at lib/x/src/Token.sol:8
+Breakpoint #2 set at lib/x/src/Token.sol:12
+Breakpoint #1 hit at step [..], lib/x/src/Token.sol:8
+lib/x/src/Token.sol:8 in constructor  (step [..])
+    8 |         longPath = value;
+Breakpoint #2 hit at step [..], lib/x/src/Token.sol:12
+lib/x/src/Token.sol:12 in setLongPath  (step [..])
+   12 |         longPath = value;
+...
+uint256 longPath = 1 [slot 0x0]
+Exiting debugger.
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--debug", "--mt", "^test_short\\("])
+        .stdin("break src/Token.sol:8\nbreak src/Token.sol:12\ncontinue\ncontinue\nprint shortPath\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Breakpoint #1 set at src/Token.sol:8
+Breakpoint #2 set at src/Token.sol:12
+Breakpoint #1 hit at step [..], src/Token.sol:8
+src/Token.sol:8 in constructor  (step [..])
+    8 |         shortPath = value;
+Breakpoint #2 hit at step [..], src/Token.sol:12
+src/Token.sol:12 in setShortPath  (step [..])
+   12 |         shortPath = value;
+...
+uint256 shortPath = 1 [slot 0x0]
+Exiting debugger.
+
+"#]]);
+
+    // The bundle pairs the contract's code with its own source map.
+    let dump_dir = prj.root().join("soldb");
+    cmd.forge_fuse()
+        .args(["test", "--debug", "--mt", "^test_b\\(", "--dump"])
+        .arg(&dump_dir)
+        .assert_success();
+    let mapping = serde_json::from_slice::<serde_json::Value>(
+        &std::fs::read(dump_dir.join("contracts.json")).unwrap(),
+    )
+    .unwrap();
+    let token = mapping["contracts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "Token")
+        .unwrap();
+    let combined = serde_json::from_slice::<serde_json::Value>(
+        &std::fs::read(dump_dir.join(token["debug_dir"].as_str().unwrap()).join("combined.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(combined["contracts"]["src/b/Token.sol:Token"].is_object());
+}
+
 // With dynamic test linking, `new Child()` runs as a `vm.deployCode` call around the creation, and
 // the constructor's steps and storage writes still belong to the creation.
 #[forgetest]
