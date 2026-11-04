@@ -45,6 +45,7 @@ use super::{
 };
 use crate::{
     NodeConfig,
+    config::DEFAULT_TEMPO_EPOCH_LENGTH,
     eth::{
         backend::{
             db::MaybeFullDatabase,
@@ -328,6 +329,22 @@ impl TempoChain {
             height,
         )
     }
+
+    /// Captures a fallback diagnostic from the fork's final metadata for output after commit.
+    pub(super) fn epoch_length_fallback_warning(
+        config: &NodeConfig,
+        fork: &ClientFork,
+    ) -> Option<String> {
+        (!config.silent
+            && config.tempo_epoch_length.is_none()
+            && fork.config.read().tempo_epoch_length.is_none())
+        .then(|| {
+            format!(
+                "Tempo fork epoch length is unavailable; using {DEFAULT_TEMPO_EPOCH_LENGTH}. \
+                 Set --tempo.epoch-length to match the source."
+            )
+        })
+    }
 }
 
 /// Accounts sealed by a locally mined fork block.
@@ -595,6 +612,19 @@ impl<N: Network> Backend<N> {
             .clone();
         drop(states);
         Ok(Some(super::prove_account(&accounts, address, keys)))
+    }
+
+    /// Captures the startup diagnostic before the backend is exposed to concurrent resets.
+    pub(crate) async fn tempo_epoch_length_fallback_warning(&self) -> Option<String> {
+        let config = self.node_config.read().await;
+        let storage = self.blockchain.storage.read();
+        if storage.tempo.is_some()
+            && let Some(fork) = self.get_fork()
+        {
+            TempoChain::epoch_length_fallback_warning(&config, &fork)
+        } else {
+            None
+        }
     }
 }
 
