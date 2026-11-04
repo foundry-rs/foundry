@@ -217,7 +217,13 @@ fn decode_as_non_empty_string(err: &[u8]) -> Option<String> {
 
     // ASCII string.
     if err.is_ascii() {
-        let msg = std::str::from_utf8(err).unwrap();
+        let mut msg = std::str::from_utf8(err).unwrap();
+        // Raw strings stored in whole words are padded with trailing zeros. A selector followed
+        // by ABI-encoded arguments is never a multiple of 32 bytes long, so its zero arguments
+        // are not trimmed.
+        if err.len().is_multiple_of(32) {
+            msg = msg.trim_end_matches('\0');
+        }
         if !msg.is_empty() && is_printable(msg) {
             return Some(msg.to_owned());
         }
@@ -343,5 +349,24 @@ mod tests {
 
         assert_eq!(decoder.maybe_decode_known(data), None);
         assert_eq!(decoder.maybe_decode(data, None).as_deref(), Some(".,Bo"));
+
+        // A string stored in a whole word is shown without its zero padding.
+        let mut data = b"insufficient balance".to_vec();
+        data.resize(32, 0);
+        assert_eq!(decoder.maybe_decode_known(&data), None);
+        assert_eq!(decoder.maybe_decode(&data, None).as_deref(), Some("insufficient balance"));
+
+        // Zero-valued ABI arguments after a printable selector are not padding.
+        let data = &hex!(
+            "0x2e2c426f"
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        );
+        assert_eq!(
+            decoder.maybe_decode(data, None).as_deref(),
+            Some(
+                "custom error 0x2e2c426f: \
+                 0000000000000000000000000000000000000000000000000000000000000000"
+            )
+        );
     }
 }
