@@ -37,6 +37,7 @@ inline suppressions. Production source files remain linted.
   - `ecrecover`: Flags direct `ecrecover` calls whose signature `s` value is not proven to be canonical and non-malleable.
   - `incorrect-erc20-interface`: Flags ERC20 interfaces and implementations with non-compliant function signatures.
   - `incorrect-erc721-interface`: Flags ERC721 interfaces and implementations with non-compliant function signatures.
+  - `incorrect-storage-namespace-slot`: Flags constant storage pointer slots that disagree with the struct's ERC-7201 namespace.
   - `incorrect-strict-equality`: Dangerous strict equality check on an externally-influenced value (ETH balance, ERC-20 balance).
   - `mapping-deletion`: `delete` on a value containing a mapping does not clear the mapping.
   - `reentrancy-no-eth`: Flags non-ETH external calls followed by writes to state that was read before the call.
