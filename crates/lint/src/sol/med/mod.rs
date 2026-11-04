@@ -8,6 +8,7 @@ mod duplicate_storage_namespace;
 mod ecrecover;
 mod incorrect_erc20_interface;
 mod incorrect_erc721_interface;
+mod incorrect_storage_namespace_slot;
 mod incorrect_strict_equality;
 mod locked_ether;
 mod mapping_deletion;
@@ -46,4 +47,6 @@ register_lints!(
     tautological_compare: (TautologicalCompare, late, (TAUTOLOGICAL_COMPARE));
     duplicate_storage_namespace:
         (DuplicateStorageNamespace, late, (DUPLICATE_STORAGE_NAMESPACE));
+    incorrect_storage_namespace_slot:
+        (IncorrectStorageNamespaceSlot, late, (INCORRECT_STORAGE_NAMESPACE_SLOT));
 );

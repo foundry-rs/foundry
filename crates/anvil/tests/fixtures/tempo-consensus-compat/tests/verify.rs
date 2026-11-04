@@ -207,21 +207,37 @@ async fn native_rotation_follows_authenticated_announcement() {
         let initial = consensus_identity(&handle).await;
         let scheduled: Identity =
             provider.client().request("anvil_tempoRotateConsensusIdentity", ()).await.unwrap();
-        assert_eq!(scheduled.from_epoch, 1);
+        assert_eq!(scheduled.from_epoch, 2);
         assert_ne!(scheduled.identity, initial.identity);
         api.mine_one().await.unwrap();
         let snapshot: U256 = provider.client().request("evm_snapshot", ()).await.unwrap();
         api.mine_one().await.unwrap();
 
-        let boundary = verify_block(&handle, 2, &initial.identity).await;
+        let preannouncement = verify_block(&handle, 2, &initial.identity).await;
+        let ceremony =
+            OnchainDkgOutcome::decode(preannouncement.block.header.inner.extra_data.as_ref())
+                .unwrap();
+        assert_eq!(ceremony.epoch, 1);
+        assert!(ceremony.is_next_full_dkg);
+        assert_eq!(ceremony.network_identity().encode().as_ref(), initial.identity.as_ref());
+        assert_ne!(ceremony.next_players, *ceremony.output.players());
+        api.mine_one().await.unwrap();
+        verify_block(&handle, 3, &initial.identity).await;
+        api.mine_one().await.unwrap();
+        api.mine_one().await.unwrap();
+
+        let boundary = verify_block(&handle, 5, &initial.identity).await;
         let announcement =
             OnchainDkgOutcome::decode(boundary.block.header.inner.extra_data.as_ref()).unwrap();
         assert_eq!(announcement.epoch, scheduled.from_epoch);
+        assert!(!announcement.is_next_full_dkg);
+        assert_eq!(ceremony.next_players, *announcement.output.players());
+        assert_eq!(announcement.next_players, *announcement.output.players());
         let next_key = announcement.network_identity().encode();
         assert_eq!(next_key.as_ref(), scheduled.identity.as_ref());
         assert_eq!(consensus_identity(&handle).await.identity, initial.identity);
         api.mine_one().await.unwrap();
-        let next = verify_block(&handle, 3, &next_key).await;
+        let next = verify_block(&handle, 6, &next_key).await;
         assert_eq!((next.epoch, next.view), (announcement.epoch, 1));
         assert_eq!(consensus_identity(&handle).await.identity.as_ref(), next_key.as_ref());
 
@@ -235,14 +251,23 @@ async fn native_rotation_follows_authenticated_announcement() {
             &Sequential,
         ));
         verify_block(&handle, 2, &initial.identity).await;
+        verify_block(&handle, 5, &initial.identity).await;
 
         assert!(provider.client().request::<_, bool>("evm_revert", (snapshot,)).await.unwrap());
         assert_eq!(consensus_identity(&handle).await.identity, initial.identity);
         api.mine_one().await.unwrap();
         let replayed = verify_block(&handle, 2, &initial.identity).await;
+        assert_eq!(
+            replayed.block.header.inner.extra_data,
+            preannouncement.block.header.inner.extra_data,
+        );
+        for _ in 3..=5 {
+            api.mine_one().await.unwrap();
+        }
+        let replayed = verify_block(&handle, 5, &initial.identity).await;
         assert_eq!(replayed.block.header.inner.extra_data, boundary.block.header.inner.extra_data);
         api.mine_one().await.unwrap();
-        verify_block(&handle, 3, &next_key).await;
+        verify_block(&handle, 6, &next_key).await;
     }
 }
 

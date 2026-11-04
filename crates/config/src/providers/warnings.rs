@@ -100,6 +100,20 @@ const TRACING_KEYS: &[&str] = &[
     "external_identification_timeout",
 ];
 
+/// Allowed keys for the table form of an `[rpc_endpoints]` entry.
+const RPC_ENDPOINT_KEYS: &[&str] = &[
+    "endpoint",
+    "url",
+    "endpoints",
+    "retries",
+    "retry_backoff",
+    "compute_units_per_second",
+    "auth",
+];
+
+/// Allowed keys for an `[etherscan]` entry.
+const ETHERSCAN_KEYS: &[&str] = &["key", "url", "chain"];
+
 /// Reserved keys that should not trigger unknown key warnings.
 const RESERVED_KEYS: &[&str] = &["extends"];
 
@@ -265,6 +279,10 @@ impl<P: Provider> WarningsProvider<P> {
                 continue;
             };
 
+            if Self::collect_entry_warnings(section_name, section_dict, &source, out) {
+                continue;
+            }
+
             // Get allowed keys for this section from the default config
             // Special case for vyper: VyperConfig uses skip_serializing_if on all Option fields,
             // so the default serialization produces an empty dict. Use explicit keys instead.
@@ -341,6 +359,10 @@ impl<P: Provider> WarningsProvider<P> {
                 continue;
             };
 
+            if Self::collect_entry_warnings(key, nested_dict, source, out) {
+                continue;
+            }
+
             // Get allowed keys from the default config for this nested section
             // Special case for vyper: VyperConfig uses skip_serializing_if on all Option fields,
             // so the default serialization produces an empty dict. Use explicit keys instead.
@@ -374,6 +396,35 @@ impl<P: Provider> WarningsProvider<P> {
                 }
             }
         }
+    }
+
+    /// Collects warnings for unknown keys in the entries of the sections keyed by alias,
+    /// `[rpc_endpoints]` and `[etherscan]`. Returns `false` for other sections.
+    fn collect_entry_warnings(
+        section_name: &str,
+        section_dict: &Dict,
+        source: &str,
+        out: &mut Vec<Warning>,
+    ) -> bool {
+        let allowed_keys = match section_name {
+            "rpc_endpoints" => RPC_ENDPOINT_KEYS,
+            "etherscan" => ETHERSCAN_KEYS,
+            _ => return false,
+        };
+        for (alias, entry) in section_dict {
+            // An RPC endpoint can also be a plain URL.
+            let Some(entry) = entry.as_dict() else { continue };
+            for key in entry.keys() {
+                if !allowed_keys.contains(&key.as_str()) {
+                    out.push(Warning::UnknownSectionKey {
+                        key: key.clone(),
+                        section: format!("{section_name}.{alias}"),
+                        source: source.to_string(),
+                    });
+                }
+            }
+        }
+        true
     }
 
     /// Returns the allowed keys for array item types based on the section name.

@@ -28,6 +28,7 @@ use foundry_config::{Config, DenyLevel, impl_figment_convert};
 use foundry_evm::fuzz::CounterExample;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use solar::parse::Cursor;
 use std::{
     cmp::Reverse,
     collections::{BTreeMap, BTreeSet, HashSet},
@@ -479,8 +480,10 @@ impl PropertiesArgs {
         ensure_inside(&config.root, &generated_dir, &generated_tests)?;
         fs::create_dir_all(&generated_dir)
             .wrap_err_with(|| format!("failed to create {}", generated_dir.display()))?;
+        let properties_cache = config.cache_path.join("properties");
+        fs::create_dir_all(&properties_cache)?;
         let mut run = 1;
-        let run_dirs = loop {
+        let (run_dirs, cache_root) = loop {
             let mut dirs = RunDirs(Vec::new());
             for id in 1..=self.agents {
                 let dir = generated_dir.join(format!("run-{run}-agent-{id}"));
@@ -494,11 +497,20 @@ impl PropertiesArgs {
                 }
             }
             if dirs.0.len() == self.agents {
-                break dirs;
+                // Empty generated directories are removed on drop, but campaign caches remain.
+                // Reserve the cache too, so a later run never reads an earlier run's outputs.
+                let cache = properties_cache.join(format!("run-{run}"));
+                match fs::create_dir(&cache) {
+                    Ok(()) => break (dirs, cache),
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                    Err(error) => {
+                        return Err(error)
+                            .wrap_err_with(|| format!("failed to create {}", cache.display()));
+                    }
+                }
             }
             run += 1;
         };
-        let cache_root = config.cache_path.join("properties");
         let verifier_command = self
             .verifier_command
             .as_ref()
@@ -607,10 +619,6 @@ impl Campaign<'_> {
             self.args.target.clone()
         };
         let inputs = AgentInputs { agent_command, targets, context };
-        // The prompts, logs, usage, verdicts, and test copies of an earlier run go.
-        if self.cache_root.exists() {
-            fs::remove_dir_all(&self.cache_root)?;
-        }
         // Agents work in copies of the project, but the copies link the entries of dependency
         // directories. A shared file that changes while they run taints the run.
         let fingerprint = project_fingerprint(self.config, &self.sandbox.dependencies());
@@ -721,12 +729,11 @@ impl Campaign<'_> {
         // unless a written file of its agent imports it or it imports one, so every written test
         // compiles against the files that it ran with. Nothing is kept when files that the
         // workspaces share with the project changed while the agents ran.
-        let normalize =
-            |content: &str| COMMENT.replace_all(content, "").split_whitespace().collect::<String>();
-        let mut seen = collect_tests(&self.config.root, &self.generated_tests, 0, &mut vec![])
-            .unwrap_or_default()
+        let existing = collect_tests(&self.config.root, &self.generated_tests, 0, &mut vec![])
+            .unwrap_or_default();
+        let mut seen = existing
             .iter()
-            .map(|file| normalize(&file.content))
+            .map(|file| normalize_test_content(&file.content))
             .collect::<HashSet<_>>();
         let mut held_back = Vec::new();
         let mut kept = Vec::new();
@@ -749,8 +756,10 @@ impl Campaign<'_> {
             let imports = |file: &TestFile, other: &TestFile| {
                 session.imports.get(&file.path).is_some_and(|i| i.contains(&other.path))
             };
-            let mut write =
-                files.iter().map(|file| seen.insert(normalize(&file.content))).collect::<Vec<_>>();
+            let mut write = files
+                .iter()
+                .map(|file| seen.insert(normalize_test_content(&file.content)))
+                .collect::<Vec<_>>();
             while let Some(index) = (0..files.len()).find(|&i| {
                 !write[i]
                     && files.iter().zip(&write).any(|(other, written)| {
@@ -839,7 +848,14 @@ impl Campaign<'_> {
             "duplicates": duplicates,
             "usage": usage,
         });
-        fs::write(&report_path, serde_json::to_vec_pretty(&report)?)?;
+        let report_bytes = serde_json::to_vec_pretty(&report)?;
+        fs::write(&report_path, &report_bytes)?;
+        // Publish the convenience copy atomically: concurrent campaigns must not interleave
+        // writes into one report. Each campaign also keeps its own copy under `run-<n>/`.
+        let properties_root = self.cache_root.parent().expect("campaign cache has a parent");
+        let mut latest = tempfile::NamedTempFile::new_in(properties_root)?;
+        latest.write_all(&report_bytes)?;
+        latest.persist(properties_root.join("report.json")).map_err(|error| error.error)?;
 
         // Agents can reach the project's dependencies through their copies, so a change can come
         // from an agent, and no result of the run can be trusted.
@@ -1523,6 +1539,16 @@ fn collect_tests(
     }
     files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(files)
+}
+
+/// Compares Solidity tokens without comments or whitespace, preserving literal bytes and token
+/// boundaries so different expressions cannot collapse into the same comparison key.
+fn normalize_test_content(source: &str) -> Vec<&str> {
+    Cursor::new(source)
+        .with_position()
+        .filter(|(_, token)| !token.kind.is_trivial())
+        .map(|(pos, token)| &source[pos..pos + token.len as usize])
+        .collect()
 }
 
 /// Returns the comment right above a test function, without comment markers, as one line. The
@@ -2214,5 +2240,41 @@ contract OtherTest {
             let error = collect_tests(workspace.path(), linked, 2, &mut rejected).unwrap_err();
             assert!(error.to_string().contains("is not a directory"), "{error}");
         }
+    }
+
+    #[test]
+    fn normalize_test_content_keeps_string_literals_and_strips_comments() {
+        let with_space = r#"
+            // Fixture case.
+            contract EchoSpecTest {
+              function testEcho() public pure {
+                require(keccak256(bytes(Echo.echo("a b"))) == keccak256(bytes("a b")), "echo changed");
+              }
+            }
+        "#;
+        let without_space = r#"
+            // Other fixture.
+            contract EchoSpecTest {
+              function testEcho() public pure {
+                require(keccak256(bytes(Echo.echo("ab"))) == keccak256(bytes("ab")), "echo changed");
+              }
+            }
+        "#;
+        let url_one = r#"require(Echo.echo("https://one.example") == "https://one.example");"#;
+        let url_two = r#"require(Echo.echo("https://two.example") == "https://two.example");"#;
+        let comment_only_a =
+            "contract T { function testA() public pure { /* note */ require(true); } }";
+        let comment_only_b =
+            "contract T { function testA() public pure { require(true); // note\n } }";
+
+        assert_ne!(normalize_test_content(with_space), normalize_test_content(without_space));
+        assert_ne!(normalize_test_content(url_one), normalize_test_content(url_two));
+        assert_eq!(normalize_test_content(comment_only_a), normalize_test_content(comment_only_b));
+        for literal in
+            [r#""https://one.example""#, r#"'a\' /* b */'"#, r#"unicode"été //""#, r#"hex"abcd""#]
+        {
+            assert_eq!(normalize_test_content(literal), [literal]);
+        }
+        assert_ne!(normalize_test_content("a + ++b"), normalize_test_content("a++ + b"));
     }
 }
