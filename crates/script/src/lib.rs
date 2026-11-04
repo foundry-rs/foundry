@@ -44,7 +44,7 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
-use foundry_debugger::DebuggerLayout;
+use foundry_debugger::ensure_dump_dir;
 use foundry_evm::{
     backend::Backend,
     core::{
@@ -244,15 +244,14 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub debug: bool,
 
-    /// Debugger layout to use.
-    #[arg(long = "debug-layout", requires = "debug", value_enum)]
-    pub debug_layout: Option<DebuggerLayout>,
-
-    /// Dumps all debugger steps to file.
+    /// Writes a SolDB trace and source bundle to a directory.
+    ///
+    /// Read the bundle with SolDB tools, for example:
+    /// `soldb profile --trace-file <PATH>/trace.json --contracts <PATH>/contracts.json`.
     #[arg(
         long,
         requires = "debug",
-        value_hint = ValueHint::FilePath,
+        value_hint = ValueHint::DirPath,
         value_name = "PATH"
     )]
     pub dump: Option<PathBuf>,
@@ -276,9 +275,7 @@ pub struct ScriptArgs {
     )]
     pub confirmations: u64,
 
-    /// Disables interactive prompts that might appear when deploying big contracts.
-    ///
-    /// For more info on the contract size limit, see EIP-170: <https://eips.ethereum.org/EIPS/eip-170>
+    /// Skips script confirmation prompts, including no-code targets and oversized contracts.
     #[arg(long)]
     pub non_interactive: bool,
 
@@ -422,8 +419,17 @@ impl ScriptArgs {
 
         tempo.resolve_expires();
         config.tracing = args.tracing.resolve(&config.tracing, evm_opts.verbosity);
-        if args.debug && !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
-            config.extra_output.push(ContractOutputSelection::StorageLayout);
+        if args.debug {
+            if !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
+                config.extra_output.push(ContractOutputSelection::StorageLayout);
+            }
+            // Full build infos keep the sources the compiler saw, which dynamic test linking
+            // rewrites in scripts.
+            if let Err(error) = config.enable_debug_build_info() {
+                let _ = sh_warn!(
+                    "the debugger may show source files that differ from the compiled ones: {error:#}"
+                );
+            }
         }
 
         let script_config = ScriptConfig::new(
@@ -448,6 +454,10 @@ impl ScriptArgs {
                 "--sponsor-url is not supported by forge script; use --tempo.sponsor with \
                  --tempo.sponsor-signer or --tempo.sponsor-sig"
             );
+        }
+
+        if let Some(dir) = &self.dump {
+            ensure_dump_dir(dir)?;
         }
 
         if self.wallet_session.enabled {
@@ -494,6 +504,7 @@ impl ScriptArgs {
                     } else {
                         bundled.broadcast().await?
                     };
+                    broadcasted.print_deployed_contracts()?;
                     if broadcasted.args.verify {
                         broadcasted.verify().await?;
                     }
@@ -710,6 +721,7 @@ impl ScriptArgs {
 
     async fn broadcast_bundle<FEN: FoundryEvmNetwork>(bundled: BundledState<FEN>) -> Result<()> {
         let broadcasted = bundled.wait_for_pending().await?.broadcast().await?;
+        broadcasted.print_deployed_contracts()?;
 
         if broadcasted.args.verify {
             broadcasted.verify().await?;
@@ -861,11 +873,15 @@ impl ScriptArgs {
         }
 
         // Only prompt if we're broadcasting and we've not disabled interactivity.
-        if prompt_user
-            && !self.non_interactive
-            && !Confirm::new().with_prompt("Do you wish to continue?".to_string()).interact()?
-        {
-            eyre::bail!("User canceled the script.");
+        if prompt_user && !self.non_interactive {
+            if !dialoguer::console::Term::stderr().is_term() {
+                eyre::bail!(
+                    "contract above the code size limit requires confirmation; pass --non-interactive to continue without confirmation"
+                );
+            }
+            if !Confirm::new().with_prompt("Do you wish to continue?".to_string()).interact()? {
+                eyre::bail!("User canceled the script.");
+            }
         }
 
         Ok(())
@@ -1018,6 +1034,7 @@ impl<N: Network> ScriptResult<N> {
                         exact_artifact_match,
                         init_code,
                         creator_code_addresses,
+                        label: None,
                     })
                 })
             })
@@ -1307,7 +1324,7 @@ async fn prepare_script_source(
 const fn script_trace_requirements(config: &Config, debug: bool) -> TraceRequirements {
     TraceRequirements::none()
         .with_calls(true)
-        .with_debug(debug)
+        .with_debug_recording(debug)
         .with_verbosity(config.tracing.verbosity)
         .with_decode_internal(if config.tracing.decode_internal {
             InternalTraceMode::Full
@@ -1822,6 +1839,7 @@ mod tests {
                     arena,
                     ignored: Default::default(),
                     diagnostics: Default::default(),
+                    debug_steps: None,
                 },
             )],
             ..Default::default()
@@ -1864,6 +1882,7 @@ mod tests {
                     arena,
                     ignored: Default::default(),
                     diagnostics: Default::default(),
+                    debug_steps: None,
                 },
             )],
             ..Default::default()

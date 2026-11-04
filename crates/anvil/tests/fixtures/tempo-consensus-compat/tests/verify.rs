@@ -2,7 +2,9 @@
 
 #![cfg(unix)]
 
-use alloy_consensus::{Typed2718, proofs::calculate_transaction_root, transaction::TxHashRef};
+use alloy_consensus::{
+    Sealable, Typed2718, proofs::calculate_transaction_root, transaction::TxHashRef,
+};
 use alloy_primitives::{B256, Bytes, U256, hex, keccak256};
 use alloy_provider::Provider;
 use anvil::{NodeConfig, NodeHandle, spawn};
@@ -104,7 +106,7 @@ async fn native_epoch_boundaries() {
             NodeConfig::test_tempo()
                 .with_no_mining(true)
                 .with_hardfork(Some(hardfork.into()))
-                .with_tempo_epoch_length(NonZeroU64::new(3).unwrap()),
+                .with_tempo_epoch_length(NonZeroU64::new(3)),
         )
         .await;
         let identity = consensus_identity(&handle).await;
@@ -198,28 +200,44 @@ async fn native_rotation_follows_authenticated_announcement() {
             NodeConfig::test_tempo()
                 .with_no_mining(true)
                 .with_hardfork(Some(hardfork.into()))
-                .with_tempo_epoch_length(NonZeroU64::new(3).unwrap()),
+                .with_tempo_epoch_length(NonZeroU64::new(3)),
         )
         .await;
         let provider = handle.http_provider();
         let initial = consensus_identity(&handle).await;
         let scheduled: Identity =
             provider.client().request("anvil_tempoRotateConsensusIdentity", ()).await.unwrap();
-        assert_eq!(scheduled.from_epoch, 1);
+        assert_eq!(scheduled.from_epoch, 2);
         assert_ne!(scheduled.identity, initial.identity);
         api.mine_one().await.unwrap();
         let snapshot: U256 = provider.client().request("evm_snapshot", ()).await.unwrap();
         api.mine_one().await.unwrap();
 
-        let boundary = verify_block(&handle, 2, &initial.identity).await;
+        let preannouncement = verify_block(&handle, 2, &initial.identity).await;
+        let ceremony =
+            OnchainDkgOutcome::decode(preannouncement.block.header.inner.extra_data.as_ref())
+                .unwrap();
+        assert_eq!(ceremony.epoch, 1);
+        assert!(ceremony.is_next_full_dkg);
+        assert_eq!(ceremony.network_identity().encode().as_ref(), initial.identity.as_ref());
+        assert_ne!(ceremony.next_players, *ceremony.output.players());
+        api.mine_one().await.unwrap();
+        verify_block(&handle, 3, &initial.identity).await;
+        api.mine_one().await.unwrap();
+        api.mine_one().await.unwrap();
+
+        let boundary = verify_block(&handle, 5, &initial.identity).await;
         let announcement =
             OnchainDkgOutcome::decode(boundary.block.header.inner.extra_data.as_ref()).unwrap();
         assert_eq!(announcement.epoch, scheduled.from_epoch);
+        assert!(!announcement.is_next_full_dkg);
+        assert_eq!(ceremony.next_players, *announcement.output.players());
+        assert_eq!(announcement.next_players, *announcement.output.players());
         let next_key = announcement.network_identity().encode();
         assert_eq!(next_key.as_ref(), scheduled.identity.as_ref());
         assert_eq!(consensus_identity(&handle).await.identity, initial.identity);
         api.mine_one().await.unwrap();
-        let next = verify_block(&handle, 3, &next_key).await;
+        let next = verify_block(&handle, 6, &next_key).await;
         assert_eq!((next.epoch, next.view), (announcement.epoch, 1));
         assert_eq!(consensus_identity(&handle).await.identity.as_ref(), next_key.as_ref());
 
@@ -233,13 +251,57 @@ async fn native_rotation_follows_authenticated_announcement() {
             &Sequential,
         ));
         verify_block(&handle, 2, &initial.identity).await;
+        verify_block(&handle, 5, &initial.identity).await;
 
         assert!(provider.client().request::<_, bool>("evm_revert", (snapshot,)).await.unwrap());
         assert_eq!(consensus_identity(&handle).await.identity, initial.identity);
         api.mine_one().await.unwrap();
         let replayed = verify_block(&handle, 2, &initial.identity).await;
+        assert_eq!(
+            replayed.block.header.inner.extra_data,
+            preannouncement.block.header.inner.extra_data,
+        );
+        for _ in 3..=5 {
+            api.mine_one().await.unwrap();
+        }
+        let replayed = verify_block(&handle, 5, &initial.identity).await;
         assert_eq!(replayed.block.header.inner.extra_data, boundary.block.header.inner.extra_data);
         api.mine_one().await.unwrap();
-        verify_block(&handle, 3, &next_key).await;
+        verify_block(&handle, 6, &next_key).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn native_fork_inherits_skipped_views() {
+    let config =
+        NodeConfig::test_tempo().with_no_mining(true).with_tempo_epoch_length(NonZeroU64::new(4));
+    let (source_api, source) = spawn(config.clone()).await;
+    source_api.anvil_mine(Some(U256::from(5)), None).await.unwrap();
+    let mut state = source_api.serialized_state(false).await.unwrap();
+    let block = state.blocks.iter_mut().find(|block| block.header.inner().number == 5).unwrap();
+    let mut anchor = block.header.as_tempo().unwrap().clone();
+    let context = anchor.consensus_context.as_mut().unwrap();
+    context.view = 8896;
+    context.parent_view = 8870;
+    let mut parent_hash = anchor.hash_slow();
+    block.header = anchor.into();
+    source_api.anvil_load_state(serde_json::to_vec(&state).unwrap().into()).await.unwrap();
+
+    let (api, handle) = spawn(
+        config
+            .with_eth_rpc_url(Some(source.http_endpoint()))
+            .with_fork_block_number(Some(5u64))
+            .with_tempo_consensus_seed(Some(B256::repeat_byte(0x42))),
+    )
+    .await;
+    let identity = consensus_identity(&handle).await;
+    for (height, round) in [(6, (1, 8897, 8896)), (7, (1, 8898, 8897)), (8, (2, 1, 0))] {
+        api.mine_one().await.unwrap();
+        let finalized = verify_block(&handle, height, &identity.identity).await;
+        let header = &finalized.block.header;
+        let context = header.consensus_context.unwrap();
+        assert_eq!((context.epoch, context.view, context.parent_view), round);
+        assert_eq!(header.inner.parent_hash, parent_hash);
+        parent_hash = finalized.digest;
     }
 }
