@@ -932,6 +932,10 @@ impl SymbolicExecutor {
             }
             opcode::SSTORE => {
                 if state.is_static {
+                    // Forge records the access in `step`, before the static-call check halts.
+                    if let Ok(key) = state.stack.peek(0).cloned() {
+                        state.record_sstore(state.storage_address, key);
+                    }
                     state.return_data = SymReturnData::empty(&mut self.cx);
                     return Ok(StepOutcome::ExceptionalHalt);
                 }
