@@ -1042,7 +1042,7 @@ impl SymbolicExecutor {
 
         // A call beyond the call depth limit fails before it transfers value or runs
         // any code, including a precompile.
-        if state.call_depth >= CALL_STACK_LIMIT as usize {
+        if state.at_call_depth_limit() {
             let return_data = SymReturnData::empty(&mut self.cx);
             return self.finish_codeless_call(
                 executor,
@@ -1175,6 +1175,7 @@ impl SymbolicExecutor {
         let mut child = state.child(frame);
         if isolated {
             child.world.clear_transient_storage();
+            child.call_depth_base = child.call_depth;
         }
         if let Some((origin, origin_word)) = pranked_origin {
             child.origin = origin;
@@ -1630,7 +1631,7 @@ impl SymbolicExecutor {
                 branch.world.increment_nonce(executor, call_caller)?;
             }
             let mut outcome = None;
-            if branch.call_depth >= CALL_STACK_LIMIT as usize {
+            if branch.at_call_depth_limit() {
                 // Beyond the call depth limit the call fails before it transfers value. A
                 // pending revert cheatcode would match against a symbolic reverter.
                 if branch.expected_revert.is_some() || branch.assume_no_revert_next_call.is_some() {
