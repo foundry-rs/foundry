@@ -586,11 +586,11 @@ solar-lsp = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
 solar-lint = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
 
 ## foundry-core
-# fork-db evm2 completion merged with main 39cc9fb.
-foundry-wallets = { git = "https://github.com/mablr/foundry-core", rev = "457b8ede0dceba4f518de6ac8ea807a65d9a4fda" }
-foundry-compilers = { git = "https://github.com/mablr/foundry-core", rev = "457b8ede0dceba4f518de6ac8ea807a65d9a4fda" }
-foundry-block-explorers = { git = "https://github.com/mablr/foundry-core", rev = "457b8ede0dceba4f518de6ac8ea807a65d9a4fda" }
-foundry-fork-db = { git = "https://github.com/mablr/foundry-core", rev = "457b8ede0dceba4f518de6ac8ea807a65d9a4fda" }
+# foundry-rs/foundry-core#286 (fork-db on evm2) on main 39cc9fb.
+foundry-wallets = { git = "https://github.com/mablr/foundry-core", rev = "1a0159f80cd0bd488b6421ee25939ee4f9a83de6" }
+foundry-compilers = { git = "https://github.com/mablr/foundry-core", rev = "1a0159f80cd0bd488b6421ee25939ee4f9a83de6" }
+foundry-block-explorers = { git = "https://github.com/mablr/foundry-core", rev = "1a0159f80cd0bd488b6421ee25939ee4f9a83de6" }
+foundry-fork-db = { git = "https://github.com/mablr/foundry-core", rev = "1a0159f80cd0bd488b6421ee25939ee4f9a83de6" }
 
 ## alloy-core
 alloy-dyn-abi = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
@@ -652,15 +652,12 @@ reth-zstd-compressors = { git = "https://github.com/paradigmxyz/reth-core", rev 
 [workspace.metadata.cargo-shear]
 ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]
 
-# The single evm2 revision for the whole graph: alloy-rs/evm2 `main` at `85395c5`. Tempo, reth and
-# evm2-networks pin `alloy-rs/evm2`, while foundry-core pins `mablr/evm2`. Cargo rejects a patch
-# from the same source, so both go through `DaniPopes/evm2`, a URL in the same fork network.
+# The single evm2 revision for the whole graph: alloy-rs/evm2 `main` at `85395c5`. Tempo, reth,
+# reth-core, evm2-networks and foundry-core all pin `alloy-rs/evm2`, at different revisions. Cargo
+# rejects a patch from the same source, so this goes through `DaniPopes/evm2`, the pre-transfer
+# URL of alloy-rs/evm2, which GitHub redirects to it.
 [patch."https://github.com/alloy-rs/evm2"]
 evm2 = { git = "https://github.com/DaniPopes/evm2", rev = "85395c5440bef1f685142e79c66051014f46f9b5" }
 evm2-inspectors = { git = "https://github.com/DaniPopes/evm2", rev = "85395c5440bef1f685142e79c66051014f46f9b5" }
 evm2-macros = { git = "https://github.com/DaniPopes/evm2", rev = "85395c5440bef1f685142e79c66051014f46f9b5" }
 
-[patch."https://github.com/mablr/evm2"]
-evm2 = { git = "https://github.com/DaniPopes/evm2", rev = "85395c5440bef1f685142e79c66051014f46f9b5" }
-evm2-inspectors = { git = "https://github.com/DaniPopes/evm2", rev = "85395c5440bef1f685142e79c66051014f46f9b5" }
-evm2-macros = { git = "https://github.com/DaniPopes/evm2", rev = "85395c5440bef1f685142e79c66051014f46f9b5" }
