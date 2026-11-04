@@ -72,6 +72,7 @@ alloy-monad-evm = { workspace = true, optional = true }
 monad-revm = { workspace = true, optional = true }
 
 [dev-dependencies]
+foundry-test-utils.workspace = true
 tempo-revm.workspace = true
 
 [features]

@@ -6434,6 +6434,7 @@ dependencies = [
  "foundry-evm-networks",
  "foundry-evm-sancov",
  "foundry-evm-traces",
+ "foundry-test-utils",
  "indicatif",
  "monad-revm",
  "parking_lot 0.12.5",
