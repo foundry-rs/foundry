@@ -49,25 +49,28 @@ fn log2_bin(value: U256) -> u16 {
 /// Storage slots held by the executor's backend, and its nonzero computed slots per contract.
 fn storage_stats<FEN: FoundryEvmNetwork>(executor: &Executor<FEN>) -> (usize, AddressMap<u64>) {
     let backend = executor.backend();
-    let mut slots = 0;
-    let mut cardinality = AddressMap::<u64>::default();
-    for (address, account) in backend
-        .mem_db()
-        .cache
-        .accounts
+    let mem_db = &backend.mem_db().cache.accounts;
+    let fork_db = backend.active_fork_db().map(|db| &db.cache.accounts);
+    // Cloning the backend copies both databases.
+    let slots = mem_db
+        .values()
+        .chain(fork_db.into_iter().flat_map(|accounts| accounts.values()))
+        .map(|account| account.storage.len())
+        .sum();
+    // Calls only read and write the active database, which holds a copy of the persistent
+    // accounts, so count entries there alone.
+    let cardinality = fork_db
+        .unwrap_or(mem_db)
         .iter()
-        .chain(backend.active_fork_db().into_iter().flat_map(|db| &db.cache.accounts))
-    {
-        slots += account.storage.len();
-        let computed = account
-            .storage
-            .iter()
-            .filter(|(slot, value)| **slot >= COMPUTED_SLOT && !value.is_zero())
-            .count() as u64;
-        if computed > 0 {
-            *cardinality.entry(*address).or_default() += computed;
-        }
-    }
+        .filter_map(|(address, account)| {
+            let computed = account
+                .storage
+                .iter()
+                .filter(|(slot, value)| **slot >= COMPUTED_SLOT && !value.is_zero())
+                .count() as u64;
+            (computed > 0).then_some((*address, computed))
+        })
+        .collect();
     (slots, cardinality)
 }
 
@@ -345,9 +348,17 @@ mod tests {
     use crate::executors::ExecutorBuilder;
     use alloy_evm::EvmEnv;
     use alloy_primitives::Bytes;
-    use foundry_evm_core::{backend::Backend, evm::EthEvmNetwork};
+    use foundry_evm_core::{
+        backend::{Backend, DatabaseExt},
+        evm::EthEvmNetwork,
+        fork::CreateFork,
+        opts::EvmOpts,
+    };
     use foundry_evm_fuzz::CallDetails;
-    use revm::{context::TxEnv, state::EvmStorageSlot};
+    use revm::{
+        context::{JournalInner, TxEnv},
+        state::EvmStorageSlot,
+    };
 
     fn write(slot: U256, original: U256, present: U256) -> AddressMap<Account> {
         let mut account = Account::default();
@@ -507,5 +518,38 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!(outcomes.windows(2).all(|pair| pair[0] == pair[1]), "{outcomes:?}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_entries_count_from_the_active_database() {
+        let entry = |i: u64| U256::MAX - U256::from(i);
+        let mut setup = executor();
+        let persistent = Address::repeat_byte(0x11);
+        for i in 0..4 {
+            setup.set_storage_slot(persistent, entry(i), U256::ONE).unwrap();
+        }
+        let backend = setup.backend_mut();
+        backend.add_persistent_account(persistent);
+        let evm_opts = EvmOpts {
+            fork_url: Some(foundry_test_utils::rpc::next_http_rpc_endpoint()),
+            ..Default::default()
+        };
+        backend
+            .create_select_fork(
+                CreateFork {
+                    enable_caching: false,
+                    url: evm_opts.fork_url.clone().unwrap(),
+                    evm_opts,
+                },
+                &mut EvmEnv::default(),
+                &mut TxEnv::default(),
+                &mut JournalInner::new(),
+            )
+            .unwrap();
+
+        // Selecting the fork copied the persistent account, so both databases hold its entries.
+        let (slots, cardinality) = storage_stats(&setup);
+        assert_eq!(slots, 8);
+        assert_eq!(cardinality, AddressMap::from_iter([(persistent, 4)]));
     }
 }
