@@ -143,7 +143,9 @@ impl AnvilInspector {
         if config.print_traces {
             self.print_traces(config.call_trace_decoder.clone());
         }
-        self.print_logs();
+        if config.print_logs {
+            self.print_logs();
+        }
 
         let mut traces =
             self.tracer.take().map(|t| t.into_traces().into_nodes()).unwrap_or_default();

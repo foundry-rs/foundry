@@ -6063,6 +6063,44 @@ mod tests {
         }
     }
 
+    // The pending block executes the queued transactions again for every request that reads it.
+    // Only mining prints their console logs and traces.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn pending_block_does_not_print_logs_or_traces() {
+        let (api, handle) =
+            spawn(NodeConfig::test().with_no_mining(true).with_print_traces(true)).await;
+        let from = handle.dev_accounts().next().unwrap();
+        // Calls `console.log(uint256)` with 11, then stops.
+        let mut code =
+            alloy_primitives::hex!("63f82c50f160e01b600052600b6004526000600060246000").to_vec();
+        code.push(0x73);
+        code.extend_from_slice(HARDHAT_CONSOLE_ADDRESS.as_slice());
+        code.extend_from_slice(&[0x5a, 0xfa, 0x50, 0x00]);
+        let to = Address::repeat_byte(0x42);
+        api.anvil_set_code(to, code.into()).await.unwrap();
+        let request = TransactionRequest::default().from(from).to(to).gas_limit(100_000);
+        api.send_transaction(WithOtherFields::new(request)).await.unwrap();
+
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter("off,node::user=info,node::console=info")
+            .without_time()
+            .with_ansi(false)
+            .with_writer(Arc::new(file.reopen().unwrap()))
+            .finish();
+        let _subscriber = tracing::subscriber::set_default(subscriber);
+        let output = || std::fs::read_to_string(file.path()).unwrap();
+
+        api.pending_block().await.unwrap();
+        api.pending_block().await.unwrap();
+        assert_eq!(output(), "");
+
+        api.mine_one().await.unwrap();
+        let output = output();
+        assert_eq!(output.matches("node::console: 11\n").count(), 1, "{output}");
+        assert_eq!(output.matches("Traces=").count(), 1, "{output}");
+    }
+
     // Regression test for <https://github.com/foundry-rs/foundry/issues/13680>.
     #[tokio::test(flavor = "multi_thread")]
     async fn fee_history_is_complete_when_cache_entries_are_missing() {
