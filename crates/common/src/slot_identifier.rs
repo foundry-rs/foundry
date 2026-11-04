@@ -9,7 +9,7 @@ use crate::{
     namespaced_storage::unscoped_type_id,
 };
 use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{B256, U256, hex, keccak256, map::B256Map};
+use alloy_primitives::{B256, I256, U256, hex, keccak256, map::B256Map};
 use foundry_common_fmt::format_token_raw;
 use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
 use serde::{
@@ -1403,12 +1403,16 @@ fn resolve_sol_type(id: &str, storage_type: &StorageType) -> Option<DynSolType> 
 /// direct ABI equivalent (mappings, structs).
 ///
 /// Handles `contract X` types (which are addresses under the hood) and `enum X` types
-/// (which are uint8) that `DynSolType::parse` doesn't recognize.
+/// (which are uint8) that `DynSolType::parse` doesn't recognize. User-defined value types scoped
+/// to a contract, library, or interface (e.g. `C.Price`) would parse as `uint8`, so they decode as
+/// a full-word `uint256`.
 fn parse_sol_type(label: &str) -> Option<DynSolType> {
     let scalar = if label.starts_with("contract ") {
         "address"
     } else if label.starts_with("enum ") {
         "uint8"
+    } else if label.contains('.') && !label.contains(' ') {
+        "uint256"
     } else {
         return DynSolType::parse(label).ok();
     };
@@ -2306,6 +2310,23 @@ mod tests {
             let info = StorageTypeInfo { label: label.to_string(), dyn_sol_type: ty };
             assert_eq!(info.to_string(), shown, "{label}");
         }
+    }
+
+    #[test]
+    fn decodes_scoped_udvt_as_a_full_word() {
+        let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
+            "storage": [
+                { "astId": 1, "contract": "C", "label": "value", "offset": 0, "slot": "0", "type": "t_value" }
+            ],
+            "types": {
+                "t_value": { "encoding": "inplace", "label": "C.Price", "numberOfBytes": "16" }
+            }
+        }))
+        .unwrap();
+        let identifier = SlotIdentifier::new(Arc::new(layout));
+        let mut info = identifier.identify(&B256::ZERO, None).unwrap();
+        info.decode_values(B256::ZERO, B256::from(U256::from(1000)));
+        assert_eq!(format_token_raw(&info.decoded.unwrap().new_value), "1000");
     }
 
     #[test]
