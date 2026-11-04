@@ -1168,7 +1168,8 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
     /// flag so sibling parallel suites (notably long-running invariant campaigns) observe
     /// `should_stop()` and exit at their next run boundary instead of running to their timeout.
     ///
-    /// The `selected` tests without a result are recorded as blocked so `--rerun` runs them again.
+    /// When the suite failed, the runnable `selected` tests without a result are recorded as
+    /// blocked so `--rerun` runs them again. A skipped suite blocks nothing.
     fn failed_suite(
         &self,
         start: Instant,
@@ -1178,8 +1179,27 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
     ) -> SuiteResult {
         self.tcfg.early_exit.record_failure();
         let mut suite = SuiteResult::new(start.elapsed(), results.into_iter().collect(), warnings);
+        if suite.failed() == 0 {
+            return suite;
+        }
+        // In showmap replay mode and `forge fuzz`, only fuzz and invariant tests are runnable.
+        let fuzz_engine_only = self.mcr.tcfg.fuzz_only || self.mcr.tcfg.showmap.is_some();
+        let test_matcher = self.test_matcher();
+        let generated_symbolic_regression =
+            is_generated_symbolic_regression_contract(&self.contract.abi);
         suite.blocked_tests = selected
             .iter()
+            .filter(|func| {
+                !fuzz_engine_only
+                    || matches!(
+                        test_matcher.test_function_kind(
+                            self.name,
+                            func,
+                            generated_symbolic_regression
+                        ),
+                        TestFunctionKind::FuzzTest { .. } | TestFunctionKind::InvariantTest
+                    )
+            })
             .map(|func| func.signature())
             .filter(|signature| !suite.test_results.contains_key(signature))
             .collect();

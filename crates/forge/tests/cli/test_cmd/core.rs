@@ -821,6 +821,72 @@ Ran 4 test suites [ELAPSED]: 0 tests passed, 4 failed, 0 skipped (4 total tests)
 "#]]);
 }
 
+// A suite skipped in `setUp()` is not recorded, so `--rerun` runs only the failed suite.
+#[forgetest_init]
+fn rerun_excludes_skipped_setup(prj: _, cmd: _) {
+    prj.add_test(
+        "RerunSkipped.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SetupSkips is Test {
+    function setUp() public {
+        vm.skip(true);
+    }
+
+    function testA() public {}
+}
+
+contract TestFails is Test {
+    function testB() public {
+        assertTrue(false);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "-j1"]).assert_failure();
+    assert_eq!(
+        std::fs::read_to_string(prj.root().join("cache/test-failures")).unwrap(),
+        r#"{"version":1,"failures":[{"contract":"test/RerunSkipped.t.sol:TestFails","test":"testB"}]}"#
+    );
+    cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/RerunSkipped.t.sol:TestFails
+[FAIL: assertion failed] testB() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+...
+"#]]);
+}
+
+// `forge fuzz` cannot run unit tests, so a failed `setUp()` records only its fuzz tests.
+#[forgetest_init]
+fn rerun_fuzz_only_records_runnable_blocked_tests(prj: _, cmd: _) {
+    prj.add_test(
+        "RerunFuzzOnly.t.sol",
+        r#"
+contract SetupFails {
+    function setUp() public {
+        revert("setup failed");
+    }
+
+    function testUnit() public {}
+
+    function testFuzz(uint256) public {}
+}
+"#,
+    );
+
+    cmd.args(["fuzz", "run", "-j1"]).assert_failure();
+    assert_eq!(
+        std::fs::read_to_string(prj.root().join("cache/test-failures")).unwrap(),
+        r#"{"version":1,"failures":[{"contract":"test/RerunFuzzOnly.t.sol:SetupFails","test":"testFuzz"}]}"#
+    );
+}
+
 #[forgetest_init]
 fn rerun_cache_tracks_completed_invocation(prj: _, cmd: _) {
     let failures_file = prj.root().join("cache/test-failures");
