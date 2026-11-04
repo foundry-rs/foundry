@@ -326,6 +326,9 @@ impl SymbolicExecutor {
         // Isolation runs a `deployCode` from the test frame as its own transaction.
         let isolated = state.starts_isolated_transaction(executor);
         let mut child = state.child(frame);
+        // Forge runs the constructor in a nested EVM, so its call depth starts over even
+        // without isolation.
+        child.call_depth_base = child.call_depth;
         let pending_expected_creates = std::mem::take(&mut child.expected_creates);
         child.world = failure_world.clone();
         if isolated {

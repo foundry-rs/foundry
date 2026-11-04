@@ -1773,7 +1773,8 @@ Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
 }
 
 // A call or create beyond the EVM call depth limit fails, so self-call recursion unwinds after
-// 1024 nested frames, as on a node, instead of exhausting the native stack.
+// 1024 nested frames, as on a node, instead of exhausting the native stack. As in concrete Forge,
+// the depth counts from the first frame of the transaction or `vm.deployCode` constructor.
 #[forgetest_init]
 fn symbolic_call_depth_limit_stops_recursion(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_call_depth_limit_stops_recursion");
@@ -1790,6 +1791,34 @@ contract SelfCaller {
         frames += 1;
         (bool ok,) = address(this).call("");
         ok;
+    }
+}
+
+// Returns how many frames its self-STATICCALL recursion nests.
+contract StaticDepth {
+    function depth() external view returns (uint256) {
+        try this.depth() returns (uint256 inner) {
+            return inner + 1;
+        } catch {
+            return 1;
+        }
+    }
+}
+
+// Its constructor starts self-call recursion.
+contract Launcher {
+    constructor(SelfCaller target) {
+        (bool ok,) = address(target).call("");
+        require(ok);
+    }
+}
+
+// Deploys a Launcher with `vm.deployCode` from below the test frame.
+contract NestedDeployer {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function deploy(SelfCaller target) external {
+        vm.deployCode("SymbolicCallDepth.t.sol:Launcher", abi.encode(target));
     }
 }
 
@@ -1862,7 +1891,47 @@ contract DeepExpectRevertCreator {
     }
 }
 
-contract SymbolicCallDepth is Test {
+// Isolation runs a CALL or CREATE, but not a STATICCALL or CREATE2, from the test as its own
+// transaction, whose first frame is at depth 0. A `vm.deployCode` constructor always starts at
+// depth 0.
+abstract contract CallDepthFrames is Test {
+    function checkSelfCallsStopAtTheCallDepthLimit(uint256) public {
+        SelfCaller target = new SelfCaller();
+        (bool ok,) = address(target).call("");
+        assertTrue(ok);
+        assertEq(target.frames(), vm.isIsolateMode() ? 1025 : 1024);
+    }
+
+    function checkStaticCallsStopAtTheCallDepthLimit(uint256) public {
+        assertEq(new StaticDepth().depth(), 1024);
+    }
+
+    function checkConstructorSelfCallsStopAtTheCallDepthLimit(uint256) public {
+        SelfCaller target = new SelfCaller();
+        new Launcher(target);
+        assertEq(target.frames(), vm.isIsolateMode() ? 1024 : 1023);
+    }
+
+    function checkCreate2ConstructorSelfCallsStopAtTheCallDepthLimit(uint256) public {
+        SelfCaller target = new SelfCaller();
+        new Launcher{salt: bytes32(0)}(target);
+        assertEq(target.frames(), 1023);
+    }
+
+    function checkDeployCodeSelfCallsStopAtTheCallDepthLimit(uint256) public {
+        SelfCaller target = new SelfCaller();
+        vm.deployCode("SymbolicCallDepth.t.sol:Launcher", abi.encode(target));
+        assertEq(target.frames(), 1024);
+    }
+
+    function checkNestedDeployCodeSelfCallsStopAtTheCallDepthLimit(uint256) public {
+        SelfCaller target = new SelfCaller();
+        new NestedDeployer().deploy(target);
+        assertEq(target.frames(), 1024);
+    }
+}
+
+contract SymbolicCallDepth is CallDepthFrames {
     function checkExpectedRevertOnCreateBeyondDepthLimit(uint256) public {
         DeepExpectRevertCreator target = new DeepExpectRevertCreator();
         target.descend();
@@ -1875,13 +1944,6 @@ contract SymbolicCallDepth is Test {
         assertTrue(target.caughtExpected());
         // Forge answers a call that met its expected revert with 8192 zero bytes.
         assertEq(target.outputLength(), 8192);
-    }
-
-    function checkSelfCallsStopAtTheCallDepthLimit(uint256) public {
-        SelfCaller target = new SelfCaller();
-        (bool ok,) = address(target).call("");
-        assertTrue(ok);
-        assertEq(target.frames(), 1024);
     }
 
     function checkSymbolicTargetAtTheCallDepthLimitFails(address to) public {
@@ -1899,12 +1961,17 @@ contract SymbolicCallDepth is Test {
         assertEq(vm.getNonce(address(target)), 1);
     }
 }
+
+/// forge-config: default.isolate = false
+contract SymbolicCallDepthNoIsolation is CallDepthFrames {}
 "#,
     );
 
     assert_symbolic(cmd.args([
         "test",
         "--symbolic",
+        "--match-contract",
+        "^SymbolicCallDepth$",
         "--match-test",
         "check.*AtTheCallDepthLimit",
         "--symbolic-call-targets",
@@ -1918,12 +1985,41 @@ contract SymbolicCallDepth is Test {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 4 tests for test/SymbolicCallDepth.t.sol:SymbolicCallDepth
+Ran 9 tests for test/SymbolicCallDepth.t.sol:SymbolicCallDepth
+[PASS] checkConstructorSelfCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
+[PASS] checkCreate2ConstructorSelfCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
 [PASS] checkCreateAtTheCallDepthLimitFails(uint256) ([METRICS])
+[PASS] checkDeployCodeSelfCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
 [PASS] checkExpectedRevertAtTheCallDepthLimitSucceeds(uint256) ([METRICS])
+[PASS] checkNestedDeployCodeSelfCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
 [PASS] checkSelfCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
+[PASS] checkStaticCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
 [PASS] checkSymbolicTargetAtTheCallDepthLimitFails(address) ([METRICS])
-Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 9 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicCallDepthNoIsolation",
+        "--symbolic-max-paths",
+        "16384",
+        "--symbolic-max-depth",
+        "1000000",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 6 tests for test/SymbolicCallDepth.t.sol:SymbolicCallDepthNoIsolation
+[PASS] checkConstructorSelfCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
+[PASS] checkCreate2ConstructorSelfCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
+[PASS] checkDeployCodeSelfCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
+[PASS] checkNestedDeployCodeSelfCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
+[PASS] checkSelfCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
+[PASS] checkStaticCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
+Suite result: ok. 6 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 
