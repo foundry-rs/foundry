@@ -1053,12 +1053,16 @@ fn get_array_base_indices(dyn_type: &DynSolType) -> String {
 /// direct ABI equivalent (mappings, structs).
 ///
 /// Handles `contract X` types (which are addresses under the hood) and `enum X` types
-/// (which are uint8) that `DynSolType::parse` doesn't recognize.
+/// (which are uint8) that `DynSolType::parse` doesn't recognize. User-defined value types scoped
+/// to a contract, library, or interface (e.g. `C.Price`) would parse as `uint8`, so they decode as
+/// a full-word `uint256`.
 fn parse_sol_type(label: &str) -> Option<DynSolType> {
     let scalar = if label.starts_with("contract ") {
         "address"
     } else if label.starts_with("enum ") {
         "uint8"
+    } else if label.contains('.') && !label.contains(' ') {
+        "uint256"
     } else {
         return DynSolType::parse(label).ok();
     };
@@ -1273,6 +1277,7 @@ mod tests {
                 "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                 "0xfedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
             ),
+            ("C.Price", "16", "1ff", "3e8", "511", "1000"),
         ] {
             let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
                 "storage": [
