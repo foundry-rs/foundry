@@ -160,13 +160,21 @@ fn select_sender(
             dictionary_weight => fuzz_param_from_state(&DynSolType::Address, state),
         ]
         // Replacements for excluded senders are drawn from the test runner, so they follow the
-        // fuzz seed like every other generated value.
-        .prop_perturb(move |value, mut rng| {
-            let mut sender = value.as_address().unwrap();
-            while senders.excluded.contains(&sender) {
-                sender.randomize_with(&mut rng);
+        // fuzz seed. Allowed senders consume no extra randomness from the runner.
+        .prop_ind_flat_map(move |value| {
+            let sender = value.as_address().unwrap();
+            if !senders.excluded.contains(&sender) {
+                return Just(sender).boxed();
             }
-            sender
+            let senders = senders.clone();
+            Just(sender)
+                .prop_perturb(move |mut sender, mut rng| {
+                    while senders.excluded.contains(&sender) {
+                        sender.randomize_with(&mut rng);
+                    }
+                    sender
+                })
+                .boxed()
         })
         .boxed()
     } else {
