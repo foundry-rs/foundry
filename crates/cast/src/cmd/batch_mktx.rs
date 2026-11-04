@@ -85,7 +85,7 @@ impl BatchMakeTxArgs {
         // A raw unsigned transaction needs no signer, but the access-key metadata still shapes
         // the request.
         let (signer, tempo_access_key) = if raw_unsigned {
-            (None, eth.wallet.maybe_signer_for_chain(chain.id()).await?.1)
+            (None, foundry_common::tempo::maybe_signer(&eth.wallet, Some(chain.id())).await?.1)
         } else {
             tempo::resolve_session_or_wallet_signer(&tx.tempo, &eth.wallet, chain.id()).await?
         };

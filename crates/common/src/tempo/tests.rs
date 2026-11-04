@@ -6,21 +6,27 @@ use std::env;
 
 use crate::FoundryTransactionBuilder;
 use alloy_network::{Ethereum, TransactionBuilder};
-use alloy_primitives::{Address, Bytes, TxKind, U256, address};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address};
 use alloy_provider::mock::Asserter;
 use alloy_rpc_types::TransactionRequest;
+use alloy_signer::SignerSync;
+use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolValue};
 use tempo_alloy::{
     TempoNetwork,
     contracts::precompiles::{IFeeManager, IStablecoinDEX, ITIP20, STABLECOIN_DEX_ADDRESS},
     rpc::TempoTransactionRequest,
 };
-use tempo_primitives::transaction::{Call, SignatureType};
+use tempo_primitives::transaction::{
+    Call, KeyAuthorization, PrimitiveSignature, SignatureType, SignedKeyAuthorization,
+    tt_signature::P256SignatureWithPreHash,
+};
 
 use super::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, OUSD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
-    TIP_FEE_MANAGER_ADDRESS, TempoSponsor, known_fee_token_symbol, resolve_and_set_fee_token,
-    resolve_fee_token_symbol,
+    TIP_FEE_MANAGER_ADDRESS, TempoSponsor, ensure_browser_key_authorization_supported,
+    known_fee_token_symbol, resolve_and_set_fee_token, resolve_fee_token_symbol,
+    verify_browser_key_authorization,
 };
 
 #[test]
@@ -675,4 +681,143 @@ async fn resolves_fee_token_symbol_from_tempo_mainnet() -> eyre::Result<()> {
     let invalid_fee_token = address!("0x20C0000000000000000000000000000000000004");
     assert_eq!(resolve_fee_token_symbol(&provider, invalid_fee_token).await.as_deref(), None);
     Ok(())
+}
+
+/// Signs `authorization` with `signer` and RLP-encodes the result, as the browser wallet returns
+/// it.
+fn browser_signed(authorization: &KeyAuthorization, signer: &PrivateKeySigner) -> Vec<u8> {
+    let signature = signer.sign_hash_sync(&authorization.signature_hash()).unwrap();
+    alloy_rlp::encode(authorization.clone().into_signed(PrimitiveSignature::Secp256k1(signature)))
+}
+
+fn root_signer() -> PrivateKeySigner {
+    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".parse().unwrap()
+}
+
+#[test]
+fn browser_key_authorization_accepts_root_signature() {
+    let root = root_signer();
+    let requested =
+        KeyAuthorization::unrestricted(1, SignatureType::Secp256k1, Address::repeat_byte(0xbb))
+            .with_expiry(123);
+
+    let signed = verify_browser_key_authorization(
+        &browser_signed(&requested, &root),
+        &requested,
+        root.address(),
+    )
+    .unwrap();
+
+    assert_eq!(signed.authorization, requested);
+    assert_eq!(
+        signed.recover_signer().unwrap(),
+        address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")
+    );
+}
+
+#[test]
+fn browser_key_authorization_rejects_mutated_payload() {
+    let root = root_signer();
+    let key_id = Address::repeat_byte(0xbb);
+    let requested =
+        KeyAuthorization::unrestricted(1, SignatureType::Secp256k1, key_id).with_expiry(123);
+    let mutated =
+        KeyAuthorization::unrestricted(1, SignatureType::Secp256k1, key_id).with_expiry(456);
+
+    let err = verify_browser_key_authorization(
+        &browser_signed(&mutated, &root),
+        &requested,
+        root.address(),
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "wallet returned a mutated KeyAuthorization payload: signed digest {} but requested {}",
+            mutated.signature_hash(),
+            requested.signature_hash(),
+        )
+    );
+}
+
+#[test]
+fn browser_key_authorization_rejects_other_signer() {
+    let root = root_signer();
+    let other: PrivateKeySigner =
+        "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d".parse().unwrap();
+    let requested =
+        KeyAuthorization::unrestricted(1, SignatureType::Secp256k1, Address::repeat_byte(0xbb));
+
+    let err = verify_browser_key_authorization(
+        &browser_signed(&requested, &other),
+        &requested,
+        root.address(),
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        err.to_string(),
+        "wallet returned a SignedKeyAuthorization signed by \
+         0x70997970C51812dc3A010C7d01b50e0d17dc79C8 but the connected root account is \
+         0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    );
+}
+
+#[test]
+fn browser_key_authorization_rejects_unrecoverable_signature() {
+    let requested =
+        KeyAuthorization::unrestricted(1, SignatureType::P256, Address::repeat_byte(0xbb));
+    let signed: SignedKeyAuthorization =
+        requested.clone().into_signed(PrimitiveSignature::P256(P256SignatureWithPreHash {
+            r: B256::ZERO,
+            s: B256::ZERO,
+            pub_key_x: B256::ZERO,
+            pub_key_y: B256::ZERO,
+            pre_hash: false,
+        }));
+
+    let err = verify_browser_key_authorization(
+        &alloy_rlp::encode(signed),
+        &requested,
+        root_signer().address(),
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        err.to_string(),
+        "wallet returned an unrecoverable SignedKeyAuthorization signature"
+    );
+}
+
+#[test]
+fn browser_key_authorization_rejects_invalid_rlp() {
+    let requested =
+        KeyAuthorization::unrestricted(1, SignatureType::Secp256k1, Address::repeat_byte(0xbb));
+
+    let err =
+        verify_browser_key_authorization(&[0xf8, 0x01, 0x02], &requested, root_signer().address())
+            .unwrap_err();
+
+    assert_eq!(err.to_string(), "invalid SignedKeyAuthorization RLP from wallet");
+}
+
+#[test]
+fn browser_key_authorization_rejects_t5_t6_fields() {
+    let plain =
+        KeyAuthorization::unrestricted(1, SignatureType::Secp256k1, Address::repeat_byte(0xbb));
+    ensure_browser_key_authorization_supported(&plain).unwrap();
+
+    for unsupported in [
+        plain.clone().with_witness(B256::repeat_byte(0x53)),
+        plain.clone().with_account(Address::repeat_byte(0xcc)),
+        plain.into_admin(Address::repeat_byte(0xcc)),
+    ] {
+        let err = ensure_browser_key_authorization_supported(&unsupported).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "browser key authorization signing does not support T5/T6 fields yet: witness, admin, \
+             account"
+        );
+    }
 }

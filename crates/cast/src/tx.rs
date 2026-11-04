@@ -24,9 +24,10 @@ use foundry_common::{
     tempo::ensure_expiring_nonce_discriminator_active,
 };
 use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
-use foundry_wallets::{BrowserWalletOpts, TempoAccountsWallet, WalletOpts, WalletSigner};
+use foundry_wallets::{BrowserWalletOpts, WalletOpts, WalletSigner};
 use itertools::Itertools;
 use std::{fmt::Write, marker::PhantomData, str::FromStr, time::Duration};
+use tempo_alloy::accounts::TempoAccountsWallet;
 
 #[derive(Debug, Clone, Args)]
 pub struct SendTxOpts {
@@ -169,7 +170,7 @@ impl SenderKind<'_> {
         {
             return Ok(from.into());
         }
-        let (signer, tempo_wallet) = opts.maybe_signer().await?;
+        let (signer, tempo_wallet) = foundry_common::tempo::maybe_signer(&opts, None).await?;
         Ok(if let Some(signer) = signer {
             signer.into()
         } else if let Some(tempo_wallet) = tempo_wallet {

@@ -333,7 +333,7 @@ foundry-evm-traces = { path = "crates/evm/traces", default-features = false }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils", default-features = false }
 foundry-test-macros = { path = "crates/test-utils/macros" }
-foundry-wallets = { version = "0.1.0", default-features = false }
+foundry-wallets = { version = "0.2.0", default-features = false }
 foundry-linking = { path = "crates/linking" }
 foundry-primitives = { path = "crates/primitives", default-features = false }
 foundry-tui = { path = "crates/tui", default-features = false }
@@ -584,8 +584,8 @@ solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "a2b4435466bff
 solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "a2b4435466bff1b91459a1bc64b04e5e8144ed9f" }
 
 ## foundry-core
+foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "ef6b67bfa4c642be3b4208485791adbcd03455c3" }
 # fork-db evm2 completion merged with main 1534b92.
-foundry-wallets = { git = "https://github.com/mablr/foundry-core", rev = "b3110f09c6591004f9b91bafa19a86c4730772db" }
 foundry-compilers = { git = "https://github.com/mablr/foundry-core", rev = "b3110f09c6591004f9b91bafa19a86c4730772db" }
 foundry-block-explorers = { git = "https://github.com/mablr/foundry-core", rev = "b3110f09c6591004f9b91bafa19a86c4730772db" }
 foundry-fork-db = { git = "https://github.com/mablr/foundry-core", rev = "b3110f09c6591004f9b91bafa19a86c4730772db" }
@@ -640,11 +640,6 @@ op-alloy-consensus = { git = "https://github.com/foundry-rs/optimism", rev = "20
 op-alloy-network = { git = "https://github.com/foundry-rs/optimism", rev = "206d26cedb9d861b983d89fc71e1122187dfa877" }
 op-alloy-rpc-types = { git = "https://github.com/foundry-rs/optimism", rev = "206d26cedb9d861b983d89fc71e1122187dfa877" }
 alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", rev = "206d26cedb9d861b983d89fc71e1122187dfa877" }
-
-## tempo — unify crates.io versions (pulled by mpp/foundry-wallets) with git rev
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "5c04fd51cef7e9054a6506b8375faeb240abf1b0" }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "5c04fd51cef7e9054a6506b8375faeb240abf1b0" }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "5c04fd51cef7e9054a6506b8375faeb240abf1b0" }
 
 ## reth-core — as patched by tempoxyz/tempo and reth, whose root patches do not propagate
 reth-codecs = { git = "https://github.com/paradigmxyz/reth-core", rev = "275ce4cf5befeb9f1e8acd935ff2882d2d25fc61" }
