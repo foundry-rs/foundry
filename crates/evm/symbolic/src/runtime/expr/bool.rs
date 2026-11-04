@@ -112,23 +112,34 @@ impl SymBoolExpr {
         // such as Solidity's bounds check `(x & 0xf) < 16`.
         if matches!(op, SymCmpOp::Ult | SymCmpOp::Ugt | SymCmpOp::Ule | SymCmpOp::Uge) {
             let decided = match (left.as_const(), right.as_const()) {
-                (None, Some(constant)) => unsigned_max(&left).map(|max| match op {
-                    SymCmpOp::Ult if max < constant => Some(true),
-                    SymCmpOp::Ule if max <= constant => Some(true),
-                    SymCmpOp::Ugt if max <= constant => Some(false),
-                    SymCmpOp::Uge if max < constant => Some(false),
-                    _ => None,
-                }),
-                (Some(constant), None) => unsigned_max(&right).map(|max| match op {
-                    SymCmpOp::Ugt if max < constant => Some(true),
-                    SymCmpOp::Uge if max <= constant => Some(true),
-                    SymCmpOp::Ult if max <= constant => Some(false),
-                    SymCmpOp::Ule if max < constant => Some(false),
-                    _ => None,
-                }),
+                (None, Some(constant)) => {
+                    let max = unsigned_max(&left);
+                    match op {
+                        SymCmpOp::Ult if max < constant => Some(true),
+                        SymCmpOp::Ule if max <= constant => Some(true),
+                        SymCmpOp::Ugt if max <= constant => Some(false),
+                        SymCmpOp::Uge if max < constant => Some(false),
+                        // Nothing is below zero.
+                        SymCmpOp::Ult if constant.is_zero() => Some(false),
+                        SymCmpOp::Uge if constant.is_zero() => Some(true),
+                        _ => None,
+                    }
+                }
+                (Some(constant), None) => {
+                    let max = unsigned_max(&right);
+                    match op {
+                        SymCmpOp::Ugt if max < constant => Some(true),
+                        SymCmpOp::Uge if max <= constant => Some(true),
+                        SymCmpOp::Ult if max <= constant => Some(false),
+                        SymCmpOp::Ule if max < constant => Some(false),
+                        SymCmpOp::Ugt if constant.is_zero() => Some(false),
+                        SymCmpOp::Ule if constant.is_zero() => Some(true),
+                        _ => None,
+                    }
+                }
                 _ => None,
             };
-            if let Some(Some(value)) = decided {
+            if let Some(value) = decided {
                 return Self::constant(cx, value);
             }
         }
@@ -965,7 +976,7 @@ pub(crate) fn visit_unique<'a, B>(
 }
 
 /// Returns the largest value `expr` can take by its bit width, when that is below `2^256 - 1`.
-fn unsigned_max(expr: &SymExpr) -> Option<U256> {
+fn unsigned_max(expr: &SymExpr) -> U256 {
     let bits = expr.unsigned_bits();
-    (bits < 256).then(|| (U256::ONE << bits) - U256::ONE)
+    if bits < 256 { (U256::ONE << bits) - U256::ONE } else { U256::MAX }
 }

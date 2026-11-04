@@ -26,6 +26,11 @@ pub(crate) struct PathState {
     pub(crate) root_calldata: Option<SymbolicCalldata>,
     /// Predicate context follows child calls but is not committed back to handler state.
     pub(crate) invariant_predicate: bool,
+    /// Sender word of the sequence call this path runs, while it runs one.
+    pub(crate) sequence_sender: Option<SymExpr>,
+    /// Whether this path read the sequence call's sender, as `msg.sender`, `tx.origin` or
+    /// `vm.readCallers`: one that never did behaves the same for every sender.
+    pub(crate) sender_observed: bool,
     corpus_seed_models: Vec<Arc<SymbolicModel>>,
     /// Subexpressions this path's constraints pin to one value, recorded where the executor
     /// forked on them, so expressions built from them fold to constants without the solver.
@@ -111,6 +116,8 @@ impl PathState {
             access_record: None,
             root_calldata: None,
             invariant_predicate: false,
+            sequence_sender: None,
+            sender_observed: false,
             corpus_seed_models: Vec::new(),
             pinned: Arc::default(),
             branch_target: None,
@@ -1952,6 +1959,12 @@ impl SymbolicWorld {
 
     /// Clears transaction-scoped state at a top-level call boundary.
     pub(crate) fn clear_transaction_scoped_state(&mut self) {
+        // Leave a world without transaction-scoped state shared, so a call that writes nothing
+        // keeps the state it started from.
+        if self.transient_storage.is_empty() && self.current_transaction_created_accounts.is_empty()
+        {
+            return;
+        }
         let state = Arc::make_mut(&mut self.state);
         state.transient_storage.clear();
         state.current_transaction_created_accounts.clear();
@@ -2054,6 +2067,11 @@ impl SymbolicWorld {
         self.symbolic_address_aliases
             .iter()
             .find_map(|(word, slot)| (*slot == address).then(|| word.clone()))
+    }
+
+    /// Whether both worlds share one state, as a call that wrote nothing leaves it.
+    pub(crate) fn same_state(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.state, &other.state)
     }
 
     pub(crate) fn snapshot_state(&mut self) -> U256 {

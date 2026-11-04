@@ -834,6 +834,11 @@ impl SymbolicExecutor {
                     opcode::ORIGIN => state.origin_word.clone(),
                     _ => state.callvalue.clone(),
                 };
+                if matches!(op, opcode::CALLER | opcode::ORIGIN)
+                    && state.sequence_sender.as_ref() == Some(&value)
+                {
+                    state.sender_observed = true;
+                }
                 state.stack.push(value)?;
             }
             opcode::BLOCKHASH => {

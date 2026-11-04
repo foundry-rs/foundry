@@ -273,6 +273,19 @@ pub struct SymbolicInvariantRunInput<'a> {
     pub fail_on_revert: bool,
     /// Whether symbolic `vm.ffi` calls are allowed to execute subprocesses.
     pub ffi_enabled: bool,
+    /// Handler calls, by target and selector, whose assertion failures were already reported:
+    /// they count as reverts, so the search goes on to other failures.
+    pub ignored_handler_failures: Vec<(Address, [u8; 4])>,
+    /// Keep searching after a handler assertion failure, one per target and selector, instead
+    /// of returning it; take them with [`SymbolicExecutor::take_handler_counterexamples`].
+    pub collect_handler_failures: bool,
+    /// Deadline shared by successive runs of one campaign, instead of the configured timeout
+    /// from the start of this run.
+    pub deadline: Option<Instant>,
+    /// Largest amount, in seconds, a step may advance the block timestamp before its call.
+    pub max_time_delay: Option<u32>,
+    /// Largest amount a step may advance the block number before its call.
+    pub max_block_delay: Option<u32>,
 }
 
 /// One concrete storage value required to replay a symbolic invariant candidate.
@@ -339,6 +352,10 @@ pub struct SymbolicInvariantStep {
     pub args: Vec<DynSolValue>,
     /// ABI-encoded calldata for replay.
     pub calldata: Bytes,
+    /// Amount the block timestamp advances before the call, when the step advances it.
+    pub warp: Option<U256>,
+    /// Amount the block number advances before the call, when the step advances it.
+    pub roll: Option<U256>,
 }
 
 /// Input for a symbolic equivalence check of two runtime bytecodes.
@@ -526,6 +543,8 @@ pub struct SymbolicExecutor {
     stateless_retry_safe: bool,
     /// Set while an equivalence check runs.
     equivalence: Option<EquivalenceMode>,
+    /// Handler counterexamples collected by the last invariant run.
+    handler_counterexamples: Vec<SymbolicInvariantRunResult>,
     /// Symbolic memory offsets that take too many values to fork on, per run.
     unenumerable_offsets: HashSet<runtime::SymExpr>,
 }

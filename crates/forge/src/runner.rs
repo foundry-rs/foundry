@@ -87,7 +87,7 @@ use std::{
     ops::Deref,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::Instant,
+    time::{Duration, Instant},
 };
 use tokio::signal;
 use tracing::Span;
@@ -4344,268 +4344,299 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 )
             };
             let mut symbolic = SymbolicExecutor::new(symbolic_config.clone());
-            match symbolic.run_invariant(SymbolicInvariantRunInput {
+            // A handler assertion bug does not end the search: keep looking for the others under
+            // one deadline, then hand them all to the concrete campaign.
+            let deadline = symbolic_config
+                .timeout
+                .filter(|seconds| *seconds > 0)
+                .map(|seconds| Instant::now() + Duration::from_secs(seconds.into()));
+            let first = symbolic.run_invariant(SymbolicInvariantRunInput {
                 executor: ExecutorView::new(&evm.executor),
                 invariant_address: self.address,
                 sender: self.sender,
                 invariant: anchor,
                 after_invariant,
-                targets: symbolic_targets,
-                senders: sender_filters.targeted,
-                excluded_senders: sender_filters.excluded,
+                targets: symbolic_targets.clone(),
+                senders: sender_filters.targeted.clone(),
+                excluded_senders: sender_filters.excluded.clone(),
                 depth: symbolic_config.invariant_depth as usize,
                 check_interval: invariant_config.check_interval,
                 fail_on_revert: anchor_fail_on_revert,
                 ffi_enabled: self.config.ffi,
-            }) {
-                SymbolicInvariantRunResult::Safe(stats) => {
-                    self.result.record_symbolic(match unsupported_domain_reason {
-                        Some(reason) => incomplete(
-                            SymbolicStopReason::Stuck,
-                            reason,
-                            stats,
-                            SymbolicReplayMetadata::not_required(),
-                        ),
-                        None => SymbolicResult::pass(&symbolic_config, stats),
-                    });
-                }
-                SymbolicInvariantRunResult::Incomplete { kind, reason, stats } => {
-                    self.result.record_symbolic(incomplete(
-                        kind,
-                        &reason,
-                        stats,
-                        SymbolicReplayMetadata::not_required(),
-                    ));
-                }
-                SymbolicInvariantRunResult::Counterexample {
-                    kind,
-                    sequence,
-                    storage,
-                    stats,
-                } => 'counterexample: {
-                    let is_handler = matches!(kind, SymbolicInvariantCounterexampleKind::Handler);
-                    let symbolic_calls = symbolic_invariant_counterexample_calls(
-                        &sequence,
-                        identified_contracts,
-                        invariant_config.show_solidity,
-                    );
-                    let check = SequenceReplay {
-                        invariant_config: &symbolic_invariant_config,
-                        invariant_contract: &invariant_contract,
-                        target_invariant: anchor,
-                        assertion_failure: false,
-                        storage: &storage,
-                    };
-                    let replayed = self
-                        .symbolic_sequence_failure(check, &symbolic_calls)
-                        .ok_or("symbolic invariant counterexample did not replay")
-                        .and_then(|failure| {
-                            let handler_site = match failure.failure_site {
-                                Some(CheckSequenceFailureSite::SequenceCall {
-                                    target,
-                                    selector,
-                                    fingerprint,
-                                }) if is_handler => Some((target, selector, fingerprint)),
-                                _ => None,
-                            };
-                            if is_handler && handler_site.is_none() {
-                                return Err("symbolic handler counterexample replayed at a \
-                                            non-handler failure site");
-                            }
-                            Ok((failure, handler_site))
-                        });
-                    let (failure, handler_site) = match replayed {
-                        Ok(replayed) => replayed,
-                        Err(reason) => {
-                            self.result.record_symbolic(incomplete(
-                                SymbolicStopReason::Error,
+                ignored_handler_failures: Vec::new(),
+                collect_handler_failures: true,
+                deadline,
+                max_time_delay: invariant_config.max_time_delay,
+                max_block_delay: invariant_config.max_block_delay,
+            });
+            // Handler bugs the search collected come first, then how the search ended.
+            let mut results = symbolic
+                .take_handler_counterexamples()
+                .into_iter()
+                .collect::<std::collections::VecDeque<_>>();
+            results.push_back(first);
+            // A confirmed handler bug is the symbolic verdict; how the search ended after it does
+            // not replace it.
+            let mut handler_confirmed = false;
+            while let Some(result) = results.pop_front() {
+                match result {
+                    SymbolicInvariantRunResult::Safe(_)
+                    | SymbolicInvariantRunResult::Incomplete { .. }
+                        if handler_confirmed => {}
+                    SymbolicInvariantRunResult::Safe(stats) => {
+                        self.result.record_symbolic(match unsupported_domain_reason {
+                            Some(reason) => incomplete(
+                                SymbolicStopReason::Stuck,
                                 reason,
                                 stats,
-                                SymbolicReplayMetadata::mismatch(reason.to_string()),
-                            ));
-                            break 'counterexample;
-                        }
-                    };
+                                SymbolicReplayMetadata::not_required(),
+                            ),
+                            None => SymbolicResult::pass(&symbolic_config, stats),
+                        });
+                    }
+                    SymbolicInvariantRunResult::Incomplete { kind, reason, stats } => {
+                        self.result.record_symbolic(incomplete(
+                            kind,
+                            &reason,
+                            stats,
+                            SymbolicReplayMetadata::not_required(),
+                        ));
+                    }
+                    SymbolicInvariantRunResult::Counterexample {
+                        kind,
+                        sequence,
+                        storage,
+                        stats,
+                    } => 'counterexample: {
+                        let is_handler =
+                            matches!(kind, SymbolicInvariantCounterexampleKind::Handler);
+                        let symbolic_calls = symbolic_invariant_counterexample_calls(
+                            &sequence,
+                            identified_contracts,
+                            invariant_config.show_solidity,
+                        );
+                        let check = SequenceReplay {
+                            invariant_config: &symbolic_invariant_config,
+                            invariant_contract: &invariant_contract,
+                            target_invariant: anchor,
+                            assertion_failure: false,
+                            storage: &storage,
+                        };
+                        let replayed = self
+                            .symbolic_sequence_failure(check, &symbolic_calls)
+                            .ok_or("symbolic invariant counterexample did not replay")
+                            .and_then(|failure| {
+                                let handler_site = match failure.failure_site {
+                                    Some(CheckSequenceFailureSite::SequenceCall {
+                                        target,
+                                        selector,
+                                        fingerprint,
+                                    }) if is_handler => Some((target, selector, fingerprint)),
+                                    _ => None,
+                                };
+                                if is_handler && handler_site.is_none() {
+                                    return Err("symbolic handler counterexample replayed at a \
+                                            non-handler failure site");
+                                }
+                                Ok((failure, handler_site))
+                            });
+                        let (failure, handler_site) = match replayed {
+                            Ok(replayed) => replayed,
+                            Err(reason) => {
+                                self.result.record_symbolic(incomplete(
+                                    SymbolicStopReason::Error,
+                                    reason,
+                                    stats,
+                                    SymbolicReplayMetadata::mismatch(reason.to_string()),
+                                ));
+                                break 'counterexample;
+                            }
+                        };
 
-                    let txes = symbolic_calls
-                        .iter()
-                        .map(SymbolicCounterexampleCall::to_basic_tx_details)
-                        .collect::<Vec<_>>();
-                    let original_sequence_len = txes.len();
-                    let failure_site = failure.failure_site.map(SymbolicInvariantFailureSite::from);
-                    let (artifact_file_name, artifact_failure) = match handler_site {
-                        Some((reverter, selector, fingerprint)) => (
-                            format!("handler-{reverter}-{selector}"),
-                            SymbolicInvariantArtifactFailure::Handler {
-                                name: Some(invariant_handler_failure_name(
-                                    identified_contracts,
+                        let txes = symbolic_calls
+                            .iter()
+                            .map(SymbolicCounterexampleCall::to_basic_tx_details)
+                            .collect::<Vec<_>>();
+                        let original_sequence_len = txes.len();
+                        let failure_site =
+                            failure.failure_site.map(SymbolicInvariantFailureSite::from);
+                        let (artifact_file_name, artifact_failure) = match handler_site {
+                            Some((reverter, selector, fingerprint)) => (
+                                format!("handler-{reverter}-{selector}"),
+                                SymbolicInvariantArtifactFailure::Handler {
+                                    name: Some(invariant_handler_failure_name(
+                                        identified_contracts,
+                                        reverter,
+                                        selector,
+                                    )),
                                     reverter,
                                     selector,
-                                )),
-                                reverter,
-                                selector,
-                                fingerprint,
+                                    fingerprint,
+                                },
+                            ),
+                            None => (
+                                anchor.signature(),
+                                SymbolicInvariantArtifactFailure::Predicate {
+                                    name: anchor.name.clone(),
+                                    site: failure_site,
+                                },
+                            ),
+                        };
+                        let replayed = match self.replay_invariant_error_sequence(
+                            SequenceReplay { assertion_failure: is_handler, ..check },
+                            &txes,
+                            None,
+                            identified_contracts,
+                            &current_settings,
+                            SequenceArtifactSpec {
+                                file_name: &artifact_file_name,
+                                fail_on_revert: is_handler || anchor_fail_on_revert,
+                                failure: Some(artifact_failure),
                             },
-                        ),
-                        None => (
-                            anchor.signature(),
-                            SymbolicInvariantArtifactFailure::Predicate {
-                                name: anchor.name.clone(),
-                                site: failure_site,
-                            },
-                        ),
-                    };
-                    let replayed = match self.replay_invariant_error_sequence(
-                        SequenceReplay { assertion_failure: is_handler, ..check },
-                        &txes,
-                        None,
-                        identified_contracts,
-                        &current_settings,
-                        SequenceArtifactSpec {
-                            file_name: &artifact_file_name,
-                            fail_on_revert: is_handler || anchor_fail_on_revert,
-                            failure: Some(artifact_failure),
-                        },
-                        progress.as_ref(),
-                        Some((1, 1)),
-                    ) {
-                        Ok(replayed) => replayed,
-                        Err(err) => {
-                            let reason = format!("symbolic invariant replay failed: {err}");
-                            self.result.record_symbolic(incomplete(
-                                SymbolicStopReason::Error,
-                                &reason,
-                                stats,
-                                SymbolicReplayMetadata::error(reason.clone()),
-                            ));
+                            progress.as_ref(),
+                            Some((1, 1)),
+                        ) {
+                            Ok(replayed) => replayed,
+                            Err(err) => {
+                                let reason = format!("symbolic invariant replay failed: {err}");
+                                self.result.record_symbolic(incomplete(
+                                    SymbolicStopReason::Error,
+                                    &reason,
+                                    stats,
+                                    SymbolicReplayMetadata::error(reason.clone()),
+                                ));
+                                break 'counterexample;
+                            }
+                        };
+                        let ReplayedInvariantSequence {
+                            call_sequence,
+                            artifact,
+                            minimization,
+                            fork_block_number,
+                        } = replayed;
+                        let mut symbolic_result = SymbolicResult::fail_counterexample_sequence(
+                            &symbolic_config,
+                            stats,
+                            SymbolicCallTrace::test_result_traces(!self.result.traces.is_empty()),
+                        );
+                        if let Some(artifact) = artifact.clone() {
+                            symbolic_result = symbolic_result.with_artifact(artifact);
+                        }
+                        if let Some(minimization) = minimization.clone() {
+                            symbolic_result = symbolic_result.with_minimization(minimization);
+                        }
+                        let reason = failure.reason.unwrap_or_else(|| {
+                            if is_handler {
+                                "symbolic handler counterexample".to_string()
+                            } else {
+                                "symbolic invariant counterexample".to_string()
+                            }
+                        });
+
+                        if let Some((reverter, selector, fingerprint)) = handler_site {
+                            let call_sequence = call_sequence
+                                .iter()
+                                .map(base_counterexample_to_tx)
+                                .collect::<Vec<_>>();
+                            symbolic_handler_storage.insert(
+                                (reverter, selector, fingerprint),
+                                SymbolicHandlerReplayStorage {
+                                    call_sequence: call_sequence.clone(),
+                                    assignments: storage,
+                                    fingerprint_provenance: None,
+                                },
+                            );
+                            persisted_handler_failures.insert(
+                                (reverter, selector),
+                                InvariantFuzzError::HandlerAssertion(HandlerAssertionFailure {
+                                    reverter,
+                                    selector,
+                                    call_sequence,
+                                    original_sequence_len,
+                                    revert_reason: reason,
+                                    fork_block_number: None,
+                                    edge_fingerprint: fingerprint,
+                                }),
+                            );
+                            self.result.record_symbolic(symbolic_result);
+                            handler_confirmed = true;
                             break 'counterexample;
                         }
-                    };
-                    let ReplayedInvariantSequence {
-                        call_sequence,
-                        artifact,
-                        minimization,
-                        fork_block_number,
-                    } = replayed;
-                    let mut symbolic_result = SymbolicResult::fail_counterexample_sequence(
-                        &symbolic_config,
-                        stats,
-                        SymbolicCallTrace::test_result_traces(!self.result.traces.is_empty()),
-                    );
-                    if let Some(artifact) = artifact.clone() {
-                        symbolic_result = symbolic_result.with_artifact(artifact);
-                    }
-                    if let Some(minimization) = minimization.clone() {
-                        symbolic_result = symbolic_result.with_minimization(minimization);
-                    }
-                    let reason = failure.reason.unwrap_or_else(|| {
-                        if is_handler {
-                            "symbolic handler counterexample".to_string()
-                        } else {
-                            "symbolic invariant counterexample".to_string()
-                        }
-                    });
 
-                    if let Some((reverter, selector, fingerprint)) = handler_site {
-                        let call_sequence =
-                            call_sequence.iter().map(base_counterexample_to_tx).collect::<Vec<_>>();
-                        symbolic_handler_storage.insert(
-                            (reverter, selector, fingerprint),
-                            SymbolicHandlerReplayStorage {
-                                call_sequence: call_sequence.clone(),
-                                assignments: storage,
-                                fingerprint_provenance: None,
+                        record_invariant_failure(
+                            &primary_failure_file,
+                            &call_sequence,
+                            &current_settings,
+                            false,
+                            &storage,
+                            failure_site,
+                            None,
+                            setup_fork_block,
+                        );
+                        let mut invariant_failures = vec![InvariantFailure::Predicate {
+                            name: anchor.name.clone(),
+                            reason,
+                            counterexample: Some(CounterExample::Sequence(
+                                original_sequence_len,
+                                call_sequence,
+                            )),
+                            artifact,
+                            minimization,
+                            persisted_path: primary_failure_file,
+                            is_anchor: true,
+                        }];
+                        for (invariant, _) in &invariant_contract.invariant_fns {
+                            if let Some((_, error, _, _)) = replayed_predicate_failures
+                                .iter()
+                                .find(|(name, ..)| name == &invariant.name)
+                                && let Some(calls) = failed_invariant_calls(error)
+                            {
+                                invariant_failures.push(InvariantFailure::Predicate {
+                                    name: invariant.name.clone(),
+                                    reason: error.revert_reason().unwrap_or_default(),
+                                    counterexample: Some(CounterExample::Sequence(
+                                        calls.len(),
+                                        base_counterexamples(
+                                            calls,
+                                            identified_contracts,
+                                            invariant_config.show_solidity,
+                                        ),
+                                    )),
+                                    artifact: None,
+                                    minimization: None,
+                                    persisted_path: invariant_failure_file(&failure_dir, invariant),
+                                    is_anchor: false,
+                                });
+                            }
+                        }
+                        let invariant_predicate_results = if is_campaign {
+                            self.sort_predicate_results(
+                                invariant_failures
+                                    .iter()
+                                    .map(|failure| InvariantPredicateResult {
+                                        name: failure.name().to_string(),
+                                        status: TestStatus::Failure,
+                                        reason: Some(failure.reason().to_string()),
+                                    })
+                                    .chain(skipped_predicate_results),
+                            )
+                        } else {
+                            Vec::new()
+                        };
+                        self.result.invariant_result(
+                            invariant_kind(1, failure.calls_count, failure.reverts),
+                            InvariantOutcome {
+                                fork_block_number,
+                                failures: invariant_failures,
+                                predicate_results: invariant_predicate_results,
+                                failure_dir: Some(failure_dir),
+                                invariant_count,
+                                ..Default::default()
                             },
                         );
-                        persisted_handler_failures.insert(
-                            (reverter, selector),
-                            InvariantFuzzError::HandlerAssertion(HandlerAssertionFailure {
-                                reverter,
-                                selector,
-                                call_sequence,
-                                original_sequence_len,
-                                revert_reason: reason,
-                                fork_block_number: None,
-                                edge_fingerprint: fingerprint,
-                            }),
-                        );
                         self.result.record_symbolic(symbolic_result);
-                        break 'counterexample;
+                        return self.result;
                     }
-
-                    record_invariant_failure(
-                        &primary_failure_file,
-                        &call_sequence,
-                        &current_settings,
-                        false,
-                        &storage,
-                        failure_site,
-                        None,
-                        setup_fork_block,
-                    );
-                    let mut invariant_failures = vec![InvariantFailure::Predicate {
-                        name: anchor.name.clone(),
-                        reason,
-                        counterexample: Some(CounterExample::Sequence(
-                            original_sequence_len,
-                            call_sequence,
-                        )),
-                        artifact,
-                        minimization,
-                        persisted_path: primary_failure_file,
-                        is_anchor: true,
-                    }];
-                    for (invariant, _) in &invariant_contract.invariant_fns {
-                        if let Some((_, error, _, _)) = replayed_predicate_failures
-                            .iter()
-                            .find(|(name, ..)| name == &invariant.name)
-                            && let Some(calls) = failed_invariant_calls(error)
-                        {
-                            invariant_failures.push(InvariantFailure::Predicate {
-                                name: invariant.name.clone(),
-                                reason: error.revert_reason().unwrap_or_default(),
-                                counterexample: Some(CounterExample::Sequence(
-                                    calls.len(),
-                                    base_counterexamples(
-                                        calls,
-                                        identified_contracts,
-                                        invariant_config.show_solidity,
-                                    ),
-                                )),
-                                artifact: None,
-                                minimization: None,
-                                persisted_path: invariant_failure_file(&failure_dir, invariant),
-                                is_anchor: false,
-                            });
-                        }
-                    }
-                    let invariant_predicate_results = if is_campaign {
-                        self.sort_predicate_results(
-                            invariant_failures
-                                .iter()
-                                .map(|failure| InvariantPredicateResult {
-                                    name: failure.name().to_string(),
-                                    status: TestStatus::Failure,
-                                    reason: Some(failure.reason().to_string()),
-                                })
-                                .chain(skipped_predicate_results),
-                        )
-                    } else {
-                        Vec::new()
-                    };
-                    self.result.invariant_result(
-                        invariant_kind(1, failure.calls_count, failure.reverts),
-                        InvariantOutcome {
-                            fork_block_number,
-                            failures: invariant_failures,
-                            predicate_results: invariant_predicate_results,
-                            failure_dir: Some(failure_dir),
-                            invariant_count,
-                            ..Default::default()
-                        },
-                    );
-                    self.result.record_symbolic(symbolic_result);
-                    return self.result;
                 }
             }
         }
@@ -5624,8 +5655,8 @@ fn symbolic_invariant_counterexample_calls(
         .iter()
         .map(|step| {
             let tx = BasicTxDetails {
-                warp: None,
-                roll: None,
+                warp: step.warp.filter(|warp| !warp.is_zero()),
+                roll: step.roll.filter(|roll| !roll.is_zero()),
                 sender: step.sender,
                 call_details: CallDetails {
                     target: step.address,

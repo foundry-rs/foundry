@@ -14,6 +14,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+/// How many comparison sites a recorder keeps per record the artifact may hold.
+const RECORDED_SITES_PER_LIMIT: usize = 16;
+
 const FRONTIER_SCHEMA: &str = "foundry:fuzz.branch-frontiers@v1";
 const STATEFUL_FRONTIER_SCHEMA: &str = "foundry:fuzz.branch-frontiers@v2";
 pub(super) const FRONTIER_FILE: &str = "branch-frontiers.json";
@@ -307,7 +310,8 @@ impl FuzzFrontierRecorder {
                     }
                 }
                 Entry::Vacant(entry) => {
-                    if self.frontiers.len() < self.limit {
+                    // Both outcomes of a site count, so the merge can tell covered sites apart.
+                    if self.frontiers.len() < self.limit.saturating_mul(RECORDED_SITES_PER_LIMIT) {
                         entry.insert(self.frontiers.len());
                         let frontier = new_frontier(cmp, result, operand_delta);
                         self.frontiers.push(frontier);
@@ -371,8 +375,10 @@ impl FuzzBranchFrontier {
 /// `operand_delta`, but workers run independently, so the same site can appear in several workers'
 /// records with different observed deltas. This applies the same key dedup and smallest-delta
 /// policy across all workers so the artifact keeps one globally closest record per site and does
-/// not spend `limit` on duplicates. Iteration continues after `limit` is reached because a later
-/// record may be a smaller-delta duplicate of an already retained key.
+/// not spend `limit` on duplicates.
+///
+/// Sites seen with only one outcome come first: their other branch is one no run has taken, which
+/// is what a symbolic flip can add. Sites seen both ways fill what the limit leaves.
 pub(in crate::executors) fn merge_frontiers(
     limit: usize,
     frontiers: impl IntoIterator<Item = FuzzBranchFrontier>,
@@ -381,7 +387,7 @@ pub(in crate::executors) fn merge_frontiers(
         return Vec::new();
     }
 
-    let mut merged = Vec::<FuzzBranchFrontier>::with_capacity(limit.min(32));
+    let mut merged = Vec::<FuzzBranchFrontier>::new();
     let mut indexes = HashMap::<FuzzBranchFrontierKey, usize>::default();
     for frontier in frontiers {
         match indexes.entry(frontier.key()) {
@@ -396,15 +402,19 @@ pub(in crate::executors) fn merge_frontiers(
                 }
             }
             Entry::Vacant(entry) => {
-                if merged.len() < limit {
-                    entry.insert(merged.len());
-                    merged.push(frontier);
-                }
+                entry.insert(merged.len());
+                merged.push(frontier);
             }
         }
     }
 
-    merged
+    let (mut uncovered, covered) = merged.into_iter().partition::<Vec<_>, _>(|frontier| {
+        let other = FuzzBranchFrontierKey { result: !frontier.operands.result, ..frontier.key() };
+        !indexes.contains_key(&other)
+    });
+    uncovered.extend(covered);
+    uncovered.truncate(limit);
+    uncovered
 }
 
 pub(in crate::executors) fn write_frontier_artifact(
@@ -652,6 +662,19 @@ mod tests {
         let merged = merge_frontiers(8, [frontier(1, false, 5), frontier(1, true, 5)]);
 
         assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn merge_frontiers_puts_one_sided_sites_first() {
+        // Site 1 was seen both ways across workers and site 2 only one way, so a limit of one
+        // keeps site 2, whose other branch no run took.
+        let merged = merge_frontiers(
+            1,
+            [frontier(1, false, 5), frontier(1, true, 5), frontier(2, false, 5)],
+        );
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].site.pc, 2);
     }
 
     #[test]

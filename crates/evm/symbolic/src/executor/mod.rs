@@ -83,6 +83,10 @@ struct SequenceStepTemplate {
     contract_name: Option<String>,
     function: Function,
     calldata: SymbolicCalldata,
+    /// Symbolic block timestamp advance before the call.
+    warp: Option<SymExpr>,
+    /// Symbolic block number advance before the call.
+    roll: Option<SymExpr>,
 }
 
 #[derive(Debug)]

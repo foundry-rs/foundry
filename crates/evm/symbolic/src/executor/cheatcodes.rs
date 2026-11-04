@@ -1109,6 +1109,7 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             readCallersCall::SELECTOR => {
+                state.sender_observed = true;
                 Ok(CheatcodeOutcome::Continue(state.read_callers_words(&mut self.cx)))
             }
             addrCall::SELECTOR => {

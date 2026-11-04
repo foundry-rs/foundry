@@ -465,7 +465,21 @@ impl super::hashcons::NodeFlags for SymExprKind {
             Self::BinOp(SymBinOp::Shr, left, right) => {
                 shift(right).map_or(256, |shift| left.unsigned_bits().saturating_sub(shift).max(1))
             }
-            Self::BinOp(SymBinOp::UDiv, left, _) => left.unsigned_bits(),
+            Self::BinOp(SymBinOp::UDiv, left, right) => match right.as_const() {
+                // Dividing by a constant of at least 2**k drops at least k bits.
+                Some(divisor) if !divisor.is_zero() => {
+                    left.unsigned_bits().saturating_sub(divisor.bit_len() - 1).max(1)
+                }
+                _ => left.unsigned_bits(),
+            },
+            // A nonzero constant modulus bounds the remainder below it. A symbolic modulus
+            // can be zero, which leaves the dividend in SMT-LIB and zero in the EVM.
+            Self::BinOp(SymBinOp::URem, left, right) => match right.as_const() {
+                Some(modulus) if !modulus.is_zero() => {
+                    left.unsigned_bits().min((modulus - U256::ONE).bit_len().max(1))
+                }
+                _ => left.unsigned_bits(),
+            },
             Self::TernOp(_, _, _, modulus) => modulus.unsigned_bits(),
             Self::Ite(_, left, right) => left.unsigned_bits().max(right.unsigned_bits()),
             _ => 256,
@@ -2697,5 +2711,29 @@ mod tests {
         });
         assert_eq!(result, ControlFlow::Break(42));
         assert_eq!(visits, 2);
+    }
+
+    // Solidity's bounded mint takes amount % 1e30, so the remainder fits in 100 bits and
+    // comparisons the width decides fold without a solver query.
+    #[test]
+    fn remainder_and_quotient_by_constant_narrow_width() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let modulus = SymExpr::constant(&mut cx, U256::from(10).pow(U256::from(30)));
+        let remainder = SymExpr::binop(&mut cx, SymBinOp::URem, x.clone(), modulus);
+        assert_eq!(remainder.unsigned_bits(), 100);
+        let divisor = SymExpr::constant(&mut cx, U256::from(10).pow(U256::from(18)));
+        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, x.clone(), divisor);
+        assert_eq!(quotient.unsigned_bits(), 197);
+        let symbolic = SymExpr::var(&mut cx, "m");
+        let unbounded = SymExpr::binop(&mut cx, SymBinOp::URem, x, symbolic);
+        assert_eq!(unbounded.unsigned_bits(), 256);
+
+        let half = U256::MAX >> 1;
+        let above = SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ugt, &remainder, half);
+        assert_eq!(above, SymBoolExpr::constant(&mut cx, false));
+        let below_zero =
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ult, &unbounded, U256::ZERO);
+        assert_eq!(below_zero, SymBoolExpr::constant(&mut cx, false));
     }
 }

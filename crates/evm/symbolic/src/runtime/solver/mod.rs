@@ -309,6 +309,11 @@ impl SmtLibSubprocessSolver {
         self.jobs = jobs.max(1);
     }
 
+    /// Sets the time limit, in seconds, of each query.
+    pub(crate) const fn set_query_timeout(&mut self, timeout: Option<u32>) {
+        self.timeout = timeout;
+    }
+
     /// Sets the wall-clock deadline queries must finish by.
     pub(crate) const fn set_deadline(&mut self, deadline: Option<Instant>) {
         self.deadline = deadline;
