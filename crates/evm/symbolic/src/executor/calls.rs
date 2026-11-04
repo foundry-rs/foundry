@@ -751,9 +751,9 @@ impl SymbolicExecutor {
                 state.expected_emit = Some(expected);
             }
         } else {
-            // Like Forge, a log without topics cannot fill a non-anonymous template, which every
-            // count 0 expectation is, and reverts the emitting frame.
-            if expected.is_forbidden() && !log.has_topics() {
+            // Like Forge, a log without topics cannot fill the template of a non-anonymous
+            // expectation and reverts the emitting frame.
+            if !expected.is_anonymous() && !log.has_topics() {
                 return self.revert_expect_emit(
                     state,
                     "use vm.expectEmitAnonymous to match anonymous events",

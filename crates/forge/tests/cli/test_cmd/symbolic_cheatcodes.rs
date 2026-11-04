@@ -7203,8 +7203,9 @@ contract SymbolicMappingStorageHooksSymbolicSize is Test {
     );
 }
 
-// Like Forge, `vm.stopRecord` pauses recording but keeps the accesses for `vm.accesses`, and
-// `vm.expectEmit(emitter, 0)` reverts the frame that emits a matching log.
+// Like Forge, `vm.stopRecord` pauses recording but keeps the accesses for `vm.accesses`,
+// `vm.expectEmit(emitter, 0)` reverts the frame that emits a matching log, and a log without
+// topics cannot fill the template of a non-anonymous `vm.expectEmit`.
 #[forgetest_init]
 fn symbolic_stop_record_and_expect_emit_count_zero_match_forge(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_stop_record_and_expect_emit_count_zero_match_forge");
@@ -7220,6 +7221,7 @@ interface Vm {
     function expectEmit(address emitter, uint64 count) external;
     function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData)
         external;
+    function expectEmitAnonymous() external;
     function expectRevert() external;
     function mockCall(address callee, bytes calldata data, bytes calldata returnData) external;
 }
@@ -7408,6 +7410,19 @@ contract SymbolicRecordAndEmitCount {
         store.setA(value);
     }
 
+    // Like Forge, a log without topics cannot be the template of a non-anonymous expectation.
+    function checkExpectEmitAnonymousTemplate(uint256 value) public {
+        vm.expectEmit();
+        emit Anon(value);
+        store.emitAnon(value);
+    }
+
+    function checkExpectEmitAnonymousMatches(uint256 value) public {
+        vm.expectEmitAnonymous();
+        emit Anon(value);
+        store.emitAnon(value);
+    }
+
     function testStopRecordKeepsAndPausesAccesses() public {
         checkStopRecordKeepsAndPausesAccesses(1);
     }
@@ -7439,6 +7454,10 @@ contract SymbolicRecordAndEmitCount {
     function testExpectNoEmitEndsAfterHaltedCall() public {
         checkExpectNoEmitEndsAfterHaltedCall(1);
     }
+
+    function testExpectEmitAnonymousMatches() public {
+        checkExpectEmitAnonymousMatches(1);
+    }
 }
 "#,
     );
@@ -7458,7 +7477,9 @@ contract SymbolicRecordAndEmitCount {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 17 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCount
+Ran 19 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCount
+[PASS] checkExpectEmitAnonymousMatches(uint256) ([METRICS])
+[FAIL: use vm.expectEmitAnonymous to match anonymous events; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitAnonymousTemplate(uint256) ([METRICS])
 [FAIL: Set indexed topic count mismatch: expected 1, got 0; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitRequiresSameTopicCount(uint256) ([METRICS])
 [PASS] checkExpectNoEmitAllowsOtherEvent(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit count 0 across a failed call] checkExpectNoEmitAnonymousInRevertedCall(uint256) ([METRICS])
@@ -7476,7 +7497,7 @@ Ran 17 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCoun
 [PASS] checkExpectNoEmitUnderExpectRevert(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit with a pending expectation] checkQueuedExpectEmitFailsClosed(uint256) ([METRICS])
 [PASS] checkStopRecordKeepsAndPausesAccesses(uint256) ([METRICS])
-Suite result: FAILED. 8 passed; 9 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 9 passed; 10 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
