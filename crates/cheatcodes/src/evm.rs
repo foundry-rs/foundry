@@ -1608,8 +1608,8 @@ pub(super) fn get_nonce<FEN: FoundryEvmNetwork>(
 
 fn inner_snapshot_state<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
     let evm_env = ccx.ecx.evm_clone();
-    let journaled_state = ccx.ecx.journal_inner().clone();
-    let id = ccx.ecx.db_mut().snapshot_state(&journaled_state, &evm_env);
+    let (db, journaled_state) = ccx.ecx.db_journal_inner_mut();
+    let id = db.snapshot_state(journaled_state, &evm_env);
     let fork_id = ccx.active_fork_id();
     let tx_gas_price = ccx.tx_gas_price();
     let tx_type = ccx.tx_type();
@@ -1685,22 +1685,21 @@ fn restore_isolation_fee_accounting<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt
     ccx.ecx.chain_mut().clear_transaction_fee_cache();
 }
 
-/// Records the live journal replaced by a snapshot restoration so that a failing enclosing frame
-/// can reinstate it and unwind its journaled writes.
+/// Records the live journal that a snapshot restoration replaced so that a failing enclosing
+/// frame can reinstate it and unwind its journaled writes.
 fn track_snapshot_restore<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
-    journaled_state: JournaledState,
-    restored: &JournaledState,
+    replaced: JournaledState,
 ) {
     if !ccx.state.track_isolated_snapshots {
         return;
     }
     if std::mem::take(&mut ccx.state.capture_isolated_snapshot_restore) {
-        ccx.state.isolated_snapshot_restores.push(journaled_state);
+        ccx.state.isolated_snapshot_restores.push(replaced);
     }
     // The suspended parent of an isolated call adopts the restored journal on success.
     if ccx.state.in_isolation_context {
-        ccx.state.pending_isolated_snapshot_journal = Some(restored.journal.clone());
+        ccx.state.pending_isolated_snapshot_journal = Some(ccx.ecx.journal_inner().journal.clone());
     }
 }
 
@@ -1710,16 +1709,16 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
 ) -> Result {
     let mut evm_env = ccx.ecx.evm_clone();
     let caller = ccx.tx_caller();
-    let journaled_state = ccx.ecx.journal_inner().clone();
-    if let Some(restored) = ccx.ecx.db_mut().revert_state(
+    let (db, journaled_state) = ccx.ecx.db_journal_inner_mut();
+    if let Some(restored) = db.revert_state(
         snapshot_id,
-        &journaled_state,
+        journaled_state,
         &mut evm_env,
         caller,
         RevertStateSnapshotAction::RevertKeep,
     ) {
-        track_snapshot_restore(ccx, journaled_state, &restored);
-        ccx.ecx.set_journal_inner(restored);
+        let replaced = std::mem::replace(journaled_state, restored);
+        track_snapshot_restore(ccx, replaced);
         #[cfg(feature = "monad")]
         {
             use foundry_evm_core::FoundryJournal as _;
@@ -1754,16 +1753,16 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
 ) -> Result {
     let mut evm_env = ccx.ecx.evm_clone();
     let caller = ccx.tx_caller();
-    let journaled_state = ccx.ecx.journal_inner().clone();
-    if let Some(restored) = ccx.ecx.db_mut().revert_state(
+    let (db, journaled_state) = ccx.ecx.db_journal_inner_mut();
+    if let Some(restored) = db.revert_state(
         snapshot_id,
-        &journaled_state,
+        journaled_state,
         &mut evm_env,
         caller,
         RevertStateSnapshotAction::RevertRemove,
     ) {
-        track_snapshot_restore(ccx, journaled_state, &restored);
-        ccx.ecx.set_journal_inner(restored);
+        let replaced = std::mem::replace(journaled_state, restored);
+        track_snapshot_restore(ccx, replaced);
         #[cfg(feature = "monad")]
         {
             use foundry_evm_core::FoundryJournal as _;
