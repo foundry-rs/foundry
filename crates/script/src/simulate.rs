@@ -180,8 +180,21 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
 
     fn into_filled(
         self,
-        transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
+        mut transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
     ) -> FilledTransactionsState<FEN> {
+        // Use the final script labels, including labels set after a deployment. Additional
+        // contracts are only known after transaction simulation.
+        let labels = &self.execution_result.labeled_addresses;
+        for transaction in &mut transactions {
+            if transaction.call_kind.is_any_create() {
+                transaction.label =
+                    transaction.contract_address.and_then(|address| labels.get(&address)).cloned();
+            }
+            for contract in &mut transaction.additional_contracts {
+                contract.label = labels.get(&contract.address).cloned();
+            }
+        }
+
         FilledTransactionsState {
             args: self.args,
             script_config: self.script_config,
@@ -290,13 +303,18 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                     )?;
 
                     // Only prompt if we're broadcasting and we've not disabled interactivity.
-                    if self.args.should_broadcast()
-                        && !self.args.non_interactive
-                        && !Confirm::new()
+                    if self.args.should_broadcast() && !self.args.non_interactive {
+                        if !dialoguer::console::Term::stderr().is_term() {
+                            eyre::bail!(
+                                "transaction to {to} has no code; pass --non-interactive to continue without confirmation"
+                            );
+                        }
+                        if !Confirm::new()
                             .with_prompt("Do you wish to continue?".to_string())
                             .interact()?
-                    {
-                        eyre::bail!("User canceled the script.");
+                        {
+                            eyre::bail!("User canceled the script.");
+                        }
                     }
                 }
 

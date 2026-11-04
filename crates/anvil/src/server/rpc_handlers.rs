@@ -96,6 +96,7 @@ impl PubSubEthRpcHandler {
                             storage,
                             filter: params,
                             queued: Default::default(),
+                            skipped: Default::default(),
                             id: id.clone(),
                         }))
                     }
@@ -222,6 +223,7 @@ mod tests {
             storage: api.storage_info(),
             filter: FilteredParams::new(None),
             queued: Default::default(),
+            skipped: Default::default(),
             id: id.clone(),
         }));
         assert!(handler.close_on_subscription_end(&logs));
