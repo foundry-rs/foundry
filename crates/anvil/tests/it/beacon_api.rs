@@ -314,11 +314,14 @@ async fn test_beacon_api_get_blobs_by_slot() {
         }
     };
 
-    assert!(get_blobs("2").await == Some(vec![blobs[0], blobs[1]]));
-    assert!(get_blobs(&format!("2?versioned_hashes={}", hashes[1])).await == Some(vec![blobs[1]]));
-    assert!(get_blobs("3").await == Some(vec![blobs[2]]));
+    assert!(get_blobs("2").await.as_deref() == Some(&blobs[..2]));
+    assert!(
+        get_blobs(&format!("2?versioned_hashes={}", hashes[1])).await.as_deref()
+            == Some(&blobs[1..2])
+    );
+    assert!(get_blobs("3").await.as_deref() == Some(&blobs[2..]));
     // Slot 0 holds the genesis block, which has no blobs.
-    assert!(get_blobs("0").await == Some(vec![]));
+    assert!(get_blobs("0").await.as_deref() == Some(&[][..]));
     // Slots without a block are not found, even when a block has that number.
     assert!(get_blobs("1").await.is_none());
     assert!(get_blobs("4").await.is_none());
@@ -326,5 +329,11 @@ async fn test_beacon_api_get_blobs_by_slot() {
 
     // The slot length stays the configured block time when the mining mode changes.
     api.anvil_set_interval_mining(0).unwrap();
-    assert!(get_blobs("2").await == Some(vec![blobs[0], blobs[1]]));
+    assert!(get_blobs("2").await.as_deref() == Some(&blobs[..2]));
+
+    // A block mined after moving the time back to slot 1 does not hide the later slots.
+    api.evm_set_time(GENESIS + SLOT).unwrap();
+    api.evm_mine(None).await.unwrap();
+    assert!(get_blobs("1").await.as_deref() == Some(&[][..]));
+    assert!(get_blobs("2").await.as_deref() == Some(&blobs[..2]));
 }

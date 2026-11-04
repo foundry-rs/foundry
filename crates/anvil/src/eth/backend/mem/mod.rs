@@ -4634,15 +4634,13 @@ impl<N: Network> Backend<N> {
             .and_then(|offset| self.genesis_time().checked_add(offset))?;
         let end = start.saturating_add(seconds_per_slot);
         let storage = self.blockchain.storage.read();
-        // Walk back from the head until a block precedes the slot. This assumes timestamps never
-        // decrease, which only setting the time backwards with `evm_setTime` breaks.
+        // Check every local canonical block, since `evm_setTime` can move timestamps backwards.
         let mut blocks = (0..=storage.best_number)
             .rev()
             .map_while(|number| {
                 storage.hashes.get(&number).and_then(|hash| storage.blocks.get(hash))
             })
-            .take_while(|block| block.header.timestamp() >= start)
-            .filter(|block| block.header.timestamp() < end)
+            .filter(|block| (start..end).contains(&block.header.timestamp()))
             .collect::<Vec<_>>();
         if blocks.is_empty() {
             return None;
