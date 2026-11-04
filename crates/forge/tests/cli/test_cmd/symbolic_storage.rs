@@ -498,3 +498,139 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 
 "#]]);
 }
+
+// An access at `keccak(key, slot) + index` with an unbounded `index` can reach any slot, here the
+// owner at slot 0 and another mapping's slot, and a bounded `index` reaches the folded constant
+// slots `keccak(7, 1) + 1` and `keccak(keccak(7, 1)) + 1` for both a concrete and a symbolic `key`.
+// These must not be proven safe.
+#[forgetest_init]
+fn symbolic_storage_layout_offset_aliases_fixed_slot(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_storage_layout_offset_aliases_fixed_slot");
+
+    prj.add_test(
+        "SymbolicStorageLayoutAlias.t.sol",
+        r#"
+contract Registry {
+    address public owner = address(0xBEEF);
+    mapping(uint256 => uint256[]) internal lists;
+    mapping(uint256 => uint256) public balances;
+
+    function setAt(uint256 key, uint256 index, uint256 value) external {
+        assembly {
+            mstore(0, key)
+            mstore(32, 1)
+            sstore(add(keccak256(0, 64), index), value)
+        }
+    }
+
+    function getAt(uint256 key, uint256 index) external view returns (uint256 value) {
+        assembly {
+            mstore(0, key)
+            mstore(32, 1)
+            value := sload(add(keccak256(0, 64), index))
+        }
+    }
+
+    function setListAt(uint256 key, uint256 index, uint256 value) external {
+        assembly {
+            mstore(0, key)
+            mstore(32, 1)
+            mstore(0, keccak256(0, 64))
+            sstore(add(keccak256(0, 32), index), value)
+        }
+    }
+
+    function getListAt(uint256 key, uint256 index) external view returns (uint256 value) {
+        assembly {
+            mstore(0, key)
+            mstore(32, 1)
+            mstore(0, keccak256(0, 64))
+            value := sload(add(keccak256(0, 32), index))
+        }
+    }
+}
+
+contract SymbolicStorageLayoutAlias {
+    Registry registry;
+
+    function setUp() public {
+        registry = new Registry();
+    }
+
+    function checkConstantKeyIndexCannotReachOwner(uint256 index, uint256 value) public {
+        registry.setAt(7, index, value);
+        assert(registry.owner() == address(0xBEEF));
+    }
+
+    function checkSymbolicKeyIndexCannotReachOwner(uint256 key, uint256 index, uint256 value)
+        public
+    {
+        registry.setAt(key, index, value);
+        assert(registry.owner() == address(0xBEEF));
+    }
+
+    function checkIndexCannotReachOtherMapping(uint256 index, uint256 value) public {
+        registry.setAt(7, index, value);
+        assert(registry.balances(7) == 0);
+    }
+
+    function checkSymbolicKeyBoundedIndexCannotReachOwner(
+        uint256 key,
+        uint256 index,
+        uint256 value
+    ) public {
+        require(index < 3);
+        registry.setAt(key, index, value);
+        assert(registry.owner() == address(0xBEEF));
+    }
+
+    function checkBoundedIndexCannotReachNextSlot(uint256 index, uint256 value) public {
+        require(index < 3);
+        registry.setAt(7, index, value);
+        assert(registry.getAt(7, 1) == 0);
+    }
+
+    function checkSymbolicKeyBoundedIndexCannotReachNextSlot(
+        uint256 key,
+        uint256 index,
+        uint256 value
+    ) public {
+        require(index < 3);
+        registry.setAt(key, index, value);
+        assert(registry.getAt(7, 1) == 0);
+    }
+
+    function checkSymbolicKeyBoundedIndexCannotReachListElement(
+        uint256 key,
+        uint256 index,
+        uint256 value
+    ) public {
+        require(index < 3);
+        registry.setListAt(key, index, value);
+        assert(registry.getListAt(7, 1) == 0);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicStorageLayoutAlias",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 7 tests for test/SymbolicStorageLayoutAlias.t.sol:SymbolicStorageLayoutAlias
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkBoundedIndexCannotReachNextSlot(uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkConstantKeyIndexCannotReachOwner(uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkIndexCannotReachOtherMapping(uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicKeyBoundedIndexCannotReachListElement(uint256,uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicKeyBoundedIndexCannotReachNextSlot(uint256,uint256,uint256) ([METRICS])
+[PASS] checkSymbolicKeyBoundedIndexCannotReachOwner(uint256,uint256,uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): solver error: solver model does not satisfy path constraints involving symbolic Keccak heuristic] checkSymbolicKeyIndexCannotReachOwner(uint256,uint256,uint256) ([METRICS])
+Suite result: FAILED. 1 passed; 6 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}

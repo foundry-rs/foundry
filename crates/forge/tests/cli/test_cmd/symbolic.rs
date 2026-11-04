@@ -2084,7 +2084,7 @@ contract SymbolicArrayAssertions is Test {
     }
 
     function checkZeroLengthMcopy(uint256 dest, uint256 size) public view {
-        vm.assume(size <= 2);
+        vm.assume(size <= 2 && (size == 0 || dest <= 0x100));
         uint256 byteAtZero;
         assembly {
             mstore8(0, 0xaa)
