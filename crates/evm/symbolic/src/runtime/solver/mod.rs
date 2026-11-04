@@ -587,9 +587,16 @@ impl SmtLibSubprocessSolver {
                     self.cache_model_result(cache_key, model.clone());
                     return Ok(model);
                 }
-                let lemmas = keccak_lemmas(cx, constraints, &model);
+                let (lemmas, pins) = keccak_lemmas(cx, constraints, &model);
                 if lemmas.is_empty() || rounds == 0 {
                     return parse_and_validate_model(cx, &output, constraints);
+                }
+                // Keeping this model's preimages and fixing their real hashes usually settles at
+                // once; a solver that moves the preimages every round may never converge otherwise.
+                let mut pinned = constraints.to_vec();
+                pinned.extend(pins);
+                if let Ok(model) = self.model_refining(cx, &pinned, 0) {
+                    return Ok(model);
                 }
                 trace!(lemmas = lemmas.len(), "model: refining Keccak values");
                 let mut refined = constraints.to_vec();
@@ -1221,11 +1228,13 @@ const KECCAK_REFINEMENT_ROUNDS: usize = 8;
 
 /// Returns, for each Keccak node whose model value is not the real hash of its model preimage,
 /// the lemma "this preimage hashes to its real value".
+/// Returns, for each Keccak node whose model value is not the real hash of its model preimage, the
+/// lemma that this preimage hashes to its real value, and the pin that fixes both.
 fn keccak_lemmas(
     cx: &mut SymCx,
     constraints: &[SymBoolExpr],
     model: &SymbolicModel,
-) -> Vec<SymBoolExpr> {
+) -> (Vec<SymBoolExpr>, Vec<SymBoolExpr>) {
     let mut nodes = Vec::new();
     let mut seen = HashSet::<SymExpr>::default();
     for constraint in constraints {
@@ -1237,6 +1246,7 @@ fn keccak_lemmas(
         });
     }
     let mut lemmas = Vec::new();
+    let mut pins = Vec::new();
     for node in nodes {
         let SymExprKind::Keccak { name, len, bytes } = node.kind() else { continue };
         let Some(assigned) = model.get(name).copied() else { continue };
@@ -1253,10 +1263,11 @@ fn keccak_lemmas(
         }
         let premise = SymBoolExpr::and(cx, premise);
         let hashes = SymBoolExpr::eq_word_const(cx, &node, real);
-        let not_premise = premise.not(cx);
-        lemmas.push(SymBoolExpr::or(cx, vec![not_premise, hashes]));
+        let not_premise = premise.clone().not(cx);
+        lemmas.push(SymBoolExpr::or(cx, vec![not_premise, hashes.clone()]));
+        pins.extend([premise, hashes]);
     }
-    lemmas
+    (lemmas, pins)
 }
 
 /// Returns a hard-arithmetic fallback model only after validating it against original constraints.
