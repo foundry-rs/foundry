@@ -675,7 +675,9 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 // A failed `setUp()` is rerun along with the failed tests of other suites.
 #[forgetest_init]
 fn rerun_includes_setup_failure_next_to_test_failures(prj: _, cmd: _) {
-    prj.update_config(|config| config.test_pattern = Some(Regex::new("^testC").unwrap().into()));
+    prj.update_config(|config| {
+        config.test_pattern = Some(Regex::new(r"^testC\w*").unwrap().into())
+    });
     prj.add_test(
         "RerunMixed.t.sol",
         r#"
