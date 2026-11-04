@@ -1027,12 +1027,12 @@ impl AccessRecord {
     }
 
     pub(crate) fn read(&mut self, address: Address, slot: SymExpr) {
-        Self::push_unique_slot(self.reads.entry(address).or_default(), slot);
+        self.reads.entry(address).or_default().push(slot);
     }
 
     pub(crate) fn write(&mut self, address: Address, slot: SymExpr) {
         self.read(address, slot.clone());
-        Self::push_unique_slot(self.writes.entry(address).or_default(), slot);
+        self.writes.entry(address).or_default().push(slot);
     }
 
     pub(crate) fn addresses(&self) -> Vec<Address> {
@@ -1050,12 +1050,6 @@ impl AccessRecord {
 
     pub(crate) fn write_slots(&self, address: Address) -> Vec<SymExpr> {
         self.writes.get(&address).cloned().unwrap_or_default()
-    }
-
-    fn push_unique_slot(slots: &mut Vec<SymExpr>, slot: SymExpr) {
-        if !slots.iter().any(|existing| existing == &slot) {
-            slots.push(slot);
-        }
     }
 }
 
@@ -1431,6 +1425,8 @@ pub(crate) struct ExpectedEmit {
     emitter: Option<SymExpr>,
     remaining: u64,
     template: Option<SymbolicLog>,
+    /// Set by `vm.expectEmitAnonymous`, which lets a log without topics fill the template.
+    anonymous: bool,
     /// Call depth of the frame that declared the expectation.
     depth: usize,
 }
@@ -1440,9 +1436,10 @@ impl ExpectedEmit {
         checks: ExpectedEmitChecks,
         emitter: Option<SymExpr>,
         remaining: u64,
+        anonymous: bool,
         depth: usize,
     ) -> Self {
-        Self { checks, emitter, remaining, template: None, depth }
+        Self { checks, emitter, remaining, template: None, anonymous, depth }
     }
 
     /// Returns whether this expectation forbids logs matching its template (`count = 0`).
@@ -1451,6 +1448,11 @@ impl ExpectedEmit {
     /// remaining is a `count = 0` expectation, which is met while no log matches it.
     pub(crate) const fn is_forbidden(&self) -> bool {
         self.remaining == 0
+    }
+
+    /// Returns whether this expectation was declared by `vm.expectEmitAnonymous`.
+    pub(crate) const fn is_anonymous(&self) -> bool {
+        self.anonymous
     }
 
     pub(crate) const fn template(&self) -> Option<&SymbolicLog> {

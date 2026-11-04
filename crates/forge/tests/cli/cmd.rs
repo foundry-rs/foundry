@@ -349,6 +349,30 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
     assert!(!prj.root().join("lib/forge-std/.git").exists());
 }
 
+// Without git on PATH, the error names git and retains the OS error.
+#[forgetest]
+fn init_without_git_names_git(prj: _, cmd: _) {
+    let empty = tempfile::tempdir().unwrap();
+
+    for no_git in [false, true] {
+        prj.wipe();
+        cmd.forge_fuse().env("PATH", empty.path());
+        cmd.arg("init")
+            .arg(prj.root())
+            .args(no_git.then_some("--no-git"))
+            .assert_failure()
+            .stdout_eq(str![""])
+            .stderr_eq(str![[r#"
+...
+Error: could not run `git`[..]
+
+Context:
+- [..]
+
+"#]]);
+    }
+}
+
 // Checks that `--no-commit` is accepted as a noop backwards-compatibility flag
 #[forgetest]
 fn can_init_with_no_commit(prj: _, cmd: _) {

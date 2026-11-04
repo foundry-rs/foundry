@@ -887,16 +887,17 @@ impl<N: Network> EthApi<N> {
     pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
         node_info!("anvil_reset");
         let _reset = self.reset_lock.lock().await;
-        if let Some(forking) = forking {
+        let warning = if let Some(forking) = forking {
             let staged = self.backend.prepare_fork_reset(forking, self.instance_id()).await?;
             let _lifecycle = self.lifecycle_lock.write().await;
             // Stop an old-context block before publishing the replacement DB and environment.
             let _mining = self.backend.lock_mining().await;
-            self.backend.commit_fork_reset(staged).await?;
+            let warning = self.backend.commit_fork_reset(staged).await?;
             self.reset_instance_id();
             self.pool.clear();
             self.pool_snapshots.lock().clear();
             self.fee_history_cache.lock().clear();
+            warning
         } else {
             let _lifecycle = self.lifecycle_lock.write().await;
             // Unlike fork preparation, memory preparation snapshots live local fee state and does
@@ -908,6 +909,12 @@ impl<N: Network> EthApi<N> {
             self.pool.clear();
             self.pool_snapshots.lock().clear();
             self.fee_history_cache.lock().clear();
+            None
+        };
+        drop(_reset);
+        // Diagnostics describe the completed reset and must not hold its lifecycle or state locks.
+        if let Some(warning) = warning {
+            let _ = sh_warn!("{warning}");
         }
         Ok(())
     }

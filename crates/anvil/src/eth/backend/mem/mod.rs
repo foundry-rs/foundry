@@ -5412,11 +5412,12 @@ impl<N: Network> Backend<N> {
         }
     }
 
-    /// Atomically publishes a fully prepared fork replacement.
+    /// Atomically publishes a fully prepared fork replacement and captures its fallback warning.
+    /// The caller emits the warning after releasing its lifecycle locks.
     pub(crate) async fn commit_fork_reset(
         &self,
         staged: StagedForkReset,
-    ) -> Result<(), BlockchainError> {
+    ) -> Result<Option<String>, BlockchainError> {
         let fork_block_number = staged.fork.block_number();
         let fork_block_hash = staged.fork.block_hash();
         let fork_total_difficulty = staged.fork.total_difficulty();
@@ -5487,7 +5488,14 @@ impl<N: Network> Backend<N> {
         self.cheats.clear_next_block_overrides();
 
         trace!(target: "backend", "reset fork");
-        Ok(())
+        let storage = self.blockchain.storage.read();
+        if storage.tempo.is_some()
+            && let Some(fork) = self.get_fork()
+        {
+            Ok(TempoChain::epoch_length_fallback_warning(&node_config, &fork))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Builds a complete in-memory replacement without mutating the live backend.
