@@ -75,6 +75,7 @@ rustls = { workspace = true, features = ["ring"] }
 tracing-tracy = { version = "0.12", optional = true, features = ["demangle"] }
 
 [dev-dependencies]
+alloy-transport.workspace = true
 tempfile.workspace = true
 
 [target.'cfg(unix)'.dependencies]
