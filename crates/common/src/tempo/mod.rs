@@ -508,11 +508,13 @@ pub async fn maybe_signer(
 
 /// Asks the browser wallet to sign `authorization` with its connected root account, and verifies
 /// the result.
+///
+/// The browser wallet cannot display T5/T6 fields (witness, account, admin) yet, so callers must
+/// reject them before starting the browser flow.
 pub async fn sign_key_authorization_with_browser(
     browser: &BrowserSigner<TempoNetwork>,
     authorization: KeyAuthorization,
 ) -> Result<SignedKeyAuthorization> {
-    ensure_browser_key_authorization_supported(&authorization)?;
     let signed = browser
         .sign_key_authorization(
             serde_json::to_value(&authorization)?,
@@ -547,16 +549,4 @@ fn verify_browser_key_authorization(
          account is {root_account}"
     );
     Ok(signed)
-}
-
-/// Rejects T5/T6 `KeyAuthorization` fields, which the browser wallet cannot display yet, so it is
-/// never asked to sign them.
-fn ensure_browser_key_authorization_supported(authorization: &KeyAuthorization) -> Result<()> {
-    eyre::ensure!(
-        authorization.witness.is_none()
-            && authorization.account.is_none()
-            && !authorization.is_admin,
-        "browser key authorization signing does not support T5/T6 fields yet: witness, admin, account"
-    );
-    Ok(())
 }

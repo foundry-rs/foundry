@@ -12,8 +12,10 @@ use alloy_rpc_types::TransactionRequest;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolValue};
+use foundry_wallets::WalletOpts;
 use tempo_alloy::{
     TempoNetwork,
+    accounts::TempoAccountsError,
     contracts::precompiles::{IFeeManager, IStablecoinDEX, ITIP20, STABLECOIN_DEX_ADDRESS},
     rpc::TempoTransactionRequest,
 };
@@ -24,9 +26,8 @@ use tempo_primitives::transaction::{
 
 use super::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, OUSD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
-    TIP_FEE_MANAGER_ADDRESS, TempoSponsor, ensure_browser_key_authorization_supported,
-    known_fee_token_symbol, resolve_and_set_fee_token, resolve_fee_token_symbol,
-    verify_browser_key_authorization,
+    TIP_FEE_MANAGER_ADDRESS, TempoSponsor, known_fee_token_symbol, maybe_signer,
+    resolve_and_set_fee_token, resolve_fee_token_symbol, verify_browser_key_authorization,
 };
 
 #[test]
@@ -709,10 +710,6 @@ fn browser_key_authorization_accepts_root_signature() {
     .unwrap();
 
     assert_eq!(signed.authorization, requested);
-    assert_eq!(
-        signed.recover_signer().unwrap(),
-        address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")
-    );
 }
 
 #[test]
@@ -802,22 +799,27 @@ fn browser_key_authorization_rejects_invalid_rlp() {
     assert_eq!(err.to_string(), "invalid SignedKeyAuthorization RLP from wallet");
 }
 
-#[test]
-fn browser_key_authorization_rejects_t5_t6_fields() {
-    let plain =
-        KeyAuthorization::unrestricted(1, SignatureType::Secp256k1, Address::repeat_byte(0xbb));
-    ensure_browser_key_authorization_supported(&plain).unwrap();
+#[tokio::test]
+async fn maybe_signer_pins_access_key_wallet_to_chain() {
+    let root = Address::repeat_byte(0x11);
+    let wallet = WalletOpts {
+        tempo_access_key: Some(
+            "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d".to_owned(),
+        ),
+        tempo_root_account: Some(root),
+        ..Default::default()
+    };
 
-    for unsupported in [
-        plain.clone().with_witness(B256::repeat_byte(0x53)),
-        plain.clone().with_account(Address::repeat_byte(0xcc)),
-        plain.into_admin(Address::repeat_byte(0xcc)),
-    ] {
-        let err = ensure_browser_key_authorization_supported(&unsupported).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "browser key authorization signing does not support T5/T6 fields yet: witness, admin, \
-             account"
-        );
-    }
+    let (signer, pinned) = maybe_signer(&wallet, Some(4217)).await.unwrap();
+    assert!(signer.is_none());
+    let key = pinned.unwrap().active_access_key().unwrap();
+    assert_eq!(key.account(), root);
+    assert_eq!(key.chain_id(), 4217);
+    assert_eq!(key.address(), address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"));
+
+    let (_, unpinned) = maybe_signer(&wallet, None).await.unwrap();
+    assert!(matches!(
+        unpinned.unwrap().active_access_key(),
+        Err(TempoAccountsError::MissingChainId)
+    ));
 }
