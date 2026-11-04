@@ -391,7 +391,7 @@ dependencies = [
  "alloy-sol-types",
  "auto_impl",
  "derive_more",
- "revm",
+ "revm 43.0.3",
  "thiserror 2.0.21",
  "tracing",
 ]
@@ -460,7 +460,7 @@ dependencies = [
  "alloy-evm",
  "alloy-primitives",
  "monad-revm",
- "revm",
+ "revm 43.0.3",
 ]
 
 [[package]]
@@ -515,7 +515,7 @@ dependencies = [
  "auto_impl",
  "op-alloy",
  "op-revm",
- "revm",
+ "revm 43.0.3",
  "thiserror 2.0.21",
 ]
 
@@ -1370,17 +1370,17 @@ dependencies = [
  "rand 0.9.5",
  "rand_chacha 0.10.0",
  "reqwest 0.13.5",
- "revm",
+ "revm 43.0.3",
  "revm-inspectors",
  "serde",
  "serde_json",
  "tempfile",
- "tempo-alloy",
+ "tempo-alloy 1.16.0",
  "tempo-dkg-onchain-artifacts",
  "tempo-evm",
- "tempo-hardfork",
+ "tempo-hardfork 1.16.0",
  "tempo-precompiles",
- "tempo-primitives",
+ "tempo-primitives 1.16.0",
  "tempo-revm",
  "thiserror 2.0.21",
  "tokio",
@@ -1408,7 +1408,7 @@ dependencies = [
  "foundry-evm",
  "foundry-primitives",
  "rand 0.9.5",
- "revm",
+ "revm 43.0.3",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -1462,8 +1462,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tempo-dkg-onchain-artifacts",
- "tempo-hardfork",
- "tempo-primitives",
+ "tempo-hardfork 1.16.0",
+ "tempo-primitives 1.16.0",
  "tokio",
 ]
 
@@ -2518,7 +2518,7 @@ dependencies = [
  "alloy-primitives",
  "auto_impl",
  "base-common-genesis",
- "revm",
+ "revm 43.0.3",
  "spin",
 ]
 
@@ -2540,7 +2540,7 @@ dependencies = [
  "reth-codecs 0.6.0",
  "reth-primitives-traits 0.6.0",
  "reth-zstd-compressors 0.6.0",
- "revm",
+ "revm 43.0.3",
  "serde",
  "thiserror 2.0.21",
 ]
@@ -2574,7 +2574,7 @@ dependencies = [
  "base-execution-eip8130",
  "base-metrics",
  "base-precompile-storage",
- "revm",
+ "revm 43.0.3",
  "serde",
  "thiserror 2.0.21",
 ]
@@ -2642,7 +2642,7 @@ dependencies = [
  "base-common-genesis",
  "base-precompile-macros",
  "base-precompile-storage",
- "revm",
+ "revm 43.0.3",
 ]
 
 [[package]]
@@ -2662,7 +2662,7 @@ dependencies = [
  "base-common-evm",
  "derive_more",
  "reth-primitives-traits 0.6.0",
- "revm",
+ "revm 43.0.3",
  "serde",
  "serde_json",
 ]
@@ -2712,7 +2712,7 @@ dependencies = [
  "base64 0.22.1",
  "k256",
  "p256 0.13.2",
- "revm",
+ "revm 43.0.3",
  "sha2 0.10.9",
  "thiserror 2.0.21",
 ]
@@ -2743,7 +2743,7 @@ dependencies = [
  "alloy-sol-types",
  "base-precompile-macros",
  "derive_more",
- "revm",
+ "revm 43.0.3",
  "thiserror 2.0.21",
  "tracing",
 ]
@@ -3389,7 +3389,7 @@ dependencies = [
  "rayon",
  "regex",
  "reqwest 0.13.5",
- "revm",
+ "revm 43.0.3",
  "rexpect",
  "rpassword",
  "semver 1.0.28",
@@ -3397,10 +3397,10 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
- "tempo-alloy",
- "tempo-contracts",
- "tempo-hardfork",
- "tempo-primitives",
+ "tempo-alloy 1.16.0",
+ "tempo-contracts 1.16.0",
+ "tempo-hardfork 1.16.0",
+ "tempo-primitives 1.16.0",
  "tokio",
  "tower",
  "tracing",
@@ -3487,7 +3487,7 @@ dependencies = [
  "foundry-test-utils",
  "itertools 0.15.0",
  "reqwest 0.13.5",
- "revm",
+ "revm 43.0.3",
  "rexpect",
  "rustyline",
  "semver 1.0.28",
@@ -5763,7 +5763,7 @@ dependencies = [
  "rayon",
  "regex",
  "reqwest 0.13.5",
- "revm",
+ "revm 43.0.3",
  "rexpect",
  "rustix",
  "semver 1.0.28",
@@ -5777,7 +5777,7 @@ dependencies = [
  "soldeer-core",
  "svm-rs",
  "tempfile",
- "tempo-alloy",
+ "tempo-alloy 1.16.0",
  "thiserror 2.0.21",
  "tokio",
  "toml_edit",
@@ -5881,8 +5881,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "tempo-alloy",
- "tempo-primitives",
+ "tempo-alloy 1.16.0",
+ "tempo-primitives 1.16.0",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -5949,7 +5949,7 @@ dependencies = [
  "monad-revm",
  "regex",
  "reqwest 0.13.5",
- "revm",
+ "revm 43.0.3",
  "semver 1.0.28",
  "serde",
  "serde_json",
@@ -6048,16 +6048,16 @@ dependencies = [
  "parking_lot 0.12.5",
  "proptest",
  "rand 0.9.5",
- "revm",
+ "revm 43.0.3",
  "semver 1.0.28",
  "serde",
  "serde_json",
  "solar-compiler",
  "tempfile",
- "tempo-contracts",
- "tempo-hardfork",
+ "tempo-contracts 1.16.0",
+ "tempo-hardfork 1.16.0",
  "tempo-precompiles",
- "tempo-primitives",
+ "tempo-primitives 1.16.0",
  "thiserror 2.0.21",
  "toml",
  "toml_edit",
@@ -6125,7 +6125,7 @@ dependencies = [
  "soldeer-commands",
  "strsim",
  "tempfile",
- "tempo-primitives",
+ "tempo-primitives 1.16.0",
  "tikv-jemallocator",
  "tokio",
  "toml",
@@ -6197,7 +6197,7 @@ dependencies = [
  "path-slash",
  "regex",
  "reqwest 0.13.5",
- "revm",
+ "revm 43.0.3",
  "semver 1.0.28",
  "serde",
  "serde_json",
@@ -6206,8 +6206,8 @@ dependencies = [
  "solar-compiler",
  "syn 3.0.6",
  "tempfile",
- "tempo-alloy",
- "tempo-primitives",
+ "tempo-alloy 1.16.0",
+ "tempo-primitives 1.16.0",
  "thiserror 2.0.21",
  "tokio",
  "tower",
@@ -6237,11 +6237,11 @@ dependencies = [
  "op-alloy-consensus",
  "op-alloy-rpc-types",
  "proptest",
- "revm",
+ "revm 43.0.3",
  "serde",
  "serde_json",
  "similar-asserts",
- "tempo-alloy",
+ "tempo-alloy 1.16.0",
  "yansi",
 ]
 
@@ -6400,7 +6400,7 @@ dependencies = [
  "foundry-evm-core",
  "foundry-evm-traces",
  "foundry-tui",
- "revm",
+ "revm 43.0.3",
  "serde_json",
  "soldb-core",
  "soldb-debugger",
@@ -6440,13 +6440,13 @@ dependencies = [
  "proptest",
  "rand 0.9.5",
  "rayon",
- "revm",
+ "revm 43.0.3",
  "revm-inspectors",
  "serde",
  "serde_json",
  "soldb-core",
  "tempo-precompiles",
- "tempo-primitives",
+ "tempo-primitives 1.16.0",
  "tempo-revm",
  "thiserror 2.0.21",
  "tokio",
@@ -6516,16 +6516,16 @@ dependencies = [
  "op-alloy-rpc-types",
  "op-revm",
  "parking_lot 0.12.5",
- "revm",
+ "revm 43.0.3",
  "revm-inspectors",
  "serde",
  "serde_json",
- "tempo-alloy",
- "tempo-contracts",
+ "tempo-alloy 1.16.0",
+ "tempo-contracts 1.16.0",
  "tempo-evm",
- "tempo-hardfork",
+ "tempo-hardfork 1.16.0",
  "tempo-precompiles",
- "tempo-primitives",
+ "tempo-primitives 1.16.0",
  "tempo-revm",
  "thiserror 2.0.21",
  "tokio",
@@ -6543,7 +6543,7 @@ dependencies = [
  "foundry-compilers",
  "foundry-evm-core",
  "rayon",
- "revm",
+ "revm 43.0.3",
  "semver 1.0.28",
  "solar-compiler",
  "tracing",
@@ -6567,7 +6567,7 @@ dependencies = [
  "parking_lot 0.12.5",
  "proptest",
  "rand 0.9.5",
- "revm",
+ "revm 43.0.3",
  "serde",
  "solar-compiler",
  "thiserror 2.0.21",
@@ -6587,9 +6587,9 @@ dependencies = [
  "foundry-compilers",
  "monad-revm",
  "op-revm",
- "revm",
+ "revm 43.0.3",
  "serde",
- "tempo-hardfork",
+ "tempo-hardfork 1.16.0",
 ]
 
 [[package]]
@@ -6605,10 +6605,10 @@ dependencies = [
  "clap",
  "foundry-evm-hardforks",
  "monad-revm",
- "revm",
+ "revm 43.0.3",
  "serde",
  "serde_json",
- "tempo-contracts",
+ "tempo-contracts 1.16.0",
 ]
 
 [[package]]
@@ -6667,7 +6667,7 @@ dependencies = [
  "monad-revm",
  "rayon",
  "reqwest 0.13.5",
- "revm",
+ "revm 43.0.3",
  "revm-inspectors",
  "ron",
  "serde",
@@ -6676,7 +6676,7 @@ dependencies = [
  "solar-compiler",
  "soldb-core",
  "tempfile",
- "tempo-contracts",
+ "tempo-contracts 1.16.0",
  "tempo-precompiles",
  "tokio",
  "tracing",
@@ -6696,7 +6696,7 @@ dependencies = [
  "eyre",
  "futures",
  "parking_lot 0.13.0",
- "revm",
+ "revm 43.0.3",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -6749,11 +6749,11 @@ dependencies = [
  "op-alloy-consensus",
  "op-alloy-rpc-types",
  "op-revm",
- "revm",
+ "revm 43.0.3",
  "serde",
  "serde_json",
- "tempo-alloy",
- "tempo-primitives",
+ "tempo-alloy 1.16.0",
+ "tempo-primitives 1.16.0",
  "tempo-revm",
 ]
 
@@ -6806,14 +6806,13 @@ dependencies = [
 
 [[package]]
 name = "foundry-wallets"
-version = "0.1.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=c996c4655f670e5cc9091d4e27787c01308d0b6b#c996c4655f670e5cc9091d4e27787c01308d0b6b"
+version = "0.2.0"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=39cc9fbe82bab09345ff0265032deb9fb4ca7782#39cc9fbe82bab09345ff0265032deb9fb4ca7782"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
  "alloy-network",
  "alloy-primitives",
- "alloy-rlp",
  "alloy-signer",
  "alloy-signer-aws",
  "alloy-signer-gcp",
@@ -6836,7 +6835,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "tempo-alloy",
  "thiserror 2.0.21",
  "tokio",
  "tower",
@@ -8593,8 +8591,8 @@ checksum = "27654f9cc215f197ccf39165b6565d9099e65cd1b28314e07b241c6bc6731616"
 dependencies = [
  "alloy-sol-types",
  "auto_impl",
- "revm",
- "revm-interpreter",
+ "revm 43.0.3",
+ "revm-interpreter 43.0.2",
  "serde",
 ]
 
@@ -8622,7 +8620,7 @@ dependencies = [
  "serde_json_canonicalizer",
  "sha2 0.11.0",
  "subtle",
- "tempo-alloy",
+ "tempo-alloy 1.11.0",
  "thiserror 2.0.21",
  "time",
  "tokio",
@@ -9168,7 +9166,7 @@ source = "git+https://github.com/foundry-rs/optimism?rev=206d26cedb9d861b983d89f
 dependencies = [
  "auto_impl",
  "op-alloy-consensus",
- "revm",
+ "revm 43.0.3",
  "serde",
 ]
 
@@ -10734,7 +10732,7 @@ dependencies = [
  "reth-primitives-traits 0.8.2",
  "reth-trie",
  "reth-trie-sparse",
- "revm",
+ "revm 43.0.3",
  "serde",
  "tokio",
  "tokio-stream",
@@ -10954,7 +10952,7 @@ dependencies = [
  "reth-storage-api",
  "reth-storage-errors",
  "reth-trie-common",
- "revm",
+ "revm 43.0.3",
 ]
 
 [[package]]
@@ -10974,7 +10972,7 @@ dependencies = [
  "reth-execution-types",
  "reth-primitives-traits 0.8.2",
  "reth-storage-errors",
- "revm",
+ "revm 43.0.3",
 ]
 
 [[package]]
@@ -11005,7 +11003,7 @@ dependencies = [
  "reth-ethereum-primitives",
  "reth-primitives-traits 0.8.2",
  "reth-trie-common",
- "revm",
+ "revm 43.0.3",
  "serde",
  "serde_with",
 ]
@@ -11137,7 +11135,7 @@ dependencies = [
  "reth-primitives-traits 0.8.2",
  "reth-storage-api",
  "reth-storage-errors",
- "revm",
+ "revm 43.0.3",
 ]
 
 [[package]]
@@ -11203,7 +11201,7 @@ dependencies = [
  "reth-stages-types",
  "reth-storage-errors",
  "reth-trie-common",
- "revm",
+ "revm 43.0.3",
  "serde_json",
 ]
 
@@ -11220,7 +11218,7 @@ dependencies = [
  "reth-primitives-traits 0.8.2",
  "reth-prune-types",
  "reth-static-file-types",
- "revm",
+ "revm 43.0.3",
  "thiserror 2.0.21",
 ]
 
@@ -11243,7 +11241,7 @@ dependencies = [
  "reth-storage-errors",
  "reth-trie-common",
  "reth-trie-sparse",
- "revm",
+ "revm 43.0.3",
  "tracing",
 ]
 
@@ -11266,7 +11264,7 @@ dependencies = [
  "rayon",
  "reth-codecs 0.8.2",
  "reth-primitives-traits 0.8.2",
- "revm",
+ "revm 43.0.3",
  "serde",
  "serde_with",
  "thiserror 2.0.21",
@@ -11318,19 +11316,38 @@ dependencies = [
 
 [[package]]
 name = "revm"
+version = "42.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7c7fcd426beab3b91300a6d0d5eb8d583c0fad0fba451126e19fd51443eca62"
+dependencies = [
+ "revm-bytecode 42.0.0",
+ "revm-context 42.0.0",
+ "revm-context-interface 42.0.0",
+ "revm-database 42.0.0",
+ "revm-database-interface 42.0.0",
+ "revm-handler 42.0.1",
+ "revm-inspector 42.0.1",
+ "revm-interpreter 42.0.0",
+ "revm-precompile 42.0.1",
+ "revm-primitives 42.0.0",
+ "revm-state 42.0.0",
+]
+
+[[package]]
+name = "revm"
 version = "43.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62b2fbb3bdce72fef4f156e2164bdfde44dc3aeebc5b4f31a413fba0c09c524c"
 dependencies = [
  "revm-bytecode 43.0.0",
- "revm-context",
- "revm-context-interface",
- "revm-database",
- "revm-database-interface",
- "revm-handler",
- "revm-inspector",
- "revm-interpreter",
- "revm-precompile",
+ "revm-context 43.0.3",
+ "revm-context-interface 43.0.2",
+ "revm-database 43.0.1",
+ "revm-database-interface 43.0.1",
+ "revm-handler 43.0.3",
+ "revm-inspector 43.0.3",
+ "revm-interpreter 43.0.2",
+ "revm-precompile 43.0.3",
  "revm-primitives 43.0.0",
  "revm-state 43.0.1",
 ]
@@ -11361,6 +11378,23 @@ dependencies = [
 
 [[package]]
 name = "revm-context"
+version = "42.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc6512f05f83378e29b2b016fa5bd7f5a533e3625548be4113732e1a536c2564"
+dependencies = [
+ "bitvec",
+ "cfg-if",
+ "derive-where",
+ "revm-bytecode 42.0.0",
+ "revm-context-interface 42.0.0",
+ "revm-database-interface 42.0.0",
+ "revm-primitives 42.0.0",
+ "revm-state 42.0.0",
+ "serde",
+]
+
+[[package]]
+name = "revm-context"
 version = "43.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b06efea511a15ff8309acaa4c283239b444b461bbd2e9f0326c8586f45fb1da"
@@ -11369,10 +11403,26 @@ dependencies = [
  "cfg-if",
  "derive-where",
  "revm-bytecode 43.0.0",
- "revm-context-interface",
- "revm-database-interface",
+ "revm-context-interface 43.0.2",
+ "revm-database-interface 43.0.1",
  "revm-primitives 43.0.0",
  "revm-state 43.0.1",
+ "serde",
+]
+
+[[package]]
+name = "revm-context-interface"
+version = "42.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "103fff818b10311034c0c11ff8760294ee0e3c320daab3c5717990fe8ee2617b"
+dependencies = [
+ "alloy-eip2930",
+ "alloy-eip7702",
+ "auto_impl",
+ "either",
+ "revm-database-interface 42.0.0",
+ "revm-primitives 42.0.0",
+ "revm-state 42.0.0",
  "serde",
 ]
 
@@ -11386,9 +11436,25 @@ dependencies = [
  "alloy-eip7702",
  "auto_impl",
  "either",
- "revm-database-interface",
+ "revm-database-interface 43.0.1",
  "revm-primitives 43.0.0",
  "revm-state 43.0.1",
+ "serde",
+]
+
+[[package]]
+name = "revm-database"
+version = "42.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df72760eab0852100e748c7cb03ce0221626d60ac14534118c84c5cc894fb4c9"
+dependencies = [
+ "alloy-eips",
+ "derive_more",
+ "either",
+ "revm-bytecode 42.0.0",
+ "revm-database-interface 42.0.0",
+ "revm-primitives 42.0.0",
+ "revm-state 42.0.0",
  "serde",
 ]
 
@@ -11402,10 +11468,24 @@ dependencies = [
  "derive_more",
  "either",
  "revm-bytecode 43.0.0",
- "revm-database-interface",
+ "revm-database-interface 43.0.1",
  "revm-primitives 43.0.0",
  "revm-state 43.0.1",
  "serde",
+]
+
+[[package]]
+name = "revm-database-interface"
+version = "42.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9286c059a11be1dee814cafdc3a3ade57521c8caa050785a52c19a9d894f400"
+dependencies = [
+ "auto_impl",
+ "either",
+ "revm-primitives 42.0.0",
+ "revm-state 42.0.0",
+ "serde",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -11424,6 +11504,25 @@ dependencies = [
 
 [[package]]
 name = "revm-handler"
+version = "42.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09126175c3fa482e71e80cc28c6bb17e681911e472b94d4f7f73dd6780411798"
+dependencies = [
+ "auto_impl",
+ "derive-where",
+ "revm-bytecode 42.0.0",
+ "revm-context 42.0.0",
+ "revm-context-interface 42.0.0",
+ "revm-database-interface 42.0.0",
+ "revm-interpreter 42.0.0",
+ "revm-precompile 42.0.1",
+ "revm-primitives 42.0.0",
+ "revm-state 42.0.0",
+ "serde",
+]
+
+[[package]]
+name = "revm-handler"
 version = "43.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba5102e9c02b9d27e7c98f449b495a2c2b2ec011209f4eeca16e054520ec5ac4"
@@ -11431,13 +11530,30 @@ dependencies = [
  "auto_impl",
  "derive-where",
  "revm-bytecode 43.0.0",
- "revm-context",
- "revm-context-interface",
- "revm-database-interface",
- "revm-interpreter",
- "revm-precompile",
+ "revm-context 43.0.3",
+ "revm-context-interface 43.0.2",
+ "revm-database-interface 43.0.1",
+ "revm-interpreter 43.0.2",
+ "revm-precompile 43.0.3",
  "revm-primitives 43.0.0",
  "revm-state 43.0.1",
+ "serde",
+]
+
+[[package]]
+name = "revm-inspector"
+version = "42.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4aa55b208b52f0c083ea68147c78866eeecadd7c0071a614f477de316b60648e"
+dependencies = [
+ "auto_impl",
+ "either",
+ "revm-context 42.0.0",
+ "revm-database-interface 42.0.0",
+ "revm-handler 42.0.1",
+ "revm-interpreter 42.0.0",
+ "revm-primitives 42.0.0",
+ "revm-state 42.0.0",
  "serde",
 ]
 
@@ -11449,10 +11565,10 @@ checksum = "825cf946c1bf3178f6a93aae4e8064a0ebd505bc764a7fe3d49411e7242e4091"
 dependencies = [
  "auto_impl",
  "either",
- "revm-context",
- "revm-database-interface",
- "revm-handler",
- "revm-interpreter",
+ "revm-context 43.0.3",
+ "revm-database-interface 43.0.1",
+ "revm-handler 43.0.3",
+ "revm-interpreter 43.0.2",
  "revm-primitives 43.0.0",
  "revm-state 43.0.1",
  "serde",
@@ -11475,11 +11591,24 @@ dependencies = [
  "boa_gc",
  "colorchoice",
  "num-bigint 0.4.8",
- "revm",
+ "revm 43.0.3",
  "ruint",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "revm-interpreter"
+version = "42.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd310927437752ce4bac6997b385772823b84843f04c82e151993bec1265a5ed"
+dependencies = [
+ "revm-bytecode 42.0.0",
+ "revm-context-interface 42.0.0",
+ "revm-primitives 42.0.0",
+ "revm-state 42.0.0",
+ "serde",
 ]
 
 [[package]]
@@ -11489,10 +11618,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa32f5099a266329d1869d6f9bf4bb7894345d2b58c57d05396f67385d65f299"
 dependencies = [
  "revm-bytecode 43.0.0",
- "revm-context-interface",
+ "revm-context-interface 43.0.2",
  "revm-primitives 43.0.0",
  "revm-state 43.0.1",
  "serde",
+]
+
+[[package]]
+name = "revm-precompile"
+version = "42.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2431091420999795df6a200b9f7933defe3d654710560a895e6bcabbd9954a5"
+dependencies = [
+ "ark-bls12-381",
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.6.0",
+ "ark-serialize 0.6.0",
+ "arrayref",
+ "aurora-engine-modexp",
+ "cfg-if",
+ "k256",
+ "p256 0.13.2",
+ "revm-context-interface 42.0.0",
+ "revm-primitives 42.0.0",
+ "ripemd 0.2.0",
+ "sha2 0.11.0",
 ]
 
 [[package]]
@@ -11513,7 +11664,7 @@ dependencies = [
  "cfg-if",
  "k256",
  "p256 0.13.2",
- "revm-context-interface",
+ "revm-context-interface 43.0.2",
  "revm-primitives 43.0.0",
  "ripemd 0.2.0",
  "secp256k1 0.31.1",
@@ -13466,6 +13617,47 @@ dependencies = [
 
 [[package]]
 name = "tempo-alloy"
+version = "1.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb621c7446ece6cd71d3efddc5caa7967104c9d531c1d06bb78126cb07623930"
+dependencies = [
+ "alloy-consensus",
+ "alloy-contract",
+ "alloy-eips",
+ "alloy-json-rpc",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rlp",
+ "alloy-rpc-client",
+ "alloy-rpc-types-eth",
+ "alloy-serde",
+ "alloy-signer",
+ "alloy-signer-local",
+ "alloy-sol-types",
+ "alloy-transport",
+ "async-trait",
+ "base64 0.22.1",
+ "dashmap",
+ "derive_more",
+ "dirs-next",
+ "futures",
+ "http 1.5.0",
+ "p256 0.13.2",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempo-chainspec 1.11.0",
+ "tempo-contracts 1.11.0",
+ "tempo-primitives 1.11.0",
+ "thiserror 2.0.21",
+ "tower",
+ "tracing",
+]
+
+[[package]]
+name = "tempo-alloy"
 version = "1.16.0"
 source = "git+https://github.com/tempoxyz/tempo?rev=55a96bad10cb3e171f1b28dfd6e21bea957df0e4#55a96bad10cb3e171f1b28dfd6e21bea957df0e4"
 dependencies = [
@@ -13496,12 +13688,29 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "tempo-chainspec",
- "tempo-contracts",
- "tempo-primitives",
+ "tempo-chainspec 1.16.0",
+ "tempo-contracts 1.16.0",
+ "tempo-primitives 1.16.0",
  "thiserror 2.0.21",
  "tower",
  "tracing",
+]
+
+[[package]]
+name = "tempo-chainspec"
+version = "1.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d93395433bdf5f7a3b77e0d94fc073f8a9212ca98253764995a47d701ddfe4ae"
+dependencies = [
+ "alloy-eips",
+ "alloy-genesis",
+ "alloy-primitives",
+ "once_cell",
+ "paste",
+ "serde",
+ "serde_json",
+ "tempo-hardfork 1.11.0",
+ "tempo-primitives 1.11.0",
 ]
 
 [[package]]
@@ -13523,8 +13732,21 @@ dependencies = [
  "serde",
  "serde_json",
  "tempo-dkg-onchain-artifacts",
- "tempo-hardfork",
- "tempo-primitives",
+ "tempo-hardfork 1.16.0",
+ "tempo-primitives 1.16.0",
+]
+
+[[package]]
+name = "tempo-contracts"
+version = "1.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "707973df430ad7a79d4b1e7d9ac5df7dd2bd3b87944182b207d780290f0d5977"
+dependencies = [
+ "alloy-contract",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "serde",
+ "tempo-hardfork 1.11.0",
 ]
 
 [[package]]
@@ -13541,7 +13763,7 @@ dependencies = [
  "alloy-transport",
  "k256",
  "serde",
- "tempo-hardfork",
+ "tempo-hardfork 1.16.0",
 ]
 
 [[package]]
@@ -13575,14 +13797,26 @@ dependencies = [
  "reth-evm-ethereum",
  "reth-primitives-traits 0.8.2",
  "reth-revm",
- "tempo-chainspec",
- "tempo-contracts",
+ "tempo-chainspec 1.16.0",
+ "tempo-contracts 1.16.0",
  "tempo-dkg-onchain-artifacts",
  "tempo-precompiles",
- "tempo-primitives",
+ "tempo-primitives 1.16.0",
  "tempo-revm",
  "thiserror 2.0.21",
  "tracing",
+]
+
+[[package]]
+name = "tempo-hardfork"
+version = "1.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3cf3b208113c1e63b4bf6a2980a25066b47e696514ce333c5e18b6a41cba7049"
+dependencies = [
+ "alloy-eips",
+ "alloy-hardforks",
+ "paste",
+ "serde",
 ]
 
 [[package]]
@@ -13627,15 +13861,15 @@ dependencies = [
  "derive_more",
  "keccak-const",
  "paste",
- "revm",
+ "revm 43.0.3",
  "scoped-tls",
  "serde",
  "serde_json",
- "tempo-chainspec",
- "tempo-contracts",
+ "tempo-chainspec 1.16.0",
+ "tempo-contracts 1.16.0",
  "tempo-nitro-attestation",
  "tempo-precompiles-macros",
- "tempo-primitives",
+ "tempo-primitives 1.16.0",
  "thiserror 2.0.21",
  "tracing",
 ]
@@ -13649,6 +13883,29 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "tempo-primitives"
+version = "1.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b60f1395d853c21e646893b0e8150b8e77456756bde58aebd80240c270856adc"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-serde",
+ "base64 0.22.1",
+ "commonware-cryptography",
+ "derive_more",
+ "once_cell",
+ "p256 0.13.2",
+ "revm 42.0.1",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempo-contracts 1.11.0",
 ]
 
 [[package]]
@@ -13671,11 +13928,11 @@ dependencies = [
  "reth-codecs 0.8.2",
  "reth-ethereum-primitives",
  "reth-primitives-traits 0.8.2",
- "revm",
+ "revm 43.0.3",
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "tempo-contracts",
+ "tempo-contracts 1.16.0",
 ]
 
 [[package]]
@@ -13691,11 +13948,11 @@ dependencies = [
  "derive_more",
  "reth-evm",
  "reth-storage-api",
- "revm",
- "tempo-chainspec",
- "tempo-contracts",
+ "revm 43.0.3",
+ "tempo-chainspec 1.16.0",
+ "tempo-contracts 1.16.0",
  "tempo-precompiles",
- "tempo-primitives",
+ "tempo-primitives 1.16.0",
  "thiserror 2.0.21",
  "tracing",
 ]

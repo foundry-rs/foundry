@@ -21,11 +21,12 @@ use foundry_common::{
 use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
 use foundry_evm::hardfork::TempoHardfork;
 use foundry_evm_networks::NetworkVariant;
-use foundry_wallets::{TempoAccountsWallet, WalletOpts, WalletSigner};
+use foundry_wallets::{WalletOpts, WalletSigner};
 use serde_json::Value;
 use std::str::FromStr;
 use tempo_alloy::{
     TempoNetwork,
+    accounts::TempoAccountsWallet,
     rpc::TempoTransactionRequest,
     transport::{RelayConnector, SponsorshipMode},
 };
@@ -159,7 +160,7 @@ pub(crate) async fn resolve_session_or_wallet_signer(
 ) -> Result<(Option<WalletSigner>, Option<TempoAccountsWallet>)> {
     let (signer, access_key) = match tempo.session_signer_for_wallet(wallet, chain_id)? {
         Some(session) => (None, Some(session.access_key)),
-        None => wallet.maybe_signer_for_chain(chain_id).await?,
+        None => foundry_common::tempo::maybe_signer(wallet, Some(chain_id)).await?,
     };
     if let (Some(from), Some(access_key)) = (wallet.from, &access_key) {
         eyre::ensure!(
@@ -259,7 +260,7 @@ pub(crate) async fn resolve_transaction_network_and_signer(
 
     let mut explicit_wallet = eth.wallet.clone();
     explicit_wallet.from = None;
-    let (signer, access_key) = explicit_wallet.maybe_signer().await?;
+    let (signer, access_key) = foundry_common::tempo::maybe_signer(&explicit_wallet, None).await?;
     let network =
         crate::cmd::resolve_transaction_network(&config, requires_tempo || access_key.is_some())
             .await?;
@@ -278,7 +279,8 @@ pub(crate) async fn resolve_transaction_network_and_signer(
     // Only consult the Accounts store after selecting Tempo.
     let provider = ProviderBuilder::<Ethereum>::from_config(&config)?.build()?;
     let chain = get_chain(config.chain, &provider).await?;
-    let (signer, access_key) = eth.wallet.maybe_signer_for_chain(chain.id()).await?;
+    let (signer, access_key) =
+        foundry_common::tempo::maybe_signer(&eth.wallet, Some(chain.id())).await?;
     if let Some(access_key) = &access_key {
         let from = eth.wallet.from.expect("checked above");
         eyre::ensure!(

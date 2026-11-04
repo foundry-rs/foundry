@@ -58,14 +58,12 @@ use foundry_evm::{
     hardfork::TempoHardfork,
     traces::CallKind,
 };
-use foundry_wallets::{
-    TempoAccountsWallet,
-    wallet_browser::{error::BrowserWalletError, signer::BrowserSigner},
-};
+use foundry_wallets::wallet_browser::{error::BrowserWalletError, signer::BrowserSigner};
 use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use itertools::Itertools;
 use tempo_alloy::{
     TempoNetwork,
+    accounts::TempoAccountsWallet,
     rpc::{TempoTransactionReceipt, TempoTransactionRequest},
 };
 use tempo_primitives::transaction::{Call, TEMPO_EXPIRING_NONCE_KEY, TempoTxEnvelope};

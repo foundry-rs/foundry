@@ -706,7 +706,8 @@ async fn resolve_root_signer(
     root_account: Address,
     chain_id: u64,
 ) -> Result<WalletSigner> {
-    let (signer, tempo_access_key) = wallet.maybe_signer_for_chain(chain_id).await?;
+    let (signer, tempo_access_key) =
+        foundry_common::tempo::maybe_signer(&wallet, Some(chain_id)).await?;
     if tempo_access_key.is_some() {
         eyre::bail!(
             "Tempo access keys cannot authorize Tempo sessions; use a persistent root signer"
