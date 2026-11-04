@@ -26,9 +26,9 @@ use foundry_common::{
     tempo::maybe_print_fee_token,
 };
 use foundry_config::Config;
-use foundry_wallets::{TempoAccountsWallet, WalletSigner, wallet_browser::signer::BrowserSigner};
+use foundry_wallets::{WalletSigner, wallet_browser::signer::BrowserSigner};
 use std::{path::PathBuf, str::FromStr};
-use tempo_alloy::TempoNetwork;
+use tempo_alloy::{TempoNetwork, accounts::TempoAccountsWallet};
 use tempo_contracts::precompiles::{TIP20_FACTORY_ADDRESS, is_iso4217_currency};
 use tempo_primitives::transaction::FEE_PAYER_SIGNATURE_MARKER;
 use url::Url;

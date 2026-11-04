@@ -125,6 +125,84 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 }
 
 #[forgetest_init]
+fn symbolic_clz_opcode(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_clz_opcode");
+
+    prj.add_test(
+        "SymbolicClz.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract SymbolicClz is Test {
+    address constant TARGET = address(0xC12);
+
+    function setUp() public {
+        // Returns clz(calldataload(0)).
+        vm.etch(TARGET, hex"5f351e5f5260205ff3");
+    }
+
+    function clz(uint256 x) internal view returns (bool ok, uint256 r) {
+        bytes memory out;
+        (ok, out) = TARGET.staticcall(abi.encode(x));
+        if (ok) r = abi.decode(out, (uint256));
+    }
+
+    function checkClz(uint256 x) public view {
+        (bool ok, uint256 r) = clz(x);
+        assertTrue(ok);
+        if (x == 0) {
+            assertEq(r, 256);
+        } else {
+            assertLt(r, 256);
+            assertEq(x >> (255 - r), 1);
+        }
+    }
+
+    function checkClzWitness(uint256 x) public view {
+        (, uint256 r) = clz(x);
+        assertTrue(r != 255);
+    }
+
+    function checkClzBeforeOsaka(uint256 x) public view {
+        (bool ok,) = clz(x);
+        assertFalse(ok);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkClz(Witness)?\\("]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicClz.t.sol:SymbolicClz
+[PASS] checkClz(uint256) ([METRICS])
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkClzWitness(uint256) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // CLZ is an Osaka opcode, so earlier forks halt on it.
+    cmd.forge_fuse();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--evm-version",
+        "prague",
+        "--match-test",
+        "checkClzBeforeOsaka",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicClz.t.sol:SymbolicClz
+[PASS] checkClzBeforeOsaka(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
 fn symbolic_exp_accepts_larger_bounded_symbolic_base(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(

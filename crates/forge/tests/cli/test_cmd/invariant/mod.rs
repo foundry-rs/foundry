@@ -10,6 +10,7 @@ use std::{
 
 mod common;
 mod handler;
+mod snapshot;
 mod storage;
 mod target;
 
@@ -2132,7 +2133,9 @@ contract JunitInvariantCounterexampleTest is Test {
 #[forgetest_init]
 fn check_interval_zero_only_checks_last_call(prj: _, cmd: _) {
     prj.update_config(|config| {
-        config.invariant.runs = 5;
+        // One run: later runs may resume from snapshots of earlier runs, so counter would not
+        // restart at 0.
+        config.invariant.runs = 1;
         config.invariant.depth = 10;
         config.invariant.check_interval = 0;
     });
@@ -2170,7 +2173,7 @@ contract CheckIntervalTest is Test {
 
     cmd.args(["test", "--mt", "invariant_counter"]).assert_success().stdout_eq(str![[r#"
 ...
-[PASS] invariant_counter_multiple_of_depth() (runs: 5, calls: 50, reverts: 0)
+[PASS] invariant_counter_multiple_of_depth() (runs: 1, calls: 10, reverts: 0)
 ...
 "#]]);
 }

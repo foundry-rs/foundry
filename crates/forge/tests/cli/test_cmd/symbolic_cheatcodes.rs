@@ -4769,6 +4769,12 @@ contract SymbolicRevertingStorageTarget {
         }
         revert();
     }
+
+    function loadTwiceThenStore(bytes32 slot) external {
+        assembly {
+            sstore(slot, add(sload(slot), sload(slot)))
+        }
+    }
 }
 
 contract SymbolicRecordAccesses is Test {
@@ -4783,9 +4789,10 @@ contract SymbolicRecordAccesses is Test {
 
         (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(this));
         assertEq(loadedSlot, stored);
-        assertEq(reads.length, 1);
+        assertEq(reads.length, 2);
         assertEq(writes.length, 1);
         assertEq(reads[0], slot);
+        assertEq(reads[1], slot);
         assertEq(writes[0], slot);
 
         vm.stopRecord();
@@ -4803,9 +4810,10 @@ contract SymbolicRecordAccesses is Test {
 
         (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(target);
         assertEq(loadedSlot, stored);
-        assertEq(reads.length, 1);
+        assertEq(reads.length, 2);
         assertEq(writes.length, 1);
         assertEq(reads[0], slot);
+        assertEq(reads[1], slot);
         assertEq(writes[0], slot);
 
         vm.stopRecord();
@@ -4825,9 +4833,10 @@ contract SymbolicRecordAccesses is Test {
         (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(target);
         assertEq(loadedSlot, stored);
         if (target == address(this)) {
-            assertEq(reads.length, 1);
+            assertEq(reads.length, 2);
             assertEq(writes.length, 1);
             assertEq(reads[0], slot);
+            assertEq(reads[1], slot);
             assertEq(writes[0], slot);
         } else {
             assertEq(reads.length, 0);
@@ -4861,11 +4870,38 @@ contract SymbolicRecordAccesses is Test {
         assertEq(reads[0], slot);
         assertEq(writes[0], slot);
     }
+
+    function testRecordRepeatedAndStaticAccesses() public {
+        recordRepeatedAndStaticAccesses();
+    }
+
+    function checkRecordAccessesRepeatedAndStatic() public {
+        recordRepeatedAndStaticAccesses();
+    }
+
+    // Like Forge, every access is recorded, including the write of an `SSTORE` that halts in a
+    // static call.
+    function recordRepeatedAndStaticAccesses() internal {
+        SymbolicRevertingStorageTarget target = new SymbolicRevertingStorageTarget();
+        bytes32 slot = bytes32(uint256(7));
+
+        vm.record();
+        (bool ok,) = address(target).staticcall(abi.encodeCall(target.loadTwiceThenStore, (slot)));
+        assertFalse(ok);
+
+        (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(target));
+        assertEq(reads.length, 3);
+        assertEq(writes.length, 1);
+        assertEq(reads[0], slot);
+        assertEq(reads[1], slot);
+        assertEq(reads[2], slot);
+        assertEq(writes[0], slot);
+    }
 }
 "#,
     );
 
-    cmd.args(["test", "--match-test", "testRecordRevertedChildAccesses"]).assert_success();
+    cmd.args(["test", "--match-test", "testRecord"]).assert_success();
     cmd.forge_fuse();
 
     let stdout = assert_symbolic_witness(cmd.args([
@@ -4877,12 +4913,13 @@ contract SymbolicRecordAccesses is Test {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 4 tests for test/SymbolicRecordAccesses.t.sol:SymbolicRecordAccesses
+Ran 5 tests for test/SymbolicRecordAccesses.t.sol:SymbolicRecordAccesses
 [PASS] checkRecordAccesses(bytes32,bytes32) ([METRICS])
+[PASS] checkRecordAccessesRepeatedAndStatic() ([METRICS])
 [PASS] checkRecordAccessesRevertedChild() ([METRICS])
 [PASS] checkRecordAccessesSymbolicTarget(address,bytes32,bytes32) ([METRICS])
 [PASS] checkRecordAccessesSymbolicTargetBranches(address,bytes32,bytes32) ([METRICS])
-Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -7166,8 +7203,9 @@ contract SymbolicMappingStorageHooksSymbolicSize is Test {
     );
 }
 
-// Like Forge, `vm.stopRecord` pauses recording but keeps the accesses for `vm.accesses`, and
-// `vm.expectEmit(emitter, 0)` reverts the frame that emits a matching log.
+// Like Forge, `vm.stopRecord` pauses recording but keeps the accesses for `vm.accesses`,
+// `vm.expectEmit(emitter, 0)` reverts the frame that emits a matching log, and a log without
+// topics cannot fill the template of a non-anonymous `vm.expectEmit`.
 #[forgetest_init]
 fn symbolic_stop_record_and_expect_emit_count_zero_match_forge(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_stop_record_and_expect_emit_count_zero_match_forge");
@@ -7183,6 +7221,7 @@ interface Vm {
     function expectEmit(address emitter, uint64 count) external;
     function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData)
         external;
+    function expectEmitAnonymous() external;
     function expectRevert() external;
     function mockCall(address callee, bytes calldata data, bytes calldata returnData) external;
 }
@@ -7371,6 +7410,19 @@ contract SymbolicRecordAndEmitCount {
         store.setA(value);
     }
 
+    // Like Forge, a log without topics cannot be the template of a non-anonymous expectation.
+    function checkExpectEmitAnonymousTemplate(uint256 value) public {
+        vm.expectEmit();
+        emit Anon(value);
+        store.emitAnon(value);
+    }
+
+    function checkExpectEmitAnonymousMatches(uint256 value) public {
+        vm.expectEmitAnonymous();
+        emit Anon(value);
+        store.emitAnon(value);
+    }
+
     function testStopRecordKeepsAndPausesAccesses() public {
         checkStopRecordKeepsAndPausesAccesses(1);
     }
@@ -7402,6 +7454,10 @@ contract SymbolicRecordAndEmitCount {
     function testExpectNoEmitEndsAfterHaltedCall() public {
         checkExpectNoEmitEndsAfterHaltedCall(1);
     }
+
+    function testExpectEmitAnonymousMatches() public {
+        checkExpectEmitAnonymousMatches(1);
+    }
 }
 "#,
     );
@@ -7421,7 +7477,9 @@ contract SymbolicRecordAndEmitCount {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 17 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCount
+Ran 19 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCount
+[PASS] checkExpectEmitAnonymousMatches(uint256) ([METRICS])
+[FAIL: use vm.expectEmitAnonymous to match anonymous events; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitAnonymousTemplate(uint256) ([METRICS])
 [FAIL: Set indexed topic count mismatch: expected 1, got 0; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitRequiresSameTopicCount(uint256) ([METRICS])
 [PASS] checkExpectNoEmitAllowsOtherEvent(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit count 0 across a failed call] checkExpectNoEmitAnonymousInRevertedCall(uint256) ([METRICS])
@@ -7439,7 +7497,7 @@ Ran 17 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCoun
 [PASS] checkExpectNoEmitUnderExpectRevert(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit with a pending expectation] checkQueuedExpectEmitFailsClosed(uint256) ([METRICS])
 [PASS] checkStopRecordKeepsAndPausesAccesses(uint256) ([METRICS])
-Suite result: FAILED. 8 passed; 9 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 9 passed; 10 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

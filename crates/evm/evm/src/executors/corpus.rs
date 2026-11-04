@@ -888,6 +888,17 @@ impl WorkerCorpus {
         Ok(plan)
     }
 
+    /// Produces a sequence of freshly generated calls, without replaying or crediting a corpus
+    /// entry: for runs resumed from a state whose prefix corpus entries would replay again.
+    pub fn fresh_sequence(&self, test_runner: &mut TestRunner) -> Result<SequencePlan> {
+        self.sequence_generator.start(
+            test_runner,
+            0,
+            |_| Err(eyre::eyre!("fresh sequences do not read the corpus")),
+            self.config.is_coverage_guided(),
+        )
+    }
+
     pub fn new<FEN: FoundryEvmNetwork>(
         id: usize,
         config: FuzzCorpusConfig,
@@ -1931,10 +1942,14 @@ mod tests {
     };
     use alloy_dyn_abi::DynSolValue;
     use alloy_evm::EvmEnv;
+    use alloy_json_abi::JsonAbi;
     use foundry_cheatcodes::{Cheatcodes, CheatsConfig};
     use foundry_config::FuzzDictionaryConfig;
     use foundry_evm_core::{backend::Backend, constants::MAGIC_ASSUME, evm::EthEvmNetwork};
-    use foundry_evm_fuzz::strategies::{EvmFuzzState, TxGenerator};
+    use foundry_evm_fuzz::{
+        invariant::TargetedContract,
+        strategies::{EvmFuzzState, TxGenerator},
+    };
     use proptest::prelude::{Just, Strategy};
     use rayon::prelude::*;
     use revm::{DatabaseRef, bytecode::Bytecode, context::TxEnv, database::InMemoryDB};
@@ -2102,9 +2117,6 @@ mod tests {
         functions: Vec<Function>,
         targeted_selectors: impl IntoIterator<Item = alloy_primitives::Selector>,
     ) -> FuzzRunIdentifiedContracts {
-        use alloy_json_abi::JsonAbi;
-        use foundry_evm_fuzz::invariant::TargetedContract;
-
         let mut abi = JsonAbi::new();
         for function in functions {
             abi.functions.entry(function.name.clone()).or_default().push(function);

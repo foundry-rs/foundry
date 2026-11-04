@@ -1902,7 +1902,7 @@ mod tests {
     use crate::CallKind;
     use alloy_primitives::{address, aliases::U96, bytes, hex};
     use alloy_sol_types::{SolCall, SolError, SolEvent};
-    use foundry_evm_core::{abi::Vm, precompiles::P256_VERIFY};
+    use foundry_evm_core::{abi::Vm, precompiles::P256_VERIFY, tempo::TEMPO_PRECOMPILE_ADDRESSES};
     use std::borrow::Cow;
     use tempo_precompiles::{
         ACCOUNT_KEYCHAIN_ADDRESS, SIGNATURE_VERIFIER_ADDRESS, STORAGE_CREDITS_ADDRESS,
@@ -2115,9 +2115,6 @@ mod tests {
 
     #[test]
     fn test_selector_collision_resolution() {
-        use alloy_json_abi::Function;
-        use alloy_primitives::Address;
-
         // Create two functions with the same selector but different signatures
         let func1 = Function::parse("transferFrom(address,address,uint256)").unwrap();
         let func2 = Function::parse("gasprice_bit_ether(int128)").unwrap();
@@ -2146,9 +2143,6 @@ mod tests {
 
     #[test]
     fn test_selector_collision_resolution_second_function() {
-        use alloy_json_abi::Function;
-        use alloy_primitives::Address;
-
         // Create two functions with the same selector but different signatures
         let func1 = Function::parse("transferFrom(address,address,uint256)").unwrap();
         let func2 = Function::parse("gasprice_bit_ether(int128)").unwrap();
@@ -3837,8 +3831,6 @@ mod tests {
 
     #[test]
     fn test_identify_addresses_skips_evm_precompiles() {
-        use foundry_evm_core::precompiles::SHA_256;
-
         let decoder = CallTraceDecoder::new();
 
         let mut arena = CallTraceArena::default();
@@ -3877,8 +3869,6 @@ mod tests {
 
     #[test]
     fn test_identify_addresses_skips_tempo_precompiles() {
-        use foundry_evm_core::tempo::{TEMPO_PRECOMPILE_ADDRESSES, TIP20_CHANNEL_RESERVE_ADDRESS};
-
         // Decoder with Tempo chain ID (4217).
         let decoder = CallTraceDecoderBuilder::new()
             .with_chain_id(Some(4217))
@@ -4152,8 +4142,6 @@ mod tests {
 
     #[test]
     fn test_tempo_hardfork_none_does_not_remove_user_reserve_label() {
-        use foundry_evm_core::tempo::TIP20_CHANNEL_RESERVE_ADDRESS;
-
         let reserve_label = "UserReserve".to_string();
         let decoder = CallTraceDecoderBuilder::new()
             .with_labels([(TIP20_CHANNEL_RESERVE_ADDRESS, reserve_label.clone())])
@@ -4453,8 +4441,6 @@ mod tests {
 
     #[test]
     fn test_identify_addresses_does_not_skip_future_tempo_precompiles() {
-        use foundry_evm_core::tempo::TIP20_CHANNEL_RESERVE_ADDRESS;
-
         let decoder = CallTraceDecoderBuilder::new()
             .with_chain_id(Some(4217))
             .with_hardfork(Some(TempoHardfork::T4.into()))
@@ -4483,8 +4469,6 @@ mod tests {
 
     #[test]
     fn test_identify_addresses_does_not_skip_tempo_precompiles_on_other_chains() {
-        use foundry_evm_core::tempo::TEMPO_PRECOMPILE_ADDRESSES;
-
         // Decoder with Ethereum mainnet chain ID (1).
         let mut decoder = CallTraceDecoder::new().clone();
         decoder.chain_id = Some(1);

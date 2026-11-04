@@ -307,7 +307,7 @@ impl SymbolicExecutor {
             Err(_) => true,
         }) {
             state.return_data = SymReturnData::empty(&mut self.cx);
-            return Ok(Some(StepOutcome::Revert));
+            return Ok(Some(StepOutcome::ExceptionalHalt));
         }
 
         let expanded_size_bound = state
@@ -333,7 +333,7 @@ impl SymbolicExecutor {
                 return Ok(None);
             }
             state.return_data = SymReturnData::empty(&mut self.cx);
-            return Ok(Some(StepOutcome::Revert));
+            return Ok(Some(StepOutcome::ExceptionalHalt));
         }
         let memory_limit = SymExpr::constant(&mut self.cx, U256::from(memory_limit));
         let within_limit = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, local_size, memory_limit);
@@ -364,7 +364,7 @@ impl SymbolicExecutor {
                 state.constraints = invalid_constraints;
                 state.set_corpus_seed_models(invalid_seed_models);
                 state.return_data = SymReturnData::empty(&mut self.cx);
-                Ok(Some(StepOutcome::Revert))
+                Ok(Some(StepOutcome::ExceptionalHalt))
             }
             (true, false) => {
                 state.constraints = valid_constraints;
@@ -373,7 +373,7 @@ impl SymbolicExecutor {
             (false, true) => {
                 state.constraints = invalid_constraints;
                 state.return_data = SymReturnData::empty(&mut self.cx);
-                Ok(Some(StepOutcome::Revert))
+                Ok(Some(StepOutcome::ExceptionalHalt))
             }
             (false, false) => Ok(Some(StepOutcome::AssumeRejected)),
         }
@@ -399,7 +399,7 @@ impl SymbolicExecutor {
                     .is_some_and(|end| end <= memory_limit);
             if !valid {
                 state.return_data = SymReturnData::empty(&mut self.cx);
-                return Ok(Some(StepOutcome::Revert));
+                return Ok(Some(StepOutcome::ExceptionalHalt));
             }
             state.memory.expand_range(&mut self.cx, offset.clone(), size.clone());
             return Ok(None);
@@ -579,6 +579,10 @@ impl SymbolicExecutor {
             opcode::SHL => state.shift_word(&mut self.cx, SymBinOp::Shl)?,
             opcode::SHR => state.shift_word(&mut self.cx, SymBinOp::Shr)?,
             opcode::SAR => state.shift_word(&mut self.cx, SymBinOp::Sar)?,
+            opcode::CLZ => {
+                let value = state.stack.pop()?;
+                state.stack.push(clz_word(&mut self.cx, value))?;
+            }
             opcode::KECCAK256 => {
                 let offset = state.stack.peek(0)?.clone();
                 let size = state.stack.peek(1)?.clone();
@@ -947,6 +951,10 @@ impl SymbolicExecutor {
             }
             opcode::SSTORE => {
                 if state.is_static {
+                    // Forge records the access in `step`, before the static-call check halts.
+                    if let Ok(key) = state.stack.peek(0).cloned() {
+                        state.record_sstore(state.storage_address, key);
+                    }
                     state.return_data = SymReturnData::empty(&mut self.cx);
                     return Ok(StepOutcome::ExceptionalHalt);
                 }
@@ -1555,6 +1563,7 @@ const fn opcode_activation(op: u8) -> SpecId {
         opcode::TLOAD | opcode::TSTORE | opcode::MCOPY | opcode::BLOBHASH | opcode::BLOBBASEFEE => {
             SpecId::CANCUN
         }
+        opcode::CLZ => SpecId::OSAKA,
         opcode::SLOTNUM | opcode::DUPN | opcode::SWAPN | opcode::EXCHANGE => SpecId::AMSTERDAM,
         _ => SpecId::FRONTIER,
     }
