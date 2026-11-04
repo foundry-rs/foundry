@@ -9,4 +9,12 @@ contract C {
         /* a */
         // b
         public {}
+
+    function commentBeforeBody()
+        internal
+        returns (uint256 a)
+    // note
+    {
+        a = 1;
+    }
 }
