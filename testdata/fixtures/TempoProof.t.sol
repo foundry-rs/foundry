@@ -18,6 +18,16 @@ contract TempoProofTest {
     uint256 private height;
     uint256 private boundaryHeight;
     uint256 private successorHeight;
+    BLS.G2Point private forkKey;
+    BLS.G2Point private upstreamKey;
+    TempoProofVerifier.Evidence private forkEvidence;
+    TempoProofVerifier.Evidence private forkUpdated;
+    TempoProofVerifier.Evidence private forkImported;
+    address private forkAccount;
+    address private forkRemote;
+    uint256 private forkHeight;
+    uint256 private forkUpdatedHeight;
+    uint256 private forkImportedHeight;
 
     function setUp() public {
         string memory json = vm.readFile("fixtures/proofs.json");
@@ -31,6 +41,16 @@ contract TempoProofTest {
         evidence = _readEvidence(json, ".initial.evidence");
         boundary = _readEvidence(json, ".boundary.evidence");
         successor = _readEvidence(json, ".successor.evidence");
+        forkKey = abi.decode(vm.parseJsonBytes(json, ".fork.key"), (BLS.G2Point));
+        upstreamKey = abi.decode(vm.parseJsonBytes(json, ".fork.upstreamKey"), (BLS.G2Point));
+        forkAccount = vm.parseJsonAddress(json, ".fork.account");
+        forkRemote = vm.parseJsonAddress(json, ".fork.remote");
+        forkHeight = vm.parseJsonUint(json, ".fork.initial.height");
+        forkUpdatedHeight = vm.parseJsonUint(json, ".fork.updated.height");
+        forkImportedHeight = vm.parseJsonUint(json, ".fork.imported.height");
+        forkEvidence = _readEvidence(json, ".fork.initial.evidence");
+        forkUpdated = _readEvidence(json, ".fork.updated.evidence");
+        forkImported = _readEvidence(json, ".fork.imported.evidence");
     }
 
     function _readEvidence(string memory json, string memory path)
@@ -184,5 +204,47 @@ contract TempoProofTest {
     function verifyAfterHandoff() external view returns (bool) {
         return verifier.verifyHandoff(initialKey, boundary, boundaryHeight, nextKey, successor.subject.epoch)
             && verifier.verify(nextKey, successor, successorHeight, account, bytes32(0), 42);
+    }
+
+    function test_fork_historical_certified_storage_proof() public view {
+        require(
+            verifier.verify(forkKey, forkEvidence, forkHeight, forkAccount, bytes32(0), 42), "historical fork value"
+        );
+    }
+
+    function test_fork_updated_certified_storage_proof() public view {
+        require(
+            verifier.verify(forkKey, forkUpdated, forkUpdatedHeight, forkAccount, bytes32(0), 43), "updated fork value"
+        );
+    }
+
+    function test_fork_imported_account_certified_storage_proof() public view {
+        require(
+            verifier.verify(forkKey, forkImported, forkImportedHeight, forkRemote, bytes32(0), 8), "imported fork value"
+        );
+    }
+
+    function test_fork_reject_upstream_key() public {
+        forkKey = upstreamKey;
+        _rejectFork(42);
+    }
+
+    function test_fork_reject_mixed_account_proof() public {
+        forkEvidence.accountProof = forkUpdated.accountProof;
+        forkEvidence.storageProof = forkUpdated.storageProof;
+        _rejectFork(43);
+    }
+
+    function test_fork_reject_mixed_storage_proof() public {
+        forkEvidence.storageProof = forkUpdated.storageProof;
+        _rejectFork(43);
+    }
+
+    function _rejectFork(uint256 expectedValue) private view {
+        try verifier.verify(forkKey, forkEvidence, forkHeight, forkAccount, bytes32(0), expectedValue) returns (
+            bool valid
+        ) {
+            require(!valid, "invalid fork evidence accepted");
+        } catch {}
     }
 }

@@ -1,4 +1,5 @@
 use super::*;
+use foundry_evm::revm::interpreter::STACK_LIMIT;
 
 enum MappingStorageProvenance {
     None,
@@ -434,7 +435,7 @@ impl SymbolicExecutor {
                 return Ok(Some(StepOutcome::AssumeRejected));
             }
             state.return_data = SymReturnData::empty(&mut self.cx);
-            return Ok(Some(StepOutcome::Revert));
+            return Ok(Some(StepOutcome::ExceptionalHalt));
         }
 
         let expanded_size_bound = state
@@ -466,7 +467,7 @@ impl SymbolicExecutor {
                 return Ok(Some(StepOutcome::AssumeRejected));
             }
             state.return_data = SymReturnData::empty(&mut self.cx);
-            return Ok(Some(StepOutcome::Revert));
+            return Ok(Some(StepOutcome::ExceptionalHalt));
         }
         if self.ignores_out_of_gas() {
             return self.modulo_gas_memory_guard(executor, state, offset, &size);
@@ -531,7 +532,7 @@ impl SymbolicExecutor {
                 state.constraints = invalid_constraints;
                 state.set_corpus_seed_models(invalid_seed_models);
                 state.return_data = SymReturnData::empty(&mut self.cx);
-                Ok(Some(StepOutcome::Revert))
+                Ok(Some(StepOutcome::ExceptionalHalt))
             }
             (true, false) => {
                 state.constraints = valid_constraints;
@@ -540,7 +541,7 @@ impl SymbolicExecutor {
             (false, true) => {
                 state.constraints = invalid_constraints;
                 state.return_data = SymReturnData::empty(&mut self.cx);
-                Ok(Some(StepOutcome::Revert))
+                Ok(Some(StepOutcome::ExceptionalHalt))
             }
             (false, false) => Ok(Some(StepOutcome::AssumeRejected)),
         }
@@ -569,7 +570,7 @@ impl SymbolicExecutor {
                     return Ok(Some(StepOutcome::AssumeRejected));
                 }
                 state.return_data = SymReturnData::empty(&mut self.cx);
-                return Ok(Some(StepOutcome::Revert));
+                return Ok(Some(StepOutcome::ExceptionalHalt));
             }
             state.memory.expand_range(&mut self.cx, offset.clone(), size.clone());
             return Ok(None);
@@ -635,6 +636,18 @@ impl SymbolicExecutor {
         state.pc += 1;
 
         if executor.spec_id < opcode_activation(op) {
+            state.return_data = SymReturnData::empty(&mut self.cx);
+            return Ok(StepOutcome::ExceptionalHalt);
+        }
+
+        // The EVM halts a frame exceptionally before it runs an undefined opcode or one whose
+        // stack inputs or outputs do not fit, so the handlers below never see such a stack.
+        let fits = opcode::OpCode::new(op).is_some_and(|opcode| {
+            let height = state.stack.len();
+            let inputs = opcode.inputs() as usize;
+            height >= inputs && height - inputs + opcode.outputs() as usize <= STACK_LIMIT
+        });
+        if !fits {
             state.return_data = SymReturnData::empty(&mut self.cx);
             return Ok(StepOutcome::ExceptionalHalt);
         }
@@ -738,6 +751,10 @@ impl SymbolicExecutor {
             opcode::SHL => state.shift_word(&mut self.cx, SymBinOp::Shl)?,
             opcode::SHR => state.shift_word(&mut self.cx, SymBinOp::Shr)?,
             opcode::SAR => state.shift_word(&mut self.cx, SymBinOp::Sar)?,
+            opcode::CLZ => {
+                let value = state.stack.pop()?;
+                state.stack.push(clz_word(&mut self.cx, value))?;
+            }
             opcode::KECCAK256 => {
                 let offset = state.stack.peek(0)?.clone();
                 let size = state.stack.peek(1)?.clone();
@@ -1168,6 +1185,10 @@ impl SymbolicExecutor {
             }
             opcode::SSTORE => {
                 if state.is_static {
+                    // Forge records the access in `step`, before the static-call check halts.
+                    if let Ok(key) = state.stack.peek(0).cloned() {
+                        state.record_sstore(state.storage_address, key);
+                    }
                     state.return_data = SymReturnData::empty(&mut self.cx);
                     return Ok(StepOutcome::ExceptionalHalt);
                 }
@@ -1853,6 +1874,7 @@ const fn opcode_activation(op: u8) -> SpecId {
         opcode::TLOAD | opcode::TSTORE | opcode::MCOPY | opcode::BLOBHASH | opcode::BLOBBASEFEE => {
             SpecId::CANCUN
         }
+        opcode::CLZ => SpecId::OSAKA,
         _ => SpecId::FRONTIER,
     }
 }

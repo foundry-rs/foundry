@@ -349,6 +349,30 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
     assert!(!prj.root().join("lib/forge-std/.git").exists());
 }
 
+// Without git on PATH, the error names git and retains the OS error.
+#[forgetest]
+fn init_without_git_names_git(prj: _, cmd: _) {
+    let empty = tempfile::tempdir().unwrap();
+
+    for no_git in [false, true] {
+        prj.wipe();
+        cmd.forge_fuse().env("PATH", empty.path());
+        cmd.arg("init")
+            .arg(prj.root())
+            .args(no_git.then_some("--no-git"))
+            .assert_failure()
+            .stdout_eq(str![""])
+            .stderr_eq(str![[r#"
+...
+Error: could not run `git`[..]
+
+Context:
+- [..]
+
+"#]]);
+    }
+}
+
 // Checks that `--no-commit` is accepted as a noop backwards-compatibility flag
 #[forgetest]
 fn can_init_with_no_commit(prj: _, cmd: _) {
@@ -1906,25 +1930,107 @@ Compiler run successful!
 fn deny_warnings_allows_solar_experimental_codegen(prj: _, cmd: _) {
     prj.add_source("A.sol", "contract A {}");
     let solar = prj.root().join("solar");
-    fs::write(
-        &solar,
-        r#"#!/bin/sh
-if [ "$1" = "--version" ]; then
-    echo "Version: 0.8.38+commit.3a70399.solar.0.2.0"
-    exit 0
-fi
-cat >/dev/null
-printf '%s\n' '{"errors":[{"component":"general","errorCode":"2264","formattedMessage":"Warning: code generation is experimental","message":"code generation is experimental","severity":"warning","type":"Warning"}],"sources":{"src/A.sol":{"id":0}},"contracts":{}}'
-"#,
-    )
-    .unwrap();
-    fs::set_permissions(&solar, fs::Permissions::from_mode(0o755)).unwrap();
+    write_fake_solar(&solar, "0.8.38+commit.3a70399.solar.0.2.0");
     prj.update_config(|config| {
         config.solc = Some(SolcReq::Local(solar));
         config.deny = DenyLevel::Warnings;
     });
 
     cmd.args(["build"]).assert_success();
+}
+
+// A `solar:<version>` pin builds with the release installed in `~/.foundry/solar`, and
+// `forge config` reports the pin.
+#[cfg(unix)]
+#[forgetest]
+fn solar_pin_uses_installed_release(prj: _, cmd: _) {
+    prj.add_source("A.sol", "contract A {}");
+    let home = prj.root().join("home");
+    write_fake_solar(&home.join(".foundry/solar/9.9.9/solar"), "0.8.38+commit.3a70399.solar.9.9.9");
+    prj.update_config(|config| {
+        config.solc = Some("solar:9.9.9".into());
+        config.deny = DenyLevel::Warnings;
+    });
+
+    cmd.env("HOME", &home);
+    cmd.args(["build", "--offline"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with Solar 0.8.38
+Solar 0.8.38 [ELAPSED]
+Compiler run successful!
+
+"#]]);
+
+    cmd.forge_fuse().env("HOME", &home);
+    cmd.args(["config", "--json"])
+        .assert_json_stdout(str![[r#"{ "solc": "solar:9.9.9", "...": "{...}" }"#]]);
+}
+
+// Without network access, a Solar pin that is not installed fails, and `--use` accepts a pin.
+#[cfg(unix)]
+#[forgetest]
+fn solar_pin_offline_requires_installed_release(prj: _, cmd: _) {
+    prj.add_source("A.sol", "contract A {}");
+    let home = prj.root().join("home");
+    write_fake_solar(&home.join(".foundry/solar/9.9.8/solar"), "0.8.38+commit.3a70399.solar.9.9.8");
+    prj.update_config(|config| config.solc = Some("solar:9.9.9".into()));
+
+    cmd.env("HOME", &home);
+    cmd.args(["build", "--offline"]).assert_failure().stderr_eq(str![[r#"
+Error: can't install missing solar 9.9.9 in offline mode
+
+"#]]);
+
+    cmd.forge_fuse().env("HOME", &home);
+    cmd.args(["build", "--offline", "--use", "solar:9.9.8"]).assert_success().stdout_eq(str![[
+        r#"
+[COMPILING_FILES] with Solar 0.8.38
+Solar 0.8.38 [ELAPSED]
+Compiler run successful!
+
+"#
+    ]]);
+
+    prj.update_config(|config| config.solc = Some("solar:9.9".into()));
+    cmd.forge_fuse().args(["build", "--offline"]).assert_failure().stderr_eq(str![[r#"
+Error: invalid Solar pin "solar:9.9", expected `solar:<version>` naming a release 0.2.0 or later, without pre-release or build metadata
+
+"#]]);
+}
+
+// Solar gets the thread count from `-j`.
+#[cfg(unix)]
+#[forgetest]
+fn solar_receives_threads(prj: _, cmd: _) {
+    prj.add_source("A.sol", "contract A {}");
+    let solar = prj.root().join("solar");
+    write_fake_solar(&solar, "0.8.38+commit.3a70399.solar.0.2.0");
+    let args = prj.root().join("solar-args");
+    let script = fs::read_to_string(&solar)
+        .unwrap()
+        .replace("cat >/dev/null", &format!("echo \"$@\" > {}\ncat >/dev/null", args.display()));
+    fs::write(&solar, script).unwrap();
+    prj.update_config(|config| config.solc = Some(SolcReq::Local(solar)));
+
+    cmd.args(["build", "-j", "3"]).assert_success();
+    let args = fs::read_to_string(args).unwrap();
+    assert!(args.split_whitespace().any(|arg| arg == "--threads=3"), "{args}");
+}
+
+/// Writes a fake `solar` that reports the solc-compatible `version` and emits only the experimental
+/// codegen warning (2264).
+#[cfg(unix)]
+fn write_fake_solar(solar: &Path, version: &str) {
+    fs::create_dir_all(solar.parent().unwrap()).unwrap();
+    let script = r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+    echo "Version: VERSION"
+    exit 0
+fi
+cat >/dev/null
+printf '%s\n' '{"errors":[{"component":"general","errorCode":"2264","formattedMessage":"Warning: code generation is experimental","message":"code generation is experimental","severity":"warning","type":"Warning"}],"sources":{"src/A.sol":{"id":0}},"contracts":{}}'
+"#;
+    fs::write(solar, script.replace("VERSION", version)).unwrap();
+    fs::set_permissions(solar, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
 // test that `forge build` ignores error codes only from matching path prefixes

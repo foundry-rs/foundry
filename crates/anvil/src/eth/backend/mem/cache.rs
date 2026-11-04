@@ -47,12 +47,10 @@ impl DiskStateCache {
                 }
             }
         }
-        if let Some(temp_dir) = &self.temp_dir {
+        self.temp_dir.as_ref().map(|temp_dir| {
             let path = temp_dir.path().join(format!("{hash:?}.json"));
-            Some(f(path))
-        } else {
-            None
-        }
+            f(path)
+        })
     }
 
     /// Stores the snapshot for the given hash synchronously.

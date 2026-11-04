@@ -752,9 +752,9 @@ impl SymbolicExecutor {
                 state.expected_emit = Some(expected);
             }
         } else {
-            // Like Forge, a log without topics cannot fill a non-anonymous template, which every
-            // count 0 expectation is, and reverts the emitting frame.
-            if expected.is_forbidden() && !log.has_topics() {
+            // Like Forge, a log without topics cannot fill the template of a non-anonymous
+            // expectation and reverts the emitting frame.
+            if !expected.is_anonymous() && !log.has_topics() {
                 return self.revert_expect_emit(
                     state,
                     "use vm.expectEmitAnonymous to match anonymous events",
@@ -1040,6 +1040,22 @@ impl SymbolicExecutor {
         }
         let (call_caller, call_caller_word, pranked_origin) =
             call_context.unwrap_or_else(|| state.prank_for_next_call());
+
+        // A call beyond the call depth limit fails before it transfers value or runs
+        // any code, including a precompile.
+        if state.call_depth >= CALL_STACK_LIMIT as usize {
+            let return_data = SymReturnData::empty(&mut self.cx);
+            return self.finish_codeless_call(
+                executor,
+                state,
+                kind,
+                CallStatus::Revert,
+                return_data,
+                transfer_to,
+                out_offset,
+                &out_size,
+            );
+        }
 
         let spec_id = executor.spec_id;
         if is_precompile_for_spec(code_address, spec_id) {
@@ -1639,7 +1655,19 @@ impl SymbolicExecutor {
             if matches!(kind, CallKind::Call) && branch.starts_isolated_transaction(executor) {
                 branch.world.increment_nonce(executor, call_caller)?;
             }
-            if self.equivalence.is_some() {
+            if branch.call_depth >= CALL_STACK_LIMIT as usize {
+                // Beyond the call depth limit the call fails before it transfers value. A
+                // pending revert cheatcode would match against a symbolic reverter.
+                if branch.expected_revert.is_some() || branch.assume_no_revert_next_call.is_some() {
+                    return Err(SymbolicError::Unsupported(
+                        "revert cheatcode on a symbolic CALL target beyond the call depth limit",
+                    ));
+                }
+                branch.return_data = SymReturnData::empty(&mut self.cx);
+                branch.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
+                branch.stack.push(SymExpr::zero(&mut self.cx))?;
+                parents.push_back(branch);
+            } else if self.equivalence.is_some() {
                 // A target that is none of the known contracts is unknown code.
                 let to = branch.world.symbolic_address_slot(target.clone());
                 let outcome = if matches!(kind, CallKind::Call) {

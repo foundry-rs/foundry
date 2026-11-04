@@ -3,10 +3,9 @@
 use super::KeyType;
 use alloy_primitives::{Address, B256, Selector, U256};
 use eyre::ensure;
-use foundry_wallets::TempoAccountsWallet;
 use serde::{Deserialize, Serialize};
 use std::{fmt, num::NonZeroU64, time::SystemTime};
-use tempo_alloy::accounts::TempoAccountsStore;
+use tempo_alloy::accounts::{TempoAccountsStore, TempoAccountsWallet};
 use tempo_primitives::transaction::{
     CallScope, KeyAuthorization, SelectorRule, SignatureType, SignedKeyAuthorization, TokenLimit,
 };

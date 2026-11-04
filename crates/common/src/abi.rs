@@ -259,14 +259,13 @@ pub fn coerce_value(ty: &str, arg: &str) -> Result<DynSolValue> {
 mod tests {
     use super::*;
     use alloy_dyn_abi::EventExt;
-    use alloy_primitives::{B256, U256};
+    use alloy_primitives::{B256, U256, address};
+    use foundry_block_explorers::contract::Metadata;
 
     /// `Proxy: 1` with an empty `Implementation` used to panic on `.unwrap()`
     /// (real-world shape, see `foundry_block_explorers`' own `can_deserialize_address_opt` test).
     #[test]
     fn test_proxy_without_implementation_does_not_panic() {
-        use foundry_block_explorers::contract::Metadata;
-
         let json = serde_json::json!({
             "SourceCode": "// dummy",
             "ABI": "[]",
@@ -300,9 +299,6 @@ mod tests {
 
     #[test]
     fn proxy_implementation_decision_follows_real_implementation() {
-        use alloy_primitives::address;
-        use foundry_block_explorers::contract::Metadata;
-
         let json = serde_json::json!({
             "SourceCode": "// dummy",
             "ABI": "[]",
@@ -422,8 +418,6 @@ mod tests {
 
     #[test]
     fn test_encode_args_length_validation() {
-        use alloy_json_abi::Param;
-
         let params = vec![
             Param {
                 name: "a".to_string(),

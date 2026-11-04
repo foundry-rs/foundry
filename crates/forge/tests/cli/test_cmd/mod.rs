@@ -1909,6 +1909,97 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
+// A cheatcode fork takes the `--fork-retries` and `--fork-retry-backoff` of the run, and the
+// retry settings of the `rpc_endpoints` entry it names by alias or by the URL `vm.rpcUrl` returns.
+// <https://github.com/foundry-rs/foundry/issues/18071>
+#[forgetest]
+async fn fork_cheatcode_retry_settings(prj: _, cmd: _) {
+    let chain_id_requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = chain_id_requests.clone();
+    let router =
+        axum::Router::new().fallback(move |axum::Json(body): axum::Json<serde_json::Value>| {
+            let requests =
+                if let serde_json::Value::Array(requests) = body { requests } else { vec![body] };
+            let chain_id = requests.iter().filter(|request| request["method"] == "eth_chainId");
+            counter.fetch_add(chain_id.count(), std::sync::atomic::Ordering::SeqCst);
+            async {
+                (
+                    axum::http::StatusCode::TOO_MANY_REQUESTS,
+                    axum::Json(serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "error": { "code": -32005, "message": "Too Many Requests" },
+                    })),
+                )
+            }
+        });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    std::fs::write(
+        prj.config(),
+        format!(
+            r#"[rpc_endpoints]
+stub = {{ endpoint = "{endpoint}/stub", retries = 2, retry_backoff = 1 }}
+late = {{ endpoint = "${{FORK_RETRY_SETTINGS_LATE_URL}}", retries = 2, retry_backoff = 1 }}
+plain = "{endpoint}/plain"
+"#
+        ),
+    )
+    .unwrap();
+
+    prj.add_test(
+        "ForkRetries.t.sol",
+        &format!(
+            r#"
+interface Vm {{
+    function createSelectFork(string calldata urlOrAlias) external returns (uint256 forkId);
+    function rpcUrl(string calldata rpcAlias) external view returns (string memory json);
+    function setEnv(string calldata name, string calldata value) external;
+}}
+
+Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+contract ByUrl {{
+    function testFork() public {{
+        vm.createSelectFork(vm.rpcUrl("stub"));
+    }}
+}}
+
+contract ByLateUrl {{
+    function testFork() public {{
+        vm.setEnv("FORK_RETRY_SETTINGS_LATE_URL", "{endpoint}/late");
+        vm.createSelectFork(vm.rpcUrl("late"));
+    }}
+}}
+
+contract ByAlias {{
+    function testFork() public {{
+        vm.createSelectFork("stub");
+    }}
+}}
+
+contract Plain {{
+    function testFork() public {{
+        vm.createSelectFork("plain");
+    }}
+}}
+"#
+        ),
+    );
+
+    // Each attempt sends one `eth_chainId`, so a fork with `n` retries sends `n + 1`.
+    let mut attempts = |args: &[&str]| {
+        cmd.forge_fuse().args(["test", "--no-storage-caching"]).args(args).assert_failure();
+        chain_id_requests.swap(0, std::sync::atomic::Ordering::SeqCst)
+    };
+    let cli = ["--fork-retries", "4", "--fork-retry-backoff", "1"];
+    assert_eq!(attempts(&["--mc", "ByUrl"]), 3);
+    assert_eq!(attempts(&[&["--mc", "ByLateUrl"][..], &cli].concat()), 3);
+    assert_eq!(attempts(&[&["--mc", "ByAlias"][..], &cli].concat()), 3);
+    assert_eq!(attempts(&[&["--mc", "Plain"][..], &cli].concat()), 5);
+}
+
 // <https://github.com/foundry-rs/foundry/issues/7574>
 #[forgetest]
 async fn failed_fork_test_reports_block_number(prj: _, cmd: _) {
