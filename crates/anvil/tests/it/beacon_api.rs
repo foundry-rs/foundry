@@ -3,12 +3,13 @@ use alloy_consensus::{Blob, BlobTransactionSidecar, SidecarBuilder, SimpleCoder,
 use alloy_network::{TransactionBuilder, TransactionBuilder4844};
 use alloy_primitives::{B256, FixedBytes, U256, b256};
 use alloy_provider::Provider;
-use alloy_rpc_types::TransactionRequest;
+use alloy_rpc_types::{TransactionRequest, anvil::MineOptions};
 use alloy_rpc_types_beacon::{genesis::GenesisResponse, sidecar::GetBlobsResponse};
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, spawn};
 use foundry_evm::hardfork::EthereumHardfork;
 use ssz::Decode;
+use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_beacon_api_get_blob_sidecars() {
@@ -256,4 +257,74 @@ async fn test_beacon_api_get_genesis() {
         genesis_response.data.genesis_fork_version,
         FixedBytes::from([0x00, 0x00, 0x00, 0x00])
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_beacon_api_get_blobs_by_slot() {
+    const GENESIS: u64 = 1_700_000_000;
+    const SLOT: u64 = 3600;
+
+    // The long block time keeps the interval miner idle while the test places blocks by hand.
+    let node_config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+        .with_genesis_timestamp(Some(GENESIS))
+        .with_blocktime(Some(Duration::from_secs(SLOT)));
+    let (api, handle) = spawn(node_config).await;
+
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let from = wallets[0].address();
+    let to = wallets[1].address();
+    let provider = http_provider(&handle.http_endpoint());
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+
+    // Mine one blob per block: blocks 1 and 2 in slot 2, block 3 at the first second of slot 3.
+    let timestamps = [GENESIS + 2 * SLOT + 5, GENESIS + 2 * SLOT + 6, GENESIS + 3 * SLOT];
+    let mut blobs = Vec::new();
+    let mut hashes = Vec::new();
+    for (nonce, timestamp) in timestamps.into_iter().enumerate() {
+        let sidecar = SidecarBuilder::<SimpleCoder>::from_slice(format!("blob {nonce}").as_bytes())
+            .build::<BlobTransactionSidecar>()
+            .unwrap();
+        blobs.push(sidecar.blobs[0]);
+        hashes.extend(sidecar.versioned_hashes());
+        let tx = TransactionRequest::default()
+            .with_from(from)
+            .with_to(to)
+            .with_nonce(nonce as u64)
+            .with_max_fee_per_blob_gas(gas_price + 1)
+            .with_max_fee_per_gas(eip1559_est.max_fee_per_gas)
+            .with_max_priority_fee_per_gas(eip1559_est.max_priority_fee_per_gas)
+            .with_blob_sidecar_4844(sidecar);
+        let pending = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+        api.evm_mine(Some(MineOptions::Timestamp(Some(timestamp)))).await.unwrap();
+        assert_eq!(pending.get_receipt().await.unwrap().block_number, Some(nonce as u64 + 1));
+    }
+
+    let client = reqwest::Client::new();
+    let get_blobs = async |path: &str| {
+        let url = format!("{}/eth/v1/beacon/blobs/{path}", handle.http_endpoint());
+        let response = client.get(&url).send().await.unwrap();
+        match response.status() {
+            reqwest::StatusCode::OK => {
+                Some(response.json::<GetBlobsResponse>().await.unwrap().data)
+            }
+            reqwest::StatusCode::NOT_FOUND => None,
+            status => panic!("unexpected status {status} for {path}"),
+        }
+    };
+
+    assert!(get_blobs("2").await == Some(vec![blobs[0], blobs[1]]));
+    assert!(get_blobs(&format!("2?versioned_hashes={}", hashes[1])).await == Some(vec![blobs[1]]));
+    assert!(get_blobs("3").await == Some(vec![blobs[2]]));
+    // Slot 0 holds the genesis block, which has no blobs.
+    assert!(get_blobs("0").await == Some(vec![]));
+    // Slots without a block are not found, even when a block has that number.
+    assert!(get_blobs("1").await.is_none());
+    assert!(get_blobs("4").await.is_none());
+    assert!(get_blobs(&u64::MAX.to_string()).await.is_none());
+
+    // The slot length stays the configured block time when the mining mode changes.
+    api.anvil_set_interval_mining(0).unwrap();
+    assert!(get_blobs("2").await == Some(vec![blobs[0], blobs[1]]));
 }

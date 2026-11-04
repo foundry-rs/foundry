@@ -71,7 +71,7 @@ pub async fn handle_get_blobs<N: Network>(
     };
 
     // Get the blob sidecars using existing EthApi logic
-    match api.anvil_get_blobs_by_block_id(block_id, versioned_hashes) {
+    match api.anvil_get_blobs_by_block_id(block_id, versioned_hashes).await {
         Ok(Some(blobs)) => {
             if must_be_ssz(&headers) {
                 blobs.as_ssz_bytes().into_response()

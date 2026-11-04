@@ -4615,23 +4615,40 @@ impl<N: Network> Backend<N> {
         id: impl Into<BlockId>,
         versioned_hashes: Vec<B256>,
     ) -> Result<Option<Vec<alloy_consensus::Blob>>> {
-        Ok(self.get_block(id).map(|block| {
-            block
-                .body
-                .transactions
-                .iter()
-                .filter_map(|tx| tx.as_ref().sidecar())
-                .flat_map(|sidecar| {
-                    sidecar.sidecar.blobs().iter().zip(sidecar.sidecar.commitments().iter())
-                })
-                .filter(|(_, commitment)| {
-                    // Filter blobs by versioned_hashes if provided
-                    versioned_hashes.is_empty()
-                        || versioned_hashes.contains(&kzg_to_versioned_hash(commitment.as_slice()))
-                })
-                .map(|(blob, _)| *blob)
-                .collect()
-        }))
+        Ok(self.get_block(id).map(|block| block_blobs(&block, &versioned_hashes).collect()))
+    }
+
+    /// Returns the blobs of the blocks in the given beacon slot, or `None` if no block is in it.
+    ///
+    /// Slot `n` covers the timestamps in
+    /// `[genesis_time + n * seconds_per_slot, genesis_time + (n + 1) * seconds_per_slot)`. Anvil
+    /// can mine more than one block in a slot, so this returns the blobs of all of them.
+    pub fn get_blobs_by_slot(
+        &self,
+        slot: u64,
+        seconds_per_slot: u64,
+        versioned_hashes: &[B256],
+    ) -> Option<Vec<Blob>> {
+        let start = slot
+            .checked_mul(seconds_per_slot)
+            .and_then(|offset| self.genesis_time().checked_add(offset))?;
+        let end = start.saturating_add(seconds_per_slot);
+        let storage = self.blockchain.storage.read();
+        // Walk back from the head until a block precedes the slot. This assumes timestamps never
+        // decrease, which only setting the time backwards with `evm_setTime` breaks.
+        let mut blocks = (0..=storage.best_number)
+            .rev()
+            .map_while(|number| {
+                storage.hashes.get(&number).and_then(|hash| storage.blocks.get(hash))
+            })
+            .take_while(|block| block.header.timestamp() >= start)
+            .filter(|block| block.header.timestamp() < end)
+            .collect::<Vec<_>>();
+        if blocks.is_empty() {
+            return None;
+        }
+        blocks.reverse();
+        Some(blocks.into_iter().flat_map(|block| block_blobs(block, versioned_hashes)).collect())
     }
 
     #[allow(clippy::large_stack_frames)]
@@ -11207,6 +11224,24 @@ fn genesis_json_header(genesis: &Genesis) -> Header {
 /// Wraps an Ethereum-shaped header in the selected network's consensus header.
 fn foundry_header(networks: &NetworkConfigs, header: Header) -> FoundryHeader {
     if networks.is_tempo() { FoundryHeader::tempo(header) } else { header.into() }
+}
+
+/// Returns the blobs in `block`, keeping only those in `versioned_hashes` unless it is empty.
+fn block_blobs<'a>(
+    block: &'a Block,
+    versioned_hashes: &'a [B256],
+) -> impl Iterator<Item = Blob> + 'a {
+    block
+        .body
+        .transactions
+        .iter()
+        .filter_map(|tx| tx.as_ref().sidecar())
+        .flat_map(|sidecar| sidecar.sidecar.blobs().iter().zip(sidecar.sidecar.commitments()))
+        .filter(|(_, commitment)| {
+            versioned_hashes.is_empty()
+                || versioned_hashes.contains(&kzg_to_versioned_hash(commitment.as_slice()))
+        })
+        .map(|(blob, _)| *blob)
 }
 
 #[cfg(test)]
