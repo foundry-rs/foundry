@@ -38,7 +38,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.9.0"
+version = "1.9.1"
 edition = "2024"
 rust-version = "1.98"
 authors = ["Foundry Contributors"]
@@ -578,17 +578,18 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "a2b4435466bff1b91459a1bc64b04e5e8144ed9f" }
-solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "a2b4435466bff1b91459a1bc64b04e5e8144ed9f" }
-solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "a2b4435466bff1b91459a1bc64b04e5e8144ed9f" }
-solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "a2b4435466bff1b91459a1bc64b04e5e8144ed9f" }
+# Always point solar at a release tag, never a branch revision.
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
+solar-cli = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
+solar-lsp = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
+solar-lint = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
 
 ## foundry-core
-# fork-db evm2 completion merged with main 1534b92.
-foundry-wallets = { git = "https://github.com/mablr/foundry-core", rev = "b3110f09c6591004f9b91bafa19a86c4730772db" }
-foundry-compilers = { git = "https://github.com/mablr/foundry-core", rev = "b3110f09c6591004f9b91bafa19a86c4730772db" }
-foundry-block-explorers = { git = "https://github.com/mablr/foundry-core", rev = "b3110f09c6591004f9b91bafa19a86c4730772db" }
-foundry-fork-db = { git = "https://github.com/mablr/foundry-core", rev = "b3110f09c6591004f9b91bafa19a86c4730772db" }
+# fork-db evm2 completion merged with main c996c46.
+foundry-wallets = { git = "https://github.com/mablr/foundry-core", rev = "0c0cc186c939c7f084dedf5687ba87f95e83ffd0" }
+foundry-compilers = { git = "https://github.com/mablr/foundry-core", rev = "0c0cc186c939c7f084dedf5687ba87f95e83ffd0" }
+foundry-block-explorers = { git = "https://github.com/mablr/foundry-core", rev = "0c0cc186c939c7f084dedf5687ba87f95e83ffd0" }
+foundry-fork-db = { git = "https://github.com/mablr/foundry-core", rev = "0c0cc186c939c7f084dedf5687ba87f95e83ffd0" }
 
 ## alloy-core
 alloy-dyn-abi = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }

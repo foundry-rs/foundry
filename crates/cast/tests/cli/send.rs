@@ -370,6 +370,41 @@ async fn send_sync(cmd: _) {
     assert!(output.contains("gasUsed"));
 }
 
+// A send that times out names the hash of the transaction it sent, which is still pending.
+#[casttest]
+async fn send_timeout_names_tx_hash(cmd: _) {
+    let (_api, handle) = anvil::spawn(NodeConfig::test().with_no_mining(true)).await;
+    let endpoint = handle.http_endpoint();
+
+    let stderr = cmd
+        .args([
+            "send",
+            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "--value",
+            "1",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+            "--timeout",
+            "1",
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: transaction 0x[..] was sent, but waiting for its receipt failed
+
+Context:
+- transaction was not confirmed within the timeout
+
+"#]])
+        .get_output()
+        .stderr_lossy();
+
+    let hash = stderr.split_whitespace().find(|word| word.starts_with("0x")).unwrap();
+    let tx = handle.http_provider().get_transaction_by_hash(hash.parse().unwrap()).await.unwrap();
+    assert_eq!(tx.unwrap().block_number(), None);
+}
+
 // Concurrent `cast send --async` processes whose txs do not fit into one block must all be mined.
 #[casttest]
 async fn send_async_burst_is_mined_across_full_blocks(prj: _) {
