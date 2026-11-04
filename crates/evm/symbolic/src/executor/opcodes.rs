@@ -308,7 +308,7 @@ impl SymbolicExecutor {
             Err(_) => true,
         }) {
             state.return_data = SymReturnData::empty(&mut self.cx);
-            return Ok(Some(StepOutcome::Revert));
+            return Ok(Some(StepOutcome::ExceptionalHalt));
         }
 
         let expanded_size_bound = state
@@ -334,7 +334,7 @@ impl SymbolicExecutor {
                 return Ok(None);
             }
             state.return_data = SymReturnData::empty(&mut self.cx);
-            return Ok(Some(StepOutcome::Revert));
+            return Ok(Some(StepOutcome::ExceptionalHalt));
         }
         let memory_limit = SymExpr::constant(&mut self.cx, U256::from(memory_limit));
         let within_limit = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, local_size, memory_limit);
@@ -365,7 +365,7 @@ impl SymbolicExecutor {
                 state.constraints = invalid_constraints;
                 state.set_corpus_seed_models(invalid_seed_models);
                 state.return_data = SymReturnData::empty(&mut self.cx);
-                Ok(Some(StepOutcome::Revert))
+                Ok(Some(StepOutcome::ExceptionalHalt))
             }
             (true, false) => {
                 state.constraints = valid_constraints;
@@ -374,7 +374,7 @@ impl SymbolicExecutor {
             (false, true) => {
                 state.constraints = invalid_constraints;
                 state.return_data = SymReturnData::empty(&mut self.cx);
-                Ok(Some(StepOutcome::Revert))
+                Ok(Some(StepOutcome::ExceptionalHalt))
             }
             (false, false) => Ok(Some(StepOutcome::AssumeRejected)),
         }
@@ -400,7 +400,7 @@ impl SymbolicExecutor {
                     .is_some_and(|end| end <= memory_limit);
             if !valid {
                 state.return_data = SymReturnData::empty(&mut self.cx);
-                return Ok(Some(StepOutcome::Revert));
+                return Ok(Some(StepOutcome::ExceptionalHalt));
             }
             state.memory.expand_range(&mut self.cx, offset.clone(), size.clone());
             return Ok(None);
@@ -498,7 +498,11 @@ impl SymbolicExecutor {
                 let n = (op - opcode::SWAP1 + 1) as usize;
                 state.stack.swap(n)?;
             }
-            opcode::STOP => return Ok(StepOutcome::Halt),
+            opcode::STOP => {
+                // STOP returns no output; drop the return data of the frame's last call.
+                state.return_data = SymReturnData::empty(&mut self.cx);
+                return Ok(StepOutcome::Halt);
+            }
             opcode::ADD | opcode::SUB | opcode::MUL | opcode::AND | opcode::OR | opcode::XOR => {
                 let bin_op = match op {
                     opcode::ADD => SymBinOp::Add,
@@ -569,6 +573,10 @@ impl SymbolicExecutor {
             opcode::SHL => state.shift_word(&mut self.cx, SymBinOp::Shl)?,
             opcode::SHR => state.shift_word(&mut self.cx, SymBinOp::Shr)?,
             opcode::SAR => state.shift_word(&mut self.cx, SymBinOp::Sar)?,
+            opcode::CLZ => {
+                let value = state.stack.pop()?;
+                state.stack.push(clz_word(&mut self.cx, value))?;
+            }
             opcode::KECCAK256 => {
                 let offset = state.stack.peek(0)?.clone();
                 let size = state.stack.peek(1)?.clone();
@@ -937,6 +945,10 @@ impl SymbolicExecutor {
             }
             opcode::SSTORE => {
                 if state.is_static {
+                    // Forge records the access in `step`, before the static-call check halts.
+                    if let Ok(key) = state.stack.peek(0).cloned() {
+                        state.record_sstore(state.storage_address, key);
+                    }
                     state.return_data = SymReturnData::empty(&mut self.cx);
                     return Ok(StepOutcome::ExceptionalHalt);
                 }
@@ -1393,6 +1405,7 @@ impl SymbolicExecutor {
                 }
                 return self.handle_log(
                     state,
+                    worklist,
                     SymbolicLog::new(log_topics, data_len, data, state.address),
                 );
             }
@@ -1500,6 +1513,12 @@ impl SymbolicExecutor {
         if state.call_depth != 0 {
             return Ok(StepOutcome::Revert);
         }
+        let data = state.return_data.read_concrete(&mut self.cx, "symbolic revert data");
+        // Like Forge's fuzz and invariant runners, a `vm.assumeNoRevert` rejection that reaches the
+        // top frame discards the run. Invariant predicates still treat it as a revert.
+        if !state.invariant_predicate && data.as_deref().is_ok_and(|data| data == MAGIC_ASSUME) {
+            return Ok(StepOutcome::AssumeRejected);
+        }
         // In `check*`/`prove*` tests, a `CheatcodeError` that reaches the top frame, such as an
         // unmet `vm.expectRevert`, is a failure. Invariant handlers treat it as a revert.
         // Match its selector independently of the memory address and the rest of the payload.
@@ -1511,9 +1530,7 @@ impl SymbolicExecutor {
             state.constraints = constraints;
             return Ok(StepOutcome::Failure);
         }
-        if let Ok(data) = state.return_data.read_concrete(&mut self.cx, "symbolic revert data")
-            && is_assertion_revert(&data)
-        {
+        if data.is_ok_and(|data| is_assertion_revert(&data)) {
             return Ok(StepOutcome::Failure);
         }
         Ok(StepOutcome::Revert)
@@ -1536,6 +1553,7 @@ const fn opcode_activation(op: u8) -> SpecId {
         opcode::TLOAD | opcode::TSTORE | opcode::MCOPY | opcode::BLOBHASH | opcode::BLOBBASEFEE => {
             SpecId::CANCUN
         }
+        opcode::CLZ => SpecId::OSAKA,
         _ => SpecId::FRONTIER,
     }
 }

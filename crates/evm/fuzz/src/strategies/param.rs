@@ -130,6 +130,36 @@ pub(crate) fn fuzz_param_from_state(
     param: &DynSolType,
     state: &impl DictionaryRead,
 ) -> BoxedStrategy<DynSolValue> {
+    let generated = fuzz_param_from_state_inner(param, state);
+    if !param.is_dynamic() && !matches!(param, DynSolType::Tuple(_) | DynSolType::FixedArray(..)) {
+        return generated;
+    }
+
+    // Composite and dynamic values: half the time, reuse a whole value of exactly this type that
+    // the target returned or emitted, so related fields stay consistent (e.g. a struct read from a
+    // getter passed back as-is). Otherwise, or when none was observed, generate it piecewise.
+    let state = state.clone();
+    let param = param.clone();
+    (any::<(bool, prop::sample::Index)>(), generated)
+        .prop_map(move |((reuse, index), generated)| {
+            if !reuse {
+                return generated;
+            }
+            state
+                .with_dictionary(|dict| {
+                    dict.composite_samples(&param).and_then(|values| {
+                        values.get_index(index.index(values.len())).map(|(_, value)| value.clone())
+                    })
+                })
+                .unwrap_or(generated)
+        })
+        .boxed()
+}
+
+fn fuzz_param_from_state_inner(
+    param: &DynSolType,
+    state: &impl DictionaryRead,
+) -> BoxedStrategy<DynSolValue> {
     // Value strategy that uses the state.
     let value = || {
         let state = state.clone();
@@ -548,12 +578,14 @@ pub fn generate_msg_value(test_runner: &mut TestRunner) -> U256 {
 
 #[cfg(test)]
 mod tests {
+    use super::{fuzz_msg_value, fuzz_param_from_state, mutate_param_value, select_random_address};
     use crate::{
         FuzzFixtures,
-        strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state},
+        invariant::SenderFilters,
+        strategies::{EvmFuzzState, LiteralMaps, fuzz_calldata, fuzz_calldata_from_state},
     };
     use alloy_dyn_abi::{DynSolType, DynSolValue};
-    use alloy_primitives::{B256, U256};
+    use alloy_primitives::{Address, B256, U256, keccak256};
     use foundry_common::abi::get_func;
     use foundry_config::FuzzDictionaryConfig;
     use proptest::{
@@ -565,8 +597,6 @@ mod tests {
 
     #[test]
     fn payable_value_weight_controls_non_zero_msg_value() {
-        use super::fuzz_msg_value;
-
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
         let mut runner = proptest::test_runner::TestRunner::new(cfg);
 
@@ -626,12 +656,6 @@ mod tests {
 
     #[test]
     fn can_fuzz_string_and_bytes_with_ast_literals_and_hashes() {
-        use super::fuzz_param_from_state;
-        use crate::strategies::LiteralMaps;
-        use alloy_dyn_abi::DynSolType;
-        use alloy_primitives::keccak256;
-        use proptest::strategy::Strategy;
-
         // Seed dict with string values and their hashes --> mimic `CheatcodeAnalysis` behavior.
         let mut literals = LiteralMaps::default();
         literals.strings.insert("hello".to_string());
@@ -684,10 +708,6 @@ mod tests {
 
     #[test]
     fn mutate_address_can_select_from_dictionary() {
-        use super::mutate_param_value;
-        use alloy_dyn_abi::{DynSolType, DynSolValue};
-        use alloy_primitives::Address;
-
         let mut state = EvmFuzzState::test();
 
         // Add addresses to dictionary via state values.
@@ -737,10 +757,6 @@ mod tests {
 
     #[test]
     fn mutate_address_prefers_targeted_senders() {
-        use super::select_random_address;
-        use crate::invariant::SenderFilters;
-        use alloy_primitives::Address;
-
         let mut state = EvmFuzzState::test();
 
         // Add addresses to dictionary (these should NOT be selected when targeted is set).
@@ -789,10 +805,6 @@ mod tests {
 
     #[test]
     fn mutate_address_respects_excluded_senders() {
-        use super::select_random_address;
-        use crate::invariant::SenderFilters;
-        use alloy_primitives::Address;
-
         let mut state = EvmFuzzState::test();
 
         // Add addresses to dictionary.
@@ -827,5 +839,24 @@ mod tests {
 
         assert!(!got_excluded, "select_random_address should not select excluded addresses");
         assert!(got_valid, "select_random_address should select valid (non-excluded) addresses");
+    }
+
+    #[test]
+    fn reuses_whole_struct_from_dictionary() {
+        let value = DynSolValue::Tuple(vec![
+            DynSolValue::Address(Address::repeat_byte(0x44)),
+            DynSolValue::Uint(U256::from(123_456_789u64), 256),
+            DynSolValue::Uint(U256::from(77), 32),
+        ]);
+        let ty = value.as_type().unwrap();
+        let mut state = EvmFuzzState::test();
+        state.collect_sample_values([value.clone()], 8);
+
+        let strategy = super::fuzz_param_from_state(&ty, &state);
+        let mut runner = TestRunner::deterministic();
+        let reused =
+            (0..200).filter(|_| strategy.new_tree(&mut runner).unwrap().current() == value).count();
+        // About half the draws reuse the recorded struct whole.
+        assert!((50..=150).contains(&reused), "reused {reused} of 200");
     }
 }

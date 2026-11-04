@@ -3,7 +3,7 @@
 use crate::PRECOMPUTED_VADDR_SALT_FOR_ADDR1;
 use alloy_consensus::{TxEnvelope, transaction::SignerRecoverable};
 use alloy_eips::{Decodable2718, Encodable2718};
-use alloy_primitives::{Address, U256, hex};
+use alloy_primitives::{Address, B256, U256, hex};
 use alloy_rlp::{Header, PayloadView};
 use alloy_rpc_types::Authorization;
 use alloy_signer::SignerSync;
@@ -25,7 +25,10 @@ use std::{
 use tempo_alloy::accounts::TempoAccountsStore;
 use tempo_contracts::precompiles::TIP20_FACTORY_ADDRESS;
 use tempo_hardfork::TempoHardfork;
-use tempo_primitives::TempoTxEnvelope;
+use tempo_primitives::{
+    TempoTxEnvelope,
+    transaction::{KeychainSignature, PrimitiveSignature, TempoSignature},
+};
 
 /// Anvil test accounts (standard mnemonic).
 mod accounts {
@@ -583,7 +586,6 @@ fn key_authorization_inspect_account_mismatch_rejected(cmd: _) {
 // On-chain (T6): authorize an admin key, then confirm it via `keychain is-admin --json`.
 #[casttest]
 async fn keychain_authorize_admin_then_is_admin(cmd: _) {
-    use tempo_hardfork::TempoHardfork;
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
     let rpc = handle.http_endpoint();
@@ -1091,12 +1093,6 @@ async fn corrupt_tempo_store_does_not_break_ethereum_unlocked_send(cmd: _) {
 // On-chain (T6): a keychain signature from an authorized admin key passes `verify-admin`.
 #[casttest]
 async fn keychain_verify_admin_accepts_admin_signature(cmd: _) {
-    use alloy_primitives::{Address, B256, hex};
-    use alloy_signer::SignerSync;
-    use alloy_signer_local::PrivateKeySigner;
-    use tempo_hardfork::TempoHardfork;
-    use tempo_primitives::transaction::{KeychainSignature, PrimitiveSignature, TempoSignature};
-
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
     let rpc = handle.http_endpoint();
@@ -1152,7 +1148,6 @@ async fn keychain_verify_admin_accepts_admin_signature(cmd: _) {
 // On-chain (T6): `keychain authorize --admin` rejects spending limits before submitting.
 #[casttest]
 async fn keychain_authorize_admin_rejects_limits(cmd: _) {
-    use tempo_hardfork::TempoHardfork;
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
     let rpc = handle.http_endpoint();
@@ -1181,7 +1176,6 @@ async fn keychain_authorize_admin_rejects_limits(cmd: _) {
 // `UnauthorizedCaller()` on the pinned Tempo build.
 #[casttest]
 async fn keychain_access_key_cannot_submit_admin_mutator(cmd: _) {
-    use tempo_hardfork::TempoHardfork;
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
     let rpc = handle.http_endpoint();

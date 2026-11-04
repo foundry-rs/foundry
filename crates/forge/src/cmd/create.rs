@@ -38,12 +38,10 @@ use foundry_config::{
     },
     merge_impl_figment_convert,
 };
-use foundry_wallets::{
-    BrowserWalletOpts, TempoAccountsWallet, WalletSigner, wallet_browser::signer::BrowserSigner,
-};
+use foundry_wallets::{BrowserWalletOpts, WalletSigner, wallet_browser::signer::BrowserSigner};
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc, time::Duration};
-use tempo_alloy::TempoNetwork;
+use tempo_alloy::{TempoNetwork, accounts::TempoAccountsWallet};
 
 merge_impl_figment_convert!(CreateArgs, build, eth);
 
@@ -160,7 +158,8 @@ impl CreateArgs {
             // deployment into a Tempo transaction.
             wallet.from = None;
         }
-        let (signer, tempo_access_key) = wallet.maybe_signer_for_chain(chain.id()).await?;
+        let (signer, tempo_access_key) =
+            foundry_common::tempo::maybe_signer(&wallet, Some(chain.id())).await?;
 
         // Never deploy from an account other than the one explicitly selected by the user. Unlocked
         // and browser deployments do not use the resolved signer.

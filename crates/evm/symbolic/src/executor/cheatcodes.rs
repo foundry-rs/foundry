@@ -145,7 +145,7 @@ impl SymbolicExecutor {
         state: &mut PathState,
         data: ExpectedRevertData,
         reverter: Option<SymExpr>,
-        remaining: u64,
+        count: u64,
     ) -> CheatcodeOutcome {
         if state.expected_revert.is_some() {
             return CheatcodeOutcome::Revert(error_string_return_data(
@@ -153,7 +153,8 @@ impl SymbolicExecutor {
                 "you must call another function prior to expecting a second revert",
             ));
         }
-        state.expected_revert = Some(ExpectedRevert::new(data, reverter, remaining));
+        state.expected_revert = Some(ExpectedRevert::new(data, reverter, count));
+        state.first_failed_callee = None;
         CheatcodeOutcome::Continue(Vec::new())
     }
 
@@ -162,6 +163,7 @@ impl SymbolicExecutor {
         state: &mut PathState,
         args_offset: usize,
         checks: ExpectedEmitChecks,
+        anonymous: bool,
         emitter_arg: Option<usize>,
         count_arg: Option<usize>,
     ) -> Result<CheatcodeOutcome, SymbolicError> {
@@ -180,7 +182,14 @@ impl SymbolicExecutor {
             })
             .transpose()?
             .unwrap_or(1);
-        state.expected_emit = Some(ExpectedEmit::new(checks, emitter, remaining));
+        // Forge queues expectations; replacing a pending one would silently drop it.
+        if state.expected_emit.is_some() {
+            return Err(SymbolicError::Unsupported(
+                "symbolic vm.expectEmit with a pending expectation",
+            ));
+        }
+        state.expected_emit =
+            Some(ExpectedEmit::new(checks, emitter, remaining, anonymous, state.call_depth));
         Ok(CheatcodeOutcome::Continue(Vec::new()))
     }
 
@@ -283,6 +292,7 @@ impl SymbolicExecutor {
         out_size: &BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
         if state.is_static {
+            state.first_failed_callee.get_or_insert(CHEATCODE_ADDRESS);
             state.return_data = SymReturnData::empty(&mut self.cx);
             return Ok(StepOutcome::Revert);
         }
@@ -331,8 +341,21 @@ impl SymbolicExecutor {
 
         let mut parents = VecDeque::with_capacity(outcomes.len());
         for outcome in outcomes {
-            match self.join_call_outcome(executor, state, outcome, created)? {
-                JoinedCallOutcome::Rejected => {}
+            if !matches!(outcome.status, CallStatus::Success)
+                && state.expected_revert.as_ref().is_some_and(ExpectedRevert::repeats_with_reverter)
+            {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic vm.expectRevert reverter count on CREATE",
+                ));
+            }
+            // Forge records a reverting CREATE, and otherwise the failed cheatcode call.
+            let failed_callee = match outcome.status {
+                CallStatus::Success => None,
+                CallStatus::Revert => Some(created),
+                CallStatus::ExceptionalHalt | CallStatus::Failure => Some(CHEATCODE_ADDRESS),
+            };
+            // Like Forge, a cheatcode CREATE leaves `vm.assumeNoRevert` for the next call.
+            match self.join_call_outcome(executor, state, outcome, failed_callee, None)? {
                 JoinedCallOutcome::Failure(parent)
                 | JoinedCallOutcome::Success { parent, unmet_expected_revert: true, .. } => {
                     *state = parent;
@@ -644,7 +667,9 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             stopRecordCall::SELECTOR => {
-                state.access_record = None;
+                if let Some(record) = &mut state.access_record {
+                    record.stop();
+                }
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             accessesCall::SELECTOR => {
@@ -839,7 +864,14 @@ impl SymbolicExecutor {
                 };
                 let emitter = params.iter().position(|param| *param == DynSolType::Address);
                 let count = params.iter().position(|param| *param == DynSolType::Uint(64));
-                self.expect_emit_from_args(state, args_offset, checks, emitter, count)
+                let anonymous = matches!(
+                    selector,
+                    expectEmitAnonymous_0Call::SELECTOR
+                        | expectEmitAnonymous_1Call::SELECTOR
+                        | expectEmitAnonymous_2Call::SELECTOR
+                        | expectEmitAnonymous_3Call::SELECTOR
+                );
+                self.expect_emit_from_args(state, args_offset, checks, anonymous, emitter, count)
             }
             expectCall_0Call::SELECTOR
             | expectCall_1Call::SELECTOR

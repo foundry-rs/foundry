@@ -1,6 +1,7 @@
 //! general eth api tests
 
 use crate::abi::Greeter;
+use alloy_eips::BlockNumberOrTag;
 use alloy_network::{ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U256, Uint, address, b256, bytes, utils::Unit};
 use alloy_provider::Provider;
@@ -388,8 +389,6 @@ async fn test_load_state_removes_canonical_mappings_above_restored_head() {
 // <https://github.com/foundry-rs/foundry/issues/12645>
 #[tokio::test(flavor = "multi_thread")]
 async fn finalized_block_hash_consistent_after_load_state() {
-    use alloy_eips::BlockNumberOrTag;
-
     let tmp = tempfile::tempdir().unwrap();
     let state_file = tmp.path().join("state.json");
 
@@ -1077,16 +1076,13 @@ async fn test_fork_load_state_preserves_fork_blocks_below_head() {
                     .unwrap(),
                 Some(origin_tx.clone())
             );
-            // Number-and-index forwarding currently excludes the fork head.
-            if (number as u64) < fork_boundary {
-                assert_eq!(
-                    forked_provider
-                        .get_transaction_by_block_number_and_index((number as u64).into(), 0)
-                        .await
-                        .unwrap(),
-                    Some(origin_tx)
-                );
-            }
+            assert_eq!(
+                forked_provider
+                    .get_transaction_by_block_number_and_index((number as u64).into(), 0)
+                    .await
+                    .unwrap(),
+                Some(origin_tx)
+            );
         }
     }
 }

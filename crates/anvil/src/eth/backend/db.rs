@@ -40,6 +40,7 @@ use std::{
     fs::File,
     io::BufReader,
     path::Path,
+    sync::Arc,
 };
 
 /// Number of preceding block hashes available to the EVM's `BLOCKHASH` opcode.
@@ -79,6 +80,11 @@ pub trait MaybeFullDatabase: crate::mem::DatabaseRef + Send + Sync {
     /// Returns an owned, recursively merged view of all available accounts.
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
         self.maybe_as_full_db().cloned()
+    }
+
+    /// Returns the accounts if they are stored behind a shared, immutable allocation.
+    fn maybe_shared_full_db(&self) -> Option<Arc<AddressMap<DbAccount>>> {
+        None
     }
 
     /// Returns whether snapshots of this database use structural sharing.
@@ -147,6 +153,10 @@ where
 
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
         T::maybe_full_db(self)
+    }
+
+    fn maybe_shared_full_db(&self) -> Option<Arc<AddressMap<DbAccount>>> {
+        T::maybe_shared_full_db(self)
     }
 
     fn is_persistent(&self) -> bool {
@@ -663,6 +673,10 @@ impl MaybeFullDatabase for StateDb {
         self.0.maybe_full_db()
     }
 
+    fn maybe_shared_full_db(&self) -> Option<Arc<AddressMap<DbAccount>>> {
+        self.0.maybe_shared_full_db()
+    }
+
     fn is_persistent(&self) -> bool {
         self.0.is_persistent()
     }
@@ -1015,6 +1029,7 @@ mod test {
     use super::*;
     use crate::eth::backend::mem::fork_db::ForkedDatabase;
     use alloy_consensus::Header;
+    use alloy_eips::eip4895::Withdrawal;
     use alloy_network::AnyNetwork;
     use alloy_provider::ProviderBuilder;
     use alloy_transport::mock::Asserter;
@@ -1183,8 +1198,6 @@ mod test {
 
     #[test]
     fn test_block_withdrawals_preserved() {
-        use alloy_eips::eip4895::Withdrawal;
-
         // create a block with withdrawals (like post-Shanghai blocks)
         let withdrawal = Withdrawal {
             index: 42,
