@@ -10,7 +10,7 @@ use crate::eth::backend::db::{
 use alloy_network::Network;
 use alloy_primitives::{Address, B256, U256, map::AddressMap};
 use alloy_rpc_types::BlockId;
-use evm2::evm::BlockStateAccumulator;
+use evm2::evm::{BlockStateAccumulator, DatabaseRef as _};
 use foundry_fork_db::cache::MemDb as RemoteState;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -30,7 +30,7 @@ impl<N: Network> RemoteDb<N> {
 
 impl<N: Network> DatabaseRef for RemoteDb<N> {
     fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
-        self.backend.account(address).map(|info| info.filter(|info| !info.is_empty()))
+        self.backend.get_account(&address).map(|info| info.filter(|info| !info.is_empty()))
     }
 
     fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
@@ -38,11 +38,11 @@ impl<N: Network> DatabaseRef for RemoteDb<N> {
     }
 
     fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
-        self.backend.storage_at(address, index)
+        self.backend.get_storage(&address, &index)
     }
 
     fn block_hash_ref(&self, number: u64) -> DatabaseResult<B256> {
-        self.backend.block_hash(number)
+        self.backend.get_block_hash(&U256::from(number))
     }
 }
 

@@ -9,7 +9,9 @@ use alloy_primitives::{Address, B256, U256};
 use evm2::{
     DatabaseError,
     bytecode::Bytecode,
-    evm::{AccountInfo, Cache, Database, DbResult, DynDatabase, EmptyDB, InMemoryDB, NonStaticAny},
+    evm::{
+        AccountInfo, Cache, DatabaseRef, DbResult, DynDatabase, EmptyDB, InMemoryDB, NonStaticAny,
+    },
     interpreter::Word,
 };
 use foundry_fork_db::{ForkBlockEnv, SharedBackend};
