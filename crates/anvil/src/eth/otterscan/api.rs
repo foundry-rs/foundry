@@ -223,7 +223,6 @@ impl EthApi<FoundryNetwork> {
             if let Some(traces) = self.backend.mined_parity_trace_block(n) {
                 let hashes = traces
                     .into_iter()
-                    .rev()
                     .filter(|trace| trace.contains_address(address))
                     .filter_map(|trace| trace.transaction_hash)
                     .unique();
