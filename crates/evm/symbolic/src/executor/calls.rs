@@ -1040,6 +1040,22 @@ impl SymbolicExecutor {
         let (call_caller, call_caller_word, pranked_origin) =
             call_context.unwrap_or_else(|| state.prank_for_next_call());
 
+        // A call beyond the call depth limit fails before it transfers value or runs
+        // any code, including a precompile.
+        if state.call_depth >= CALL_STACK_LIMIT as usize {
+            let return_data = SymReturnData::empty(&mut self.cx);
+            return self.finish_codeless_call(
+                executor,
+                state,
+                kind,
+                CallStatus::Revert,
+                return_data,
+                transfer_to,
+                out_offset,
+                &out_size,
+            );
+        }
+
         let spec_id = executor.spec_id;
         if is_precompile_for_spec(code_address, spec_id) {
             let input_len = in_size.size_word(&mut self.cx);
@@ -1614,7 +1630,19 @@ impl SymbolicExecutor {
                 branch.world.increment_nonce(executor, call_caller)?;
             }
             let mut outcome = None;
-            if matches!(kind, CallKind::Call | CallKind::CallCode) {
+            if branch.call_depth >= CALL_STACK_LIMIT as usize {
+                // Beyond the call depth limit the call fails before it transfers value. A
+                // pending revert cheatcode would match against a symbolic reverter.
+                if branch.expected_revert.is_some() || branch.assume_no_revert_next_call.is_some() {
+                    return Err(SymbolicError::Unsupported(
+                        "revert cheatcode on a symbolic CALL target beyond the call depth limit",
+                    ));
+                }
+                branch.return_data = SymReturnData::empty(&mut self.cx);
+                branch.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
+                branch.stack.push(SymExpr::zero(&mut self.cx))?;
+                outcome = Some(StepOutcome::Continue);
+            } else if matches!(kind, CallKind::Call | CallKind::CallCode) {
                 let transfer_to = if matches!(kind, CallKind::Call) {
                     // A failed transfer would report this placeholder, not the symbolic target, as
                     // the reverter.
