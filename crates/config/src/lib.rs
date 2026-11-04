@@ -1845,11 +1845,29 @@ impl Config {
 
     /// Returns configuration for a compiler to use when setting up a [Project].
     pub fn solc_compiler(&self) -> Result<SolcCompiler, SolcError> {
-        if let Some(solc) = self.ensure_solc()? {
+        if let Some(mut solc) = self.ensure_solc()? {
+            self.forward_solar_threads(&mut solc);
             Ok(SolcCompiler::Specific(solc))
         } else {
             Ok(SolcCompiler::AutoDetect)
         }
+    }
+
+    /// Runs Solar with as many threads as the global thread pool, so `-j` reaches it and it
+    /// otherwise uses every core instead of its own default. The count is passed on the compiler
+    /// instance rather than in the settings, so it does not change the build cache. A thread
+    /// count already set in `extra_args` wins.
+    fn forward_solar_threads(&self, solc: &mut Solc) {
+        if solc.solar_version().is_none() {
+            return;
+        }
+        let is_threads_arg = |arg: &str| {
+            arg.starts_with("--threads") || arg.starts_with("--jobs") || arg.starts_with("-j")
+        };
+        if solc.extra_args.iter().chain(&self.extra_args).any(|arg| is_threads_arg(arg)) {
+            return;
+        }
+        solc.extra_args.push(format!("--threads={}", rayon::current_num_threads()));
     }
 
     /// Returns the solc version, if any.
@@ -8979,6 +8997,52 @@ mod tests {
             assert!(cfg.warnings.iter().any(
                 |w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "unknown_key_xyz")
             ));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn warns_on_unknown_keys_in_endpoint_entries() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default.rpc_endpoints]
+                local = { endpoint = "http://localhost:8545", retriez = 3 }
+
+                [rpc_endpoints]
+                mainnet = "https://eth.example"
+                sepolia = { url = "https://sepolia.example", retries = 2, auth = "token" }
+                optimism = { endpoints = ["https://op.example"], compute_units_per_second = 10 }
+                base = { endpoint = "https://base.example", timeout = 5 }
+
+                [etherscan]
+                mainnet = { key = "KEY", chainId = 1 }
+                sepolia = { key = "KEY", chain = 11155111, url = "https://api.example" }
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            let unknown: Vec<_> = cfg
+                .warnings
+                .iter()
+                .filter_map(|w| match w {
+                    crate::Warning::UnknownSectionKey { key, section, .. } => {
+                        Some((key.as_str(), section.as_str()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                unknown,
+                [
+                    ("retriez", "rpc_endpoints.local"),
+                    ("timeout", "rpc_endpoints.base"),
+                    ("chainId", "etherscan.mainnet"),
+                ],
+                "{:?}",
+                cfg.warnings
+            );
             Ok(())
         });
     }

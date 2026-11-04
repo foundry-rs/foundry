@@ -736,12 +736,27 @@ struct TypedCallOverrides {
     gas_limit: Option<u64>,
     access_list: Option<AccessList>,
     disable_fee_charge: bool,
+    console_logs: ConsoleLogs,
+}
+
+/// When a call prints the `console.log` output it collected.
+///
+/// This does not change whether the console collector is installed, because the collector can
+/// change execution.
+#[derive(Default)]
+pub(crate) enum ConsoleLogs {
+    #[default]
+    Always,
+    /// Only if the call reverts or halts.
+    OnFailure,
+    Never,
 }
 
 pub(crate) struct GasEstimateCallOptions {
     gas_limit: u64,
     disable_fee_charge: bool,
     monad_context: Option<MonadReplayContext>,
+    console_logs: ConsoleLogs,
 }
 
 impl GasEstimateCallOptions {
@@ -749,8 +764,9 @@ impl GasEstimateCallOptions {
         gas_limit: u64,
         disable_fee_charge: bool,
         monad_context: Option<MonadReplayContext>,
+        console_logs: ConsoleLogs,
     ) -> Self {
-        Self { gas_limit, disable_fee_charge, monad_context }
+        Self { gas_limit, disable_fee_charge, monad_context, console_logs }
     }
 }
 
@@ -3897,7 +3913,8 @@ impl<N: Network> Backend<N> {
         block_env: BlockEnv,
         options: GasEstimateCallOptions,
     ) -> Result<(InstructionResult, Option<Output>, u128, StateChangeset), BlockchainError> {
-        let GasEstimateCallOptions { gas_limit, disable_fee_charge, monad_context } = options;
+        let GasEstimateCallOptions { gas_limit, disable_fee_charge, monad_context, console_logs } =
+            options;
         self.call_with_state_typed_inner(
             state,
             request,
@@ -3906,6 +3923,7 @@ impl<N: Network> Backend<N> {
             TypedCallOverrides {
                 gas_limit: Some(gas_limit),
                 disable_fee_charge,
+                console_logs,
                 ..Default::default()
             },
             monad_context,
@@ -3968,7 +3986,14 @@ impl<N: Network> Backend<N> {
             monad_context.as_mut().map(next_monad_context),
         )?;
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
-        inspector.print_logs();
+        let print_logs = match overrides.console_logs {
+            ConsoleLogs::Always => true,
+            ConsoleLogs::OnFailure => !exit_reason.is_ok(),
+            ConsoleLogs::Never => false,
+        };
+        if print_logs {
+            inspector.print_logs();
+        }
         Ok((exit_reason, out, gas_used as u128, state))
     }
 
@@ -5387,11 +5412,12 @@ impl<N: Network> Backend<N> {
         }
     }
 
-    /// Atomically publishes a fully prepared fork replacement.
+    /// Atomically publishes a fully prepared fork replacement and captures its fallback warning.
+    /// The caller emits the warning after releasing its lifecycle locks.
     pub(crate) async fn commit_fork_reset(
         &self,
         staged: StagedForkReset,
-    ) -> Result<(), BlockchainError> {
+    ) -> Result<Option<String>, BlockchainError> {
         let fork_block_number = staged.fork.block_number();
         let fork_block_hash = staged.fork.block_hash();
         let fork_total_difficulty = staged.fork.total_difficulty();
@@ -5462,7 +5488,14 @@ impl<N: Network> Backend<N> {
         self.cheats.clear_next_block_overrides();
 
         trace!(target: "backend", "reset fork");
-        Ok(())
+        let storage = self.blockchain.storage.read();
+        if storage.tempo.is_some()
+            && let Some(fork) = self.get_fork()
+        {
+            Ok(TempoChain::epoch_length_fallback_warning(&node_config, &fork))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Builds a complete in-memory replacement without mutating the live backend.
@@ -10404,9 +10437,10 @@ where
         if let Some(tx_chain_id) = tx.chain_id() {
             let chain_id = self.chain_id();
             if chain_id.to::<u64>() != tx_chain_id {
-                if let FoundryTxEnvelope::Legacy(tx) = tx.as_ref() {
-                    // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
-                    if evm_env.cfg_env.spec >= SpecId::SPURIOUS_DRAGON && tx.chain_id().is_none() {
+                // EIP-155 binds a legacy signature to one chain once Spurious Dragon is active.
+                // <https://eips.ethereum.org/EIPS/eip-155>
+                if tx.as_ref().is_legacy() {
+                    if evm_env.cfg_env.spec >= SpecId::SPURIOUS_DRAGON {
                         debug!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
                         return Err(InvalidTransactionError::IncompatibleEIP155);
                     }
