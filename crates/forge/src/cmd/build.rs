@@ -206,7 +206,11 @@ impl BuildArgs {
                     if let Some(files) = files {
                         return files.iter().any(|file| &curr_dir.join(file) == p);
                     }
-                    skip.is_match(p) && !is_ignored_path(p, &ignored, &curr_dir)
+                    // Ignore entries are canonical, so check symlinked inputs by both paths.
+                    skip.is_match(p)
+                        && !is_ignored_path(p, &ignored, &curr_dir)
+                        && !foundry_common::fs::canonicalize_path(p)
+                            .is_ok_and(|p| is_ignored_path(&p, &ignored, &curr_dir))
                 })
                 .collect::<Vec<_>>();
 

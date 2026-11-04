@@ -67,7 +67,12 @@ impl LintArgs {
                 config
                     .project_paths::<SolcLanguage>()
                     .input_files_iter()
-                    .filter(|p| !is_ignored_path(p, &ignored, &cwd))
+                    .filter(|p| {
+                        // Ignore entries are canonical, so check symlinked inputs by both paths.
+                        !is_ignored_path(p, &ignored, &cwd)
+                            && !foundry_common::fs::canonicalize_path(p)
+                                .is_ok_and(|p| is_ignored_path(&p, &ignored, &cwd))
+                    })
                     .collect()
             }
             paths => {

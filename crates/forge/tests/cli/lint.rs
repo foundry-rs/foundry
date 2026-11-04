@@ -2140,6 +2140,45 @@ note[screaming-snake-case-const]: constant name is not `SCREAMING_SNAKE_CASE`
 "#]]);
 }
 
+// `[lint] ignore` excludes symlinked sources, whether an entry names the symlink, a symlinked
+// directory, or a directory containing symlinks.
+#[cfg(unix)]
+#[forgetest]
+fn lint_ignore_symlinked_sources(prj: _, cmd: _) {
+    std::fs::create_dir_all(prj.root().join("shared")).unwrap();
+    std::fs::create_dir_all(prj.root().join("src")).unwrap();
+    std::fs::write(
+        prj.root().join("shared/Linked.sol"),
+        r#"
+pragma solidity ^0.8.0;
+
+contract Linked {
+    uint256 constant limit = 10;
+}
+"#,
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("../shared/Linked.sol", prj.root().join("src/Linked.sol")).unwrap();
+    std::os::unix::fs::symlink("../shared", prj.root().join("src/vendor")).unwrap();
+
+    for ignore in [vec!["src/Linked.sol", "src/vendor/**"], vec!["src/**"]] {
+        prj.update_config(|config| {
+            config.deny = DenyLevel::Notes;
+            config.lint = LinterConfig {
+                lint_on_build: true,
+                severity: vec![],
+                ignore: ignore.into_iter().map(String::from).collect(),
+                ..Default::default()
+            };
+        });
+        cmd.forge_fuse().arg("build").assert_success().stderr_eq("");
+        cmd.forge_fuse().arg("lint").assert_success().stderr_eq(str![[r#"
+nothing to lint
+
+"#]]);
+    }
+}
+
 #[cfg(unix)]
 #[forgetest]
 fn lint_symlinked_tests_and_scripts(prj: _, cmd: _) {
