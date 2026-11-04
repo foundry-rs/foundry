@@ -1254,10 +1254,8 @@ impl CallTraceDecoder {
     fn decode_cheatcode_inputs(&self, func: &Function, data: &[u8]) -> Option<Vec<String>> {
         match func.name.as_str() {
             "expectRevert" => {
-                let decoded = match data.get(SELECTOR_LEN..) {
-                    Some(data) => func.abi_decode_input(data).ok(),
-                    None => None,
-                };
+                let decoded =
+                    data.get(SELECTOR_LEN..).and_then(|data| func.abi_decode_input(data).ok());
                 let Some(decoded) = decoded else {
                     return Some(vec![self.revert_decoder.decode(data, None)]);
                 };

@@ -2214,10 +2214,8 @@ fn handle_arbitrum_system_call<FEN: FoundryEvmNetwork>(
 
     // Forks report their L2 block, which the block env lacks on Arbitrum because `NUMBER` returns
     // the L1 block there. Without a fork the block env is read here to follow `vm.roll`.
-    let block_number = match ecx.db().active_fork_block_number() {
-        Some(block_number) => block_number,
-        None => ecx.block().number().saturating_to(),
-    };
+    let block_number =
+        ecx.db().active_fork_block_number().unwrap_or_else(|| ecx.block().number().saturating_to());
     let Some((gas_cost, output)) = arbitrum::arb_block_number_call(call.gas_limit, block_number)
     else {
         return Some(arbitrum_call_outcome(

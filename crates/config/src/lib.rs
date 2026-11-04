@@ -2079,7 +2079,7 @@ impl Config {
         &'a self,
         fallback: impl Into<Cow<'a, str>>,
     ) -> Result<Cow<'a, str>, UnresolvedEnvVarError> {
-        if let Some(url) = self.get_rpc_url() { url } else { Ok(fallback.into()) }
+        self.get_rpc_url().unwrap_or_else(|| Ok(fallback.into()))
     }
 
     /// Returns the configured rpc or `"http://localhost:8545"` if no `eth_rpc_url` is set

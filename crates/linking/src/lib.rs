@@ -688,14 +688,12 @@ impl<'a> Linker<'a> {
         let mut addresses = BTreeMap::new();
         let mut libs_to_deploy = Vec::new();
         for &id in &needed_libraries {
-            let address = if let Some(address) = self.configured_library_address(id, &libraries)? {
-                address
-            } else {
+            let address = self.configured_library_address(id, &libraries)?.unwrap_or_else(|| {
                 let address = sender.create(nonce);
                 nonce += 1;
                 libs_to_deploy.push((id, address));
                 address
-            };
+            });
             addresses.insert(id, address);
         }
 

@@ -111,11 +111,10 @@ impl Mutator for AssignmentMutator {
                 false // Not an assign
             }
         } else if let Some(var_definition) = context.var_definition {
-            if let Some(init) = &var_definition.initializer {
-                matches!(&init.kind, ExprKind::Lit(..) | ExprKind::Ident(..))
-            } else {
-                false // No initializer
-            }
+            var_definition
+                .initializer
+                .as_ref()
+                .is_some_and(|init| matches!(&init.kind, ExprKind::Lit(..) | ExprKind::Ident(..)))
         } else {
             false // Not an expression or var_definition
         }
