@@ -119,7 +119,7 @@ impl EnvOverrideState {
 
     /// Returns whether any fork, not only the active one, has an override set.
     #[inline]
-    pub fn is_any_set(&self) -> bool {
+    pub const fn is_any_set(&self) -> bool {
         self.any_set
     }
 
