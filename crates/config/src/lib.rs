@@ -1105,9 +1105,9 @@ impl Config {
     }
 
     fn normalize_hardfork_settings(&mut self) -> Result<(), Error> {
-        self.networks.validate().map_err(Error::from)?;
+        self.networks.validate()?;
         let Some(hardfork) = self.hardfork else { return Ok(()) };
-        self.networks = self.networks.normalize_for_hardfork(hardfork).map_err(Error::from)?;
+        self.networks = self.networks.normalize_for_hardfork(hardfork)?;
         Ok(())
     }
 
