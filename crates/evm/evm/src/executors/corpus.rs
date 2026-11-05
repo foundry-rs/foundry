@@ -3148,7 +3148,7 @@ mod tests {
     fn sequence_from_test_trace_preserves_forward_environment_and_rejects_restores() {
         let target = Address::repeat_byte(0x42);
         let sender = Address::repeat_byte(0xaa);
-        let foo = Function::parse("foo()").unwrap();
+        let foo = Function::parse("foo() payable").unwrap();
         let foo_selector = foo.selector();
         let targeted_contracts =
             targeted_contracts_with_selective_functions(target, vec![foo], [foo_selector]);
