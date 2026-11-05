@@ -2499,6 +2499,7 @@ pub(crate) struct SymbolicBlock {
     pub(crate) gaslimit: SymExpr,
     pub(crate) basefee: SymExpr,
     pub(crate) blob_basefee: SymExpr,
+    pub(crate) slot_num: SymExpr,
     pub(crate) block_hashes: HashMap<U256, SymExpr>,
     pub(crate) blob_hashes: Vec<B256>,
 }
@@ -2514,6 +2515,7 @@ impl SymbolicBlock {
             gaslimit: SymExpr::zero(cx),
             basefee: SymExpr::zero(cx),
             blob_basefee: SymExpr::zero(cx),
+            slot_num: SymExpr::zero(cx),
             block_hashes: HashMap::default(),
             blob_hashes: Vec::new(),
         }
@@ -2530,6 +2532,7 @@ impl SymbolicBlock {
             gaslimit: SymExpr::constant(cx, U256::from(block.gas_limit)),
             basefee: SymExpr::constant(cx, U256::from(block.basefee)),
             blob_basefee: SymExpr::constant(cx, U256::from(block.blob_basefee)),
+            slot_num: SymExpr::constant(cx, U256::from(block.slot_num)),
             block_hashes: HashMap::default(),
             blob_hashes: executor.blob_hashes.clone(),
         }

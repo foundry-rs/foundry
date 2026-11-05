@@ -1597,6 +1597,25 @@ impl SymbolicExecutor {
                 state.block.number = state.memory.load_word(&mut self.cx, in_offset + 4)?;
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
+            rollSlotCall::SELECTOR | getSlotNumberCall::SELECTOR
+                if executor.spec_id < SpecId::AMSTERDAM =>
+            {
+                let message = if selector == rollSlotCall::SELECTOR {
+                    "vm.rollSlot: `rollSlot` is not supported before the Amsterdam hard fork; \
+                     see EIP-7843: https://eips.ethereum.org/EIPS/eip-7843"
+                } else {
+                    "vm.getSlotNumber: `getSlotNumber` is not supported before the Amsterdam hard \
+                     fork; see EIP-7843: https://eips.ethereum.org/EIPS/eip-7843"
+                };
+                Ok(CheatcodeOutcome::Revert(error_string_return_data(&mut self.cx, message)))
+            }
+            rollSlotCall::SELECTOR => {
+                // The concrete cheatcode decodes a `uint64`, which drops the high bits.
+                let slot = state.memory.load_word(&mut self.cx, in_offset + 4)?;
+                let mask = SymExpr::constant(&mut self.cx, U256::from(u64::MAX));
+                state.block.slot_num = SymExpr::binop(&mut self.cx, SymBinOp::And, slot, mask);
+                Ok(CheatcodeOutcome::Continue(Vec::new()))
+            }
             setBlockhashCall::SELECTOR => {
                 let block_number = read_abi_constrained_word_arg(
                     &mut self.cx,
@@ -1666,6 +1685,9 @@ impl SymbolicExecutor {
             }
             getBlockNumberCall::SELECTOR => {
                 Ok(CheatcodeOutcome::Continue(vec![state.block.number.clone()]))
+            }
+            getSlotNumberCall::SELECTOR => {
+                Ok(CheatcodeOutcome::Continue(vec![state.block.slot_num.clone()]))
             }
             txGasPriceCall::SELECTOR => {
                 state.gas_price = state.memory.load_word(&mut self.cx, in_offset + 4)?;
