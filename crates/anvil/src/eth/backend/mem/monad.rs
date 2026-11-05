@@ -167,9 +167,7 @@ pub(super) fn normalize_access_list(
     if MonadHardfork::MonadTen.is_enabled_in(hardfork) {
         for item in &mut access_list.0 {
             item.storage_keys.sort_unstable();
-            item.storage_keys.dedup_by_key(|slot| {
-                monad_evm2::page::page_index(U256::from_be_slice(slot.as_slice()))
-            });
+            item.storage_keys.dedup_by_key(|slot| monad_evm2::page::page_index((*slot).into()));
         }
     }
     access_list

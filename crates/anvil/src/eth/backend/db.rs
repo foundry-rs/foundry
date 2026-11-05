@@ -447,20 +447,12 @@ pub fn apply_state_overrides<ExtDB: DatabaseRef>(
             (Some(state), None) => {
                 let account = db.load_account(address)?;
                 account.account_state = AccountState::StorageCleared;
-                account.storage = state
-                    .into_iter()
-                    .map(|(slot, value)| {
-                        (U256::from_be_bytes(slot.0), U256::from_be_bytes(value.0))
-                    })
-                    .collect();
+                account.storage =
+                    state.into_iter().map(|(slot, value)| (slot.into(), value.into())).collect();
             }
             (None, Some(state_diff)) => {
                 for (slot, value) in state_diff {
-                    db.insert_account_storage(
-                        address,
-                        U256::from_be_bytes(slot.0),
-                        U256::from_be_bytes(value.0),
-                    )?;
+                    db.insert_account_storage(address, slot.into(), value.into())?;
                 }
             }
             (None, None) => {}
