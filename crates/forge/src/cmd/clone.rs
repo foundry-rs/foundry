@@ -357,10 +357,13 @@ impl CloneArgs {
             true
         })?;
 
-        // update configuration
+        // Update configuration, surfacing any error instead of silently discarding it.
+        let mut result = Ok(());
         Config::update_at(root, |config, doc| {
-            update_config_by_metadata(config, doc, meta, chain).is_ok()
+            result = update_config_by_metadata(config, doc, meta, chain);
+            result.is_ok()
         })?;
+        result?;
 
         // write remappings to remappings.txt if necessary
         if !no_remappings_txt {
@@ -370,10 +373,13 @@ impl CloneArgs {
                 "remappings.txt already exists, please remove it first"
             );
 
+            // Propagate remappings.txt write errors instead of silently discarding them.
+            let mut remappings_write_error = Ok(());
             Config::update_at(root, |config, doc| {
                 let remappings_txt_content =
                     config.remappings.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n");
-                if fs::write(&remappings_txt, remappings_txt_content).is_err() {
+                if let Err(err) = fs::write(&remappings_txt, remappings_txt_content) {
+                    remappings_write_error = Err(err);
                     return false;
                 }
 
@@ -385,6 +391,7 @@ impl CloneArgs {
                     false
                 }
             })?;
+            remappings_write_error?;
         }
 
         Ok(())
@@ -421,20 +428,12 @@ fn update_config_by_metadata(
 ) -> Result<()> {
     let profile = config.profile.as_str().as_str();
 
-    // macro to update the config if the value exists
+    // Update supplied settings, inserting missing keys and tables.
     macro_rules! update_if_needed {
         ([$($key:expr),+], $value:expr) => {
             {
                 if let Some(value) = $value {
-                    let mut current = &mut doc[Config::PROFILE_SECTION][profile];
-                    $(
-                        if let Some(nested_doc) = current.get_mut(&$key) {
-                            current = nested_doc;
-                        } else {
-                            return Err(eyre::eyre!("cannot find the key: {}", $key));
-                        }
-                    )+
-                    *current = toml_edit::value(value);
+                    doc[Config::PROFILE_SECTION][profile]$([$key])+ = toml_edit::value(value);
                 }
             }
         };
@@ -1194,6 +1193,99 @@ mod tests {
                 implementation,
                 swarm_source: String::new(),
             }],
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_metadata_propagates_compiler_version_error() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().to_path_buf();
+        fs::create_dir(root.join("src")).unwrap();
+        fs::create_dir(root.join("lib")).unwrap();
+        fs::write(
+            root.join(Config::FILE_NAME),
+            Config::with_root(&root).into_basic().to_string_pretty().unwrap(),
+        )
+        .unwrap();
+        let mut meta = contract_metadata("Contract", false, None).items.remove(0);
+        meta.compiler_version = "definitely-not-a-version".to_string();
+        // Let dump_sources parse the settings without first parsing the compiler version.
+        meta.evm_version = "london".to_string();
+        let expected = meta.compiler_version().unwrap_err().to_string();
+
+        let err = CloneArgs::parse_metadata(&meta, Chain::mainnet(), &root, false, false)
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.to_string(), expected);
+        assert!(root.join("src/Contract.sol").exists());
+        assert!(!root.join("remappings.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn test_parse_metadata_inserts_missing_settings() {
+        for evm_version in ["london", "Default"] {
+            for no_remappings_txt in [false, true] {
+                let temp = tempfile::tempdir().unwrap();
+                let root = temp.path().to_path_buf();
+                fs::create_dir(root.join("src")).unwrap();
+                fs::create_dir(root.join("lib")).unwrap();
+                fs::write(
+                    root.join(Config::FILE_NAME),
+                    Config::with_root(&root).into_basic().to_string_pretty().unwrap(),
+                )
+                .unwrap();
+                let mut meta = contract_metadata("Contract", false, None).items.remove(0);
+                meta.evm_version = evm_version.to_string();
+                meta.source_code = SourceCodeMetadata::Metadata {
+                    language: None,
+                    sources: HashMap::from([(
+                        "Contract.sol".to_string(),
+                        SourceCodeEntry { content: "contract Contract {}".to_string() },
+                    )]),
+                    settings: Some(serde_json::json!({
+                        "viaIR": true,
+                        "metadata": { "useLiteralContent": true, "bytecodeHash": "none" },
+                        "optimizer": {
+                            "enabled": true,
+                            "runs": 200,
+                            "details": {
+                                "peephole": true,
+                                "yul": true,
+                                "yulDetails": {
+                                    "stackAllocation": true,
+                                    "optimizerSteps": "u"
+                                }
+                            }
+                        }
+                    })),
+                };
+
+                CloneArgs::parse_metadata(&meta, Chain::mainnet(), &root, no_remappings_txt, false)
+                    .await
+                    .unwrap();
+
+                let doc = fs::read_to_string(root.join(Config::FILE_NAME))
+                    .unwrap()
+                    .parse::<toml_edit::DocumentMut>()
+                    .unwrap();
+                let profile = &doc[Config::PROFILE_SECTION]["default"];
+                assert_eq!(profile["solc_version"].as_str(), Some("0.8.10"));
+                assert_eq!(profile["evm_version"].as_str(), Some("london"));
+                assert_eq!(profile["via_ir"].as_bool(), Some(true));
+                assert_eq!(profile["use_literal_content"].as_bool(), Some(true));
+                assert_eq!(profile["bytecode_hash"].as_str(), Some("none"));
+                assert_eq!(profile["optimizer"].as_bool(), Some(true));
+                assert_eq!(profile["optimizer_runs"].as_integer(), Some(200));
+                let details = &profile["optimizer_details"];
+                assert_eq!(details["peephole"].as_bool(), Some(true));
+                assert_eq!(details["yul"].as_bool(), Some(true));
+                assert_eq!(details["yulDetails"]["stackAllocation"].as_bool(), Some(true));
+                assert_eq!(details["yulDetails"]["optimizerSteps"].as_str(), Some("u"));
+                assert_eq!(root.join("remappings.txt").exists(), !no_remappings_txt);
+                assert_eq!(profile.get("remappings").is_some(), no_remappings_txt);
+                Config::load_with_root(&root).unwrap();
+            }
         }
     }
 
