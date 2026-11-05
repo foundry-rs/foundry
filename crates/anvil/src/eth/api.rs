@@ -866,13 +866,26 @@ impl<N: Network> EthApi<N> {
         Ok(self.backend.get_blob_by_versioned_hash(hash)?)
     }
 
-    /// Handler for RPC call: `anvil_getBlobsByBlockId`
-    pub fn anvil_get_blobs_by_block_id(
+    /// Returns the blobs for a Beacon API `block_id`.
+    ///
+    /// With `--block-time`, a numeric `block_id` is a beacon slot whose length is the block time
+    /// rounded up to whole seconds, as beacon clients address blobs by slot.
+    ///
+    /// Handler for Beacon API call: `GET /eth/v1/beacon/blobs/{block_id}`
+    pub async fn anvil_get_blobs_by_block_id(
         &self,
         block_id: impl Into<BlockId>,
         versioned_hashes: Vec<B256>,
     ) -> Result<Option<Vec<Blob>>> {
         node_info!("anvil_getBlobsByBlockId");
+        let block_id = block_id.into();
+        let block_time = self.backend.node_config.read().await.block_time;
+        if let BlockId::Number(BlockNumber::Number(slot)) = block_id
+            && let Some(block_time) = block_time
+        {
+            let seconds_per_slot = block_time.as_secs() + u64::from(block_time.subsec_nanos() != 0);
+            return Ok(self.backend.get_blobs_by_slot(slot, seconds_per_slot, &versioned_hashes));
+        }
         Ok(self.backend.get_blobs_by_block_id(block_id, versioned_hashes)?)
     }
 

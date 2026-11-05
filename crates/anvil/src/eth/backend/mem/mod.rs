@@ -4616,22 +4616,64 @@ impl<N: Network> Backend<N> {
         versioned_hashes: Vec<B256>,
     ) -> Result<Option<Vec<alloy_consensus::Blob>>> {
         Ok(self.get_block(id).map(|block| {
-            block
-                .body
-                .transactions
-                .iter()
-                .filter_map(|tx| tx.as_ref().sidecar())
-                .flat_map(|sidecar| {
-                    sidecar.sidecar.blobs().iter().zip(sidecar.sidecar.commitments().iter())
-                })
-                .filter(|(_, commitment)| {
-                    // Filter blobs by versioned_hashes if provided
-                    versioned_hashes.is_empty()
-                        || versioned_hashes.contains(&kzg_to_versioned_hash(commitment.as_slice()))
-                })
+            block_blobs(&block)
+                .filter(|(_, hash)| versioned_hashes.is_empty() || versioned_hashes.contains(hash))
                 .map(|(blob, _)| *blob)
                 .collect()
         }))
+    }
+
+    /// Returns the blobs of the blocks in the given beacon slot, or `None` if no block is in it.
+    ///
+    /// Slot `n` covers the timestamps in
+    /// `[genesis_time + n * seconds_per_slot, genesis_time + (n + 1) * seconds_per_slot)`. Anvil
+    /// can mine more than one block in a slot, so this returns the blobs of all of them.
+    /// When hashes are supplied, each is returned at most as often as requested.
+    pub fn get_blobs_by_slot(
+        &self,
+        slot: u64,
+        seconds_per_slot: u64,
+        versioned_hashes: &[B256],
+    ) -> Option<Vec<Blob>> {
+        let start = slot
+            .checked_mul(seconds_per_slot)
+            .and_then(|offset| self.genesis_time().checked_add(offset))?;
+        let end = start.saturating_add(seconds_per_slot);
+        let storage = self.blockchain.storage.read();
+        // Check every local canonical block, since `evm_setTime` can move timestamps backwards.
+        // State loading can leave gaps in the locally stored block numbers.
+        let mut blocks = storage
+            .hashes
+            .iter()
+            .filter(|(number, _)| **number <= storage.best_number)
+            .filter_map(|(_, hash)| storage.blocks.get(hash))
+            .filter(|block| (start..end).contains(&block.header.timestamp()))
+            .collect::<Vec<_>>();
+        if blocks.is_empty() {
+            return None;
+        }
+        blocks.sort_unstable_by_key(|block| block.header.number());
+        let mut remaining = versioned_hashes.to_vec();
+        Some(
+            blocks
+                .into_iter()
+                .flat_map(block_blobs)
+                .filter(|(_, hash)| {
+                    if versioned_hashes.is_empty() {
+                        return true;
+                    }
+                    // The same blob can appear in multiple blocks in a slot. Return only as many
+                    // occurrences as requested, rather than every matching occurrence in the slot.
+                    if let Some(index) = remaining.iter().position(|remaining| remaining == hash) {
+                        remaining.swap_remove(index);
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .map(|(blob, _)| *blob)
+                .collect(),
+        )
     }
 
     #[allow(clippy::large_stack_frames)]
@@ -11207,6 +11249,16 @@ fn genesis_json_header(genesis: &Genesis) -> Header {
 /// Wraps an Ethereum-shaped header in the selected network's consensus header.
 fn foundry_header(networks: &NetworkConfigs, header: Header) -> FoundryHeader {
     if networks.is_tempo() { FoundryHeader::tempo(header) } else { header.into() }
+}
+
+/// Returns the blobs in `block` with their versioned hashes, in transaction order.
+fn block_blobs(block: &Block) -> impl Iterator<Item = (&Blob, B256)> {
+    block
+        .body
+        .transactions
+        .iter()
+        .filter_map(|tx| tx.as_ref().sidecar())
+        .flat_map(|sidecar| sidecar.sidecar.blobs().iter().zip(sidecar.sidecar.versioned_hashes()))
 }
 
 #[cfg(test)]
