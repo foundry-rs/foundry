@@ -26,6 +26,10 @@ use std::{
 const MAX_PENDING: usize = 32;
 const MAX_CALLS: usize = 1024;
 const MAX_CALLDATA_BYTES: usize = 64 * 1024;
+/// Distinct comparison outcomes remembered for novelty checks. Real targets reach far more
+/// outcomes than `frontier_limit` in their first sequence, so this bound is separate from the
+/// submission budget.
+const MAX_OBSERVED_OUTCOMES: usize = 1 << 16;
 
 /// Counters for the live worker, separate from bounded symbolic verification results.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -150,7 +154,7 @@ impl LiveInvariantSolver {
         let len = sequence.cmp_seq.len().min(depth);
         let mut novel = false;
         for cmp in sequence.cmp_seq[..len].iter().flatten() {
-            if self.observed.len() >= self.limit {
+            if self.observed.len() >= MAX_OBSERVED_OUTCOMES {
                 break;
             }
             novel |=
@@ -240,7 +244,6 @@ impl LiveInvariantSolver {
     pub(super) fn is_active(&self) -> bool {
         self.requests.is_some()
             && self.seen.len() < self.limit
-            && self.observed.len() < self.limit
             && Instant::now() < self.deadline
             && self.thread.as_ref().is_some_and(|thread| !thread.is_finished())
     }
