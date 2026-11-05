@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.24;
 
-import {TempoProofVerifier} from "../src/TempoProofVerifier.sol";
+import {TempoProofVerifier, TempoProofReceiver} from "../src/TempoProofVerifier.sol";
 import {LibBLS12381 as BLS} from "commonware/certificate/LibBLS12381.sol";
 import {LibSimplex as Simplex} from "commonware/simplex/LibSimplex.sol";
 import {Vm} from "../src/Vm.sol";
@@ -246,5 +246,21 @@ contract TempoProofTest {
         ) {
             require(!valid, "invalid fork evidence accepted");
         } catch {}
+    }
+
+    function test_fork_receiver_accepts_certified_storage_proof() public {
+        TempoProofReceiver receiver = new TempoProofReceiver(forkKey);
+        vm.expectEmit(true, true, true, true, address(receiver));
+        emit TempoProofReceiver.ProofAccepted(forkEvidence.subject.payload, forkHeight, forkAccount, bytes32(0), 42);
+        vm.recordLogs();
+        receiver.submit(forkEvidence, forkHeight, forkAccount, bytes32(0), 42);
+        require(vm.getRecordedLogs().length == 1, "one acceptance event");
+    }
+
+    function test_fork_receiver_rejects_other_identity() public {
+        TempoProofReceiver receiver = new TempoProofReceiver(forkKey);
+        require(verifier.verify(initialKey, evidence, height, account, bytes32(0), 42), "valid other identity proof");
+        vm.expectRevert(abi.encodeWithSignature("Error(string)", "vote signature"));
+        receiver.submit(evidence, height, account, bytes32(0), 42);
     }
 }

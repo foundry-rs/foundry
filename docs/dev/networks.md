@@ -255,6 +255,13 @@ reads and later writes preserve the earlier certified proofs. It also writes to 
 and verifies its inclusion in a later sealed partial trie while preserving its earlier exclusion.
 Uncached runs download pinned sources and Solc.
 
+The [receiver fixture](../../testdata/fixtures/TempoProofVerifier.sol) fixes its trusted development
+key at deployment and reuses the same verifier. Its `submit` entry point reverts on invalid evidence
+or a mismatched value, and emits `ProofAccepted(digest, height, account, slot, value)` only after
+verification succeeds. Tests check the exact acceptance event and reject valid evidence from a
+different identity with a vote-signature revert. This fixture has no key rotation or replay
+policy; these tests run locally in Forge and do not submit proof transactions to a native Tempo node.
+
 Fork certificates authenticate the sealed trie of cached local state, not the complete upstream
 state. An uncached upstream account remains absent from an earlier sealed trie even after a later
 RPC read loads it. The fork uses an explicit local development consensus identity distinct from the
