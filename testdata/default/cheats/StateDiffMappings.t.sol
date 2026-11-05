@@ -297,9 +297,7 @@ contract StateDiffMappingsTest is Test {
         emit log_string(json);
 
         // `roles[2].members[account]`, not one more key of `roles`.
-        assertTrue(
-            vm.contains(json, '"label":"roles[2].members[0x0000000000000000000000000000000000001234]"')
-        );
+        assertTrue(vm.contains(json, '"label":"roles[2].members[0x0000000000000000000000000000000000001234]"'));
         assertTrue(vm.contains(json, '"type":"struct StructMappingStorage.Access"'));
         assertTrue(vm.contains(json, '"keys":["2","0x0000000000000000000000000000000000001234"]'));
         assertTrue(vm.contains(json, '"decoded":{"previousValue":"0","newValue":"1700000000"}'));
@@ -309,9 +307,7 @@ contract StateDiffMappingsTest is Test {
 
         // A mapping member past the struct's first slot.
         assertTrue(vm.contains(json, '"label":"pools[1].total"'));
-        assertTrue(
-            vm.contains(json, '"label":"pools[1].shares[0x0000000000000000000000000000000000001234]"')
-        );
+        assertTrue(vm.contains(json, '"label":"pools[1].shares[0x0000000000000000000000000000000000001234]"'));
         assertTrue(vm.contains(json, '"type":"mapping(address => uint256)"'));
 
         vm.stopAndReturnStateDiff();
@@ -327,9 +323,7 @@ contract StateDiffMappingsTest is Test {
         string memory json = vm.getStateDiffJson();
 
         assertTrue(vm.contains(json, '"label":"roles[2].admin"'));
-        assertTrue(
-            vm.contains(json, '"label":"pools[1].shares[0x0000000000000000000000000000000000001234]"')
-        );
+        assertTrue(vm.contains(json, '"label":"pools[1].shares[0x0000000000000000000000000000000000001234]"'));
         assertTrue(vm.contains(json, '"decoded":{"previousValue":"0","newValue":"4"}'));
         assertTrue(vm.contains(json, '"decoded":{"previousValue":"0","newValue":"100"}'));
 
