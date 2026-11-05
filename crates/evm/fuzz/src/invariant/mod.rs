@@ -262,10 +262,14 @@ impl TargetedContracts {
                 .is_some_and(|function| {
                     (function.state_mutability == StateMutability::Payable
                         || tx.call_details.value.is_none_or(|value| value.is_zero()))
+                        // Decoding depth follows the function's type nesting, which the fuzzer
+                        // does not limit, so the default recursion limit would reject valid calls.
                         && function
                             .abi_decode_input_with_config(
                                 &calldata[4..],
-                                AbiDecoderConfig::new().validate_words(true),
+                                AbiDecoderConfig::new()
+                                    .validate_words(true)
+                                    .recursion_limit(usize::MAX),
                             )
                             .is_ok()
                 })
@@ -792,10 +796,14 @@ mod tests {
     #[test]
     fn targeted_contracts_replay_only_generatable_calls() {
         let target = Address::repeat_byte(0x42);
-        let targets =
-            targeted_contracts_with_functions(target, &["set(uint8)", "deposit() payable"]);
+        let deep_signature = format!("deep(uint256{})", "[1]".repeat(17));
+        let targets = targeted_contracts_with_functions(
+            target,
+            &["set(uint8)", "deposit() payable", &deep_signature],
+        );
         let set = Function::parse("set(uint8)").unwrap().selector();
         let deposit = Function::parse("deposit()").unwrap().selector();
+        let deep = Function::parse(&deep_signature).unwrap().selector();
         let set_calldata = |word: u64| {
             let mut calldata = set.to_vec();
             calldata.extend_from_slice(&U256::from(word).to_be_bytes::<32>());
@@ -815,6 +823,7 @@ mod tests {
         assert!(targets.can_replay(&with_value(0, tx(target, set_calldata(1)))));
         assert!(!targets.can_replay(&with_value(1, tx(target, set_calldata(1)))));
         assert!(targets.can_replay(&with_value(1, tx(target, deposit.to_vec()))));
+        assert!(targets.can_replay(&tx(target, [deep.as_slice(), &[0; 32]].concat())));
     }
 
     #[test]
