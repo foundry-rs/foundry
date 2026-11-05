@@ -428,9 +428,22 @@ impl<N: Network> EthApi<N> {
 
     /// Sets the code of a contract.
     ///
+    /// Native Tempo precompiles reject empty and unchanged writes as well to preserve their account
+    /// markers. For TIP20, nonempty code marks the token as initialized.
+    ///
     /// Handler for RPC call: `anvil_setCode`
     pub async fn anvil_set_code(&self, address: Address, code: Bytes) -> Result<()> {
         node_info!("anvil_setCode");
+        let _lifecycle = self.lifecycle_lock.read().await;
+        if self.backend.is_tempo()
+            && let Some(name) =
+                backend::tempo::native_precompile_name(address, self.backend.tempo_hardfork())
+        {
+            return Err(RpcError::invalid_params(format!(
+                "cannot set code for native Tempo precompile {name} at {address}: calls are handled natively and do not execute account bytecode; code writes are rejected to preserve native account markers, including TIP20 initialization"
+            ))
+            .into());
+        }
         self.backend.set_code(address, code).await?;
         #[cfg(feature = "base")]
         self.invalidate_base_eip8130_pool();
@@ -853,13 +866,26 @@ impl<N: Network> EthApi<N> {
         Ok(self.backend.get_blob_by_versioned_hash(hash)?)
     }
 
-    /// Handler for RPC call: `anvil_getBlobsByBlockId`
-    pub fn anvil_get_blobs_by_block_id(
+    /// Returns the blobs for a Beacon API `block_id`.
+    ///
+    /// With `--block-time`, a numeric `block_id` is a beacon slot whose length is the block time
+    /// rounded up to whole seconds, as beacon clients address blobs by slot.
+    ///
+    /// Handler for Beacon API call: `GET /eth/v1/beacon/blobs/{block_id}`
+    pub async fn anvil_get_blobs_by_block_id(
         &self,
         block_id: impl Into<BlockId>,
         versioned_hashes: Vec<B256>,
     ) -> Result<Option<Vec<Blob>>> {
         node_info!("anvil_getBlobsByBlockId");
+        let block_id = block_id.into();
+        let block_time = self.backend.node_config.read().await.block_time;
+        if let BlockId::Number(BlockNumber::Number(slot)) = block_id
+            && let Some(block_time) = block_time
+        {
+            let seconds_per_slot = block_time.as_secs() + u64::from(block_time.subsec_nanos() != 0);
+            return Ok(self.backend.get_blobs_by_slot(slot, seconds_per_slot, &versioned_hashes));
+        }
         Ok(self.backend.get_blobs_by_block_id(block_id, versioned_hashes)?)
     }
 
@@ -2195,12 +2221,14 @@ impl EthApi<FoundryNetwork> {
         trace!(target: "rpc::api", "executing eth request");
         // Fork reset and RPC URL replacement take the write lock internally after their fallible
         // remote staging work. Memory reset takes it before staging because it snapshots live
-        // state. Identity, snapshot, and chain-rewind methods also lock internally to keep direct
-        // API callers safe without recursively acquiring this fair RwLock. Consensus queries
-        // snapshot their source under the backend DB lock before any upstream I/O.
+        // state. Identity, snapshot, chain-rewind, and SetCode methods also lock internally to keep
+        // direct API callers safe. Nested reads of this fair RwLock can deadlock behind a queued
+        // writer. Consensus queries snapshot their source under the backend DB lock before any
+        // upstream I/O.
         let _lifecycle = if matches!(
             &request,
             EthRequest::Reset(_)
+                | EthRequest::SetCode(_, _)
                 | EthRequest::SetRpcUrl(_)
                 | EthRequest::NodeInfo(_)
                 | EthRequest::AnvilMetadata(_)
@@ -6150,5 +6178,19 @@ mod tests {
         assert_eq!(response.blob_gas_used_ratio.len(), 6);
         assert_eq!(response.base_fee_per_blob_gas.len(), 6);
         assert_eq!(rewards.len(), 6);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn set_code_waits_for_lifecycle_before_native_guard() {
+        let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+        let lifecycle = api.lifecycle_lock.write().await;
+        let mut write = std::pin::pin!(
+            api.anvil_set_code(foundry_evm::core::tempo::PATH_USD_ADDRESS, Bytes::new())
+        );
+
+        assert!(futures::poll!(write.as_mut()).is_pending());
+        drop(lifecycle);
+        let error = tokio::time::timeout(Duration::from_secs(5), write).await.unwrap().unwrap_err();
+        assert!(matches!(error, BlockchainError::RpcError(_)));
     }
 }

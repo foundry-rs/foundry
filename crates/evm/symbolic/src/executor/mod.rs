@@ -28,10 +28,7 @@ enum CallStatus {
 }
 
 enum JoinedCallOutcome {
-    ExpectedRevert {
-        parent: PathState,
-        child: PathState,
-    },
+    ExpectedRevert(PathState),
     /// A successful call; `unmet_expected_revert` means the caller must see it as a revert.
     Success {
         parent: PathState,
@@ -242,7 +239,7 @@ impl SymbolicExecutor {
                     } else {
                         parent.expected_revert = Some(expected);
                     }
-                    return Ok(JoinedCallOutcome::ExpectedRevert { parent, child: outcome.state });
+                    return Ok(JoinedCallOutcome::ExpectedRevert(parent));
                 }
             }
         }

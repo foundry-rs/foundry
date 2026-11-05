@@ -515,6 +515,8 @@ Supported ABI shapes include:
 
 When `--symbolic` is enabled, `invariant*` and `statefulFuzz*` functions use a
 bounded symbolic call sequence instead of the normal invariant fuzzer.
+Each selected symbolic invariant runs in a separate campaign with its own inline
+configuration, result, and counterexample replay.
 
 ```solidity
 contract CounterInvariant is Test {
@@ -957,7 +959,7 @@ be modeled safely. The supported surface includes:
 
 - `vm.assume`, `vm.bound`, `vm.skip`, `vm.assumeNoRevert`
 - forge-std and DSTest assertion/failure signals
-- `warp`, `roll`, `fee`, `chainId`, `difficulty`, `coinbase`, blockhash helpers
+- `warp`, `roll`, `rollSlot`, `fee`, `chainId`, `difficulty`, `coinbase`, blockhash helpers
 - `deal`, `store`, `load`, `etch`, `getCode`, `getDeployedCode`
 - `prank`, `startPrank`, `stopPrank`
 - `addr`, `sign`, `deriveKey`, `rememberKey`, `rememberKeys`

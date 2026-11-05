@@ -1233,8 +1233,7 @@ impl SymbolicExecutor {
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;
                     parents.push_back(parent);
                 }
-                JoinedCallOutcome::ExpectedRevert { mut parent, child } => {
-                    parent.expected_creates = child.expected_creates;
+                JoinedCallOutcome::ExpectedRevert(mut parent) => {
                     parent.world = original_world.clone();
                     parent.return_data = SymReturnData::from_concrete_bytes(
                         &mut self.cx,
@@ -1253,7 +1252,6 @@ impl SymbolicExecutor {
                     if !unmet_expected_revert {
                         parent.end_expected_emit_after_call(kind);
                     }
-                    parent.expected_creates = child.expected_creates;
                     parent.return_data = if unmet_expected_revert {
                         error_string_return_data(
                             &mut self.cx,
@@ -1269,7 +1267,6 @@ impl SymbolicExecutor {
                     parents.push_back(parent);
                 }
                 JoinedCallOutcome::Revert { mut parent, child } => {
-                    parent.expected_creates = child.expected_creates;
                     parent.world = original_world.clone();
                     parent.return_data = child.frame.return_data;
                     parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;

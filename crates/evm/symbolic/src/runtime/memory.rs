@@ -28,6 +28,14 @@ impl SymStack {
             .ok_or(SymbolicError::StackUnderflow)
     }
 
+    /// Swaps the `n`th and `m`th items from the top, where `n < m`.
+    pub(crate) fn exchange(&mut self, n: usize, m: usize) -> Result<(), SymbolicError> {
+        let top = self.0.len().checked_sub(1).ok_or(SymbolicError::StackUnderflow)?;
+        let other = top.checked_sub(m).ok_or(SymbolicError::StackUnderflow)?;
+        self.0.swap(top - n, other);
+        Ok(())
+    }
+
     pub(crate) const fn len(&self) -> usize {
         self.0.len()
     }
@@ -48,13 +56,6 @@ impl SymStack {
                 })
                 .collect(),
         )
-    }
-
-    pub(crate) fn swap(&mut self, index_from_top: usize) -> Result<(), SymbolicError> {
-        let len = self.0.len();
-        let other = len.checked_sub(index_from_top + 1).ok_or(SymbolicError::StackUnderflow)?;
-        self.0.swap(len - 1, other);
-        Ok(())
     }
 }
 

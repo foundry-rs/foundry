@@ -121,7 +121,6 @@ impl SymbolicExecutor {
         let isolated =
             matches!(kind, CreateKind::Create) && state.starts_isolated_transaction(executor);
         let mut child = state.child(frame);
-        let pending_expected_creates = std::mem::take(&mut child.expected_creates);
         child.world = failure_world.clone();
         if isolated {
             child.world.clear_transient_storage();
@@ -173,9 +172,8 @@ impl SymbolicExecutor {
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;
                     parents.push_back(parent);
                 }
-                JoinedCallOutcome::ExpectedRevert { mut parent, .. } => {
+                JoinedCallOutcome::ExpectedRevert(mut parent) => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
-                    parent.expected_creates = pending_expected_creates.clone();
                     parent.world = failure_world.clone();
                     let address = address_word(DUMMY_CREATE_ADDRESS);
                     parent.stack.push(SymExpr::constant(&mut self.cx, address))?;
@@ -189,7 +187,6 @@ impl SymbolicExecutor {
                         parent.world.restore_transient_storage(&failure_world);
                     }
                     parent.expected_emit = child.expected_emit;
-                    parent.expected_creates = pending_expected_creates.clone();
                     // Under an unmet `vm.expectRevert`, the caller sees a failed CREATE, but the
                     // code stays deployed and `expectCreate` does not count it.
                     if !unmet_expected_revert {

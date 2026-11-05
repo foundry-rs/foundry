@@ -374,7 +374,9 @@ pub(crate) fn inline_config_for(
     Ok(config.merge_inline_provider(inline_config.provide(contract_name, function))?)
 }
 
-fn invariant_suite_configs_match(
+/// Returns whether predicates can share a concrete campaign. Symbolic execution checks one
+/// predicate at a time with its own symbolic configuration, result, and replay.
+fn can_merge_invariant_suite(
     config: &Config,
     inline_config: &InlineConfig,
     contract_name: &str,
@@ -385,12 +387,12 @@ fn invariant_suite_configs_match(
     };
     let anchor_config = match inline_config_for(config, inline_config, contract_name, Some(anchor))
     {
-        Ok(config) => config.invariant,
-        Err(_) => return false,
+        Ok(config) if !config.symbolic.enabled => config.invariant,
+        _ => return false,
     };
     rest.iter().all(|func| {
         inline_config_for(config, inline_config, contract_name, Some(func))
-            .map(|config| config.invariant == anchor_config)
+            .map(|config| !config.symbolic.enabled && config.invariant == anchor_config)
             .unwrap_or(false)
     })
 }
@@ -422,19 +424,14 @@ fn select_invariant_campaigns<'a>(
     // move an isolated campaign into the contract-level namespace.
     let canonical_boolean_anchor = boolean_invariant_fns.first().copied();
     let merge_boolean_suite = !matched_boolean_invariant_fns.is_empty()
-        && invariant_suite_configs_match(
+        && can_merge_invariant_suite(
             config,
             inline_config,
             contract_name,
             &matched_boolean_invariant_fns,
         );
     let shared_boolean_namespace = merge_boolean_suite
-        && invariant_suite_configs_match(
-            config,
-            inline_config,
-            contract_name,
-            &boolean_invariant_fns,
-        );
+        && can_merge_invariant_suite(config, inline_config, contract_name, &boolean_invariant_fns);
     let boolean_suite_anchor = merge_boolean_suite
         .then(|| {
             canonical_boolean_anchor
@@ -1094,8 +1091,8 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 if early_exit.should_stop() {
                     return None;
                 }
-                // Invariant tests run either as a shared boolean suite or as a single
-                // optimization campaign; other test kinds keep their original invariant set.
+                // Invariant tests run either as a shared boolean suite or as individual
+                // campaigns; other test kinds keep their original invariant set.
                 let invariants: &[&Function] = if func.is_invariant_test() {
                     if is_optimization_invariant(func) {
                         std::slice::from_ref(&func)
