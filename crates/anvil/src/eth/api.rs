@@ -119,9 +119,7 @@ use revm::{
 };
 use std::{sync::Arc, time::Duration};
 use tempo_hardfork::TempoHardfork;
-use tempo_primitives::{
-    AASigned, TEMPO_TX_TYPE_ID, TempoAddressExt, transaction::FEE_PAYER_SIGNATURE_MARKER,
-};
+use tempo_primitives::{AASigned, TEMPO_TX_TYPE_ID, transaction::FEE_PAYER_SIGNATURE_MARKER};
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, unbounded_channel},
     try_join,
@@ -431,8 +429,7 @@ impl<N: Network> EthApi<N> {
     /// Sets the code of a contract.
     ///
     /// Native Tempo precompiles reject empty and unchanged writes as well to preserve their account
-    /// markers. For TIP20, nonempty code marks the token as initialized. Use
-    /// `anvil_tempoCreateToken` to create a native token at an uninitialized TIP20 address.
+    /// markers. For TIP20, nonempty code marks the token as initialized.
     ///
     /// Handler for RPC call: `anvil_setCode`
     pub async fn anvil_set_code(&self, address: Address, code: Bytes) -> Result<()> {
@@ -442,13 +439,8 @@ impl<N: Network> EthApi<N> {
             && let Some(name) =
                 backend::tempo::native_precompile_name(address, self.backend.tempo_hardfork())
         {
-            let guidance = if address.is_tip20() {
-                "; use anvil_tempoCreateToken to create a native TIP-20 token at an uninitialized TIP-20 address"
-            } else {
-                ""
-            };
             return Err(RpcError::invalid_params(format!(
-                "cannot set code for native Tempo precompile {name} at {address}: calls are handled natively and do not execute account bytecode; code writes are rejected to preserve native account markers, including TIP20 initialization{guidance}"
+                "cannot set code for native Tempo precompile {name} at {address}: calls are handled natively and do not execute account bytecode; code writes are rejected to preserve native account markers, including TIP20 initialization"
             ))
             .into());
         }
