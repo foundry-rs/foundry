@@ -443,8 +443,10 @@ mod tests {
         let dead = Energy { picks: 4, finds: 2, calls: 400, reverted: 360 };
         let untried = Energy { picks: 0, finds: 0, calls: 0, reverted: 0 };
         assert!(dead.productivity() < live.productivity());
-        assert!((live.productivity() - 0.6 * 0.81).abs() < 1e-9);
-        assert!((dead.productivity() - 0.6 * MIN_LIVENESS).abs() < 1e-9);
+        let expected_live = 0.6 * 0.81;
+        let expected_dead = 0.6 * MIN_LIVENESS;
+        assert!((live.productivity() - expected_live).abs() < 1e-9);
+        assert!((dead.productivity() - expected_dead).abs() < 1e-9);
         assert_eq!(untried.productivity(), 1.0);
     }
 
