@@ -5,7 +5,7 @@
 
 use crate::mapping_slots::MappingSlots;
 use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{B256, U256, hex, keccak256, map::B256Map};
+use alloy_primitives::{B256, I256, U256, hex, keccak256, map::B256Map};
 use foundry_common_fmt::format_token_raw;
 use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
 use serde::{
@@ -120,8 +120,22 @@ impl SlotInfo {
                 }
             }
             _ => {
-                // Decode based on the actual type
-                actual_type.abi_decode(&value.0).ok()
+                let bits = match *actual_type {
+                    DynSolType::Uint(bits) | DynSolType::Int(bits) => bits,
+                    DynSolType::FixedBytes(size) => size * 8,
+                    DynSolType::Bool => 8,
+                    _ => return actual_type.abi_decode(value.as_slice()).ok(),
+                };
+                // Storage does not sign-extend intN or left-align bytesN as ABI encoding does.
+                // Discard higher-order bytes before moving the value to its ABI position.
+                let shift = 256 - bits;
+                let value = Into::<U256>::into(value) << shift;
+                let value = match actual_type {
+                    DynSolType::Int(_) => I256::from_raw(value).asr(shift).into_raw(),
+                    DynSolType::FixedBytes(_) => value,
+                    _ => value >> shift,
+                };
+                actual_type.abi_decode(B256::from(value).as_slice()).ok()
             }
         }
     }
@@ -1038,12 +1052,16 @@ fn get_array_base_indices(dyn_type: &DynSolType) -> String {
 /// direct ABI equivalent (mappings, structs).
 ///
 /// Handles `contract X` types (which are addresses under the hood) and `enum X` types
-/// (which are uint8) that `DynSolType::parse` doesn't recognize.
+/// (which are uint8) that `DynSolType::parse` doesn't recognize. User-defined value types scoped
+/// to a contract, library, or interface (e.g. `C.Price`) would parse as `uint8`, so they decode as
+/// a full-word `uint256`.
 fn parse_sol_type(label: &str) -> Option<DynSolType> {
     let scalar = if label.starts_with("contract ") {
         "address"
     } else if label.starts_with("enum ") {
         "uint8"
+    } else if label.contains('.') && !label.contains(' ') {
+        "uint256"
     } else {
         return DynSolType::parse(label).ok();
     };
@@ -1233,5 +1251,56 @@ mod tests {
                 )
             ]
         );
+    }
+
+    #[test]
+    fn decodes_standalone_storage_values() {
+        for (ty, size, previous, new, previous_decoded, new_decoded) in [
+            ("int8", "1", "ff", "80", "-1", "-128"),
+            ("int16", "2", "8000", "7fff", "-32768", "32767"),
+            (
+                "int256",
+                "32",
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "1",
+                "-1",
+                "1",
+            ),
+            ("bytes1", "1", "ab", "cd", "0xab", "0xcd"),
+            ("bytes4", "4", "deadbeef", "12345678", "0xdeadbeef", "0x12345678"),
+            (
+                "bytes32",
+                "32",
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+                "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                "0xfedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+            ),
+            ("C.Price", "16", "1ff", "3e8", "511", "1000"),
+        ] {
+            let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
+                "storage": [
+                    { "astId": 1, "contract": "C", "label": "value", "offset": 0, "slot": "0", "type": "t_value" }
+                ],
+                "types": {
+                    "t_value": { "encoding": "inplace", "label": ty, "numberOfBytes": size }
+                }
+            }))
+            .unwrap();
+            let identifier = SlotIdentifier::new(Arc::new(layout));
+            let mut info = identifier.identify(&B256::ZERO, None).unwrap();
+            info.decode_values(
+                B256::from(U256::from_str_radix(previous, 16).unwrap()),
+                B256::from(U256::from_str_radix(new, 16).unwrap()),
+            );
+            assert_eq!(
+                serde_json::to_value(info).unwrap(),
+                serde_json::json!({
+                    "label": "value", "type": ty, "offset": 0, "slot": "0",
+                    "decoded": { "previousValue": previous_decoded, "newValue": new_decoded }
+                }),
+                "{ty}"
+            );
+        }
     }
 }
