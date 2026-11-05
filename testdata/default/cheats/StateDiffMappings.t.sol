@@ -57,6 +57,14 @@ contract StructMappingStorage {
         pools[poolId].total += amount;
         pools[poolId].shares[account] += amount;
     }
+
+    function setAdmin(uint64 roleId, uint64 admin) public {
+        roles[roleId].admin = admin;
+    }
+
+    function setShares(uint256 poolId, address account, uint256 amount) public {
+        pools[poolId].shares[account] = amount;
+    }
 }
 
 contract StateDiffMappingsTest is Test {
@@ -305,6 +313,25 @@ contract StateDiffMappingsTest is Test {
             vm.contains(json, '"label":"pools[1].shares[0x0000000000000000000000000000000000001234]"')
         );
         assertTrue(vm.contains(json, '"type":"mapping(address => uint256)"'));
+
+        vm.stopAndReturnStateDiff();
+    }
+
+    /// Offset members must not depend on a write to the outer mapping entry itself.
+    function testIsolatedMappedStructMembersStateDiff() public {
+        StructMappingStorage structStorage = new StructMappingStorage();
+
+        vm.startStateDiffRecording();
+        structStorage.setAdmin(2, 4);
+        structStorage.setShares(1, address(0x1234), 100);
+        string memory json = vm.getStateDiffJson();
+
+        assertTrue(vm.contains(json, '"label":"roles[2].admin"'));
+        assertTrue(
+            vm.contains(json, '"label":"pools[1].shares[0x0000000000000000000000000000000000001234]"')
+        );
+        assertTrue(vm.contains(json, '"decoded":{"previousValue":"0","newValue":"4"}'));
+        assertTrue(vm.contains(json, '"decoded":{"previousValue":"0","newValue":"100"}'));
 
         vm.stopAndReturnStateDiff();
     }

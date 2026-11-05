@@ -779,12 +779,12 @@ impl SlotIdentifier {
         let mut current = *slot;
         loop {
             let (entry, offset) = mapping_entry(&current, mapping_slots)?;
-            let parent = *mapping_slots.parent_slots.get(&entry)?;
-            levels.push((entry, *mapping_slots.keys.get(&entry)?, offset));
+            let &(key, parent) = mapping_slots.seen_sha3.get(&entry)?;
+            levels.push((entry, key, offset));
             if parent == base_slot {
                 break;
             }
-            if levels.len() > MAX_MAPPING_DEPTH {
+            if levels.len() > mapping_slots.seen_sha3.len() {
                 trace!("Mapping slot {} does not match any parent in chain", storage.slot);
                 return None;
             }
@@ -804,8 +804,8 @@ impl SlotIdentifier {
             if mapping_type.encoding != ENCODING_MAPPING {
                 return None;
             }
-            let key_label = &self.storage_layout.types.get(mapping_type.key.as_ref()?)?.label;
-            let decoded_key = parse_sol_type(key_label)
+            let decoded_key = self
+                .parsed_type(mapping_type.key.as_ref()?)
                 .and_then(|sol_type| sol_type.abi_decode(&key.0).ok())
                 .map(|decoded| format_token_raw(&decoded))
                 .unwrap_or_else(|| hex::encode_prefixed(key.0));
@@ -847,7 +847,9 @@ impl SlotIdentifier {
                     label,
                     slot_type: StorageTypeInfo {
                         label: type_label,
-                        dyn_sol_type: parse_sol_type(&value_type.label)
+                        dyn_sol_type: self
+                            .parsed_type(mapping_type.value.as_ref()?)
+                            .cloned()
                             .unwrap_or(DynSolType::Bytes),
                     },
                     offset: storage.offset,
@@ -1044,21 +1046,20 @@ impl SlotIdentifier {
     }
 }
 
-/// How many mapping levels are followed up from an accessed slot before giving up.
-const MAX_MAPPING_DEPTH: usize = 32;
-
 /// How far into a mapping value a recorded entry is searched for: the slot offset of a struct
 /// field from the entry holding the struct.
 const MAX_VALUE_SLOTS: u64 = 256;
 
 /// The recorded mapping entry `slot` belongs to and its slot offset from it: the entry itself,
 /// or a field of a struct stored there.
+///
+/// An offset-only store need not promote the entry into `keys`, so use all observed preimages.
 fn mapping_entry(slot: &B256, mapping_slots: &MappingSlots) -> Option<(B256, U256)> {
     let slot = U256::from_be_bytes(slot.0);
     (0..MAX_VALUE_SLOTS).find_map(|offset| {
         let offset = U256::from(offset);
         let entry = B256::from(slot.checked_sub(offset)?);
-        mapping_slots.keys.contains_key(&entry).then_some((entry, offset))
+        mapping_slots.seen_sha3.contains_key(&entry).then_some((entry, offset))
     })
 }
 
@@ -1347,7 +1348,6 @@ mod tests {
         let parent = B256::from(parent);
         let result = keccak256([key.0, parent.0].concat());
         mapping_slots.record_hash(result, key, parent);
-        mapping_slots.insert(result);
         U256::from_be_bytes(result.0)
     }
 
@@ -1359,6 +1359,7 @@ mod tests {
         let mut slots = MappingSlots::default();
         let outer = entry(&mut slots, USER.into_word(), U256::from(2));
         let inner = entry(&mut slots, Address::repeat_byte(0x22).into_word(), outer);
+        slots.insert(inner.into());
 
         let info = identifier.identify(&B256::from(inner), Some(&slots)).unwrap();
         assert_eq!(
@@ -1374,6 +1375,7 @@ mod tests {
         let identifier = mapping_struct_layout();
         let mut slots = MappingSlots::default();
         let role = entry(&mut slots, U256::from(2).into(), U256::ZERO);
+        slots.insert((role + U256::from(1)).into());
 
         let mut info =
             identifier.identify(&B256::from(role + U256::from(1)), Some(&slots)).unwrap();
@@ -1397,6 +1399,7 @@ mod tests {
         let mut slots = MappingSlots::default();
         let role = entry(&mut slots, U256::from(2).into(), U256::ZERO);
         let access = entry(&mut slots, USER.into_word(), role);
+        slots.insert(access.into());
 
         let mut info = identifier.identify(&B256::from(access), Some(&slots)).unwrap();
         assert_eq!(info.label, "roles[2].members[0x1111111111111111111111111111111111111111]");
@@ -1423,6 +1426,7 @@ mod tests {
         let mut slots = MappingSlots::default();
         let pool = entry(&mut slots, U256::from(1).into(), U256::from(1));
         let share = entry(&mut slots, USER.into_word(), pool + U256::from(1));
+        slots.insert(share.into());
 
         let info = identifier.identify(&B256::from(share), Some(&slots)).unwrap();
         assert_eq!(info.label, "pools[1].shares[0x1111111111111111111111111111111111111111]");
@@ -1431,5 +1435,52 @@ mod tests {
 
         let info = identifier.identify(&B256::from(pool), Some(&slots)).unwrap();
         assert_eq!(info.label, "pools[1].total");
+    }
+
+    #[test]
+    fn identifies_deep_mappings_and_rejects_cycles() {
+        let mut types = serde_json::json!({
+            "uint": { "encoding": "inplace", "label": "uint256", "numberOfBytes": "32" }
+        });
+        let mut value_id = "uint".to_string();
+        let mut type_label = "uint256".to_string();
+        for depth in 0..34 {
+            let id = format!("mapping{depth}");
+            type_label = format!("mapping(uint256 => {type_label})");
+            types[&id] = serde_json::json!({
+                "encoding": "mapping", "label": type_label, "numberOfBytes": "32",
+                "key": "uint", "value": value_id
+            });
+            value_id = id;
+        }
+        let layout = serde_json::from_value(serde_json::json!({
+            "storage": [
+                { "astId": 1, "contract": "C", "label": "deep", "offset": 0, "slot": "0", "type": value_id }
+            ],
+            "types": types
+        }))
+        .unwrap();
+        let identifier = SlotIdentifier::new(Arc::new(layout));
+        let mut slots = MappingSlots::default();
+        let mut slot = U256::ZERO;
+        for key in 1..=34 {
+            slot = entry(&mut slots, U256::from(key).into(), slot);
+        }
+        slots.insert(slot.into());
+
+        let mut info = identifier.identify(&slot.into(), Some(&slots)).unwrap();
+        let keys = (1..=34).map(|key| key.to_string()).collect::<Vec<_>>();
+        let suffix = keys.iter().map(|key| format!("[{key}]")).collect::<String>();
+        assert_eq!(info.label, format!("deep{suffix}"));
+        assert_eq!(info.keys, Some(keys));
+        assert_eq!(info.slot_type.label, type_label);
+        info.decode_values(B256::ZERO, U256::from(123).into());
+        assert_eq!(format_token_raw(&info.decoded.unwrap().new_value), "123");
+
+        // An observed hash that points to itself must not loop indefinitely.
+        let mut slots = MappingSlots::default();
+        slots.record_hash(slot.into(), U256::ONE.into(), slot.into());
+        slots.insert(slot.into());
+        assert!(identifier.identify(&slot.into(), Some(&slots)).is_none());
     }
 }
