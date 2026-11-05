@@ -861,6 +861,134 @@ Exiting debugger.
 "#]]);
 }
 
+const SAME_NAME_TOKEN_A: &str = r#"
+contract Token {
+    uint256 public alpha;
+
+    constructor() {
+        alpha = 1;
+    }
+}
+"#;
+
+// Adds two contracts named `Token`: a plain one in `src/a` and one that uses a public library in
+// `src/b`.
+fn add_same_name_tokens(prj: &foundry_test_utils::TestProject) {
+    prj.add_source("a/Token.sol", SAME_NAME_TOKEN_A);
+    prj.add_source(
+        "b/Token.sol",
+        r#"
+library LibB {
+    function thrice(uint256 value) public pure returns (uint256) {
+        return value * 3;
+    }
+}
+
+contract Token {
+    uint256 public beta;
+
+    constructor() {
+        beta = LibB.thrice(1);
+    }
+}
+"#,
+    );
+}
+
+// Runs `forge create` with `args` and returns its JSON output.
+fn forge_create(
+    cmd: &mut foundry_test_utils::TestCommand,
+    endpoint: &str,
+    args: &[&str],
+) -> serde_json::Value {
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            endpoint,
+            "--broadcast",
+            "--json",
+        ])
+        .args(args)
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    serde_json::from_str(&output).unwrap()
+}
+
+// Local artifacts aren't linked, so the creation of a contract that uses a public library can't be
+// matched by its init code. Its source must still be found when another artifact has its name.
+#[forgetest]
+async fn cast_run_debug_soldb_same_name_linked_creation(prj: _, cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    add_same_name_tokens(&prj);
+
+    let library = forge_create(&mut cmd, &endpoint, &["src/b/Token.sol:LibB"]);
+    let library = format!("src/b/Token.sol:LibB:{}", library["deployedTo"].as_str().unwrap());
+    let token =
+        forge_create(&mut cmd, &endpoint, &["src/b/Token.sol:Token", "--libraries", &library]);
+
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args([
+            "run",
+            token["transactionHash"].as_str().unwrap(),
+            "--rpc-url",
+            &endpoint,
+            "--debug",
+            "--with-local-artifacts",
+        ])
+        .stdin("break src/b/Token.sol:14\ncontinue\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Breakpoint #1 set at src/b/Token.sol:14
+Breakpoint #1 hit at step [..], src/b/Token.sol:14
+src/b/Token.sol:14 in constructor  (step [..])
+   14 |         beta = LibB.thrice(1);
+Exiting debugger.
+
+"#]]);
+}
+
+// A comment changes the metadata hash, so the deployed init code no longer matches the local
+// artifact. Its source must still be found when another artifact has its name.
+#[forgetest]
+async fn cast_run_debug_soldb_same_name_edited_metadata(prj: _, cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    add_same_name_tokens(&prj);
+
+    let token = forge_create(&mut cmd, &endpoint, &["src/a/Token.sol:Token"]);
+    prj.add_source("a/Token.sol", &format!("{SAME_NAME_TOKEN_A}// A comment.\n"));
+
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args([
+            "run",
+            token["transactionHash"].as_str().unwrap(),
+            "--rpc-url",
+            &endpoint,
+            "--debug",
+            "--with-local-artifacts",
+        ])
+        .stdin("break src/a/Token.sol:8\ncontinue\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Breakpoint #1 set at src/a/Token.sol:8
+Breakpoint #1 hit at step [..], src/a/Token.sol:8
+src/a/Token.sol:8 in constructor  (step [..])
+    8 |         alpha = 1;
+Exiting debugger.
+
+"#]]);
+}
+
 // A forked Anvil replays upstream transactions with the hardfork of the upstream chain: Cancun
 // charges 21000 where EIP-2780 charges 15000.
 #[casttest]
