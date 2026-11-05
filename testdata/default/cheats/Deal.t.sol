@@ -17,3 +17,43 @@ contract DealTest is Test {
         assertEq(target.balance, amount, "deal did not overwrite balance");
     }
 }
+
+contract DealInvariantHandler {
+    uint256 public calls;
+
+    function succeed() external {
+        calls++;
+    }
+
+    function fail() external {
+        calls++;
+        revert();
+    }
+}
+
+contract DealInvariantTest is Test {
+    address constant SENDER = address(0xA11CE);
+    DealInvariantHandler handler;
+
+    function setUp() public {
+        handler = new DealInvariantHandler();
+        vm.deal(SENDER, 100 ether);
+    }
+
+    function targetContracts() public view returns (address[] memory targets) {
+        targets = new address[](1);
+        targets[0] = address(handler);
+    }
+
+    function targetSenders() public pure returns (address[] memory senders) {
+        senders = new address[](1);
+        senders[0] = SENDER;
+    }
+
+    // The deal is committed by `setUp`, so reverted calls from the sender must not undo it.
+    /// forge-config: default.isolate = false
+    /// forge-config: default.invariant.fail-on-revert = false
+    function invariant_dealSurvivesRevertedCalls() public {
+        assertEq(SENDER.balance, 100 ether);
+    }
+}
