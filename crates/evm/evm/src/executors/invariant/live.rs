@@ -2,11 +2,14 @@
 //! ordinary campaign before they can contribute coverage or failures.
 
 use super::RecordedCallSequence;
-use crate::executors::{
-    EarlyExit, EvmExecutionCancellation, Executor,
-    fuzz::{FuzzBranchFrontier, FuzzFrontierRecorder, comparison_result},
+use crate::{
+    executors::{
+        EarlyExit, EvmExecutionCancellation, Executor,
+        fuzz::{FuzzBranchFrontier, FuzzFrontierRecorder, comparison_result},
+    },
+    inspectors::CmpOperands,
 };
-use alloy_primitives::{Address, B256, keccak256, map::HashSet};
+use alloy_primitives::{Address, map::HashSet};
 use eyre::Result;
 use foundry_config::SymbolicConfig;
 use foundry_evm_core::evm::FoundryEvmNetwork;
@@ -26,7 +29,7 @@ use std::{
 const MAX_PENDING: usize = 32;
 const MAX_CALLS: usize = 1024;
 const MAX_CALLDATA_BYTES: usize = 64 * 1024;
-/// Distinct comparison outcomes remembered for novelty checks. Real targets reach far more
+/// Distinct comparison outcomes remembered to select solve targets. Real targets reach far more
 /// outcomes than `frontier_limit` in their first sequence, so this bound is separate from the
 /// submission budget.
 const MAX_OBSERVED_OUTCOMES: usize = 1 << 16;
@@ -63,8 +66,9 @@ pub struct LiveInvariantSolver {
     responses: Receiver<Vec<BasicTxDetails>>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<LiveInvariantStats>>,
-    seen: HashSet<B256>,
     observed: HashSet<(Address, usize, u8, bool)>,
+    /// Outcomes already queued for the worker; each is attempted at most once.
+    admitted: HashSet<(Address, usize, u8, bool)>,
     pending: VecDeque<FuzzBranchFrontier>,
     limit: usize,
     deadline: Instant,
@@ -133,8 +137,8 @@ impl LiveInvariantSolver {
             responses,
             stop,
             thread: Some(thread),
-            seen: HashSet::default(),
             observed: HashSet::default(),
+            admitted: HashSet::default(),
             pending: VecDeque::new(),
             limit: config.frontier_limit,
             deadline,
@@ -151,50 +155,52 @@ impl LiveInvariantSolver {
         {
             return;
         }
-        let len = sequence.cmp_seq.len().min(depth);
-        let mut novel = false;
-        for cmp in sequence.cmp_seq[..len].iter().flatten() {
+        let cmp_seq = &sequence.cmp_seq[..sequence.cmp_seq.len().min(depth)];
+        for cmp in cmp_seq.iter().flatten() {
             if self.observed.len() >= MAX_OBSERVED_OUTCOMES {
                 break;
             }
-            novel |=
-                self.observed.insert((cmp.address, cmp.pc, cmp.opcode, comparison_result(cmp)));
+            self.observed.insert(outcome(cmp, comparison_result(cmp)));
         }
-        // Feed back newly reached control flow, rather than spending the budget on random
-        // no-op prefixes that repeatedly reach the same comparison outcomes.
-        if novel {
-            let mut recorder = FuzzFrontierRecorder::new(self.limit - self.stats.submitted);
+        self.dispatch();
+        let room = (MAX_PENDING - self.pending.len())
+            .min(self.limit - self.stats.submitted - self.pending.len());
+        if room > 0 {
+            // Only an outcome whose other side fuzzing has not reached can lead to new control
+            // flow. Outcomes that do not fit stay unadmitted, so a later run offers them again.
+            let targets = cmp_seq
+                .iter()
+                .map(|cmps| {
+                    cmps.iter()
+                        .copied()
+                        .filter(|cmp| {
+                            let result = comparison_result(cmp);
+                            let reached = outcome(cmp, result);
+                            self.observed.contains(&reached)
+                                && !self.admitted.contains(&reached)
+                                && !self.observed.contains(&outcome(cmp, !result))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            let mut recorder = FuzzFrontierRecorder::new(room);
             recorder.prefer_shortest_prefix();
-            recorder.capture_sequence(&sequence.inputs, &sequence.cmp_seq[..len]);
+            recorder.capture_sequence(&sequence.inputs, &targets);
             for frontier in recorder.into_frontiers() {
-                if self.pending.len() == MAX_PENDING || self.seen.len() == self.limit {
-                    break;
-                }
-                let calls = frontier.sequence();
-                let call = calls.last().expect("frontier contains a call");
                 let (cmp, result) = frontier.comparison();
-                let key = keccak256(
-                    serde_json::to_vec(&(
-                        &calls[..calls.len() - 1],
-                        call.sender,
-                        call.call_details.target,
-                        call.call_details.calldata.get(..4),
-                        cmp.address,
-                        cmp.pc,
-                        cmp.opcode,
-                        result,
-                    ))
-                    .expect("frontier identity serializes"),
-                );
-                if self.seen.insert(key) {
-                    self.pending.push_back(frontier);
-                }
+                self.admitted.insert(outcome(&cmp, result));
+                self.pending.push_back(frontier);
             }
         }
         self.dispatch();
     }
 
     fn dispatch(&mut self) {
+        // Fuzzing may have reached the other side of a queued comparison since it was admitted.
+        self.pending.retain(|frontier| {
+            let (cmp, result) = frontier.comparison();
+            !self.observed.contains(&outcome(&cmp, !result))
+        });
         while let Some(frontier) = self.pending.pop_front() {
             let Some(requests) = &self.requests else { break };
             match requests.try_send(frontier) {
@@ -243,7 +249,7 @@ impl LiveInvariantSolver {
     /// Whether recording more frontiers can still contribute work to this campaign.
     pub(super) fn is_active(&self) -> bool {
         self.requests.is_some()
-            && self.seen.len() < self.limit
+            && self.stats.submitted + self.pending.len() < self.limit
             && Instant::now() < self.deadline
             && self.thread.as_ref().is_some_and(|thread| !thread.is_finished())
     }
@@ -258,4 +264,9 @@ impl Drop for LiveInvariantSolver {
     fn drop(&mut self) {
         self.finish();
     }
+}
+
+/// Identifies one side of a comparison site.
+const fn outcome(cmp: &CmpOperands, result: bool) -> (Address, usize, u8, bool) {
+    (cmp.address, cmp.pc, cmp.opcode, result)
 }

@@ -251,3 +251,41 @@ fn symbolic_live_one_second_budget(prj: _, cmd: _) {
     let result = json_test_result(&output, "invariant_a()");
     assert!(result["symbolic_live"]["solver_queries"].as_u64().unwrap() > 0, "{result}");
 }
+
+// Many handlers add dispatcher comparisons whose other side fuzzing already reaches. They must
+// not crowd the gates out of the worker's backlog.
+#[forgetest_init]
+fn symbolic_live_wide_target(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_live_wide_target");
+    let handlers = (0..24)
+        .map(|i| {
+            format!(
+                "    function f{i}(uint256 a) external {{ if (a % {} == {i}) counter += 1; }}\n",
+                i + 7
+            )
+        })
+        .collect::<String>();
+    let source = TWO_STEP.replacen(
+        "    uint256 public stage;\n",
+        &format!("    uint256 public stage;\n    uint256 public counter;\n{handlers}"),
+        1,
+    );
+    prj.add_test("LiveWide.t.sol", &source);
+    prj.update_config(|config| {
+        config.invariant.runs = u32::MAX;
+        config.invariant.timeout = Some(10);
+        config.invariant.depth = 100;
+        config.invariant.dictionary.dictionary_weight = 0;
+        config.symbolic.live = true;
+        config.symbolic.timeout = Some(10);
+    });
+    let output = cmd
+        .args(["test", "--json", "--threads", "1", "--fuzz-seed", "0x1234"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_a()");
+    assert_eq!(result["invariant_failures"][0]["name"], "invariant_z", "{result}");
+    assert!(result["symbolic_live"]["scheduled"].as_u64().unwrap() >= 2, "{result}");
+}
