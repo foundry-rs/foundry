@@ -435,6 +435,17 @@ impl SymbolicExecutor {
         if state.expected_creates.is_empty() {
             return Ok(());
         }
+        // An unrelated deployment may have symbolic immutable bytes in its runtime code.
+        let conditions = state
+            .expected_creates
+            .iter()
+            .filter_map(|expected| expected.deployer_match_condition(&mut self.cx, deployer, kind))
+            .collect::<Vec<_>>();
+        let condition = SymBoolExpr::or(&mut self.cx, conditions);
+        let (_, match_sat) = self.constraints_with_condition(state, condition)?;
+        if !match_sat {
+            return Ok(());
+        }
         let bytecode = runtime.read_concrete(&mut self.cx, "symbolic expected create bytecode")?;
         let mut mismatch_constraints = None;
         for idx in 0..state.expected_creates.len() {

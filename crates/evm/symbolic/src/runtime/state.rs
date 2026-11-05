@@ -1212,8 +1212,19 @@ impl ExpectedCreate {
         kind: CreateKind,
         bytecode: &[u8],
     ) -> Option<SymBoolExpr> {
-        (self.kind == kind && self.bytecode == bytecode)
-            .then(|| self.deployer.address_match_condition(cx, deployer))
+        if self.bytecode != bytecode {
+            return None;
+        }
+        self.deployer_match_condition(cx, deployer, kind)
+    }
+
+    pub(crate) fn deployer_match_condition(
+        &self,
+        cx: &mut SymCx,
+        deployer: Address,
+        kind: CreateKind,
+    ) -> Option<SymBoolExpr> {
+        (self.kind == kind).then(|| self.deployer.address_match_condition(cx, deployer))
     }
 }
 
