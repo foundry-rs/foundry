@@ -9,6 +9,14 @@ contract Contract {
     }
 }
 
+contract EmptyCode {
+    constructor() {
+        assembly {
+            return(0, 0)
+        }
+    }
+}
+
 contract ContractDeployer {
     function deployContract() public {
         new Contract();
@@ -38,5 +46,10 @@ contract ExpectCreateTest is Test {
         vm.expectCreate2(bytecode, address(foo));
         foo.deployContract();
         foo.deployContractCreate2();
+    }
+
+    function testExpectCreateEmptyCode() public {
+        vm.expectCreate(hex"", address(this));
+        new EmptyCode();
     }
 }
