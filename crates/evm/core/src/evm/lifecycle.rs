@@ -430,9 +430,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
             None => factory.create_evm(db, env),
             Some(cache) => {
                 let view = AcceptedView { cache: Arc::clone(cache), backing: db };
-                let mut evm = factory.new_evm(view, env);
-                *evm.ext_mut() = context.ext.get();
-                evm
+                factory.new_evm_with_ext(view, env, context.ext.get())
             }
         }
     }
@@ -853,9 +851,8 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
             ext
         });
         let env = env.unwrap_or_else(|| evm_env(evm));
-        let mut executor = self.factory.configure_for(&db, &env).new_evm(db, env);
+        let mut executor = self.factory.configure_for(&db, &env).new_evm_with_ext(db, env, ext);
         *executor.state_mut() = state;
-        *executor.ext_mut() = ext;
         self.sync_database_policy(&mut executor);
         executor
     }
@@ -958,18 +955,13 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         let factory = self.factory.configure_for(&db, &env);
         // A context that never ran gets its network genesis before the transaction.
         let is_forked = db.is_forked_mode();
-        let mut executor = match &context.cache {
-            None => factory.create_evm(db, env),
-            Some(cache) => {
-                let mut executor = factory.new_evm(db, env);
-                executor.state_mut().overlay_db_mut().cache = Cache::clone(cache);
-                if context.needs_init {
-                    factory.initialize_evm(&mut executor, is_forked);
-                }
-                executor
-            }
-        };
-        *executor.ext_mut() = ext;
+        let mut executor = factory.new_evm_with_ext(db, env, ext);
+        if let Some(cache) = &context.cache {
+            executor.state_mut().overlay_db_mut().cache = Cache::clone(cache);
+        }
+        if context.cache.is_none() || context.needs_init {
+            factory.initialize_evm(&mut executor, is_forked);
+        }
 
         // Carry the running transaction's accepted and in-flight persistent accounts over.
         self.materialize(evm);

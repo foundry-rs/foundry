@@ -15,9 +15,10 @@ use evm2::{
 use foundry_evm_core::{
     constants::TEST_CONTRACT_ADDRESS,
     evm::{
-        EvmEnv, ExecutionLifecycle, FoundryEvmFactory, FoundryEvmNetwork, TempoEvmNetwork,
-        TxEnvelopeFor, TxPayload,
+        EvmEnv, ExecutionLifecycle, ExecutionPhase, ForkInfo, FoundryEvmFactory, FoundryEvmNetwork,
+        TempoEvmNetwork, TxEnvelopeFor, TxPayload,
     },
+    fork::ForkId,
 };
 use tempo_alloy::primitives::{
     TempoSignature, TempoTransaction,
@@ -114,7 +115,7 @@ fn nested_tempo_execution_preserves_halt_reason() {
     }
 }
 
-fn keychain_spend_setup() -> (Address, Address, Recovered<TempoTxEnv>, Recovered<TempoTxEnv>) {
+fn keychain_spend_setup(evm: &mut Evm<'_, TempoEvmTypes>) -> Recovered<TempoTxEnv> {
     let root = PrivateKeySigner::random();
     let access_key = PrivateKeySigner::random();
     let recipient = Address::repeat_byte(0xee);
@@ -151,6 +152,10 @@ fn keychain_spend_setup() -> (Address, Address, Recovered<TempoTxEnv>, Recovered
         },
     );
 
+    seed_fee_token_balances(evm, root.address(), recipient);
+    let auth_result = evm.transact(&auth_tx).expect("auth transaction executes").commit();
+    assert!(auth_result.status, "auth transaction should succeed: {auth_result:?}");
+
     let spend_tx = TempoTransaction {
         chain_id: CHAIN_ID,
         fee_token: Some(DEFAULT_FEE_TOKEN),
@@ -169,34 +174,32 @@ fn keychain_spend_setup() -> (Address, Address, Recovered<TempoTxEnv>, Recovered
     };
     let keychain_hash = KeychainSignature::signing_hash(spend_tx.signature_hash(), root.address());
     let access_signature = access_key.sign_hash_sync(&keychain_hash).unwrap();
-    let spend_tx = signed_tx(
+    signed_tx(
         spend_tx.into_signed(TempoSignature::Keychain(KeychainSignature::new(
             root.address(),
             PrimitiveSignature::Secp256k1(access_signature),
         ))),
         root.address(),
-    );
-    (root.address(), recipient, auth_tx, spend_tx)
+    )
 }
 
 #[test]
 fn foundry_factory_keychain_limit_refund_does_not_leak_storage_credit() {
-    let (account, recipient, auth_tx, spend_tx) = keychain_spend_setup();
     let factory = TempoEvmFactory::default();
     let mut evm = FoundryEvmFactory::create_evm(
         &factory,
         InMemoryDB::default(),
         tempo_env(TempoHardfork::T7),
     );
-    seed_fee_token_balances(&mut evm, account, recipient);
+    let spend_tx = keychain_spend_setup(&mut evm);
+    assert_keychain_refund(&mut evm, &spend_tx);
+}
 
-    let auth_result = evm.transact(&auth_tx).expect("auth transaction executes").commit();
-    assert!(auth_result.status, "auth transaction should succeed: {auth_result:?}");
-
-    let spend_result = evm.transact(&spend_tx).expect("spend transaction executes").commit();
+fn assert_keychain_refund(evm: &mut Evm<'_, TempoEvmTypes>, spend_tx: &Recovered<TempoTxEnv>) {
+    let spend_result = evm.transact(spend_tx).expect("spend transaction executes").commit();
     assert!(spend_result.status, "keychain spend should succeed: {spend_result:?}");
     assert_eq!(
-        storage_credit_balance(&mut evm, ACCOUNT_KEYCHAIN_ADDRESS),
+        storage_credit_balance(evm, ACCOUNT_KEYCHAIN_ADDRESS),
         0,
         "post-tx fee refund recreates the keychain spending-limit slot, so the same-tx clear credit must be canceled",
     );
@@ -219,5 +222,56 @@ fn tempo_execution_spec_preserves_network_gas() {
             tempo_execution_config(spec, CHAIN_ID).version().gas_params
         );
         assert_ne!(evm.version().gas_params, Version::new(SpecId::OSAKA).gas_params);
+    }
+}
+
+fn keychain_lifecycle()
+-> (ExecutionLifecycle<TempoEvmFactory>, Evm<'static, TempoEvmTypes>, Recovered<TempoTxEnv>) {
+    let lifecycle = ExecutionLifecycle::new(
+        TempoEvmFactory::default(),
+        InMemoryDB::default(),
+        tempo_env(TempoHardfork::T7),
+    );
+    let mut evm = lifecycle.create_evm();
+    let spend_tx = keychain_spend_setup(&mut evm);
+    (lifecycle, evm, spend_tx)
+}
+
+#[test]
+fn cached_tempo_keychain_refund_does_not_leak_storage_credit() {
+    let (mut lifecycle, evm, spend_tx) = keychain_lifecycle();
+    lifecycle.park(evm);
+    let mut evm = lifecycle.create_evm();
+    assert_keychain_refund(&mut evm, &spend_tx);
+}
+
+#[test]
+fn nested_tempo_keychain_refund_does_not_leak_storage_credit() {
+    let (lifecycle, mut evm, spend_tx) = keychain_lifecycle();
+    let mut nested = lifecycle.nested_evm(&mut evm, &spend_tx, None, None);
+    assert_keychain_refund(&mut nested, &spend_tx);
+}
+
+#[test]
+fn inactive_fork_tempo_keychain_refund_does_not_leak_storage_credit() {
+    for cached in [false, true] {
+        let (mut lifecycle, mut evm, spend_tx) = keychain_lifecycle();
+        let db = InMemoryDB { cache: evm.state().overlay_db().cache.clone(), ..Default::default() };
+        let info = ForkInfo::new(ForkId::new("http://fork", Some(1)), "http://fork", Some(1));
+        let fork = lifecycle.create_fork(info, db, tempo_env(TempoHardfork::T7));
+        if cached {
+            lifecycle.select_fork(&mut evm, Some(fork), ExecutionPhase::Boundary).unwrap();
+            lifecycle.select_fork(&mut evm, None, ExecutionPhase::Boundary).unwrap();
+        }
+
+        let executed = lifecycle
+            .prepare_on_inactive(&mut evm, Some(fork), spend_tx, None, None)
+            .unwrap()
+            .execute(&mut evm, None, false)
+            .expect("inactive transaction executes");
+        let result = lifecycle.store_executed(executed);
+        assert!(result.status, "keychain spend should succeed: {result:?}");
+        lifecycle.select_fork(&mut evm, Some(fork), ExecutionPhase::Boundary).unwrap();
+        assert_eq!(storage_credit_balance(&mut evm, ACCOUNT_KEYCHAIN_ADDRESS), 0);
     }
 }
