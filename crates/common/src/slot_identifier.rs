@@ -738,8 +738,13 @@ impl SlotIdentifier {
 
     /// Handles identification of mapping slots.
     ///
-    /// Identifies mapping entries by walking up the parent chain to find the base slot,
-    /// then decodes the keys and builds the appropriate label.
+    /// A mapping value lives at `keccak256(key . parent)`. When the value is a struct, its fields
+    /// sit at slot offsets from that entry, and a mapping among them is the parent of the next
+    /// level. So the accessed slot is walked up to the variable's base slot one recorded entry
+    /// at a time, each possibly displaced by a field's offset, and then resolved down through the
+    /// types: every key is decoded with its mapping's key type, a struct member holding the next
+    /// mapping is added to the label, and the final value is identified within the entry, by
+    /// [`Self::handle_struct`] when it is a struct.
     ///
     /// # Arguments
     /// * `storage` - The storage metadata from the layout
@@ -763,84 +768,136 @@ impl SlotIdentifier {
             mapping_slots.parent_slots.contains_key(slot)
         );
 
-        // Verify it's actually a mapping type
         if storage_type.encoding != ENCODING_MAPPING {
             return None;
         }
 
-        // Check if this slot is a known mapping entry
-        if !mapping_slots.keys.contains_key(slot) {
-            return None;
-        }
-
-        // Convert storage.slot to B256 for comparison
-        let storage_slot_b256 = B256::from(U256::from_str(&storage.slot).ok()?);
-
-        // Walk up the parent chain to collect keys and validate the base slot
-        let mut current_slot = *slot;
-        let mut keys_to_decode = Vec::new();
-        let mut found_base = false;
-
-        while let Some((key, parent)) =
-            mapping_slots.keys.get(&current_slot).zip(mapping_slots.parent_slots.get(&current_slot))
-        {
-            keys_to_decode.push(*key);
-
-            // Check if the parent is our base storage slot
-            if *parent == storage_slot_b256 {
-                found_base = true;
+        // Walk up to the base slot, collecting each level's entry, key and the offset of the
+        // child (the next level's mapping, or the accessed slot) within that entry's value.
+        let base_slot = B256::from(U256::from_str(&storage.slot).ok()?);
+        let mut levels = Vec::new();
+        let mut current = *slot;
+        loop {
+            let (entry, offset) = mapping_entry(&current, mapping_slots)?;
+            let parent = *mapping_slots.parent_slots.get(&entry)?;
+            levels.push((entry, *mapping_slots.keys.get(&entry)?, offset));
+            if parent == base_slot {
                 break;
             }
-
-            // Move up to the parent for the next iteration
-            current_slot = *parent;
+            if levels.len() > MAX_MAPPING_DEPTH {
+                trace!("Mapping slot {} does not match any parent in chain", storage.slot);
+                return None;
+            }
+            current = parent;
         }
+        levels.reverse();
 
-        if !found_base {
-            trace!("Mapping slot {} does not match any parent in chain", storage.slot);
-            return None;
-        }
-
-        // Resolve the mapping type to get all key types and the final value type
-        let (key_types, value_type_label, full_type_label) =
-            self.resolve_mapping_type(&storage.storage_type)?;
-
-        // Reverse keys to process from outermost to innermost
-        keys_to_decode.reverse();
-
-        // Build the label with decoded keys and collect decoded key values
+        // Resolve down from the variable's mapping type.
+        let mut mapping_type = storage_type;
+        // The type reported for a plain value: the mapping it was reached through, outermost of
+        // its directly nested levels, as it is declared.
+        let mut type_label = storage_type.label.clone();
         let mut label = storage.label.clone();
         let mut decoded_keys = Vec::new();
 
-        // Decode each key using the corresponding type
-        for (i, key) in keys_to_decode.iter().enumerate() {
-            if let Some(key_type_label) = key_types.get(i)
-                && let Some(sol_type) = parse_sol_type(key_type_label)
-                && let Ok(decoded) = sol_type.abi_decode(&key.0)
-            {
-                let decoded_key_str = format_token_raw(&decoded);
-                decoded_keys.push(decoded_key_str.clone());
-                label = format!("{label}[{decoded_key_str}]");
-            } else {
-                let hex_key = hex::encode_prefixed(key.0);
-                decoded_keys.push(hex_key.clone());
-                label = format!("{label}[{hex_key}]");
+        for (i, (entry, key, offset)) in levels.iter().enumerate() {
+            if mapping_type.encoding != ENCODING_MAPPING {
+                return None;
             }
+            let key_label = &self.storage_layout.types.get(mapping_type.key.as_ref()?)?.label;
+            let decoded_key = parse_sol_type(key_label)
+                .and_then(|sol_type| sol_type.abi_decode(&key.0).ok())
+                .map(|decoded| format_token_raw(&decoded))
+                .unwrap_or_else(|| hex::encode_prefixed(key.0));
+            label = format!("{label}[{decoded_key}]");
+            decoded_keys.push(decoded_key);
+
+            let value_type = self.storage_layout.types.get(mapping_type.value.as_ref()?)?;
+
+            if i + 1 < levels.len() {
+                // The next level is a mapping `offset` slots into this value: the value itself, or
+                // a member of a struct value.
+                if value_type.encoding == ENCODING_MAPPING && *offset == U256::ZERO {
+                    mapping_type = value_type;
+                } else {
+                    let (member_label, member_type) =
+                        self.mapping_member(value_type, *offset, 0)?;
+                    label = format!("{label}.{member_label}");
+                    type_label = member_type.label.clone();
+                    mapping_type = member_type;
+                }
+                continue;
+            }
+
+            // The last level: the accessed slot is `offset` slots into this entry's value.
+            let mut info = if is_struct(&value_type.label) {
+                let entry_slot = U256::from_be_bytes(entry.0);
+                self.handle_struct(
+                    &label,
+                    value_type,
+                    entry_slot + *offset,
+                    entry_slot,
+                    0,
+                    slot_str,
+                    0,
+                )?
+            } else if *offset == U256::ZERO {
+                // Contract types (e.g., "contract IPool") are addresses under the hood.
+                SlotInfo {
+                    label,
+                    slot_type: StorageTypeInfo {
+                        label: type_label,
+                        dyn_sol_type: parse_sol_type(&value_type.label)
+                            .unwrap_or(DynSolType::Bytes),
+                    },
+                    offset: storage.offset,
+                    slot: slot_str.to_string(),
+                    members: None,
+                    decoded: None,
+                    keys: None,
+                }
+            } else {
+                return None;
+            };
+            info.keys = Some(decoded_keys);
+            return Some(info);
         }
 
-        // Parse the final value type for decoding.
-        // Contract types (e.g., "contract IPool") are addresses under the hood.
-        let dyn_sol_type = parse_sol_type(&value_type_label).unwrap_or(DynSolType::Bytes);
+        None
+    }
 
-        Some(SlotInfo {
-            label,
-            slot_type: StorageTypeInfo { label: full_type_label, dyn_sol_type },
-            offset: storage.offset,
-            slot: slot_str.to_string(),
-            members: None,
-            decoded: None,
-            keys: Some(decoded_keys),
-        })
+    /// Finds the mapping-typed member `offset` slots into a struct, descending into nested
+    /// structs, and returns its dotted label and type.
+    fn mapping_member(
+        &self,
+        struct_type: &StorageType,
+        offset: U256,
+        depth: usize,
+    ) -> Option<(String, &StorageType)> {
+        const MAX_DEPTH: usize = 10;
+        if depth > MAX_DEPTH || !is_struct(&struct_type.label) {
+            return None;
+        }
+        let members = struct_type
+            .other
+            .get("members")
+            .and_then(|v| serde_json::from_value::<Vec<Storage>>(v.clone()).ok())?;
+        for member in &members {
+            let member_slot = U256::from_str(&member.slot).ok()?;
+            let member_type = self.storage_layout.types.get(&member.storage_type)?;
+            let member_slots =
+                U256::from(member_type.number_of_bytes.parse::<u64>().ok()?.div_ceil(32));
+            if offset < member_slot || offset >= member_slot + member_slots {
+                continue;
+            }
+            if member_type.encoding == ENCODING_MAPPING && offset == member_slot {
+                return Some((member.label.clone(), member_type));
+            }
+            let (nested_label, nested_type) =
+                self.mapping_member(member_type, offset - member_slot, depth + 1)?;
+            return Some((format!("{}.{nested_label}", member.label), nested_type));
+        }
+        None
     }
 
     /// Handles identification of bytes/string storage slots.
@@ -934,37 +991,6 @@ impl SlotIdentifier {
         None
     }
 
-    fn resolve_mapping_type(&self, type_ref: &str) -> Option<(Vec<String>, String, String)> {
-        let storage_type = self.storage_layout.types.get(type_ref)?;
-
-        if storage_type.encoding != ENCODING_MAPPING {
-            // Not a mapping, return the type as-is
-            return Some((vec![], storage_type.label.clone(), storage_type.label.clone()));
-        }
-
-        // Get key and value type references
-        let key_type_ref = storage_type.key.as_ref()?;
-        let value_type_ref = storage_type.value.as_ref()?;
-
-        // Resolve the key type
-        let key_type = self.storage_layout.types.get(key_type_ref)?;
-        let mut key_types = vec![key_type.label.clone()];
-
-        // Check if the value is another mapping (nested case)
-        if let Some(value_storage_type) = self.storage_layout.types.get(value_type_ref) {
-            if value_storage_type.encoding == ENCODING_MAPPING {
-                // Recursively resolve the nested mapping
-                let (nested_keys, final_value, _) = self.resolve_mapping_type(value_type_ref)?;
-                key_types.extend(nested_keys);
-                return Some((key_types, final_value, storage_type.label.clone()));
-            }
-            // Value is not a mapping, we're done
-            return Some((key_types, value_storage_type.label.clone(), storage_type.label.clone()));
-        }
-
-        None
-    }
-
     /// Identifies a slot holding the ABI-decodable variables in `entries`, all stored in it.
     ///
     /// A slot shared by several packed variables gets one member per variable, so each is decoded
@@ -1018,6 +1044,24 @@ impl SlotIdentifier {
     }
 }
 
+/// How many mapping levels are followed up from an accessed slot before giving up.
+const MAX_MAPPING_DEPTH: usize = 32;
+
+/// How far into a mapping value a recorded entry is searched for: the slot offset of a struct
+/// field from the entry holding the struct.
+const MAX_VALUE_SLOTS: u64 = 256;
+
+/// The recorded mapping entry `slot` belongs to and its slot offset from it: the entry itself,
+/// or a field of a struct stored there.
+fn mapping_entry(slot: &B256, mapping_slots: &MappingSlots) -> Option<(B256, U256)> {
+    let slot = U256::from_be_bytes(slot.0);
+    (0..MAX_VALUE_SLOTS).find_map(|offset| {
+        let offset = U256::from(offset);
+        let entry = B256::from(slot.checked_sub(offset)?);
+        mapping_slots.keys.contains_key(&entry).then_some((entry, offset))
+    })
+}
+
 /// Returns the base indices for array types, e.g. "\[0\]\[0\]" for 2D arrays.
 fn get_array_base_indices(dyn_type: &DynSolType) -> String {
     match dyn_type {
@@ -1059,6 +1103,7 @@ pub fn is_struct(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::Address;
 
     #[test]
     fn preserves_contract_and_enum_array_dimensions() {
@@ -1233,5 +1278,158 @@ mod tests {
                 )
             ]
         );
+    }
+
+    /// A layout with mappings to structs holding mappings, as OpenZeppelin's `AccessManager` has.
+    fn mapping_struct_layout() -> SlotIdentifier {
+        let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
+            "storage": [
+                { "astId": 1, "contract": "C", "label": "roles", "offset": 0, "slot": "0", "type": "t_mapping(t_uint64,t_struct(Role))" },
+                { "astId": 2, "contract": "C", "label": "pools", "offset": 0, "slot": "1", "type": "t_mapping(t_uint256,t_struct(Pool))" },
+                { "astId": 3, "contract": "C", "label": "allowances", "offset": 0, "slot": "2", "type": "t_mapping(t_address,t_mapping(t_address,t_uint256))" }
+            ],
+            "types": {
+                "t_mapping(t_uint64,t_struct(Role))": {
+                    "encoding": "mapping", "label": "mapping(uint64 => struct C.Role)", "numberOfBytes": "32",
+                    "key": "t_uint64", "value": "t_struct(Role)"
+                },
+                "t_struct(Role)": {
+                    "encoding": "inplace", "label": "struct C.Role", "numberOfBytes": "64",
+                    "members": [
+                        { "astId": 4, "contract": "C", "label": "members", "offset": 0, "slot": "0", "type": "t_mapping(t_address,t_struct(Access))" },
+                        { "astId": 5, "contract": "C", "label": "admin", "offset": 0, "slot": "1", "type": "t_uint64" },
+                        { "astId": 6, "contract": "C", "label": "guardian", "offset": 8, "slot": "1", "type": "t_uint64" }
+                    ]
+                },
+                "t_mapping(t_address,t_struct(Access))": {
+                    "encoding": "mapping", "label": "mapping(address => struct C.Access)", "numberOfBytes": "32",
+                    "key": "t_address", "value": "t_struct(Access)"
+                },
+                "t_struct(Access)": {
+                    "encoding": "inplace", "label": "struct C.Access", "numberOfBytes": "32",
+                    "members": [
+                        { "astId": 7, "contract": "C", "label": "since", "offset": 0, "slot": "0", "type": "t_uint48" },
+                        { "astId": 8, "contract": "C", "label": "delay", "offset": 6, "slot": "0", "type": "t_uint112" }
+                    ]
+                },
+                "t_mapping(t_uint256,t_struct(Pool))": {
+                    "encoding": "mapping", "label": "mapping(uint256 => struct C.Pool)", "numberOfBytes": "32",
+                    "key": "t_uint256", "value": "t_struct(Pool)"
+                },
+                "t_struct(Pool)": {
+                    "encoding": "inplace", "label": "struct C.Pool", "numberOfBytes": "64",
+                    "members": [
+                        { "astId": 9, "contract": "C", "label": "total", "offset": 0, "slot": "0", "type": "t_uint256" },
+                        { "astId": 10, "contract": "C", "label": "shares", "offset": 0, "slot": "1", "type": "t_mapping(t_address,t_uint256)" }
+                    ]
+                },
+                "t_mapping(t_address,t_mapping(t_address,t_uint256))": {
+                    "encoding": "mapping", "label": "mapping(address => mapping(address => uint256))", "numberOfBytes": "32",
+                    "key": "t_address", "value": "t_mapping(t_address,t_uint256)"
+                },
+                "t_mapping(t_address,t_uint256)": {
+                    "encoding": "mapping", "label": "mapping(address => uint256)", "numberOfBytes": "32",
+                    "key": "t_address", "value": "t_uint256"
+                },
+                "t_uint48": { "encoding": "inplace", "label": "uint48", "numberOfBytes": "6" },
+                "t_uint64": { "encoding": "inplace", "label": "uint64", "numberOfBytes": "8" },
+                "t_uint112": { "encoding": "inplace", "label": "uint112", "numberOfBytes": "14" },
+                "t_uint256": { "encoding": "inplace", "label": "uint256", "numberOfBytes": "32" },
+                "t_address": { "encoding": "inplace", "label": "address", "numberOfBytes": "20" }
+            }
+        }))
+        .unwrap();
+        SlotIdentifier::new(Arc::new(layout))
+    }
+
+    /// Records the mapping entry `keccak256(key . parent)` as the EVM would, and returns it.
+    fn entry(mapping_slots: &mut MappingSlots, key: B256, parent: U256) -> U256 {
+        let parent = B256::from(parent);
+        let result = keccak256([key.0, parent.0].concat());
+        mapping_slots.record_hash(result, key, parent);
+        mapping_slots.insert(result);
+        U256::from_be_bytes(result.0)
+    }
+
+    const USER: Address = Address::repeat_byte(0x11);
+
+    #[test]
+    fn identifies_nested_mappings_as_declared() {
+        let identifier = mapping_struct_layout();
+        let mut slots = MappingSlots::default();
+        let outer = entry(&mut slots, USER.into_word(), U256::from(2));
+        let inner = entry(&mut slots, Address::repeat_byte(0x22).into_word(), outer);
+
+        let info = identifier.identify(&B256::from(inner), Some(&slots)).unwrap();
+        assert_eq!(
+            info.label,
+            "allowances[0x1111111111111111111111111111111111111111][0x2222222222222222222222222222222222222222]"
+        );
+        assert_eq!(info.slot_type.label, "mapping(address => mapping(address => uint256))");
+        assert_eq!(info.slot_type.dyn_sol_type, DynSolType::Uint(256));
+    }
+
+    #[test]
+    fn identifies_struct_fields_past_a_mapping_entry() {
+        let identifier = mapping_struct_layout();
+        let mut slots = MappingSlots::default();
+        let role = entry(&mut slots, U256::from(2).into(), U256::ZERO);
+
+        let mut info =
+            identifier.identify(&B256::from(role + U256::from(1)), Some(&slots)).unwrap();
+        assert_eq!(info.label, "roles[2].admin, roles[2].guardian");
+        assert_eq!(info.keys, Some(vec!["2".to_string()]));
+        info.decode_values(B256::ZERO, B256::from(U256::from(5) << 64 | U256::from(4)));
+        assert_eq!(
+            decoded(&info),
+            [
+                ("roles[2].admin", "0".to_string(), "4".to_string()),
+                ("roles[2].guardian", "0".to_string(), "5".to_string())
+            ]
+        );
+    }
+
+    /// `roles[2].members[user]`: the inner mapping is the struct's first member, so its entry's
+    /// parent is the outer entry itself, which used to read as one more key of `roles`.
+    #[test]
+    fn identifies_a_mapping_inside_a_mapped_struct() {
+        let identifier = mapping_struct_layout();
+        let mut slots = MappingSlots::default();
+        let role = entry(&mut slots, U256::from(2).into(), U256::ZERO);
+        let access = entry(&mut slots, USER.into_word(), role);
+
+        let mut info = identifier.identify(&B256::from(access), Some(&slots)).unwrap();
+        assert_eq!(info.label, "roles[2].members[0x1111111111111111111111111111111111111111]");
+        assert_eq!(info.slot_type.label, "struct C.Access");
+        assert_eq!(
+            info.keys,
+            Some(vec!["2".to_string(), "0x1111111111111111111111111111111111111111".to_string()])
+        );
+        info.decode_values(B256::ZERO, B256::from(U256::from(9) << 48 | U256::from(1_700_000_000)));
+        assert_eq!(
+            decoded(&info),
+            [
+                ("since", "0".to_string(), "1700000000".to_string()),
+                ("delay", "0".to_string(), "9".to_string())
+            ]
+        );
+    }
+
+    /// `pools[1].shares[user]`: the inner mapping is the struct's second slot, so its parent is
+    /// displaced from the outer entry and the chain used to break there.
+    #[test]
+    fn identifies_a_mapping_member_past_the_first_slot() {
+        let identifier = mapping_struct_layout();
+        let mut slots = MappingSlots::default();
+        let pool = entry(&mut slots, U256::from(1).into(), U256::from(1));
+        let share = entry(&mut slots, USER.into_word(), pool + U256::from(1));
+
+        let info = identifier.identify(&B256::from(share), Some(&slots)).unwrap();
+        assert_eq!(info.label, "pools[1].shares[0x1111111111111111111111111111111111111111]");
+        assert_eq!(info.slot_type.label, "mapping(address => uint256)");
+        assert_eq!(info.slot_type.dyn_sol_type, DynSolType::Uint(256));
+
+        let info = identifier.identify(&B256::from(pool), Some(&slots)).unwrap();
+        assert_eq!(info.label, "pools[1].total");
     }
 }

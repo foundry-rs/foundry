@@ -28,6 +28,37 @@ contract MappingStorage {
     }
 }
 
+/// Mappings holding structs that hold mappings, as OpenZeppelin's `AccessManager` has.
+contract StructMappingStorage {
+    struct Access {
+        uint48 since;
+        uint112 delay;
+    }
+
+    struct Role {
+        mapping(address => Access) members;
+        uint64 admin;
+    }
+
+    struct Pool {
+        uint256 total;
+        mapping(address => uint256) shares;
+    }
+
+    mapping(uint64 => Role) internal roles; // Slot 0
+    mapping(uint256 => Pool) internal pools; // Slot 1
+
+    function grant(uint64 roleId, address account, uint48 since, uint64 admin) public {
+        roles[roleId].members[account].since = since;
+        roles[roleId].admin = admin;
+    }
+
+    function deposit(uint256 poolId, address account, uint256 amount) public {
+        pools[poolId].total += amount;
+        pools[poolId].shares[account] += amount;
+    }
+}
+
 contract StateDiffMappingsTest is Test {
     MappingStorage public mappingStorage;
 
@@ -242,6 +273,39 @@ contract StateDiffMappingsTest is Test {
         );
 
         // Stop recording
+        vm.stopAndReturnStateDiff();
+    }
+
+    /// A mapping inside a struct held by a mapping is labeled by its member, and a struct value
+    /// is identified field by field, past its first slot too.
+    function testMappingInsideMappedStructStateDiff() public {
+        StructMappingStorage structStorage = new StructMappingStorage();
+        address account = address(0x1234);
+
+        vm.startStateDiffRecording();
+        structStorage.grant(2, account, 1_700_000_000, 4);
+        structStorage.deposit(1, account, 100);
+        string memory json = vm.getStateDiffJson();
+        emit log_string(json);
+
+        // `roles[2].members[account]`, not one more key of `roles`.
+        assertTrue(
+            vm.contains(json, '"label":"roles[2].members[0x0000000000000000000000000000000000001234]"')
+        );
+        assertTrue(vm.contains(json, '"type":"struct StructMappingStorage.Access"'));
+        assertTrue(vm.contains(json, '"keys":["2","0x0000000000000000000000000000000000001234"]'));
+        assertTrue(vm.contains(json, '"decoded":{"previousValue":"0","newValue":"1700000000"}'));
+
+        // The struct's second slot.
+        assertTrue(vm.contains(json, '"label":"roles[2].admin"'));
+
+        // A mapping member past the struct's first slot.
+        assertTrue(vm.contains(json, '"label":"pools[1].total"'));
+        assertTrue(
+            vm.contains(json, '"label":"pools[1].shares[0x0000000000000000000000000000000000001234]"')
+        );
+        assertTrue(vm.contains(json, '"type":"mapping(address => uint256)"'));
+
         vm.stopAndReturnStateDiff();
     }
 }
