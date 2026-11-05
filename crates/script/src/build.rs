@@ -1,7 +1,8 @@
 use crate::{
     ScriptArgs, ScriptConfig,
     broadcast::{
-        BundledState, remaining_operation_indices, remaining_unsigned_transactions_for_recovery,
+        BundledState, refused_after_revert, remaining_operation_indices,
+        remaining_unsigned_transactions_for_recovery,
     },
     execute::LinkedState,
     multi_sequence::MultiChainSequence,
@@ -441,20 +442,16 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 _ => eyre::bail!("{}", errors.iter().format("\n")),
             }
         }
-        for (index, deployment) in sequence.sequences().iter().enumerate() {
-            // The script stops at a failed call, so it never planned to send the operations left
-            // after a revert, and resume must not send them for it.
-            if !deployment.reverted.is_empty()
-                && !remaining_operation_indices(&sequence, index).is_empty()
-            {
-                return Err(sequence.label_error(
-                    index,
-                    eyre::eyre!(
-                        "transaction {} reverted, so the script would not have sent the operations after it; resume will not send them. Pass `--broadcast --start-fresh` to archive this broadcast and run the script again",
-                        deployment.reverted.iter().format(", ")
-                    ),
-                ));
-            }
+        // Resume refuses new operations after a recorded revert. Saved attempts after it are still
+        // recovered, so it refuses here only once nothing is left to recover, and otherwise after
+        // the broadcast.
+        if let Some(err) = refused_after_revert(&sequence)
+            && (0..sequence.sequences().len())
+                .all(|index| remaining_operation_indices(&sequence, index).is_empty())
+        {
+            return Err(err);
+        }
+        for deployment in sequence.sequences() {
             for hash in &deployment.reverted {
                 sh_warn!(
                     "Transaction {hash} on chain {} reverted; resume will not resubmit it.",

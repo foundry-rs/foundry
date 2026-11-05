@@ -399,7 +399,7 @@ impl SlotIdentifier {
         let parsed_types = storage_layout
             .types
             .iter()
-            .map(|(id, storage_type)| (id.clone(), parse_sol_type(&storage_type.label)))
+            .map(|(id, storage_type)| (id.clone(), resolve_sol_type(id, storage_type)))
             .collect();
         Self { storage_layout, parsed_types }
     }
@@ -1086,6 +1086,27 @@ fn get_array_base_indices(dyn_type: &DynSolType) -> String {
     }
 }
 
+/// Prefix of the layout's type ids for user-defined value types, e.g.
+/// `t_userDefinedValueType(Delay)1234`.
+const UDVT_TYPE_PREFIX: &str = "t_userDefinedValueType(";
+
+/// Resolves the layout type `id` to a [`DynSolType`], returning `None` for types that have no
+/// direct ABI equivalent (mappings, structs).
+///
+/// A user-defined value type's label is its name (`Delay`, or `Time.Delay` when declared in a
+/// library), which says nothing of the underlying type, and the layout records only its size. It is
+/// resolved to an unsigned integer of that size, which keeps packed neighbours apart and decodes
+/// the common unsigned underlying types exactly. Other underlying types are displayed as raw
+/// unsigned bits, not their original signed, address, bool or fixed-bytes values. Mapping keys
+/// retain the full encoded key word, whose padding can differ from compact storage.
+fn resolve_sol_type(id: &str, storage_type: &StorageType) -> Option<DynSolType> {
+    if id.starts_with(UDVT_TYPE_PREFIX) {
+        let bytes = storage_type.number_of_bytes.parse::<usize>().ok()?;
+        return (1..=32).contains(&bytes).then(|| DynSolType::Uint(bytes * 8));
+    }
+    parse_sol_type(&storage_type.label)
+}
+
 /// Parses a storage type label into a [`DynSolType`], returning `None` for labels that have no
 /// direct ABI equivalent (mappings, structs).
 ///
@@ -1350,11 +1371,11 @@ mod tests {
                 "t_struct(Order)": {
                     "encoding": "inplace", "label": "struct C.Order", "numberOfBytes": "64",
                     "members": [
-                        { "astId": 13, "contract": "C", "label": "price", "offset": 0, "slot": "0", "type": "t_userDefinedValueType(Price)" },
+                        { "astId": 13, "contract": "C", "label": "callback", "offset": 0, "slot": "0", "type": "t_function_external_nonpayable(t_uint256)returns()" },
                         { "astId": 14, "contract": "C", "label": "qty", "offset": 0, "slot": "1", "type": "t_uint256" }
                     ]
                 },
-                "t_userDefinedValueType(Price)": { "encoding": "inplace", "label": "Price", "numberOfBytes": "32" },
+                "t_function_external_nonpayable(t_uint256)returns()": { "encoding": "inplace", "label": "function (uint256) external", "numberOfBytes": "24" },
                 "t_mapping(t_uint256,t_array(t_struct(Access))dyn_storage)": {
                     "encoding": "mapping", "label": "mapping(uint256 => struct C.Access[])", "numberOfBytes": "32",
                     "key": "t_uint256", "value": "t_array(t_struct(Access))dyn_storage"
@@ -1370,15 +1391,13 @@ mod tests {
                 "t_struct(Pay)": {
                     "encoding": "inplace", "label": "struct C.Pay", "numberOfBytes": "96",
                     "members": [
-                        { "astId": 16, "contract": "C", "label": "currency", "offset": 0, "slot": "0", "type": "t_userDefinedValueType(Currency)" },
-                        { "astId": 17, "contract": "C", "label": "amount", "offset": 20, "slot": "0", "type": "t_uint96" },
+                        { "astId": 16, "contract": "C", "label": "hook", "offset": 0, "slot": "0", "type": "t_function_external_nonpayable(t_uint256)returns()" },
+                        { "astId": 17, "contract": "C", "label": "amount", "offset": 24, "slot": "0", "type": "t_uint64" },
                         { "astId": 18, "contract": "C", "label": "deadline", "offset": 0, "slot": "1", "type": "t_uint256" },
                         { "astId": 19, "contract": "C", "label": "fee", "offset": 0, "slot": "2", "type": "t_uint64" },
-                        { "astId": 20, "contract": "C", "label": "payee", "offset": 8, "slot": "2", "type": "t_userDefinedValueType(Currency)" }
+                        { "astId": 20, "contract": "C", "label": "payee", "offset": 8, "slot": "2", "type": "t_function_external_nonpayable(t_uint256)returns()" }
                     ]
                 },
-                "t_userDefinedValueType(Currency)": { "encoding": "inplace", "label": "Currency", "numberOfBytes": "20" },
-                "t_uint96": { "encoding": "inplace", "label": "uint96", "numberOfBytes": "12" },
                 "t_uint48": { "encoding": "inplace", "label": "uint48", "numberOfBytes": "6" },
                 "t_uint64": { "encoding": "inplace", "label": "uint64", "numberOfBytes": "8" },
                 "t_uint112": { "encoding": "inplace", "label": "uint112", "numberOfBytes": "14" },
@@ -1531,7 +1550,7 @@ mod tests {
         assert!(identifier.identify(&slot.into(), Some(&slots)).is_none());
     }
 
-    /// `orders[2]` starts with a user-defined value type and `queues[1]` is an array of structs,
+    /// `orders[2]` starts with an external function and `queues[1]` is an array of structs,
     /// so neither entry can be identified field by field, but each is still identified whole.
     #[test]
     fn identifies_mapping_entries_with_unidentifiable_fields() {
@@ -1554,8 +1573,8 @@ mod tests {
         }
     }
 
-    /// `pays[1].amount` and `pays[1].fee` share their slots with a user-defined value type, which
-    /// can't be decoded, so each is decoded from its own bytes rather than the whole word.
+    /// `pays[1].amount` and `pays[1].fee` share their slots with an external function, which can't
+    /// be decoded, so each is decoded from its own bytes rather than the whole word.
     #[test]
     fn decodes_mapped_struct_fields_beside_undecodable_ones() {
         let identifier = mapping_struct_layout();
@@ -1563,7 +1582,7 @@ mod tests {
         let pay = entry(&mut slots, U256::from(1).into(), U256::from(5));
 
         for (offset, word, label, value) in [
-            (0, U256::from(3) << 160 | U256::from(0xdead), "pays[1].amount", "3"),
+            (0, U256::from(3) << 192 | U256::from(0xdead), "pays[1].amount", "3"),
             (2, U256::from(0xbeef) << 64 | U256::from(4), "pays[1].fee", "4"),
         ] {
             let slot = B256::from(pay + U256::from(offset));
@@ -1572,6 +1591,97 @@ mod tests {
             assert_eq!(info.keys, Some(vec!["1".to_string()]));
             info.decode_values(B256::ZERO, B256::from(word));
             assert_eq!(decoded(&info), [(label, "0".to_string(), value.to_string())]);
+        }
+    }
+
+    /// User-defined value types as solc lays them out: a file-level one labeled by its name, a
+    /// library one by `Library.Name`, both 12 bytes (`uint96`).
+    fn udvt_layout() -> SlotIdentifier {
+        let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
+            "storage": [
+                { "astId": 1, "contract": "C", "label": "config", "offset": 0, "slot": "0", "type": "t_struct(Config)" },
+                { "astId": 2, "contract": "C", "label": "ids", "offset": 0, "slot": "2", "type": "t_array(t_userDefinedValueType(FileId)10)3_storage" },
+                { "astId": 3, "contract": "C", "label": "byId", "offset": 0, "slot": "4", "type": "t_mapping(t_userDefinedValueType(FileId)10,t_userDefinedValueType(LibId)11)" }
+            ],
+            "types": {
+                "t_struct(Config)": {
+                    "encoding": "inplace", "label": "struct C.Config", "numberOfBytes": "64",
+                    "members": [
+                        { "astId": 4, "contract": "C", "label": "owner", "offset": 0, "slot": "0", "type": "t_address" },
+                        { "astId": 5, "contract": "C", "label": "fileId", "offset": 20, "slot": "0", "type": "t_userDefinedValueType(FileId)10" },
+                        { "astId": 6, "contract": "C", "label": "libId", "offset": 0, "slot": "1", "type": "t_userDefinedValueType(LibId)11" }
+                    ]
+                },
+                "t_array(t_userDefinedValueType(FileId)10)3_storage": {
+                    "encoding": "inplace", "label": "FileId[3]", "numberOfBytes": "64",
+                    "base": "t_userDefinedValueType(FileId)10"
+                },
+                "t_mapping(t_userDefinedValueType(FileId)10,t_userDefinedValueType(LibId)11)": {
+                    "encoding": "mapping", "label": "mapping(FileId => L.LibId)", "numberOfBytes": "32",
+                    "key": "t_userDefinedValueType(FileId)10", "value": "t_userDefinedValueType(LibId)11"
+                },
+                "t_userDefinedValueType(FileId)10": { "encoding": "inplace", "label": "FileId", "numberOfBytes": "12" },
+                "t_userDefinedValueType(LibId)11": { "encoding": "inplace", "label": "L.LibId", "numberOfBytes": "12" },
+                "t_address": { "encoding": "inplace", "label": "address", "numberOfBytes": "20" }
+            }
+        }))
+        .unwrap();
+        SlotIdentifier::new(Arc::new(layout))
+    }
+
+    /// Wider than a byte, which a `Library.Name` label used to be parsed as.
+    const ID: u64 = 0x0102_0304_0506;
+
+    #[test]
+    fn decodes_user_defined_value_type_members() {
+        let identifier = udvt_layout();
+
+        let mut info = identifier.identify(&B256::ZERO, None).unwrap();
+        assert_eq!(info.label, "config.owner, config.fileId");
+        info.decode_values(B256::ZERO, B256::from(U256::from(ID) << 160 | U256::from(0x1234)));
+        assert_eq!(
+            decoded(&info),
+            [
+                (
+                    "config.owner",
+                    "0x0000000000000000000000000000000000000000".to_string(),
+                    "0x0000000000000000000000000000000000001234".to_string()
+                ),
+                ("config.fileId", "0".to_string(), ID.to_string())
+            ]
+        );
+
+        let mut info = identifier.identify(&B256::from(U256::from(1)), None).unwrap();
+        assert_eq!(info.label, "config.libId");
+        assert_eq!(info.slot_type.label, "L.LibId");
+        info.decode_values(B256::ZERO, B256::from(U256::from(ID)));
+        assert_eq!(format_token_raw(&info.decoded.unwrap().new_value), ID.to_string());
+    }
+
+    #[test]
+    fn resolves_mappings_of_user_defined_value_types() {
+        let identifier = udvt_layout();
+
+        let mut slots = MappingSlots::default();
+        let key = B256::from(U256::from(ID));
+        let parent = B256::from(U256::from(4));
+        let entry = keccak256([key.0, parent.0].concat());
+        slots.record_hash(entry, key, parent);
+        slots.insert(entry);
+
+        let mut info = identifier.identify(&entry, Some(&slots)).unwrap();
+        assert_eq!(info.label, format!("byId[{ID}]"));
+        info.decode_values(B256::ZERO, B256::from(U256::from(ID)));
+        assert_eq!(format_token_raw(&info.decoded.unwrap().new_value), ID.to_string());
+    }
+
+    #[test]
+    fn leaves_unresolved_packed_udvt_arrays_unidentified() {
+        let identifier = udvt_layout();
+        // Resolving FileId[3] to uint96[3] would feed packed words into a decoder that treats
+        // slots as elements, giving both incorrect values and incorrect indices.
+        for slot in [2, 3] {
+            assert!(identifier.identify(&B256::from(U256::from(slot)), None).is_none());
         }
     }
 }

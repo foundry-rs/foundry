@@ -496,7 +496,26 @@ impl SymbolicExecutor {
             }
             opcode::SWAP1..=opcode::SWAP16 => {
                 let n = (op - opcode::SWAP1 + 1) as usize;
-                state.stack.swap(n)?;
+                state.stack.exchange(0, n)?;
+            }
+            opcode::DUPN | opcode::SWAPN | opcode::EXCHANGE => {
+                // EIP-8024: a missing trailing immediate reads as zero, like revm's padded code.
+                let immediate = code.opcode(&mut self.cx, state.pc)?.unwrap_or_default();
+                state.pc += 1;
+                let decoded = if op == opcode::EXCHANGE {
+                    decode_exchange_immediate(immediate)
+                } else {
+                    decode_stack_immediate(immediate).map(|n| (0, n))
+                };
+                let Some((n, m)) = decoded else {
+                    return Ok(StepOutcome::ExceptionalHalt);
+                };
+                if op == opcode::DUPN {
+                    let value = state.stack.peek(m - 1)?.clone();
+                    state.stack.push(value)?;
+                } else {
+                    state.stack.exchange(n, m)?;
+                }
             }
             opcode::STOP => {
                 // STOP returns no output; drop the return data of the frame's last call.
@@ -1349,6 +1368,10 @@ impl SymbolicExecutor {
                 let value = state.block.blob_basefee.clone();
                 state.stack.push(value)?;
             }
+            opcode::SLOTNUM => {
+                let value = state.block.slot_num.clone();
+                state.stack.push(value)?;
+            }
             opcode::LOG0 | opcode::LOG1 | opcode::LOG2 | opcode::LOG3 | opcode::LOG4 => {
                 if state.is_static {
                     state.return_data = SymReturnData::empty(&mut self.cx);
@@ -1554,6 +1577,26 @@ const fn opcode_activation(op: u8) -> SpecId {
             SpecId::CANCUN
         }
         opcode::CLZ => SpecId::OSAKA,
+        opcode::SLOTNUM | opcode::DUPN | opcode::SWAPN | opcode::EXCHANGE => SpecId::AMSTERDAM,
         _ => SpecId::FRONTIER,
     }
+}
+
+/// Decodes the EIP-8024 `DUPN`/`SWAPN` immediate into a stack depth.
+///
+/// Bytes `0x5b..=0x7f` are invalid so that the immediate is never a `JUMPDEST` or `PUSH` opcode.
+const fn decode_stack_immediate(immediate: u8) -> Option<usize> {
+    let x = immediate as usize;
+    if x <= 90 || x >= 128 { Some((x + 145) % 256) } else { None }
+}
+
+/// Decodes the EIP-8024 `EXCHANGE` immediate into a pair of stack depths `n < m`.
+const fn decode_exchange_immediate(immediate: u8) -> Option<(usize, usize)> {
+    let x = immediate as usize;
+    if x > 81 && x < 128 {
+        return None;
+    }
+    let k = x ^ 143;
+    let (q, r) = (k / 16, k % 16);
+    if q < r { Some((q + 1, r + 1)) } else { Some((r + 1, 29 - q)) }
 }
