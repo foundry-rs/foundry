@@ -157,8 +157,10 @@ appends its receipt. A revert removes the hash, records it in `reverted` rather 
 which consumers treat as successful, and returns an error. A later `--resume` never resubmits a
 recorded revert. The script would have stopped at the failed call, so resume fails, pointing to
 `--broadcast --start-fresh`, while a sequence with a recorded revert still has operations without a
-receipt or recorded revert; otherwise it warns about each revert and replaces the final success
-message with a warning listing them. Receipt-watcher timeouts keep retrying without
+receipt or recorded revert, or a later sequence, on any chain, still has such an operation that was
+never submitted, with neither a hash nor a saved attempt. Later operations submitted before the
+revert was recorded are still reconciled. Otherwise it warns about each revert and replaces the
+final success message with a warning listing them. Receipt-watcher timeouts keep retrying without
 consuming the retry budget while the selected RPC still returns the transaction, so ordinary polling
 is unbounded; Tempo batches use `transaction_timeout`. Outside `--batch`, each polled hash prints
 one warning naming it after its first such timeout (hidden by `--quiet`), and waiting continues. If

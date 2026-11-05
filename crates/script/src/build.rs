@@ -1,7 +1,8 @@
 use crate::{
     ScriptArgs, ScriptConfig,
     broadcast::{
-        BundledState, remaining_operation_indices, remaining_unsigned_transactions_for_recovery,
+        BundledState, is_operation_submitted, remaining_operation_indices,
+        remaining_unsigned_transactions_for_recovery,
     },
     execute::LinkedState,
     multi_sequence::MultiChainSequence,
@@ -443,9 +444,16 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
         }
         for (index, deployment) in sequence.sequences().iter().enumerate() {
             // The script stops at a failed call, so it never planned to send the operations left
-            // after a revert, and resume must not send them for it.
+            // after a revert, in its sequence or in a later one, and resume must not send them for
+            // it. A later sequence can hold operations submitted before the revert was recorded;
+            // those were reconciled above and are left to the broadcast like any other submission.
             if !deployment.reverted.is_empty()
-                && !remaining_operation_indices(&sequence, index).is_empty()
+                && (!remaining_operation_indices(&sequence, index).is_empty()
+                    || (index + 1..sequence.sequences().len()).any(|later| {
+                        remaining_operation_indices(&sequence, later)
+                            .into_iter()
+                            .any(|operation| !is_operation_submitted(&sequence, later, operation))
+                    }))
             {
                 return Err(sequence.label_error(
                     index,

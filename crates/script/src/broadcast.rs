@@ -510,6 +510,21 @@ where
     })
 }
 
+/// Returns true if the operation was already submitted, or may have been: it has a recorded hash or
+/// a saved signed or delegated attempt.
+pub(crate) fn is_operation_submitted<N: Network>(
+    sequence: &ScriptSequenceKind<N>,
+    sequence_index: usize,
+    index: usize,
+) -> bool
+where
+    N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
+{
+    sequence.sequences()[sequence_index].transactions[index].hash.is_some()
+        || sequence.signed_payload(sequence_index, index).is_some()
+        || sequence.delegated_status(sequence_index, index).is_some()
+}
+
 fn remaining_sender_addresses<N: Network>(sequence: &ScriptSequenceKind<N>) -> AddressHashSet
 where
     N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
