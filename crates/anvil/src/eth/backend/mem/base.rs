@@ -3,7 +3,7 @@
 use super::Backend;
 use crate::eth::{
     backend::{
-        db::{AnvilCacheDB, Db, StateRef},
+        db::{AnvilCacheDB, Db, ExecutionDb, StateRef},
         executor::{BlockExecutionKind, ExecutedPoolTransactions},
         time::{PendingBlockTimestamp, TimeManager},
     },
@@ -48,7 +48,7 @@ impl<N: Network> Backend<N> {
         tx: BaseTransaction<TxEnv>,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
-        I: Inspector<BaseContext<WrapDatabaseRef<&'db dyn super::DatabaseRef>>>,
+        I: Inspector<BaseContext<ExecutionDb<&'db dyn super::DatabaseRef>>>,
     {
         let upgrade = self.base_upgrade_at_timestamp(evm_env.block_env.timestamp.saturating_to());
         if tx.eip8130.is_some() && upgrade < BaseUpgrade::Zenith {
@@ -67,7 +67,11 @@ impl<N: Network> Backend<N> {
             )
         });
         let factory = BaseEvmFactory::new(activation_admin);
-        let mut evm = factory.create_evm_with_inspector(WrapDatabaseRef(db), base_env, inspector);
+        let mut evm = factory.create_evm_with_inspector(
+            ExecutionDb(db, *evm_env.spec_id()),
+            base_env,
+            inspector,
+        );
         evm.ctx_mut().cfg.tx_chain_id_check = true;
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
         let result = Evm::transact_raw(&mut evm, tx)?;
