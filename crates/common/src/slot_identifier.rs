@@ -398,8 +398,8 @@ impl SlotIdentifier {
     pub fn new(storage_layout: Arc<StorageLayout>) -> Self {
         let parsed_types = storage_layout
             .types
-            .keys()
-            .map(|id| (id.clone(), resolve_sol_type(&storage_layout.types, id, 0)))
+            .iter()
+            .map(|(id, storage_type)| (id.clone(), resolve_sol_type(id, storage_type)))
             .collect();
         Self { storage_layout, parsed_types }
     }
@@ -1040,31 +1040,13 @@ const UDVT_TYPE_PREFIX: &str = "t_userDefinedValueType(";
 /// A user-defined value type's label is its name (`Delay`, or `Time.Delay` when declared in a
 /// library), which says nothing of the underlying type, and the layout records only its size. It is
 /// resolved to an unsigned integer of that size, which keeps packed neighbours apart and decodes
-/// the common unsigned underlying types exactly. Arrays are resolved through their base type, so
-/// arrays of such types are too.
-fn resolve_sol_type(
-    types: &BTreeMap<String, StorageType>,
-    id: &str,
-    depth: usize,
-) -> Option<DynSolType> {
-    const MAX_DEPTH: usize = 16;
-    let storage_type = types.get(id)?;
+/// the common unsigned underlying types exactly. Other underlying types are displayed as raw
+/// unsigned bits, not their original signed, address, bool or fixed-bytes values. Mapping keys
+/// retain the full encoded key word, whose padding can differ from compact storage.
+fn resolve_sol_type(id: &str, storage_type: &StorageType) -> Option<DynSolType> {
     if id.starts_with(UDVT_TYPE_PREFIX) {
         let bytes = storage_type.number_of_bytes.parse::<usize>().ok()?;
         return (1..=32).contains(&bytes).then(|| DynSolType::Uint(bytes * 8));
-    }
-    if depth < MAX_DEPTH
-        && let Some(base) = storage_type.other.get("base").and_then(|base| base.as_str())
-        && storage_type.label.ends_with(']')
-    {
-        let element = resolve_sol_type(types, base, depth + 1)?;
-        let dimension =
-            &storage_type.label[storage_type.label.rfind('[')? + 1..storage_type.label.len() - 1];
-        return Some(if dimension.is_empty() {
-            DynSolType::Array(Box::new(element))
-        } else {
-            DynSolType::FixedArray(Box::new(element), dimension.parse().ok()?)
-        });
     }
     parse_sol_type(&storage_type.label)
 }
@@ -1276,7 +1258,7 @@ mod tests {
         let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
             "storage": [
                 { "astId": 1, "contract": "C", "label": "config", "offset": 0, "slot": "0", "type": "t_struct(Config)" },
-                { "astId": 2, "contract": "C", "label": "ids", "offset": 0, "slot": "2", "type": "t_array(t_userDefinedValueType(LibId)11)3_storage" },
+                { "astId": 2, "contract": "C", "label": "ids", "offset": 0, "slot": "2", "type": "t_array(t_userDefinedValueType(FileId)10)3_storage" },
                 { "astId": 3, "contract": "C", "label": "byId", "offset": 0, "slot": "4", "type": "t_mapping(t_userDefinedValueType(FileId)10,t_userDefinedValueType(LibId)11)" }
             ],
             "types": {
@@ -1288,9 +1270,9 @@ mod tests {
                         { "astId": 6, "contract": "C", "label": "libId", "offset": 0, "slot": "1", "type": "t_userDefinedValueType(LibId)11" }
                     ]
                 },
-                "t_array(t_userDefinedValueType(LibId)11)3_storage": {
-                    "encoding": "inplace", "label": "L.LibId[3]", "numberOfBytes": "64",
-                    "base": "t_userDefinedValueType(LibId)11"
+                "t_array(t_userDefinedValueType(FileId)10)3_storage": {
+                    "encoding": "inplace", "label": "FileId[3]", "numberOfBytes": "64",
+                    "base": "t_userDefinedValueType(FileId)10"
                 },
                 "t_mapping(t_userDefinedValueType(FileId)10,t_userDefinedValueType(LibId)11)": {
                     "encoding": "mapping", "label": "mapping(FileId => L.LibId)", "numberOfBytes": "32",
@@ -1335,12 +1317,8 @@ mod tests {
     }
 
     #[test]
-    fn resolves_arrays_and_mappings_of_user_defined_value_types() {
+    fn resolves_mappings_of_user_defined_value_types() {
         let identifier = udvt_layout();
-        assert_eq!(
-            identifier.parsed_type("t_array(t_userDefinedValueType(LibId)11)3_storage"),
-            Some(&DynSolType::FixedArray(Box::new(DynSolType::Uint(96)), 3))
-        );
 
         let mut slots = MappingSlots::default();
         let key = B256::from(U256::from(ID));
@@ -1353,5 +1331,15 @@ mod tests {
         assert_eq!(info.label, format!("byId[{ID}]"));
         info.decode_values(B256::ZERO, B256::from(U256::from(ID)));
         assert_eq!(format_token_raw(&info.decoded.unwrap().new_value), ID.to_string());
+    }
+
+    #[test]
+    fn leaves_unresolved_packed_udvt_arrays_unidentified() {
+        let identifier = udvt_layout();
+        // Resolving FileId[3] to uint96[3] would feed packed words into a decoder that treats
+        // slots as elements, giving both incorrect values and incorrect indices.
+        for slot in [2, 3] {
+            assert!(identifier.identify(&B256::from(U256::from(slot)), None).is_none());
+        }
     }
 }
