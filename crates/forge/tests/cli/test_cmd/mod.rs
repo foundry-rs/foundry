@@ -6001,7 +6001,7 @@ Traces:
     │   ├─  storage changes:
     │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
-    ├─ [..] SLOAD
+    ├─ [..] SLOAD 0x1f → (0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f01)
     ├─ [..] MLOAD
     ├─ [..] MLOAD
     ├─ [..] Counter::number() [staticcall]

@@ -136,7 +136,7 @@ pub fn is_protocol_system_legacy(tx: &TxLegacy) -> bool {
 /// Returns the EIP-7702 authorities of `tx`.
 fn authorities(tx: &Recovered<TxEnvelope>) -> Vec<Address> {
     tx.as_eip7702()
-        .map(|tx| tx.authorization_list.iter().filter_map(|auth| auth.authority()).collect())
+        .map(|tx| tx.authorizations().filter_map(|auth| auth.authority()).collect())
         .unwrap_or_default()
 }
 

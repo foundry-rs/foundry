@@ -2,7 +2,7 @@ use crate::utils::http_provider;
 use alloy_consensus::{SignableTransaction, transaction::TxEip7702};
 use alloy_network::{ReceiptResponse, TransactionBuilder, TxSignerSync};
 use alloy_primitives::{U256, address, bytes};
-use alloy_provider::{PendingTransactionConfig, Provider};
+use alloy_provider::{PendingTransactionConfig, Provider, ext::TraceApi};
 use alloy_rpc_types::{Authorization, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_signer::{Signature, SignerSync};
@@ -253,14 +253,75 @@ async fn eip7702_refunds_only_existing_authorities() {
         .with_to(address!("0x0000000000000000000000000000000000001234"))
         .with_input(bytes!("12345678"));
 
+        // Simulations refund only existing authorities, as mining does.
+        let tx = WithOtherFields::new(tx);
+        let access_list = provider.create_access_list(&tx).await.unwrap();
+        assert_eq!(access_list.gas_used, U256::from(gas_used), "authority {}", authority.address());
+
+        let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+        assert!(receipt.status());
+        assert_eq!(receipt.gas_used(), gas_used, "authority {}", authority.address());
+    }
+}
+
+// EIP-8037 charges new-account state gas for an authority that does not exist yet, so estimates
+// and replays must charge it as mining does.
+// <https://github.com/foundry-rs/foundry/issues/18126>
+#[tokio::test(flavor = "multi_thread")]
+async fn eip7702_charges_state_gas_for_fresh_authorities() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()));
+    let (_api, handle) = spawn(node_config).await;
+    let provider = http_provider(&handle.http_endpoint());
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let authorize = |authority: &PrivateKeySigner| {
+        let authorization = Authorization {
+            chain_id: U256::from(31337u64),
+            address: address!("0x000000000000000000000000000000000000dEaD"),
+            nonce: 0,
+        };
+        let signature = authority.sign_hash_sync(&authorization.signature_hash()).unwrap();
+        WithOtherFields::new(
+            TransactionRequest {
+                authorization_list: Some(vec![authorization.into_signed(signature)]),
+                ..Default::default()
+            }
+            .with_from(wallets[0].address())
+            .with_to(address!("0x0000000000000000000000000000000000001234")),
+        )
+    };
+
+    let existing = authorize(&wallets[1]);
+    let existing_gas = provider.estimate_gas(existing.clone()).await.unwrap();
+    let fresh = authorize(&PrivateKeySigner::random());
+    let fresh_gas = provider.estimate_gas(fresh.clone()).await.unwrap();
+    // A fresh authority also pays 183600 state gas to create its account.
+    assert_eq!(fresh_gas, existing_gas + 183_600);
+
+    for (tx, gas) in [(existing, existing_gas), (fresh, fresh_gas)] {
         let receipt = provider
-            .send_transaction(WithOtherFields::new(tx))
+            .send_transaction(tx.with_gas_limit(gas))
             .await
             .unwrap()
             .get_receipt()
             .await
             .unwrap();
         assert!(receipt.status());
-        assert_eq!(receipt.gas_used(), gas_used, "authority {}", authority.address());
+        assert_eq!(receipt.gas_used(), gas);
     }
+
+    // Without the state gas the transaction fails, and its replay must not delegate the authority.
+    let authority = PrivateKeySigner::random();
+    let receipt = provider
+        .send_transaction(authorize(&authority).with_gas_limit(existing_gas))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(!receipt.status());
+    let replay =
+        provider.trace_replay_transaction(receipt.transaction_hash).state_diff().await.unwrap();
+    let state_diff = replay.state_diff.unwrap();
+    assert!(state_diff.contains_key(&wallets[0].address()));
+    assert!(!state_diff.contains_key(&authority.address()));
 }

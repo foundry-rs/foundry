@@ -1767,22 +1767,16 @@ impl SymExpr {
             return Some(Self::udiv_zero_condition(cx, numerator, denominator));
         }
         if let SymExprKind::Ite(condition, then_expr, else_expr) = self.kind() {
-            let then_zero = match then_expr.normalize_eq_zero_for_solver(cx) {
-                Some(condition) => condition,
-                None => {
-                    let then_expr = normalize_expr_for_solver(cx, then_expr.clone());
-                    let zero = Self::zero(cx);
-                    SymBoolExpr::eq(cx, then_expr, zero)
-                }
-            };
-            let else_zero = match else_expr.normalize_eq_zero_for_solver(cx) {
-                Some(condition) => condition,
-                None => {
-                    let else_expr = normalize_expr_for_solver(cx, else_expr.clone());
-                    let zero = Self::zero(cx);
-                    SymBoolExpr::eq(cx, else_expr, zero)
-                }
-            };
+            let then_zero = then_expr.normalize_eq_zero_for_solver(cx).unwrap_or_else(|| {
+                let then_expr = normalize_expr_for_solver(cx, then_expr.clone());
+                let zero = Self::zero(cx);
+                SymBoolExpr::eq(cx, then_expr, zero)
+            });
+            let else_zero = else_expr.normalize_eq_zero_for_solver(cx).unwrap_or_else(|| {
+                let else_expr = normalize_expr_for_solver(cx, else_expr.clone());
+                let zero = Self::zero(cx);
+                SymBoolExpr::eq(cx, else_expr, zero)
+            });
             if then_zero.contains_udiv() || else_zero.contains_udiv() {
                 return None;
             }
@@ -1802,22 +1796,16 @@ impl SymExpr {
             return Some(Self::udiv_nonzero_condition(cx, numerator, denominator));
         }
         if let SymExprKind::Ite(condition, then_expr, else_expr) = self.kind() {
-            let then_nonzero = match then_expr.normalize_ne_zero_for_solver(cx) {
-                Some(condition) => condition,
-                None => {
-                    let then_expr = normalize_expr_for_solver(cx, then_expr.clone());
-                    let zero = Self::zero(cx);
-                    SymBoolExpr::eq(cx, then_expr, zero).not(cx)
-                }
-            };
-            let else_nonzero = match else_expr.normalize_ne_zero_for_solver(cx) {
-                Some(condition) => condition,
-                None => {
-                    let else_expr = normalize_expr_for_solver(cx, else_expr.clone());
-                    let zero = Self::zero(cx);
-                    SymBoolExpr::eq(cx, else_expr, zero).not(cx)
-                }
-            };
+            let then_nonzero = then_expr.normalize_ne_zero_for_solver(cx).unwrap_or_else(|| {
+                let then_expr = normalize_expr_for_solver(cx, then_expr.clone());
+                let zero = Self::zero(cx);
+                SymBoolExpr::eq(cx, then_expr, zero).not(cx)
+            });
+            let else_nonzero = else_expr.normalize_ne_zero_for_solver(cx).unwrap_or_else(|| {
+                let else_expr = normalize_expr_for_solver(cx, else_expr.clone());
+                let zero = Self::zero(cx);
+                SymBoolExpr::eq(cx, else_expr, zero).not(cx)
+            });
             if then_nonzero.contains_udiv() || else_nonzero.contains_udiv() {
                 return None;
             }

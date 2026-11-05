@@ -19,7 +19,7 @@ use base64::prelude::*;
 use evm2::{
     EvmFeatures, SpecId,
     bytecode::{Bytecode, JumpTable},
-    constants::EIP7702_BYTECODE_LEN,
+    constants::{CALL_DEPTH_LIMIT, EIP7702_BYTECODE_LEN},
     interpreter::{GasTracker, op as opcode},
     precompiles::{
         Precompiles, blake2, bls12_381, bn254, hash, identity, kzg_point_evaluation, modexp,

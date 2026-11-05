@@ -193,7 +193,7 @@ async fn fork_bal_prefill_validates_before_caching() {
             let account = &accounts[&address];
             assert_eq!(account.balance, U256::from(42));
             assert_eq!(account.nonce, 3);
-            assert_eq!(account.code.as_ref().unwrap().original_bytes(), bytes!("6000"));
+            assert_eq!(account.code.as_ref().unwrap(), &bytes!("6000"));
         }
     }
 }
@@ -299,7 +299,8 @@ fn fork_bal_seed_preserves_cached_values_and_merges_slots() {
             vec![StorageChange::new(index(1), U256::from(22))],
         ));
     let db = database(hash);
-    let cached_account = evm2::AccountInfo::default().with_balance(U256::from(99));
+    let cached_account =
+        foundry_fork_db::AccountInfo { balance: U256::from(99), ..Default::default() };
     db.accounts().write().insert(address, cached_account.clone());
     db.storage().write().insert(
         address,
@@ -337,11 +338,7 @@ fn fork_bal_seed_keeps_final_account_code() {
         assert_eq!(account.balance, U256::from(42));
         assert_eq!(account.nonce, 3);
         assert_eq!(account.code_hash, alloy_primitives::keccak256(&code));
-        assert_eq!(account.code.as_ref().unwrap().original_bytes(), code);
-        assert_eq!(
-            account.code.as_ref().unwrap().is_eip7702(),
-            code.starts_with(&[0xef, 0x01, 0x00])
-        );
+        assert_eq!(account.code.as_ref().unwrap(), &code);
     }
 }
 

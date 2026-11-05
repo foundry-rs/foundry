@@ -569,7 +569,12 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
         };
         if balance >= value && nonce != u64::MAX {
             let created_address = derive_create_destination(kind, &caller, &salt, &bytecode, nonce);
-            if ccx.evm.target_is_empty_for_new_account_gas(&created_address, version.features)? {
+            if ccx
+                .evm
+                .state_mut()
+                .account(&created_address)?
+                .is_empty_for_new_account_gas(version.features)
+            {
                 if ccx.gas.spend_state(create_state_gas).is_err() {
                     ccx.gas.spend_all();
                     return Err(fmt_err!("out of gas"));

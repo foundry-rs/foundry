@@ -27,8 +27,8 @@ use foundry_common::FoundryTransactionBuilder;
 use foundry_evm_core::{
     backend::{Backend, BackendResult, CowBackend, GLOBAL_FAIL_SLOT, handler_error},
     constants::{
-        CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
-        DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
+        CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_CODE,
+        DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
     decode::{RevertDecoder, SkipReason},
     eip2935::{
@@ -152,16 +152,15 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
 
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // do not fail.
-        // The code hash value does not matter, as long as it's not zero or `KECCAK_EMPTY`.
+        // evm2 requires the code hash to be the hash of the code.
         let stub = Bytecode::new_raw(Bytes::from_static(&[0]));
-        backend.insert_account_info(
-            CHEATCODE_ADDRESS,
-            AccountInfo::new(U256::ZERO, 0, CHEATCODE_CONTRACT_HASH, Some(stub.clone())),
-        );
-        for &address in extra_cheatcode_addresses {
+        let stub_hash = stub.hash_slow();
+        for address in
+            std::iter::once(CHEATCODE_ADDRESS).chain(extra_cheatcode_addresses.iter().copied())
+        {
             backend.insert_account_info(
                 address,
-                AccountInfo::new(U256::ZERO, 0, keccak256(address), Some(stub.clone())),
+                AccountInfo::new(U256::ZERO, 0, stub_hash, Some(stub.clone())),
             );
         }
 
@@ -648,7 +647,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     ) -> eyre::Result<RawCallResult<FEN>> {
         let init = tx.from().zip(tx.kind());
         let tx_env = FEN::tx_from_request(tx.clone())?;
-        let mut result = self.call_tx_with_init(evm_env, &tx_env, None, init)?;
+        let mut result =
+            self.call_tx_with_init(evm_env, &tx_env, None, init, self.inspector().clone())?;
         result.set_stipend(&evm_env, tx);
         Ok(result)
     }
@@ -664,19 +664,40 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         tx: &Recovered<TxFor<FEN>>,
         ext: Option<ChainFor<FEN>>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        self.call_tx_with_init(evm_env, tx, ext, None)
+        self.call_tx_with_init(evm_env, tx, ext, None, self.inspector().clone())
     }
 
-    /// Like [`Self::call_tx`], recording `init`'s caller and test contract, if the
-    /// call modifies the backend.
+    /// Performs a raw call like [`Self::call_raw`], but without the fuzz guidance inspectors.
+    ///
+    /// The call collects no edge coverage, comparison operands, or dictionary values, so use it
+    /// for calls whose instrumentation output is discarded, such as invariant predicate checks.
+    pub fn call_raw_without_fuzz_instrumentation(
+        &self,
+        from: Address,
+        to: Address,
+        calldata: Bytes,
+        value: U256,
+    ) -> eyre::Result<RawCallResult<FEN>> {
+        let (evm_env, tx) = self.prepare_call_env(from, TxKind::Call(to), calldata, value);
+        let init = tx.from().zip(tx.kind());
+        let tx_env = FEN::tx_from_request(tx.clone())?;
+        let mut stack = self.inspector().clone();
+        stack.disable_fuzz_instrumentation();
+        let mut result = self.call_tx_with_init(evm_env, &tx_env, None, init, stack)?;
+        result.set_stipend(&evm_env, tx);
+        Ok(result)
+    }
+
+    /// Like [`Self::call_tx`] with the inspector `stack`, recording `init`'s caller and test
+    /// contract, if the call modifies the backend.
     fn call_tx_with_init(
         &self,
         evm_env: EvmEnvFor<FEN>,
         tx: &Recovered<TxFor<FEN>>,
         ext: Option<ChainFor<FEN>>,
         init: Option<(Address, TxKind)>,
+        mut stack: InspectorStack<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let mut stack = self.inspector().clone();
         let mut backend = CowBackend::new_borrowed(self.backend());
         if let Some((caller, kind)) = init {
             backend.initialize(caller, kind);

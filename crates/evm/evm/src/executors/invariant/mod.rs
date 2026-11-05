@@ -2375,8 +2375,12 @@ fn collect_view_values<FEN: FoundryEvmNetwork>(
     for (address, function) in calls {
         let args = vec![DynSolValue::Address(tx.sender); function.inputs.len()];
         let Ok(calldata) = function.abi_encode_input(&args) else { continue };
-        let Ok(call_result) = executor.call_raw(tx.sender, address, calldata.into(), U256::ZERO)
-        else {
+        let Ok(call_result) = executor.call_raw_without_fuzz_instrumentation(
+            tx.sender,
+            address,
+            calldata.into(),
+            U256::ZERO,
+        ) else {
             continue;
         };
         if !call_result.reverted {
@@ -2411,7 +2415,8 @@ pub(crate) fn call_after_invariant_function<FEN: FoundryEvmNetwork>(
     to: Address,
 ) -> Result<(RawCallResult<FEN>, bool), EvmError<FEN>> {
     let calldata = Bytes::from_static(&IInvariantTest::afterInvariantCall::SELECTOR);
-    let mut call_result = executor.call_raw(CALLER, to, calldata, U256::ZERO)?;
+    let mut call_result =
+        executor.call_raw_without_fuzz_instrumentation(CALLER, to, calldata, U256::ZERO)?;
     let success = executor.is_raw_call_mut_success_handler_gate(to, &mut call_result);
     Ok((call_result, success))
 }
@@ -2427,7 +2432,8 @@ pub(crate) fn call_invariant_function<FEN: FoundryEvmNetwork>(
     address: Address,
     calldata: Bytes,
 ) -> Result<(RawCallResult<FEN>, bool)> {
-    let mut call_result = executor.call_raw(CALLER, address, calldata, U256::ZERO)?;
+    let mut call_result =
+        executor.call_raw_without_fuzz_instrumentation(CALLER, address, calldata, U256::ZERO)?;
     let success = executor.is_raw_call_mut_success_handler_gate(address, &mut call_result);
     Ok((call_result, success))
 }
@@ -2478,7 +2484,7 @@ mod tests {
     use crate::executors::ExecutorBuilder;
     use evm2::{bytecode::Bytecode, evm::InMemoryDB};
     use foundry_cheatcodes::CheatsConfig;
-    use foundry_config::FuzzDictionaryConfig;
+    use foundry_config::{FuzzCorpusMutationWeights, FuzzDictionaryConfig};
     use foundry_evm_core::evm::EthEvmNetwork;
     use foundry_evm_fuzz::CallDetails;
     use proptest::{
@@ -3161,8 +3167,6 @@ mod tests {
 
     #[test]
     fn invariant_worker_cmp_log_selection_uses_one_worker_per_campaign() {
-        use foundry_config::FuzzCorpusMutationWeights;
-
         let mut config = InvariantConfig::default();
         assert!(!invariant_worker_collects_evm_cmp_log(&config, 0, 1));
 

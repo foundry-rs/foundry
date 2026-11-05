@@ -5,14 +5,14 @@
 //! seed signs only its epoch and view. Integers use Commonware's unsigned varints, not fixed-width
 //! Ethereum quantities. Keep this adapter aligned with the pinned upstream definitions:
 //!
-//! - [Commonware 2026.9.0 `Proposal` and `Finalization`][proposal].
-//! - [Commonware 2026.9.0 threshold VRF signature pair][vrf] and [namespaces][namespaces].
+//! - [Commonware 2026.10.0 `Proposal` and `Finalization`][proposal].
+//! - [Commonware 2026.10.0 threshold VRF signature pair][vrf] and [namespaces][namespaces].
 //! - [Tempo's pinned `TEMPO` namespace][tempo].
 //!
-//! [proposal]: https://github.com/commonwarexyz/monorepo/blob/d476a2361ce6840d2b9d0aa6fb30a924429046d4/consensus/src/simplex/types.rs
-//! [vrf]: https://github.com/commonwarexyz/monorepo/blob/d476a2361ce6840d2b9d0aa6fb30a924429046d4/consensus/src/simplex/scheme/bls12381_threshold/vrf.rs
-//! [namespaces]: https://github.com/commonwarexyz/monorepo/blob/d476a2361ce6840d2b9d0aa6fb30a924429046d4/consensus/src/simplex/scheme/mod.rs
-//! [tempo]: https://github.com/tempoxyz/tempo/blob/680082043ca40b6457f615101ca43bf8c1280b66/crates/consensus/src/config.rs
+//! [proposal]: https://github.com/commonwarexyz/monorepo/blob/92a2f68a0e131c8b69de41e84aec37da6280f212/consensus/src/simplex/types.rs
+//! [vrf]: https://github.com/commonwarexyz/monorepo/blob/92a2f68a0e131c8b69de41e84aec37da6280f212/consensus/src/simplex/scheme/bls12381_threshold/vrf.rs
+//! [namespaces]: https://github.com/commonwarexyz/monorepo/blob/92a2f68a0e131c8b69de41e84aec37da6280f212/consensus/src/simplex/scheme/mod.rs
+//! [tempo]: https://github.com/tempoxyz/tempo/blob/7354e02593d46bc88b15c55a0e3b0c2733a43026/crates/consensus/src/config.rs
 
 use alloy_primitives::{B256, Bytes};
 use commonware_codec::{

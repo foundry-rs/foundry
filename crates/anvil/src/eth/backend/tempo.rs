@@ -19,8 +19,14 @@ use foundry_evm_core::tempo::{
     initialize_tempo_genesis_inner,
 };
 use foundry_evm_hardforks::FoundryHardfork;
+use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
-    TIP_FEE_MANAGER_ADDRESS,
+    ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, CONFIGURABLE_ACCOUNT_ADDRESS,
+    CURRENT_COMMITTEE_ADDRESS, NONCE_PRECOMPILE_ADDRESS, RECEIVE_POLICY_GUARD_ADDRESS,
+    SIGNATURE_VERIFIER_ADDRESS, STABLECOIN_DEX_ADDRESS, STORAGE_CREDITS_ADDRESS,
+    TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
+    TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS, VALIDATOR_CONFIG_V2_ADDRESS,
+    ZONE_FACTORY_ADDRESS, ZONE_VERIFIER_ADDRESS,
     account_keychain::{
         AccountKeychain,
         IAccountKeychain::{KeyRestrictions, SignatureType},
@@ -30,6 +36,7 @@ use tempo_precompiles::{
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{ITIP20, TIP20Token},
 };
+use tempo_primitives::TempoAddressExt;
 
 const SENDER: Address = address!("0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38");
 const ADMIN: Address = address!("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f");
@@ -214,4 +221,34 @@ fn initialize_tempo_genesis(
 
         Ok(())
     })()
+}
+
+/// Returns the name of a native precompile active at `hardfork`, using Tempo's execution lookup.
+pub(crate) fn native_precompile_name(address: Address, hardfork: TempoHardfork) -> Option<String> {
+    if !address.is_precompile(hardfork) {
+        return None;
+    }
+    // evm2's `TempoPrecompiles` dispatches by address without naming its native precompiles.
+    let name = match address {
+        _ if address.is_tip20() => "TIP20Token",
+        TIP20_FACTORY_ADDRESS => "TIP20Factory",
+        TIP20_CHANNEL_RESERVE_ADDRESS => "TIP20ChannelReserve",
+        ADDRESS_REGISTRY_ADDRESS => "AddressRegistry",
+        TIP403_REGISTRY_ADDRESS => "TIP403Registry",
+        TIP_FEE_MANAGER_ADDRESS => "TipFeeManager",
+        STABLECOIN_DEX_ADDRESS => "StablecoinDEX",
+        NONCE_PRECOMPILE_ADDRESS => "NonceManager",
+        CONFIGURABLE_ACCOUNT_ADDRESS => "ConfigurableAccount",
+        VALIDATOR_CONFIG_ADDRESS => "ValidatorConfig",
+        ACCOUNT_KEYCHAIN_ADDRESS => "AccountKeychain",
+        VALIDATOR_CONFIG_V2_ADDRESS => "ValidatorConfigV2",
+        SIGNATURE_VERIFIER_ADDRESS => "SignatureVerifier",
+        RECEIVE_POLICY_GUARD_ADDRESS => "ReceivePolicyGuard",
+        STORAGE_CREDITS_ADDRESS => "StorageCredits",
+        CURRENT_COMMITTEE_ADDRESS => "CurrentCommittee",
+        ZONE_FACTORY_ADDRESS => "ZoneFactory",
+        ZONE_VERIFIER_ADDRESS => "ZoneVerifier",
+        _ => return None,
+    };
+    Some(name.to_string())
 }

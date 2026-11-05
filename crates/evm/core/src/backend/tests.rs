@@ -10,7 +10,7 @@ use alloy_network::{AnyHeader, AnyRpcHeader, AnyTxEnvelope};
 use alloy_primitives::{Bytes, Signature};
 use alloy_rpc_types::{Block, Transaction as RpcTransaction};
 use alloy_serde::WithOtherFields;
-use evm2::{NoopInspector, evm::InMemoryDB};
+use evm2::NoopInspector;
 
 const CHAIN_ID: u64 = 31337;
 
@@ -153,8 +153,7 @@ where
     // A call to a contract that only exists on another fork is diagnosed.
     let elsewhere = Address::with_last_byte(0xEE);
     let mut other_db = db_with(&[], 0);
-    let mut info = AccountInfo::default().with_code(Bytecode::new_raw(Bytes::from_static(STORE)));
-    other_db.insert_contract(&mut info);
+    let info = AccountInfo::default().with_code(Bytecode::new_raw(Bytes::from_static(STORE)));
     other_db.insert_account_info(&elsewhere, info);
     let other_fork = memory_fork(&mut backend, other_db, env);
     assert!(matches!(
@@ -325,8 +324,7 @@ fn persistent_account_takes_inactive_fork_code() {
     let caller = Address::with_last_byte(0xCA);
     let mut local = InMemoryDB::default();
     local.insert_account_info(&caller, AccountInfo::default().with_balance(U256::from(ETHER)));
-    let mut info = AccountInfo::default().with_code(Bytecode::new_legacy(Bytes::from_static(&[0])));
-    local.insert_contract(&mut info);
+    let info = AccountInfo::default().with_code(Bytecode::new_legacy(Bytes::from_static(&[0])));
     local.insert_account_info(&STORE_ADDRESS, info);
     let mut backend = Backend::<EthEvmNetwork>::with_db(local, env);
     let fork = memory_fork(&mut backend, db_with(&[(caller, ETHER)], 1), env);

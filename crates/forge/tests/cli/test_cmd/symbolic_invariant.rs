@@ -301,6 +301,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 #[forgetest_init]
 fn symbolic_secondary_replay_preserves_storage(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_secondary_replay_preserves_storage");
+    prj.update_config(|config| config.invariant.runs = 0);
 
     prj.add_test(
         "SymbolicSecondaryStorage.t.sol",
@@ -381,9 +382,6 @@ contract SymbolicSecondaryStorage is Test {
     assert_eq!(original["storage"].as_array().expect("storage assignments").len(), 1);
     assert_eq!(original["storage"][0]["value"], "0x2a");
 
-    prj.update_config(|config| {
-        config.invariant.runs = 0;
-    });
     for _ in 0..2 {
         let output = cmd
             .forge_fuse()
@@ -395,12 +393,14 @@ contract SymbolicSecondaryStorage is Test {
         let result = json_test_result(&output, "invariant_anchor()");
         assert_eq!(result["symbolic"]["status"], "fail_counterexample");
         let failures = result["invariant_failures"].as_array().expect("invariant failures");
-        assert_eq!(failures.len(), 2);
+        assert_eq!(failures.len(), 1);
         assert_eq!(failures[0]["name"], "invariant_anchor");
         assert_eq!(failures[0]["reason"], "anchor hit");
-        assert_eq!(failures[1]["name"], "invariant_secondary");
-        assert_eq!(failures[1]["reason"], "hit");
-        assert_eq!(failures[1]["counterexample"]["Sequence"][1][0]["func_name"], "useStore");
+
+        let result = json_test_result(&output, "invariant_secondary()");
+        assert_eq!(result["status"], "Failure");
+        assert_eq!(result["reason"], "hit");
+        assert_eq!(result["counterexample"]["Sequence"][1][0]["func_name"], "useStore");
 
         let replayed: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&persisted).unwrap()).unwrap();
@@ -750,9 +750,12 @@ contract SymbolicInvariantHandlerFailure is Test {
 }
 
 #[forgetest_init]
-fn symbolic_invariant_omits_unchecked_predicate_pass_rows(prj: _, cmd: _) {
-    skip_unless_z3!("symbolic_invariant_omits_unchecked_predicate_pass_rows");
-    prj.update_config(|config| config.invariant.runs = 0);
+fn symbolic_invariant_suite_checks_each_predicate_after_failure(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_invariant_suite_checks_each_predicate_after_failure");
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+        config.symbolic.invariant_depth = 1;
+    });
 
     prj.add_test(
         "SymbolicInvariantMultiPredicate.t.sol",
@@ -775,42 +778,54 @@ contract SymbolicInvariantMultiPredicate is Test {
     function setUp() public {
         target = new SymbolicInvariantMultiPredicateTarget();
         targetContract(address(target));
+        targetSender(address(this));
     }
 
-    /// forge-config: default.symbolic.invariant_depth = 1
     function invariant_anchorBreak() public view {
         assertEq(target.value(), 0);
     }
 
-    function invariant_neverCheckedBySymbolicFastFail() public pure {
+    function invariant_stillCheckedAfterFailure() public pure {
         assertTrue(true);
     }
 }
 "#,
     );
 
-    let output = cmd
-        .args([
-            "test",
-            "--symbolic",
-            "--json",
-            "--match-contract",
-            "SymbolicInvariantMultiPredicate",
-        ])
-        .assert_failure()
-        .get_output()
-        .stdout
-        .clone();
-    let result = json_test_result(&output, "invariant_anchorBreak()");
-    assert_eq!(result["status"], "Failure");
-    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
-    assert_eq!(result["invariant_count"], 2);
-
-    let predicates = result["invariant_predicate_results"].as_array().unwrap();
-    assert_eq!(predicates.len(), 1);
-    assert_eq!(predicates[0]["name"], "invariant_anchorBreak");
-    assert_eq!(predicates[0]["status"], "Failure");
-    assert!(predicates.iter().all(|predicate| predicate["status"] != "Success"));
+    cmd.args([
+        "test",
+        "--symbolic",
+        "--json",
+        "--match-contract",
+        "SymbolicInvariantMultiPredicate",
+    ])
+    .assert_json_stdout_with_status(
+        false,
+        str![[r#"
+{
+  "test/SymbolicInvariantMultiPredicate.t.sol:SymbolicInvariantMultiPredicate": {
+    "test_results": {
+      "invariant_anchorBreak()": {
+        "status": "Failure",
+        "symbolic": {
+          "status": "fail_counterexample",
+          "replay": { "required": true, "status": "confirmed", "reason": null },
+          "...": "{...}"
+        },
+        "...": "{...}"
+      },
+      "invariant_stillCheckedAfterFailure()": {
+        "status": "Success",
+        "symbolic": { "status": "pass", "...": "{...}" },
+        "kind": { "Invariant": { "runs": 0, "calls": 0, "...": "{...}" } },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]],
+    );
 }
 
 #[forgetest_init]
@@ -2541,6 +2556,222 @@ contract SymbolicHandlerUnmetExpectRevert is Test {
         "status": "Success",
         "symbolic": {
           "status": "pass",
+          "...": "{...}"
+        },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]],
+        );
+}
+
+#[forgetest_init]
+fn symbolic_invariant_suite_checks_non_anchor_predicate(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_invariant_suite_checks_non_anchor_predicate");
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+        config.symbolic.invariant_depth = 1;
+    });
+
+    prj.add_test(
+        "SymbolicSuite.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SuiteTarget {
+    bool public broken;
+
+    function step(uint256 value) external {
+        if (value == 123456789012345678901234567890) broken = true;
+    }
+}
+
+contract SymbolicSuite is Test {
+    SuiteTarget target;
+
+    function setUp() public {
+        target = new SuiteTarget();
+        targetContract(address(target));
+        targetSender(address(this));
+    }
+
+    function invariant_a() public pure {}
+
+    function invariant_z() public view {
+        assertFalse(target.broken());
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--json", "--match-contract", "SymbolicSuite"])
+        .assert_json_stdout_with_status(
+            false,
+            str![[r#"
+{
+  "test/SymbolicSuite.t.sol:SymbolicSuite": {
+    "test_results": {
+      "invariant_a()": {
+        "status": "Success",
+        "symbolic": { "status": "pass", "...": "{...}" },
+        "kind": { "Invariant": { "runs": 0, "calls": 0, "...": "{...}" } },
+        "...": "{...}"
+      },
+      "invariant_z()": {
+        "status": "Failure",
+        "symbolic": {
+          "status": "fail_counterexample",
+          "replay": { "required": true, "status": "confirmed", "reason": null },
+          "...": "{...}"
+        },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]],
+        );
+}
+
+#[forgetest_init]
+fn symbolic_invariant_suite_preserves_predicate_bounds(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_invariant_suite_preserves_predicate_bounds");
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+        config.symbolic.enabled = true;
+    });
+
+    prj.add_test(
+        "SymbolicSuiteBounds.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SuiteCounter {
+    uint256 public count;
+
+    function step() external {
+        count++;
+    }
+}
+
+contract SymbolicSuiteBounds is Test {
+    SuiteCounter target;
+
+    function setUp() public {
+        target = new SuiteCounter();
+        targetContract(address(target));
+        targetSender(address(this));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_a() public view {
+        assertLt(target.count(), 2);
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 2
+    function invariant_z() public view {
+        assertLt(target.count(), 2);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--json", "--match-contract", "SymbolicSuiteBounds"])
+        .assert_json_stdout_with_status(
+            false,
+            str![[r#"
+{
+  "test/SymbolicSuiteBounds.t.sol:SymbolicSuiteBounds": {
+    "test_results": {
+      "invariant_a()": {
+        "status": "Success",
+        "symbolic": {
+          "status": "pass",
+          "bounds": { "invariant_depth": 1, "...": "{...}" },
+          "...": "{...}"
+        },
+        "kind": { "Invariant": { "runs": 0, "calls": 0, "...": "{...}" } },
+        "...": "{...}"
+      },
+      "invariant_z()": {
+        "status": "Failure",
+        "symbolic": {
+          "status": "fail_counterexample",
+          "bounds": { "invariant_depth": 2, "...": "{...}" },
+          "replay": { "required": true, "status": "confirmed", "reason": null },
+          "...": "{...}"
+        },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]],
+        );
+}
+
+#[forgetest_init]
+fn symbolic_invariant_suite_honors_non_anchor_inline_enable(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_invariant_suite_honors_non_anchor_inline_enable");
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+        config.symbolic.invariant_depth = 1;
+    });
+
+    prj.add_test(
+        "SymbolicSuiteInline.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract InlineSuiteTarget {
+    bool public broken;
+
+    function step(bool value) external {
+        broken = value;
+    }
+}
+
+contract SymbolicSuiteInline is Test {
+    InlineSuiteTarget target;
+
+    function setUp() public {
+        target = new InlineSuiteTarget();
+        targetContract(address(target));
+        targetSender(address(this));
+    }
+
+    function invariant_a() public pure {}
+
+    /// forge-config: default.symbolic.enabled = true
+    function invariant_z() public view {
+        assertFalse(target.broken());
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--json", "--match-contract", "SymbolicSuiteInline"])
+        .assert_json_stdout_with_status(
+            false,
+            str![[r#"
+{
+  "test/SymbolicSuiteInline.t.sol:SymbolicSuiteInline": {
+    "test_results": {
+      "invariant_a()": {
+        "status": "Success",
+        "kind": { "Invariant": { "runs": 0, "calls": 0, "...": "{...}" } },
+        "...": "{...}"
+      },
+      "invariant_z()": {
+        "status": "Failure",
+        "symbolic": {
+          "status": "fail_counterexample",
+          "replay": { "required": true, "status": "confirmed", "reason": null },
           "...": "{...}"
         },
         "...": "{...}"

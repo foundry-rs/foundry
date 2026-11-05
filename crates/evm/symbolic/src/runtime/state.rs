@@ -8,6 +8,9 @@ const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
 pub(crate) struct PathState {
     pub(crate) depth: usize,
     pub(crate) call_depth: usize,
+    /// The `call_depth` of the frame that the EVM counts as depth 0 for the call depth limit: the
+    /// first frame of the current transaction or of a `vm.deployCode` constructor.
+    pub(crate) call_depth_base: usize,
     pub(crate) origin: Address,
     pub(crate) origin_word: SymExpr,
     pub(crate) gas_price: SymExpr,
@@ -86,6 +89,7 @@ impl PathState {
         Self {
             depth: 0,
             call_depth: 0,
+            call_depth_base: 0,
             origin: caller,
             origin_word,
             gas_price,
@@ -159,6 +163,11 @@ impl PathState {
     /// Forge's call isolation does for calls made by the test, handler, or invariant frame.
     pub(crate) const fn starts_isolated_transaction(&self, executor: &ExecutorView<'_>) -> bool {
         executor.isolate && self.call_depth == 0
+    }
+
+    /// Returns whether a CALL or CREATE issued by this frame exceeds the call depth limit.
+    pub(crate) const fn at_call_depth_limit(&self) -> bool {
+        self.call_depth - self.call_depth_base >= CALL_DEPTH_LIMIT as usize
     }
 
     pub(crate) fn storage_hook_child(&self, frame: CallFrame) -> Self {

@@ -14,7 +14,7 @@ use evm2::{
     TxResultWithState,
     ethereum::intrinsic_and_floor_gas,
     evm::{DbResult, PendingState, PrewarmSet, State},
-    interpreter::{GasTracker, Host, InstrStop, MessageKind, op, opcode::OpCode},
+    interpreter::{GasTracker, Host, InstrStop, MessageKind, op},
     registry::HandlerError,
 };
 use eyre::WrapErr;
@@ -807,6 +807,18 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         self.refresh_static_step_dispatch();
     }
 
+    /// Drops the inspectors that only feed fuzz guidance: edge coverage, the fuzzer value
+    /// collector, and sancov collection. Calls whose coverage and collected values are never
+    /// merged back, such as invariant predicate checks, run faster without them.
+    #[inline]
+    pub fn disable_fuzz_instrumentation(&mut self) {
+        self.edge_coverage = None;
+        self.fuzzer = None;
+        self.sancov_edges = false;
+        self.sancov_trace_cmp = false;
+        self.refresh_static_step_dispatch();
+    }
+
     /// Set whether to collect EVM comparison operands.
     #[inline]
     pub fn collect_evm_cmp_log(&mut self, yes: bool) {
@@ -1356,7 +1368,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             match child.state_mut().account(address) {
                 Ok(mut account) => {
                     if account.exists() {
-                        account.mark_created_keeping_storage();
+                        account.mark_created();
                     }
                 }
                 Err(_) => return not_executed(Bytes::new()),
@@ -1905,7 +1917,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         }
         // Steps the union of the opcodes of every inspector `step_inlined` and `step_end_inlined`
         // call. An inspector that does not declare its opcodes steps all of them.
-        let inspectors: [Option<&dyn Inspector<TypesFor<FEN>>>; 7] = [
+        let inspectors: [Option<&dyn Inspector<TypesFor<FEN>>>; 8] = [
+            inner.tracer.as_deref().map(|i| i as _),
             inner.chisel_state.as_deref().map(|i| i as _),
             inner.debug_recorder.as_deref().map(|i| i as _),
             inner.edge_coverage.as_deref().map(|i| i as _),
@@ -1914,14 +1927,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
             inner.revert_diag.as_deref().map(|i| i as _),
             inner.script_execution_inspector.as_deref().map(|i| i as _),
         ];
-        if let Some(tracer) = inner.tracer.as_deref() {
-            steps = steps.union(tracer_steps(tracer));
-        }
         for inspector in inspectors.into_iter().flatten() {
             if steps == OpcodeSet::ALL {
                 break;
             }
-            steps = steps.union(inspector.inspector_config().steps);
+            steps = steps.union(inspector.inspector_config().steps());
         }
         InspectorConfig::new().with_steps(steps)
     }
@@ -2612,8 +2622,9 @@ fn account_creation_state_gas<FEN: FoundryEvmNetwork>(
     if !features.contains(EvmFeatures::EIP8037)
         || !(is_create || !message.value.is_zero())
         || !evm
-            .target_is_empty_for_new_account_gas(&message.destination, features)
-            .unwrap_or_default()
+            .state_mut()
+            .account(&message.destination)
+            .is_ok_and(|account| account.is_empty_for_new_account_gas(features))
     {
         return 0;
     }
@@ -2662,25 +2673,6 @@ fn handle_arbitrum_system_call<FEN: FoundryEvmNetwork>(
     let mut result = message_result(message, InstrStop::Return, output);
     let _ = result.gas.spend(gas_cost);
     Some(result)
-}
-
-/// Returns the opcodes the tracer steps, which are the ones it records.
-///
-/// Its step hooks otherwise only halt once a halting byte budget is exceeded, and Foundry sets no
-/// byte budget.
-fn tracer_steps(tracer: &TracingInspector) -> OpcodeSet {
-    // TODO: this belongs upstream as `TracingInspector::inspector_config` in evm2, which would
-    // step every opcode under a halting byte budget and otherwise the opcodes of its filter.
-    let config = tracer.config();
-    if !config.record_steps {
-        return OpcodeSet::EMPTY;
-    }
-    match &config.record_opcodes_filter {
-        Some(filter) => {
-            (0..=u8::MAX).filter(|&op| filter.is_enabled(OpCode::new_or_unknown(op))).collect()
-        }
-        None => OpcodeSet::ALL,
-    }
 }
 
 #[cfg(test)]
@@ -2742,8 +2734,9 @@ mod tests {
     fn inspector_config_unions_the_opcodes_the_hooks_need() {
         let mut backend = Backend::spawn(None, default_env::<EthEvmNetwork>()).unwrap();
         let mut stack = InspectorStack::<EthEvmNetwork>::new();
-        let mut steps =
-            |stack: &mut InspectorStack| stack.as_inspector(&mut backend).inspector_config().steps;
+        let mut steps = |stack: &mut InspectorStack| {
+            stack.as_inspector(&mut backend).inspector_config().steps()
+        };
         let set = |opcodes: &[u8]| opcodes.iter().copied().collect::<OpcodeSet>();
 
         stack.set_cheatcodes(Cheatcodes::new(Default::default()));

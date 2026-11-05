@@ -7,7 +7,7 @@ use super::{
 use crate::constants::SYSTEM_PRECOMPILE_STUB;
 use alloy_consensus::transaction::Recovered;
 use alloy_network::AnyRpcTransaction;
-use alloy_primitives::{Address, Bytes, KECCAK256_EMPTY};
+use alloy_primitives::{Address, Bytes};
 use base_common_network::Base;
 use base_evm2::{
     BaseEvmExt, BaseEvmFactory, BaseEvmTypes, BaseSpecId, BaseTxEnvelope, BaseTxResultExt,
@@ -129,7 +129,7 @@ impl FoundryEvmFactory for BaseEvmFactory {
             .filter(|address| is_base_precompile_active_at(**address, upgrade))
         {
             if let Ok(mut account) = evm.state_mut().account(address)
-                && account.code_hash() == KECCAK256_EMPTY
+                && account.is_empty_code_hash()
             {
                 account.set_code_slow(sentinel.clone());
             }

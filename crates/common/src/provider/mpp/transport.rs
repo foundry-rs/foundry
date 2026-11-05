@@ -16,6 +16,7 @@ use mpp::{
     protocol::{
         core::{PaymentChallenge, PaymentCredential},
         intents::{ChargeRequest, SessionRequest},
+        methods::tempo::{TempoChargeExt, TempoSessionExt},
     },
 };
 use std::{
@@ -502,8 +503,6 @@ async fn run_interactive_tempo_fund(context: &FundingContext) -> Result<bool, Mp
 pub(super) fn extract_challenge_chain_and_currency(
     challenge: &PaymentChallenge,
 ) -> (Option<u64>, Option<String>) {
-    use mpp::protocol::methods::tempo::{TempoChargeExt, TempoSessionExt};
-
     if challenge.method.as_str() != "tempo" {
         return (None, None);
     }

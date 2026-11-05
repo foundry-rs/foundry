@@ -34,7 +34,6 @@ use soldb_ethdebug::{EthdebugInfo, Instruction, SourceLocation, SourceMapContext
 use soldb_repl::{BreakpointTarget, DebuggerCommand, DebuggerState, Output, Renderer, Session};
 use soldb_tui::Exit;
 use std::{
-    borrow::Cow,
     collections::{BTreeMap, BTreeSet, HashMap},
     io::{self, IsTerminal, Write},
     ops::Range,
@@ -663,15 +662,8 @@ fn contract_debug_info(
             Some(pc as u32)
         };
         if let Some(element) = index.and_then(|index| program.source_map.get(index as usize)) {
-            let mnemonic = op.map_or_else(
-                || Cow::Owned(format!("UNKNOWN(0x{byte:02x})")),
-                |op| Cow::Borrowed(op.as_str()),
-            );
-            instructions.push(Instruction::from_source_map(
-                pc as u64,
-                mnemonic,
-                instruction_context(element, program.build_sources, &mut used_sources),
-            ));
+            let context = instruction_context(element, program.build_sources, &mut used_sources);
+            instructions.extend(Instruction::from_bytecode(program.code, pc, context));
         }
         pc += 1 + op.map_or(0, |op| op.info().immediate_size() as usize);
     }
@@ -916,13 +908,11 @@ mod tests {
             returndata: Bytes::new(),
             gas_remaining: 0,
             gas_refund_counter: 0,
-            gas_used: 0,
             gas_cost: 0,
             state_gas_cost: None,
             state_gas_reservoir: None,
             state_gas_spent: 0,
             storage_change: None,
-            storage_slot: None,
             status: (op == OpCode::STOP).then_some(InstrStop::Stop),
             immediate_bytes: None,
             decoded: None,
@@ -1097,6 +1087,7 @@ mod tests {
                 json!({
                     "offset": instruction.offset,
                     "mnemonic": instruction.mnemonic(),
+                    "arguments": instruction.arguments(),
                     "context": serde_json::to_value(instruction).unwrap()["context"],
                 })
             })
@@ -1107,6 +1098,7 @@ mod tests {
                 {
                     "offset": 0,
                     "mnemonic": "PUSH1",
+                    "arguments": ["0x80"],
                     "context": {
                         "modifierDepth": 0,
                         "code": { "source": { "id": 0 }, "range": { "offset": 0, "length": 8 } },
@@ -1115,13 +1107,19 @@ mod tests {
                 {
                     "offset": 2,
                     "mnemonic": "JUMPDEST",
+                    "arguments": [],
                     "context": {
                         "modifierDepth": 0,
                         "code": { "source": { "id": 0 }, "range": { "offset": 9, "length": 3 } },
                         "invoke": {},
                     },
                 },
-                { "offset": 3, "mnemonic": "STOP", "context": { "modifierDepth": 0, "return": {} } },
+                {
+                    "offset": 3,
+                    "mnemonic": "STOP",
+                    "arguments": [],
+                    "context": { "modifierDepth": 0, "return": {} },
+                },
             ])
         );
     }

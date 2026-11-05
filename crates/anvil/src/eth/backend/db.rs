@@ -447,20 +447,12 @@ pub fn apply_state_overrides<ExtDB: DatabaseRef>(
             (Some(state), None) => {
                 let account = db.load_account(address)?;
                 account.account_state = AccountState::StorageCleared;
-                account.storage = state
-                    .into_iter()
-                    .map(|(slot, value)| {
-                        (U256::from_be_bytes(slot.0), U256::from_be_bytes(value.0))
-                    })
-                    .collect();
+                account.storage =
+                    state.into_iter().map(|(slot, value)| (slot.into(), value.into())).collect();
             }
             (None, Some(state_diff)) => {
                 for (slot, value) in state_diff {
-                    db.insert_account_storage(
-                        address,
-                        U256::from_be_bytes(slot.0),
-                        U256::from_be_bytes(value.0),
-                    )?;
+                    db.insert_account_storage(address, slot.into(), value.into())?;
                 }
             }
             (None, None) => {}
@@ -1520,6 +1512,7 @@ mod test {
     use super::*;
     use crate::eth::backend::mem::{fork_db::ForkedDatabase, in_memory_db::MemDb};
     use alloy_consensus::Header;
+    use alloy_eips::eip4895::Withdrawal;
     use alloy_network::AnyNetwork;
     use alloy_provider::ProviderBuilder;
     use alloy_transport::mock::Asserter;
@@ -1687,8 +1680,6 @@ mod test {
 
     #[test]
     fn test_block_withdrawals_preserved() {
-        use alloy_eips::eip4895::Withdrawal;
-
         // create a block with withdrawals (like post-Shanghai blocks)
         let withdrawal = Withdrawal {
             index: 42,

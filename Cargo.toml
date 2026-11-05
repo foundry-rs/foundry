@@ -355,24 +355,25 @@ svm = { package = "svm-rs", version = "0.5.30", default-features = false, featur
 ] }
 
 ## evm2
-# Keep all migration satellites on the same engine fork.
-evm2 = { git = "https://github.com/mablr/evm2", rev = "bee42cd84d9b9f9638c1636098957f1013bea2cd", default-features = false, features = [
+# alloy-rs/evm2 `main`; see the patch sections below.
+evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "85395c5440bef1f685142e79c66051014f46f9b5", default-features = false, features = [
     "std",
 ] }
-evm2-inspectors = { git = "https://github.com/mablr/evm2", rev = "bee42cd84d9b9f9638c1636098957f1013bea2cd", features = [
+evm2-inspectors = { git = "https://github.com/alloy-rs/evm2", rev = "85395c5440bef1f685142e79c66051014f46f9b5", features = [
     "serde",
 ] }
-# Tempo with Commonware 2026.10.0 (tempoxyz/tempo#8907).
-tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "9cebb77076c0bd769f07ad040551df81b448345d", default-features = false }
-tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "9cebb77076c0bd769f07ad040551df81b448345d", default-features = false, features = [
+# Tempo `main` at `7354e02` (tempoxyz/tempo#8907, Commonware 2026.10.0) with reth and evm2
+# bumped to evm2 `main`, from the `mablr/tempo` `mablr/bump-evm2-main-8907` branch.
+tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "e93da1f5ce13c6b388658920c2eae39b285553a3", default-features = false }
+tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "e93da1f5ce13c6b388658920c2eae39b285553a3", default-features = false, features = [
     "serde",
     "std",
 ] }
-tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "9cebb77076c0bd769f07ad040551df81b448345d", default-features = false }
+tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "e93da1f5ce13c6b388658920c2eae39b285553a3", default-features = false }
 # Op, Base and Monad evm2 type families.
-op-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "c966ec176039fd1758b6991c7c9bcf96a1d6c5c1", default-features = false }
-base-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "c966ec176039fd1758b6991c7c9bcf96a1d6c5c1", default-features = false }
-monad-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "c966ec176039fd1758b6991c7c9bcf96a1d6c5c1", default-features = false }
+op-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "da987d70663aafe4fa3cd2769269b459682c2cca", default-features = false }
+base-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "da987d70663aafe4fa3cd2769269b459682c2cca", default-features = false }
+monad-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "da987d70663aafe4fa3cd2769269b459682c2cca", default-features = false }
 
 ## alloy
 alloy-consensus = { version = "2.5.0", default-features = false }
@@ -501,13 +502,14 @@ serde_json = { version = "1.0", features = ["arbitrary_precision", "unbounded_de
 shlex = "2"
 similar-asserts = "2.0"
 smolgen = { version = "0.1.1", features = ["build", "gitcl"] }
-soldb-core = "0.4.5"
-soldb-debugger = "0.4.5"
-soldb-ethdebug = "0.4.5"
-soldb-repl = "0.4.5"
-soldb-tui = "0.4.5"
+soldb-core = "0.4.6"
+soldb-debugger = "0.4.6"
+soldb-ethdebug = "0.4.6"
+soldb-repl = "0.4.6"
+soldb-tui = "0.4.6"
 soldeer-commands = "=0.12.1"
 soldeer-core = { version = "=0.12.1", features = ["serde"] }
+stacker = "0.1"
 strum = "0.28"
 tempfile = "3.23"
 tokio = { version = "1.53.3", features = ["full"] }
@@ -540,12 +542,12 @@ mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "fa51e6ae93197aadc16cb
     "reqwest-rustls-tls",
     "ws",
 ] }
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "9cebb77076c0bd769f07ad040551df81b448345d", default-features = false, features = [
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "e93da1f5ce13c6b388658920c2eae39b285553a3", default-features = false, features = [
     "serde",
 ] }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "9cebb77076c0bd769f07ad040551df81b448345d", default-features = false }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "9cebb77076c0bd769f07ad040551df81b448345d" }
-tempo-dkg-onchain-artifacts = { git = "https://github.com/tempoxyz/tempo", rev = "9cebb77076c0bd769f07ad040551df81b448345d", default-features = false }
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "e93da1f5ce13c6b388658920c2eae39b285553a3", default-features = false }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "e93da1f5ce13c6b388658920c2eae39b285553a3" }
+tempo-dkg-onchain-artifacts = { git = "https://github.com/tempoxyz/tempo", rev = "e93da1f5ce13c6b388658920c2eae39b285553a3", default-features = false }
 
 # Tempo consensus certificate primitives.
 commonware-codec = { version = "=2026.10.0", default-features = false }
@@ -585,11 +587,11 @@ solar-lsp = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
 solar-lint = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
 
 ## foundry-core
-# fork-db evm2 completion merged with main 39cc9fb.
-foundry-wallets = { git = "https://github.com/mablr/foundry-core", rev = "457b8ede0dceba4f518de6ac8ea807a65d9a4fda" }
-foundry-compilers = { git = "https://github.com/mablr/foundry-core", rev = "457b8ede0dceba4f518de6ac8ea807a65d9a4fda" }
-foundry-block-explorers = { git = "https://github.com/mablr/foundry-core", rev = "457b8ede0dceba4f518de6ac8ea807a65d9a4fda" }
-foundry-fork-db = { git = "https://github.com/mablr/foundry-core", rev = "457b8ede0dceba4f518de6ac8ea807a65d9a4fda" }
+# foundry-rs/foundry-core#286 (engine-agnostic fork-db) on main 39cc9fb.
+foundry-wallets = { git = "https://github.com/mablr/foundry-core", rev = "a2f9087f5035baf3b9f6cf0457d84ff2051fd174" }
+foundry-compilers = { git = "https://github.com/mablr/foundry-core", rev = "a2f9087f5035baf3b9f6cf0457d84ff2051fd174" }
+foundry-block-explorers = { git = "https://github.com/mablr/foundry-core", rev = "a2f9087f5035baf3b9f6cf0457d84ff2051fd174" }
+foundry-fork-db = { git = "https://github.com/mablr/foundry-core", rev = "a2f9087f5035baf3b9f6cf0457d84ff2051fd174" }
 
 ## alloy-core
 alloy-dyn-abi = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
@@ -651,18 +653,12 @@ reth-zstd-compressors = { git = "https://github.com/paradigmxyz/reth-core", rev 
 [workspace.metadata.cargo-shear]
 ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]
 
-# The single evm2 revision for the whole graph: `mablr/evm2` `mablr/upstream-main-873`, which is
-# alloy-rs/evm2 `main` at `abfd112` plus alloy-rs/evm2#873 up to `24868e5`, squashed. Tempo, reth and evm2-networks pin
-# `alloy-rs/evm2`, while foundry-core pins `mablr/evm2`. Cargo rejects a patch from the same
-# source, so both go through `DaniPopes/evm2`, a URL in the same fork network. evm2-networks is
-# pinned above to its `main` after foundry-rs/evm2-networks#13, which marks its message
-# instructions for alloy-rs/evm2#873.
+# The single evm2 revision for the whole graph: alloy-rs/evm2 `main` at `85395c5`. Tempo, reth,
+# reth-core, evm2-networks and foundry-core all pin `alloy-rs/evm2`, at different revisions. Cargo
+# rejects a patch from the same source, so this goes through `DaniPopes/evm2`, the pre-transfer
+# URL of alloy-rs/evm2, which GitHub redirects to it.
 [patch."https://github.com/alloy-rs/evm2"]
-evm2 = { git = "https://github.com/DaniPopes/evm2", rev = "bee42cd84d9b9f9638c1636098957f1013bea2cd" }
-evm2-inspectors = { git = "https://github.com/DaniPopes/evm2", rev = "bee42cd84d9b9f9638c1636098957f1013bea2cd" }
-evm2-macros = { git = "https://github.com/DaniPopes/evm2", rev = "bee42cd84d9b9f9638c1636098957f1013bea2cd" }
+evm2 = { git = "https://github.com/DaniPopes/evm2", rev = "85395c5440bef1f685142e79c66051014f46f9b5" }
+evm2-inspectors = { git = "https://github.com/DaniPopes/evm2", rev = "85395c5440bef1f685142e79c66051014f46f9b5" }
+evm2-macros = { git = "https://github.com/DaniPopes/evm2", rev = "85395c5440bef1f685142e79c66051014f46f9b5" }
 
-[patch."https://github.com/mablr/evm2"]
-evm2 = { git = "https://github.com/DaniPopes/evm2", rev = "bee42cd84d9b9f9638c1636098957f1013bea2cd" }
-evm2-inspectors = { git = "https://github.com/DaniPopes/evm2", rev = "bee42cd84d9b9f9638c1636098957f1013bea2cd" }
-evm2-macros = { git = "https://github.com/DaniPopes/evm2", rev = "bee42cd84d9b9f9638c1636098957f1013bea2cd" }

@@ -23,7 +23,7 @@ use clap::Parser;
 use foundry_evm_hardforks::{
     EthereumHardfork, ExecutionSpec, FoundryHardfork, TempoHardfork, latest_active_tempo_hardfork,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, ser::SerializeStruct};
 use std::collections::BTreeMap;
 use tempo_contracts::precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, CURRENT_COMMITTEE_ADDRESS,
@@ -417,7 +417,6 @@ pub struct NetworkConfigs {
 // canonical and legacy selectors, and ensures old foundry.toml keys round-trip canonically.
 impl Serialize for NetworkConfigs {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeStruct;
         let mut s = serializer.serialize_struct("NetworkConfigs", 3)?;
         s.serialize_field("network", &self.resolved_network())?;
         s.serialize_field("celo", &self.celo)?;
