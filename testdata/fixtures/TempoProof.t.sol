@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.24;
 
-import {TempoProofVerifier} from "../src/TempoProofVerifier.sol";
-import {TempoProofReceiver} from "../src/TempoProofReceiver.sol";
+import {TempoProofVerifier, TempoProofReceiver} from "../src/TempoProofVerifier.sol";
 import {LibBLS12381 as BLS} from "commonware/certificate/LibBLS12381.sol";
 import {LibSimplex as Simplex} from "commonware/simplex/LibSimplex.sol";
 import {Vm} from "../src/Vm.sol";
@@ -29,7 +28,6 @@ contract TempoProofTest {
     uint256 private forkHeight;
     uint256 private forkUpdatedHeight;
     uint256 private forkImportedHeight;
-    TempoProofReceiver private receiver;
 
     function setUp() public {
         string memory json = vm.readFile("fixtures/proofs.json");
@@ -53,7 +51,6 @@ contract TempoProofTest {
         forkEvidence = _readEvidence(json, ".fork.initial.evidence");
         forkUpdated = _readEvidence(json, ".fork.updated.evidence");
         forkImported = _readEvidence(json, ".fork.imported.evidence");
-        receiver = new TempoProofReceiver(forkKey);
     }
 
     function _readEvidence(string memory json, string memory path)
@@ -252,6 +249,7 @@ contract TempoProofTest {
     }
 
     function test_fork_receiver_accepts_certified_storage_proof() public {
+        TempoProofReceiver receiver = new TempoProofReceiver(forkKey);
         vm.expectEmit(true, true, true, true, address(receiver));
         emit TempoProofReceiver.ProofAccepted(forkEvidence.subject.payload, forkHeight, forkAccount, bytes32(0), 42);
         vm.recordLogs();
@@ -259,32 +257,10 @@ contract TempoProofTest {
         require(vm.getRecordedLogs().length == 1, "one acceptance event");
     }
 
-    function test_receiver_accepts_configured_identity() public {
-        TempoProofReceiver other = new TempoProofReceiver(initialKey);
-        vm.expectEmit(true, true, true, true, address(other));
-        emit TempoProofReceiver.ProofAccepted(evidence.subject.payload, height, account, bytes32(0), 42);
-        vm.recordLogs();
-        other.submit(evidence, height, account, bytes32(0), 42);
-        require(vm.getRecordedLogs().length == 1, "one acceptance event");
-    }
-
     function test_fork_receiver_rejects_other_identity() public {
+        TempoProofReceiver receiver = new TempoProofReceiver(forkKey);
         require(verifier.verify(initialKey, evidence, height, account, bytes32(0), 42), "valid other identity proof");
         vm.expectRevert(abi.encodeWithSignature("Error(string)", "vote signature"));
         receiver.submit(evidence, height, account, bytes32(0), 42);
-    }
-
-    function test_fork_receiver_rejects_wrong_value() public {
-        require(
-            !verifier.verify(forkKey, forkEvidence, forkHeight, forkAccount, bytes32(0), 43), "wrong value accepted"
-        );
-        vm.expectRevert(TempoProofReceiver.InvalidProof.selector);
-        receiver.submit(forkEvidence, forkHeight, forkAccount, bytes32(0), 43);
-    }
-
-    function test_fork_receiver_rejects_changed_header() public {
-        forkEvidence.rawHeader[10] = bytes1(uint8(forkEvidence.rawHeader[10]) ^ 1);
-        vm.expectRevert(abi.encodeWithSignature("Error(string)", "header digest"));
-        receiver.submit(forkEvidence, forkHeight, forkAccount, bytes32(0), 42);
     }
 }

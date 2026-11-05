@@ -256,7 +256,7 @@ reads and later writes preserve the earlier certified proofs. It also writes to 
 and verifies its inclusion in a later sealed partial trie while preserving its earlier exclusion.
 Uncached runs download pinned sources and Solc.
 
-The [receiver fixture](../../testdata/fixtures/TempoProofReceiver.sol) fixes its trusted development
+The [receiver fixture](../../testdata/fixtures/TempoProofVerifier.sol) fixes its trusted development
 key at deployment and reuses the same verifier. Its `submit` entry point reverts on invalid evidence
 or a mismatched value, and emits `ProofAccepted(digest, height, account, slot, value)` only after
 verification succeeds. Tests check the exact acceptance event and reject valid evidence from a
