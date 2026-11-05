@@ -684,14 +684,46 @@ async fn multi_resume_refuses_unsent_same_chain_sequence_after_revert(prj: _, cm
 }
 
 // A later sequence's operation that was submitted before an upstream revert was recorded is not new
-// work: resume replays its saved signed bytes after the revert instead of refusing it.
-#[forgetest_init]
-async fn multi_resume_replays_later_signed_attempt_after_revert(prj: _, cmd: _) {
+// work: resume replays its saved signed bytes after the revert, and refuses only the sequences that
+// were never submitted, after the replay.
+async fn multi_resume_replays_later_signed_attempt_after_revert(
+    prj: TestProject,
+    mut cmd: TestCommand,
+    unsent_sequence: bool,
+) {
     let gate = address!("0x000000000000000000000000000000000000bEEF");
     let recipient = address!("0x000000000000000000000000000000000000dEaD");
-    let script = prj.add_script("MultiResumeLaterRevert.s.sol", MULTI_RESUME_LATER_REVERT);
+    let script = prj.add_script(
+        "MultiResumeAttemptRevert.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract MultiResumeAttemptRevert is Script {
+    function run(string memory rpc1, string memory rpc2, string memory rpc3) external {
+        vm.createSelectFork(rpc1);
+        vm.startBroadcast();
+        (bool success,) = address(0x000000000000000000000000000000000000bEEF).call("");
+        require(success);
+        vm.stopBroadcast();
+
+        vm.createSelectFork(rpc2);
+        vm.startBroadcast();
+        payable(address(0x000000000000000000000000000000000000dEaD)).transfer(1);
+        vm.stopBroadcast();
+
+        if (bytes(rpc3).length > 0) {
+            vm.createSelectFork(rpc3);
+            vm.startBroadcast();
+            payable(address(0x000000000000000000000000000000000000dEaD)).transfer(1);
+            vm.stopBroadcast();
+        }
+    }
+}
+"#,
+    );
     let (api1, handle1) = spawn(NodeConfig::test().with_chain_id(Some(1111u64))).await;
     let (api2, handle2) = spawn(NodeConfig::test().with_chain_id(Some(2222u64))).await;
+    let (api3, handle3) = spawn(NodeConfig::test().with_chain_id(Some(3333u64))).await;
     // Runtime that reverts once storage slot 0 is set.
     api1.anvil_set_code(gate, bytes!("60005415600b57600080fd5b00")).await.unwrap();
     api1.anvil_set_auto_mine(false).await.unwrap();
@@ -706,22 +738,25 @@ async fn multi_resume_replays_later_signed_attempt_after_revert(prj: _, cmd: _) 
         .await;
     let (rpc2, submissions2) =
         spawn_rpc_proxy_recording_method(handle2.http_endpoint(), "eth_sendRawTransaction").await;
+    let (rpc3, submissions3) =
+        spawn_rpc_proxy_recording_method(handle3.http_endpoint(), "eth_sendRawTransaction").await;
     let sender = handle2.dev_accounts().next().unwrap();
     let args = [
         "script",
         script.to_str().unwrap(),
         "--sig",
-        "run(string,string)",
+        "run(string,string,string)",
         &rpc1,
         &rpc2,
+        if unsent_sequence { &rpc3 } else { "" },
         "--private-key",
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
         "--timeout",
         "1",
     ];
-    let path = prj.root().join("broadcast/multi/MultiResumeLaterRevert.s.sol-latest/run.json");
+    let path = prj.root().join("broadcast/multi/MultiResumeAttemptRevert.s.sol-latest/run.json");
 
-    // Interrupt the broadcast once chain 2222's transfer is pending.
+    // Interrupt the broadcast once chain 2222's transfer is pending, before chain 3333 is reached.
     cmd.forge_fuse().args(args).arg("--broadcast");
     let child = KillOnDrop::spawn(cmd.cmd());
     let (attempt, reverted) = tokio::time::timeout(Duration::from_secs(60), async {
@@ -760,19 +795,36 @@ async fn multi_resume_replays_later_signed_attempt_after_revert(prj: _, cmd: _) 
     ));
     let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
     let deployments = sequence["deployments"].as_array().unwrap();
+    assert_eq!(deployments.len(), 2 + usize::from(unsent_sequence));
     assert_eq!(deployments[0]["reverted"], serde_json::json!([reverted]));
     assert!(deployments[1]["pending"].as_array().unwrap().is_empty());
     assert!(deployments[1]["receipts"].as_array().unwrap().is_empty());
     assert_eq!(api2.transaction_count(sender, None).await.unwrap().to::<u32>(), 0);
 
-    // The guard admits the existing attempt, which is replayed with identical bytes and mined.
+    // The existing attempt is replayed with identical bytes and mined. Chain 3333's transfer was
+    // never submitted, so resume refuses it once the replay is done, and again on every later run.
+    let refusal = format!(
+        "Error: chain 1111: transaction {reverted} reverted, so the script would not have sent the operations after it; resume will not send them. Pass `--broadcast --start-fresh` to archive this broadcast and run the script again\n"
+    );
+    let warning = format!(
+        "Warning: Transaction {reverted} on chain 1111 reverted; resume will not resubmit it.\n"
+    );
     cmd.forge_fuse().args(args).args(["--multi", "--resume"]);
-    cmd.assert_success().stderr_eq(format!(
-        "Warning: Transaction {reverted} on chain 1111 reverted; resume will not resubmit it.\nWarning: ONCHAIN EXECUTION COMPLETE WITH REVERTED TRANSACTIONS:\nchain 1111: {reverted}\n"
-    ));
+    if unsent_sequence {
+        cmd.assert_failure().stderr_eq(format!("{warning}{refusal}"));
+        cmd.forge_fuse().args(args).args(["--multi", "--resume"]);
+        cmd.assert_failure().stderr_eq(refusal);
+    } else {
+        cmd.assert_success().stderr_eq(format!(
+            "{warning}Warning: ONCHAIN EXECUTION COMPLETE WITH REVERTED TRANSACTIONS:\nchain 1111: {reverted}\n"
+        ));
+    }
     assert_eq!(*submissions2.lock().unwrap(), [payload.clone(), payload]);
     assert_eq!(api2.transaction_count(sender, None).await.unwrap().to::<u32>(), 1);
     assert_eq!(handle2.http_provider().get_balance(recipient).await.unwrap(), U256::from(1));
+    assert!(submissions3.lock().unwrap().is_empty());
+    assert_eq!(api3.transaction_count(sender, None).await.unwrap().to::<u32>(), 0);
+    assert_eq!(handle3.http_provider().get_balance(recipient).await.unwrap(), U256::ZERO);
     let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
     let deployments = sequence["deployments"].as_array().unwrap();
     assert_eq!(deployments[0]["reverted"], serde_json::json!([reverted]));
@@ -780,4 +832,20 @@ async fn multi_resume_replays_later_signed_attempt_after_revert(prj: _, cmd: _) 
     assert_eq!(receipts.len(), 1);
     assert_eq!(receipts[0]["transactionHash"].as_str().unwrap().parse::<B256>().unwrap(), attempt);
     assert_eq!(receipts[0]["status"], "0x1");
+    if unsent_sequence {
+        assert!(deployments[2]["transactions"][0]["hash"].is_null());
+    }
+}
+
+#[forgetest_init]
+async fn multi_resume_replays_later_signed_attempt_after_revert_without_unsent_work(
+    prj: _,
+    cmd: _,
+) {
+    multi_resume_replays_later_signed_attempt_after_revert(prj, cmd, false).await;
+}
+
+#[forgetest_init]
+async fn multi_resume_replays_later_signed_attempt_before_refusing_unsent_work(prj: _, cmd: _) {
+    multi_resume_replays_later_signed_attempt_after_revert(prj, cmd, true).await;
 }
