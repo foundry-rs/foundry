@@ -66,10 +66,12 @@ async fn tempo_proofs_fork(prj: _, cmd: _) {
     cmd.forge_fuse().args(["test", "--offline"]).assert_success().stdout_eq(str![[r#"
 No files changed, compilation skipped
 
-Ran 29 tests for test/TempoProof.t.sol:TempoProofTest
+Ran 31 tests for test/TempoProof.t.sol:TempoProofTest
 [PASS] test_certified_storage_proof() ([GAS])
 [PASS] test_fork_historical_certified_storage_proof() ([GAS])
 [PASS] test_fork_imported_account_certified_storage_proof() ([GAS])
+[PASS] test_fork_receiver_accepts_certified_storage_proof() ([GAS])
+[PASS] test_fork_receiver_rejects_other_identity() ([GAS])
 [PASS] test_fork_reject_mixed_account_proof() ([GAS])
 [PASS] test_fork_reject_mixed_storage_proof() ([GAS])
 [PASS] test_fork_reject_upstream_key() ([GAS])
@@ -96,9 +98,9 @@ Ran 29 tests for test/TempoProof.t.sol:TempoProofTest
 [PASS] test_rotation_rejects_unannounced_key() ([GAS])
 [PASS] test_rotation_rejects_unauthenticated_boundary() ([GAS])
 [PASS] test_rotation_rejects_wrong_epoch() ([GAS])
-Suite result: ok. 29 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 31 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 29 tests passed, 0 failed, 0 skipped (29 total tests)
+Ran 1 test suite [ELAPSED]: 31 tests passed, 0 failed, 0 skipped (31 total tests)
 
 "#]]);
 }

@@ -3,12 +3,13 @@ use alloy_consensus::{Blob, BlobTransactionSidecar, SidecarBuilder, SimpleCoder,
 use alloy_network::{TransactionBuilder, TransactionBuilder4844};
 use alloy_primitives::{B256, FixedBytes, U256, b256};
 use alloy_provider::Provider;
-use alloy_rpc_types::TransactionRequest;
+use alloy_rpc_types::{TransactionRequest, anvil::MineOptions};
 use alloy_rpc_types_beacon::{genesis::GenesisResponse, sidecar::GetBlobsResponse};
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, spawn};
 use foundry_evm::hardfork::EthereumHardfork;
 use ssz::Decode;
+use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_beacon_api_get_blob_sidecars() {
@@ -198,6 +199,25 @@ async fn test_beacon_api_get_blobs() {
         "Expected 2 blobs when filtering by two versioned_hashes"
     );
 
+    // Test filtering with versioned_hashes query parameter - multiple versioned_hashes
+    // (repeated keys, as sent by beacon clients such as op-node).
+    // Request in reverse order to verify that the response retains block order.
+    let url = format!(
+        "{}/eth/v1/beacon/blobs/{}?versioned_hashes={}&versioned_hashes={}",
+        handle.http_endpoint(),
+        block_number,
+        actual_versioned_hashes[1],
+        actual_versioned_hashes[0]
+    );
+    let response = client.get(&url).send().await.unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let blobs_response: GetBlobsResponse = response.json().await.unwrap();
+    assert_eq!(
+        blobs_response.data,
+        decoded_blobs[..2],
+        "Expected the requested blobs in block order when filtering by repeated versioned_hashes keys"
+    );
+
     // Test filtering with non-existent versioned_hash
     let non_existent_hash =
         b256!("0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
@@ -256,4 +276,118 @@ async fn test_beacon_api_get_genesis() {
         genesis_response.data.genesis_fork_version,
         FixedBytes::from([0x00, 0x00, 0x00, 0x00])
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_beacon_api_get_blobs_by_slot() {
+    const GENESIS: u64 = 1_700_000_000;
+    const SLOT: u64 = 3600;
+
+    // The long block time keeps the interval miner idle while the test places blocks by hand.
+    let node_config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+        .with_genesis_timestamp(Some(GENESIS))
+        .with_blocktime(Some(Duration::from_secs(SLOT)));
+    let (api, handle) = spawn(node_config).await;
+
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let from = wallets[0].address();
+    let to = wallets[1].address();
+    let provider = http_provider(&handle.http_endpoint());
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+
+    // Mine one blob per block: two distinct blobs in slot 2, then the same blob twice in slot 3.
+    let timestamps = [
+        GENESIS + 2 * SLOT + 5,
+        GENESIS + 2 * SLOT + 6,
+        GENESIS + 3 * SLOT,
+        GENESIS + 3 * SLOT + 1,
+    ];
+    let mut blobs = Vec::new();
+    let mut hashes = Vec::new();
+    for (nonce, timestamp) in timestamps.into_iter().enumerate() {
+        let sidecar =
+            SidecarBuilder::<SimpleCoder>::from_slice(format!("blob {}", nonce.min(2)).as_bytes())
+                .build::<BlobTransactionSidecar>()
+                .unwrap();
+        blobs.push(sidecar.blobs[0]);
+        hashes.extend(sidecar.versioned_hashes());
+        let tx = TransactionRequest::default()
+            .with_from(from)
+            .with_to(to)
+            .with_nonce(nonce as u64)
+            .with_max_fee_per_blob_gas(gas_price + 1)
+            .with_max_fee_per_gas(eip1559_est.max_fee_per_gas)
+            .with_max_priority_fee_per_gas(eip1559_est.max_priority_fee_per_gas)
+            .with_blob_sidecar_4844(sidecar);
+        let pending = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+        api.evm_mine(Some(MineOptions::Timestamp(Some(timestamp)))).await.unwrap();
+        assert_eq!(pending.get_receipt().await.unwrap().block_number, Some(nonce as u64 + 1));
+    }
+
+    let client = reqwest::Client::new();
+    let get_blobs = async |path: &str| {
+        let url = format!("{}/eth/v1/beacon/blobs/{path}", handle.http_endpoint());
+        let response = client.get(&url).send().await.unwrap();
+        match response.status() {
+            reqwest::StatusCode::OK => {
+                Some(response.json::<GetBlobsResponse>().await.unwrap().data)
+            }
+            reqwest::StatusCode::NOT_FOUND => None,
+            status => panic!("unexpected status {status} for {path}"),
+        }
+    };
+
+    assert!(get_blobs("2").await.as_deref() == Some(&blobs[..2]));
+    assert!(
+        get_blobs(&format!("2?versioned_hashes={}", hashes[1])).await.as_deref()
+            == Some(&blobs[1..2])
+    );
+    assert!(
+        get_blobs(&format!("2?versioned_hashes={},{}", hashes[1], hashes[0])).await.as_deref()
+            == Some(&blobs[..2])
+    );
+    assert!(
+        get_blobs(&format!("2?versioned_hashes={}", B256::ZERO)).await.as_deref() == Some(&[][..])
+    );
+    assert!(get_blobs("3").await.as_deref() == Some(&blobs[2..]));
+    // Hashes and tags still address one execution block, not the whole slot.
+    assert!(get_blobs(&api.backend.best_hash().to_string()).await.as_deref() == Some(&blobs[3..]));
+    assert!(get_blobs("latest").await.as_deref() == Some(&blobs[3..]));
+    // Filtered requests return only the requested number of occurrences, across all blocks.
+    assert!(
+        get_blobs(&format!("3?versioned_hashes={}", hashes[2])).await.as_deref()
+            == Some(&blobs[2..3])
+    );
+    assert!(
+        get_blobs(&format!("3?versioned_hashes={},{}", hashes[2], hashes[2])).await.as_deref()
+            == Some(&blobs[2..])
+    );
+    // Slot 0 holds the genesis block, which has no blobs.
+    assert!(get_blobs("0").await.as_deref() == Some(&[][..]));
+    // Slots without a block are not found, even when a block has that number.
+    assert!(get_blobs("1").await.is_none());
+    assert!(get_blobs("4").await.is_none());
+    assert!(get_blobs(&u64::MAX.to_string()).await.is_none());
+
+    // The slot length stays the configured block time when the mining mode changes.
+    api.anvil_set_interval_mining(0).unwrap();
+    assert!(get_blobs("2").await.as_deref() == Some(&blobs[..2]));
+
+    // A block mined after moving the time back to slot 1 does not hide the later slots.
+    api.evm_set_time(GENESIS + SLOT).unwrap();
+    api.evm_mine(None).await.unwrap();
+    assert!(get_blobs("1").await.as_deref() == Some(&[][..]));
+    assert!(get_blobs("2").await.as_deref() == Some(&blobs[..2]));
+
+    // Loading a legacy dump without block history can leave a gap before its checkpoint.
+    // Previously stored canonical blocks must remain visible across that gap.
+    let mut state = api.serialized_state(false).await.unwrap();
+    state.blocks.clear();
+    state.best_block_number = Some(7);
+    state.block.as_mut().unwrap().number = U256::from(7);
+    api.anvil_load_state(serde_json::to_vec(&state).unwrap().into()).await.unwrap();
+    assert!(get_blobs("2").await.as_deref() == Some(&blobs[..2]));
+    assert!(get_blobs("3").await.as_deref() == Some(&blobs[2..]));
 }
