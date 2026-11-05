@@ -2587,6 +2587,19 @@ pub fn execute_and_commit_tx<FEN: FoundryEvmNetwork>(
     Ok(result)
 }
 
+/// Advances the executor's block by an invariant call's warp and roll delays, as the campaign
+/// does before it executes the call.
+pub fn apply_invariant_call_delay<FEN: FoundryEvmNetwork>(
+    executor: &mut Executor<FEN>,
+    tx: &BasicTxDetails,
+) {
+    super::campaign::apply_block_delay(
+        executor,
+        tx.warp.unwrap_or_default(),
+        tx.roll.unwrap_or_default(),
+    );
+}
+
 #[cfg(test)]
 mod tests {
 

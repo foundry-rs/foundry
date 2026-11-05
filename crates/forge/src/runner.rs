@@ -51,8 +51,8 @@ use foundry_evm::{
         invariant::{
             CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome,
             HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError, LiveInvariantSolution,
-            LiveInvariantSolver, ReplayErrorResult, check_sequence, did_fail_on_assert,
-            execute_and_commit_tx, execute_tx, execute_tx_and_register_created,
+            LiveInvariantSolver, ReplayErrorResult, apply_invariant_call_delay, check_sequence,
+            did_fail_on_assert, execute_and_commit_tx, execute_tx, execute_tx_and_register_created,
             handler_edge_fingerprint, replay_error, replay_handler_failure_sequence, replay_run,
         },
         persist_corpus_seed, read_corpus_dir, replay_corpus_to_showmap,
@@ -6042,8 +6042,6 @@ fn solve_live_invariant_frontier<FEN: FoundryEvmNetwork>(
     if Instant::now() >= deadline
         || queries == 0
         || call.call_details.value.is_some_and(|value| !value.is_zero())
-        || call.warp.is_some()
-        || call.roll.is_some()
         || sequence.iter().any(|tx| !senders.allows(tx.sender) || !targets.can_replay(tx))
     {
         return outcome;
@@ -6074,6 +6072,9 @@ fn solve_live_invariant_frontier<FEN: FoundryEvmNetwork>(
     if Instant::now() >= deadline {
         return outcome;
     }
+    // The campaign advances the block by the call's delays before it executes the call, so the
+    // search and the candidate replays below see the same timestamp and number.
+    apply_invariant_call_delay(&mut executor, call);
     let mut config = config.clone();
     config.timeout = Some(1);
     config.max_solver_queries = queries;
@@ -6104,7 +6105,9 @@ fn solve_live_invariant_frontier<FEN: FoundryEvmNetwork>(
         solved.call_details.calldata = candidate.calldata;
         let mut replay = executor.clone();
         replay.inspector_mut().collect_evm_cmp_log(true);
-        let Ok(raw) = execute_tx(&mut replay, &solved) else { continue };
+        // The delay is already applied; the campaign applies it again from the returned call.
+        let probe = BasicTxDetails { warp: None, roll: None, ..solved.clone() };
+        let Ok(raw) = execute_tx(&mut replay, &probe) else { continue };
         let site = FuzzBranchFrontierSite { address: cmp.address, pc: cmp.pc, opcode: cmp.opcode };
         if !raw.execution_cancelled
             && raw.result.as_ref() != MAGIC_ASSUME

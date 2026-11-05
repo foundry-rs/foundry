@@ -849,8 +849,9 @@ Short campaigns may finish before a solver response arrives.
 
 The initial implementation assists ordinary invariant campaigns, excluding
 optimization and `call_override`. It uses setup-known targets and fixed
-senders; it does not symbolize transaction value, sender, warp, or roll. Calls
-with nonzero value or a delay are not solved. Unsupported symbolic operations
+senders; it does not symbolize transaction value, sender, warp, or roll. A
+call's warp and roll delays are applied concretely before the search. Calls
+with nonzero value are not solved. Unsupported symbolic operations
 produce no candidate, and concrete fuzzing continues when the worker exhausts
 its budget. Imported-frontier selectors and IDs apply only to the offline
 frontier workflow.

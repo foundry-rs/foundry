@@ -98,6 +98,34 @@ fn symbolic_live_two_step(prj: _, cmd: _) {
     assert_eq!(replayed["invariant_failures"][0]["name"], "invariant_z");
 }
 
+// Every call carries a warp and a roll once delays are configured; the worker applies them
+// concretely instead of rejecting the frontier.
+#[forgetest_init]
+fn symbolic_live_solves_delayed_calls(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_live_solves_delayed_calls");
+    prj.add_test("LiveTwoStep.t.sol", TWO_STEP);
+    prj.update_config(|config| {
+        config.invariant.runs = u32::MAX;
+        config.invariant.timeout = Some(10);
+        config.invariant.depth = 2;
+        config.invariant.max_time_delay = Some(3600);
+        config.invariant.max_block_delay = Some(300);
+        config.invariant.dictionary.dictionary_weight = 0;
+        config.symbolic.live = true;
+        config.symbolic.timeout = Some(10);
+    });
+    let output = cmd
+        .args(["test", "--json", "--threads", "1", "--fuzz-seed", "0x1234"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_a()");
+    assert_eq!(result["invariant_failures"][0]["name"], "invariant_z", "{result}");
+    assert!(result["symbolic_live"]["scheduled"].as_u64().unwrap() >= 2, "{result}");
+    assert!(result["symbolic_live"]["solver_queries"].as_u64().unwrap() > 0, "{result}");
+}
+
 #[forgetest_init]
 fn symbolic_live_zero_query_budget(prj: _, cmd: _) {
     prj.add_test("LiveTwoStep.t.sol", TWO_STEP);
