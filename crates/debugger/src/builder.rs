@@ -220,7 +220,17 @@ fn identify_creation<'a>(
         return Some(ContractIdentity::Local(id));
     }
     // The address of a failed creation holds no code, so its identity can't be trusted.
-    trace.success.then(|| identify_name(known_contracts, address_name)).flatten()
+    if !trace.success {
+        return None;
+    }
+    // The init code check above fails for unlinked artifacts or a different metadata hash.
+    // The deployed code check ignores both.
+    if let Some((id, _)) = known_contracts
+        .find_by_deployed_code_exact_preferred(&trace.output, |id| address_name == Some(&id.name))
+    {
+        return Some(ContractIdentity::Local(id));
+    }
+    identify_name(known_contracts, address_name)
 }
 
 /// Identifies a contract by name alone, unless two local artifacts share the name.
