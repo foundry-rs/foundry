@@ -94,6 +94,17 @@ contract RevertedFrameHelper is Test {
         }
         revert FrameEffectApplied();
     }
+
+    function dealAfterReceive(uint256 amount) external payable {
+        vm.deal(address(this), amount);
+        revert FrameEffectApplied();
+    }
+
+    function setNonceAfterCreate() external {
+        new RevertedFrameProbe();
+        vm.setNonce(address(this), 50);
+        revert FrameEffectApplied();
+    }
 }
 
 contract RevertedFrameOuter {
@@ -103,6 +114,10 @@ contract RevertedFrameOuter {
 
     function run(RevertedFrameHelper helper, FrameEffect effect, address target, RevertedFrameProbe probe) external {
         helper.run(effect, target, probe);
+    }
+
+    function dealAfterReceive(RevertedFrameHelper helper, uint256 amount) external payable {
+        helper.dealAfterReceive{value: msg.value}(amount);
     }
 }
 
@@ -130,6 +145,25 @@ contract RevertedFrameEffectsTest is Test {
         runAndCatch(FrameEffect.Deal, true);
         // Master behavior: persists.
         assertEq(target.balance, 123);
+    }
+
+    function test_deal_after_receive_persists_depth1() public {
+        vm.deal(address(this), 1 ether);
+        (bool success, bytes memory result) =
+            address(helper).call{value: 1 ether}(abi.encodeCall(helper.dealAfterReceive, (0)));
+        assertHelperReverted(success, result);
+        assertEq(address(helper).balance, 0);
+        assertEq(address(this).balance, 1 ether);
+    }
+
+    function test_deal_after_receive_persists_depth2() public {
+        vm.deal(address(this), 1 ether);
+        (bool success, bytes memory result) =
+            address(outer).call{value: 1 ether}(abi.encodeCall(outer.dealAfterReceive, (helper, 5 ether)));
+        assertHelperReverted(success, result);
+        assertEq(address(helper).balance, 5 ether);
+        assertEq(address(outer).balance, 0);
+        assertEq(address(this).balance, 1 ether);
     }
 
     function test_store_reverts_depth1() public {
@@ -162,6 +196,12 @@ contract RevertedFrameEffectsTest is Test {
         runAndCatch(FrameEffect.SetNonce, true);
         // Master behavior: persists.
         assertEq(vm.getNonce(target), 123);
+    }
+
+    function test_setNonce_after_create_persists_depth1() public {
+        (bool success, bytes memory result) = address(helper).call(abi.encodeCall(helper.setNonceAfterCreate, ()));
+        assertHelperReverted(success, result);
+        assertEq(vm.getNonce(address(helper)), 50);
     }
 
     function test_setNonceUnsafe_persists_depth1() public {
@@ -362,6 +402,10 @@ contract RevertedFrameEffectsTest is Test {
         } else {
             (success, result) = address(helper).call(abi.encodeCall(helper.run, (effect, target, probe)));
         }
+        assertHelperReverted(success, result);
+    }
+
+    function assertHelperReverted(bool success, bytes memory result) internal {
         assertTrue(!success, "helper did not revert");
         assertEq(result, abi.encodeWithSelector(FrameEffectApplied.selector), "unexpected helper revert");
     }

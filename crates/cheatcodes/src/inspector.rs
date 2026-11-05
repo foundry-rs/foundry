@@ -73,6 +73,9 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
+#[cfg(feature = "monad")]
+use foundry_evm_core::evm::refresh_chain_journal;
+
 mod env_overrides;
 pub use env_overrides::EnvOverrideState;
 
@@ -567,6 +570,15 @@ struct CreatedAccountsFrame {
     recorded_logs: usize,
     /// Recorded log buffer generation when the frame started.
     recorded_logs_generation: u64,
+    /// Account write count when the frame started.
+    account_writes: usize,
+}
+
+/// A balance or nonce written outside revm's journal, which survives reverts of the frame.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum AccountWrite {
+    Balance(U256),
+    Nonce(u64),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -676,6 +688,10 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 
     /// Creation lists captured by state snapshots.
     created_accounts_snapshots: HashMap<U256, CreatedAccountsSnapshot>,
+
+    /// Balances and nonces written outside the journal in the root transaction, replayed when a
+    /// frame fails. `None` once the state was replaced after the write.
+    account_writes: Vec<Option<(Address, AccountWrite)>>,
 
     /// The information of the debug step recording.
     pub record_debug_steps_info: Option<RecordDebugStepInfo>,
@@ -827,6 +843,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             created_account_changes: Default::default(),
             created_accounts_frames: Default::default(),
             created_accounts_snapshots: Default::default(),
+            account_writes: Default::default(),
             record_debug_steps_info: Default::default(),
             expected_emits: Default::default(),
             expected_creates: Default::default(),
@@ -1038,6 +1055,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             self.created_account_bindings.clear();
             self.created_account_changes.clear();
             self.created_accounts_frames.clear();
+            self.account_writes.clear();
             // Earlier snapshots contain no creations from the new root transaction.
             for snapshot in self.created_accounts_snapshots.values_mut() {
                 snapshot.bindings.clear();
@@ -1049,11 +1067,24 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             checkpoint: self.created_account_changes.len(),
             recorded_logs: self.core.recorded_logs.as_ref().map_or(0, Vec::len),
             recorded_logs_generation: self.core.recorded_logs_generation,
+            account_writes: self.account_writes.len(),
         });
+    }
+
+    /// Records a balance or nonce written outside the journal, see [`Self::account_writes`].
+    pub(crate) fn record_account_write(&mut self, address: Address, write: AccountWrite) {
+        self.account_writes.push(Some((address, write)));
+    }
+
+    /// Stops replaying earlier account writes after the state was replaced or written outside the
+    /// journal.
+    pub(crate) fn reset_account_writes(&mut self) {
+        self.account_writes.fill(None);
     }
 
     fn finish_created_accounts_frame(
         &mut self,
+        ecx: &mut FoundryContextFor<'_, FEN>,
         success: bool,
         kind: CreatedAccountsFrameKind,
         depth: usize,
@@ -1068,6 +1099,28 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         };
         let checkpoint = frame.checkpoint;
         self.created_accounts_frames.pop();
+        // Balances and nonces written outside the journal survive the revert, but revm undoes the
+        // frame's transfers and nonce bumps relative to them. Restore the values that were set.
+        // `on_revert` cleans up the root frame.
+        if !success && depth > 0 {
+            let state = ecx.journal_mut().evm_state_mut();
+            for (address, write) in self.account_writes[frame.account_writes..].iter().flatten() {
+                if let Some(account) = state.get_mut(address) {
+                    match *write {
+                        AccountWrite::Balance(balance) => account.info.balance = balance,
+                        AccountWrite::Nonce(nonce) => account.info.nonce = nonce,
+                    }
+                }
+            }
+            #[cfg(feature = "monad")]
+            if self.account_writes[frame.account_writes..]
+                .iter()
+                .flatten()
+                .any(|(_, write)| matches!(write, AccountWrite::Balance(_)))
+            {
+                refresh_chain_journal(ecx);
+            }
+        }
         if !success {
             // Logs of a failed frame are reverted. If the buffer was replaced inside the frame,
             // every log it holds was recorded by the frame.
@@ -1579,6 +1632,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     if !active_delegations.is_empty() {
                         if let Err(err) = apply_authorization_nonces::<FEN>(
                             ecx,
+                            &mut self.account_writes,
                             &active_delegations,
                             broadcast.new_origin,
                             chain_id,
@@ -1617,6 +1671,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                             .unwrap();
                         let prev = account.info.nonce;
                         account.info.nonce += 1;
+                        let write = AccountWrite::Nonce(prev + 1);
+                        self.account_writes.push(Some((broadcast.new_origin, write)));
                         debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
                     }
                 } else if broadcast.single_call {
@@ -2256,6 +2312,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         let curr_depth = ecx.journal().depth();
 
         self.finish_created_accounts_frame(
+            ecx,
             outcome.result.is_ok(),
             CreatedAccountsFrameKind::Call,
             curr_depth,
@@ -2670,6 +2727,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         let curr_depth = ecx.journal().depth();
 
         self.finish_created_accounts_frame(
+            ecx,
             outcome.result.is_ok(),
             CreatedAccountsFrameKind::Create,
             curr_depth,
@@ -3770,6 +3828,7 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
 /// authority nonce.
 fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
     ecx: &mut FoundryContextFor<'_, FEN>,
+    account_writes: &mut Vec<Option<(Address, AccountWrite)>>,
     authorizations: &[SignedAuthorization],
     sender: Address,
     chain_id: u64,
@@ -3787,6 +3846,7 @@ fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
         // The sender nonce has not been incremented for the transaction yet.
         if auth.nonce() == account.info.nonce + u64::from(authority == sender) {
             account.info.nonce += 1;
+            account_writes.push(Some((authority, AccountWrite::Nonce(account.info.nonce))));
         }
     }
     Ok(())

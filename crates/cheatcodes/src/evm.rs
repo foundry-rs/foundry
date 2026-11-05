@@ -2,7 +2,10 @@
 
 use crate::{
     BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesCore, CheatcodesExecutor,
-    CheatsCtxt, Error, Result, Vm::*, env::FORGE_CONTEXT, inspector::RecordDebugStepInfo,
+    CheatsCtxt, Error, Result,
+    Vm::*,
+    env::FORGE_CONTEXT,
+    inspector::{AccountWrite, RecordDebugStepInfo},
 };
 use alloy_consensus::{Transaction as _, Typed2718, transaction::SignerRecoverable};
 use alloy_evm::FromRecoveredTx;
@@ -391,6 +394,10 @@ impl Cheatcode for loadAllocsCall {
         // Then, load the allocs into the database.
         let (db, inner) = ccx.ecx.db_journal_inner_mut();
         db.load_allocs(&allocs, inner).map_err(|e| fmt_err!("failed to load allocs: {e}"))?;
+        for (address, account) in &allocs {
+            let nonce = account.nonce.unwrap_or_default();
+            ccx.state.record_account_write(*address, AccountWrite::Nonce(nonce));
+        }
         #[cfg(feature = "monad")]
         refresh_chain_journal(ccx.ecx);
         Ok(Default::default())
@@ -405,6 +412,8 @@ impl Cheatcode for cloneAccountCall {
         let genesis = genesis_account(account.data);
         let (db, inner) = ccx.ecx.db_journal_inner_mut();
         db.clone_account(&genesis, target, inner)?;
+        let nonce = genesis.nonce.unwrap_or_default();
+        ccx.state.record_account_write(*target, AccountWrite::Nonce(nonce));
         // Cloned account should persist in forked envs.
         ccx.ecx.db_mut().add_persistent_account(*target);
         #[cfg(feature = "monad")]
@@ -836,6 +845,7 @@ impl Cheatcode for dealCall {
         let old_balance = std::mem::replace(&mut account.info.balance, new_balance);
         let record = DealRecord { address, old_balance, new_balance };
         ccx.state.eth_deals.push(record);
+        ccx.state.record_account_write(address, AccountWrite::Balance(new_balance));
         #[cfg(feature = "monad")]
         refresh_chain_journal(ccx.ecx);
         Ok(Default::default())
@@ -867,15 +877,16 @@ impl Cheatcode for etchCall {
 
 impl Cheatcode for resetNonceCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { account } = self;
-        ccx.ecx.journal_mut().load_account_with_code(*account)?;
-        let account = journaled_account(ccx.ecx, *account)?;
+        let Self { account: address } = *self;
+        ccx.ecx.journal_mut().load_account_with_code(address)?;
+        let account = journaled_account(ccx.ecx, address)?;
         // Per EIP-161, contract nonces start at 1. EOAs, including EIP-7702 delegated ones, start
         // at 0.
         let code = account.info.code.as_ref().expect("account code is loaded");
         let is_eoa = account.info.is_empty_code_hash() || code.is_eip7702();
         let nonce = if is_eoa { 0 } else { 1 };
         account.info.nonce = nonce;
+        ccx.state.record_account_write(address, AccountWrite::Nonce(nonce));
         debug!(target: "cheatcodes", nonce, "reset");
         Ok(Default::default())
     }
@@ -883,8 +894,8 @@ impl Cheatcode for resetNonceCall {
 
 impl Cheatcode for setNonceCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { account, newNonce } = *self;
-        let account = journaled_account(ccx.ecx, account)?;
+        let Self { account: address, newNonce } = *self;
+        let account = journaled_account(ccx.ecx, address)?;
         // nonce must increment only
         let current = account.info.nonce;
         ensure!(
@@ -893,15 +904,17 @@ impl Cheatcode for setNonceCall {
              account's current nonce ({current})"
         );
         account.info.nonce = newNonce;
+        ccx.state.record_account_write(address, AccountWrite::Nonce(newNonce));
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for setNonceUnsafeCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { account, newNonce } = *self;
-        let account = journaled_account(ccx.ecx, account)?;
+        let Self { account: address, newNonce } = *self;
+        let account = journaled_account(ccx.ecx, address)?;
         account.info.nonce = newNonce;
+        ccx.state.record_account_write(address, AccountWrite::Nonce(newNonce));
         Ok(Default::default())
     }
 }
@@ -1354,6 +1367,7 @@ impl Cheatcode for broadcastRawTransactionCall {
         };
 
         executor.transact_from_tx_on_db(ccx.state, ccx.ecx, tx_env)?;
+        ccx.state.reset_account_writes();
         #[cfg(feature = "monad")]
         refresh_chain_journal(ccx.ecx);
 
@@ -1486,6 +1500,7 @@ impl Cheatcode for executeTransactionCall {
 
         // Merge state changes back into the parent journaled state.
         merge_child_state(ccx.ecx.journal_mut().evm_state_mut(), res.state, false);
+        ccx.state.reset_account_writes();
 
         // Keep Monad reserve balances aligned with the state merged from the nested EVM while
         // preserving the outer transaction's execution context.
@@ -1740,6 +1755,7 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
             ccx.state.fork_block_number_override = fork_block_number;
         }
         ccx.state.revert_created_accounts(snapshot_id, false);
+        ccx.state.reset_account_writes();
         sync_tx_after_env_override_restore(ccx);
         restore_isolation_fee_accounting(ccx);
         Ok(true.abi_encode())
@@ -1782,6 +1798,7 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
             ccx.state.fork_block_number_override = fork_block_number;
         }
         ccx.state.revert_created_accounts(snapshot_id, true);
+        ccx.state.reset_account_writes();
         sync_tx_after_env_override_restore(ccx);
         restore_isolation_fee_accounting(ccx);
         Ok(true.abi_encode())

@@ -1,6 +1,6 @@
 use crate::{
     Cheatcode, Cheatcodes, CheatcodesCore, CheatcodesExecutor, CheatsCtxt, DatabaseExt, Result,
-    Vm::*, json::json_value_to_token,
+    Vm::*, inspector::AccountWrite, json::json_value_to_token,
 };
 use alloy_dyn_abi::DynSolValue;
 use alloy_evm::EvmEnv;
@@ -517,6 +517,7 @@ fn record_fork_switch<FEN: FoundryEvmNetwork>(
     ccx.state.fork_block_number_override = ccx.active_fork_block_number();
     if source_fork_id != target_fork_id {
         ccx.state.commit_created_account_changes(source_fork_id);
+        ccx.state.reset_account_writes();
     }
     ccx.state.record_initial_created_accounts(target_fork_id, initial);
     ccx.state.record_propagated_accounts(target_fork_id, propagated);
@@ -532,6 +533,7 @@ fn record_fork_roll<FEN: FoundryEvmNetwork>(
     if target_fork_id.is_none() || target_fork_id == active_fork_id {
         ccx.state.fork_block_number_override = ccx.active_fork_block_number();
         ccx.state.commit_created_account_changes(active_fork_id);
+        ccx.state.reset_account_writes();
     }
 }
 
@@ -550,6 +552,7 @@ fn transact<FEN: FoundryEvmNetwork>(
     fork_id: Option<U256>,
 ) -> Result {
     let context_update = executor.transact_on_db(ccx.state, ccx.ecx, fork_id, transaction)?;
+    ccx.state.reset_account_writes();
     #[cfg(not(feature = "monad"))]
     let _ = context_update;
     #[cfg(feature = "monad")]
@@ -628,6 +631,14 @@ fn refresh_active_fork_state<FEN: FoundryEvmNetwork>(
     let (db, journaled_state) = ccx.ecx.db_journal_inner_mut();
     if let Some(field) = account_field {
         db.refresh_fork_account(address, field, journaled_state)?;
+        if let Some(account) = journaled_state.state.get(&address) {
+            let write = match field {
+                ForkAccountField::Balance => AccountWrite::Balance(account.info.balance),
+                ForkAccountField::Nonce => AccountWrite::Nonce(account.info.nonce),
+                ForkAccountField::Code => return Ok(()),
+            };
+            ccx.state.record_account_write(address, write);
+        }
     } else {
         let Some(slot) =
             params.get(1).and_then(|v| v.as_str()).and_then(|s| s.parse::<U256>().ok())
