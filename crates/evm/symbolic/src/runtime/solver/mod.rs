@@ -205,18 +205,32 @@ impl SmtLibSubprocessSolver {
     pub(crate) fn check_available(&self) -> Result<(), SymbolicError> {
         let commands = self.commands()?;
         let mut errors = Vec::new();
+        // Availability must not strand a joined live worker before exploration can check its
+        // deadline. Share one budget across the portfolio and discard unneeded version output.
+        let seconds = self.timeout.filter(|seconds| *seconds > 0).unwrap_or(30);
+        let deadline = Instant::now() + Duration::from_secs(seconds.into());
         for command in commands {
-            let output = match Command::new(&command.program).arg("--version").output() {
-                Ok(output) => output,
+            let mut child = match Command::new(&command.program)
+                .arg("--version")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                Ok(child) => SolverChild::new(child),
                 Err(err) => {
                     errors.push(format!("failed to execute `{}`: {err}", command.program));
                     continue;
                 }
             };
-            if output.status.success() {
-                return Ok(());
+            match child.child_mut().wait_timeout(deadline.saturating_duration_since(Instant::now()))
+            {
+                Ok(Some(status)) if status.success() => return Ok(()),
+                Ok(Some(_)) => errors
+                    .push(format!("`{}` is not a usable SMT solver executable", command.program)),
+                Ok(None) => return Err(SymbolicError::Timeout(seconds)),
+                Err(err) => errors.push(format!("failed to wait for `{}`: {err}", command.program)),
             }
-            errors.push(format!("`{}` is not a usable SMT solver executable", command.program));
         }
         Err(SymbolicError::Solver(errors.join("; ")))
     }
