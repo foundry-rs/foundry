@@ -6071,7 +6071,7 @@ fn solve_live_invariant_frontier<FEN: FoundryEvmNetwork>(
     }
     // Each attempt yields within a short slice; the worker additionally enforces campaign-wide
     // time, query and job budgets. A zero timeout would disable the symbolic deadline.
-    if deadline.saturating_duration_since(Instant::now()).as_secs() == 0 {
+    if Instant::now() >= deadline {
         return outcome;
     }
     let mut config = config.clone();

@@ -1154,9 +1154,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &campaign_seed,
             corpus_seed,
         )?;
-        if live_solver.is_some() {
-            executor.inspector_mut().collect_evm_cmp_log(true);
-        }
+        let collect_corpus_cmp =
+            invariant_worker_collects_evm_cmp_log(&config, plan.worker_id, worker_count);
         let mut runs = 0;
         // Where the next view harvesting window starts; kept across runs so it keeps rotating.
         let mut view_cursor = 0;
@@ -1213,11 +1212,22 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 corpus_manager.fresh_sequence(&mut invariant_test.test_data.branch_runner)?
             };
             let initial_seq = sequence_plan.initial();
-            let mut frontier_run =
-                (frontier_limit > 0 || live_solver.is_some()).then(|| RecordedCallSequence {
-                    inputs: start.prefix.to_vec(),
-                    cmp_seq: vec![Vec::new(); start.prefix.len()],
-                });
+            let collect_live = live_solver.is_some_and(|solver| solver.lock().unwrap().is_active());
+            let mut frontier_calldata_bytes = if collect_live {
+                start.prefix.iter().map(|tx| tx.call_details.calldata.len()).sum::<usize>()
+            } else {
+                0
+            };
+            let mut frontier_run = (frontier_limit > 0
+                || (collect_live
+                    && LiveInvariantSolver::accepts_sequence(
+                        start.prefix.len(),
+                        frontier_calldata_bytes,
+                    )))
+            .then(|| RecordedCallSequence {
+                inputs: start.prefix.to_vec(),
+                cmp_seq: vec![Vec::new(); start.prefix.len()],
+            });
 
             // Create current invariant run data.
             let mut current_run = InvariantTestRun::new(
@@ -1226,6 +1236,14 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 start.executor,
                 run_depth as usize,
             );
+            // Snapshots can carry instrumentation from an earlier live run. Restore only the
+            // independently requested corpus logging once the assistant stops accepting work.
+            if live_solver.is_some() {
+                current_run
+                    .executor
+                    .inspector_mut()
+                    .collect_evm_cmp_log(collect_corpus_cmp || frontier_run.is_some());
+            }
 
             // We stop the run immediately if we have reverted, and `fail_on_revert` is set.
             if config.fail_on_revert && invariant_test.reverts() > 0 {
@@ -1315,15 +1333,28 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 return Ok(CampaignControl::Continue);
                             }
                             debug_assert_eq!(kind, CampaignCallKind::Accepted);
-                            if let Some(frontier_run) = &mut frontier_run {
-                                frontier_run.inputs.push(
+                            if let Some(history) = &mut frontier_run {
+                                let tx = current_run
+                                    .inputs
+                                    .last()
+                                    .expect("accepted call has a campaign input");
+                                frontier_calldata_bytes += tx.call_details.calldata.len();
+                                if frontier_limit > 0
+                                    || (LiveInvariantSolver::accepts_sequence(
+                                        history.inputs.len() + 1,
+                                        frontier_calldata_bytes,
+                                    ) && live_solver
+                                        .is_some_and(|solver| solver.lock().unwrap().is_active()))
+                                {
+                                    history.inputs.push(tx.clone());
+                                    history.cmp_seq.push(call_cmp_values.clone());
+                                } else {
+                                    frontier_run = None;
                                     current_run
-                                        .inputs
-                                        .last()
-                                        .expect("accepted call has a campaign input")
-                                        .clone(),
-                                );
-                                frontier_run.cmp_seq.push(call_cmp_values.clone());
+                                        .executor
+                                        .inspector_mut()
+                                        .collect_evm_cmp_log(collect_corpus_cmp);
+                                }
                             }
                             if config.corpus.is_coverage_guided() {
                                 let preserve_revert =

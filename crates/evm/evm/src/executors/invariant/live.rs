@@ -63,6 +63,7 @@ pub struct LiveInvariantSolver {
     observed: HashSet<(Address, usize, u8, bool)>,
     pending: VecDeque<FuzzBranchFrontier>,
     limit: usize,
+    deadline: Instant,
     stats: LiveInvariantStats,
 }
 
@@ -124,7 +125,7 @@ impl LiveInvariantSolver {
             stats
         })?;
         Ok(Self {
-            requests: Some(requests),
+            requests: (max_queries > 0 && config.frontier_limit > 0).then_some(requests),
             responses,
             stop,
             thread: Some(thread),
@@ -132,16 +133,17 @@ impl LiveInvariantSolver {
             observed: HashSet::default(),
             pending: VecDeque::new(),
             limit: config.frontier_limit,
+            deadline,
             stats: LiveInvariantStats::default(),
         })
     }
 
     pub(super) fn submit(&mut self, sequence: &RecordedCallSequence, depth: usize) {
-        if self.requests.is_none()
-            || self.stats.submitted >= self.limit
-            || sequence.inputs.len() > MAX_CALLS
-            || sequence.inputs.iter().map(|tx| tx.call_details.calldata.len()).sum::<usize>()
-                > MAX_CALLDATA_BYTES
+        if !self.is_active()
+            || !Self::accepts_sequence(
+                sequence.inputs.len(),
+                sequence.inputs.iter().map(|tx| tx.call_details.calldata.len()).sum(),
+            )
         {
             return;
         }
@@ -232,6 +234,20 @@ impl LiveInvariantSolver {
             }
         }
         self.stats.clone()
+    }
+
+    /// Whether recording more frontiers can still contribute work to this campaign.
+    pub(super) fn is_active(&self) -> bool {
+        self.requests.is_some()
+            && self.seen.len() < self.limit
+            && self.observed.len() < self.limit
+            && Instant::now() < self.deadline
+            && self.thread.as_ref().is_some_and(|thread| !thread.is_finished())
+    }
+
+    /// Applies the same input bounds during collection and before channel admission.
+    pub(super) const fn accepts_sequence(calls: usize, calldata_bytes: usize) -> bool {
+        calls <= MAX_CALLS && calldata_bytes <= MAX_CALLDATA_BYTES
     }
 }
 

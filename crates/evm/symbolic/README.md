@@ -833,14 +833,19 @@ symbolic safety. `--json` reports work in `symbolic_live` separately from
 verification results. `scheduled` counts candidate sequences handed to the
 campaign, not confirmed coverage gains or proofs.
 
-The worker retains up to 32 frontiers from sequences with new comparison
-outcomes, with one queued request and one queued response. Its campaign-wide
+The worker keeps a backlog of up to 32 frontiers from sequences with new comparison
+outcomes, with one queued request and one queued response in addition to active work.
+Admission is lossy: outcomes dropped when the backlog is full are not reconsidered
+unless a later sequence reaches a new comparison outcome. Its campaign-wide
 budgets are `symbolic.timeout` (30 seconds when unset; zero disables work),
 `symbolic.max_solver_queries`, and `symbolic.frontier_limit`. Each search has a
 one-second timeout; shutdown cancels concrete prefix replay and joins the
-worker. An active solver query may take its timeout to finish. At most 1024
-calls and 64 KiB of aggregate calldata are accepted per request, within
-`invariant.depth`. Short campaigns may finish before a solver response arrives.
+worker. An active search or solver availability probe may take its timeout to
+finish after admission stops. At most 1024 calls and 64 KiB of aggregate calldata
+are retained for live assistance per sequence, within `invariant.depth`. Live-only
+recording stops at these bounds or when the worker can no longer accept work;
+independently requested corpus and offline-frontier instrumentation is unaffected.
+Short campaigns may finish before a solver response arrives.
 
 The initial implementation assists ordinary invariant campaigns, excluding
 optimization and `call_override`. It uses setup-known targets and fixed

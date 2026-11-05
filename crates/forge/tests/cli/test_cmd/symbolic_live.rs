@@ -3,6 +3,13 @@ use crate::skip_unless_z3;
 use foundry_config::InvariantDepthMode;
 use foundry_test_utils::forgetest_init;
 
+#[cfg(unix)]
+use std::{
+    os::unix::fs::PermissionsExt,
+    process::Command,
+    time::{Duration, Instant},
+};
+
 // Two wide arithmetic gates keep this regression outside ordinary random input coverage.
 // The second gate is only visible after replaying a candidate for the first gate.
 const TWO_STEP: &str = r#"
@@ -172,4 +179,70 @@ fn symbolic_live_frontier_and_time_budgets(prj: _, cmd: _) {
             assert_eq!(stats["scheduled"], 0);
         }
     }
+}
+
+#[cfg(unix)]
+#[forgetest_init]
+fn symbolic_live_bounds_solver_version_probe(prj: _, cmd: _) {
+    let solver = prj.root().join("slow-version-solver");
+    std::fs::write(
+        &solver,
+        r#"#!/bin/sh
+echo $$ > "$0.pid"
+exec sleep 10
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&solver, std::fs::Permissions::from_mode(0o755)).unwrap();
+    prj.add_test("LiveTwoStep.t.sol", TWO_STEP);
+    prj.update_config(|config| {
+        config.invariant.runs = u32::MAX;
+        config.invariant.timeout = Some(2);
+        config.invariant.depth = 2;
+        config.symbolic.live = true;
+        config.symbolic.timeout = Some(2);
+        config.symbolic.frontier_limit = 1;
+        config.symbolic.solver_command = Some(solver.display().to_string());
+    });
+    // Keep compiler installation and compilation outside the shutdown measurement.
+    cmd.arg("build").assert_success();
+    let started = Instant::now();
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--json", "--threads", "1", "--fuzz-seed", "0x1234"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    assert!(started.elapsed() < Duration::from_secs(5), "worker shutdown exceeded its budget");
+    let result = json_test_result(&output, "invariant_a()");
+    assert_eq!(result["symbolic_live"]["completed"], 1);
+    assert_eq!(result["symbolic_live"]["scheduled"], 0);
+    let pid = std::fs::read_to_string(solver.with_extension("pid")).unwrap();
+    assert!(
+        !Command::new("kill").args(["-0", pid.trim()]).output().unwrap().status.success(),
+        "solver version probe survived campaign shutdown"
+    );
+}
+
+#[forgetest_init]
+fn symbolic_live_one_second_budget(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_live_one_second_budget");
+    prj.add_test("LiveTwoStep.t.sol", TWO_STEP);
+    prj.update_config(|config| {
+        config.invariant.runs = u32::MAX;
+        config.invariant.timeout = Some(3);
+        config.invariant.depth = 2;
+        config.invariant.dictionary.dictionary_weight = 0;
+        config.symbolic.live = true;
+        config.symbolic.timeout = Some(1);
+    });
+    let output = cmd
+        .args(["test", "--json", "--threads", "1", "--fuzz-seed", "0x1234"])
+        .assert()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_a()");
+    assert!(result["symbolic_live"]["solver_queries"].as_u64().unwrap() > 0, "{result}");
 }
