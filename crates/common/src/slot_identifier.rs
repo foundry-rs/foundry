@@ -1006,6 +1006,8 @@ impl SlotIdentifier {
         entries: impl IntoIterator<Item = (String, &'a Storage)>,
         slot_str: &str,
     ) -> Option<SlotInfo> {
+        let entries = entries.into_iter().collect::<Vec<_>>();
+        let entry_count = entries.len();
         let mut variables = entries
             .into_iter()
             .filter_map(|(label, storage)| {
@@ -1030,7 +1032,9 @@ impl SlotIdentifier {
                 })
             })
             .collect::<Vec<_>>();
-        if variables.len() <= 1 {
+        // A lone variable is decoded from the whole word, so it stands alone only if it doesn't
+        // share the slot with variables that can't be decoded.
+        if variables.is_empty() || entry_count == 1 {
             return variables.pop();
         }
 
@@ -1293,7 +1297,8 @@ mod tests {
                 { "astId": 2, "contract": "C", "label": "pools", "offset": 0, "slot": "1", "type": "t_mapping(t_uint256,t_struct(Pool))" },
                 { "astId": 3, "contract": "C", "label": "allowances", "offset": 0, "slot": "2", "type": "t_mapping(t_address,t_mapping(t_address,t_uint256))" },
                 { "astId": 11, "contract": "C", "label": "orders", "offset": 0, "slot": "3", "type": "t_mapping(t_uint256,t_struct(Order))" },
-                { "astId": 12, "contract": "C", "label": "queues", "offset": 0, "slot": "4", "type": "t_mapping(t_uint256,t_array(t_struct(Access))dyn_storage)" }
+                { "astId": 12, "contract": "C", "label": "queues", "offset": 0, "slot": "4", "type": "t_mapping(t_uint256,t_array(t_struct(Access))dyn_storage)" },
+                { "astId": 15, "contract": "C", "label": "pays", "offset": 0, "slot": "5", "type": "t_mapping(t_uint256,t_struct(Pay))" }
             ],
             "types": {
                 "t_mapping(t_uint64,t_struct(Role))": {
@@ -1358,6 +1363,22 @@ mod tests {
                     "encoding": "dynamic_array", "label": "struct C.Access[]", "numberOfBytes": "32",
                     "base": "t_struct(Access)"
                 },
+                "t_mapping(t_uint256,t_struct(Pay))": {
+                    "encoding": "mapping", "label": "mapping(uint256 => struct C.Pay)", "numberOfBytes": "32",
+                    "key": "t_uint256", "value": "t_struct(Pay)"
+                },
+                "t_struct(Pay)": {
+                    "encoding": "inplace", "label": "struct C.Pay", "numberOfBytes": "96",
+                    "members": [
+                        { "astId": 16, "contract": "C", "label": "currency", "offset": 0, "slot": "0", "type": "t_userDefinedValueType(Currency)" },
+                        { "astId": 17, "contract": "C", "label": "amount", "offset": 20, "slot": "0", "type": "t_uint96" },
+                        { "astId": 18, "contract": "C", "label": "deadline", "offset": 0, "slot": "1", "type": "t_uint256" },
+                        { "astId": 19, "contract": "C", "label": "fee", "offset": 0, "slot": "2", "type": "t_uint64" },
+                        { "astId": 20, "contract": "C", "label": "payee", "offset": 8, "slot": "2", "type": "t_userDefinedValueType(Currency)" }
+                    ]
+                },
+                "t_userDefinedValueType(Currency)": { "encoding": "inplace", "label": "Currency", "numberOfBytes": "20" },
+                "t_uint96": { "encoding": "inplace", "label": "uint96", "numberOfBytes": "12" },
                 "t_uint48": { "encoding": "inplace", "label": "uint48", "numberOfBytes": "6" },
                 "t_uint64": { "encoding": "inplace", "label": "uint64", "numberOfBytes": "8" },
                 "t_uint112": { "encoding": "inplace", "label": "uint112", "numberOfBytes": "14" },
@@ -1530,6 +1551,27 @@ mod tests {
             assert_eq!(info.keys, Some(vec![key.to_string()]));
             assert_eq!(info.slot_type.label, type_label);
             assert_eq!(info.slot_type.dyn_sol_type, DynSolType::Bytes);
+        }
+    }
+
+    /// `pays[1].amount` and `pays[1].fee` share their slots with a user-defined value type, which
+    /// can't be decoded, so each is decoded from its own bytes rather than the whole word.
+    #[test]
+    fn decodes_mapped_struct_fields_beside_undecodable_ones() {
+        let identifier = mapping_struct_layout();
+        let mut slots = MappingSlots::default();
+        let pay = entry(&mut slots, U256::from(1).into(), U256::from(5));
+
+        for (offset, word, label, value) in [
+            (0, U256::from(3) << 160 | U256::from(0xdead), "pays[1].amount", "3"),
+            (2, U256::from(0xbeef) << 64 | U256::from(4), "pays[1].fee", "4"),
+        ] {
+            let slot = B256::from(pay + U256::from(offset));
+            let mut info = identifier.identify(&slot, Some(&slots)).unwrap();
+            assert_eq!(info.label, label);
+            assert_eq!(info.keys, Some(vec!["1".to_string()]));
+            info.decode_values(B256::ZERO, B256::from(word));
+            assert_eq!(decoded(&info), [(label, "0".to_string(), value.to_string())]);
         }
     }
 }
