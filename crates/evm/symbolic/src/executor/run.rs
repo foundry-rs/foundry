@@ -166,7 +166,7 @@ impl SymbolicExecutor {
         input: SymbolicRunInput<'_>,
         mut branch_candidates: Option<&mut Vec<SymbolicConcreteInput>>,
     ) -> SymbolicRunResult {
-        self.reset_run_state(false);
+        self.reset_run_state(branch_candidates.is_some());
         self.solver.clear_context_caches();
         self.cx = SymCx::new();
         if let Err(err) = self.solver.check_available() {

@@ -818,6 +818,38 @@ and symbolic storage keys. Supported behavior includes:
 Unsupported symbolic constructs return an incomplete result with a `Stuck`
 reason instead of silently proving the property.
 
+## Live invariant assistance
+
+`forge test --symbolic-live` (or `[profile.default.symbolic] live = true`) adds
+one solver thread to each concrete invariant campaign. It consumes branch
+comparisons from the first fuzz worker, replays their concrete prefixes, and
+tries to flip the target comparison. Returned sequences execute unmutated from
+setup through the normal campaign: predicate intervals, handler failures,
+shrinking, corpus persistence, and merged suites keep their usual behavior.
+A successful candidate can expose another frontier in the same campaign.
+
+This is opt-in assistance, independent of `--symbolic`, and does not establish
+symbolic safety. `--json` reports work in `symbolic_live` separately from
+verification results. `scheduled` counts candidate sequences handed to the
+campaign, not confirmed coverage gains or proofs.
+
+The worker retains up to 32 frontiers from sequences with new comparison
+outcomes, with one queued request and one queued response. Its campaign-wide
+budgets are `symbolic.timeout` (30 seconds when unset; zero disables work),
+`symbolic.max_solver_queries`, and `symbolic.frontier_limit`. Each search has a
+one-second timeout; shutdown cancels concrete prefix replay and joins the
+worker. An active solver query may take its timeout to finish. At most 1024
+calls and 64 KiB of aggregate calldata are accepted per request, within
+`invariant.depth`. Short campaigns may finish before a solver response arrives.
+
+The initial implementation assists ordinary invariant campaigns, excluding
+optimization and `call_override`. It uses setup-known targets and fixed
+senders; it does not symbolize transaction value, sender, warp, or roll. Calls
+with nonzero value or a delay are not solved. Unsupported symbolic operations
+produce no candidate, and concrete fuzzing continues when the worker exhausts
+its budget. Imported-frontier selectors and IDs apply only to the offline
+frontier workflow.
+
 ## Known limitations
 
 Unsupported constructs report `Incomplete` rather than a proof. Some supported

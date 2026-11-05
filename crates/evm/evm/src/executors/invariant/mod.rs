@@ -93,6 +93,9 @@ pub use shrink::{
 
 mod snapshot;
 
+mod live;
+pub use live::{LiveInvariantSolution, LiveInvariantSolver, LiveInvariantStats};
+
 /// Minimum number of logical runs assigned to each auto invariant worker at the default invariant
 /// depth.
 ///
@@ -834,6 +837,7 @@ pub struct InvariantExecutor<'a, FEN: FoundryEvmNetwork> {
     artifact_filters: ArtifactFilters,
     /// Number of matching invariant campaign anchors in the current test pass.
     invariant_campaign_anchors: usize,
+    live_solver: Option<LiveInvariantSolver>,
 }
 
 impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
@@ -857,7 +861,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             project_contracts,
             artifact_filters: ArtifactFilters::default(),
             invariant_campaign_anchors,
+            live_solver: None,
         }
+    }
+
+    /// Attaches one bounded solver worker to this campaign.
+    pub fn set_live_solver(&mut self, solver: LiveInvariantSolver) {
+        self.live_solver = Some(solver);
     }
 
     pub fn config(&self) -> InvariantConfig {
@@ -951,8 +961,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let project_contracts = self.project_contracts;
         let base_executor = self.executor.clone();
         let focus_seed = invariant_focus_seed(&mut runner, self.fuzz_seed, actual_worker_count);
-        let campaign_state =
-            Arc::new(InvariantCampaignState::new(early_exit.clone(), self.config.timeout));
+        let mut campaign_state =
+            InvariantCampaignState::new(early_exit.clone(), self.config.timeout);
+        campaign_state.live_solver = self.live_solver.take().map(std::sync::Mutex::new);
+        let campaign_state = Arc::new(campaign_state);
 
         let frontier_test = self
             .config
@@ -1085,6 +1097,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             aggregator.finish_campaign()?
         };
         result.interrupted = campaign_state.interrupted(result.runs, self.config.runs);
+        result.symbolic_live =
+            campaign_state.live_solver.as_ref().map(|solver| solver.lock().unwrap().finish());
         persist_campaign_optimization(
             &self.config.corpus,
             result.optimization_best_value,
@@ -1123,6 +1137,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         } else {
             0
         };
+        let live_solver =
+            (plan.worker_id == 0).then_some(campaign_state.live_solver.as_ref()).flatten();
         let mut frontier_recorder = FuzzFrontierRecorder::new(frontier_limit);
         executor.inspector_mut().set_execution_cancellation(campaign_state.cancellation().clone());
 
@@ -1138,6 +1154,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &campaign_seed,
             corpus_seed,
         )?;
+        if live_solver.is_some() {
+            executor.inspector_mut().collect_evm_cmp_log(true);
+        }
         let mut runs = 0;
         // Where the next view harvesting window starts; kept across runs so it keeps rotating.
         let mut view_cursor = 0;
@@ -1168,24 +1187,37 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 optimization: invariant_contract.is_optimization(),
             });
 
-            let run_depth =
+            let mut run_depth =
                 invariant_run_depth(&config, &mut invariant_test.test_data.branch_runner);
 
             let mut corpus_run = Option::<RecordedCallSequence>::None;
             // Before each run, we must reset the backend state: to the post-setUp state or to a
             // snapshot reached by an earlier run.
-            let start = snapshots.start(&mut invariant_test.test_data.branch_runner, &executor);
+            let candidate = live_solver
+                .and_then(|solver| solver.lock().unwrap().next(config.depth.max(1) as usize));
+            if let Some(candidate) = &candidate {
+                run_depth = run_depth.max(candidate.len() as u32);
+            }
+            let start = if candidate.is_some() {
+                snapshots.start_from_setup(&executor)
+            } else {
+                snapshots.start(&mut invariant_test.test_data.branch_runner, &executor)
+            };
             // Corpus entries replay from the post-setUp state, so a resumed run makes fresh calls.
-            let sequence_plan = if start.prefix.is_empty() {
+            let sequence_plan = if let Some(candidate) = candidate {
+                corpus_manager
+                    .replay_sequence(candidate, &mut invariant_test.test_data.branch_runner)?
+            } else if start.prefix.is_empty() {
                 corpus_manager.new_sequence(&mut invariant_test.test_data.branch_runner)?
             } else {
                 corpus_manager.fresh_sequence(&mut invariant_test.test_data.branch_runner)?
             };
             let initial_seq = sequence_plan.initial();
-            let mut frontier_run = (frontier_limit > 0).then(|| RecordedCallSequence {
-                inputs: start.prefix.to_vec(),
-                cmp_seq: vec![Vec::new(); start.prefix.len()],
-            });
+            let mut frontier_run =
+                (frontier_limit > 0 || live_solver.is_some()).then(|| RecordedCallSequence {
+                    inputs: start.prefix.to_vec(),
+                    cmp_seq: vec![Vec::new(); start.prefix.len()],
+                });
 
             // Create current invariant run data.
             let mut current_run = InvariantTestRun::new(
@@ -1565,6 +1597,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 let len = frontier_run.cmp_seq.len().min(config.depth.max(1) as usize);
                 frontier_recorder
                     .capture_sequence(&frontier_run.inputs, &frontier_run.cmp_seq[..len]);
+                if let Some(solver) = live_solver {
+                    solver.lock().unwrap().submit(frontier_run, config.depth as usize);
+                }
             }
             let optimization = current_run.optimization_value.map(|v| {
                 let prefix = current_run.inputs[..current_run.optimization_prefix_len].to_vec();
@@ -2498,10 +2533,7 @@ pub fn execute_tx_and_register_created<FEN: FoundryEvmNetwork>(
     dynamic_target_ctx: &DynamicTargetCtx<'_>,
     created_contracts: &mut Vec<Address>,
 ) -> Result<()> {
-    let (kind, call_result) = super::campaign::execute_invariant_replay_tx(executor, tx)?;
-    if kind == CampaignCallKind::AssumptionRejected {
-        return Err(eyre!("invariant replay prefix rejected by vm.assume"));
-    }
+    let call_result = execute_and_commit_tx(executor, tx)?;
     targeted_contracts.collect_created_contracts(
         &call_result.state_changeset,
         dynamic_target_ctx.project_contracts,
@@ -2510,6 +2542,18 @@ pub fn execute_tx_and_register_created<FEN: FoundryEvmNetwork>(
         created_contracts,
     )?;
     Ok(())
+}
+
+/// Executes and commits an invariant prefix call with campaign acceptance semantics.
+pub fn execute_and_commit_tx<FEN: FoundryEvmNetwork>(
+    executor: &mut Executor<FEN>,
+    tx: &BasicTxDetails,
+) -> Result<RawCallResult<FEN>> {
+    let (kind, result) = super::campaign::execute_invariant_replay_tx(executor, tx)?;
+    if kind == CampaignCallKind::AssumptionRejected {
+        return Err(eyre!("invariant replay prefix rejected by vm.assume"));
+    }
+    Ok(result)
 }
 
 #[cfg(test)]
