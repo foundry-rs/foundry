@@ -5564,11 +5564,18 @@ contract FuzzNumbersTest is Test {
             xy = x * y;
         }
 
-        if ((x != 0 && xy / x != y)) {
+        // Skip overflowing products without panicking on `type(int256).min / -1`.
+        if (x != 0 && (x == -1 ? y == type(int256).min : xy / x != y)) {
             return;
         }
 
-        assertEq(((xy - 1) / 1e18) + 1, (xy - 1) / (1e18 + 1));
+        int256 lhs;
+        int256 rhs;
+        unchecked {
+            lhs = ((xy - 1) / 1e18) + 1;
+            rhs = (xy - 1) / (1e18 + 1);
+        }
+        assertEq(lhs, rhs);
     }
 }
    "#,
