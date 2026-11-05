@@ -28,9 +28,7 @@ pub(crate) fn db_with(accounts: &[(Address, u128)], slot: u64) -> InMemoryDB {
         db.insert_account_info(address, AccountInfo::default().with_balance(U256::from(*balance)));
     }
     for (address, code) in [(STORE_ADDRESS, STORE), (REVERT_ADDRESS, STORE_THEN_REVERT)] {
-        let mut info =
-            AccountInfo::default().with_code(Bytecode::new_legacy(Bytes::from_static(code)));
-        db.insert_contract(&mut info);
+        let info = AccountInfo::default().with_code(Bytecode::new_legacy(Bytes::from_static(code)));
         db.insert_account_info(&address, info);
     }
     db.insert_account_storage(&STORE_ADDRESS, &U256::ZERO, &U256::from(slot));
@@ -270,8 +268,7 @@ fn spec_changes_keep_foundry_policy() {
     env.version.memory_limit = 1 << 20;
     let delegated = Address::with_last_byte(0xD7);
     let mut db = db_with(&[(caller, ETHER)], 0);
-    let mut info = AccountInfo::default().with_code(Bytecode::new_eip7702(STORE_ADDRESS));
-    db.insert_contract(&mut info);
+    let info = AccountInfo::default().with_code(Bytecode::new_eip7702(STORE_ADDRESS));
     db.insert_account_info(&delegated, info);
     let mut evm = FoundryEvmFactory::create_evm(&factory, db, env);
 

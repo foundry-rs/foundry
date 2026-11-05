@@ -83,9 +83,7 @@ fn nested_tempo_execution_preserves_halt_reason() {
     for (opcode, expected) in [(0x0c, InstrStop::OpcodeNotFound), (0x50, InstrStop::StackUnderflow)]
     {
         let mut db = InMemoryDB::default();
-        let mut info =
-            AccountInfo::default().with_code(Bytecode::new_raw(Bytes::from(vec![opcode])));
-        db.insert_contract(&mut info);
+        let info = AccountInfo::default().with_code(Bytecode::new_raw(Bytes::from(vec![opcode])));
         db.insert_account_info(&target, info);
         let mut lifecycle =
             ExecutionLifecycle::new(TempoEvmFactory::default(), db, tempo_env(TempoHardfork::T11));

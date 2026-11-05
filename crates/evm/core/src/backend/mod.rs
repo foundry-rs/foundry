@@ -53,7 +53,7 @@ use evm2::{
     EvmFeatures, Inspector,
     bytecode::Bytecode,
     evm::{
-        AccountInfo, Cache, CacheDB, DbResult, DynDatabase, EmptyDB, PendingState, State,
+        AccountInfo, Cache, DbResult, DynDatabase, EmptyDB, InMemoryDB, PendingState, State,
         StateSnapshot,
         bal::{Bal, BlockAccessIndex},
     },
@@ -526,9 +526,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     ///
     /// Use this between executions only; a running EVM does not observe it.
     pub fn commit_pending(&mut self, pending: &PendingState) {
-        let cache = mem::take(self.lifecycle.accepted_mut());
-        let mut db = CacheDB::new(EmptyDB::default());
-        db.cache = cache;
+        let mut db =
+            InMemoryDB { cache: mem::take(self.lifecycle.accepted_mut()), ..Default::default() };
         db.commit_pending(pending);
         *self.lifecycle.accepted_mut() = db.cache;
     }

@@ -1,4 +1,4 @@
-//! Tempo on evm2, using Tempo's own evm2 integration (tempoxyz/tempo#7871).
+//! Tempo execution integration.
 
 use super::{
     EvmEnv, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork, FoundryTxResultExt, SendableExt,
