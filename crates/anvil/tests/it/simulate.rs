@@ -35,6 +35,7 @@ use anvil::{
     spawn,
 };
 use axum::{Json, Router, routing::post};
+use evm2::evm::{BUILDER_DEPOSIT_REQUEST_ADDRESS, BUILDER_EXIT_REQUEST_ADDRESS};
 use foundry_test_utils::rpc;
 use serde_json::{Value, json};
 use std::{
@@ -85,8 +86,8 @@ async fn test_simulate_block_access_list_hash_rpc() {
         BEACON_ROOTS_ADDRESS,
         WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
         CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
-        BUILDER_DEPOSIT_REQUEST_PREDEPLOY_ADDRESS,
-        BUILDER_EXIT_REQUEST_PREDEPLOY_ADDRESS,
+        BUILDER_DEPOSIT_REQUEST_ADDRESS,
+        BUILDER_EXIT_REQUEST_ADDRESS,
     ];
     let mut overrides = serde_json::Map::new();
     for address in system_contracts {
@@ -455,14 +456,6 @@ async fn test_simulate_v1_validates_precompile_moves_rpc() {
     .await;
     assert_eq!(response["error"]["code"], -32000, "{response}");
 }
-
-/// The address of the EIP-8282 builder deposit requests predeploy.
-const BUILDER_DEPOSIT_REQUEST_PREDEPLOY_ADDRESS: Address =
-    address!("0x0000BFF46984E3725691FA540A8C7589300D8282");
-
-/// The address of the EIP-8282 builder exit requests predeploy.
-const BUILDER_EXIT_REQUEST_PREDEPLOY_ADDRESS: Address =
-    address!("0x000064D678505AD48F8CCB093BC65613800E8282");
 
 fn dyn_precompile(
     f: impl Fn(PrecompileInput<'_>, &mut GasTracker) -> PrecompileResult + Send + Sync + 'static,

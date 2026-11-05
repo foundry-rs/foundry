@@ -846,9 +846,7 @@ fn cheat_ecrecover(
     if let Err(err) = gas.spend(ECRECOVER_BASE) {
         return Some(Err(err.into()));
     }
-    let mut out = [0u8; 32];
-    out[12..].copy_from_slice(address.as_slice());
-    Some(Ok(PrecompileOutput::new(out.into())))
+    Some(Ok(PrecompileOutput::new(address.into_word().into())))
 }
 
 fn execute_extra<T: evm2::EvmTypes>(
