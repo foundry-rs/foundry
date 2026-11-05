@@ -11,8 +11,8 @@ use crate::{
         backend::{
             cheats::{CheatEcrecover, CheatsManager, NextBlockOverrides},
             db::{
-                AnvilCacheDB, BLOCKHASH_HISTORY, Db, EmptyAsAbsentDb, MaybeFullDatabase,
-                SerializableState, StateDb, StateRef,
+                AnvilCacheDB, BLOCKHASH_HISTORY, Db, EmptyAsAbsentDb, ExecutionDb,
+                MaybeFullDatabase, SerializableState, StateDb, StateRef,
             },
             executor::{
                 AnvilBlockExecutor, BlockExecutionKind, EthereumBlockTransitions,
@@ -163,7 +163,7 @@ use revm::{
         transaction::TransactionType,
     },
     database::{
-        AccountState, CacheDB, DbAccount, WrapDatabaseRef,
+        AccountState, CacheDB, DbAccount,
         bal::{BalDatabase, BalState},
     },
     handler::{
@@ -2901,7 +2901,7 @@ impl<N: Network> Backend<N> {
         tx_env: TxEnv,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
-        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db dyn DatabaseRef>>>,
+        I: Inspector<EthEvmContext<ExecutionDb<&'db dyn DatabaseRef>>>,
     {
         self.transact_eth_with_inspector_ref_and_precompile_overrides(
             db,
@@ -2921,7 +2921,7 @@ impl<N: Network> Backend<N> {
         overrides: &SimulationPrecompileOverrides,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
-        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db dyn DatabaseRef>>>,
+        I: Inspector<EthEvmContext<ExecutionDb<&'db dyn DatabaseRef>>>,
     {
         let mut evm = self.prepare_eth_evm(db, evm_env, inspector, overrides)?;
         Ok(evm.transact(tx_env)?)
@@ -2936,7 +2936,7 @@ impl<N: Network> Backend<N> {
         overrides: &SimulationPrecompileOverrides,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
-        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db dyn DatabaseRef>>>,
+        I: Inspector<EthEvmContext<ExecutionDb<&'db dyn DatabaseRef>>>,
     {
         let evm = self.prepare_eth_evm(db, evm_env, inspector, overrides)?;
         let mut evm = evm.into_inner();
@@ -2959,14 +2959,14 @@ impl<N: Network> Backend<N> {
         inspector: &'inspector mut I,
         overrides: &SimulationPrecompileOverrides,
     ) -> Result<
-        EthEvm<WrapDatabaseRef<&'db dyn DatabaseRef>, &'inspector mut I, PrecompilesMap>,
+        EthEvm<ExecutionDb<&'db dyn DatabaseRef>, &'inspector mut I, PrecompilesMap>,
         BlockchainError,
     >
     where
-        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db dyn DatabaseRef>>>,
+        I: Inspector<EthEvmContext<ExecutionDb<&'db dyn DatabaseRef>>>,
     {
         let mut evm = EthEvmFactory::default().create_evm_with_inspector(
-            WrapDatabaseRef(db),
+            ExecutionDb(db, *evm_env.spec_id()),
             evm_env.clone(),
             inspector,
         );
@@ -2994,7 +2994,7 @@ impl<N: Network> Backend<N> {
         >,
     ) -> Result<(ResultAndState<HaltReason>, TxEnv), BlockchainError>
     where
-        I: BackendInspector<WrapDatabaseRef<&'db dyn DatabaseRef>>,
+        I: BackendInspector<ExecutionDb<&'db dyn DatabaseRef>>,
     {
         self.transact_envelope_with_inspector_ref_and_context_kind(
             db,
@@ -3015,7 +3015,7 @@ impl<N: Network> Backend<N> {
         execution: EnvelopeExecution<'_>,
     ) -> Result<(ResultAndState<HaltReason>, TxEnv), BlockchainError>
     where
-        I: BackendInspector<WrapDatabaseRef<&'db dyn DatabaseRef>>,
+        I: BackendInspector<ExecutionDb<&'db dyn DatabaseRef>>,
     {
         self.transact_envelope_with_inspector_ref_and_context_kind(
             db, evm_env, inspector, pending, execution,
@@ -3033,7 +3033,7 @@ impl<N: Network> Backend<N> {
         >,
     ) -> Result<(ResultAndState<HaltReason>, TxEnv), BlockchainError>
     where
-        I: BackendInspector<WrapDatabaseRef<&'db dyn DatabaseRef>>,
+        I: BackendInspector<ExecutionDb<&'db dyn DatabaseRef>>,
     {
         #[cfg(any(feature = "base", feature = "optimism"))]
         let (tx, sender) = (pending.transaction.as_ref(), *pending.sender());
@@ -3110,11 +3110,11 @@ impl<N: Network> Backend<N> {
         tx_env: TempoTxEnv,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
-        I: Inspector<TempoContext<WrapDatabaseRef<&'db dyn DatabaseRef>>>,
+        I: Inspector<TempoContext<ExecutionDb<&'db dyn DatabaseRef>>>,
     {
         let tempo_env = Self::build_tempo_evm_env(evm_env, self.tempo_hardfork());
         let mut evm = TempoEvmFactory::default().create_evm_with_inspector(
-            WrapDatabaseRef(db),
+            ExecutionDb(db, *evm_env.spec_id()),
             tempo_env,
             inspector,
         );
@@ -3816,7 +3816,7 @@ impl<N: Network> Backend<N> {
         >,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
-        I: BackendInspector<WrapDatabaseRef<&'db dyn DatabaseRef>>,
+        I: BackendInspector<ExecutionDb<&'db dyn DatabaseRef>>,
     {
         self.transact_call_with_inspector_ref_at_hardfork(
             db,
@@ -3840,7 +3840,7 @@ impl<N: Network> Backend<N> {
         #[cfg_attr(not(feature = "monad"), allow(unused_variables))] hardfork: FoundryHardfork,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
-        I: BackendInspector<WrapDatabaseRef<&'db dyn DatabaseRef>>,
+        I: BackendInspector<ExecutionDb<&'db dyn DatabaseRef>>,
     {
         match tx_env {
             CallTxEnv::Eth(tx_env) => {
@@ -4507,7 +4507,7 @@ impl<N: Network> Backend<N> {
         f: F,
     ) -> Result<T, BlockchainError>
     where
-        for<'a> I: BackendInspector<WrapDatabaseRef<&'a dyn DatabaseRef>> + 'a,
+        for<'a> I: BackendInspector<ExecutionDb<&'a dyn DatabaseRef>> + 'a,
         for<'a> F: FnOnce(ResultAndState<HaltReason>, CacheDB<StateRef<'a>>, I, TxEnv, EvmEnv) -> T,
     {
         let block = {
@@ -10250,7 +10250,7 @@ where
             let cache_db = CacheDB::new(&*state);
             let mut inspector = self.build_inspector();
             let mut evm = TempoEvmFactory::default().create_evm_with_inspector(
-                WrapDatabaseRef(&cache_db as &dyn DatabaseRef),
+                ExecutionDb(&cache_db as &dyn DatabaseRef, *evm_env.spec_id()),
                 Self::build_tempo_evm_env(&evm_env, self.tempo_hardfork()),
                 &mut inspector,
             );

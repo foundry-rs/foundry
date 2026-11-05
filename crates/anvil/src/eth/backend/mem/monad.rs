@@ -6,7 +6,7 @@ use super::{
 };
 use crate::eth::{
     backend::{
-        db::MonadBlockReplayProfile,
+        db::{ExecutionDb, MonadBlockReplayProfile},
         executor::{
             AnvilBlockExecutor, AnvilTxResult, ExecutedPoolTransactions, PoolTxGasConfig,
             build_tx_env_for_pending, execute_pool_transactions,
@@ -60,7 +60,6 @@ use revm::{
         result::{HaltReason, InvalidTransaction, ResultAndState},
         transaction::AuthorizationTr,
     },
-    database_interface::WrapDatabaseRef,
     primitives::hardfork::SpecId,
     state::AccountInfo,
 };
@@ -911,11 +910,15 @@ impl<N: Network> Backend<N> {
         execution: PreparedExecution,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
-        I: Inspector<MonadContext<WrapDatabaseRef<&'db dyn DatabaseRef>>>,
+        I: Inspector<MonadContext<ExecutionDb<&'db dyn DatabaseRef>>>,
     {
         let monad_env = Self::build_monad_evm_env(evm_env, execution.hardfork);
         let factory = MonadEvmFactory::default();
-        let mut evm = factory.create_evm_with_inspector(WrapDatabaseRef(db), monad_env, inspector);
+        let mut evm = factory.create_evm_with_inspector(
+            ExecutionDb(db, *evm_env.spec_id()),
+            monad_env,
+            inspector,
+        );
         evm.ctx_mut().chain = execution.context;
         self.inject_configured_precompiles(evm.precompiles_mut(), evm_env);
         match execution.kind {
