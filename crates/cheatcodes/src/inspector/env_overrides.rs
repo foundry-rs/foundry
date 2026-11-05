@@ -104,6 +104,9 @@ impl EnvOverrides {
 #[derive(Clone, Debug, Default)]
 pub struct EnvOverrideState {
     by_fork: EnvOverridesByFork,
+    /// Whether any fork has an override set. The step hooks read this on every opcode, so it is
+    /// kept in sync by every mutation of `by_fork` instead of scanning the map.
+    any_set: bool,
     snapshots: HashMap<U256, EnvOverridesByFork>,
 }
 
@@ -116,8 +119,8 @@ impl EnvOverrideState {
 
     /// Returns whether any fork, not only the active one, has an override set.
     #[inline]
-    pub fn is_any_set(&self) -> bool {
-        self.by_fork.values().any(EnvOverrides::is_any_set)
+    pub const fn is_any_set(&self) -> bool {
+        self.any_set
     }
 
     /// Returns the overrides entry for `fork_id`, even if no override is set.
@@ -139,12 +142,14 @@ impl EnvOverrideState {
         f: impl FnOnce(&mut EnvOverrides),
     ) {
         f(self.by_fork.entry(fork_id).or_default());
+        self.refresh_any_set();
     }
 
     /// Clears the base fee restored for isolation on `fork_id`, without inserting an entry.
     pub(crate) fn clear_implicit_basefee(&mut self, fork_id: Option<LocalForkId>) {
         if let Some(overrides) = self.by_fork.get_mut(&fork_id) {
             overrides.implicit_basefee = None;
+            self.refresh_any_set();
         }
     }
 
@@ -187,6 +192,7 @@ impl EnvOverrideState {
         };
         if let Some(snapshot) = snapshot {
             self.by_fork = snapshot;
+            self.refresh_any_set();
         }
     }
 
@@ -198,6 +204,10 @@ impl EnvOverrideState {
     /// Deletes all saved copies.
     pub(crate) fn clear_snapshots(&mut self) {
         self.snapshots.clear();
+    }
+
+    fn refresh_any_set(&mut self) {
+        self.any_set = self.by_fork.values().any(EnvOverrides::is_any_set);
     }
 }
 
