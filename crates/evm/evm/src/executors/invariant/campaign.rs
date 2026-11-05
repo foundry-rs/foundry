@@ -1,6 +1,6 @@
 use super::{
     FailureKey, InvariantFailureMetrics, InvariantFailures, InvariantFuzzError,
-    InvariantFuzzTestResult, InvariantMetrics,
+    InvariantFuzzTestResult, InvariantMetrics, LiveInvariantSolver,
 };
 use crate::executors::{EarlyExit, EvmExecutionCancellation};
 use alloy_primitives::{Address, I256, Selector};
@@ -81,6 +81,7 @@ pub struct InvariantCampaignState {
     cancellation: EvmExecutionCancellation,
     last_metrics_report: Mutex<Instant>,
     failure_metrics: Mutex<CampaignFailureMetrics>,
+    pub(super) live_solver: Option<Mutex<LiveInvariantSolver>>,
 }
 
 #[derive(Default)]
@@ -108,6 +109,7 @@ impl InvariantCampaignState {
             ),
             last_metrics_report: Mutex::new(started_at),
             failure_metrics: Mutex::new(CampaignFailureMetrics::default()),
+            live_solver: None,
         }
     }
 

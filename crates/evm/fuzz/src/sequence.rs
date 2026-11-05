@@ -102,6 +102,19 @@ impl SequencePlan {
     pub const fn source(&self) -> Option<usize> {
         self.source
     }
+
+    /// Replays an unmutated candidate before generating any continuation.
+    pub fn replay(mut self, transactions: Vec<BasicTxDetails>) -> Result<Self> {
+        if transactions.is_empty() {
+            return Err(eyre!("replay sequence has no transactions"));
+        }
+        self.initial = InitialSequence::Multiple(transactions);
+        self.fresh_weight = 0;
+        self.has_corpus_dir = true;
+        self.source = None;
+        Ok(self)
+    }
+
     pub fn next(
         &self,
         runner: &mut TestRunner,

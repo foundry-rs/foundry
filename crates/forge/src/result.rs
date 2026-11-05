@@ -17,7 +17,9 @@ use foundry_evm::{
     decode::SkipReason,
     executors::{
         RawCallResult,
-        invariant::{CheckSequenceFailureSite, CheckSequenceOutcome, InvariantMetrics},
+        invariant::{
+            CheckSequenceFailureSite, CheckSequenceOutcome, InvariantMetrics, LiveInvariantStats,
+        },
     },
     fuzz::{
         CallDetails, CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult,
@@ -1310,6 +1312,10 @@ pub struct TestResult {
     /// Stable symbolic result object for `forge test --symbolic --json`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symbolic: Option<SymbolicResult>,
+
+    /// Work performed by the live symbolic assistant; does not represent a proof result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbolic_live: Option<LiveInvariantStats>,
 
     /// Traces
     pub traces: Traces,

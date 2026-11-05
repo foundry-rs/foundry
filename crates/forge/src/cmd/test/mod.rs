@@ -857,7 +857,11 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_SYMBOLIC_CHECK_INVARIANT_FRONTIERS")]
     pub symbolic_check_invariant_frontiers: bool,
 
-    /// Maximum number of fuzz branch frontiers to try for one symbolic test.
+    /// Assist invariant campaigns with one bounded live symbolic worker.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_LIVE")]
+    pub symbolic_live: bool,
+
+    /// Maximum number of imported or live branch frontiers to try per test.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_FRONTIER_LIMIT", value_name = "COUNT")]
     pub symbolic_frontier_limit: Option<usize>,
 
@@ -3156,6 +3160,7 @@ impl Provider for TestArgs {
             "use_fuzz_corpus" => self.symbolic_use_fuzz_corpus.then_some(true),
             "corpus_seed_limit" => self.symbolic_corpus_seed_limit,
             "use_fuzz_frontiers" => self.symbolic_use_fuzz_frontiers.then_some(true),
+            "live" => self.symbolic_live.then_some(true),
             "check_invariant_frontiers" =>
                 self.symbolic_check_invariant_frontiers.then_some(true),
             "frontier_limit" => self.symbolic_frontier_limit,
