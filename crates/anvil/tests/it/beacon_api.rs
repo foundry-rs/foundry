@@ -200,20 +200,21 @@ async fn test_beacon_api_get_blobs() {
 
     // Test filtering with versioned_hashes query parameter - multiple versioned_hashes
     // (repeated keys, as sent by beacon clients such as op-node).
+    // Request in reverse order to verify that the response retains block order.
     let url = format!(
         "{}/eth/v1/beacon/blobs/{}?versioned_hashes={}&versioned_hashes={}",
         handle.http_endpoint(),
         block_number,
-        actual_versioned_hashes[0],
-        actual_versioned_hashes[1]
+        actual_versioned_hashes[1],
+        actual_versioned_hashes[0]
     );
     let response = client.get(&url).send().await.unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     let blobs_response: GetBlobsResponse = response.json().await.unwrap();
     assert_eq!(
-        blobs_response.data.len(),
-        2,
-        "Expected 2 blobs when filtering by two repeated versioned_hashes keys"
+        blobs_response.data,
+        decoded_blobs[..2],
+        "Expected the requested blobs in block order when filtering by repeated versioned_hashes keys"
     );
 
     // Test filtering with non-existent versioned_hash
