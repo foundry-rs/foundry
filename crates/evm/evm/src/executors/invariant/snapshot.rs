@@ -175,11 +175,7 @@ impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
         self.run_found = false;
         self.current = self.pick(runner);
         match self.current {
-            Start::Setup => {
-                self.setup.picks += 1;
-                self.cardinality.clone_from(&self.setup_cardinality);
-                RunStart { executor: setup.clone(), prefix: Arc::from([]) }
-            }
+            Start::Setup => self.start_from_setup(setup),
             Start::Snapshot(index) => {
                 let snapshot = &mut self.snapshots[index];
                 snapshot.energy.picks += 1;
@@ -210,6 +206,15 @@ impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
             point -= weight;
         }
         Start::Snapshot(self.snapshots.len() - 1)
+    }
+
+    /// Starts a candidate replay from setup without crediting the previous run's snapshot.
+    pub(super) fn start_from_setup(&mut self, setup: &Executor<FEN>) -> RunStart<FEN> {
+        self.run_found = false;
+        self.current = Start::Setup;
+        self.setup.picks += 1;
+        self.cardinality.clone_from(&self.setup_cardinality);
+        RunStart { executor: setup.clone(), prefix: Arc::from([]) }
     }
 
     fn feature(&self, parts: impl std::hash::Hash) -> u64 {

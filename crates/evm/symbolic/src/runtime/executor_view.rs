@@ -63,6 +63,7 @@ pub(crate) struct ExecutorBlock {
     pub(crate) gas_limit: U256,
     pub(crate) basefee: U256,
     pub(crate) blob_basefee: U256,
+    pub(crate) slot_num: U256,
 }
 
 impl<'a> ExecutorView<'a> {
@@ -110,6 +111,7 @@ impl<'a> ExecutorView<'a> {
                     .and_then(|overrides| overrides.basefee_override())
                     .map_or(block.basefee, U256::from),
                 blob_basefee: block.blob_basefee,
+                slot_num: block.slot_num,
             },
             gas_price: overrides
                 .and_then(|overrides| overrides.gas_price_override())

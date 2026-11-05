@@ -135,8 +135,9 @@ struct StatefulFuzzSequence {
     len: usize,
 }
 
-#[derive(Debug, Serialize)]
-pub(in crate::executors) struct FuzzBranchFrontier {
+/// A concrete sequence and the comparison reached by one of its calls.
+#[derive(Clone, Debug, Serialize)]
+pub struct FuzzBranchFrontier {
     /// Unique record identifier.
     id: u64,
     /// Reproducible fuzz seed, if configured.
@@ -209,11 +210,17 @@ pub(in crate::executors) struct FuzzFrontierRecorder {
     limit: usize,
     frontiers: Vec<FuzzBranchFrontier>,
     indexes: HashMap<FuzzBranchFrontierKey, usize>,
+    prefer_shortest: bool,
 }
 
 impl FuzzFrontierRecorder {
     pub(in crate::executors) fn new(limit: usize) -> Self {
-        Self { limit, frontiers: Vec::with_capacity(limit.min(32)), indexes: HashMap::default() }
+        Self { limit, frontiers: Vec::with_capacity(limit.min(32)), ..Default::default() }
+    }
+
+    /// Prefers short live prefixes so a returned seed leaves room for a continuation.
+    pub(in crate::executors) const fn prefer_shortest_prefix(&mut self) {
+        self.prefer_shortest = true;
     }
 
     pub(super) fn capture_call(
@@ -299,10 +306,14 @@ impl FuzzFrontierRecorder {
                 Entry::Occupied(entry) => {
                     let index = *entry.get();
                     let previous = &self.frontiers[index];
-                    if operand_delta < previous.operands.operand_delta
-                        || (operand_delta == previous.operands.operand_delta
-                            && call_index < previous.call_index)
-                    {
+                    let replace = if self.prefer_shortest {
+                        (call_index, operand_delta)
+                            < (previous.call_index, previous.operands.operand_delta)
+                    } else {
+                        (operand_delta, call_index)
+                            < (previous.operands.operand_delta, previous.call_index)
+                    };
+                    if replace {
                         self.frontiers[index] = new_frontier(cmp, result, operand_delta);
                     }
                 }
@@ -323,6 +334,25 @@ impl FuzzFrontierRecorder {
 }
 
 impl FuzzBranchFrontier {
+    /// Returns the sequence ending at the comparison's call.
+    pub fn sequence(&self) -> &[BasicTxDetails] {
+        &self.sequence[..=self.call_index]
+    }
+
+    /// Returns the comparison operands and their observed result.
+    pub const fn comparison(&self) -> (CmpOperands, bool) {
+        (
+            CmpOperands {
+                address: self.site.address,
+                pc: self.site.pc,
+                opcode: self.site.opcode,
+                op1: self.operands.lhs,
+                op2: self.operands.rhs,
+            },
+            self.operands.result,
+        )
+    }
+
     const fn key(&self) -> FuzzBranchFrontierKey {
         FuzzBranchFrontierKey {
             address: self.site.address,
@@ -432,7 +462,7 @@ where
     serializer.collect_seq(sequences.iter().map(|sequence| &sequence.calls[..sequence.len]))
 }
 
-fn comparison_result(cmp: &CmpOperands) -> bool {
+pub(in crate::executors) fn comparison_result(cmp: &CmpOperands) -> bool {
     match cmp.opcode {
         opcode::EQ => cmp.op1 == cmp.op2,
         opcode::LT => cmp.op1 < cmp.op2,

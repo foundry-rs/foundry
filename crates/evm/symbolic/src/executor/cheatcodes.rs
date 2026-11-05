@@ -329,7 +329,6 @@ impl SymbolicExecutor {
         // Forge runs the constructor in a nested EVM, so its call depth starts over even
         // without isolation.
         child.call_depth_base = child.call_depth;
-        let pending_expected_creates = std::mem::take(&mut child.expected_creates);
         child.world = failure_world.clone();
         if isolated {
             child.world.clear_transient_storage();
@@ -371,8 +370,7 @@ impl SymbolicExecutor {
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;
                     parents.push_back(parent);
                 }
-                JoinedCallOutcome::ExpectedRevert { mut parent, .. } => {
-                    parent.expected_creates = pending_expected_creates.clone();
+                JoinedCallOutcome::ExpectedRevert(mut parent) => {
                     parent.world = failure_world.clone();
                     let zero = SymExpr::zero(&mut self.cx);
                     let return_data = SymReturnData::from_words(&mut self.cx, vec![zero]);
@@ -391,7 +389,6 @@ impl SymbolicExecutor {
                         parent.world.restore_transient_storage(&failure_world);
                     }
                     parent.expected_emit = child.expected_emit;
-                    parent.expected_creates = pending_expected_creates.clone();
                     self.observe_expected_create(
                         &mut parent,
                         state.address,
@@ -436,6 +433,17 @@ impl SymbolicExecutor {
         runtime: &SymReturnData,
     ) -> Result<(), SymbolicError> {
         if state.expected_creates.is_empty() {
+            return Ok(());
+        }
+        // An unrelated deployment may have symbolic immutable bytes in its runtime code.
+        let conditions = state
+            .expected_creates
+            .iter()
+            .filter_map(|expected| expected.deployer_match_condition(&mut self.cx, deployer, kind))
+            .collect::<Vec<_>>();
+        let condition = SymBoolExpr::or(&mut self.cx, conditions);
+        let (_, match_sat) = self.constraints_with_condition(state, condition)?;
+        if !match_sat {
             return Ok(());
         }
         let bytecode = runtime.read_concrete(&mut self.cx, "symbolic expected create bytecode")?;
@@ -1589,6 +1597,25 @@ impl SymbolicExecutor {
                 state.block.number = state.memory.load_word(&mut self.cx, in_offset + 4)?;
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
+            rollSlotCall::SELECTOR | getSlotNumberCall::SELECTOR
+                if executor.spec_id < SpecId::AMSTERDAM =>
+            {
+                let message = if selector == rollSlotCall::SELECTOR {
+                    "vm.rollSlot: `rollSlot` is not supported before the Amsterdam hard fork; \
+                     see EIP-7843: https://eips.ethereum.org/EIPS/eip-7843"
+                } else {
+                    "vm.getSlotNumber: `getSlotNumber` is not supported before the Amsterdam hard \
+                     fork; see EIP-7843: https://eips.ethereum.org/EIPS/eip-7843"
+                };
+                Ok(CheatcodeOutcome::Revert(error_string_return_data(&mut self.cx, message)))
+            }
+            rollSlotCall::SELECTOR => {
+                // The concrete cheatcode decodes a `uint64`, which drops the high bits.
+                let slot = state.memory.load_word(&mut self.cx, in_offset + 4)?;
+                let mask = SymExpr::constant(&mut self.cx, U256::from(u64::MAX));
+                state.block.slot_num = SymExpr::binop(&mut self.cx, SymBinOp::And, slot, mask);
+                Ok(CheatcodeOutcome::Continue(Vec::new()))
+            }
             setBlockhashCall::SELECTOR => {
                 let block_number = read_abi_constrained_word_arg(
                     &mut self.cx,
@@ -1658,6 +1685,9 @@ impl SymbolicExecutor {
             }
             getBlockNumberCall::SELECTOR => {
                 Ok(CheatcodeOutcome::Continue(vec![state.block.number.clone()]))
+            }
+            getSlotNumberCall::SELECTOR => {
+                Ok(CheatcodeOutcome::Continue(vec![state.block.slot_num.clone()]))
             }
             txGasPriceCall::SELECTOR => {
                 state.gas_price = state.memory.load_word(&mut self.cx, in_offset + 4)?;

@@ -2794,8 +2794,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             merge_recorded_frame(recorded_account_diffs_stack, last_depth);
         }
 
-        // Match the create against expected_creates
+        // Match successful creates against expected_creates; a failed create deploys nothing.
         if !self.expected_creates.is_empty()
+            && outcome.is_success()
             && let Some(address) = outcome.created_address
             && let Ok(mut account) = interp.host().state_mut().account(&address)
         {
