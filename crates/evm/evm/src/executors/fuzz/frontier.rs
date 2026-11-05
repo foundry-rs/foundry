@@ -306,12 +306,14 @@ impl FuzzFrontierRecorder {
                 Entry::Occupied(entry) => {
                     let index = *entry.get();
                     let previous = &self.frontiers[index];
-                    if (self.prefer_shortest && call_index < previous.call_index)
-                        || ((!self.prefer_shortest || call_index == previous.call_index)
-                            && (operand_delta < previous.operands.operand_delta
-                                || (operand_delta == previous.operands.operand_delta
-                                    && call_index < previous.call_index)))
-                    {
+                    let replace = if self.prefer_shortest {
+                        (call_index, operand_delta)
+                            < (previous.call_index, previous.operands.operand_delta)
+                    } else {
+                        (operand_delta, call_index)
+                            < (previous.operands.operand_delta, previous.call_index)
+                    };
+                    if replace {
                         self.frontiers[index] = new_frontier(cmp, result, operand_delta);
                     }
                 }

@@ -127,29 +127,6 @@ fn symbolic_live_solves_delayed_calls(prj: _, cmd: _) {
 }
 
 #[forgetest_init]
-fn symbolic_live_zero_query_budget(prj: _, cmd: _) {
-    prj.add_test("LiveTwoStep.t.sol", TWO_STEP);
-    prj.update_config(|config| {
-        config.invariant.runs = 100;
-        config.invariant.depth = 2;
-        config.invariant.dictionary.dictionary_weight = 0;
-        config.symbolic.live = true;
-        config.symbolic.max_solver_queries = 0;
-    });
-    let output = cmd
-        .args(["test", "--json", "--threads", "1", "--fuzz-seed", "0x1234"])
-        .assert_success()
-        .get_output()
-        .stdout
-        .clone();
-    let result = json_test_result(&output, "invariant_a()");
-    assert_eq!(result["status"], "Success");
-    assert_eq!(result["symbolic_live"]["solver_queries"], 0);
-    assert_eq!(result["symbolic_live"]["completed"], 0);
-    assert_eq!(result["symbolic_live"]["scheduled"], 0);
-}
-
-#[forgetest_init]
 fn symbolic_live_parallel_random_depth(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_live_parallel_random_depth");
     prj.add_test("LiveTwoStep.t.sol", TWO_STEP);
@@ -182,7 +159,7 @@ fn symbolic_live_parallel_random_depth(prj: _, cmd: _) {
 #[forgetest_init]
 fn symbolic_live_frontier_and_time_budgets(prj: _, cmd: _) {
     prj.add_test("LiveTwoStep.t.sol", TWO_STEP);
-    for (frontiers, queries, timeout) in [(0, 100, 10), (100, 100, 0), (1, 1, 10)] {
+    for (frontiers, queries, timeout) in [(0, 100, 10), (100, 100, 0), (100, 0, 10), (1, 1, 10)] {
         prj.update_config(|config| {
             config.invariant.runs = 100;
             config.invariant.depth = 2;
@@ -202,7 +179,7 @@ fn symbolic_live_frontier_and_time_budgets(prj: _, cmd: _) {
         let stats = &result["symbolic_live"];
         assert!(stats["submitted"].as_u64().unwrap() <= frontiers as u64);
         assert!(stats["solver_queries"].as_u64().unwrap() <= queries as u64);
-        if frontiers == 0 || timeout == 0 {
+        if frontiers == 0 || queries == 0 || timeout == 0 {
             assert_eq!(stats["completed"], 0);
             assert_eq!(stats["scheduled"], 0);
         }

@@ -6059,11 +6059,7 @@ fn solve_live_invariant_frontier<FEN: FoundryEvmNetwork>(
         return outcome;
     };
     for tx in &sequence[..sequence.len() - 1] {
-        let Ok(raw) = execute_and_commit_tx(&mut executor, tx) else { return outcome };
-        if raw.execution_cancelled
-            || raw.result.as_ref() == MAGIC_ASSUME
-            || Instant::now() >= deadline
-        {
+        if execute_and_commit_tx(&mut executor, tx).is_err() || Instant::now() >= deadline {
             return outcome;
         }
     }
