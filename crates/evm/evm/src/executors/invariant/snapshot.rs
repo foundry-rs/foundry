@@ -109,6 +109,8 @@ enum Start {
 pub(super) struct RunStart<FEN: FoundryEvmNetwork> {
     pub executor: Executor<FEN>,
     pub prefix: Arc<[BasicTxDetails]>,
+    /// A feature first reached by the prefix's last call, identifying the state it produced.
+    pub state: Option<u64>,
 }
 
 /// Per-worker pool of snapshots and the state features seen so far.
@@ -177,7 +179,11 @@ impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
                 let snapshot = &mut self.snapshots[index];
                 snapshot.energy.picks += 1;
                 self.cardinality.clone_from(&snapshot.cardinality);
-                RunStart { executor: snapshot.executor.clone(), prefix: snapshot.prefix.clone() }
+                RunStart {
+                    executor: snapshot.executor.clone(),
+                    prefix: snapshot.prefix.clone(),
+                    state: snapshot.features.first().copied(),
+                }
             }
         }
     }
@@ -211,7 +217,7 @@ impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
         self.current = Start::Setup;
         self.setup.picks += 1;
         self.cardinality.clone_from(&self.setup_cardinality);
-        RunStart { executor: setup.clone(), prefix: Arc::from([]) }
+        RunStart { executor: setup.clone(), prefix: Arc::from([]), state: None }
     }
 
     fn feature(&self, parts: impl std::hash::Hash) -> u64 {

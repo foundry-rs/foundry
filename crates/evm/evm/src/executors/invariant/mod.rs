@@ -1218,7 +1218,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             } else {
                 0
             };
-            let mut frontier_state_change = None;
+            // Storage states this run reached, as the index of the call that produced each and a
+            // feature that call reached first. A resumed run starts from its snapshot's state.
+            let mut frontier_states = start
+                .state
+                .map(|state| (start.prefix.len() - 1, state))
+                .into_iter()
+                .collect::<Vec<_>>();
             let mut frontier_run = (frontier_limit > 0
                 || (collect_live
                     && LiveInvariantSolver::accepts_sequence(
@@ -1521,10 +1527,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             }
                             if !reverted {
                                 let novel = snapshots.observe(&state_changeset);
-                                if !novel.is_empty()
+                                if let Some(&state) = novel.first()
                                     && let Some(history) = &frontier_run
                                 {
-                                    frontier_state_change.get_or_insert(history.inputs.len() - 1);
+                                    frontier_states.push((history.inputs.len() - 1, state));
                                 }
                                 // Targets created mid-run are dropped at its end, so states
                                 // holding them are not resumed.
@@ -1638,7 +1644,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     solver.lock().unwrap().submit(
                         frontier_run,
                         config.depth as usize,
-                        frontier_state_change,
+                        &frontier_states,
                     );
                 }
             }

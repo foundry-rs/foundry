@@ -74,6 +74,8 @@ pub struct LiveInvariantSolver {
     admitted: HashSet<Outcome>,
     /// Admitted outcomes for which the worker returned a candidate.
     flipped: HashSet<Outcome>,
+    /// Flipped outcomes already retried from a storage state.
+    retried: HashSet<(Outcome, u64)>,
     /// Queued frontiers, flagged when they retry an admitted outcome from a new prefix.
     pending: VecDeque<(FuzzBranchFrontier, bool)>,
     limit: usize,
@@ -148,6 +150,7 @@ impl LiveInvariantSolver {
             observed: HashSet::default(),
             admitted: HashSet::default(),
             flipped: HashSet::default(),
+            retried: HashSet::default(),
             pending: VecDeque::new(),
             limit: config.frontier_limit,
             deadline,
@@ -155,13 +158,13 @@ impl LiveInvariantSolver {
         })
     }
 
-    /// Offers a completed run's comparisons. `state_change` is the index of its first call that
-    /// wrote storage values no earlier call wrote.
+    /// Offers a completed run's comparisons. `states` lists the storage states the run reached
+    /// in call order, as the index of the call that produced each and a feature identifying it.
     pub(super) fn submit(
         &mut self,
         sequence: &RecordedCallSequence,
         depth: usize,
-        state_change: Option<usize>,
+        states: &[(usize, u64)],
     ) {
         if !self.is_active()
             || !Self::accepts_sequence(
@@ -182,9 +185,13 @@ impl LiveInvariantSolver {
         let room = (MAX_PENDING - self.pending.len())
             .min(self.limit - self.stats.submitted - self.pending.len());
         if room > 0 {
+            let state_before = |index: usize| {
+                states.iter().rev().find(|(call, _)| *call < index).map(|&(_, state)| state)
+            };
             // A first attempt needs an outcome whose other side fuzzing has not reached; one that
             // does not fit stays unadmitted, so a later run offers it again. A flipped outcome is
-            // retried after a storage change, which may require different arguments to flip it.
+            // retried once from each new storage state, which may need different arguments, unless
+            // a retry of it is already queued.
             let targets = cmp_seq
                 .iter()
                 .enumerate()
@@ -197,7 +204,9 @@ impl LiveInvariantSolver {
                             self.observed.contains(&reached)
                                 && if self.admitted.contains(&reached) {
                                     self.flipped.contains(&reached)
-                                        && state_change.is_some_and(|change| change < index)
+                                        && state_before(index).is_some_and(|state| {
+                                            !self.retried.contains(&(reached, state))
+                                        })
                                         && !self.pending.iter().any(|(frontier, _)| {
                                             let (cmp, result) = frontier.comparison();
                                             outcome(&cmp, result) == reached
@@ -214,7 +223,11 @@ impl LiveInvariantSolver {
             recorder.capture_sequence(&sequence.inputs, &targets);
             for frontier in recorder.into_frontiers() {
                 let (cmp, result) = frontier.comparison();
-                let retry = !self.admitted.insert(outcome(&cmp, result));
+                let reached = outcome(&cmp, result);
+                let retry = !self.admitted.insert(reached);
+                if retry && let Some(state) = state_before(frontier.sequence().len() - 1) {
+                    self.retried.insert((reached, state));
+                }
                 self.pending.push_back((frontier, retry));
             }
         }

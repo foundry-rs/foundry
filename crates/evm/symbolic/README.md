@@ -838,9 +838,10 @@ queued response in addition to active work. Each reached comparison outcome whos
 other side has not been reached is offered once, with the shortest prefix from the
 first run that has room. Outcomes that do not fit are offered again when a later run
 reaches them, and queued first attempts are dropped once fuzzing reaches the other
-side. An outcome the worker has flipped is offered again from a run whose earlier
-calls wrote new storage values, since its other side may need different arguments in
-that state. Outcomes whose attempts all failed are not retried.
+side. An outcome the worker has flipped is offered again once from each new storage
+state that a run reaches before it, including the state a run resumes from, since its
+other side may need different arguments there. Outcomes whose attempts all failed are
+not retried.
 Its campaign-wide budgets are `symbolic.timeout` (30 seconds when unset; zero
 disables work), `symbolic.max_solver_queries`, and `symbolic.frontier_limit`.
 Each search has a one-second timeout; shutdown cancels concrete prefix replay and

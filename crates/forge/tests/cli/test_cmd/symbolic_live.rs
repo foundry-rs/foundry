@@ -292,6 +292,7 @@ fn symbolic_live_wide_target(prj: _, cmd: _) {
 
 // One equality guards every stage through a stored secret, so each later attempt must run from
 // the state left by the previous solve even though both sides of the site were already reached.
+// Random depths end some runs right after a solve, so resumed runs must also retry the gate.
 #[forgetest_init]
 fn symbolic_live_retries_shared_gate(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_live_retries_shared_gate");
@@ -324,6 +325,8 @@ fn symbolic_live_retries_shared_gate(prj: _, cmd: _) {
         config.invariant.runs = u32::MAX;
         config.invariant.timeout = Some(10);
         config.invariant.depth = 3;
+        config.invariant.min_depth = 1;
+        config.invariant.depth_mode = InvariantDepthMode::Random;
         config.invariant.dictionary.dictionary_weight = 0;
         config.symbolic.live = true;
         config.symbolic.timeout = Some(10);
