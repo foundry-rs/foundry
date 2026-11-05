@@ -331,6 +331,7 @@ impl PathState {
         // Inspector state survives child reverts and exceptional halts.
         self.block = child.block.clone();
         self.expected_calls = std::mem::take(&mut child.expected_calls);
+        self.expected_creates = std::mem::take(&mut child.expected_creates);
         self.call_mocks = std::mem::take(&mut child.call_mocks);
         self.function_mocks = std::mem::take(&mut child.function_mocks);
     }
@@ -1211,8 +1212,19 @@ impl ExpectedCreate {
         kind: CreateKind,
         bytecode: &[u8],
     ) -> Option<SymBoolExpr> {
-        (self.kind == kind && self.bytecode == bytecode)
-            .then(|| self.deployer.address_match_condition(cx, deployer))
+        if self.bytecode != bytecode {
+            return None;
+        }
+        self.deployer_match_condition(cx, deployer, kind)
+    }
+
+    pub(crate) fn deployer_match_condition(
+        &self,
+        cx: &mut SymCx,
+        deployer: Address,
+        kind: CreateKind,
+    ) -> Option<SymBoolExpr> {
+        (self.kind == kind).then(|| self.deployer.address_match_condition(cx, deployer))
     }
 }
 
