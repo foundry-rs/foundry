@@ -1904,7 +1904,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     }
 
     #[inline(always)]
-    pub fn has_step_end_hooks(&self) -> bool {
+    pub const fn has_step_end_hooks(&self) -> bool {
         self.gas_metering.paused
             || self.gas_metering.touched
             || self.core.arbitrary_storage.is_some()
@@ -1933,7 +1933,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     }
 
     #[inline(always)]
-    fn has_active_env_overrides(&self) -> bool {
+    const fn has_active_env_overrides(&self) -> bool {
         self.env_overrides.is_any_set()
     }
 }
