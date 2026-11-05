@@ -25,6 +25,10 @@ async fn tempo_proofs_fork(prj: _, cmd: _) {
         "TempoProofVerifier.sol",
         include_str!("../../../../testdata/fixtures/TempoProofVerifier.sol"),
     );
+    prj.add_raw_source(
+        "TempoProofReceiver.sol",
+        include_str!("../../../../testdata/fixtures/TempoProofReceiver.sol"),
+    );
     prj.add_raw_test(
         "TempoProof.t.sol",
         include_str!("../../../../testdata/fixtures/TempoProof.t.sol"),
@@ -66,14 +70,19 @@ async fn tempo_proofs_fork(prj: _, cmd: _) {
     cmd.forge_fuse().args(["test", "--offline"]).assert_success().stdout_eq(str![[r#"
 No files changed, compilation skipped
 
-Ran 29 tests for test/TempoProof.t.sol:TempoProofTest
+Ran 34 tests for test/TempoProof.t.sol:TempoProofTest
 [PASS] test_certified_storage_proof() ([GAS])
 [PASS] test_fork_historical_certified_storage_proof() ([GAS])
 [PASS] test_fork_imported_account_certified_storage_proof() ([GAS])
+[PASS] test_fork_receiver_accepts_certified_storage_proof() ([GAS])
+[PASS] test_fork_receiver_rejects_changed_header() ([GAS])
+[PASS] test_fork_receiver_rejects_other_identity() ([GAS])
+[PASS] test_fork_receiver_rejects_wrong_value() ([GAS])
 [PASS] test_fork_reject_mixed_account_proof() ([GAS])
 [PASS] test_fork_reject_mixed_storage_proof() ([GAS])
 [PASS] test_fork_reject_upstream_key() ([GAS])
 [PASS] test_fork_updated_certified_storage_proof() ([GAS])
+[PASS] test_receiver_accepts_configured_identity() ([GAS])
 [PASS] test_reject_changed_account_proof() ([GAS])
 [PASS] test_reject_changed_epoch() ([GAS])
 [PASS] test_reject_changed_header() ([GAS])
@@ -96,9 +105,9 @@ Ran 29 tests for test/TempoProof.t.sol:TempoProofTest
 [PASS] test_rotation_rejects_unannounced_key() ([GAS])
 [PASS] test_rotation_rejects_unauthenticated_boundary() ([GAS])
 [PASS] test_rotation_rejects_wrong_epoch() ([GAS])
-Suite result: ok. 29 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 34 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 29 tests passed, 0 failed, 0 skipped (29 total tests)
+Ran 1 test suite [ELAPSED]: 34 tests passed, 0 failed, 0 skipped (34 total tests)
 
 "#]]);
 }
