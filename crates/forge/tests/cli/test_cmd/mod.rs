@@ -553,6 +553,227 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
+// Proxy storage written by both the proxy's own code and its implementations decodes each slot
+// with the layout of the code that wrote it last, even for proxies created during the recording.
+#[forgetest_init]
+fn state_diff_decodes_proxy_storage_by_writer(prj: _, cmd: _) {
+    prj.add_test(
+        "StateDiffProxy.t.sol",
+        r#"
+import {Test, console} from "forge-std/Test.sol";
+
+library MintLib {
+    struct Stats {
+        uint256 minted;
+    }
+
+    function add(Stats storage stats, uint256 amount) external {
+        stats.minted += amount;
+    }
+}
+
+contract TokenV1 {
+    address public owner;
+    uint256 public value;
+    MintLib.Stats public stats;
+
+    function initialize(address owner_) external {
+        owner = owner_;
+    }
+
+    function setValue(uint256 value_) external {
+        value = value_;
+    }
+
+    function mint(uint256 amount) external {
+        MintLib.add(stats, amount);
+    }
+}
+
+contract TokenV2 {
+    address public owner;
+    uint256 public balance;
+    MintLib.Stats public stats;
+    uint256 public extra;
+
+    function setExtra(uint256 extra_) external {
+        extra = extra_;
+    }
+}
+
+contract ERC1967Proxy {
+    bytes32 private constant IMPLEMENTATION_SLOT =
+        0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+
+    constructor(address implementation, bytes memory data) {
+        _upgradeTo(implementation, data);
+    }
+
+    function upgradeTo(address implementation) external {
+        _upgradeTo(implementation, "");
+    }
+
+    function _upgradeTo(address implementation, bytes memory data) internal {
+        bytes32 slot = IMPLEMENTATION_SLOT;
+        assembly {
+            sstore(slot, implementation)
+        }
+        if (data.length > 0) {
+            (bool success,) = implementation.delegatecall(data);
+            require(success);
+        }
+    }
+
+    receive() external payable {}
+
+    fallback() external payable {
+        bytes32 slot = IMPLEMENTATION_SLOT;
+        assembly {
+            let implementation := sload(slot)
+            calldatacopy(0, 0, calldatasize())
+            let success := delegatecall(gas(), implementation, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            if iszero(success) { revert(0, returndatasize()) }
+            return(0, returndatasize())
+        }
+    }
+}
+
+contract LegacyImplementation {
+    address private reserved;
+    uint256 public value;
+
+    function setValue(uint256 value_) external {
+        value = value_;
+    }
+}
+
+contract LegacyProxy {
+    address public target;
+
+    function upgradeTo(address target_) external {
+        target = target_;
+    }
+
+    receive() external payable {}
+
+    fallback() external payable {
+        address implementation = target;
+        assembly {
+            calldatacopy(0, 0, calldatasize())
+            let success := delegatecall(gas(), implementation, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            if iszero(success) { revert(0, returndatasize()) }
+            return(0, returndatasize())
+        }
+    }
+}
+
+contract StateDiffProxyTest is Test {
+    function test_createdProxy() public {
+        TokenV1 implementation = new TokenV1();
+
+        vm.startStateDiffRecording();
+        ERC1967Proxy proxy = new ERC1967Proxy(
+            address(implementation), abi.encodeCall(TokenV1.initialize, (address(0xBEEF)))
+        );
+        TokenV1(address(proxy)).mint(5);
+        console.log(vm.getStateDiff());
+    }
+
+    function test_upgradedProxy() public {
+        TokenV1 v1 = new TokenV1();
+        TokenV2 v2 = new TokenV2();
+        ERC1967Proxy proxy = new ERC1967Proxy(address(v1), "");
+
+        vm.startStateDiffRecording();
+        TokenV1(address(proxy)).setValue(7);
+        ERC1967Proxy(payable(address(proxy))).upgradeTo(address(v2));
+        TokenV2(address(proxy)).setExtra(9);
+        console.log(vm.getStateDiff());
+    }
+
+    function test_legacyProxy() public {
+        LegacyImplementation implementation = new LegacyImplementation();
+        LegacyProxy proxy = new LegacyProxy();
+
+        vm.startStateDiffRecording();
+        proxy.upgradeTo(address(implementation));
+        LegacyImplementation(address(proxy)).setValue(3);
+        console.log(vm.getStateDiff());
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "-vv", "--mc", "StateDiffProxyTest", "--extra-output", "storageLayout"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 3 tests for test/StateDiffProxy.t.sol:StateDiffProxyTest
+[PASS] test_createdProxy() ([GAS])
+Logs:
+  0x2e234DAe75C793f67A35089C9d99245E1C58470b
+  contract: test/StateDiffProxy.t.sol:ERC1967Proxy
+  implementation: test/StateDiffProxy.t.sol:TokenV1
+  - nonce diff: 0 → 1
+  - state diff:
+  @ 0x0000000000000000000000000000000000000000000000000000000000000000 (owner, address): 0x0000000000000000000000000000000000000000 → 0x000000000000000000000000000000000000bEEF
+  @ 0x0000000000000000000000000000000000000000000000000000000000000002 (stats, (uint256,)): 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000000000000000000000000000000005
+      minted (uint256): 0 → 5
+  @ 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc: 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000005615deb798bb3e4dfa0139dfa1b3d433cc23b72f
+  
+  0x4e59b44847b379578588920cA78FbF26c0B4956C
+  - nonce diff: 1 → 0
+  
+  0xA54882A36c497D60d7b00251F81C676C6B419832
+  contract: test/StateDiffProxy.t.sol:MintLib
+  - nonce diff: 0 → 1
+  
+
+[PASS] test_legacyProxy() ([GAS])
+Logs:
+  0x2e234DAe75C793f67A35089C9d99245E1C58470b
+  contract: test/StateDiffProxy.t.sol:LegacyProxy
+  implementation: test/StateDiffProxy.t.sol:LegacyImplementation
+  - state diff:
+  @ 0x0000000000000000000000000000000000000000000000000000000000000000 (target, address): 0x0000000000000000000000000000000000000000 → 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  @ 0x0000000000000000000000000000000000000000000000000000000000000001 (value, uint256): 0 → 3
+  
+  0x4e59b44847b379578588920cA78FbF26c0B4956C
+  - nonce diff: 1 → 0
+  
+  0xA54882A36c497D60d7b00251F81C676C6B419832
+  - nonce diff: 0 → 1
+  
+
+[PASS] test_upgradedProxy() ([GAS])
+Logs:
+  0x4e59b44847b379578588920cA78FbF26c0B4956C
+  - nonce diff: 1 → 0
+  
+  0xA54882A36c497D60d7b00251F81C676C6B419832
+  - nonce diff: 0 → 1
+  
+  0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
+  contract: test/StateDiffProxy.t.sol:ERC1967Proxy
+  implementation: test/StateDiffProxy.t.sol:TokenV2
+  - state diff:
+  @ 0x0000000000000000000000000000000000000000000000000000000000000001 (balance, uint256): 0 → 7
+  @ 0x0000000000000000000000000000000000000000000000000000000000000003 (extra, uint256): 0 → 9
+  @ 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc: 0x0000000000000000000000005615deb798bb3e4dfa0139dfa1b3d433cc23b72f → 0x0000000000000000000000002e234dae75c793f67a35089c9d99245e1c58470b
+  
+
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+
+"#]]);
+}
+
 // tests that a warning is displayed if there are tests but none match a non-empty filter
 #[forgetest]
 fn suggest_when_no_tests_match(prj: _, cmd: _) {
