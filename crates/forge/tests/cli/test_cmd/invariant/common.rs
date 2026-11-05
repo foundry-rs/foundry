@@ -1993,6 +1993,98 @@ Assertion Tests: 1 assertion bug(s) found
 }
 
 #[forgetest_init]
+fn invariant_fail_on_vm_assert_custom_message(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+    });
+
+    prj.add_test(
+        "InvariantFailOnVmAssertCustomMessage.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract VmAssertHandler {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function alwaysVmAssert() external {
+        vm.assertTrue(false, "custom message");
+    }
+}
+
+contract InvariantFailOnVmAssertCustomMessage is Test {
+    VmAssertHandler handler;
+
+    function setUp() public {
+        handler = new VmAssertHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_vm_assert_custom_message() public view {}
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantFailOnVmAssertCustomMessage.t.sol:InvariantFailOnVmAssertCustomMessage
+Assertion Tests: 1 assertion bug(s) found
+[FAIL: custom message][..]
+...
+ invariant_vm_assert_custom_message() ([RUNS])
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn invariant_fail_on_vm_assert_before_revert(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+        config.assertions_revert = false;
+    });
+
+    prj.add_test(
+        "InvariantFailOnVmAssertBeforeRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract VmAssertHandler {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function vmAssertThenRevert() external {
+        vm.assertEq(uint256(1), uint256(2), "custom message");
+        revert();
+    }
+}
+
+contract InvariantFailOnVmAssertBeforeRevert is Test {
+    VmAssertHandler handler;
+
+    function setUp() public {
+        handler = new VmAssertHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_vm_assert_before_revert() public view {}
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantFailOnVmAssertBeforeRevert.t.sol:InvariantFailOnVmAssertBeforeRevert
+Assertion Tests: 1 assertion bug(s) found
+[FAIL: EvmError: Revert] test/InvariantFailOnVmAssertBeforeRevert.t.sol:VmAssertHandler::vmAssertThenRevert
+...
+ invariant_vm_assert_before_revert() ([RUNS])
+...
+"#]]);
+}
+
+#[forgetest_init]
 fn invariant_shrink_with_assert(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(100u32));
