@@ -336,6 +336,7 @@ fn id<S: serde::Serializer>(chain: &Option<Chain>, s: S) -> Result<S::Ok, S::Err
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
     use foundry_config::{
         NamedChain,
         figment::{Figment, providers::Serialized},
@@ -468,8 +469,6 @@ mod tests {
 
     #[test]
     fn rpc_url_arg_does_not_read_eth_rpc_url_env() {
-        use clap::CommandFactory;
-
         let command = EvmArgs::command();
         let rpc_url =
             command.get_arguments().find(|arg| arg.get_id() == "rpc_url").expect("rpc_url arg");

@@ -26,7 +26,7 @@ use foundry_evm::{
         context::{Block, Cfg, Transaction},
         database::DatabaseRef,
         precompile::{PrecompileSpecId, Precompiles, kzg_point_evaluation},
-        primitives::hardfork::SpecId,
+        primitives::{constants::CALL_STACK_LIMIT, hardfork::SpecId},
     },
 };
 use serde::{Deserialize, Serialize};

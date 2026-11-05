@@ -248,16 +248,14 @@ impl TargetedContracts {
 
     /// Returns whether the given transaction can be replayed or not with known contracts.
     pub fn can_replay(&self, tx: &BasicTxDetails) -> bool {
-        match self.inner.get(&tx.call_details.target) {
-            Some(c) => tx
-                .call_details
+        self.inner.get(&tx.call_details.target).is_some_and(|c| {
+            tx.call_details
                 .calldata
                 .get(..4)
                 .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
                 .map(Selector::from)
-                .is_some_and(|selector| c.fuzzed_function_by_selector(selector).is_some()),
-            None => false,
-        }
+                .is_some_and(|selector| c.fuzzed_function_by_selector(selector).is_some())
+        })
     }
 
     /// Identifies fuzzed contract and function based on given tx details and returns unique metric

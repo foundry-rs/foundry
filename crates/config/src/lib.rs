@@ -1105,9 +1105,9 @@ impl Config {
     }
 
     fn normalize_hardfork_settings(&mut self) -> Result<(), Error> {
-        self.networks.validate().map_err(Error::from)?;
+        self.networks.validate()?;
         let Some(hardfork) = self.hardfork else { return Ok(()) };
-        self.networks = self.networks.normalize_for_hardfork(hardfork).map_err(Error::from)?;
+        self.networks = self.networks.normalize_for_hardfork(hardfork)?;
         Ok(())
     }
 
@@ -2079,7 +2079,7 @@ impl Config {
         &'a self,
         fallback: impl Into<Cow<'a, str>>,
     ) -> Result<Cow<'a, str>, UnresolvedEnvVarError> {
-        if let Some(url) = self.get_rpc_url() { url } else { Ok(fallback.into()) }
+        self.get_rpc_url().unwrap_or_else(|| Ok(fallback.into()))
     }
 
     /// Returns the configured rpc or `"http://localhost:8545"` if no `eth_rpc_url` is set

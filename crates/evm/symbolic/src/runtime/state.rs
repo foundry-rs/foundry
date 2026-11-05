@@ -8,6 +8,9 @@ const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
 pub(crate) struct PathState {
     pub(crate) depth: usize,
     pub(crate) call_depth: usize,
+    /// The `call_depth` of the frame that revm counts as depth 0 for the call depth limit: the
+    /// first frame of the current transaction or of a `vm.deployCode` constructor.
+    pub(crate) call_depth_base: usize,
     pub(crate) origin: Address,
     pub(crate) origin_word: SymExpr,
     pub(crate) gas_price: SymExpr,
@@ -86,6 +89,7 @@ impl PathState {
         Self {
             depth: 0,
             call_depth: 0,
+            call_depth_base: 0,
             origin: caller,
             origin_word,
             gas_price,
@@ -159,6 +163,11 @@ impl PathState {
     /// Forge's call isolation does for calls made by the test, handler, or invariant frame.
     pub(crate) const fn starts_isolated_transaction(&self, executor: &ExecutorView<'_>) -> bool {
         executor.isolate && self.call_depth == 0
+    }
+
+    /// Returns whether a CALL or CREATE issued by this frame exceeds the call depth limit.
+    pub(crate) const fn at_call_depth_limit(&self) -> bool {
+        self.call_depth - self.call_depth_base >= CALL_STACK_LIMIT as usize
     }
 
     pub(crate) fn storage_hook_child(&self, frame: CallFrame) -> Self {
@@ -1028,12 +1037,12 @@ impl AccessRecord {
     }
 
     pub(crate) fn read(&mut self, address: Address, slot: SymExpr) {
-        Self::push_unique_slot(self.reads.entry(address).or_default(), slot);
+        self.reads.entry(address).or_default().push(slot);
     }
 
     pub(crate) fn write(&mut self, address: Address, slot: SymExpr) {
         self.read(address, slot.clone());
-        Self::push_unique_slot(self.writes.entry(address).or_default(), slot);
+        self.writes.entry(address).or_default().push(slot);
     }
 
     pub(crate) fn addresses(&self) -> Vec<Address> {
@@ -1051,12 +1060,6 @@ impl AccessRecord {
 
     pub(crate) fn write_slots(&self, address: Address) -> Vec<SymExpr> {
         self.writes.get(&address).cloned().unwrap_or_default()
-    }
-
-    fn push_unique_slot(slots: &mut Vec<SymExpr>, slot: SymExpr) {
-        if !slots.iter().any(|existing| existing == &slot) {
-            slots.push(slot);
-        }
     }
 }
 
@@ -1432,6 +1435,8 @@ pub(crate) struct ExpectedEmit {
     emitter: Option<SymExpr>,
     remaining: u64,
     template: Option<SymbolicLog>,
+    /// Set by `vm.expectEmitAnonymous`, which lets a log without topics fill the template.
+    anonymous: bool,
     /// Call depth of the frame that declared the expectation.
     depth: usize,
 }
@@ -1441,9 +1446,10 @@ impl ExpectedEmit {
         checks: ExpectedEmitChecks,
         emitter: Option<SymExpr>,
         remaining: u64,
+        anonymous: bool,
         depth: usize,
     ) -> Self {
-        Self { checks, emitter, remaining, template: None, depth }
+        Self { checks, emitter, remaining, template: None, anonymous, depth }
     }
 
     /// Returns whether this expectation forbids logs matching its template (`count = 0`).
@@ -1452,6 +1458,11 @@ impl ExpectedEmit {
     /// remaining is a `count = 0` expectation, which is met while no log matches it.
     pub(crate) const fn is_forbidden(&self) -> bool {
         self.remaining == 0
+    }
+
+    /// Returns whether this expectation was declared by `vm.expectEmitAnonymous`.
+    pub(crate) const fn is_anonymous(&self) -> bool {
+        self.anonymous
     }
 
     pub(crate) const fn template(&self) -> Option<&SymbolicLog> {
