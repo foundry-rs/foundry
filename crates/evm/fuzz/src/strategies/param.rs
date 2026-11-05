@@ -14,6 +14,17 @@ use std::mem::replace;
 /// The max length of arrays we fuzz for is 256.
 const MAX_ARRAY_LEN: usize = 256;
 
+/// Length of a dynamic array: mostly short, sometimes medium, rarely long. Every level of a
+/// nested array draws its own length, so a uniform length up to `MAX_ARRAY_LEN` gave two levels
+/// an average of 16k elements and single calls of several MiB of calldata.
+fn array_len() -> impl Strategy<Value = usize> {
+    prop_oneof![
+        8 => 0..=4usize,
+        6 => 5..=32usize,
+        1 => 33..MAX_ARRAY_LEN,
+    ]
+}
+
 /// Given a parameter type, returns a strategy for generating values for that type.
 ///
 /// See [`fuzz_param_with_fixtures`] for more information.
@@ -114,7 +125,9 @@ fn fuzz_param_inner(
                 .boxed()
         }
         DynSolType::Array(ref param) => {
-            proptest::collection::vec(fuzz_param_inner(param, None), 0..MAX_ARRAY_LEN)
+            let element = fuzz_param_inner(param, None);
+            array_len()
+                .prop_flat_map(move |len| proptest::collection::vec(element.clone(), len))
                 .prop_map(DynSolValue::Array)
                 .boxed()
         }
@@ -322,7 +335,9 @@ fn fuzz_param_from_state_inner(
                 .boxed()
         }
         DynSolType::Array(ref param) => {
-            proptest::collection::vec(fuzz_param_from_state(param, state), 0..MAX_ARRAY_LEN)
+            let element = fuzz_param_from_state(param, state);
+            array_len()
+                .prop_flat_map(move |len| proptest::collection::vec(element.clone(), len))
                 .prop_map(DynSolValue::Array)
                 .boxed()
         }
@@ -636,6 +651,22 @@ mod tests {
             strategy.new_tree(&mut runner).unwrap().current(),
             DynSolValue::Uint(U256::ZERO, 256)
         );
+    }
+
+    #[test]
+    fn dynamic_array_lengths_are_mostly_short() {
+        let ty = DynSolType::Array(Box::new(DynSolType::Uint(256)));
+        let strategy = super::fuzz_param_with_fixtures(&ty, None, "values");
+        let mut runner = TestRunner::deterministic();
+        let lengths = (0..1000)
+            .map(|_| strategy.new_tree(&mut runner).unwrap().current().as_array().unwrap().len())
+            .collect::<Vec<_>>();
+
+        let short = lengths.iter().filter(|&&len| len <= 4).count();
+        let long = lengths.iter().filter(|&&len| len > 32).count();
+        assert!((450..=620).contains(&short), "short arrays {short} of 1000");
+        assert!((20..=120).contains(&long), "long arrays {long} of 1000");
+        assert!(lengths.iter().all(|&len| len < super::MAX_ARRAY_LEN));
     }
 
     #[test]
