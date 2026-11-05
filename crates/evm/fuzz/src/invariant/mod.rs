@@ -250,7 +250,9 @@ impl TargetedContracts {
     /// Returns whether the given transaction can be replayed or not with known contracts.
     ///
     /// The call must target a fuzzed function, carry arguments that ABI-decode with canonical
-    /// words, and send value only to a payable function, i.e. be a call the fuzzer could generate.
+    /// words, and send value only to a payable function. This checks ABI admission, not exact
+    /// fuzzer output: trailing calldata and non-strict dynamic layouts are allowed, and enum
+    /// variant bounds are not checked.
     pub fn can_replay(&self, tx: &BasicTxDetails) -> bool {
         let calldata = &tx.call_details.calldata;
         self.inner.get(&tx.call_details.target).is_some_and(|c| {
