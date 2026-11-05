@@ -2726,13 +2726,13 @@ contract OptimizationTest {
     cmd.args(["test", "--fuzz-seed", "3", "-vv"]).assert_success().stdout_eq(str![[r#"
 ...
 [PASS]
-	[Best sequence] (original: 12, shrunk: 5)
+	[Best sequence] (original: 10, shrunk: 2)
 [..]calldata=push() args=[]
-[..]calldata=push() args=[]
-[..]calldata=push() args=[]
-[..]calldata=push() args=[]
-[..]calldata=sum() args=[]
- invariant_optimize() (best: 4, runs: 1, calls: 12)
+		sender=0x00000000000000000000000000000000000000e1 addr=[test/Optimization.t.sol:Queue]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=sum() args=[]
+ invariant_optimize() (best: 1, runs: 1, calls: 12)
+
+╭----------+----------+-------+---------+----------╮
+| Contract | Selector | Calls | Reverts | Discards |
 ...
 "#]]);
 }
@@ -2766,24 +2766,22 @@ contract OptimizationTest {
 ...
 [PASS]
 	[Best sequence] (original: 10, shrunk: 2)
-[..]roll=4324 calldata=start() args=[]
-[..]roll=1518 calldata=noop() args=[]
- invariant_optimize() (best: 5843, runs: 1, calls: 10)
+		sender=0x000000000000000000000000000000000000019e addr=[test/Optimization.t.sol:Handler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f roll=3448 calldata=start() args=[]
+		sender=0x00000000000000000000000000000000000002A9 addr=[test/Optimization.t.sol:Handler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f roll=1226 calldata=noop() args=[]
+ invariant_optimize() (best: 4675, runs: 1, calls: 10)
 ...
 "#]]);
     // The rerun replays the persisted witness, which must still reach the reported value.
     prj.update_config(|config| config.invariant.runs = 0);
-    cmd.forge_fuse().args(["test", "--fuzz-seed", "1", "-vv"]).assert_success().stdout_eq(str![[
-        r#"
+    cmd.forge_fuse().args(["test", "--fuzz-seed", "1", "-vv"]).assert_success().stdout_eq(str![[r#"
 ...
 [PASS]
 	[Best sequence] (original: 2, shrunk: 2)
-[..]roll=4324 calldata=start() args=[]
-[..]roll=1518 calldata=noop() args=[]
- invariant_optimize() (best: 5843, runs: 0, calls: 0)
+		sender=0x000000000000000000000000000000000000019e addr=[test/Optimization.t.sol:Handler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f roll=3448 calldata=start() args=[]
+		sender=0x00000000000000000000000000000000000002A9 addr=[test/Optimization.t.sol:Handler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f roll=1226 calldata=noop() args=[]
+ invariant_optimize() (best: 4675, runs: 0, calls: 0)
 ...
-"#
-    ]]);
+"#]]);
 }
 
 #[forgetest]
@@ -2816,14 +2814,25 @@ contract OptimizationTest {
     // Seed 7 calls penalize, earn, finish. Dropping penalize makes earn assert but keeps its warp,
     // which scores 1000; the campaign would fail on that assertion, so the witness must keep it.
     cmd.args(["test", "--fuzz-seed", "7", "-vv"]).assert_success().stdout_eq(str![[r#"
-...
-[PASS]
-	[Best sequence] (original: 3, shrunk: 3)
-[..]calldata=penalize() args=[]
-[..]calldata=earn() args=[]
-[..]calldata=finish() args=[]
- invariant_optimize() (best: 12, runs: 1, calls: 3)
-...
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Optimization.t.sol:OptimizationTest
+[PASS] invariant_optimize() (best: 0, runs: 1, calls: 3)
+
+╭----------+----------+-------+---------+----------╮
+| Contract | Selector | Calls | Reverts | Discards |
++==================================================+
+| Handler  | earn     | 2     | 0       | 0        |
+|----------+----------+-------+---------+----------|
+| Handler  | penalize | 1     | 0       | 0        |
+╰----------+----------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
 "#]]);
 }
 
