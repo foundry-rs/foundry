@@ -11,15 +11,15 @@ use alloy_eips::{
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{AnyNetwork, AnyRpcBlock};
 use alloy_primitives::{
-    B256, U256,
+    B256, U256, keccak256,
     map::{AddressHashMap, U256Map},
 };
 use alloy_provider::Provider;
 use eyre::{Result, WrapErr};
 use foundry_common::provider::is_rpc_method_not_found;
 use foundry_evm_networks::NetworkConfigs;
-use foundry_fork_db::cache::MemDb;
-use revm::state::{AccountInfo, Bytecode};
+use foundry_fork_db::{AccountInfo, cache::MemDb};
+use revm::state::Bytecode;
 use std::time::Duration;
 
 /// Fetches and validates a parent BAL without mutating a database or propagating BAL failures.
@@ -129,15 +129,11 @@ fn cache_bal_accounts(accounts: &mut AddressHashMap<AccountInfo>, bal: &BlockAcc
         if let (Some(balance), Some(nonce), Some(code)) =
             (account.balance_post_state(), account.nonce_post_state(), account.code_changes.last())
         {
-            accounts.entry(account.address()).or_insert_with(|| {
-                let code = Bytecode::new_raw(code.new_code.clone());
-                AccountInfo {
-                    balance,
-                    nonce,
-                    code_hash: code.hash_slow(),
-                    code: Some(code),
-                    account_id: None,
-                }
+            accounts.entry(account.address()).or_insert_with(|| AccountInfo {
+                balance,
+                nonce,
+                code_hash: keccak256(&code.new_code),
+                code: Some(code.new_code.clone()),
             });
         }
     }

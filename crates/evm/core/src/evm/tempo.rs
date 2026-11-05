@@ -1,7 +1,7 @@
+use crate::backend::DatabaseError;
 use alloy_evm::{Evm, EvmEnv, EvmFactory};
 use alloy_primitives::Bytes;
 use foundry_evm_hardforks::TempoHardfork;
-use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
         Journal,

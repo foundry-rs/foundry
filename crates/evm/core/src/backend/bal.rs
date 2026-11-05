@@ -1,6 +1,6 @@
 //! Block access list (BAL) reads for executing one transaction against its parent block's state.
 
-use super::{Backend, DatabaseError, DatabaseResult};
+use super::{Backend, DatabaseResult};
 use crate::evm::FoundryEvmNetwork;
 use alloy_primitives::{Address, U256};
 use revm::{
@@ -35,8 +35,9 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         account: &mut Option<AccountInfo>,
     ) -> DatabaseResult<()> {
         if let Some(bal) = &self.bal {
-            bal.basic(address, account)
-                .map_err(|err| DatabaseError::GetAccount(address, Arc::new(err.into())))?;
+            bal.basic(address, account).map_err(|err| {
+                foundry_fork_db::DatabaseError::GetAccount(address, Arc::new(err.into()))
+            })?;
         }
         Ok(())
     }
@@ -47,8 +48,9 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         index: U256,
     ) -> DatabaseResult<Option<U256>> {
         let Some(bal) = &self.bal else { return Ok(None) };
-        bal.storage(&address, index)
-            .map_err(|err| DatabaseError::GetStorage(address, index, Arc::new(err.into())))
+        bal.storage(&address, index).map_err(|err| {
+            foundry_fork_db::DatabaseError::GetStorage(address, index, Arc::new(err.into())).into()
+        })
     }
 }
 

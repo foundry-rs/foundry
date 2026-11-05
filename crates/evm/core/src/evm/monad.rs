@@ -1,3 +1,4 @@
+use crate::backend::DatabaseError;
 use alloy_consensus::BlockHeader;
 use alloy_evm::{Evm, EvmEnv, EvmFactory, FromRecoveredTx};
 use alloy_monad_evm::{MonadEvm, MonadEvmFactory, MonadPrecompilesMap};
@@ -6,7 +7,6 @@ use alloy_provider::Provider;
 use alloy_rpc_types::BlockTransactions;
 use alloy_sol_types::SolCall;
 use eyre::WrapErr;
-use foundry_fork_db::DatabaseError;
 use monad_revm::{
     MonadBuilder, MonadCfgEnv, MonadChainContext, MonadContext, MonadEvm as RevmMonadEvm,
     MonadHardfork, MonadJournal, MonadJournalTr,

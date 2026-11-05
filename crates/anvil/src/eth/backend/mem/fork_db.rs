@@ -7,11 +7,8 @@ use alloy_network::Network;
 use alloy_primitives::{Address, B256, U256, map::AddressMap};
 use alloy_rpc_types::BlockId;
 use foundry_evm::{
-    backend::{
-        BlockchainDb, DatabaseResult, MemDb, RevertStateSnapshotAction, SharedBackend,
-        StateSnapshot,
-    },
-    fork::database::ForkDbStateSnapshot,
+    backend::{BlockchainDb, DatabaseResult, MemDb, RevertStateSnapshotAction, StateSnapshot},
+    fork::database::{ForkDbStateSnapshot, RemoteDb, remote_account},
 };
 use revm::{
     context::BlockEnv,
@@ -21,7 +18,7 @@ use revm::{
 
 pub use foundry_evm::fork::database::ForkedDatabase;
 
-impl<N: Network> MaybeFullDatabase for SharedBackend<N> {
+impl<N: Network> MaybeFullDatabase for RemoteDb<N> {
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         StateSnapshot::default()
     }
@@ -145,7 +142,10 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
 
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         let db = self.inner().db();
-        let accounts = std::mem::take(&mut *db.accounts.write());
+        let accounts = std::mem::take(&mut *db.accounts.write())
+            .into_iter()
+            .map(|(address, info)| (address, self.database().db.account(info)))
+            .collect();
         let storage = std::mem::take(&mut *db.storage.write());
         let block_hashes = std::mem::take(&mut *db.block_hashes.write());
         StateSnapshot { accounts, storage, block_hashes, ..Default::default() }
@@ -153,7 +153,12 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
 
     fn read_as_state_snapshot(&self) -> StateSnapshot {
         let db = self.inner().db();
-        let accounts = db.accounts.read().clone();
+        let accounts = db
+            .accounts
+            .read()
+            .iter()
+            .map(|(address, info)| (*address, self.database().db.account(info.clone())))
+            .collect();
         let storage = db.storage.read().clone();
         let block_hashes = db.block_hashes.read().clone();
         StateSnapshot { accounts, storage, block_hashes, ..Default::default() }
@@ -161,13 +166,14 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
 
     fn clear(&mut self) {
         self.flush_cache();
-        self.clear_into_state_snapshot();
+        self.inner().db().clear();
     }
 
     fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
         let db = self.inner().db();
         let StateSnapshot { accounts, storage, block_hashes, .. } = state_snapshot;
-        *db.accounts.write() = accounts;
+        *db.accounts.write() =
+            accounts.into_iter().map(|(address, info)| (address, remote_account(info))).collect();
         *db.storage.write() = storage;
         *db.block_hashes.write() = block_hashes;
     }

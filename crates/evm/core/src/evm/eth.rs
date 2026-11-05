@@ -1,9 +1,9 @@
+use crate::backend::DatabaseError;
 use alloy_evm::{
     EthEvm, EthEvmFactory, Evm, EvmEnv, EvmFactory, eth::EthEvmContext, precompiles::PrecompilesMap,
 };
 use alloy_network::Ethereum;
 use foundry_evm_networks::apply_bsc_p256_precompile;
-use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
         BlockEnv, Evm as RevmEvm, Journal, TxEnv,

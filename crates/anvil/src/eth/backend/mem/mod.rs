@@ -941,7 +941,7 @@ fn ensure_base_time_predeploy(
     }
     let upgrades = ChainUpgrades::new([(BaseUpgrade::Denim, ForkCondition::Timestamp(1))]);
     BaseTime::ensure_predeploy(upgrades, 1, &mut db)
-        .map_err(|err| DatabaseError::AnyRequest(Arc::new(eyre::eyre!(err))))
+        .map_err(|err| DatabaseError::any_request(Arc::new(eyre::eyre!(err))))
 }
 
 fn tempo_nonce(
@@ -4922,7 +4922,7 @@ impl<N: Network> Backend<N> {
             )
             .map_err(|e| {
                 tracing::error!(target: "backend", "failed to initialize Tempo precompiles: {e}");
-                DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}")))
+                DatabaseError::any_request(Arc::new(eyre::eyre!("{e}")))
             })?;
             trace!(target: "backend", "initialized Tempo precompiles and fee tokens for {} accounts", test_accounts.len());
         }
@@ -4967,7 +4967,7 @@ impl<N: Network> Backend<N> {
                 }
                 Err(err) => {
                     genesis_accounts.shutdown().await;
-                    return Err(DatabaseError::AnyRequest(Arc::new(eyre::eyre!(
+                    return Err(DatabaseError::any_request(Arc::new(eyre::eyre!(
                         "fork genesis account task failed: {err}"
                     ))));
                 }
@@ -5130,7 +5130,7 @@ impl<N: Network> Backend<N> {
 
         if is_tempo {
             let hardfork = tempo_hardfork.ok_or_else(|| {
-                DatabaseError::AnyRequest(Arc::new(eyre::eyre!(
+                DatabaseError::any_request(Arc::new(eyre::eyre!(
                     "missing Tempo hardfork during memory reset"
                 )))
             })?;
@@ -5141,7 +5141,7 @@ impl<N: Network> Backend<N> {
                 &genesis.accounts,
                 hardfork,
             )
-            .map_err(|err| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{err}"))))?;
+            .map_err(|err| DatabaseError::any_request(Arc::new(eyre::eyre!("{err}"))))?;
         }
 
         if install_create2_deployer {
@@ -10188,7 +10188,7 @@ impl Backend<FoundryNetwork> {
 
 /// Converts a Tempo error into an anvil [`DatabaseError`].
 fn tempo_db_err<E: std::fmt::Display>(e: E) -> DatabaseError {
-    DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}")))
+    DatabaseError::any_request(Arc::new(eyre::eyre!("{e}")))
 }
 
 /// Get max nonce from transaction pool by address.

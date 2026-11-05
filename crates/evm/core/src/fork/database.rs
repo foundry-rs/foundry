@@ -1,14 +1,14 @@
 //! A revm database that forks off a remote client
 
 use crate::{
-    backend::{RevertStateSnapshotAction, StateSnapshot},
+    backend::{DatabaseError, RevertStateSnapshotAction, StateSnapshot},
     state_snapshot::StateSnapshots,
 };
 use alloy_network::Network;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, map::B256Map};
 use alloy_rpc_types::BlockId;
-use foundry_fork_db::{BlockchainDb, DatabaseError, ForkBlockEnv, SharedBackend};
-use parking_lot::Mutex;
+use foundry_fork_db::{BlockchainDb, ForkBlockEnv, SharedBackend};
+use parking_lot::{Mutex, RwLock};
 use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
@@ -18,6 +18,94 @@ use revm::{
     state::{Account, AccountInfo},
 };
 use std::sync::Arc;
+
+/// Analyzed bytecode by code hash, shared by every [`RemoteDb`] that holds it.
+///
+/// revm analyzes jumps when it builds [`Bytecode`], so each distinct code is built once, as the
+/// fork cache shared analyzed code before. Entries are keyed by content, so forks of any source
+/// can share one map.
+pub type ForkCode = Arc<RwLock<B256Map<Bytecode>>>;
+
+/// Reads the RPC-backed fork cache, which holds raw code, as a revm database.
+#[derive(Clone, Debug)]
+pub struct RemoteDb<N: Network, B: ForkBlockEnv = BlockEnv> {
+    backend: SharedBackend<N, B>,
+    code: ForkCode,
+}
+
+impl<N: Network, B: ForkBlockEnv> RemoteDb<N, B> {
+    /// Reads through `backend`, building bytecode into `code`.
+    pub const fn new(backend: SharedBackend<N, B>, code: ForkCode) -> Self {
+        Self { backend, code }
+    }
+
+    /// Reads through `backend`, sharing the code this database built.
+    pub fn with_backend(&self, backend: SharedBackend<N, B>) -> Self {
+        Self { backend, code: Arc::clone(&self.code) }
+    }
+
+    /// Returns the fork cache handle.
+    pub const fn backend(&self) -> &SharedBackend<N, B> {
+        &self.backend
+    }
+
+    /// Returns the fork cache's `account` as a revm account.
+    pub fn account(&self, account: foundry_fork_db::AccountInfo) -> AccountInfo {
+        let mut info =
+            AccountInfo::new(account.balance, account.nonce, account.code_hash, Bytecode::new());
+        info.code = account.code.map(|code| self.bytecode(account.code_hash, code));
+        info
+    }
+
+    fn bytecode(&self, code_hash: B256, code: Bytes) -> Bytecode {
+        if code.is_empty() {
+            return Bytecode::new();
+        }
+        if let Some(bytecode) = self.code.read().get(&code_hash) {
+            return bytecode.clone();
+        }
+        self.code
+            .write()
+            .entry(code_hash)
+            // Code deployed before EIP-3541 may start with the EIP-7702 magic.
+            .or_insert_with(|| {
+                Bytecode::new_raw_checked(code.clone())
+                    .unwrap_or_else(|_| Bytecode::new_legacy(code))
+            })
+            .clone()
+    }
+}
+
+/// Returns a revm account as the fork cache stores it.
+pub fn remote_account(info: AccountInfo) -> foundry_fork_db::AccountInfo {
+    foundry_fork_db::AccountInfo {
+        balance: info.balance,
+        nonce: info.nonce,
+        code_hash: info.code_hash,
+        code: info.code.map(|code| code.original_bytes()),
+    }
+}
+
+impl<N: Network, B: ForkBlockEnv> DatabaseRef for RemoteDb<N, B> {
+    type Error = DatabaseError;
+
+    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        Ok(self.backend.account(address)?.map(|info| self.account(info)))
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        // RPC cannot fetch code by hash; accounts carry their code.
+        Err(foundry_fork_db::DatabaseError::MissingCode(code_hash).into())
+    }
+
+    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        Ok(self.backend.storage_at(address, index)?)
+    }
+
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
+        Ok(self.backend.block_hash(number)?)
+    }
+}
 
 /// a [revm::Database] that's forked off another client
 ///
@@ -36,7 +124,7 @@ pub struct ForkedDatabase<N: Network, B: ForkBlockEnv = BlockEnv> {
     ///
     /// This separates Read/Write operations
     ///   - reads from the `SharedBackend as DatabaseRef` writes to the internal cache storage.
-    cache_db: CacheDB<SharedBackend<N, B>>,
+    cache_db: CacheDB<RemoteDb<N, B>>,
     /// Contains all the data already fetched.
     ///
     /// This exclusively stores the _unchanged_ remote client state.
@@ -49,18 +137,18 @@ impl<N: Network, B: ForkBlockEnv> ForkedDatabase<N, B> {
     /// Creates a new instance of this DB
     pub fn new(backend: SharedBackend<N, B>, db: BlockchainDb<B>) -> Self {
         Self {
-            cache_db: CacheDB::new(backend.clone()),
+            cache_db: CacheDB::new(RemoteDb::new(backend.clone(), ForkCode::default())),
             backend,
             db,
             state_snapshots: Arc::new(Mutex::new(Default::default())),
         }
     }
 
-    pub const fn database(&self) -> &CacheDB<SharedBackend<N, B>> {
+    pub const fn database(&self) -> &CacheDB<RemoteDb<N, B>> {
         &self.cache_db
     }
 
-    pub const fn database_mut(&mut self) -> &mut CacheDB<SharedBackend<N, B>> {
+    pub const fn database_mut(&mut self) -> &mut CacheDB<RemoteDb<N, B>> {
         &mut self.cache_db
     }
 
@@ -81,7 +169,7 @@ impl<N: Network, B: ForkBlockEnv> ForkedDatabase<N, B> {
         // wipe the storage retrieved from remote
         self.inner().db().clear();
         // create a fresh `CacheDB`, effectively wiping modified state
-        self.cache_db = CacheDB::new(self.backend.clone());
+        self.cache_db = CacheDB::new(RemoteDb::new(self.backend.clone(), ForkCode::default()));
         trace!(target: "backend::forkdb", "Cleared database");
         Ok(())
     }
@@ -99,7 +187,12 @@ impl<N: Network, B: ForkBlockEnv> ForkedDatabase<N, B> {
     pub fn create_state_snapshot(&self) -> ForkDbStateSnapshot<N, B> {
         let db = self.db.db();
         let state_snapshot = StateSnapshot {
-            accounts: db.accounts.read().clone(),
+            accounts: db
+                .accounts
+                .read()
+                .iter()
+                .map(|(address, info)| (*address, self.cache_db.db.account(info.clone())))
+                .collect(),
             storage: db.storage.read().clone(),
             block_hashes: db.block_hashes.read().clone(),
             account_states: None,
@@ -130,7 +223,9 @@ impl<N: Network, B: ForkBlockEnv> ForkedDatabase<N, B> {
             {
                 let mut accounts_lock = db.accounts.write();
                 accounts_lock.clear();
-                accounts_lock.extend(accounts);
+                accounts_lock.extend(
+                    accounts.into_iter().map(|(address, info)| (address, remote_account(info))),
+                );
             }
             {
                 let mut storage_lock = db.storage.write();
@@ -208,7 +303,7 @@ impl<N: Network, B: ForkBlockEnv> DatabaseCommit for ForkedDatabase<N, B> {
 /// This mimics `revm::CacheDB`
 #[derive(Clone, Debug)]
 pub struct ForkDbStateSnapshot<N: Network, B: ForkBlockEnv = BlockEnv> {
-    pub local: CacheDB<SharedBackend<N, B>>,
+    pub local: CacheDB<RemoteDb<N, B>>,
     pub state_snapshot: StateSnapshot,
 }
 
@@ -296,7 +391,7 @@ mod tests {
         let (backend, handler) = SharedBackend::new(provider, db, None);
         drop(handler);
         ForkDbStateSnapshot {
-            local: CacheDB::new(backend),
+            local: CacheDB::new(RemoteDb::new(backend, ForkCode::default())),
             state_snapshot: StateSnapshot::default(),
         }
     }

@@ -1,9 +1,31 @@
 use alloy_primitives::Address;
-pub use foundry_fork_db::{DatabaseError, DatabaseResult};
-use revm::context_interface::result::EVMError;
+use revm::{context_interface::result::EVMError, database::DBErrorMarker};
 use std::convert::Infallible;
 
 pub type BackendResult<T> = Result<T, BackendError>;
+
+/// Result alias with [`DatabaseError`] as error.
+pub type DatabaseResult<T> = Result<T, DatabaseError>;
+
+/// An error of Foundry's revm databases: a fork cache error, which revm can report.
+#[derive(Debug, thiserror::Error)]
+#[error(transparent)]
+pub struct DatabaseError(#[from] pub foundry_fork_db::DatabaseError);
+
+impl DatabaseError {
+    /// Creates an error for a failed remote request.
+    pub const fn any_request(err: std::sync::Arc<eyre::Error>) -> Self {
+        Self(foundry_fork_db::DatabaseError::AnyRequest(err))
+    }
+}
+
+impl DBErrorMarker for DatabaseError {}
+
+impl From<Infallible> for DatabaseError {
+    fn from(value: Infallible) -> Self {
+        match value {}
+    }
+}
 
 /// Errors that can happen when working with [`revm::Database`]
 #[derive(Debug, thiserror::Error)]

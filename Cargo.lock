@@ -1355,6 +1355,7 @@ dependencies = [
  "foundry-config",
  "foundry-evm",
  "foundry-evm-networks",
+ "foundry-fork-db",
  "foundry-primitives",
  "foundry-test-utils",
  "futures",
@@ -6698,7 +6699,7 @@ dependencies = [
 [[package]]
 name = "foundry-fork-db"
 version = "0.27.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=c996c4655f670e5cc9091d4e27787c01308d0b6b#c996c4655f670e5cc9091d4e27787c01308d0b6b"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=a2f9087f5035baf3b9f6cf0457d84ff2051fd174#a2f9087f5035baf3b9f6cf0457d84ff2051fd174"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -6708,7 +6709,6 @@ dependencies = [
  "eyre",
  "futures",
  "parking_lot 0.13.0",
- "revm 43.0.3",
  "serde",
  "serde_json",
  "thiserror 2.0.21",

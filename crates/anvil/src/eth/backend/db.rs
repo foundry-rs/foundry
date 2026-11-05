@@ -1256,7 +1256,10 @@ mod test {
         }
 
         // The cached account imports first; the next lookup reaches the closed fork backend.
-        assert!(matches!(db.load_state(state), Err(DatabaseError::Send(_))));
+        assert!(matches!(
+            db.load_state(state),
+            Err(DatabaseError(foundry_fork_db::DatabaseError::Send(_)))
+        ));
         let imported = db.basic_ref(cached).unwrap().unwrap();
         assert_eq!(imported.nonce, original.nonce);
         assert_eq!(imported.balance, U256::from(10));

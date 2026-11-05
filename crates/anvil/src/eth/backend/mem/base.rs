@@ -115,7 +115,7 @@ impl<N: Network> Backend<N> {
         )
         .and_then(|(executed, _)| validate_system_transactions(&transactions, &executed))
         .map_err(|err| {
-            DatabaseError::AnyRequest(Arc::new(eyre::eyre!(
+            DatabaseError::any_request(Arc::new(eyre::eyre!(
                 "Denim system deposits fail on this fork; its L1Block likely predates Jovian (fork \
                  at or after the Jovian upgrade, or use an earlier --hardfork): {err}"
             )))
@@ -127,7 +127,7 @@ impl<N: Network> Backend<N> {
 fn next_millis_part(db: &dyn DatabaseRef<Error = DatabaseError>) -> Result<u16, DatabaseError> {
     let parent = BaseTime::fetch_timestamp_millis_part(&mut WrapDatabaseRef(db))?;
     if !BaseTimeUpdateTx::is_valid_timestamp_millis_part(parent) {
-        return Err(DatabaseError::AnyRequest(Arc::new(eyre::eyre!(
+        return Err(DatabaseError::any_request(Arc::new(eyre::eyre!(
             "invalid parent BaseTime millisecond component: {parent}"
         ))));
     }
@@ -172,7 +172,9 @@ pub(super) fn system_transactions(
             u64::from_be_bytes(origin[16..24].try_into().unwrap()),
             B256::from(db.storage_ref(Predeploys::L1_BLOCK_INFO, U256::from(2))?),
             sequence.checked_add(1).ok_or_else(|| {
-                DatabaseError::AnyRequest(Arc::new(eyre::eyre!("L1-info sequence number overflow")))
+                DatabaseError::any_request(Arc::new(eyre::eyre!(
+                    "L1-info sequence number overflow"
+                )))
             })?,
         )
     } else {
@@ -225,9 +227,9 @@ pub(super) fn ensure_l1_block_predeploy(db: &mut dyn Db) -> Result<(), DatabaseE
             data: Jovian::l1_block_deployment_bytecode(),
             ..Default::default()
         })
-        .map_err(|err| DatabaseError::AnyRequest(Arc::new(eyre::eyre!(err))))?;
+        .map_err(|err| DatabaseError::any_request(Arc::new(eyre::eyre!(err))))?;
     let ExecutionResult::Success { output: Output::Create(code, _), .. } = result.result else {
-        return Err(DatabaseError::AnyRequest(Arc::new(eyre::eyre!(
+        return Err(DatabaseError::any_request(Arc::new(eyre::eyre!(
             "failed to initialize the L1Block runtime"
         ))));
     };

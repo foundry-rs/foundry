@@ -1,6 +1,6 @@
+use crate::backend::DatabaseError;
 use alloy_evm::{EvmEnv, EvmFactory, precompiles::PrecompilesMap};
 use alloy_op_evm::{OpEvm, OpEvmContext, OpEvmFactory, OpTx};
-use foundry_fork_db::DatabaseError;
 use op_alloy_network::Optimism;
 use op_revm::{
     L1BlockInfo, OpEvm as RevmEvm, OpHaltReason, OpSpecId, OpTransactionError, handler::OpHandler,

@@ -7,7 +7,10 @@ use crate::{
         BlockEnvFor, ChainFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor, FoundryEvmFactory,
         FoundryEvmNetwork, HaltReasonFor, SpecFor, TxEnvFor,
     },
-    fork::{CreateFork, Fork as RemoteFork, ForkId, ForkResult, MultiFork},
+    fork::{
+        CreateFork, Fork as RemoteFork, ForkId, ForkResult, MultiFork,
+        database::{ForkCode, RemoteDb},
+    },
     opts::EvmOpts,
     state_snapshot::StateSnapshots,
     utils::{
@@ -28,10 +31,7 @@ use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
 use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
 use foundry_evm_networks::{NetworkConfigs, apply_bsc_p256_precompile};
-pub use foundry_fork_db::{
-    AccountFetchPolicy, BlockchainDb, ForkBlock, ForkBlockEnv, SharedBackend,
-    cache::BlockchainDbMeta,
-};
+pub use foundry_fork_db::{AccountFetchPolicy, ForkBlock, ForkBlockEnv};
 use revm::{
     Database, DatabaseCommit, JournalEntry,
     bytecode::Bytecode,
@@ -46,6 +46,7 @@ use revm::{
 use std::{
     collections::{BTreeMap, HashMap, hash_map::Entry},
     fmt::Debug,
+    sync::Arc,
     time::Instant,
 };
 
@@ -70,7 +71,16 @@ mod snapshot;
 pub use snapshot::{BackendStateSnapshot, RevertStateSnapshotAction, StateSnapshot};
 
 // A `revm::Database` that is used in forking mode
-type ForkDB<N, B> = CacheDB<SharedBackend<N, B>>;
+type ForkDB<N, B> = CacheDB<RemoteDb<N, B>>;
+
+/// The fork cache, keyed by revm's block environment unless set.
+pub type BlockchainDb<B = BlockEnv> = foundry_fork_db::BlockchainDb<B>;
+
+/// Metadata of the fork cache.
+pub type BlockchainDbMeta<B = BlockEnv> = foundry_fork_db::cache::BlockchainDbMeta<B>;
+
+/// The RPC-backed fork cache handle.
+pub type SharedBackend<N = AnyNetwork, B = BlockEnv> = foundry_fork_db::SharedBackend<N, B>;
 
 /// Represents a numeric `ForkId` valid only for the existence of the `Backend`.
 ///
@@ -658,6 +668,8 @@ pub struct Backend<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     bal: Option<BalState>,
     /// holds additional Backend data
     inner: BackendInner<FEN>,
+    /// Bytecode analyzed for every fork of this backend and its clones.
+    fork_code: ForkCode,
 }
 
 impl<FEN: FoundryEvmNetwork> Clone for Backend<FEN> {
@@ -671,6 +683,7 @@ impl<FEN: FoundryEvmNetwork> Clone for Backend<FEN> {
             fork_block_number_override: self.fork_block_number_override,
             bal: self.bal.clone(),
             inner: self.inner.clone(),
+            fork_code: Arc::clone(&self.fork_code),
         }
     }
 }
@@ -769,6 +782,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             fork_block_number_override: None,
             bal: None,
             inner,
+            fork_code: ForkCode::default(),
         };
 
         if let Some(fork) = fork {
@@ -776,7 +790,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 backend.forks.create_fork(fork)?;
             let context = resolved.context();
             let block = resolved.block();
-            let fork_db = ForkDB::new(fork);
+            let fork_db = ForkDB::new(RemoteDb::new(fork, Arc::clone(&backend.fork_code)));
             let fork_ids = backend.inner.insert_new_fork(
                 fork_id.clone(),
                 block,
@@ -837,6 +851,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             fork_block_number_override: None,
             bal: None,
             inner: Default::default(),
+            fork_code: Arc::clone(&self.fork_code),
         }
     }
 
@@ -2054,7 +2069,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             self.forks.create_fork(create_fork)?;
         let context = resolved.context();
         let block = resolved.block();
-        let fork_db = ForkDB::new(fork);
+        let fork_db = ForkDB::new(RemoteDb::new(fork, Arc::clone(&self.fork_code)));
         let (id, _) = self.inner.insert_new_fork(
             fork_id,
             block,
@@ -2615,7 +2630,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
     ) -> Result<(), BackendError> {
         let Some(fork) = self.active_fork_mut() else { return Ok(()) };
         trace!(?address, ?field, "refresh fork account");
-        fork.db.db.data().accounts.write().remove(&address);
+        fork.db.db.backend().data().accounts.write().remove(&address);
 
         let cache_modified = fork
             .db
@@ -2661,7 +2676,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
     ) -> Result<(), BackendError> {
         let Some(fork) = self.active_fork_mut() else { return Ok(()) };
         trace!(?address, ?slot, "refresh fork storage");
-        if let Some(storage) = fork.db.db.data().storage.write().get_mut(&address) {
+        if let Some(storage) = fork.db.db.backend().data().storage.write().get_mut(&address) {
             storage.remove(&slot);
         }
         let cache_modified = fork
@@ -2867,7 +2882,7 @@ pub struct Fork<N: Network, B: ForkBlockEnv = BlockEnv> {
 impl<N: Network, B: ForkBlockEnv> Fork<N, B> {
     /// Returns a reference to the underlying [`SharedBackend`].
     pub const fn backend(&self) -> &SharedBackend<N, B> {
-        &self.db.db
+        self.db.db.backend()
     }
 
     /// Returns true if the account is a contract
@@ -3088,7 +3103,7 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
 
         if let Some(active) = self.forks[idx].as_mut() {
             // Initialize a new `ForkDB` while retaining persistent account data.
-            let mut new_db = ForkDB::new(backend);
+            let mut new_db = ForkDB::new(active.db.db.with_backend(backend));
             for addr in self.persistent_accounts.iter().copied() {
                 merge_db_account_data(addr, &active.db, &mut new_db);
             }
@@ -3119,7 +3134,7 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
 
         // Initialize a new `ForkDB` with persistent account data and the prepared journal. The
         // live fork remains untouched until publication.
-        let mut new_db = ForkDB::new(backend);
+        let mut new_db = ForkDB::new(current.db.db.with_backend(backend));
         for addr in self.persistent_accounts.iter().copied() {
             merge_db_account_data(addr, &current.db, &mut new_db);
         }
@@ -3489,7 +3504,10 @@ mod tests {
     use crate::{
         backend::{Backend, DatabaseExt, ForkPosition},
         evm::EthEvmNetwork,
-        fork::{CreateFork, ForkId, MultiFork},
+        fork::{
+            CreateFork, ForkId, MultiFork,
+            database::{ForkCode, RemoteDb},
+        },
         opts::EvmOpts,
     };
     use alloy_consensus::{Signed, TxEnvelope, TxLegacy, transaction::Recovered};
@@ -3577,7 +3595,7 @@ mod tests {
         let (backend, handler) = SharedBackend::new(provider, db, None);
         drop(handler);
         Fork {
-            db: CacheDB::new(backend),
+            db: CacheDB::new(RemoteDb::new(backend, ForkCode::default())),
             journaled_state: JournalInner::new(),
             source_chain_id: 1,
             position: ForkPosition::AfterBlock { block: BlockNumHash::default() },

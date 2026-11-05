@@ -17,9 +17,9 @@ use base_common_evm::{
 use base_common_network::Base;
 // Only the tests below need this crate, but Cargo forbids optional dev-dependencies, so it is an
 // optional regular dependency that the `base` feature turns on.
+use crate::backend::DatabaseError;
 use base_common_precompiles as _;
 use foundry_evm_networks::{BASE_CODE_SENTINEL_ADDRESSES, is_base_precompile_active_at};
-use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
         BlockEnv, ContextTr, Journal, JournalTr, TxEnv,

@@ -4,8 +4,8 @@ use super::BackendError;
 use crate::{
     FoundryInspectorExt,
     backend::{
-        Backend, ContextUpdateFor, DatabaseExt, ForkAccountField, JournaledState, LocalForkId,
-        RevertStateSnapshotAction, diagnostic::RevertDiagnostic, existing_account,
+        Backend, ContextUpdateFor, DatabaseError, DatabaseExt, ForkAccountField, JournaledState,
+        LocalForkId, RevertStateSnapshotAction, diagnostic::RevertDiagnostic, existing_account,
     },
     evm::{
         ChainFor, EvmEnvFor, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork,
@@ -17,7 +17,6 @@ use alloy_evm::Evm;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, TxKind, U256};
 use eyre::WrapErr;
-use foundry_fork_db::DatabaseError;
 use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
