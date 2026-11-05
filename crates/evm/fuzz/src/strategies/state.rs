@@ -305,6 +305,9 @@ pub struct FuzzDictionary {
     /// Typed runtime sample values persisted across invariant runs.
     /// Initially seeded with literal values collected from the source code.
     sample_values: HashMap<DynSolType, B256IndexSet>,
+    /// Number of runtime samples persisted per type, capped at the run depth separately from the
+    /// literal, storage, and trace-cmp values that share `sample_values`.
+    learned_samples: HashMap<DynSolType, usize>,
     /// Lazily initialized dictionary of literal values collected from the source code.
     literal_values: LiteralsDictionary,
     /// Tracks whether literals from `literal_values` have been merged into `sample_values`.
@@ -363,6 +366,7 @@ impl FuzzDictionary {
             db_addresses: Default::default(),
             db_push_bytecode_hashes: Default::default(),
             sample_values: Default::default(),
+            learned_samples: Default::default(),
             composite_values: Default::default(),
             literal_values: Default::default(),
             persistent_values: Default::default(),
@@ -828,15 +832,14 @@ impl FuzzDictionary {
                 else {
                     return;
                 };
-                if let Some(values) = self.sample_values.get_mut(&sample_type) {
-                    if values.len() < limit as usize {
-                        values.insert(sample_value);
-                    } else {
-                        // Insert as state value (will be removed at the end of the run).
-                        self.insert_value(sample_value);
+                let learned = self.learned_samples.entry(sample_type.clone()).or_default();
+                if *learned < limit as usize {
+                    if self.sample_values.entry(sample_type).or_default().insert(sample_value) {
+                        *learned += 1;
                     }
                 } else {
-                    self.sample_values.entry(sample_type).or_default().insert(sample_value);
+                    // Insert as state value (will be removed at the end of the run).
+                    self.insert_value(sample_value);
                 }
             }
         }
@@ -954,6 +957,7 @@ fn canonical_type(ty: DynSolType) -> DynSolType {
 mod tests {
 
     use super::*;
+    use crate::strategies::LiteralMaps;
     use alloy_json_abi::{Event, JsonAbi};
     use foundry_evm_core::eip2935::HISTORY_STORAGE_ADDRESS;
     use revm::{
@@ -1271,6 +1275,24 @@ mod tests {
             values.values().cloned().collect::<Vec<_>>(),
             vec![withdrawal(2, 2), withdrawal(3, 3)]
         );
+    }
+
+    #[test]
+    fn literals_do_not_fill_runtime_sample_cap() {
+        let word = |value: u64| B256::from(U256::from(value));
+        let mut literals = LiteralMaps::default();
+        literals.words.entry(DynSolType::Uint(256)).or_default().extend([1, 2].map(word));
+        let mut dictionary = FuzzDictionary::default();
+        dictionary.seed_literals(literals);
+
+        dictionary.insert_sample_values(
+            [42, 43, 44].map(|value| DynSolValue::Uint(U256::from(value), 256)),
+            2,
+        );
+
+        let uints = dictionary.samples(&DynSolType::Uint(256)).unwrap();
+        assert_eq!(uints.iter().copied().collect::<Vec<_>>(), [1, 2, 42, 43].map(word));
+        assert!(dictionary.values().contains(&word(44)));
     }
 
     #[test]
