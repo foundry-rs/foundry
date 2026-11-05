@@ -289,3 +289,56 @@ fn symbolic_live_wide_target(prj: _, cmd: _) {
     assert_eq!(result["invariant_failures"][0]["name"], "invariant_z", "{result}");
     assert!(result["symbolic_live"]["scheduled"].as_u64().unwrap() >= 2, "{result}");
 }
+
+// One equality guards every stage through a stored secret, so each later attempt must run from
+// the state left by the previous solve even though both sides of the site were already reached.
+#[forgetest_init]
+fn symbolic_live_retries_shared_gate(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_live_retries_shared_gate");
+    let source = TWO_STEP
+        .replacen(
+            "    uint256 public stage;\n",
+            "    uint256 public stage;
+    uint256[3] secrets = [
+        uint256(0xdeadbeef123456789abcdef01234567890),
+        0xabcdef019876543210fedcba9876543210,
+        0x1234567890abcdef1234567890abcdef12
+    ];
+",
+            1,
+        )
+        .replacen(
+            "            if (stage == 0 && x * 3 + y * 5 == 0xdeadbeef123456789abcdef01234567890) {
+                stage = 1;
+            } else if (stage == 1 && x * 3 + y * 5 == 0xabcdef019876543210fedcba9876543210) {
+                stage = 2;
+            }
+",
+            "            if (stage < 3 && x * 3 + y * 5 == secrets[stage]) stage++;\n",
+            1,
+        )
+        .replacen("assertLt(target.stage(), 2)", "assertLt(target.stage(), 3)", 1);
+    assert!(source.contains("stage++") && source.contains("stage(), 3"));
+    prj.add_test("LiveSharedGate.t.sol", &source);
+    prj.update_config(|config| {
+        config.invariant.runs = u32::MAX;
+        config.invariant.timeout = Some(10);
+        config.invariant.depth = 3;
+        config.invariant.dictionary.dictionary_weight = 0;
+        config.symbolic.live = true;
+        config.symbolic.timeout = Some(10);
+    });
+    let output = cmd
+        .args(["test", "--json", "--threads", "1", "--fuzz-seed", "0x1234"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_a()");
+    assert_eq!(result["invariant_failures"][0]["name"], "invariant_z", "{result}");
+    assert_eq!(
+        result["invariant_failures"][0]["counterexample"]["Sequence"][1].as_array().unwrap().len(),
+        3,
+        "{result}"
+    );
+}

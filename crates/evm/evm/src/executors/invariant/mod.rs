@@ -1218,6 +1218,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             } else {
                 0
             };
+            let mut frontier_state_change = None;
             let mut frontier_run = (frontier_limit > 0
                 || (collect_live
                     && LiveInvariantSolver::accepts_sequence(
@@ -1520,6 +1521,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             }
                             if !reverted {
                                 let novel = snapshots.observe(&state_changeset);
+                                if !novel.is_empty()
+                                    && let Some(history) = &frontier_run
+                                {
+                                    frontier_state_change.get_or_insert(history.inputs.len() - 1);
+                                }
                                 // Targets created mid-run are dropped at its end, so states
                                 // holding them are not resumed.
                                 if current_run.created_contracts.is_empty() {
@@ -1629,7 +1635,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 frontier_recorder
                     .capture_sequence(&frontier_run.inputs, &frontier_run.cmp_seq[..len]);
                 if let Some(solver) = live_solver {
-                    solver.lock().unwrap().submit(frontier_run, config.depth as usize);
+                    solver.lock().unwrap().submit(
+                        frontier_run,
+                        config.depth as usize,
+                        frontier_state_change,
+                    );
                 }
             }
             let optimization = current_run.optimization_value.map(|v| {

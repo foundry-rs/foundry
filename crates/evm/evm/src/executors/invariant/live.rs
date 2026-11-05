@@ -34,6 +34,9 @@ const MAX_CALLDATA_BYTES: usize = 64 * 1024;
 /// submission budget.
 const MAX_OBSERVED_OUTCOMES: usize = 1 << 16;
 
+/// One side of a comparison site: address, pc, opcode, and result.
+type Outcome = (Address, usize, u8, bool);
+
 /// Counters for the live worker, separate from bounded symbolic verification results.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct LiveInvariantStats {
@@ -63,13 +66,16 @@ pub struct LiveInvariantSolution {
 /// One solver thread, 32 retained frontiers, and one slot in each channel.
 pub struct LiveInvariantSolver {
     requests: Option<SyncSender<FuzzBranchFrontier>>,
-    responses: Receiver<Vec<BasicTxDetails>>,
+    responses: Receiver<(Vec<BasicTxDetails>, Outcome)>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<LiveInvariantStats>>,
-    observed: HashSet<(Address, usize, u8, bool)>,
-    /// Outcomes already queued for the worker; each is attempted at most once.
-    admitted: HashSet<(Address, usize, u8, bool)>,
-    pending: VecDeque<FuzzBranchFrontier>,
+    observed: HashSet<Outcome>,
+    /// Outcomes already queued for the worker; each is attempted once unless it is flipped.
+    admitted: HashSet<Outcome>,
+    /// Admitted outcomes for which the worker returned a candidate.
+    flipped: HashSet<Outcome>,
+    /// Queued frontiers, flagged when they retry an admitted outcome from a new prefix.
+    pending: VecDeque<(FuzzBranchFrontier, bool)>,
     limit: usize,
     deadline: Instant,
     stats: LiveInvariantStats,
@@ -118,13 +124,15 @@ impl LiveInvariantSolver {
                 stats.completed += 1;
                 stats.solver_queries += result.solver_queries;
                 stats.solver_time_ms += result.solver_time_ms;
-                if let Some(mut sequence) = result.sequence {
+                if let Some(sequence) = result.sequence {
+                    let (cmp, result) = frontier.comparison();
+                    let mut response = (sequence, outcome(&cmp, result));
                     // Preserve useful responses under backpressure, while keeping shutdown
                     // bounded when the concrete campaign has already stopped consuming.
                     while !cancelled.load(Ordering::Relaxed) && Instant::now() < deadline {
-                        match output.try_send(sequence) {
+                        match output.try_send(response) {
                             Ok(()) | Err(mpsc::TrySendError::Disconnected(_)) => break,
-                            Err(mpsc::TrySendError::Full(pending)) => sequence = pending,
+                            Err(mpsc::TrySendError::Full(pending)) => response = pending,
                         }
                         thread::sleep(Duration::from_millis(1));
                     }
@@ -139,6 +147,7 @@ impl LiveInvariantSolver {
             thread: Some(thread),
             observed: HashSet::default(),
             admitted: HashSet::default(),
+            flipped: HashSet::default(),
             pending: VecDeque::new(),
             limit: config.frontier_limit,
             deadline,
@@ -146,7 +155,14 @@ impl LiveInvariantSolver {
         })
     }
 
-    pub(super) fn submit(&mut self, sequence: &RecordedCallSequence, depth: usize) {
+    /// Offers a completed run's comparisons. `state_change` is the index of its first call that
+    /// wrote storage values no earlier call wrote.
+    pub(super) fn submit(
+        &mut self,
+        sequence: &RecordedCallSequence,
+        depth: usize,
+        state_change: Option<usize>,
+    ) {
         if !self.is_active()
             || !Self::accepts_sequence(
                 sequence.inputs.len(),
@@ -166,19 +182,29 @@ impl LiveInvariantSolver {
         let room = (MAX_PENDING - self.pending.len())
             .min(self.limit - self.stats.submitted - self.pending.len());
         if room > 0 {
-            // Only an outcome whose other side fuzzing has not reached can lead to new control
-            // flow. Outcomes that do not fit stay unadmitted, so a later run offers them again.
+            // A first attempt needs an outcome whose other side fuzzing has not reached; one that
+            // does not fit stays unadmitted, so a later run offers it again. A flipped outcome is
+            // retried after a storage change, which may require different arguments to flip it.
             let targets = cmp_seq
                 .iter()
-                .map(|cmps| {
+                .enumerate()
+                .map(|(index, cmps)| {
                     cmps.iter()
                         .copied()
                         .filter(|cmp| {
                             let result = comparison_result(cmp);
                             let reached = outcome(cmp, result);
                             self.observed.contains(&reached)
-                                && !self.admitted.contains(&reached)
-                                && !self.observed.contains(&outcome(cmp, !result))
+                                && if self.admitted.contains(&reached) {
+                                    self.flipped.contains(&reached)
+                                        && state_change.is_some_and(|change| change < index)
+                                        && !self.pending.iter().any(|(frontier, _)| {
+                                            let (cmp, result) = frontier.comparison();
+                                            outcome(&cmp, result) == reached
+                                        })
+                                } else {
+                                    !self.observed.contains(&outcome(cmp, !result))
+                                }
                         })
                         .collect::<Vec<_>>()
                 })
@@ -188,25 +214,25 @@ impl LiveInvariantSolver {
             recorder.capture_sequence(&sequence.inputs, &targets);
             for frontier in recorder.into_frontiers() {
                 let (cmp, result) = frontier.comparison();
-                self.admitted.insert(outcome(&cmp, result));
-                self.pending.push_back(frontier);
+                let retry = !self.admitted.insert(outcome(&cmp, result));
+                self.pending.push_back((frontier, retry));
             }
         }
         self.dispatch();
     }
 
     fn dispatch(&mut self) {
-        // Fuzzing may have reached the other side of a queued comparison since it was admitted.
-        self.pending.retain(|frontier| {
+        // Fuzzing may have reached the other side of a first attempt since it was admitted.
+        self.pending.retain(|(frontier, retry)| {
             let (cmp, result) = frontier.comparison();
-            !self.observed.contains(&outcome(&cmp, !result))
+            *retry || !self.observed.contains(&outcome(&cmp, !result))
         });
-        while let Some(frontier) = self.pending.pop_front() {
+        while let Some((frontier, retry)) = self.pending.pop_front() {
             let Some(requests) = &self.requests else { break };
             match requests.try_send(frontier) {
                 Ok(()) => self.stats.submitted += 1,
                 Err(mpsc::TrySendError::Full(frontier)) => {
-                    self.pending.push_front(frontier);
+                    self.pending.push_front((frontier, retry));
                     break;
                 }
                 Err(mpsc::TrySendError::Disconnected(_)) => {
@@ -220,7 +246,8 @@ impl LiveInvariantSolver {
 
     pub(super) fn next(&mut self, depth: usize) -> Option<Vec<BasicTxDetails>> {
         self.dispatch();
-        let sequence = self.responses.try_recv().ok()?;
+        let (sequence, flipped) = self.responses.try_recv().ok()?;
+        self.flipped.insert(flipped);
         if sequence.is_empty() || sequence.len() > depth {
             return None;
         }
@@ -267,6 +294,6 @@ impl Drop for LiveInvariantSolver {
 }
 
 /// Identifies one side of a comparison site.
-const fn outcome(cmp: &CmpOperands, result: bool) -> (Address, usize, u8, bool) {
+const fn outcome(cmp: &CmpOperands, result: bool) -> Outcome {
     (cmp.address, cmp.pc, cmp.opcode, result)
 }
