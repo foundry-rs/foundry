@@ -278,14 +278,20 @@ async fn test_beacon_api_get_blobs_by_slot() {
     let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
     let gas_price = provider.get_gas_price().await.unwrap();
 
-    // Mine one blob per block: blocks 1 and 2 in slot 2, block 3 at the first second of slot 3.
-    let timestamps = [GENESIS + 2 * SLOT + 5, GENESIS + 2 * SLOT + 6, GENESIS + 3 * SLOT];
+    // Mine one blob per block: two distinct blobs in slot 2, then the same blob twice in slot 3.
+    let timestamps = [
+        GENESIS + 2 * SLOT + 5,
+        GENESIS + 2 * SLOT + 6,
+        GENESIS + 3 * SLOT,
+        GENESIS + 3 * SLOT + 1,
+    ];
     let mut blobs = Vec::new();
     let mut hashes = Vec::new();
     for (nonce, timestamp) in timestamps.into_iter().enumerate() {
-        let sidecar = SidecarBuilder::<SimpleCoder>::from_slice(format!("blob {nonce}").as_bytes())
-            .build::<BlobTransactionSidecar>()
-            .unwrap();
+        let sidecar =
+            SidecarBuilder::<SimpleCoder>::from_slice(format!("blob {}", nonce.min(2)).as_bytes())
+                .build::<BlobTransactionSidecar>()
+                .unwrap();
         blobs.push(sidecar.blobs[0]);
         hashes.extend(sidecar.versioned_hashes());
         let tx = TransactionRequest::default()
@@ -319,7 +325,26 @@ async fn test_beacon_api_get_blobs_by_slot() {
         get_blobs(&format!("2?versioned_hashes={}", hashes[1])).await.as_deref()
             == Some(&blobs[1..2])
     );
+    assert!(
+        get_blobs(&format!("2?versioned_hashes={},{}", hashes[1], hashes[0])).await.as_deref()
+            == Some(&blobs[..2])
+    );
+    assert!(
+        get_blobs(&format!("2?versioned_hashes={}", B256::ZERO)).await.as_deref() == Some(&[][..])
+    );
     assert!(get_blobs("3").await.as_deref() == Some(&blobs[2..]));
+    // Hashes and tags still address one execution block, not the whole slot.
+    assert!(get_blobs(&api.backend.best_hash().to_string()).await.as_deref() == Some(&blobs[3..]));
+    assert!(get_blobs("latest").await.as_deref() == Some(&blobs[3..]));
+    // Filtered requests return only the requested number of occurrences, across all blocks.
+    assert!(
+        get_blobs(&format!("3?versioned_hashes={}", hashes[2])).await.as_deref()
+            == Some(&blobs[2..3])
+    );
+    assert!(
+        get_blobs(&format!("3?versioned_hashes={},{}", hashes[2], hashes[2])).await.as_deref()
+            == Some(&blobs[2..])
+    );
     // Slot 0 holds the genesis block, which has no blobs.
     assert!(get_blobs("0").await.as_deref() == Some(&[][..]));
     // Slots without a block are not found, even when a block has that number.
@@ -336,4 +361,14 @@ async fn test_beacon_api_get_blobs_by_slot() {
     api.evm_mine(None).await.unwrap();
     assert!(get_blobs("1").await.as_deref() == Some(&[][..]));
     assert!(get_blobs("2").await.as_deref() == Some(&blobs[..2]));
+
+    // Loading a legacy dump without block history can leave a gap before its checkpoint.
+    // Previously stored canonical blocks must remain visible across that gap.
+    let mut state = api.serialized_state(false).await.unwrap();
+    state.blocks.clear();
+    state.best_block_number = Some(7);
+    state.block.as_mut().unwrap().number = U256::from(7);
+    api.anvil_load_state(serde_json::to_vec(&state).unwrap().into()).await.unwrap();
+    assert!(get_blobs("2").await.as_deref() == Some(&blobs[..2]));
+    assert!(get_blobs("3").await.as_deref() == Some(&blobs[2..]));
 }
