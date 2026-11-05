@@ -2708,20 +2708,25 @@ impl TestArgs {
                 if let Some(gas_report) = &mut gas_report {
                     gas_report.analyze(result.traces.iter().map(|(_, a)| &a.arena), &decoder).await;
 
-                    for trace in &result.gas_report_traces {
+                    if !result.gas_report_traces.is_empty() {
                         decoder.clear_addresses();
 
-                        // Re-execute setup and deployment traces to collect identities created in
-                        // setUp and constructor.
+                        // Identify the setup and deployment traces once to collect identities
+                        // created in setUp and constructor; every sampled run starts from them.
                         for (kind, arena) in &result.traces {
                             if !kind.is_execution() {
                                 decoder.identify_scoped(arena, &mut identifier);
                             }
                         }
+                        let identities = decoder.address_identities();
 
-                        for arena in trace {
-                            decoder.identify_scoped(arena, &mut identifier);
-                            gas_report.analyze([arena], &decoder).await;
+                        for trace in &result.gas_report_traces {
+                            decoder.restore_address_identities(&identities);
+
+                            for arena in trace {
+                                decoder.identify_scoped(arena, &mut identifier);
+                                gas_report.analyze([arena], &decoder).await;
+                            }
                         }
                     }
                 }

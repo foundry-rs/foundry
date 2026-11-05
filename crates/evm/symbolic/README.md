@@ -515,6 +515,8 @@ Supported ABI shapes include:
 
 When `--symbolic` is enabled, `invariant*` and `statefulFuzz*` functions use a
 bounded symbolic call sequence instead of the normal invariant fuzzer.
+Each selected symbolic invariant runs in a separate campaign with its own inline
+configuration, result, and counterexample replay.
 
 ```solidity
 contract CounterInvariant is Test {
