@@ -744,7 +744,7 @@ impl SlotIdentifier {
     /// at a time, each possibly displaced by a field's offset, and then resolved down through the
     /// types: every key is decoded with its mapping's key type, a struct member holding the next
     /// mapping is added to the label, and the final value is identified within the entry, by
-    /// [`Self::handle_struct`] when it is a struct.
+    /// [`Self::handle_struct`] when it is a struct, or as a whole when its fields can't be.
     ///
     /// # Arguments
     /// * `storage` - The storage metadata from the layout
@@ -829,10 +829,12 @@ impl SlotIdentifier {
                 continue;
             }
 
-            // The last level: the accessed slot is `offset` slots into this entry's value.
-            let mut info = if is_struct(&value_type.label) {
-                let entry_slot = U256::from_be_bytes(entry.0);
-                self.handle_struct(
+            // The last level: the accessed slot is `offset` slots into this entry's value. A struct
+            // is identified by its fields; if they can't be (e.g. a user-defined value type or an
+            // array of structs), the entry slot is still identified as the whole value.
+            let entry_slot = U256::from_be_bytes(entry.0);
+            let mut info = if is_struct(&value_type.label)
+                && let Some(info) = self.handle_struct(
                     &label,
                     value_type,
                     entry_slot + *offset,
@@ -840,7 +842,8 @@ impl SlotIdentifier {
                     0,
                     slot_str,
                     0,
-                )?
+                ) {
+                info
             } else if *offset == U256::ZERO {
                 // Contract types (e.g., "contract IPool") are addresses under the hood.
                 SlotInfo {
@@ -1281,13 +1284,16 @@ mod tests {
         );
     }
 
-    /// A layout with mappings to structs holding mappings, as OpenZeppelin's `AccessManager` has.
+    /// A layout with mappings to structs holding mappings, as OpenZeppelin's `AccessManager` has,
+    /// and mappings to values whose fields can't be identified.
     fn mapping_struct_layout() -> SlotIdentifier {
         let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
             "storage": [
                 { "astId": 1, "contract": "C", "label": "roles", "offset": 0, "slot": "0", "type": "t_mapping(t_uint64,t_struct(Role))" },
                 { "astId": 2, "contract": "C", "label": "pools", "offset": 0, "slot": "1", "type": "t_mapping(t_uint256,t_struct(Pool))" },
-                { "astId": 3, "contract": "C", "label": "allowances", "offset": 0, "slot": "2", "type": "t_mapping(t_address,t_mapping(t_address,t_uint256))" }
+                { "astId": 3, "contract": "C", "label": "allowances", "offset": 0, "slot": "2", "type": "t_mapping(t_address,t_mapping(t_address,t_uint256))" },
+                { "astId": 11, "contract": "C", "label": "orders", "offset": 0, "slot": "3", "type": "t_mapping(t_uint256,t_struct(Order))" },
+                { "astId": 12, "contract": "C", "label": "queues", "offset": 0, "slot": "4", "type": "t_mapping(t_uint256,t_array(t_struct(Access))dyn_storage)" }
             ],
             "types": {
                 "t_mapping(t_uint64,t_struct(Role))": {
@@ -1331,6 +1337,26 @@ mod tests {
                 "t_mapping(t_address,t_uint256)": {
                     "encoding": "mapping", "label": "mapping(address => uint256)", "numberOfBytes": "32",
                     "key": "t_address", "value": "t_uint256"
+                },
+                "t_mapping(t_uint256,t_struct(Order))": {
+                    "encoding": "mapping", "label": "mapping(uint256 => struct C.Order)", "numberOfBytes": "32",
+                    "key": "t_uint256", "value": "t_struct(Order)"
+                },
+                "t_struct(Order)": {
+                    "encoding": "inplace", "label": "struct C.Order", "numberOfBytes": "64",
+                    "members": [
+                        { "astId": 13, "contract": "C", "label": "price", "offset": 0, "slot": "0", "type": "t_userDefinedValueType(Price)" },
+                        { "astId": 14, "contract": "C", "label": "qty", "offset": 0, "slot": "1", "type": "t_uint256" }
+                    ]
+                },
+                "t_userDefinedValueType(Price)": { "encoding": "inplace", "label": "Price", "numberOfBytes": "32" },
+                "t_mapping(t_uint256,t_array(t_struct(Access))dyn_storage)": {
+                    "encoding": "mapping", "label": "mapping(uint256 => struct C.Access[])", "numberOfBytes": "32",
+                    "key": "t_uint256", "value": "t_array(t_struct(Access))dyn_storage"
+                },
+                "t_array(t_struct(Access))dyn_storage": {
+                    "encoding": "dynamic_array", "label": "struct C.Access[]", "numberOfBytes": "32",
+                    "base": "t_struct(Access)"
                 },
                 "t_uint48": { "encoding": "inplace", "label": "uint48", "numberOfBytes": "6" },
                 "t_uint64": { "encoding": "inplace", "label": "uint64", "numberOfBytes": "8" },
@@ -1482,5 +1508,28 @@ mod tests {
         slots.record_hash(slot.into(), U256::ONE.into(), slot.into());
         slots.insert(slot.into());
         assert!(identifier.identify(&slot.into(), Some(&slots)).is_none());
+    }
+
+    /// `orders[2]` starts with a user-defined value type and `queues[1]` is an array of structs,
+    /// so neither entry can be identified field by field, but each is still identified whole.
+    #[test]
+    fn identifies_mapping_entries_with_unidentifiable_fields() {
+        let identifier = mapping_struct_layout();
+        let mut slots = MappingSlots::default();
+        let order = entry(&mut slots, U256::from(2).into(), U256::from(3));
+        let queue = entry(&mut slots, U256::from(1).into(), U256::from(4));
+        slots.insert(order.into());
+        slots.insert(queue.into());
+
+        for (slot, label, key, type_label) in [
+            (order, "orders[2]", "2", "mapping(uint256 => struct C.Order)"),
+            (queue, "queues[1]", "1", "mapping(uint256 => struct C.Access[])"),
+        ] {
+            let info = identifier.identify(&B256::from(slot), Some(&slots)).unwrap();
+            assert_eq!(info.label, label);
+            assert_eq!(info.keys, Some(vec![key.to_string()]));
+            assert_eq!(info.slot_type.label, type_label);
+            assert_eq!(info.slot_type.dyn_sol_type, DynSolType::Bytes);
+        }
     }
 }
