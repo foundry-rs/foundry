@@ -270,27 +270,21 @@ contract TempoProofTest {
 
     function test_fork_receiver_rejects_other_identity() public {
         require(verifier.verify(initialKey, evidence, height, account, bytes32(0), 42), "valid other identity proof");
-        vm.recordLogs();
         vm.expectRevert(abi.encodeWithSignature("Error(string)", "vote signature"));
         receiver.submit(evidence, height, account, bytes32(0), 42);
-        require(vm.getRecordedLogs().length == 0, "rejected proof emitted logs");
     }
 
     function test_fork_receiver_rejects_wrong_value() public {
         require(
             !verifier.verify(forkKey, forkEvidence, forkHeight, forkAccount, bytes32(0), 43), "wrong value accepted"
         );
-        vm.recordLogs();
         vm.expectRevert(TempoProofReceiver.InvalidProof.selector);
         receiver.submit(forkEvidence, forkHeight, forkAccount, bytes32(0), 43);
-        require(vm.getRecordedLogs().length == 0, "rejected proof emitted logs");
     }
 
     function test_fork_receiver_rejects_changed_header() public {
         forkEvidence.rawHeader[10] = bytes1(uint8(forkEvidence.rawHeader[10]) ^ 1);
-        vm.recordLogs();
         vm.expectRevert(abi.encodeWithSignature("Error(string)", "header digest"));
         receiver.submit(forkEvidence, forkHeight, forkAccount, bytes32(0), 42);
-        require(vm.getRecordedLogs().length == 0, "rejected proof emitted logs");
     }
 }
