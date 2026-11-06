@@ -129,8 +129,6 @@ pub struct ProviderBuilder<N: Network = AnyNetwork> {
     no_proxy: bool,
     /// Whether to output curl commands instead of making requests.
     curl_mode: bool,
-    /// Whether to disable MPP: no `MPP_API_KEY` `x-api-key` header and no 402 payments.
-    no_mpp: bool,
     /// Phantom data for the network type.
     _network: PhantomData<N>,
 }
@@ -188,7 +186,6 @@ impl<N: Network> ProviderBuilder<N> {
             accept_invalid_certs: false,
             no_proxy: false,
             curl_mode: false,
-            no_mpp: false,
             _network: PhantomData,
         }
     }
@@ -350,17 +347,6 @@ impl<N: Network> ProviderBuilder<N> {
         self
     }
 
-    /// Sets whether to disable MPP: no `MPP_API_KEY` `x-api-key` header and no 402 payments.
-    pub const fn no_mpp(mut self, no_mpp: bool) -> Self {
-        self.no_mpp = no_mpp;
-        self
-    }
-
-    /// Returns the normalized endpoint URL, or `None` if the URL is invalid.
-    pub fn url(&self) -> Option<&Url> {
-        self.url.as_ref().ok()
-    }
-
     /// Constructs the `RetryProvider` taking all configs into account.
     pub fn build(self) -> Result<RetryProvider<N>> {
         Ok(RootProvider::new(self.build_client()?))
@@ -381,7 +367,6 @@ impl<N: Network> ProviderBuilder<N> {
             accept_invalid_certs,
             no_proxy,
             curl_mode,
-            no_mpp,
             ..
         } = self;
         let url = url?;
@@ -404,7 +389,6 @@ impl<N: Network> ProviderBuilder<N> {
             .with_jwt(jwt)
             .accept_invalid_certs(accept_invalid_certs)
             .no_proxy(no_proxy)
-            .no_mpp(no_mpp)
             .build();
         let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
 
@@ -443,7 +427,6 @@ impl<N: Network> ProviderBuilder<N> {
             accept_invalid_certs,
             no_proxy,
             curl_mode,
-            no_mpp,
             ..
         } = self;
 
@@ -466,7 +449,6 @@ impl<N: Network> ProviderBuilder<N> {
                     .with_jwt(jwt.clone())
                     .accept_invalid_certs(accept_invalid_certs)
                     .no_proxy(transport_no_proxy)
-                    .no_mpp(no_mpp)
                     .build())
             })
             .collect::<Result<Vec<_>>>()?;

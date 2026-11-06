@@ -7,7 +7,9 @@ import "utils/Test.sol";
 contract Issue6066Test is Test {
     function testNonPrefixed() public {
         vm.setEnv("__FOUNDRY_ISSUE_6066", "abcd");
-        vm._expectCheatcodeRevert("failed parsing $__FOUNDRY_ISSUE_6066 as type `uint256`");
+        vm._expectCheatcodeRevert(
+            "failed parsing $__FOUNDRY_ISSUE_6066 as type `uint256`: missing hex prefix (\"0x\") for hex string"
+        );
         uint256 x = vm.envUint("__FOUNDRY_ISSUE_6066");
     }
 }

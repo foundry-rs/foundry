@@ -800,31 +800,3 @@ contract RerunNetworksTest {
     assert!(failed_tests.contains(&"testDefaultFailure"));
     assert!(failed_tests.contains(&"testTempoFailure"));
 }
-
-#[cfg(feature = "monad")]
-#[forgetest_init]
-fn dynamic_inspector_records_resumed_caller(prj: _, cmd: _) {
-    prj.add_test(
-        "Record.t.sol",
-        &include_str!("../../../../../testdata/default/cheats/Record.t.sol")
-            .replace("utils/Test.sol", "forge-std/Test.sol"),
-    );
-
-    // Default verbosity and no coverage/gas instrumentation: pre-enabled stepping hides the bug.
-    for network in ["ethereum", "monad"] {
-        cmd.forge_fuse().args(["test", "--network", network]).assert_success().stdout_eq(str![[
-            r#"
-...
-Ran 4 tests for test/Record.t.sol:RecordTest
-[PASS] testRecordAccess() ([GAS])
-[PASS] testRecordResumedCaller() ([GAS])
-[PASS] testRecordResumedCreator() ([GAS])
-[PASS] testStopRecordAccess() ([GAS])
-Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
-
-"#
-        ]]);
-    }
-}

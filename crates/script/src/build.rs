@@ -1,9 +1,6 @@
 use crate::{
     ScriptArgs, ScriptConfig,
-    broadcast::{
-        BundledState, refused_after_revert, remaining_operation_indices,
-        remaining_unsigned_transactions_for_recovery,
-    },
+    broadcast::{BundledState, remaining_unsigned_transactions_for_recovery},
     execute::LinkedState,
     multi_sequence::MultiChainSequence,
     progress::ScriptProgress,
@@ -441,15 +438,6 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 1 => return Err(errors.remove(0)),
                 _ => eyre::bail!("{}", errors.iter().format("\n")),
             }
-        }
-        // Resume refuses new operations after a recorded revert. Saved attempts after it are still
-        // recovered, so it refuses here only once nothing is left to recover, and otherwise after
-        // the broadcast.
-        if let Some(err) = refused_after_revert(&sequence)
-            && (0..sequence.sequences().len())
-                .all(|index| remaining_operation_indices(&sequence, index).is_empty())
-        {
-            return Err(err);
         }
         for deployment in sequence.sequences() {
             for hash in &deployment.reverted {

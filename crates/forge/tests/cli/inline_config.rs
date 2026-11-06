@@ -1,6 +1,3 @@
-use serde::{Deserialize, Deserializer};
-use std::{fs, path::Path};
-
 #[forgetest]
 fn runs(prj: _, cmd: _) {
     prj.add_test(
@@ -145,6 +142,9 @@ Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing te
 
 #[forgetest_init]
 fn config_inline_isolate(prj: _, cmd: _) {
+    use serde::{Deserialize, Deserializer};
+    use std::{fs, path::Path};
+
     prj.add_test(
         "inline.sol",
         r#"

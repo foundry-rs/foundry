@@ -257,7 +257,7 @@ impl Cheatcode for copyStorageCall {
             "target address cannot have arbitrary storage"
         );
 
-        let slots = ccx.db().lifecycle().loaded_storage(ccx.evm.state(), from);
+        let slots = ccx.backend.backend().lifecycle().loaded_storage(ccx.evm.state(), from);
         let state = ccx.evm.state_mut();
         state.account(from)?.warm();
         touch_account(state, *to)?;

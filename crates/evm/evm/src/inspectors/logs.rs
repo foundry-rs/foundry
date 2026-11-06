@@ -29,6 +29,11 @@ impl LogCollector {
         }
     }
 
+    /// Records a `console.log` message, such as one emitted by a cheatcode.
+    pub fn console_log(&mut self, msg: &str) {
+        self.push_msg(msg);
+    }
+
     #[cold]
     fn do_hardhat_log<T: EvmTypesHost>(
         &mut self,
@@ -43,7 +48,7 @@ impl LogCollector {
     fn hardhat_log(&mut self, data: &[u8]) -> alloy_sol_types::Result<()> {
         let decoded = console::hh::ConsoleCalls::abi_decode(data)?;
         for line in decoded.fmt(Default::default()).lines() {
-            self.console_log(line);
+            self.push_msg(line);
         }
         Ok(())
     }
@@ -64,8 +69,7 @@ impl LogCollector {
         }
     }
 
-    /// Records a `console.log` message, such as one emitted by a cheatcode.
-    pub fn console_log(&mut self, msg: &str) {
+    fn push_msg(&mut self, msg: &str) {
         match self {
             Self::Capture { logs } => logs.push(new_console_log(msg)),
             Self::LiveLogs => sh_println!("{msg}").expect("fail printing to stdout"),

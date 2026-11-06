@@ -5,15 +5,14 @@
 //! [`ExecutionLifecycle`](super::ExecutionLifecycle), not here.
 
 use alloy_network::Network;
-use alloy_primitives::{Address, B256, U256, map::B256Map};
+use alloy_primitives::{Address, B256, U256};
 use evm2::{
     DatabaseError,
     bytecode::Bytecode,
-    evm::{AccountInfo, Cache, DbResult, DynDatabase, EmptyDB, InMemoryDB, NonStaticAny},
+    evm::{AccountInfo, Cache, Database, DbResult, DynDatabase, EmptyDB, InMemoryDB, NonStaticAny},
     interpreter::Word,
 };
 use foundry_fork_db::{ForkBlockEnv, SharedBackend};
-use parking_lot::RwLock;
 use std::{
     any::TypeId,
     sync::{
@@ -43,6 +42,28 @@ pub trait FoundryDatabase: DynDatabase {
     /// Sets whether the execution reading this database applies EIP-161, under which empty
     /// accounts do not exist.
     fn set_eip161(&self, _eip161: bool) {}
+}
+
+impl<D: FoundryDatabase + ?Sized> FoundryDatabase for &mut D {
+    fn is_forked_mode(&self) -> bool {
+        (**self).is_forked_mode()
+    }
+
+    fn active_fork_source_chain_id(&self) -> Option<u64> {
+        (**self).active_fork_source_chain_id()
+    }
+
+    fn evict_account(&self, address: &Address) {
+        (**self).evict_account(address);
+    }
+
+    fn evict_storage(&self, address: &Address, slot: &U256) {
+        (**self).evict_storage(address, slot);
+    }
+
+    fn set_eip161(&self, eip161: bool) {
+        (**self).set_eip161(eip161);
+    }
 }
 
 impl FoundryDatabase for EmptyDB {}
@@ -84,66 +105,22 @@ impl FoundryDatabase for Box<dyn BackingDb> {
     }
 }
 
-/// Converts accounts of the fork cache, which holds raw code, into evm2 accounts.
-///
-/// Each distinct code is built into [`Bytecode`] once and shared by every account and handle that
-/// reads it, so loads do not copy code and its jump analysis is reused.
-#[derive(Clone, Debug, Default)]
-pub struct ForkCode(Arc<RwLock<B256Map<Bytecode>>>);
-
-impl ForkCode {
-    /// Returns the fork cache's `account` as an evm2 account.
-    pub fn account(&self, account: foundry_fork_db::AccountInfo) -> AccountInfo {
-        let code = account.code.map(|code| self.bytecode(account.code_hash, code));
-        AccountInfo::new(account.balance, account.nonce, account.code_hash, code)
-    }
-
-    /// Returns the bytecode of `code`, whose hash is `code_hash`.
-    fn bytecode(&self, code_hash: B256, code: alloy_primitives::Bytes) -> Bytecode {
-        if code.is_empty() {
-            return Bytecode::new();
-        }
-        if let Some(bytecode) = self.0.read().get(&code_hash) {
-            return bytecode.clone();
-        }
-        self.0.write().entry(code_hash).or_insert_with(|| Bytecode::from_stored(code)).clone()
-    }
-
-    /// Returns the code with `code_hash` that an account of `db` holds.
-    pub fn code_by_hash(
-        &self,
-        db: &foundry_fork_db::cache::MemDb,
-        code_hash: B256,
-    ) -> Option<Bytecode> {
-        if let Some(bytecode) = self.0.read().get(&code_hash) {
-            return Some(bytecode.clone());
-        }
-        let code =
-            db.accounts.read().values().find_map(|info| {
-                (info.code_hash == code_hash).then(|| info.code.clone()).flatten()
-            })?;
-        Some(self.bytecode(code_hash, code))
-    }
-}
-
 /// A remote fork's backing database: Foundry's RPC-backed fork cache, read by evm2.
 ///
-/// The fork cache stores raw remote accounts. This adapter converts them into evm2 accounts and
-/// supplies the source chain identity and the execution spec's empty-account policy.
+/// The fork cache stores native evm2 accounts. This adapter supplies the source chain identity
+/// and the execution spec's empty-account policy.
 #[derive(Debug)]
 pub struct ForkDb<D> {
     db: D,
     source_chain_id: u64,
     /// Whether empty accounts do not exist (EIP-161), local to this execution's handle.
     eip161: AtomicBool,
-    /// Bytecode built from the fork cache, shared by every handle.
-    code: ForkCode,
 }
 
 impl<D> ForkDb<D> {
     /// Wraps a fork cache whose remote state belongs to `source_chain_id`.
-    pub fn new(db: D, source_chain_id: u64) -> Self {
-        Self { db, source_chain_id, eip161: AtomicBool::new(true), code: ForkCode::default() }
+    pub const fn new(db: D, source_chain_id: u64) -> Self {
+        Self { db, source_chain_id, eip161: AtomicBool::new(true) }
     }
 
     /// Returns the wrapped fork cache.
@@ -158,14 +135,13 @@ impl<D: Clone> Clone for ForkDb<D> {
             db: self.db.clone(),
             source_chain_id: self.source_chain_id,
             eip161: AtomicBool::new(self.eip161.load(Ordering::Relaxed)),
-            code: self.code.clone(),
         }
     }
 }
 
 impl<N: Network, B: ForkBlockEnv> DynDatabase for ForkDb<SharedBackend<N, B>> {
     fn get_account(&mut self, address: &Address) -> DbResult<Option<AccountInfo>> {
-        let info = self.db.account(*address).map_err(fatal)?.map(|info| self.code.account(info));
+        let info = self.db.get_account(address).map_err(fatal)?;
         // The fork cache reports accounts the remote does not hold as existing empty accounts.
         // From Spurious Dragon on an empty account does not exist (EIP-161), so load it as absent;
         // otherwise fresh EIP-7702 authorities would be refunded as existing ones. Before, the
@@ -176,17 +152,22 @@ impl<N: Network, B: ForkBlockEnv> DynDatabase for ForkDb<SharedBackend<N, B>> {
 
     fn get_code_by_hash(&mut self, code_hash: &B256) -> DbResult<Bytecode> {
         // RPC cannot fetch code by hash; the fork cache stores it inline.
-        self.code
-            .code_by_hash(&self.db.data(), *code_hash)
-            .ok_or_else(|| fatal(foundry_fork_db::DatabaseError::MissingCode(*code_hash)))
+        if let Some(code) =
+            self.db.data().accounts.read().values().find_map(|info| {
+                (info.code_hash == *code_hash).then(|| info.code.clone()).flatten()
+            })
+        {
+            return Ok(code);
+        }
+        self.db.get_code_by_hash(code_hash).map_err(fatal)
     }
 
     fn get_storage(&mut self, address: &Address, key: &U256) -> DbResult<U256> {
-        self.db.storage_at(*address, *key).map_err(fatal)
+        self.db.get_storage(address, key).map_err(fatal)
     }
 
     fn get_block_hash(&mut self, number: &U256) -> DbResult<B256> {
-        self.db.block_hash(u64::try_from(*number).map_err(fatal)?).map_err(fatal)
+        self.db.get_block_hash(number).map_err(fatal)
     }
 }
 
@@ -257,7 +238,8 @@ impl DynDatabase for AcceptedView {
             None => self.backing.get_account(address)?,
         };
         // Storage written to an absent account, such as by `vm.store`, is accepted without the
-        // account. evm2 reads no storage for an absent account, so report it as an empty one.
+        // account. evm2 reads no storage for an absent account, so report it as an empty one, as
+        // the REVM cache kept it.
         if account.is_none()
             && self
                 .cache

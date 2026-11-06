@@ -142,7 +142,8 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         evm_env: &mut EvmEnvFor<FEN>,
         evm_version: Option<EvmVersion>,
     ) -> Option<FoundryHardfork> {
-        resolve_execution_spec::<EvmFactoryFor<FEN>>(
+        resolve_execution_spec(
+            &EvmFactoryFor::<FEN>::default(),
             config.evm_version,
             config.hardfork,
             evm_env,

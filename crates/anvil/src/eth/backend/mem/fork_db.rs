@@ -11,7 +11,6 @@ use alloy_network::Network;
 use alloy_primitives::{Address, B256, U256, map::AddressMap};
 use alloy_rpc_types::BlockId;
 use evm2::evm::BlockStateAccumulator;
-use foundry_evm_core::evm::ForkCode;
 use foundry_fork_db::cache::MemDb as RemoteState;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -20,26 +19,22 @@ use std::sync::Arc;
 #[derive(Clone, Debug)]
 pub struct RemoteDb<N: Network> {
     backend: SharedBackend<N>,
-    code: ForkCode,
 }
 
 impl<N: Network> RemoteDb<N> {
-    /// Reads through `backend`, building bytecode into `code`.
-    pub const fn new(backend: SharedBackend<N>, code: ForkCode) -> Self {
-        Self { backend, code }
+    /// Reads through `backend`.
+    pub const fn new(backend: SharedBackend<N>) -> Self {
+        Self { backend }
     }
 }
 
 impl<N: Network> DatabaseRef for RemoteDb<N> {
     fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
-        let info = self.backend.account(address)?.map(|info| self.code.account(info));
-        Ok(info.filter(|info| !info.is_empty()))
+        self.backend.account(address).map(|info| info.filter(|info| !info.is_empty()))
     }
 
     fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
-        self.code
-            .code_by_hash(&self.backend.data(), code_hash)
-            .ok_or(DatabaseError::MissingCode(code_hash))
+        Err(DatabaseError::MissingCode(code_hash))
     }
 
     fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
@@ -66,14 +61,9 @@ impl<N: Network> MaybeFullDatabase for RemoteDb<N> {
 }
 
 /// Reads the accounts, storage and block hashes held by the fork cache.
-fn remote_state_snapshot(remote: &RemoteState, code: &ForkCode) -> StateSnapshot {
+fn remote_state_snapshot(remote: &RemoteState) -> StateSnapshot {
     StateSnapshot {
-        accounts: remote
-            .accounts
-            .read()
-            .iter()
-            .map(|(address, info)| (*address, code.account(info.clone())))
-            .collect(),
+        accounts: remote.accounts.read().clone(),
         storage: remote
             .storage
             .read()
@@ -87,11 +77,26 @@ fn remote_state_snapshot(remote: &RemoteState, code: &ForkCode) -> StateSnapshot
     }
 }
 
+/// Copies the fork cache's state.
+fn clone_remote_state(remote: &RemoteState) -> RemoteState {
+    RemoteState {
+        accounts: parking_lot::RwLock::new(remote.accounts.read().clone()),
+        storage: parking_lot::RwLock::new(remote.storage.read().clone()),
+        block_hashes: parking_lot::RwLock::new(remote.block_hashes.read().clone()),
+    }
+}
+
 /// A local snapshot of a [`ForkedDatabase`]: its local changes and the fork cache's contents.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct ForkDbLocalSnapshot<N: Network> {
     local: CacheDB<RemoteDb<N>>,
     remote: RemoteState,
+}
+
+impl<N: Network> Clone for ForkDbLocalSnapshot<N> {
+    fn clone(&self) -> Self {
+        Self { local: self.local.clone(), remote: clone_remote_state(&self.remote) }
+    }
 }
 
 /// State forked off another client.
@@ -114,7 +119,7 @@ impl<N: Network> ForkedDatabase<N> {
     /// Creates a new instance of this DB
     pub fn new(backend: SharedBackend<N>, db: BlockchainDb) -> Self {
         Self {
-            cache_db: CacheDB::new(RemoteDb::new(backend.clone(), ForkCode::default())),
+            cache_db: CacheDB::new(RemoteDb::new(backend.clone())),
             backend,
             db,
             state_snapshots: Arc::new(Mutex::new(Default::default())),
@@ -123,6 +128,10 @@ impl<N: Network> ForkedDatabase<N> {
 
     pub const fn database(&self) -> &CacheDB<RemoteDb<N>> {
         &self.cache_db
+    }
+
+    pub const fn database_mut(&mut self) -> &mut CacheDB<RemoteDb<N>> {
+        &mut self.cache_db
     }
 
     /// Reset the fork to a fresh forked state, and optionally update the fork config
@@ -135,7 +144,7 @@ impl<N: Network> ForkedDatabase<N> {
         // wipe the storage retrieved from remote
         self.inner().db().clear();
         // create a fresh `CacheDB`, effectively wiping modified state
-        self.cache_db = CacheDB::new(RemoteDb::new(self.backend.clone(), ForkCode::default()));
+        self.cache_db = CacheDB::new(RemoteDb::new(self.backend.clone()));
         trace!(target: "backend::forkdb", "Cleared database");
         Ok(())
     }
@@ -154,7 +163,7 @@ impl<N: Network> ForkedDatabase<N> {
     pub fn create_state_snapshot(&self) -> ForkDbStateSnapshot<N> {
         ForkDbStateSnapshot {
             local: self.cache_db.clone(),
-            state_snapshot: remote_state_snapshot(self.db.db(), &self.cache_db.db.code),
+            state_snapshot: remote_state_snapshot(self.db.db()),
         }
     }
 
@@ -162,7 +171,7 @@ impl<N: Network> ForkedDatabase<N> {
     pub fn insert_state_snapshot(&self) -> U256 {
         let state_snapshot = ForkDbLocalSnapshot {
             local: self.cache_db.clone(),
-            remote: RemoteState::clone(self.db.db()),
+            remote: clone_remote_state(self.db.db()),
         };
         let id = self.state_snapshots.lock().insert(state_snapshot);
         trace!(target: "backend::forkdb", "Created new snapshot {}", id);
@@ -323,13 +332,13 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
 
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         let db = self.inner().db();
-        let state_snapshot = remote_state_snapshot(db, &self.cache_db.db.code);
+        let state_snapshot = remote_state_snapshot(db);
         db.clear();
         state_snapshot
     }
 
     fn read_as_state_snapshot(&self) -> StateSnapshot {
-        remote_state_snapshot(self.inner().db(), &self.cache_db.db.code)
+        remote_state_snapshot(self.inner().db())
     }
 
     fn clear(&mut self) {

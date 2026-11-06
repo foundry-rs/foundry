@@ -1,6 +1,6 @@
 use super::{
     InvariantFailures, InvariantFuzzError, InvariantMetrics, InvariantTest, InvariantTestRun,
-    LiveInvariantStats, call_after_invariant_function, call_invariant_function,
+    call_after_invariant_function, call_invariant_function,
     error::{InvariantRunCtx, record_handler_assertion_bug},
 };
 use crate::executors::{Executor, RawCallResult};
@@ -61,8 +61,6 @@ pub struct InvariantFuzzTestResult {
     pub optimization_best_sequence: Vec<BasicTxDetails>,
     /// Whether fail-fast or Ctrl-C stopped the campaign before its timeout or planned runs.
     pub interrupted: bool,
-    /// Counters for the optional live symbolic worker.
-    pub symbolic_live: Option<LiveInvariantStats>,
 }
 
 impl InvariantFuzzTestResult {
@@ -107,7 +105,6 @@ impl InvariantFuzzTestResult {
             optimization_best_value,
             optimization_best_sequence,
             interrupted: false,
-            symbolic_live: None,
         }
     }
 }

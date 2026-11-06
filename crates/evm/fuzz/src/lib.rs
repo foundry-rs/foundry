@@ -526,9 +526,11 @@ impl FuzzFixtures {
 
     /// Returns configured fixtures for `param_name` fuzzed parameter.
     pub fn param_fixtures(&self, param_name: &str) -> Option<&[DynSolValue]> {
-        self.inner
-            .get(&normalize_fixture(param_name))
-            .and_then(|fixtures| fixtures.as_fixed_array().or_else(|| fixtures.as_array()))
+        if let Some(param_fixtures) = self.inner.get(&normalize_fixture(param_name)) {
+            param_fixtures.as_fixed_array().or_else(|| param_fixtures.as_array())
+        } else {
+            None
+        }
     }
 
     /// Returns the variant count for an enum identified by an optional contract qualifier and name

@@ -109,14 +109,15 @@ pub struct Parked<T: EvmTypesHost> {
     /// Whether `cache` holds carried accounts but the network initialization of a context that
     /// never ran is still due.
     pub(super) needs_init: bool,
-    /// Accounts loaded in this context before it was suspended, with their loaded slots. They are
-    /// cleared when the context finishes a transaction.
+    /// Accounts loaded in this context before it was suspended, with their loaded slots. Like
+    /// REVM's per-fork journals, they are cleared when the context finishes a transaction.
     pub(super) loaded: AddressMap<HashSet<U256>>,
     /// Accounts created in this context before it was suspended, with the same lifetime as
     /// `loaded`.
     pub(super) created: AddressSet,
     /// Accounts warm in this context when the running transaction last suspended it, with their
-    /// warm slots. Cleared between transactions, so the next transaction starts them cold.
+    /// warm slots. Cleared between transactions, as REVM treats journal entries of earlier
+    /// transactions as cold.
     pub(super) warm: AddressMap<HashSet<U256>>,
     /// Transaction-start values of the slots the running transaction changed in this context
     /// before it last suspended it, which its accepted state no longer holds. Cleared between
@@ -183,8 +184,8 @@ impl<T: EvmTypesHost<EvmExt: SendableExt>> Parked<T> {
     }
 
     /// Starts this fork from what the running transaction loaded and created in the `local`
-    /// context before it first selected a fork. Loaded storage values are kept even when a
-    /// non-created account's info comes from the fork.
+    /// context before it first selected a fork. Like REVM's initial journal, loaded storage values
+    /// are kept even when a non-created account's info comes from the fork.
     pub(super) fn inherit_local(&mut self, local: &Self) {
         for (address, slots) in &local.warm {
             self.warm.entry(*address).or_default().extend(slots);
@@ -389,6 +390,11 @@ impl<T: EvmTypesHost> ForkRegistry<T> {
     /// Returns whether an account persists across fork switches.
     pub fn is_persistent(&self, address: &Address) -> bool {
         self.persistent.contains(address)
+    }
+
+    /// Returns the accounts that persist across fork switches.
+    pub const fn persistent(&self) -> &AddressSet {
+        &self.persistent
     }
 
     /// Merges persistent accounts' accepted state from `source` into `target`.

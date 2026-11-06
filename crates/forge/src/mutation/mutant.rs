@@ -330,6 +330,7 @@ fn serialize_span<S>(span: &Span, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
+    use serde::Serialize;
     #[derive(Serialize)]
     struct SpanHelper {
         lo: u32,
@@ -342,6 +343,7 @@ fn deserialize_span<'de, D>(deserializer: D) -> Result<Span, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
+    use serde::Deserialize;
     #[derive(Deserialize)]
     struct SpanHelper {
         lo: u32,

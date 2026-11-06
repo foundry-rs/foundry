@@ -39,7 +39,7 @@ use tokio::{
     runtime::Handle,
     task::{JoinError, JoinHandle},
 };
-use tracing_subscriber::{EnvFilter, prelude::*};
+use tracing_subscriber::EnvFilter;
 
 #[cfg(feature = "optimism")]
 use op_alloy_rpc_types as _;
@@ -162,7 +162,6 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
     } else {
         None
     };
-    let tempo_epoch_length_fallback_warning = backend.tempo_epoch_length_fallback_warning().await;
 
     backend.commit_startup_fork_cache();
     let backend = Arc::new(backend);
@@ -291,10 +290,6 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
             identity.proposer,
             identity.epoch_length,
         )?;
-    }
-
-    if let Some(warning) = tempo_epoch_length_fallback_warning {
-        let _ = sh_warn!("{warning}");
     }
 
     Ok((api, handle))
@@ -489,6 +484,8 @@ impl Future for NodeHandle {
 
 #[doc(hidden)]
 pub fn init_tracing() -> LoggingManager {
+    use tracing_subscriber::prelude::*;
+
     let manager = LoggingManager::default();
 
     let _ = if let Ok(rust_log_val) = std::env::var("RUST_LOG")

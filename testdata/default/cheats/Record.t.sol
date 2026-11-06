@@ -90,37 +90,4 @@ contract RecordTest is Test {
         assertEq(reads.length, 0, "number of reads is incorrect");
         assertEq(writes.length, 0, "number of writes is incorrect");
     }
-
-    function testRecordResumedCaller() public {
-        this.startRecording();
-        assertResumedRecording();
-    }
-
-    function testRecordResumedCreator() public {
-        new RecordInConstructor();
-        assertResumedRecording();
-    }
-
-    function startRecording() external {
-        vm.record();
-    }
-
-    function assertResumedRecording() internal {
-        // No intervening call may refresh the suspended frame's opcode mask before this SSTORE.
-        assembly {
-            sstore(7, 11)
-        }
-        (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(this));
-        vm.assertEq(vm.load(address(this), bytes32(uint256(7))), bytes32(uint256(11)), "store failed");
-        vm.assertEq(writes.length, 1, "missed caller write");
-        vm.assertEq(writes[0], bytes32(uint256(7)), "wrong write slot");
-        vm.assertEq(reads.length, 1, "wrong read count");
-        vm.assertEq(reads[0], writes[0], "wrong read slot");
-    }
-}
-
-contract RecordInConstructor is Test {
-    constructor() {
-        vm.record();
-    }
 }

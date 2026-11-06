@@ -2,10 +2,13 @@
 //!
 //! Generic execution, environment, fork, backend, and state abstractions shared by Foundry tools.
 //!
-//! [`evm::FoundryEvmNetwork`] binds an Alloy network to an [`evm::FoundryEvmFactory`]. The factory
-//! owns the concrete execution types and constructs a Foundry-compatible EVM context, while
-//! `foundry-evm-networks` owns runtime family selection. Keeping those responsibilities separate
-//! allows one compiled binary to dispatch to different execution families at runtime.
+//! All execution runs on [evm2](https://github.com/alloy-rs/evm2). [`evm::FoundryEvmNetwork`] binds
+//! an Alloy network to an [`evm::FoundryEvmFactory`], which owns the network's evm2 type family and
+//! builds Foundry-configured EVMs, while `foundry-evm-networks` owns runtime family selection.
+//! Keeping those responsibilities separate allows one compiled binary to dispatch to different
+//! execution families at runtime. [`backend::Backend`] layers RPC forks, persistent accounts,
+//! snapshots and cheatcode policy on top; see its module documentation for the execution and
+//! inspector contract.
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -41,3 +44,5 @@ pub mod precompiles;
 pub mod state_snapshot;
 pub mod tempo;
 pub mod utils;
+
+pub use evm::FoundryInspectorExt;

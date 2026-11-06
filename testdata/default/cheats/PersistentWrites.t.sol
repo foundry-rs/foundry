@@ -73,6 +73,15 @@ contract PersistentWritesTest is Test {
         revert();
     }
 
+    function dealInChild() external {
+        this.dealOk();
+        revert();
+    }
+
+    function dealOk() external {
+        vm.deal(A, 100);
+    }
+
     function dealInRevertedChild() external {
         try this.dealTwice() {} catch {}
         A.transfer(10);
@@ -179,6 +188,7 @@ contract PersistentWritesTest is Test {
         assertEq(balanceAfter(abi.encodeCall(this.dealTwice, ())), 2, "dealTwice");
         assertEq(balanceAfter(abi.encodeCall(this.transferThenDeal, ())), 90, "transferThenDeal");
         assertEq(balanceAfter(abi.encodeCall(this.dealThenTransfer, ())), 100, "dealThenTransfer");
+        assertEq(balanceAfter(abi.encodeCall(this.dealInChild, ())), 100, "dealInChild");
         assertEq(balanceAfter(abi.encodeCall(this.dealInRevertedChild, ())), 2, "dealInRevertedChild");
         // A snapshot restore keeps the writes made before the snapshot.
         assertEq(balanceAfter(abi.encodeCall(this.dealThenRestoreInChild, ())), 100, "dealThenRestoreInChild");
@@ -232,14 +242,6 @@ contract PersistentWritesTest is Test {
         assertEq(A.balance, 100, "executeTransaction deal");
         // Intentionally differs from master, whose revert restored the enclosing store over it.
         assertEq(vm.load(TARGET, bytes32(uint256(1))), bytes32(uint256(1)), "executeTransaction store");
-
-        // Unlike executeTransaction, a raw transaction that fails at its root drops its writes.
-        vm.setNonceUnsafe(SENDER, 0);
-        vm.deal(A, 50);
-        vm.store(TARGET, 0, bytes32(uint256(1)));
-        vm.broadcastRawTransaction(RAW_TX);
-        assertEq(vm.getNonce(SENDER), 1, "raw transaction executed");
-        assertEq(A.balance, 50, "failed raw transaction deal");
     }
 
     // A fork switch accepts the writes on the fork it leaves, so a later revert does not replay

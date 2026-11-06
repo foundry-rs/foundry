@@ -16,12 +16,12 @@ pub extern crate foundry_cheatcodes_spec as spec;
 extern crate tracing;
 
 use alloy_primitives::{Address, B256, U256};
-use evm2::interpreter::GasTracker;
+use evm2::{env::TxEnv, interpreter::GasTracker};
 use foundry_evm_core::{
     backend::{Backend, CowBackend, LocalForkId},
     evm::{
         BlockEnvFor, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork,
-        SpecFor, evm_env,
+        SpecFor, TypesFor, evm_env,
     },
     fork::CreateFork,
 };
@@ -31,7 +31,7 @@ pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
 pub use inspector::{
     BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor,
-    StorageHook, message_result, revert_frame,
+    CheatcodesInspector, StorageHook, message_result, revert_frame,
 };
 pub use spec::{CheatcodeDef, Vm};
 
@@ -163,6 +163,8 @@ pub struct CheatsCtxt<'a, 'evm, FEN: FoundryEvmNetwork> {
     pub(crate) evm: &'a mut FoundryEvmFor<'evm, FEN>,
     /// The backend the EVM runs over.
     pub(crate) backend: &'a mut dyn CheatcodesBackend<FEN>,
+    /// The environment of the running transaction.
+    pub(crate) tx_env: &'a TxEnv<TypesFor<FEN>>,
     /// The original `msg.sender`.
     pub(crate) caller: Address,
     /// Gas of the current cheatcode call, returned to the caller.
@@ -285,13 +287,13 @@ impl<'evm, FEN: FoundryEvmNetwork> CheatsCtxt<'_, 'evm, FEN> {
     /// Returns the transaction origin (`tx.origin`), including prank and broadcast overrides.
     #[inline]
     pub(crate) fn tx_caller(&self) -> Address {
-        self.state.origin_override.unwrap_or(self.evm.tx_env().origin)
+        self.state.origin_override.unwrap_or(self.tx_env.origin)
     }
 
     /// Returns the transaction blob versioned hashes.
     #[inline]
     pub(crate) fn tx_blob_hashes(&self) -> Vec<B256> {
-        self.evm.tx_env().blob_hashes.iter().map(|hash| B256::from(*hash)).collect()
+        self.tx_env.blob_hashes.iter().map(|hash| B256::from(*hash)).collect()
     }
 
     /// Returns the active fork ID, if any.

@@ -136,8 +136,10 @@ impl<'ast> Visit<'ast> for MutantVisitor<'ast> {
         // walk so nested visit_expr / visit_variable_definition calls can gate
         // mutant collection accordingly.
         let prev = self.in_allowed_contract;
-        self.in_allowed_contract =
-            self.contract_filter.as_ref().is_none_or(|filter| filter(contract.name.as_str()));
+        self.in_allowed_contract = match &self.contract_filter {
+            Some(filter) => filter(contract.name.as_str()),
+            None => true,
+        };
         let res = self.walk_item_contract(contract);
         self.in_allowed_contract = prev;
         res

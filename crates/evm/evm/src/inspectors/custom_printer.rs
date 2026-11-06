@@ -47,7 +47,7 @@ impl<T: EvmTypesHost> Inspector<T> for CustomPrintTracer {
             message.code_address,
             message.caller,
             message.destination,
-            message.is_static(),
+            message.caller_is_static || message.kind == evm2::interpreter::MessageKind::StaticCall,
             message.value,
             message.input.len(),
         );

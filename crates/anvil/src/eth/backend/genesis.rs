@@ -1,8 +1,8 @@
 //! Genesis settings
 
-use crate::eth::backend::db::{AccountInfo, Bytecode, DatabaseResult, Db};
+use crate::eth::backend::db::{AccountInfo, Bytecode, DatabaseResult, Db, KECCAK_EMPTY};
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{Address, KECCAK256_EMPTY, U256};
+use alloy_primitives::{Address, U256};
 
 /// Genesis settings
 #[derive(Clone, Debug, Default)]
@@ -23,8 +23,8 @@ impl GenesisConfig {
     /// Returns fresh `AccountInfo`s for the configured `accounts`
     pub fn account_infos(&self) -> impl Iterator<Item = (Address, AccountInfo)> + '_ {
         self.accounts.iter().copied().map(|address| {
-            // The default account carries empty code, so `code_by_hash` doesn't get called.
-            let info = AccountInfo::default().with_balance(self.balance);
+            // The empty code is set so `code_by_hash` doesn't get called.
+            let info = AccountInfo::new(self.balance, 0, KECCAK_EMPTY, Some(Default::default()));
             (address, info)
         })
     }
@@ -52,7 +52,7 @@ impl GenesisConfig {
         AccountInfo::new(
             balance,
             nonce.unwrap_or_default(),
-            code.as_ref().map(|code| code.hash_slow()).unwrap_or(KECCAK256_EMPTY),
+            code.as_ref().map(|code| code.hash_slow()).unwrap_or(KECCAK_EMPTY),
             code,
         )
     }

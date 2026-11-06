@@ -2,7 +2,6 @@
 
 use super::{
     EvmEnv, FoundryEvmFactory, FoundryEvmNetwork, TxPayload, eth_envelope_from_any_rpc, eth_tx,
-    with_eip7702_delegations,
 };
 use alloy_consensus::transaction::Recovered;
 use alloy_network::{AnyRpcTransaction, Ethereum};
@@ -67,7 +66,10 @@ impl FoundryEvmFactory for EthEvmFactory {
     fn version(&self, spec: SpecId, chain_id: u64) -> Version {
         let mut version = Version::new(spec);
         version.chain_id = chain_id;
-        with_eip7702_delegations(version)
+        // Like REVM, existing EIP-7702 delegations resolve on every spec; only authorization
+        // processing is fork-gated, by the transaction registry.
+        version.features.insert(evm2::EvmFeatures::EIP7702);
+        version
     }
 
     fn tx_registry(&self, spec: SpecId) -> TxRegistry<BaseEvmTypes, TxResult<BaseEvmTypes>> {
@@ -190,15 +192,10 @@ pub fn celo_transfer<T: EvmTypes>(
     let to = Address::from_slice(&input[44..64]);
     let value = U256::from_be_slice(&input[64..96]);
     let state = evm.state_mut();
-    let balance = {
-        let mut account = state.account(&from)?;
-        account.warm();
-        account.balance()
-    };
-    if balance < value {
+    let balance = state.account_info_untracked(&from)?.map(|info| info.balance);
+    if balance.unwrap_or_default() < value {
         return halt("insufficient balance");
     }
-    state.account(&to)?.warm();
     if !state.transfer(&from, &to, &value)? {
         return halt("balance overflow in to account");
     }
@@ -220,11 +217,6 @@ pub const fn bsc_p256(chain_id: u64, timestamp: u64) -> Option<Option<bool>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_sol_types::SolValue;
-    use evm2::{
-        evm::{AccountInfo, InMemoryDB},
-        interpreter::{Host, InstrStop},
-    };
 
     fn ids(factory: EthEvmFactory, spec: SpecId, chain_id: u64, timestamp: u64) -> Vec<Address> {
         let block = evm2::env::BlockEnv::<BaseEvmTypes> {
@@ -250,44 +242,5 @@ mod tests {
         assert!(
             !ids(eth, SpecId::CANCUN, 1, BSC_MAINNET_HABER_TIMESTAMP).contains(&BSC_P256_ADDRESS)
         );
-    }
-
-    #[test]
-    fn celo_transfer_warms_accounts() {
-        let from = Address::with_last_byte(0xa1);
-        let recipient = Address::with_last_byte(0xb2);
-        let factory = EthEvmFactory::default().with_networks(NetworkConfigs::with_celo());
-        let spec = SpecId::OSAKA;
-        let env = EvmEnv::new(spec, factory.version(spec, 42220), Default::default());
-        let mut db = InMemoryDB::default();
-        db.insert_account_info(&from, AccountInfo::default().with_balance(U256::from(10)));
-        let mut evm = factory.create_evm(db, env);
-
-        for (to, value) in [(recipient, 0), (recipient, 3), (from, 3)] {
-            let checkpoint = evm.state().checkpoint();
-            let mut message = Message::<BaseEvmTypes> {
-                destination: CELO_TRANSFER_ADDRESS,
-                call_target: CELO_TRANSFER_ADDRESS,
-                code_address: CELO_TRANSFER_ADDRESS,
-                gas_limit: 9000,
-                input: Bytes::from((from, to, U256::from(value)).abi_encode()).into(),
-                ..Default::default()
-            };
-
-            assert_eq!(
-                Host::execute_message(&mut evm, &mut message).unwrap().stop,
-                InstrStop::Return
-            );
-            for address in [from, to] {
-                assert!(evm.state_mut().account(&address).unwrap().is_warm());
-            }
-
-            // An enclosing revert must undo the transfer's warmth.
-            let features = evm.version().features;
-            evm.state_mut().rollback(checkpoint, features);
-            for address in [from, to] {
-                assert!(!evm.state_mut().account(&address).unwrap().is_warm());
-            }
-        }
     }
 }

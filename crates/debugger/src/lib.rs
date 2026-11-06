@@ -12,4 +12,3 @@ mod builder;
 pub use builder::DebuggerBuilder;
 
 mod soldb;
-pub use soldb::ensure_dump_dir;

@@ -1,8 +1,9 @@
-//! Tempo execution integration.
+//! Tempo on evm2, using Tempo's own evm2 integration (tempoxyz/tempo#7871).
 
 use super::{
-    EvmEnv, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork, FoundryTxResultExt, SendableExt,
-    TransactionRequestFor, TxEnvelopeFor, TxPayload, placeholder_signature,
+    EvmEnv, FoundryBlockExt, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork,
+    FoundryTxResultExt, SendableExt, TransactionRequestFor, TxEnvelopeFor, TxPayload,
+    placeholder_signature,
 };
 use crate::{
     constants::{CALLER, SYSTEM_PRECOMPILE_STUB, TEST_CONTRACT_ADDRESS},
@@ -19,7 +20,7 @@ use foundry_evm_networks::TEMPO_PRECOMPILE_ADDRESSES;
 use std::sync::Arc;
 use tempo_alloy::{TempoNetwork, primitives::TEMPO_TX_TYPE_ID};
 use tempo_evm::{
-    TempoEvmExt, TempoEvmFactory, TempoEvmTypes, TempoTxEnv, TempoTxResultExt,
+    TempoBlockExt, TempoEvmExt, TempoEvmFactory, TempoEvmTypes, TempoTxEnv, TempoTxResultExt,
     tempo_execution_config, tempo_tx_registry,
 };
 use tempo_hardfork::TempoHardfork;
@@ -31,6 +32,16 @@ use tempo_precompiles::{
 /// Tempo EVM network.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TempoEvmNetwork;
+
+impl FoundryBlockExt for TempoBlockExt {
+    fn timestamp_millis_part(&self) -> u64 {
+        self.timestamp_millis_part
+    }
+
+    fn set_timestamp_millis_part(&mut self, millis: u64) {
+        self.timestamp_millis_part = millis;
+    }
+}
 
 /// Tempo envelope of Foundry's RPC types.
 type TempoNetworkTxEnvelope = TxEnvelopeFor<TempoEvmNetwork>;

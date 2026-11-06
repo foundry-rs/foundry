@@ -1,8 +1,5 @@
 use super::{abi::*, runtime::*, *};
-use foundry_evm::{
-    constants::MAGIC_ASSUME,
-    inspectors::cheatcodes::{DUMMY_CALL_OUTPUT, DUMMY_CREATE_ADDRESS},
-};
+use foundry_evm::inspectors::cheatcodes::{DUMMY_CALL_OUTPUT, DUMMY_CREATE_ADDRESS};
 
 mod calls;
 mod cheatcodes;
@@ -27,7 +24,11 @@ enum CallStatus {
 }
 
 enum JoinedCallOutcome {
-    ExpectedRevert(PathState),
+    Rejected,
+    ExpectedRevert {
+        parent: PathState,
+        child: PathState,
+    },
     /// A successful call; `unmet_expected_revert` means the caller must see it as a revert.
     Success {
         parent: PathState,
@@ -156,64 +157,29 @@ impl SymbolicExecutor {
         &mut self,
         executor: &ExecutorView<'_>,
         state: &PathState,
-        failure_world: &SymbolicWorld,
         mut outcome: CallOutcome,
-        failed_callee: Option<Address>,
-        assume_no_revert: Option<&AssumeNoRevert>,
+        reverter: Address,
     ) -> Result<JoinedCallOutcome, SymbolicError> {
         let mut parent = state.clone();
-        parent.first_failed_callee =
-            parent.first_failed_callee.or(outcome.state.first_failed_callee);
         parent.take_call_outcome_state(&mut outcome.state);
         if !matches!(outcome.status, CallStatus::Success) {
             parent.discard_failed_call_logs(
                 state.recorded_logs.as_ref().map_or(0, Vec::len),
                 state.recorded_logs_generation,
             );
-            parent.world = failure_world.clone();
-            // The path keeps the failed call's constraints, so keep its replay metadata too,
-            // including the symbolic address aliases the replayed writes resolve through.
-            parent.world.merge_replay_metadata_from(&outcome.state.world);
-            parent.replay_persistent_writes(
-                &mut self.cx,
-                executor,
-                state.persistent_writes.len(),
-            )?;
-        }
-        // Forge keeps the changes a failed call makes to a count 0 `expectEmit`, such as declaring,
-        // filling, or dropping it, which the symbolic expectation does not follow, so report them
-        // as unsupported.
-        if !matches!(outcome.status, CallStatus::Success)
-            && outcome.state.expected_emit != state.expected_emit
-            && [&outcome.state.expected_emit, &state.expected_emit]
-                .into_iter()
-                .flatten()
-                .any(ExpectedEmit::is_forbidden)
-        {
-            return Err(SymbolicError::Unsupported(
-                "symbolic vm.expectEmit count 0 across a failed call",
-            ));
         }
 
-        // Like Forge, a revert under `vm.assumeNoRevert` skips `vm.expectRevert`, and a matching
-        // revert returns `FOUNDRY::ASSUME`, which discards the run only if it reaches the top.
-        if let Some(assumption) = assume_no_revert
+        if let Some(assumption) = parent.assume_no_revert_next_call.take()
             && matches!(outcome.status, CallStatus::Revert)
-        {
-            if self.assume_no_revert_matches(
-                &parent,
-                assumption,
-                outcome.state.address,
+            && self.assume_no_revert_rejects(
+                &mut parent,
+                &assumption,
+                reverter,
                 &outcome.state.frame.return_data,
-            )? {
-                outcome.state.frame.return_data =
-                    SymReturnData::from_concrete_bytes(&mut self.cx, MAGIC_ASSUME.to_vec());
-            }
-            return Ok(JoinedCallOutcome::Revert { parent, child: outcome.state });
+            )?
+        {
+            return Ok(JoinedCallOutcome::Rejected);
         }
-        // Like Forge, the first failure inside the call precedes the call's own failure, which
-        // `vm.assumeNoRevert` handles before it is recorded.
-        parent.first_failed_callee = parent.first_failed_callee.or(failed_callee);
 
         if let Some(mut expected) = parent.expected_revert.clone() {
             // Like Forge, a call that succeeds under `vm.expectRevert` keeps its state, but the
@@ -229,7 +195,6 @@ impl SymbolicExecutor {
             match outcome.status {
                 CallStatus::Success => return Ok(JoinedCallOutcome::Failure(parent)),
                 CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {
-                    let reverter = expected.reverted_by(failed_callee, parent.first_failed_callee);
                     if !self.expected_revert_matches(
                         &mut parent,
                         &expected,
@@ -243,7 +208,7 @@ impl SymbolicExecutor {
                     } else {
                         parent.expected_revert = Some(expected);
                     }
-                    return Ok(JoinedCallOutcome::ExpectedRevert(parent));
+                    return Ok(JoinedCallOutcome::ExpectedRevert { parent, child: outcome.state });
                 }
             }
         }
@@ -366,7 +331,6 @@ impl SymbolicExecutor {
                                 }
                                 let mut halted = state.clone();
                                 halted.constraints = out_of_bounds_constraints;
-                                halted.return_data = SymReturnData::empty(&mut self.cx);
                                 *completed_paths += 1;
                                 let status = self.successful_call_status(kind, &halted);
                                 outcomes.push(CallOutcome { status, state: halted });
@@ -388,8 +352,6 @@ impl SymbolicExecutor {
                             return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
                         }
                         *completed_paths += 1;
-                        // Running past the end of code stops like STOP, with no output.
-                        state.return_data = SymReturnData::empty(&mut self.cx);
                         let status = self.successful_call_status(kind, &state);
                         outcomes.push(CallOutcome { status, state });
                         break;
@@ -431,8 +393,6 @@ impl SymbolicExecutor {
                             return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
                         }
                         *completed_paths += 1;
-                        // An exceptional halt returns no output.
-                        state.return_data = SymReturnData::empty(&mut self.cx);
                         outcomes.push(CallOutcome { status: CallStatus::ExceptionalHalt, state });
                         break;
                     }

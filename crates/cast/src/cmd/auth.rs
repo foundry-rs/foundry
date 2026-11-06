@@ -8,7 +8,7 @@ use foundry_cli::{
     utils::{ResolvedLane, maybe_print_resolved_lane},
 };
 use foundry_common::{FoundryTransactionBuilder, shell};
-use tempo_alloy::accounts::TempoAccountsWallet;
+use foundry_wallets::TempoAccountsWallet;
 
 /// Validates the authorization sender and confirms that the user intends to disclose an EIP-7702
 /// authorization to an RPC endpoint.

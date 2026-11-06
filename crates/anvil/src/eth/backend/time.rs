@@ -3,10 +3,7 @@
 use crate::eth::error::BlockchainError;
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
-use std::{
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{sync::Arc, time::Duration};
 
 /// Manages block time
 #[derive(Clone, Debug)]
@@ -26,8 +23,6 @@ struct TimeState {
     next_exact_timestamp: Option<TimestampOverride>,
     interval: Option<u64>,
     next_override_generation: u64,
-    /// Lets the next block reuse `last_timestamp`, so `evm_setTime(T)` mines a block at `T`.
-    allow_equal_once: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -54,7 +49,6 @@ pub(crate) struct TimeSnapshot {
     last_timestamp: u64,
     next_block_timestamp: Option<u64>,
     time_increase: u64,
-    allow_equal_once: bool,
 }
 
 /// A temporary additive time increase that can be rolled back after failed manual mining.
@@ -74,14 +68,12 @@ impl TimeManager {
     /// Resets the current time manager to the given timestamp, resetting the offsets and
     /// next block timestamp option
     pub fn reset(&self, start_timestamp: u64) {
-        self.reset_timestamp(start_timestamp, true, None, None, 0, false);
+        self.reset_timestamp(start_timestamp, true, None, None, 0);
     }
 
     /// Sets the current timestamp without changing when the current head was installed.
-    ///
-    /// The next block may use `timestamp` itself; later blocks strictly increase again.
     pub fn set_time(&self, timestamp: u64) {
-        self.reset_timestamp(timestamp, false, None, None, 0, true);
+        self.reset_timestamp(timestamp, false, None, None, 0);
     }
 
     /// Restores the timestamp and offset captured by a state snapshot.
@@ -92,7 +84,6 @@ impl TimeManager {
             Some(snapshot.offset),
             snapshot.next_block_timestamp,
             snapshot.time_increase,
-            snapshot.allow_equal_once,
         );
     }
 
@@ -103,13 +94,11 @@ impl TimeManager {
         offset: Option<i128>,
         next_block_timestamp: Option<u64>,
         time_increase: u64,
-        allow_equal_once: bool,
     ) {
         let current = duration_since_unix_epoch();
         let mut state = self.state.write();
         state.last_timestamp = start_timestamp;
         state.time_increase = time_increase;
-        state.allow_equal_once = allow_equal_once;
         if mark_new_head {
             state.last_block_wall_time = current.as_millis().try_into().unwrap_or(u64::MAX);
         }
@@ -134,7 +123,6 @@ impl TimeManager {
             last_timestamp: state.last_timestamp,
             next_block_timestamp: state.next_exact_timestamp.map(|override_| override_.timestamp),
             time_increase: state.time_increase,
-            allow_equal_once: state.allow_equal_once,
         }
     }
 
@@ -244,14 +232,10 @@ impl TimeManager {
             (wall.max(last_timestamp.saturating_add(state.time_increase)), false)
         };
         // Equal timestamps are only allowed when explicitly requested (exact override, an
-        // interval, a zero-interval mine such as `anvil_mine(n, 0)`, or the first block after
-        // `evm_setTime`). On the default path timestamps must strictly increase. The zero-interval
-        // flag only allows equality: the timestamp itself still comes from the wall clock or the
-        // configured interval.
-        let allow_equal = exact_timestamp.is_some()
-            || pin_timestamp
-            || state.interval.is_some()
-            || state.allow_equal_once;
+        // interval, or a zero-interval mine such as `anvil_mine(n, 0)`). On the default path
+        // timestamps must strictly increase. The zero-interval flag only allows equality: the
+        // timestamp itself still comes from the wall clock or the configured interval.
+        let allow_equal = exact_timestamp.is_some() || pin_timestamp || state.interval.is_some();
         let too_low = if allow_equal {
             next_timestamp < last_timestamp
         } else {
@@ -338,7 +322,6 @@ impl TimeManager {
         if state.offset_reset_generation == pending.offset_reset_generation {
             state.time_increase = state.time_increase.saturating_sub(pending.time_increase);
             state.last_timestamp = pending.timestamp;
-            state.allow_equal_once = false;
         }
     }
 
@@ -368,6 +351,7 @@ pub fn utc_from_secs(secs: u64) -> DateTime<Utc> {
 
 /// Returns the current duration since unix epoch.
 pub fn duration_since_unix_epoch() -> Duration {
+    use std::time::SystemTime;
     let now = SystemTime::now();
     now.duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_else(|err| panic!("Current time {now:?} is invalid: {err:?}"))
@@ -518,23 +502,6 @@ mod tests {
         let time = TimeManager::new(1_000);
         time.set_block_timestamp_interval(0);
         assert_eq!(time.next_timestamp(), 1_000);
-    }
-
-    #[test]
-    fn set_time_mines_next_block_at_that_time() {
-        let time = TimeManager::new(1_000);
-        time.set_time(5_000);
-        // Keep the wall clock behind the set time so a second tick cannot hide the floor.
-        time.state.write().offset -= 100;
-        let snapshot = time.snapshot();
-
-        assert_eq!(time.next_timestamp(), 5_000);
-        assert_eq!(time.next_timestamp(), 5_001);
-
-        // Reverting to a snapshot taken after `evm_setTime` restores the one-shot allowance.
-        time.restore(snapshot);
-        assert_eq!(time.next_timestamp(), 5_000);
-        assert_eq!(time.next_timestamp(), 5_001);
     }
 
     #[test]

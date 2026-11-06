@@ -183,14 +183,30 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn line_coverage() {
+    fn line_coverage_eth() {
         line_coverage_suite::<foundry_evm_core::evm::EthEvmNetwork>();
+    }
+
+    #[test]
+    fn line_coverage_tempo() {
         line_coverage_suite::<foundry_evm_core::evm::TempoEvmNetwork>();
-        #[cfg(feature = "optimism")]
+    }
+
+    #[cfg(feature = "optimism")]
+    #[test]
+    fn line_coverage_op() {
         line_coverage_suite::<foundry_evm_core::evm::OpEvmNetwork>();
-        #[cfg(feature = "base")]
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn line_coverage_base() {
         line_coverage_suite::<foundry_evm_core::evm::BaseEvmNetwork>();
-        #[cfg(feature = "monad")]
+    }
+
+    #[cfg(feature = "monad")]
+    #[test]
+    fn line_coverage_monad() {
         line_coverage_suite::<foundry_evm_core::evm::MonadEvmNetwork>();
     }
 }

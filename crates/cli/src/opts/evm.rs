@@ -63,17 +63,15 @@ pub struct EvmArgs {
 
     /// Number of retries.
     ///
-    /// Applies to the fork created by --rpc-url, and to forks created by cheatcodes unless their
-    /// `rpc_endpoints` entry sets `retries`.
-    #[arg(long, value_name = "RETRIES")]
+    /// See --rpc-url.
+    #[arg(long, requires = "rpc_url", value_name = "RETRIES")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_retries: Option<u32>,
 
     /// Initial retry backoff on encountering errors.
     ///
-    /// Applies to the fork created by --rpc-url, and to forks created by cheatcodes unless their
-    /// `rpc_endpoints` entry sets `retry_backoff`.
-    #[arg(long, value_name = "BACKOFF")]
+    /// See --rpc-url.
+    #[arg(long, requires = "rpc_url", value_name = "BACKOFF")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_retry_backoff: Option<u64>,
 
@@ -336,7 +334,6 @@ fn id<S: serde::Serializer>(chain: &Option<Chain>, s: S) -> Result<S::Ok, S::Err
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::CommandFactory;
     use foundry_config::{
         NamedChain,
         figment::{Figment, providers::Serialized},
@@ -469,6 +466,8 @@ mod tests {
 
     #[test]
     fn rpc_url_arg_does_not_read_eth_rpc_url_env() {
+        use clap::CommandFactory;
+
         let command = EvmArgs::command();
         let rpc_url =
             command.get_arguments().find(|arg| arg.get_id() == "rpc_url").expect("rpc_url arg");

@@ -97,11 +97,21 @@ pub fn eth_envelope_from_any_rpc(
 
 /// Transactions of a block and its two ancestors, for network state that depends on the block
 /// position of a transaction (see [`FoundryEvmExt::for_block`]).
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct BlockContext<FEN: FoundryEvmNetwork> {
     grandparent: Vec<Recovered<TxFor<FEN>>>,
     parent: Vec<Recovered<TxFor<FEN>>>,
     current: Vec<Recovered<TxFor<FEN>>>,
+}
+
+impl<FEN: FoundryEvmNetwork> Clone for BlockContext<FEN> {
+    fn clone(&self) -> Self {
+        Self {
+            grandparent: self.grandparent.clone(),
+            parent: self.parent.clone(),
+            current: self.current.clone(),
+        }
+    }
 }
 
 impl<FEN: FoundryEvmNetwork> BlockContext<FEN> {
@@ -194,13 +204,8 @@ async fn fetch_parent<P: Provider<AnyNetwork>>(
 pub fn block_txs<FEN: FoundryEvmNetwork>(
     block: &AnyRpcBlock,
 ) -> eyre::Result<Vec<Recovered<TxFor<FEN>>>> {
-    full_transactions(block)?.iter().map(FEN::tx_from_any_rpc).collect()
-}
-
-/// Returns the transactions of `block`, which must contain full transactions.
-pub(crate) fn full_transactions(block: &AnyRpcBlock) -> eyre::Result<&[AnyRpcTransaction]> {
     let BlockTransactions::Full(transactions) = &block.transactions else {
         eyre::bail!("block {} does not contain full transactions", block.header.number());
     };
-    Ok(transactions)
+    transactions.iter().map(FEN::tx_from_any_rpc).collect()
 }

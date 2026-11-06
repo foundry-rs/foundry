@@ -21,6 +21,6 @@ impl Mutator for DeleteExpressionMutator {
     }
 
     fn is_applicable(&self, ctxt: &MutationContext<'_>) -> bool {
-        ctxt.expr.is_some_and(|expr| matches!(expr.kind, ExprKind::Delete(_)))
+        if let Some(expr) = ctxt.expr { matches!(expr.kind, ExprKind::Delete(_)) } else { false }
     }
 }

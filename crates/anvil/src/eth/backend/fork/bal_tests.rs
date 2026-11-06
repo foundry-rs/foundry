@@ -63,7 +63,6 @@ fn fork_config(asserter: Asserter, block_hash: B256) -> ClientForkConfig {
             source_fork_block_hash: None,
         },
         state_is_mutable: false,
-        tempo_epoch_length: None,
         timestamp: 1_800_000_000,
         base_fee: None,
         blob_gas_used: None,
@@ -193,7 +192,7 @@ async fn fork_bal_prefill_validates_before_caching() {
             let account = &accounts[&address];
             assert_eq!(account.balance, U256::from(42));
             assert_eq!(account.nonce, 3);
-            assert_eq!(account.code.as_ref().unwrap(), &bytes!("6000"));
+            assert_eq!(account.code.as_ref().unwrap().original_bytes(), bytes!("6000"));
         }
     }
 }
@@ -299,9 +298,13 @@ fn fork_bal_seed_preserves_cached_values_and_merges_slots() {
             vec![StorageChange::new(index(1), U256::from(22))],
         ));
     let db = database(hash);
-    let cached_account =
-        foundry_fork_db::AccountInfo { balance: U256::from(99), ..Default::default() };
-    db.accounts().write().insert(address, cached_account.clone());
+    // The fork cache stores REVM-typed accounts, so the entry is edited in place.
+    let cached_account = {
+        let mut accounts = db.accounts().write();
+        let account = accounts.entry(address).or_default();
+        account.balance = U256::from(99);
+        account.clone()
+    };
     db.storage().write().insert(
         address,
         [(U256::ONE, U256::from(101)), (U256::from(3), U256::from(303))].into_iter().collect(),
@@ -338,7 +341,11 @@ fn fork_bal_seed_keeps_final_account_code() {
         assert_eq!(account.balance, U256::from(42));
         assert_eq!(account.nonce, 3);
         assert_eq!(account.code_hash, alloy_primitives::keccak256(&code));
-        assert_eq!(account.code.as_ref().unwrap(), &code);
+        assert_eq!(account.code.as_ref().unwrap().original_bytes(), code);
+        assert_eq!(
+            account.code.as_ref().unwrap().is_eip7702(),
+            code.starts_with(&[0xef, 0x01, 0x00])
+        );
     }
 }
 

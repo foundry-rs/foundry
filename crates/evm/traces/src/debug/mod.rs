@@ -464,6 +464,7 @@ mod tests {
             returndata: Bytes::new(),
             gas_remaining: 0,
             gas_refund_counter: 0,
+            gas_used: 0,
             gas_cost: 0,
             state_gas_cost: None,
             state_gas_reservoir: None,

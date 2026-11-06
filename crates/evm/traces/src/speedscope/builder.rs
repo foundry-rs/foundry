@@ -171,6 +171,7 @@ mod tests {
             returndata: Default::default(),
             gas_remaining: 0,
             gas_refund_counter: 0,
+            gas_used: 0,
             gas_cost,
             state_gas_cost: None,
             state_gas_reservoir: None,

@@ -1,8 +1,8 @@
 //! Monad on evm2, using `monad-evm2`.
 
 use super::{
-    EvmEnv, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork, FoundryTxResultExt, SendableExt,
-    TxPayload, eth_envelope_from_any_rpc, eth_tx, with_eip7702_delegations,
+    EvmEnv, FoundryBlockExt, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork,
+    FoundryTxResultExt, SendableExt, TxPayload, eth_envelope_from_any_rpc, eth_tx,
 };
 use alloy_consensus::{TxLegacy, transaction::Recovered};
 use alloy_network::{AnyRpcTransaction, Ethereum};
@@ -17,7 +17,7 @@ use evm2::{
     registry::TxRegistry,
 };
 use monad_evm2::{
-    MonadChainContext, MonadEvmExt, MonadEvmFactory, MonadEvmTypes, MonadHardfork,
+    MonadBlockExt, MonadChainContext, MonadEvmExt, MonadEvmFactory, MonadEvmTypes, MonadHardfork,
     MonadPrecompiles, MonadTxResultExt, monad_memory_limit, monad_tx_registry, monad_version,
     protocol_system_call,
     reserve_balance::{reserve_account, sync_reserve_balance},
@@ -27,6 +27,8 @@ use monad_evm2::{
 /// Monad EVM network.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MonadEvmNetwork;
+
+impl FoundryBlockExt for MonadBlockExt {}
 
 // SAFETY: `MonadEvmExt` is `Send + Sync`, as asserted below, so clones share only thread-safe
 // state.
@@ -136,7 +138,7 @@ pub fn is_protocol_system_legacy(tx: &TxLegacy) -> bool {
 /// Returns the EIP-7702 authorities of `tx`.
 fn authorities(tx: &Recovered<TxEnvelope>) -> Vec<Address> {
     tx.as_eip7702()
-        .map(|tx| tx.authorizations().filter_map(|auth| auth.authority()).collect())
+        .map(|tx| tx.authorization_list.iter().filter_map(|auth| auth.authority()).collect())
         .unwrap_or_default()
 }
 
@@ -168,7 +170,11 @@ impl FoundryEvmFactory for MonadEvmFactory {
     type Types = MonadEvmTypes;
 
     fn version(&self, spec: MonadHardfork, chain_id: u64) -> Version {
-        with_eip7702_delegations(monad_version(spec, chain_id))
+        let mut version = monad_version(spec, chain_id);
+        // Like REVM, existing EIP-7702 delegations resolve on every spec; only authorization
+        // processing is fork-gated, by the transaction registry.
+        version.features.insert(evm2::EvmFeatures::EIP7702);
+        version
     }
 
     fn execution_config(

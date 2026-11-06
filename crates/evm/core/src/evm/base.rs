@@ -1,17 +1,18 @@
 //! Base on evm2, using `base-evm2`.
 
 use super::{
-    EvmEnv, FoundryDatabase, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork,
-    FoundryTxResultExt, SendableExt, TxPayload, with_eip7702_delegations,
+    EvmEnv, FoundryBlockExt, FoundryDatabase, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork,
+    FoundryTxResultExt, SendableExt, TxPayload,
 };
 use crate::constants::SYSTEM_PRECOMPILE_STUB;
 use alloy_consensus::transaction::Recovered;
 use alloy_network::AnyRpcTransaction;
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, KECCAK256_EMPTY};
 use base_common_network::Base;
 use base_evm2::{
-    BaseEvmExt, BaseEvmFactory, BaseEvmTypes, BaseSpecId, BaseTxEnvelope, BaseTxResultExt,
-    base_tx_registry, base_version, precompiles::activation_admin_address_for_upgrade_by_chain_id,
+    BaseBlockEnvExt, BaseEvmExt, BaseEvmFactory, BaseEvmTypes, BaseSpecId, BaseTxEnvelope,
+    BaseTxResultExt, base_tx_registry, base_version,
+    precompiles::activation_admin_address_for_upgrade_by_chain_id,
 };
 use evm2::{
     Evm, TxResult, Version, bytecode::Bytecode, evm::precompile::PrecompileProvider,
@@ -22,6 +23,8 @@ use foundry_evm_networks::{BASE_CODE_SENTINEL_ADDRESSES, is_base_precompile_acti
 /// Base EVM network.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BaseEvmNetwork;
+
+impl FoundryBlockExt for BaseBlockEnvExt {}
 
 // SAFETY: `BaseEvmExt` is `Send + Sync`, as asserted below, so clones share only thread-safe state.
 unsafe impl SendableExt for BaseEvmExt {}
@@ -34,7 +37,7 @@ const _: fn() = || {
 impl FoundryEvmExt<BaseTxEnvelope> for BaseEvmExt {
     fn replace_while_executing(&mut self, ext: Self) {
         // Only the block-level L1 info comes from `ext`; everything else, including the cached L1
-        // cost, describes the running transaction.
+        // cost, describes the running transaction, as when REVM kept this state in its context.
         let tx_l1_cost = self.l1_block_info.tx_l1_cost;
         self.l1_block_info = ext.l1_block_info;
         self.l1_block_info.tx_l1_cost = tx_l1_cost;
@@ -90,7 +93,11 @@ impl FoundryEvmFactory for BaseEvmFactory {
     type Types = BaseEvmTypes;
 
     fn version(&self, spec: BaseSpecId, chain_id: u64) -> Version {
-        with_eip7702_delegations(base_version(spec, chain_id))
+        let mut version = base_version(spec, chain_id);
+        // Like REVM, existing EIP-7702 delegations resolve on every spec; only authorization
+        // processing is fork-gated, by the transaction registry.
+        version.features.insert(evm2::EvmFeatures::EIP7702);
+        version
     }
 
     fn tx_registry(&self, spec: BaseSpecId) -> TxRegistry<BaseEvmTypes, TxResult<BaseEvmTypes>> {
@@ -129,7 +136,7 @@ impl FoundryEvmFactory for BaseEvmFactory {
             .filter(|address| is_base_precompile_active_at(**address, upgrade))
         {
             if let Ok(mut account) = evm.state_mut().account(address)
-                && account.is_empty_code_hash()
+                && account.code_hash() == KECCAK256_EMPTY
             {
                 account.set_code_slow(sentinel.clone());
             }

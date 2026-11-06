@@ -29,4 +29,4 @@ tempo-primitives.workspace = true
 tokio.workspace = true
 
 [target.'cfg(unix)'.dev-dependencies]
-commonware-consensus = "=2026.10.0"
+commonware-consensus = "=2026.9.0"

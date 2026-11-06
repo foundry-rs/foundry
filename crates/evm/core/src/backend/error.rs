@@ -1,5 +1,6 @@
 use alloy_primitives::Address;
 use evm2::registry::HandlerError;
+use std::convert::Infallible;
 
 pub use foundry_fork_db::{DatabaseError, DatabaseResult};
 
@@ -9,12 +10,45 @@ pub type BackendResult<T> = Result<T, BackendError>;
 #[derive(Debug, thiserror::Error)]
 #[expect(missing_docs)]
 pub enum BackendError {
+    #[error("{0}")]
+    Message(String),
     #[error("cheatcodes are not enabled for {0}; see `vm.allowCheatcodes(address)`")]
     NoCheats(Address),
     #[error(transparent)]
     Database(#[from] DatabaseError),
     #[error(transparent)]
     State(#[from] evm2::DatabaseError),
+    #[error(
+        "CREATE2 Deployer (0x4e59b44847b379578588920ca78fbf26c0b4956c) not present on this chain.\n\
+         For a production environment, you can deploy it using the pre-signed transaction from \
+         https://github.com/Arachnid/deterministic-deployment-proxy.\n\
+         For a test environment, you can use `etch` to place the required bytecode at that address."
+    )]
+    MissingCreate2Deployer,
+}
+
+impl BackendError {
+    /// Create a new error with a message
+    pub fn msg(msg: impl Into<String>) -> Self {
+        Self::Message(msg.into())
+    }
+
+    /// Create a new error with a message
+    pub fn display(msg: impl std::fmt::Display) -> Self {
+        Self::Message(msg.to_string())
+    }
+}
+
+impl From<tokio::task::JoinError> for BackendError {
+    fn from(value: tokio::task::JoinError) -> Self {
+        Self::display(value)
+    }
+}
+
+impl From<Infallible> for BackendError {
+    fn from(value: Infallible) -> Self {
+        match value {}
+    }
 }
 
 /// Returns a report for a transaction evm2 rejected or failed to execute, wrapped in an
@@ -25,7 +59,7 @@ pub fn handler_error(err: HandlerError) -> eyre::Report {
 
 /// Returns a report for a transaction evm2 rejected or failed to execute.
 ///
-/// Transaction validation errors use Foundry's own wording instead of evm2's.
+/// Transaction validation errors keep the wording users saw before the evm2 migration.
 pub fn transaction_error(err: HandlerError) -> eyre::Report {
     let reason = match &err {
         HandlerError::InvalidNonce { expected, got } if got > expected => {

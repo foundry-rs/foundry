@@ -6,8 +6,18 @@
 //! [`EthEvmNetwork`], [`OpEvmNetwork`], [`BaseEvmNetwork`], [`MonadEvmNetwork`] and
 //! [`TempoEvmNetwork`].
 //!
-//! Transactions stay network-native until execution (see [`tx`](self::TxPayload)).
-//! [`ExecutionLifecycle`] owns the accepted state that evm2's `State` does not.
+//! Transactions stay network-native until execution (see [`tx`](self::TxPayload)): tools keep
+//! [`TransactionRequestFor`] or [`TxEnvelopeFor`] values and convert once with
+//! [`FoundryEvmNetwork::tx_from_request`], [`FoundryEvmNetwork::tx_from_signed`],
+//! [`FoundryEvmNetwork::decode_tx`] or [`FoundryEvmNetwork::tx_from_any_rpc`].
+//!
+//! State ownership is split three ways:
+//!
+//! - evm2's `State` owns transaction scratch, journaling, warmth, transient storage, logs and the
+//!   running context's accepted overlay;
+//! - a [`BackingDb`] serves reads that miss the overlay and never receives writes;
+//! - [`ExecutionLifecycle`] owns the accepted state of inactive forks, persistent accounts,
+//!   snapshots and nested execution.
 //!
 //! [`crate::backend::Backend`] layers RPC forks and Foundry's cheatcode policy on top of the
 //! lifecycle.
@@ -48,6 +58,9 @@ pub use lifecycle::*;
 
 mod snapshot;
 pub use snapshot::*;
+
+mod inspector;
+pub use inspector::FoundryInspectorExt;
 
 mod tx;
 pub use tx::*;
@@ -151,15 +164,6 @@ pub(crate) fn unknown_transaction_type(tx: &AnyRpcTransaction, target: &str) -> 
     eyre::eyre!("cannot convert unknown transaction type {:#04x} to {target}", tx.inner.inner.ty())
 }
 
-/// Enables EIP-7702 delegation resolution on `version`.
-///
-/// Existing delegations resolve on every spec; only authorization processing is fork-gated, by
-/// the transaction registry.
-pub(crate) const fn with_eip7702_delegations(mut version: Version) -> Version {
-    version.features.insert(evm2::EvmFeatures::EIP7702);
-    version
-}
-
 /// Builds Foundry-configured EVMs for one evm2 [`EvmTypesHost`] family.
 ///
 /// Implementors provide configuration (version, registry, precompiles, extension state) and
@@ -171,7 +175,7 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
         + EvmTypesHost<
             SpecId: ExecutionSpec + Default + Debug + PartialEq + Send + Sync + Unpin,
             Tx: Typed2718 + Clone + Debug + Send + Sync,
-            BlockEnvExt: Copy + Debug + Default + Send + Sync + 'static,
+            BlockEnvExt: FoundryBlockExt,
             EvmExt: FoundryEvmExt<<Self::Types as EvmTypesHost>::Tx>,
             TxResultExt: FoundryTxResultExt,
         >;
@@ -251,16 +255,14 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
     ) -> Evm<'a, Self::Types> {
         let factory = self.configure_for(&db, &env);
         let is_forked = db.is_forked_mode();
-        let ext = factory.evm_ext(&env);
-        let mut evm = factory.new_evm_with_ext(db, env, ext);
+        let mut evm = factory.new_evm(db, env);
         factory.initialize_evm(&mut evm, is_forked);
         evm
     }
 
-    /// Creates a Foundry-configured EVM with fresh extension state, without seeding network state.
+    /// Creates a Foundry-configured EVM without seeding network state.
     ///
-    /// For inherited extension state, configure the factory with [`Self::configure_for`] and use
-    /// [`Self::new_evm_with_ext`] instead.
+    /// Use this when the EVM's state is replaced right away, as for nested transactions.
     fn new_evm<'a>(
         &self,
         db: impl FoundryDatabase + 'a,
@@ -273,9 +275,6 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
 
     /// Creates a Foundry-configured EVM with the given network extension state, such as the
     /// running EVM's for a nested frame.
-    ///
-    /// The factory must already be configured for the source database and environment. This
-    /// neither reconfigures it nor seeds network state; `db` may be a temporary placeholder.
     fn new_evm_with_ext<'a>(
         &self,
         db: impl FoundryDatabase + 'a,
@@ -303,12 +302,20 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
         EvmEnv::new(spec, carry_execution_policy(&current_default, &env.version, next), env.block)
     }
 
-    /// Switches `evm` to `env`: its block, spec and chain ID, keeping Foundry's execution toggles
-    /// and limits.
+    /// Switches `evm` to `spec`, keeping Foundry's execution toggles and limits.
     ///
     /// This rebuilds the dispatch tables, the transaction registry and the precompiles, so opcode
     /// and precompile availability follows the new spec. It must not be called while `evm` is
     /// executing.
+    fn set_execution_spec(&self, evm: &mut Evm<'_, Self::Types>, spec: SpecOf<Self>) {
+        let env = EvmEnv::new(spec, *evm.version(), *evm.block());
+        self.set_env(evm, env);
+    }
+
+    /// Switches `evm` to `env`: its block, spec and chain ID, keeping Foundry's execution toggles
+    /// and limits.
+    ///
+    /// Like [`Self::set_execution_spec`], this must not be called while `evm` is executing.
     fn set_env(&self, evm: &mut Evm<'_, Self::Types>, env: EvmEnv<Self::Types>) {
         let current = *evm.version();
         let current_default = self.version(evm.config_spec_id(), current.chain_id);
@@ -347,6 +354,9 @@ pub type InterpreterFor<'frame, 'host, FEN> =
     evm2::interpreter::Interpreter<'frame, 'host, TypesFor<FEN>>;
 pub type MessageFor<FEN> = evm2::interpreter::Message<TypesFor<FEN>>;
 pub type MessageResultFor<FEN> = evm2::interpreter::MessageResult<TypesFor<FEN>>;
+pub type TxEnvFor<FEN> = evm2::env::TxEnv<TypesFor<FEN>>;
 pub type NetworkFor<FEN> = <FEN as FoundryEvmNetwork>::Network;
 pub type TxEnvelopeFor<FEN> = <NetworkFor<FEN> as Network>::TxEnvelope;
 pub type TransactionRequestFor<FEN> = <NetworkFor<FEN> as Network>::TransactionRequest;
+pub type TransactionResponseFor<FEN> = <NetworkFor<FEN> as Network>::TransactionResponse;
+pub type BlockResponseFor<FEN> = <NetworkFor<FEN> as Network>::BlockResponse;

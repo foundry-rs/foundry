@@ -176,15 +176,16 @@ pub fn reconstruct_event_params(event: &Event, decoded: &DecodedEvent) -> Vec<Dy
     inputs
 }
 
-/// Fetches the overloads of `function_name` from the contract's Etherscan ABI. If the address is a
-/// proxy, fetches the ABI of the implementation contract.
-pub async fn get_funcs_etherscan(
+/// Given a function name, address, and args, tries to parse it as a `Function` by fetching the
+/// abi from etherscan. If the address is a proxy, fetches the ABI of the implementation contract.
+pub async fn get_func_etherscan(
     function_name: &str,
     contract: Address,
+    args: &[String],
     chain: Chain,
     etherscan_api_key: &str,
     etherscan_api_url: Option<&str>,
-) -> Result<Vec<Function>> {
+) -> Result<Function> {
     let client = if let Some(api_url) = etherscan_api_url {
         Client::builder()
             .with_api_key(etherscan_api_key)
@@ -198,7 +199,16 @@ pub async fn get_funcs_etherscan(
     let metadata = source.items.first().wrap_err("etherscan returned empty metadata")?;
 
     let mut abi = metadata.abi()?;
-    Ok(abi.functions.remove(function_name).unwrap_or_default())
+    let funcs = abi.functions.remove(function_name).unwrap_or_default();
+
+    for func in funcs {
+        let res = encode_function_args(&func, args);
+        if res.is_ok() {
+            return Ok(func);
+        }
+    }
+
+    Err(eyre::eyre!("Function not found in abi"))
 }
 
 /// If the code at `address` is a proxy, recurse until we find the implementation.
@@ -249,13 +259,14 @@ pub fn coerce_value(ty: &str, arg: &str) -> Result<DynSolValue> {
 mod tests {
     use super::*;
     use alloy_dyn_abi::EventExt;
-    use alloy_primitives::{B256, U256, address};
-    use foundry_block_explorers::contract::Metadata;
+    use alloy_primitives::{B256, U256};
 
     /// `Proxy: 1` with an empty `Implementation` used to panic on `.unwrap()`
     /// (real-world shape, see `foundry_block_explorers`' own `can_deserialize_address_opt` test).
     #[test]
     fn test_proxy_without_implementation_does_not_panic() {
+        use foundry_block_explorers::contract::Metadata;
+
         let json = serde_json::json!({
             "SourceCode": "// dummy",
             "ABI": "[]",
@@ -289,6 +300,9 @@ mod tests {
 
     #[test]
     fn proxy_implementation_decision_follows_real_implementation() {
+        use alloy_primitives::address;
+        use foundry_block_explorers::contract::Metadata;
+
         let json = serde_json::json!({
             "SourceCode": "// dummy",
             "ABI": "[]",
@@ -408,6 +422,8 @@ mod tests {
 
     #[test]
     fn test_encode_args_length_validation() {
+        use alloy_json_abi::Param;
+
         let params = vec![
             Param {
                 name: "a".to_string(),

@@ -43,13 +43,7 @@ pub struct SymbolicConfig {
     /// Whether invariant frontier seeding should first search for a property-breaking call.
     #[serde(default)]
     pub check_invariant_frontiers: bool,
-    /// Whether one bounded symbolic worker assists a running invariant campaign.
-    ///
-    /// Off by default. Uses `timeout`, `max_solver_queries`, and `frontier_limit` as
-    /// campaign-wide budgets. Candidates must pass normal concrete campaign execution.
-    #[serde(default)]
-    pub live: bool,
-    /// Maximum imported frontiers per symbolic run or submitted live frontiers per campaign.
+    /// Maximum number of fuzz branch frontiers to try for one symbolic run.
     pub frontier_limit: usize,
     /// Fuzz branch frontier artifact IDs to import. Empty imports by artifact order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -125,7 +119,6 @@ impl Default for SymbolicConfig {
             corpus_seed_limit: 32,
             use_fuzz_frontiers: false,
             check_invariant_frontiers: false,
-            live: false,
             frontier_limit: 256,
             frontier_ids: Vec::new(),
             frontier_pcs: Vec::new(),
@@ -208,6 +201,5 @@ mod tests {
         let config: SymbolicConfig = serde_json::from_value(value).unwrap();
 
         assert_eq!(config.exploration_order, SymbolicExplorationOrder::Bfs);
-        assert!(!config.live);
     }
 }
