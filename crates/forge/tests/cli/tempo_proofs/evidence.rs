@@ -112,18 +112,27 @@ async fn send(
     sender: Address,
     transaction: TransactionRequest,
 ) -> AnyTransactionReceipt {
+    let receipt = transact(provider, sender, transaction).await;
+    assert!(receipt.status());
+    receipt
+}
+
+pub(super) async fn transact(
+    provider: &RetryProvider,
+    sender: Address,
+    transaction: TransactionRequest,
+) -> AnyTransactionReceipt {
+    let gas_limit = transaction.gas.unwrap_or(5_000_000);
     let hash = provider
         .client()
         .request::<_, B256>(
             "eth_sendTransaction",
-            (transaction.from(sender).transaction_type(2).gas_limit(5_000_000),),
+            (transaction.from(sender).transaction_type(2).gas_limit(gas_limit),),
         )
         .await
         .unwrap();
     mine(provider).await;
-    let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
-    assert!(receipt.status());
-    receipt
+    provider.get_transaction_receipt(hash).await.unwrap().unwrap()
 }
 
 async fn mine(provider: &RetryProvider) {
@@ -136,7 +145,7 @@ fn write(account: Address, value: u64) -> TransactionRequest {
     TransactionRequest::default().to(account).with_input(input)
 }
 
-fn key_coordinates(compressed: &[u8]) -> Bytes {
+pub(super) fn key_coordinates(compressed: &[u8]) -> Bytes {
     let encoded = PublicKey::key_validate(compressed).unwrap().serialize();
     let mut output = [0; 256];
     // blst puts each Fp2 imaginary component first; EIP-2537 uses padded real components first.
@@ -150,6 +159,7 @@ pub(super) async fn collect_fork(
     config: NodeConfig,
     bytecode: Bytes,
     deployed_bytecode: Bytes,
+    seed: B256,
 ) -> Value {
     let (source_api, source) = spawn(config.clone()).await;
     let remote = Address::repeat_byte(0x51);
@@ -168,7 +178,7 @@ pub(super) async fn collect_fork(
             .with_eth_rpc_url(Some(source.http_endpoint()))
             .with_fork_block_number(Some(1u64))
             .with_no_storage_caching(true)
-            .with_tempo_consensus_seed(Some(B256::repeat_byte(0x52))),
+            .with_tempo_consensus_seed(Some(seed)),
     )
     .await;
     let provider = handle.http_provider();

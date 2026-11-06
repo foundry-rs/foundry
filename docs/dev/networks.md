@@ -249,24 +249,64 @@ release and Docker workflows. Tests that use forks must contain `fork` in their 
 
 ### Tempo certificate and storage proofs
 
+The supported trust model is **application-level verification**. An application chooses a specific
+Anvil development consensus public key and deploys the
+[receiver fixture](../../testdata/fixtures/TempoProofVerifier.sol) with that key. The receiver fixes
+its trust anchor at deployment; submitted evidence cannot replace it. The producer's
+`anvil_tempoConsensusIdentity` response can supply the public key for this configuration, but an
+untrusted RPC response or a key bundled with evidence does not establish trust by itself.
+
+Here, **attach** means assembling an off-chain `TempoProofVerifier.Evidence` value from one retained,
+sealed block and passing it to `TempoProofReceiver.submit` with the expected height, account, slot
+and value:
+
+1. Read `consensus_getFinalization` at a fixed height and decode its finalization subject, vote and
+   seed signatures.
+2. Read the full native header with `debug_getRawHeader` at that height. Its Keccak-256 digest must
+   equal the certificate payload. The receiver verifies both signatures under its configured key,
+   requires a finalization subject, and checks the signed header's height and consensus context.
+3. Read `eth_getProof` for the account and slot at the same height. The receiver verifies the account
+   proof against the signed header's state root, then the storage proof against that account's
+   storage root, and checks the expected value.
+
+The certificate and proofs accompany the unchanged raw header. Attachment does not insert a
+certificate into the header, import a block, or change the canonical chain. There is no additional
+attach RPC. Mixing artifacts with incompatible header digests or trie roots must fail verification
+even when each artifact is valid separately. Anyone may relay the evidence; the receiver authenticates
+the configured signing key and claim rather than the transaction sender.
+
 On Unix, the [Forge test](../../crates/forge/tests/cli/tempo_proofs.rs) verifies fresh Anvil certificates,
 key rotation and account/storage proofs in Solidity, including a local two-node fork pinned to a
 fixed upstream height. It deploys and updates a contract on the fork, then checks that late upstream
 reads and later writes preserve the earlier certified proofs. It also writes to an upstream account
 and verifies its inclusion in a later sealed partial trie while preserving its earlier exclusion.
+The application submission smoke test deploys the receiver on a separate local Tempo Anvil node,
+sends evidence to `submit` over HTTP, and checks the mined transaction receipt and acceptance event.
 Uncached runs download pinned sources and Solc.
 
-The [receiver fixture](../../testdata/fixtures/TempoProofVerifier.sol) fixes its trusted development
-key at deployment and reuses the same verifier. Its `submit` entry point reverts on invalid evidence
-or a mismatched value, and emits `ProofAccepted(digest, height, account, slot, value)` only after
-verification succeeds. Tests check the exact acceptance event and reject valid evidence from a
-different identity with a vote-signature revert. This fixture has no key rotation or replay
-policy; these tests run locally in Forge and do not submit proof transactions to a native Tempo node.
+The receiver reuses the [verifier fixture](../../testdata/fixtures/TempoProofVerifier.sol). Its `submit`
+entry point reverts on invalid evidence or a mismatched value, and emits
+`ProofAccepted(digest, height, account, slot, value)` only after verification succeeds. It has no
+freshness requirement, replay protection, source-chain identity check or automatic key rotation.
+Repeated valid submissions may emit the same event, and historical evidence remains acceptable
+under the configured key. The verifier's separate authenticated key-handoff tests do not update the
+receiver's trust anchor.
+
+Development keys are predictable, and an operator can rewind or reset Anvil and sign conflicting
+histories at the same height. A valid proof therefore authenticates a claim under the chosen
+development key; it does not establish unique canonical history or production consensus safety.
+Applications needing those policies must define them separately before using this fixture beyond
+development tests.
 
 Fork certificates authenticate the sealed trie of cached local state, not the complete upstream
 state. An uncached upstream account remains absent from an earlier sealed trie even after a later
 RPC read loads it. The fork uses an explicit local development consensus identity distinct from the
 upstream identity; this test does not authenticate an upstream committee handoff to that local key.
+
+These tests exercise Solidity application acceptance, including a local HTTP transaction. They do
+not make a native Tempo validator accept the Anvil block or certificate. Native consensus acceptance
+would require the actual validator, DKG, committee membership and quorum; this receiver and its
+attachment semantics provide no such integration.
 
 ```sh
 cargo nextest run -p forge --test cli tempo_proofs
