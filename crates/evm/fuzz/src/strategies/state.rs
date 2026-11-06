@@ -87,12 +87,13 @@ impl EvmFuzzState {
         let mut accs = db.cache.accounts.iter().collect::<Vec<_>>();
         accs.sort_by_key(|(address, _)| *address);
 
-        // Create fuzz dictionary and insert values from db state.
+        // Create fuzz dictionary and insert values from db state. Literals go in first: the db
+        // values seed the typed samples, which merges the literals in at that point.
         let mut dictionary = FuzzDictionary::new(config);
-        dictionary.insert_db_values(accs);
         if let Some(literals) = literals {
             dictionary.literal_values = literals.clone();
         }
+        dictionary.insert_db_values(accs);
 
         Self { inner: Arc::new(dictionary), deployed_libs: deployed_libs.to_vec() }
     }
@@ -282,6 +283,8 @@ impl From<EvmFuzzState> for FuzzState {
 const MAX_PERSISTENT_VALUES: usize = 2048;
 /// Maximum cached storage slot layout lookups per fuzz dictionary.
 const MAX_SLOT_INFO_CACHE_ENTRIES: usize = 4096;
+/// Maximum number of account addresses kept as typed `address` samples.
+const MAX_ADDRESS_SAMPLES: usize = 1024;
 
 #[derive(Clone)]
 pub struct FuzzDictionary {
@@ -400,6 +403,7 @@ impl FuzzDictionary {
 
             // Insert basic account information
             self.insert_value(address.into_word());
+            self.insert_address_sample(*address);
             // Insert push bytes
             self.insert_push_bytes_values(address, &account.info);
             // Insert storage values.
@@ -550,6 +554,7 @@ impl FuzzDictionary {
 
             // Insert basic account information.
             self.insert_value(address.into_word());
+            self.insert_address_sample(*address);
             // Insert push bytes.
             self.insert_push_bytes_values(address, &account.info);
             // Insert storage values.
@@ -751,6 +756,21 @@ impl FuzzDictionary {
             insert(&mut self.sample_values, DynSolType::Uint(128), value);
             insert(&mut self.sample_values, DynSolType::Uint(256), value);
             insert(&mut self.sample_values, DynSolType::Int(256), value);
+        }
+    }
+
+    /// Insert the address of an account the campaign touched as a typed `address` sample.
+    ///
+    /// The address also lives in the untyped value pool, but `address` parameters only reach it
+    /// there in the share of picks that falls on the untyped pool. Samples are not reverted at the
+    /// end of a run, so addresses that a reverted call created stay available.
+    fn insert_address_sample(&mut self, address: Address) {
+        if !self.samples_seeded {
+            self.seed_samples();
+        }
+        let bucket = self.sample_values.entry(DynSolType::Address).or_default();
+        if bucket.len() < MAX_ADDRESS_SAMPLES {
+            bucket.insert(address.into_word());
         }
     }
 
@@ -1220,6 +1240,42 @@ mod tests {
             }
         }
         assert_eq!(dictionary.state_values.as_slice(), expected.as_slice());
+    }
+
+    #[test]
+    fn touched_account_addresses_become_typed_address_samples() {
+        let mut state_changeset = StateChangeset::default();
+        for i in 1..=3u8 {
+            state_changeset.insert(Address::repeat_byte(i), Account::default());
+        }
+
+        let mut dictionary = FuzzDictionary::default();
+        dictionary.insert_new_state_values(&state_changeset, &TargetedContracts::new(), None);
+
+        let samples = dictionary.samples(&DynSolType::Address).unwrap();
+        for i in 1..=3u8 {
+            assert!(samples.contains(&Address::repeat_byte(i).into_word()));
+        }
+        assert!(dictionary.samples(&DynSolType::Uint(256)).is_none_or(|s| s.is_empty()));
+    }
+
+    #[test]
+    fn literals_survive_db_seeding() {
+        let word = B256::from(U256::from(154));
+        let mut maps = LiteralMaps::default();
+        maps.words.entry(DynSolType::Uint(256)).or_default().insert(word);
+        let mut literals = LiteralsDictionary::default();
+        literals.set(maps);
+
+        let mut db = InMemoryDB::default();
+        let account = Address::repeat_byte(0x42);
+        db.insert_account_info(account, AccountInfo::default());
+
+        let state = EvmFuzzState::new(&[], &db, FuzzDictionaryConfig::default(), Some(&literals));
+        state.with_dictionary(|dict| {
+            assert!(dict.samples(&DynSolType::Uint(256)).unwrap().contains(&word));
+            assert!(dict.samples(&DynSolType::Address).unwrap().contains(&account.into_word()));
+        });
     }
 
     fn withdrawal(staker: u8, nonce: u64) -> DynSolValue {
