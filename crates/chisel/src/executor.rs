@@ -27,6 +27,9 @@ use solar::{
 use std::ops::ControlFlow;
 use yansi::Paint;
 
+/// Distinguishes inspection output from an early inline assembly return in the user's code.
+const INSPECTION_RESULT_PREFIX: B256 = B256::new(*b"chisel expression result\0\0\0\0\0\0\0\0");
+
 /// Result of inspecting a Solidity snippet.
 #[derive(Debug)]
 pub struct InspectResult {
@@ -153,6 +156,15 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             }
         };
 
+        // Return the encoded value explicitly: source maps and local variable stack positions
+        // depend on the compiler and its optimization pipeline. Replace the bytes length with a
+        // marker so an early assembly return cannot be mistaken for an inspected value.
+        source.add_run_code(&format!(
+            "assembly {{ mstore(0, mload(inspectoor)) \
+             mstore(inspectoor, {}) return(inspectoor, add(mload(0), 32)) }}",
+            hex::encode_prefixed(INSPECTION_RESULT_PREFIX)
+        ));
+
         let mut source_without_inspector = self.clone();
 
         // Events and tuples fails compilation due to it not being able to be encoded in
@@ -223,7 +235,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
         }
         drop(source_without_inspector);
 
-        let Some((stack, memory)) = &res.state else {
+        if !res.success || !res.returned.starts_with(INSPECTION_RESULT_PREFIX.as_slice()) {
             // Show traces and logs, if there are any, and return an error
             if let Ok(decoder) = ChiselDispatcher::decode_traces(&source.config, &mut res).await {
                 ChiselDispatcher::<FEN>::show_traces(&decoder, &mut res).await?;
@@ -237,7 +249,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             }
 
             return Err(eyre::eyre!("Failed to inspect expression"));
-        };
+        }
 
         // Either the expression referred to by `input`, or the last expression,
         // which was wrapped in `abi.encode`.
@@ -248,10 +260,9 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
         let res_ty = generated_output.enter(|out| -> Option<(bool, DynSolType)> {
             let gcx = out.gcx();
 
-            // Find the appended `bytes memory inspectoor = abi.encode(<input>);` and pull out the
-            // first call argument.
-            let block = out.run_func_body();
-            let last = block.last()?;
+            // Find `bytes memory inspectoor = abi.encode(<input>);` before the generated return
+            // block and pull out the first call argument.
+            let [.., last, _] = out.run_func_body().stmts else { return None };
             let StmtKind::DeclSingle(vid) = last.kind else { return None };
             let var = gcx.hir.variable(vid);
             let init = var.initializer?;
@@ -266,19 +277,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             return Ok(InspectResult::empty(ControlFlow::Continue(())));
         };
 
-        // the file compiled correctly, thus the last stack item must be the memory offset of
-        // the `bytes memory inspectoor` value
-        let data = (|| -> Option<_> {
-            let mut offset: usize = stack.last()?.try_into().ok()?;
-            debug!("inspect memory @ {offset}: {}", hex::encode(memory));
-            let mem_offset = memory.get(offset..offset + 32)?;
-            let len: usize = U256::try_from_be_slice(mem_offset)?.try_into().ok()?;
-            offset += 32;
-            memory.get(offset..offset + len)
-        })();
-        let Some(data) = data else {
-            eyre::bail!("Failed to inspect last expression: could not retrieve data from memory");
-        };
+        let data = &res.returned[INSPECTION_RESULT_PREFIX.len()..];
         let clear_last_result = dyn_ty_contains_function(&ty);
         let last_result = (!clear_last_result)
             .then(|| format!("abi.decode(hex\"{}\", ({ty}))", hex::encode(data)));
