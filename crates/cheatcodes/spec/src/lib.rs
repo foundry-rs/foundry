@@ -102,6 +102,7 @@ impl Cheatcodes<'static> {
             ]),
             enums: Cow::Owned(vec![
                 Vm::CallerMode::ENUM.clone(),
+                Vm::CallKind::ENUM.clone(),
                 Vm::AccountAccessKind::ENUM.clone(),
                 Vm::ForgeContext::ENUM.clone(),
                 Vm::BroadcastTxType::ENUM.clone(),

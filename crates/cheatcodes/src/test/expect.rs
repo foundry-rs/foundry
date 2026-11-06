@@ -276,6 +276,29 @@ impl Cheatcode for expectDelegateCallCall {
     }
 }
 
+impl Cheatcode for expectCall_6Call {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
+        let Self { kind, callee, data } = self;
+        let scheme = match kind {
+            CallKind::Call => ExpectedCallScheme::Call,
+            CallKind::DelegateCall => ExpectedCallScheme::DelegateCall,
+            CallKind::StaticCall => ExpectedCallScheme::StaticCall,
+            _ => bail!("invalid call kind"),
+        };
+        expect_call(
+            state,
+            callee,
+            data,
+            None,
+            None,
+            None,
+            Some(scheme),
+            1,
+            ExpectedCallType::NonCount,
+        )
+    }
+}
+
 impl Cheatcode for expectCallMinGas_0Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { callee, msgValue, minGas, data } = self;
@@ -1175,6 +1198,50 @@ mod tests {
             ExpectedCallScheme::DelegateCall,
         );
         assert_eq!(seen(&t, &calldata, Some(ExpectedCallScheme::DelegateCall)), 1);
+
+        let mut t = tracker(
+            calldata.clone(),
+            Some(ExpectedCallScheme::StaticCall),
+            expected(None, None, None, 1, ExpectedCallType::NonCount),
+        );
+
+        observe_call(t.get_mut(&TARGET).unwrap(), &calldata, None, 0, ExpectedCallScheme::Call);
+        observe_call(
+            t.get_mut(&TARGET).unwrap(),
+            &calldata,
+            None,
+            0,
+            ExpectedCallScheme::DelegateCall,
+        );
+        assert_eq!(seen(&t, &calldata, Some(ExpectedCallScheme::StaticCall)), 0);
+
+        observe_call(
+            t.get_mut(&TARGET).unwrap(),
+            &calldata,
+            None,
+            0,
+            ExpectedCallScheme::StaticCall,
+        );
+        assert_eq!(seen(&t, &calldata, Some(ExpectedCallScheme::StaticCall)), 1);
+
+        let mut t = tracker(
+            calldata.clone(),
+            Some(ExpectedCallScheme::Call),
+            expected(None, None, None, 1, ExpectedCallType::NonCount),
+        );
+
+        observe_call(t.get_mut(&TARGET).unwrap(), &calldata, None, 0, ExpectedCallScheme::CallCode);
+        observe_call(
+            t.get_mut(&TARGET).unwrap(),
+            &calldata,
+            None,
+            0,
+            ExpectedCallScheme::StaticCall,
+        );
+        assert_eq!(seen(&t, &calldata, Some(ExpectedCallScheme::Call)), 0);
+
+        observe_call(t.get_mut(&TARGET).unwrap(), &calldata, None, 0, ExpectedCallScheme::Call);
+        assert_eq!(seen(&t, &calldata, Some(ExpectedCallScheme::Call)), 1);
     }
 
     #[test]

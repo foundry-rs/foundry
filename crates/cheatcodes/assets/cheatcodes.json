@@ -35,6 +35,24 @@
       ]
     },
     {
+      "name": "CallKind",
+      "description": "The opcode used for an expected call.",
+      "variants": [
+        {
+          "name": "Call",
+          "description": "CALL."
+        },
+        {
+          "name": "DelegateCall",
+          "description": "DELEGATECALL."
+        },
+        {
+          "name": "StaticCall",
+          "description": "STATICCALL."
+        }
+      ]
+    },
+    {
       "name": "AccountAccessKind",
       "description": "The kind of account access that occurred.",
       "variants": [
@@ -5545,6 +5563,26 @@
           183,
           183,
           204
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectCall_6",
+        "description": "Expects a call of the specified kind to an address with the specified calldata.\nCalldata can either be a strict or a partial match.",
+        "declaration": "function expectCall(CallKind kind, address callee, bytes calldata data) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectCall(uint8,address,bytes)",
+        "selector": "0x5c1a2096",
+        "selectorBytes": [
+          92,
+          26,
+          32,
+          150
         ]
       },
       "group": "testing",
