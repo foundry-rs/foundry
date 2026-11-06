@@ -293,6 +293,33 @@ impl Display for AccountStateDiffs {
     }
 }
 
+/// Storage writes to one account during a state-diff recording.
+#[derive(Default)]
+struct StorageWriters {
+    /// Chain id and fork id of the first write.
+    context: Option<(u64, U256)>,
+    /// Whether a later write happened on a different chain or fork.
+    mixed_contexts: bool,
+    /// Code address whose layout describes the latest write to each slot: the account itself, or
+    /// the implementation that wrote through a delegatecall.
+    slots: B256Map<Address>,
+}
+
+impl StorageWriters {
+    /// Records a write to `slot` executed by the code at `writer`.
+    fn record(&mut self, context: (u64, U256), slot: B256, writer: Address) {
+        if *self.context.get_or_insert(context) != context {
+            self.mixed_contexts = true;
+        }
+        self.slots.insert(slot, writer);
+    }
+
+    /// Returns the chain id and fork id shared by every write, if any.
+    fn context(&self) -> Option<(u64, U256)> {
+        self.context.filter(|_| !self.mixed_contexts)
+    }
+}
+
 impl Cheatcode for addrCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { privateKey } = self;
@@ -2292,34 +2319,71 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
 ) -> BTreeMap<Address, AccountStateDiffs> {
     let mut state_diffs: BTreeMap<Address, AccountStateDiffs> = BTreeMap::default();
 
-    // First, collect all unique addresses we need to look up
+    // A delegatecall into a library writes with its caller's layout. Identify libraries from their
+    // artifacts; unidentified code is treated as an implementation with its own layout.
+    let delegated_code = ccx
+        .state
+        .recorded_account_diffs()
+        .filter(|access| {
+            matches!(access.kind, AccountAccessKind::DelegateCall | AccountAccessKind::CallCode)
+        })
+        .map(|access| access.account)
+        .collect::<AddressSet>();
+    let libraries = delegated_code
+        .into_iter()
+        .filter(|&address| {
+            get_contract_data(ccx, address, false).is_some_and(|(_, data)| data.is_library())
+        })
+        .collect::<AddressSet>();
+
+    // First, collect all unique addresses we need to look up, and attribute every storage write to
+    // the code whose layout describes it.
     let mut addresses_to_lookup = AddressSet::default();
-    // Storage owner to the chain and bytecode address that executed each write. For a delegatecall,
-    // these are the proxy and implementation respectively.
-    let mut layout_sources = AddressMap::default();
+    let mut writers = AddressMap::<StorageWriters>::default();
+    // Open call frames, innermost last, with the code whose layout describes each one's writes.
+    let mut frames = Vec::<(u64, Address)>::new();
     for account_access in ccx.state.recorded_account_diffs() {
+        let depth = account_access.depth;
+        match account_access.kind {
+            AccountAccessKind::Resume => {
+                while frames.last().is_some_and(|&(frame_depth, _)| frame_depth > depth) {
+                    frames.pop();
+                }
+            }
+            AccountAccessKind::Call
+            | AccountAccessKind::StaticCall
+            | AccountAccessKind::Create
+            | AccountAccessKind::DelegateCall
+            | AccountAccessKind::CallCode => {
+                while frames.last().is_some_and(|&(frame_depth, _)| frame_depth >= depth) {
+                    frames.pop();
+                }
+                let code = account_access.account;
+                let writer = if libraries.contains(&code) {
+                    frames.last().map_or(account_access.accessor, |&(_, writer)| writer)
+                } else {
+                    code
+                };
+                frames.push((depth, writer));
+            }
+            _ => {}
+        }
+
         if !account_access.storageAccesses.is_empty()
             || account_access.oldBalance != account_access.newBalance
         {
             addresses_to_lookup.insert(account_access.account);
+            let context =
+                (account_access.chainInfo.chainId.to::<u64>(), account_access.chainInfo.forkId);
+            let writer = frames.last().map(|&(_, writer)| writer);
             for storage_access in &account_access.storageAccesses {
                 if storage_access.isWrite && !storage_access.reverted {
                     addresses_to_lookup.insert(storage_access.account);
-                    let source = (
-                        account_access.chainInfo.chainId.to::<u64>(),
-                        account_access.chainInfo.forkId,
-                        account_access.account,
+                    writers.entry(storage_access.account).or_default().record(
+                        context,
+                        storage_access.slot,
+                        writer.unwrap_or(storage_access.account),
                     );
-                    if let Some(existing) = layout_sources.get_mut(&storage_access.account) {
-                        if *existing != Some(source) {
-                            // The state-diff output has no chain dimension. If writes to one
-                            // address came from different chains or implementations, decoding it
-                            // with either layout would be misleading.
-                            *existing = None;
-                        }
-                    } else {
-                        layout_sources.insert(storage_access.account, Some(source));
-                    }
                 }
             }
         }
@@ -2339,66 +2403,75 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
         }
     }
 
-    // A delegatecall writes the caller's storage with the callee's layout. Prefer a local artifact
-    // for the recorded bytecode address; otherwise fetch that exact implementation on the chain
-    // where the write occurred. This remains correct for historical forks and upgraded proxies.
-    if ccx.state.core.config.decode_external_storage {
-        let current_chain_id = ccx.chain_id();
-        let current_fork_id = ccx.active_fork_id().unwrap_or_default();
-        let mut external_requests = BTreeMap::<u64, AddressSet>::new();
-        let mut external_targets = Vec::new();
-        for (storage_address, source) in layout_sources {
-            let Some((chain_id, fork_id, code_address)) = source else {
-                // Writes from multiple chains or bytecode addresses cannot share one trustworthy
-                // layout in the address-keyed output.
-                contract_names.remove(&storage_address);
-                storage_layouts.remove(&storage_address);
-                continue;
-            };
-            let recorded_context_is_current =
-                chain_id == current_chain_id && fork_id == current_fork_id;
-            if !recorded_context_is_current {
-                contract_names.remove(&storage_address);
-            }
-            if recorded_context_is_current
-                && code_address == storage_address
-                && storage_layouts.contains_key(&storage_address)
-            {
-                continue;
-            }
-
-            // A local artifact for the storage owner may describe a proxy rather than the code
-            // that executed the write. Replace it only with the recorded bytecode's layout.
+    // A delegatecall writes the caller's storage with the callee's layout, so each slot is decoded
+    // with the layout of the code that wrote it last. Local artifacts identify code only in the
+    // journal that recorded the writes; otherwise fetch the exact code on the chain where they
+    // occurred, if enabled. This remains correct for historical forks and upgraded proxies.
+    let decode_external_storage = ccx.state.core.config.decode_external_storage;
+    let current_context = (ccx.chain_id(), ccx.active_fork_id().unwrap_or_default());
+    // Storage owner and delegated writer to the writer's layout.
+    let mut delegated_layouts = HashMap::<(Address, Address), _>::default();
+    let mut external_requests = BTreeMap::<u64, AddressSet>::new();
+    let mut external_targets = Vec::new();
+    for (&storage_address, writers) in &writers {
+        let Some(context) = writers.context() else {
+            // The state-diff output has no chain dimension. If writes to one address came from
+            // different chains, decoding it with any layout would be misleading.
+            contract_names.remove(&storage_address);
             storage_layouts.remove(&storage_address);
-            if recorded_context_is_current
-                && let Some((artifact_id, contract_data)) =
-                    get_contract_data(ccx, code_address, false)
-                && let Some(layout) = &contract_data.storage_layout
-            {
-                contract_names.insert(storage_address, artifact_id.identifier());
-                storage_layouts.insert(storage_address, layout.clone());
-            } else {
-                external_requests.entry(chain_id).or_default().insert(code_address);
-                external_targets.push((storage_address, chain_id, code_address));
-            }
+            continue;
+        };
+        let (chain_id, _) = context;
+        let recorded_context_is_current = context == current_context;
+        if !recorded_context_is_current {
+            contract_names.remove(&storage_address);
+            storage_layouts.remove(&storage_address);
         }
 
-        for (chain_id, addresses) in external_requests {
-            let external = crate::external_storage::storage_layouts(
-                &ccx.state.core.config.external_sources,
-                foundry_config::Chain::from(chain_id),
-                addresses.into_iter().collect(),
-            );
-            for &(storage_address, target_chain_id, code_address) in &external_targets {
-                if target_chain_id == chain_id
-                    && let Some((name, layout)) = external.get(&code_address)
-                {
+        for writer in writers.slots.values().copied().collect::<AddressSet>() {
+            if writer == storage_address {
+                if storage_layouts.contains_key(&storage_address) {
+                    continue;
+                }
+            } else if recorded_context_is_current
+                && let Some((_, contract_data)) = get_contract_data(ccx, writer, false)
+                && let Some(layout) = &contract_data.storage_layout
+            {
+                delegated_layouts.insert((storage_address, writer), layout.clone());
+                continue;
+            }
+            if decode_external_storage {
+                external_requests.entry(chain_id).or_default().insert(writer);
+                external_targets.push((storage_address, chain_id, writer));
+            }
+        }
+    }
+
+    for (chain_id, addresses) in external_requests {
+        let external = crate::external_storage::storage_layouts(
+            &ccx.state.core.config.external_sources,
+            foundry_config::Chain::from(chain_id),
+            addresses.into_iter().collect(),
+        );
+        for &(storage_address, target_chain_id, writer) in &external_targets {
+            if target_chain_id == chain_id
+                && let Some((name, layout)) = external.get(&writer)
+            {
+                if writer == storage_address {
                     contract_names.insert(storage_address, name.clone());
                     storage_layouts.insert(storage_address, layout.clone());
+                } else {
+                    delegated_layouts.insert((storage_address, writer), layout.clone());
                 }
             }
         }
     }
+
+    let new_account_diff = |address: &Address| AccountStateDiffs {
+        label: ccx.state.core.labels.get(address).cloned(),
+        contract: contract_names.get(address).cloned(),
+        ..Default::default()
+    };
 
     // Now process the records
     ccx.state
@@ -2411,13 +2484,9 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
         .for_each(|account_access| {
             // Record account balance diffs.
             if account_access.oldBalance != account_access.newBalance {
-                let account_diff = state_diffs.entry(account_access.account).or_insert_with(|| {
-                    AccountStateDiffs {
-                        label: ccx.state.core.labels.get(&account_access.account).cloned(),
-                        contract: contract_names.get(&account_access.account).cloned(),
-                        ..Default::default()
-                    }
-                });
+                let account_diff = state_diffs
+                    .entry(account_access.account)
+                    .or_insert_with(|| new_account_diff(&account_access.account));
                 // Update balance diff. Do not overwrite the initial balance if already set.
                 if let Some(diff) = &mut account_diff.balance_diff {
                     diff.new_value = account_access.newBalance;
@@ -2431,13 +2500,9 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
 
             // Record account nonce diffs.
             if account_access.oldNonce != account_access.newNonce && !account_access.reverted {
-                let account_diff = state_diffs.entry(account_access.account).or_insert_with(|| {
-                    AccountStateDiffs {
-                        label: ccx.state.core.labels.get(&account_access.account).cloned(),
-                        contract: contract_names.get(&account_access.account).cloned(),
-                        ..Default::default()
-                    }
-                });
+                let account_diff = state_diffs
+                    .entry(account_access.account)
+                    .or_insert_with(|| new_account_diff(&account_access.account));
                 // Update nonce diff. Do not overwrite the initial nonce if already set.
                 if let Some(diff) = &mut account_diff.nonce_diff {
                     diff.new_value = account_access.newNonce;
@@ -2462,15 +2527,18 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
             // Record account state diffs.
             for storage_access in &account_access.storageAccesses {
                 if storage_access.isWrite && !storage_access.reverted {
-                    let account_diff =
-                        state_diffs.entry(storage_access.account).or_insert_with(|| {
-                            AccountStateDiffs {
-                                label: ccx.state.core.labels.get(&storage_access.account).cloned(),
-                                contract: contract_names.get(&storage_access.account).cloned(),
-                                ..Default::default()
-                            }
-                        });
-                    let layout = storage_layouts.get(&storage_access.account);
+                    let account_diff = state_diffs
+                        .entry(storage_access.account)
+                        .or_insert_with(|| new_account_diff(&storage_access.account));
+                    let layout = match writers
+                        .get(&storage_access.account)
+                        .and_then(|writers| writers.slots.get(&storage_access.slot))
+                    {
+                        Some(&writer) if writer != storage_access.account => {
+                            delegated_layouts.get(&(storage_access.account, writer))
+                        }
+                        _ => storage_layouts.get(&storage_access.account),
+                    };
                     // Update state diff. Do not overwrite the initial value if already set.
                     let entry = match account_diff.state_diff.entry(storage_access.slot) {
                         Entry::Vacant(slot_state_diff) => {
