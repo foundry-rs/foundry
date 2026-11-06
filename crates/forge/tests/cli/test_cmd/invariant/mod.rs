@@ -533,9 +533,9 @@ contract InvariantSelectorsWeightTest is Test {
     function afterInvariant() public {
         assertEq(handlerOne.hit1(), 2);
         assertEq(handlerTwo.hit2(), 2);
-        assertEq(handlerTwo.hit3(), 3);
+        assertEq(handlerTwo.hit3(), 2);
         assertEq(handlerTwo.hit4(), 2);
-        assertEq(handlerTwo.hit5(), 1);
+        assertEq(handlerTwo.hit5(), 2);
     }
 
     function invariant_selectors_weight() public view {}
@@ -557,11 +557,11 @@ Ran 1 test for test/InvariantSelectorsWeightTest.t.sol:InvariantSelectorsWeightT
 |------------+-----------+-------+---------+----------|
 | HandlerTwo | selector2 | 2     | 0       | 0        |
 |------------+-----------+-------+---------+----------|
-| HandlerTwo | selector3 | 3     | 0       | 0        |
+| HandlerTwo | selector3 | 2     | 0       | 0        |
 |------------+-----------+-------+---------+----------|
 | HandlerTwo | selector4 | 2     | 0       | 0        |
 |------------+-----------+-------+---------+----------|
-| HandlerTwo | selector5 | 1     | 0       | 0        |
+| HandlerTwo | selector5 | 2     | 0       | 0        |
 ╰------------+-----------+-------+---------+----------╯
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]

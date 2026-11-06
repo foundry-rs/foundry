@@ -10,8 +10,10 @@ import {MerkleTrie} from "src/libraries/trie/MerkleTrie.sol";
 import {RLPReader} from "src/libraries/rlp/RLPReader.sol";
 import {Bytes} from "src/libraries/Bytes.sol";
 
-/// @dev Test acceptance adapter, using upstream Commonware cryptography and Optimism MPT verification.
+/// @dev Application-level test adapter using Commonware cryptography and Optimism MPT verification.
+/// The caller supplies the trusted development key independently of the attached evidence.
 contract TempoProofVerifier {
+    /// @dev Off-chain attachment for one sealed block; the certificate never changes the raw header.
     struct Evidence {
         bytes rawHeader;
         Simplex.Subject subject;
@@ -129,7 +131,9 @@ contract ProofStore {
     }
 }
 
-/// @dev Test receiver that accepts proofs only under its deployment-time development identity.
+/// @dev Application-level test receiver with a deployment-time Anvil development trust anchor.
+/// Evidence cannot select the trusted key. This fixture has no freshness, replay or key-rotation policy.
+/// Acceptance authenticates a local claim under that key, not native Tempo consensus membership.
 contract TempoProofReceiver {
     BLS.G2Point private trustedKey;
     TempoProofVerifier private immutable verifier;
@@ -145,7 +149,8 @@ contract TempoProofReceiver {
         verifier = new TempoProofVerifier();
     }
 
-    /// @dev Revert on invalid evidence or a mismatched value; record only verified claims.
+    /// @dev Verify attached evidence for one sealed block; emit only verified claims.
+    /// Anyone may relay evidence. Repeated valid submissions emit repeated events.
     function submit(
         TempoProofVerifier.Evidence calldata evidence,
         uint256 expectedHeight,
