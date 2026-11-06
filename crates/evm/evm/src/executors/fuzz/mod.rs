@@ -1081,7 +1081,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         if worker_id == 0 {
             worker.failed_corpus_replays = corpus.failed_replays;
         }
-        worker.frontiers = frontier_recorder.into_frontiers();
+        worker.frontiers = frontier_recorder.into_recorded_frontiers();
 
         // Logs stats
         trace!("worker {worker_id} fuzz stats");

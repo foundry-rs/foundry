@@ -127,6 +127,7 @@ impl SymbolicExecutor {
             child.call_depth_base = child.call_depth;
         }
         child.world.mark_current_transaction_created(created);
+        child.persistent_writes.push(PersistentWrite::Created(created));
         child.world.set_nonce(created, 1);
         child.world.transfer(&mut self.cx, executor, state.address, created, value);
 
@@ -160,7 +161,14 @@ impl SymbolicExecutor {
                 ));
             }
             // Like Forge's `create_end`, a CREATE leaves `vm.assumeNoRevert` for the next call.
-            match self.join_call_outcome(executor, state, outcome, failed_callee, None)? {
+            match self.join_call_outcome(
+                executor,
+                state,
+                &failure_world,
+                outcome,
+                failed_callee,
+                None,
+            )? {
                 JoinedCallOutcome::Failure(mut parent) => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
                     *state = parent;
@@ -168,13 +176,11 @@ impl SymbolicExecutor {
                 }
                 JoinedCallOutcome::ExceptionalHalt(mut parent) => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
-                    parent.world = failure_world.clone();
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;
                     parents.push_back(parent);
                 }
                 JoinedCallOutcome::ExpectedRevert(mut parent) => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
-                    parent.world = failure_world.clone();
                     let address = address_word(DUMMY_CREATE_ADDRESS);
                     parent.stack.push(SymExpr::constant(&mut self.cx, address))?;
                     parents.push_back(parent);
@@ -209,7 +215,6 @@ impl SymbolicExecutor {
                 }
                 JoinedCallOutcome::Revert { mut parent, child } => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
-                    parent.world = failure_world.clone();
                     if !rejected_runtime {
                         parent.return_data = child.frame.return_data;
                     }

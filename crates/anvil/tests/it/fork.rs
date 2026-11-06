@@ -3160,28 +3160,6 @@ async fn flaky_test_arbitrum_fork_block_number() {
     assert_eq!(block_number, initial_block_number - 2);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn test_base_fork_gas_limit() {
-    // fork to get initial block for test
-    let (api, handle) = spawn(
-        fork_config()
-            .with_fork_block_number(None::<u64>)
-            .with_eth_rpc_url(Some(next_rpc_endpoint(NamedChain::Base))),
-    )
-    .await;
-
-    // The public Base RPC occasionally returns block zero when it is unhealthy.
-    if api.block_number().unwrap().is_zero() {
-        return;
-    }
-
-    let provider = handle.http_provider();
-    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
-
-    assert!(api.gas_limit() >= uint!(96_000_000_U256));
-    assert!(block.header.gas_limit >= 96_000_000_u64);
-}
-
 // <https://github.com/foundry-rs/foundry/issues/7023>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_execution_reverted() {

@@ -162,6 +162,7 @@ impl SymbolicExecutor {
         &mut self,
         executor: &ExecutorView<'_>,
         state: &PathState,
+        failure_world: &SymbolicWorld,
         mut outcome: CallOutcome,
         failed_callee: Option<Address>,
         assume_no_revert: Option<&AssumeNoRevert>,
@@ -175,6 +176,15 @@ impl SymbolicExecutor {
                 state.recorded_logs.as_ref().map_or(0, Vec::len),
                 state.recorded_logs_generation,
             );
+            parent.world = failure_world.clone();
+            // The path keeps the failed call's constraints, so keep its replay metadata too,
+            // including the symbolic address aliases the replayed writes resolve through.
+            parent.world.merge_replay_metadata_from(&outcome.state.world);
+            parent.replay_persistent_writes(
+                &mut self.cx,
+                executor,
+                state.persistent_writes.len(),
+            )?;
         }
         // Forge keeps the changes a failed call makes to a count 0 `expectEmit`, such as declaring,
         // filling, or dropping it, which the symbolic expectation does not follow, so report them

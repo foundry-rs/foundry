@@ -332,7 +332,15 @@ impl FuzzFrontierRecorder {
         }
     }
 
+    /// Returns at most `limit` frontiers, preferring sites recorded with only one outcome.
     pub(in crate::executors) fn into_frontiers(self) -> Vec<FuzzBranchFrontier> {
+        let limit = self.limit;
+        merge_frontiers(limit, self.frontiers)
+    }
+
+    /// Returns every recorded site, including the extra sites [`merge_frontiers`] uses to tell
+    /// sites seen both ways apart across workers.
+    pub(in crate::executors) fn into_recorded_frontiers(self) -> Vec<FuzzBranchFrontier> {
         self.frontiers
     }
 }

@@ -928,14 +928,19 @@ symbolic safety. `--json` reports work in `symbolic_live` separately from
 verification results. `scheduled` counts candidate sequences handed to the
 campaign, not confirmed coverage gains or proofs.
 
-The worker keeps a backlog of up to 32 frontiers from sequences with new comparison
-outcomes, with one queued request and one queued response in addition to active work.
-Admission is lossy: outcomes dropped when the backlog is full are not reconsidered
-unless a later sequence reaches a new comparison outcome. Its campaign-wide
-budgets are `symbolic.timeout` (30 seconds when unset; zero disables work),
-`symbolic.max_solver_queries`, and `symbolic.frontier_limit`. Each search has a
-one-second timeout; shutdown cancels concrete prefix replay and joins the
-worker. An active search or solver availability probe may take its timeout to
+The worker keeps a backlog of up to 32 frontiers, with one queued request and one
+queued response in addition to active work. Each reached comparison outcome whose
+other side has not been reached is offered once, with the shortest prefix from the
+first run that has room. Outcomes that do not fit are offered again when a later run
+reaches them, and queued first attempts are dropped once fuzzing reaches the other
+side. An outcome the worker has flipped is offered again once from each new storage
+state that a run reaches before it, including the state a run resumes from, since its
+other side may need different arguments there. Outcomes whose attempts all failed are
+not retried.
+Its campaign-wide budgets are `symbolic.timeout` (30 seconds when unset; zero
+disables work), `symbolic.max_solver_queries`, and `symbolic.frontier_limit`.
+Each search has a one-second timeout; shutdown cancels concrete prefix replay and
+joins the worker. An active search or solver availability probe may take its timeout to
 finish after admission stops. At most 1024 calls and 64 KiB of aggregate calldata
 are retained for live assistance per sequence, within `invariant.depth`. Live-only
 recording stops at these bounds or when the worker can no longer accept work;
