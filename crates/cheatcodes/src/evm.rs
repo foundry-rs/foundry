@@ -1487,35 +1487,36 @@ impl Cheatcode for executeTransactionCall {
         // Clone journaled state and mark all accounts/slots cold.
         let cold_state = prepare_child_state(ccx.ecx.journal_inner());
 
-        let mut res = None;
-        let mut cold_state = Some(cold_state);
-        let nested_evm_env =
-            executor.with_fresh_nested_evm(ccx.state, ccx.ecx, chain_context, &mut |evm| {
-                // SAFETY: closure is called exactly once by the executor.
-                evm.journal_inner_mut().state = cold_state.take().expect("called once");
-                res = Some(evm.transact_raw(modified_tx_env.clone()));
-                Ok(())
-            });
-        let mut nested_evm_env = nested_evm_env?;
-        let res = res.unwrap();
+        // The changes include the cheatcode writes made in the nested EVM.
+        let result = record_account_changes(ccx, |ccx| {
+            let mut res = None;
+            let mut cold_state = Some(cold_state);
+            let nested_evm_env =
+                executor.with_fresh_nested_evm(ccx.state, ccx.ecx, chain_context, &mut |evm| {
+                    // SAFETY: closure is called exactly once by the executor.
+                    evm.journal_inner_mut().state = cold_state.take().expect("called once");
+                    res = Some(evm.transact_raw(modified_tx_env.clone()));
+                    Ok(())
+                });
+            let mut nested_evm_env = nested_evm_env?;
+            let res = res.unwrap();
 
-        // Restore env, preserving cheatcode cfg/block changes from the nested EVM
-        // but restoring the original tx and basefee (which we zeroed for the nested call)
-        // as well as cfg overrides that were applied only for the nested execution.
-        nested_evm_env.block_env.set_basefee(cached_evm_env.block_env.basefee());
-        nested_evm_env.cfg_env.disable_nonce_check = cached_evm_env.cfg_env.disable_nonce_check;
-        nested_evm_env.cfg_env.limit_contract_initcode_size =
-            cached_evm_env.cfg_env.limit_contract_initcode_size;
-        nested_evm_env.cfg_env.tx_gas_limit_cap = cached_evm_env.cfg_env.tx_gas_limit_cap;
-        ccx.ecx.set_evm(nested_evm_env);
-        ccx.ecx.set_tx(cached_tx_env);
+            // Restore env, preserving cheatcode cfg/block changes from the nested EVM
+            // but restoring the original tx and basefee (which we zeroed for the nested call)
+            // as well as cfg overrides that were applied only for the nested execution.
+            nested_evm_env.block_env.set_basefee(cached_evm_env.block_env.basefee());
+            nested_evm_env.cfg_env.disable_nonce_check = cached_evm_env.cfg_env.disable_nonce_check;
+            nested_evm_env.cfg_env.limit_contract_initcode_size =
+                cached_evm_env.cfg_env.limit_contract_initcode_size;
+            nested_evm_env.cfg_env.tx_gas_limit_cap = cached_evm_env.cfg_env.tx_gas_limit_cap;
+            ccx.ecx.set_evm(nested_evm_env);
+            ccx.ecx.set_tx(cached_tx_env);
 
-        let res = res.map_err(|e| fmt_err!("transaction execution failed: {e}"))?;
+            let res = res.map_err(|e| fmt_err!("transaction execution failed: {e}"))?;
 
-        // Merge state changes back into the parent journaled state.
-        record_account_changes(ccx, |ccx| {
+            // Merge state changes back into the parent journaled state.
             merge_child_state(ccx.ecx.journal_mut().evm_state_mut(), res.state, false);
-            Ok(())
+            Ok(res.result)
         })?;
 
         // Keep Monad reserve balances aligned with the state merged from the nested EVM while
@@ -1524,7 +1525,7 @@ impl Cheatcode for executeTransactionCall {
         refresh_chain_journal(ccx.ecx);
 
         // Return output bytes.
-        let output = match res.result {
+        let output = match result {
             ExecutionResult::Success { output, .. } => output.into_data(),
             ExecutionResult::Halt { reason, .. } => {
                 return Err(fmt_err!("transaction halted: {reason:?}"));
@@ -1716,8 +1717,12 @@ fn restore_isolation_fee_accounting<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt
     ccx.ecx.chain_mut().clear_transaction_fee_cache();
 }
 
-/// Runs `f`, which changes account state outside the journal, and records the balances and nonces
-/// it changed so that they survive frame reverts.
+/// Runs `f`, which changes account state outside the journal, and records how it changed balances
+/// and nonces so that the changes survive frame reverts.
+///
+/// The changes are recorded as deltas: the absolute values also hold the enclosing frames' value
+/// transfers and nonce bumps, which their reverts must still undo. They replace the writes that
+/// cheatcodes made inside `f`, and are absolute when one of those set the value.
 fn record_account_changes<FEN: FoundryEvmNetwork, R>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     f: impl FnOnce(&mut CheatsCtxt<'_, '_, FEN>) -> Result<R>,
@@ -1729,21 +1734,28 @@ fn record_account_changes<FEN: FoundryEvmNetwork, R>(
         .iter()
         .map(|(address, account)| (*address, (account.info.balance, account.info.nonce)))
         .collect::<AddressMap<_>>();
+    let start = ccx.state.account_writes.len();
     let result = f(ccx)?;
     let fork_id = ccx.active_fork_id();
     // Frames can only have journaled changes to accounts that were already loaded.
-    for (address, account) in ccx.ecx.journal().evm_state() {
-        let Some(&(balance, nonce)) = before.get(address) else { continue };
-        if account.info.balance != balance {
-            let write = AccountWrite::Balance(account.info.balance);
-            ccx.state.record_account_write(fork_id, *address, write);
+    for (&address, account) in ccx.ecx.journal().evm_state() {
+        let Some(&(balance, nonce)) = before.get(&address) else { continue };
+        let info = &account.info;
+        if info.balance != balance {
+            let write = if ccx.state.take_account_writes(start, fork_id, address, false) {
+                AccountWrite::Balance(info.balance)
+            } else {
+                AccountWrite::BalanceDelta(info.balance.wrapping_sub(balance))
+            };
+            ccx.state.record_account_write(fork_id, address, write);
         }
-        if account.info.nonce != nonce {
-            ccx.state.record_account_write(
-                fork_id,
-                *address,
-                AccountWrite::Nonce(account.info.nonce),
-            );
+        if info.nonce != nonce {
+            let write = if ccx.state.take_account_writes(start, fork_id, address, true) {
+                AccountWrite::Nonce(info.nonce)
+            } else {
+                AccountWrite::NonceDelta(info.nonce.wrapping_sub(nonce))
+            };
+            ccx.state.record_account_write(fork_id, address, write);
         }
     }
     Ok(result)

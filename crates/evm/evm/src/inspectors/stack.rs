@@ -1557,11 +1557,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             }
             ecx.set_journal_inner(journal);
             // The reinstated journal discards the account writes replayed by `call_end`, so restore
-            // the ones superseded by the restoration and replay them. The root frame starts before
-            // its writes are cleared.
+            // the ones superseded by the restoration and replay them. The journal predates the
+            // writes made after the restoration. The root frame starts before its writes are
+            // cleared.
             if frame.return_depth > 0 {
                 cheats.account_writes[..account_writes.len()].copy_from_slice(&account_writes);
-                cheats.replay_account_writes(ecx, frame.account_writes);
+                cheats.replay_account_writes(ecx, frame.account_writes, account_writes.len());
             }
         }
 

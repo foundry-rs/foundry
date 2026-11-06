@@ -126,6 +126,21 @@ contract RevertedFrameHelper is Test {
         revert FrameEffectApplied();
     }
 
+    function receiveThenTransaction(bytes calldata rawTx, bool broadcast) external payable {
+        if (broadcast) {
+            vm.broadcastRawTransaction(rawTx);
+        } else {
+            vm.executeTransaction(rawTx);
+        }
+        revert FrameEffectApplied();
+    }
+
+    function dealSelf(uint256 amount) external {
+        vm.deal(address(this), amount);
+    }
+
+    receive() external payable {}
+
     function setNonceAfterCreate() external {
         new RevertedFrameProbe();
         vm.setNonce(address(this), 50);
@@ -237,6 +252,38 @@ contract RevertedFrameEffectsTest is Test {
             address(helper).call{value: 1 ether}(abi.encodeCall(helper.dealThenExecuteTransaction, (0, rawTx)));
         assertHelperReverted(success, result);
         assertEq(address(helper).balance, 0);
+        assertEq(address(this).balance, 1 ether);
+    }
+
+    // Legacy transfer of 17 wei from `vm.addr(1)` to `helper` at nonce 0.
+    bytes constant TRANSFER_TO_HELPER =
+        hex"f860806483030d40945615deb798bb3e4dfa0139dfa1b3d433cc23b72f118026a066dbe2c4aae4bc73b1449d99ba2c9bd71a92906f076b5c1865f71184786034cda03d96901336922ac434aeceddd5391a31686ac4b568ff1cabc6dcd4a591a16903";
+
+    // Legacy call of `helper.dealSelf(5)` from `vm.addr(1)` at nonce 0.
+    bytes constant HELPER_DEALS_ITSELF =
+        hex"f884806483030d40945615deb798bb3e4dfa0139dfa1b3d433cc23b72f80a460056bb3000000000000000000000000000000000000000000000000000000000000000526a02a80c302883114835622449a4fefbd8294890c056bc1b2fa7844c8ebb6fd9800a0100ea23ab7b496b06b5a8898d10a1b83cb86254d04a81c50845ab72d83e47e53";
+
+    function test_transaction_into_reverted_receiver_executeTransaction() public {
+        transactionIntoRevertedReceiver(TRANSFER_TO_HELPER, false, 17);
+    }
+
+    function test_transaction_into_reverted_receiver_broadcastRawTransaction() public {
+        transactionIntoRevertedReceiver(TRANSFER_TO_HELPER, true, 17);
+    }
+
+    function test_deal_in_transaction_into_reverted_receiver() public {
+        transactionIntoRevertedReceiver(HELPER_DEALS_ITSELF, false, 5);
+    }
+
+    /// The transaction's effects survive the revert, but the reverted call's value does not.
+    function transactionIntoRevertedReceiver(bytes memory rawTx, bool broadcast, uint256 helperBalance) internal {
+        vm.chainId(1);
+        vm.deal(vm.addr(1), 1 ether);
+        vm.deal(address(this), 1 ether);
+        (bool success, bytes memory result) =
+            address(helper).call{value: 1 ether}(abi.encodeCall(helper.receiveThenTransaction, (rawTx, broadcast)));
+        assertHelperReverted(success, result);
+        assertEq(address(helper).balance, helperBalance);
         assertEq(address(this).balance, 1 ether);
     }
 

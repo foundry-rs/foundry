@@ -579,6 +579,10 @@ struct CreatedAccountsFrame {
 pub enum AccountWrite {
     Balance(U256),
     Nonce(u64),
+    /// A wrapping change made by a nested transaction, which applies on top of the frame's value.
+    BalanceDelta(U256),
+    /// A wrapping change made by a nested transaction, which applies on top of the frame's value.
+    NonceDelta(u64),
 }
 
 /// Balances and nonces written outside the journal on a fork, in write order. `None` once the
@@ -1095,6 +1099,29 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.account_writes.push(Some((fork_id, address, write)));
     }
 
+    /// Drops the writes to `address`'s balance, or nonce, recorded since `start`, and returns
+    /// whether one of them set the value rather than changing it.
+    pub(crate) fn take_account_writes(
+        &mut self,
+        start: usize,
+        fork_id: Option<LocalForkId>,
+        address: Address,
+        nonce: bool,
+    ) -> bool {
+        let mut set = false;
+        for entry in &mut self.account_writes[start..] {
+            if let Some((write_fork_id, write_address, write)) = *entry
+                && write_fork_id == fork_id
+                && write_address == address
+                && matches!(write, AccountWrite::Nonce(_) | AccountWrite::NonceDelta(_)) == nonce
+            {
+                set |= matches!(write, AccountWrite::Balance(_) | AccountWrite::Nonce(_));
+                *entry = None;
+            }
+        }
+        set
+    }
+
     /// Stops replaying the account writes of a fork whose state was replaced.
     pub(crate) fn reset_account_writes(&mut self, fork_id: Option<LocalForkId>) {
         for entry in &mut self.account_writes {
@@ -1109,26 +1136,57 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ///
     /// Balances and nonces written outside the journal survive the revert, but revm undoes the
     /// frame's transfers and nonce bumps relative to them. This restores the values that were set.
-    pub fn replay_account_writes(&self, ecx: &mut FoundryContextFor<'_, FEN>, start: usize) {
+    ///
+    /// The state already reflects the deltas recorded before `reflected`, which revm's relative
+    /// reverts keep, so those only apply on top of a value set earlier in the replay.
+    pub fn replay_account_writes(
+        &self,
+        ecx: &mut FoundryContextFor<'_, FEN>,
+        start: usize,
+        reflected: usize,
+    ) {
         let fork_id = ecx.db().active_fork_id();
         let writes = || {
-            self.account_writes[start..]
+            self.account_writes
                 .iter()
-                .flatten()
-                .filter(move |(write_fork_id, ..)| *write_fork_id == fork_id)
-                .map(|(_, address, write)| (address, write))
+                .enumerate()
+                .skip(start)
+                .filter_map(|(i, entry)| Some((i, entry.as_ref()?)))
+                .filter(move |(_, (write_fork_id, ..))| *write_fork_id == fork_id)
+                .map(|(i, (_, address, write))| (i, address, write))
         };
         let state = ecx.journal_mut().evm_state_mut();
-        for (address, write) in writes() {
+        // Accounts and fields, `true` for the nonce, whose value the replay has set.
+        let mut set = HashSet::new();
+        for (i, address, write) in writes() {
             if let Some(account) = state.get_mut(address) {
+                let info = &mut account.info;
                 match *write {
-                    AccountWrite::Balance(balance) => account.info.balance = balance,
-                    AccountWrite::Nonce(nonce) => account.info.nonce = nonce,
+                    AccountWrite::Balance(balance) => {
+                        info.balance = balance;
+                        set.insert((address, false));
+                    }
+                    AccountWrite::Nonce(nonce) => {
+                        info.nonce = nonce;
+                        set.insert((address, true));
+                    }
+                    AccountWrite::BalanceDelta(delta) => {
+                        if i >= reflected || set.contains(&(address, false)) {
+                            info.balance = info.balance.wrapping_add(delta);
+                        }
+                    }
+                    AccountWrite::NonceDelta(delta) => {
+                        if i >= reflected || set.contains(&(address, true)) {
+                            info.nonce = info.nonce.wrapping_add(delta);
+                        }
+                    }
                 }
             }
         }
         #[cfg(feature = "monad")]
-        if writes().any(|(_, write)| matches!(write, AccountWrite::Balance(_))) {
+        if writes().any(|(.., write)| {
+            matches!(write, AccountWrite::Balance(_) | AccountWrite::BalanceDelta(_))
+        }) {
             refresh_chain_journal(ecx);
         }
     }
@@ -1152,7 +1210,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.created_accounts_frames.pop();
         // `on_revert` cleans up the root frame.
         if !success && depth > 0 {
-            self.replay_account_writes(ecx, frame.account_writes);
+            self.replay_account_writes(ecx, frame.account_writes, self.account_writes.len());
         }
         if !success {
             // Logs of a failed frame are reverted. If the buffer was replaced inside the frame,
