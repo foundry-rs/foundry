@@ -1371,6 +1371,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         warm_arbitrum_system_contract::<FEN>(ecx);
         if let Some(cheatcodes) = &mut self.cheatcodes {
             cheatcodes.clear_storage_hook_mapping_slots();
+            // Deals belong to earlier root transactions and must not be rolled back if this one
+            // fails.
+            cheatcodes.eth_deals.clear();
         }
 
         if self.enable_isolation {
