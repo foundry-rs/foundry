@@ -546,7 +546,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     } else {
         gas_params.get(GasId::Create)
     };
-    if version.feature(EvmFeatures::EIP3860) {
+    if version.features.contains(EvmFeatures::EIP3860) {
         if init_code_len > version.max_initcode_size {
             ccx.gas.spend_all();
             return Err(fmt_err!("initcode size limit exceeded"));
@@ -562,19 +562,14 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     // EIP-8037: charge the account creation state gas if the creation can proceed and the
     // destination is empty.
     let mut charged_create_state_gas = false;
-    if version.feature(EvmFeatures::EIP8037) {
+    if version.features.contains(EvmFeatures::EIP8037) {
         let (balance, nonce) = {
             let account = ccx.evm.state_mut().account(&caller)?;
             (account.balance(), account.nonce())
         };
         if balance >= value && nonce != u64::MAX {
             let created_address = derive_create_destination(kind, &caller, &salt, &bytecode, nonce);
-            if ccx
-                .evm
-                .state_mut()
-                .account(&created_address)?
-                .is_empty_for_new_account_gas(version.features)
-            {
+            if ccx.evm.target_is_empty_for_new_account_gas(&created_address, version.features)? {
                 if ccx.gas.spend_state(create_state_gas).is_err() {
                     ccx.gas.spend_all();
                     return Err(fmt_err!("out of gas"));
@@ -584,10 +579,11 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
         }
     }
 
-    // The call to the cheatcode already kept back 1/64 of the caller's gas, as the CREATE opcode
-    // would, so forward all of the remaining gas to the create frame.
-    let gas_limit = ccx.gas.remaining();
-    // This cannot fail as it does not exceed `remaining`.
+    let mut gas_limit = ccx.gas.remaining();
+    if version.features.contains(EvmFeatures::EIP150) {
+        gas_limit = gas_params.call_stipend_reduction(gas_limit);
+    }
+    // Forward the gas to the create frame; this cannot fail as it does not exceed `remaining`.
     let _ = ccx.gas.spend(gas_limit);
 
     // Broadcast the synthetic create only if it was requested by the broadcaster at the broadcast
@@ -601,7 +597,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
 
     if let Some(changes) = prank_changes {
         if let Some(new_origin) = changes.origin {
-            ccx.state.set_origin(ccx.evm.tx_env().origin, new_origin);
+            ccx.state.set_origin(ccx.tx_env.origin, new_origin);
         }
         if let Some(used) = changes.used {
             ccx.state.pranks.insert(depth, used);
@@ -632,7 +628,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     ccx.state.deploy_code_depth = outer_deploy_code_depth;
     ccx.state.deploy_code_create_state_gas = outer_create_state_gas;
     // A create that runs isolated as the root of its own nested transaction returns no data from
-    // a failed code deposit.
+    // a failed code deposit, as on master.
     let returned = mem::replace(&mut ccx.state.deploy_code_output, outer_output)
         .filter(|(_, isolated)| *isolated == ccx.state.in_isolation_context)
         .map(|(output, _)| output);
@@ -644,7 +640,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
         if broadcast.single_call && depth == broadcast.depth {
             let original_origin = broadcast.original_origin;
             ccx.state.broadcast = None;
-            ccx.state.set_origin(ccx.evm.tx_env().origin, original_origin);
+            ccx.state.set_origin(ccx.tx_env.origin, original_origin);
         }
     }
 
@@ -652,7 +648,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     if let Some(prank) = ccx.state.get_prank(depth).copied()
         && depth == prank.depth
     {
-        ccx.state.set_origin(ccx.evm.tx_env().origin, prank.prank_origin);
+        ccx.state.set_origin(ccx.tx_env.origin, prank.prank_origin);
         if prank.single_call {
             ccx.state.pranks.remove(&depth);
         }
@@ -669,7 +665,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     }
 
     if !outcome.is_success() {
-        // A constructor whose returned code could not be deposited reverts with it.
+        // As on master, a constructor whose returned code could not be deposited reverts with it.
         return Err(crate::Error::from(returned.unwrap_or(outcome.output)));
     }
 

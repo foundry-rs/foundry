@@ -12,7 +12,7 @@ extern crate foundry_common;
 extern crate tracing;
 
 use evm2::interpreter::opcode::OpCode;
-use evm2_inspectors::ColorChoice;
+use evm2_inspectors::{ColorChoice, tracing::OpcodeFilter};
 use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     shell,
@@ -756,10 +756,10 @@ impl TraceRequirements {
             record_opcodes_filter: match steps {
                 StepRecording::None | StepRecording::All => None,
                 StepRecording::Jumps => {
-                    Some([OpCode::JUMP, OpCode::JUMPDEST].into_iter().map(OpCode::get).collect())
+                    Some(OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST))
                 }
             },
-            record_precompile_calls: false,
+            exclude_precompile_calls: false,
             record_immediate_bytes: self.immediate_bytes,
             record_step_deltas: false,
         }
@@ -847,14 +847,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tracing() {
+    async fn tracing_eth() {
         tracing_suite::<foundry_evm_core::evm::EthEvmNetwork>().await;
+    }
+
+    #[tokio::test]
+    async fn tracing_tempo() {
         tracing_suite::<foundry_evm_core::evm::TempoEvmNetwork>().await;
-        #[cfg(feature = "optimism")]
+    }
+
+    #[cfg(feature = "optimism")]
+    #[tokio::test]
+    async fn tracing_op() {
         tracing_suite::<foundry_evm_core::evm::OpEvmNetwork>().await;
-        #[cfg(feature = "base")]
+    }
+
+    #[cfg(feature = "base")]
+    #[tokio::test]
+    async fn tracing_base() {
         tracing_suite::<foundry_evm_core::evm::BaseEvmNetwork>().await;
-        #[cfg(feature = "monad")]
+    }
+
+    #[cfg(feature = "monad")]
+    #[tokio::test]
+    async fn tracing_monad() {
         tracing_suite::<foundry_evm_core::evm::MonadEvmNetwork>().await;
     }
 
@@ -949,6 +965,7 @@ mod tests {
                 returndata: Bytes::new(),
                 gas_remaining: 0,
                 gas_refund_counter: 0,
+                gas_used: 0,
                 gas_cost: 0,
                 state_gas_cost: None,
                 state_gas_reservoir: None,

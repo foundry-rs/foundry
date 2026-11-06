@@ -1083,11 +1083,13 @@ fn parse_inline_link(s: &str) -> Option<(usize, &str, Option<&str>, Option<&str>
     // Optional label: `[label]`
     let rest = &s[close + 1..];
     let label = if rest.starts_with('[') {
-        rest.find(']').map(|end| {
+        if let Some(end) = rest.find(']') {
             let lbl = &rest[1..end];
             consumed += end + 1;
-            lbl
-        })
+            Some(lbl)
+        } else {
+            None
+        }
     } else {
         None
     };

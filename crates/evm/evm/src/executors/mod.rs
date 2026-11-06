@@ -27,8 +27,8 @@ use foundry_common::FoundryTransactionBuilder;
 use foundry_evm_core::{
     backend::{Backend, BackendResult, CowBackend, GLOBAL_FAIL_SLOT, handler_error},
     constants::{
-        CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_CODE,
-        DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
+        CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
+        DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
     decode::{RevertDecoder, SkipReason},
     eip2935::{
@@ -152,15 +152,16 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
 
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // do not fail.
-        // evm2 requires the code hash to be the hash of the code.
+        // The code hash value does not matter, as long as it's not zero or `KECCAK_EMPTY`.
         let stub = Bytecode::new_raw(Bytes::from_static(&[0]));
-        let stub_hash = stub.hash_slow();
-        for address in
-            std::iter::once(CHEATCODE_ADDRESS).chain(extra_cheatcode_addresses.iter().copied())
-        {
+        backend.insert_account_info(
+            CHEATCODE_ADDRESS,
+            AccountInfo::new(U256::ZERO, 0, CHEATCODE_CONTRACT_HASH, Some(stub.clone())),
+        );
+        for &address in extra_cheatcode_addresses {
             backend.insert_account_info(
                 address,
-                AccountInfo::new(U256::ZERO, 0, stub_hash, Some(stub.clone())),
+                AccountInfo::new(U256::ZERO, 0, keccak256(address), Some(stub.clone())),
             );
         }
 
@@ -393,7 +394,10 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
 
     /// Returns `true` if the account has no code.
     pub fn is_empty_code(&self, address: Address) -> BackendResult<bool> {
-        Ok(self.backend().basic(address)?.is_none_or(|acc| acc.is_empty_code_hash()))
+        Ok(self
+            .backend()
+            .basic(address)?
+            .is_none_or(|acc| acc.code_hash == alloy_primitives::KECCAK256_EMPTY))
     }
 
     #[inline]
@@ -645,10 +649,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         evm_env: EvmEnvFor<FEN>,
         tx: TransactionRequestFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let init = tx.from().zip(tx.kind());
-        let tx_env = FEN::tx_from_request(tx.clone())?;
-        let mut result =
-            self.call_tx_with_init(evm_env, &tx_env, None, init, self.inspector().clone())?;
+        let mut result = self.call_tx(evm_env, &FEN::tx_from_request(tx.clone())?, None)?;
         result.set_stipend(&evm_env, tx);
         Ok(result)
     }
@@ -664,44 +665,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         tx: &Recovered<TxFor<FEN>>,
         ext: Option<ChainFor<FEN>>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        self.call_tx_with_init(evm_env, tx, ext, None, self.inspector().clone())
-    }
-
-    /// Performs a raw call like [`Self::call_raw`], but without the fuzz guidance inspectors.
-    ///
-    /// The call collects no edge coverage, comparison operands, or dictionary values, so use it
-    /// for calls whose instrumentation output is discarded, such as invariant predicate checks.
-    pub fn call_raw_without_fuzz_instrumentation(
-        &self,
-        from: Address,
-        to: Address,
-        calldata: Bytes,
-        value: U256,
-    ) -> eyre::Result<RawCallResult<FEN>> {
-        let (evm_env, tx) = self.prepare_call_env(from, TxKind::Call(to), calldata, value);
-        let init = tx.from().zip(tx.kind());
-        let tx_env = FEN::tx_from_request(tx.clone())?;
         let mut stack = self.inspector().clone();
-        stack.disable_fuzz_instrumentation();
-        let mut result = self.call_tx_with_init(evm_env, &tx_env, None, init, stack)?;
-        result.set_stipend(&evm_env, tx);
-        Ok(result)
-    }
-
-    /// Like [`Self::call_tx`] with the inspector `stack`, recording `init`'s caller and test
-    /// contract, if the call modifies the backend.
-    fn call_tx_with_init(
-        &self,
-        evm_env: EvmEnvFor<FEN>,
-        tx: &Recovered<TxFor<FEN>>,
-        ext: Option<ChainFor<FEN>>,
-        init: Option<(Address, TxKind)>,
-        mut stack: InspectorStack<FEN>,
-    ) -> eyre::Result<RawCallResult<FEN>> {
         let mut backend = CowBackend::new_borrowed(self.backend());
-        if let Some((caller, kind)) = init {
-            backend.initialize(caller, kind);
-        }
         let (execution, evm) = execute(&mut backend, evm_env, tx, ext, &mut stack)?;
         // Retain lifecycle changes; defer pending writes until commit.
         backend.park_detached(evm);
@@ -719,10 +684,6 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         evm_env: EvmEnvFor<FEN>,
         tx: TransactionRequestFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        // Every transaction records its caller and test contract.
-        if let (Some(caller), Some(kind)) = (tx.from(), tx.kind()) {
-            self.backend_mut().initialize(caller, kind);
-        }
         let mut result = self.transact_tx(evm_env, &FEN::tx_from_request(tx.clone())?, None)?;
         result.set_stipend(&evm_env, tx);
         Ok(result)
@@ -1254,8 +1215,7 @@ fn execute<FEN: FoundryEvmNetwork>(
 }
 
 /// Returns the default environment of `FEN`.
-#[cfg(test)]
-pub(crate) fn default_env<FEN: FoundryEvmNetwork>() -> EvmEnvFor<FEN> {
+fn default_env<FEN: FoundryEvmNetwork>() -> EvmEnvFor<FEN> {
     let spec = SpecFor::<FEN>::default();
     let chain_id = foundry_common::DEV_CHAIN_ID;
     EvmEnv::new(spec, EvmFactoryFor::<FEN>::default().version(spec, chain_id), Default::default())
@@ -1428,7 +1388,6 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub(crate) post_execution_backend: Option<Box<Backend<FEN>>>,
 }
 
-#[cfg(test)]
 impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
     fn default() -> Self {
         Self {
@@ -1608,7 +1567,7 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
     }
 
     /// Sets the stipend to the intrinsic gas of `tx` in `evm_env`, with the access list cheatcodes
-    /// applied to it.
+    /// applied to it, as on master.
     fn set_stipend(&mut self, evm_env: &EvmEnvFor<FEN>, mut tx: TransactionRequestFor<FEN>) {
         if let Some(access_list) =
             self.cheatcodes.as_ref().and_then(|cheats| cheats.applied_access_list.clone())
@@ -2557,33 +2516,6 @@ mod tests {
         assert!(!result.reverted);
         assert_eq!(result.exit_reason, Some(InstrStop::Stop));
         assert!(result.gas_used < GAS_LIMIT, "execution ran out of gas instead of timing out");
-    }
-
-    #[test]
-    fn campaign_deadline_is_polled_at_calls() {
-        let mut executor = eth_executor(ExecutorBuilder::default().gas_limit(1 << 24));
-        let cancellation = EvmExecutionCancellation::campaign(
-            EarlyExit::new(false),
-            Arc::new(AtomicBool::new(false)),
-            Some(Instant::now()),
-        );
-        executor.inspector_mut().set_execution_cancellation(cancellation);
-
-        let target = Address::repeat_byte(0x11);
-        // PUSH0 x5; ADDRESS; GAS; CALL; STOP calls itself without a jump until the call stops.
-        executor
-            .set_code(
-                target,
-                Bytecode::new_raw(Bytes::from_static(&[
-                    0x5f, 0x5f, 0x5f, 0x5f, 0x5f, 0x30, 0x5a, 0xf1, 0x00,
-                ])),
-            )
-            .unwrap();
-
-        let result = executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
-        assert!(result.execution_cancelled);
-        assert!(!result.reverted);
-        assert_eq!(result.exit_reason, Some(InstrStop::Stop));
     }
 
     #[test]

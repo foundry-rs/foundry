@@ -4,22 +4,20 @@
 //! in a [`Cache`]) over an optional remote fork. Execution reads it through [`EvmDb`], an evm2
 //! [`DynDatabase`] adapter, and writes back the accumulated changes with [`Db::commit`].
 
-use crate::{eth::error::BlockchainError, mem::storage::MinedTransaction};
+use crate::mem::storage::MinedTransaction;
 use alloy_consensus::BlockBody;
 use alloy_eips::{eip4895::Withdrawals, eip7691::BLOB_GASPRICE_UPDATE_FRACTION_PECTRA};
 use alloy_network::Network;
 use alloy_primitives::{
-    Address, B256, Bytes, KECCAK256_EMPTY, U256, keccak256,
-    map::{AddressMap, B256Map, U256Map},
+    Address, B256, Bytes, U256, keccak256,
+    map::{AddressMap, B256Map, HashMap, U256Map},
 };
 use alloy_rpc_types::{BlockId, BlockOverrides, state::AccountOverride};
 use anvil_core::eth::{
     block::Block,
     transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
-use evm2::evm::{
-    AccountChangeRef, BlockStateAccumulator, DbResult, DynDatabase, StateChangeSink, StorageChange,
-};
+use evm2::evm::{BlockStateAccumulator, DbResult, DynDatabase};
 use foundry_common::errors::FsPathError;
 use foundry_evm_core::evm::{FoundryDatabase, existing_account};
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
@@ -31,17 +29,15 @@ use serde::{
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
-    convert::Infallible,
     fmt::{self, Debug},
     fs::File,
     io::BufReader,
     path::Path,
-    sync::Arc,
 };
 
 pub use super::env::{BlobExcessGasAndPrice, BlockEnv, SpecId};
+pub use alloy_primitives::KECCAK256_EMPTY as KECCAK_EMPTY;
 pub use evm2::{AccountInfo, bytecode::Bytecode};
-pub use foundry_evm_core::{backend::RevertStateSnapshotAction, state_snapshot::StateSnapshots};
 pub use foundry_fork_db::{DatabaseError, DatabaseResult};
 
 /// The fork cache, keyed by Anvil's block environment.
@@ -76,6 +72,87 @@ pub(crate) fn cache_block_hash(block_hashes: &mut U256Map<B256>, number: U256, h
         block_hashes.insert(number, hash);
     }
     head
+}
+
+/// What to do when reverting a state snapshot.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RevertStateSnapshotAction {
+    /// Remove the state snapshot after reverting.
+    #[default]
+    RevertRemove,
+    /// Keep the state snapshot after reverting.
+    RevertKeep,
+}
+
+impl RevertStateSnapshotAction {
+    /// Returns `true` if the action is to keep the state snapshot.
+    pub const fn is_keep(&self) -> bool {
+        matches!(self, Self::RevertKeep)
+    }
+}
+
+/// Numbered state snapshots.
+#[derive(Clone, Debug)]
+pub struct StateSnapshots<T> {
+    id: U256,
+    state_snapshots: HashMap<U256, T>,
+}
+
+impl<T> Default for StateSnapshots<T> {
+    fn default() -> Self {
+        Self { id: U256::ZERO, state_snapshots: HashMap::default() }
+    }
+}
+
+impl<T> StateSnapshots<T> {
+    const fn next_id(&mut self) -> U256 {
+        let id = self.id;
+        self.id = id.saturating_add(U256::ONE);
+        id
+    }
+
+    /// Returns the state snapshot with the given id `id`
+    pub fn get(&self, id: U256) -> Option<&T> {
+        self.state_snapshots.get(&id)
+    }
+
+    /// Returns `true` if there are no state snapshots.
+    pub fn is_empty(&self) -> bool {
+        self.state_snapshots.is_empty()
+    }
+
+    /// Removes the state snapshot with the given `id`, and every state snapshot taken after it.
+    pub fn remove(&mut self, id: U256) -> Option<T> {
+        let snapshot_state = self.state_snapshots.remove(&id);
+        let mut to_revert = id + U256::ONE;
+        while to_revert < self.id {
+            self.state_snapshots.remove(&to_revert);
+            to_revert += U256::ONE;
+        }
+        snapshot_state
+    }
+
+    /// Removes all state snapshots.
+    pub fn clear(&mut self) {
+        self.state_snapshots.clear();
+    }
+
+    /// Removes only the state snapshot with the given `id`.
+    pub fn remove_at(&mut self, id: U256) -> Option<T> {
+        self.state_snapshots.remove(&id)
+    }
+
+    /// Inserts the new state snapshot and returns the id.
+    pub fn insert(&mut self, state_snapshot: T) -> U256 {
+        let id = self.next_id();
+        self.state_snapshots.insert(id, state_snapshot);
+        id
+    }
+
+    /// Inserts the new state snapshot at the given `id`, without advancing the next `id`.
+    pub fn insert_at(&mut self, state_snapshot: T, id: U256) {
+        self.state_snapshots.insert(id, state_snapshot);
+    }
 }
 
 /// Lifecycle of a cached account.
@@ -226,7 +303,8 @@ fn deserialize_snapshot_accounts<'de, D: Deserializer<'de>>(
     Ok(accounts.into_iter().map(|(address, account)| (address, account.into())).collect())
 }
 
-/// Deserializes bytecode written as raw bytes, or in the older tagged form of state dumps.
+/// Deserializes bytecode written as raw bytes, or in the tagged form of dumps written before the
+/// evm2 migration.
 fn deserialize_snapshot_code<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<Bytes>, D::Error> {
@@ -266,9 +344,8 @@ fn deserialize_snapshot_code<'de, D: Deserializer<'de>>(
 
 /// Read access to Anvil state.
 ///
-/// A missing account of a local database is reported as an existing empty account; [`EvmDb`]
-/// maps it to evm2's absent account where execution requires it.
-#[auto_impl::auto_impl(&, Box)]
+/// Like REVM's `DatabaseRef`, a missing account of a local database is reported as an existing
+/// empty account; [`EvmDb`] maps it to evm2's absent account where execution requires it.
 pub trait DatabaseRef: Debug {
     /// Returns the account at `address`, with its bytecode when available.
     fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>>;
@@ -281,6 +358,60 @@ pub trait DatabaseRef: Debug {
 
     /// Returns the hash of block `number`.
     fn block_hash_ref(&self, number: u64) -> DatabaseResult<B256>;
+}
+
+impl<T: DatabaseRef + ?Sized> DatabaseRef for &T {
+    fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
+        (**self).basic_ref(address)
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
+        (**self).code_by_hash_ref(code_hash)
+    }
+
+    fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
+        (**self).storage_ref(address, index)
+    }
+
+    fn block_hash_ref(&self, number: u64) -> DatabaseResult<B256> {
+        (**self).block_hash_ref(number)
+    }
+}
+
+impl<T: DatabaseRef + ?Sized> DatabaseRef for &mut T {
+    fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
+        (**self).basic_ref(address)
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
+        (**self).code_by_hash_ref(code_hash)
+    }
+
+    fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
+        (**self).storage_ref(address, index)
+    }
+
+    fn block_hash_ref(&self, number: u64) -> DatabaseResult<B256> {
+        (**self).block_hash_ref(number)
+    }
+}
+
+impl<T: DatabaseRef + ?Sized> DatabaseRef for Box<T> {
+    fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
+        (**self).basic_ref(address)
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
+        (**self).code_by_hash_ref(code_hash)
+    }
+
+    fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
+        (**self).storage_ref(address, index)
+    }
+
+    fn block_hash_ref(&self, number: u64) -> DatabaseResult<B256> {
+        (**self).block_hash_ref(number)
+    }
 }
 
 /// The empty backing database of local state: every account exists and is empty.
@@ -319,7 +450,7 @@ pub struct Cache {
 impl Default for Cache {
     fn default() -> Self {
         let mut contracts = B256Map::default();
-        contracts.insert(KECCAK256_EMPTY, Bytecode::default());
+        contracts.insert(KECCAK_EMPTY, Bytecode::default());
         contracts.insert(B256::ZERO, Bytecode::default());
         Self { accounts: Default::default(), contracts, block_hashes: Default::default() }
     }
@@ -345,13 +476,13 @@ impl<ExtDB> CacheDB<ExtDB> {
         if let Some(code) = &info.code
             && !code.is_empty()
         {
-            if info.code_hash == KECCAK256_EMPTY {
+            if info.code_hash == KECCAK_EMPTY {
                 info.code_hash = code.hash_slow();
             }
             self.cache.contracts.entry(info.code_hash).or_insert_with(|| code.clone());
         }
         if info.code_hash.is_zero() {
-            info.code_hash = KECCAK256_EMPTY;
+            info.code_hash = KECCAK_EMPTY;
         }
     }
 
@@ -397,6 +528,18 @@ impl<ExtDB: DatabaseRef> CacheDB<ExtDB> {
         Ok(())
     }
 
+    /// Replaces all storage of `address`.
+    pub fn replace_account_storage(
+        &mut self,
+        address: Address,
+        storage: U256Map<U256>,
+    ) -> DatabaseResult<()> {
+        let account = self.load_account(address)?;
+        account.account_state = AccountState::StorageCleared;
+        account.storage = storage;
+        Ok(())
+    }
+
     /// Applies state changes accumulated by evm2 to the cache.
     ///
     /// Changed accounts are loaded from the backing database first, so an account whose storage
@@ -416,6 +559,21 @@ impl<ExtDB: DatabaseRef> CacheDB<ExtDB> {
     }
 }
 
+impl<ExtDB: DatabaseRef> CacheDB<ExtDB> {
+    /// Applies `eth_call` state overrides, see [`apply_state_overrides`].
+    pub fn apply_state_overrides(
+        &mut self,
+        overrides: impl IntoIterator<Item = (Address, AccountOverride)>,
+    ) -> Result<(), crate::eth::error::BlockchainError> {
+        apply_state_overrides(overrides, self)
+    }
+
+    /// Applies `eth_call` block overrides to `block_env` and overrides block hashes.
+    pub fn apply_block_overrides(&mut self, overrides: BlockOverrides, block_env: &mut BlockEnv) {
+        apply_block_overrides(overrides, self, block_env);
+    }
+}
+
 /// Applies `eth_call` state overrides to `db`.
 ///
 /// `state` replaces the account's storage and `stateDiff` updates individual slots. Precompile
@@ -423,7 +581,9 @@ impl<ExtDB: DatabaseRef> CacheDB<ExtDB> {
 pub fn apply_state_overrides<ExtDB: DatabaseRef>(
     overrides: impl IntoIterator<Item = (Address, AccountOverride)>,
     db: &mut CacheDB<ExtDB>,
-) -> Result<(), BlockchainError> {
+) -> Result<(), crate::eth::error::BlockchainError> {
+    use crate::eth::error::BlockchainError;
+
     for (address, account_override) in overrides {
         let mut info = db.load_account(address)?.info.clone();
         if let Some(nonce) = account_override.nonce {
@@ -431,8 +591,9 @@ pub fn apply_state_overrides<ExtDB: DatabaseRef>(
         }
         if let Some(code) = account_override.code {
             let code = Bytecode::new_raw_checked(code)
-                .map_err(|err| BlockchainError::StateOverrideError(err.to_string()))?;
-            info.set_code(code);
+                .map_err(|err| BlockchainError::Message(err.to_string()))?;
+            info.code_hash = code.hash_slow();
+            info.code = Some(code);
         }
         if let Some(balance) = account_override.balance {
             info.balance = balance;
@@ -440,19 +601,26 @@ pub fn apply_state_overrides<ExtDB: DatabaseRef>(
         db.insert_account_info(address, info);
         match (account_override.state, account_override.state_diff) {
             (Some(_), Some(_)) => {
-                return Err(BlockchainError::StateOverrideError(format!(
-                    "state and state_diff can't be used together for account {address}"
+                return Err(BlockchainError::Message(format!(
+                    "Both 'state' and 'stateDiff' fields are set for account {address}"
                 )));
             }
             (Some(state), None) => {
-                let account = db.load_account(address)?;
-                account.account_state = AccountState::StorageCleared;
-                account.storage =
-                    state.into_iter().map(|(slot, value)| (slot.into(), value.into())).collect();
+                let storage = state
+                    .into_iter()
+                    .map(|(slot, value)| {
+                        (U256::from_be_bytes(slot.0), U256::from_be_bytes(value.0))
+                    })
+                    .collect();
+                db.replace_account_storage(address, storage)?;
             }
             (None, Some(state_diff)) => {
                 for (slot, value) in state_diff {
-                    db.insert_account_storage(address, slot.into(), value.into())?;
+                    db.insert_account_storage(
+                        address,
+                        U256::from_be_bytes(slot.0),
+                        U256::from_be_bytes(value.0),
+                    )?;
                 }
             }
             (None, None) => {}
@@ -514,75 +682,10 @@ pub fn apply_block_overrides<ExtDB>(
     }
 }
 
-/// Records transaction changes in a [`BlockStateAccumulator`] for [`commit_changes`].
-///
-/// From Spurious Dragon on, [`EvmDb`] loads an empty account as absent even when Anvil holds
-/// storage for it, such as storage set on an empty address. evm2 records an account absent before
-/// the block as created, with no storage, so every account is recorded with an existing empty
-/// original instead, and a created account's storage is wiped explicitly. This also covers a
-/// creation over an existing account, which evm2 does not report as a wipe.
-pub(crate) struct BlockChanges<'a> {
-    block: &'a mut BlockStateAccumulator,
-    /// The current account's slots, which evm2 visits before the account itself.
-    storage: Vec<StorageChange>,
-}
-
-impl<'a> BlockChanges<'a> {
-    pub(crate) const fn new(block: &'a mut BlockStateAccumulator) -> Self {
-        Self { block, storage: Vec::new() }
-    }
-
-    fn flush_storage(&mut self) -> Result<(), Infallible> {
-        for change in self.storage.drain(..) {
-            self.block.storage(change)?;
-        }
-        Ok(())
-    }
-}
-
-impl StateChangeSink for BlockChanges<'_> {
-    type Error = Infallible;
-
-    fn bytecode(&mut self, code_hash: B256, code: &Bytecode) -> Result<(), Self::Error> {
-        self.block.bytecode(code_hash, code)
-    }
-
-    fn account(&mut self, change: AccountChangeRef<'_>) -> Result<(), Self::Error> {
-        if change.created {
-            self.block.storage_wipe(change.address)?;
-        }
-        self.flush_storage()?;
-        let empty = AccountInfo::default();
-        self.block.account(AccountChangeRef {
-            original: Some(change.original.unwrap_or(&empty)),
-            ..change
-        })
-    }
-
-    fn storage_wipe(&mut self, address: Address) -> Result<(), Self::Error> {
-        self.block.storage_wipe(address)
-    }
-
-    fn storage(&mut self, change: StorageChange) -> Result<(), Self::Error> {
-        self.storage.push(change);
-        Ok(())
-    }
-
-    fn account_read(
-        &mut self,
-        _address: Address,
-        _info: Option<&AccountInfo>,
-    ) -> Result<(), Self::Error> {
-        self.flush_storage()
-    }
-}
-
 /// Applies evm2 state changes to a [`Cache`].
 ///
 /// A created or deleted account starts from empty storage: evm2 drops the storage wipe marker of
 /// accounts that did not exist before the block, so it is applied here before storage writes.
-/// Changes recorded through [`BlockChanges`] always have an original account and record the wipe
-/// of a created account, so only deletions take this path for them.
 pub(crate) fn commit_changes(cache: &mut Cache, changes: &BlockStateAccumulator) {
     fn wipe(account: &mut DbAccount) {
         account.storage.clear();
@@ -618,13 +721,8 @@ pub(crate) fn commit_changes(cache: &mut Cache, changes: &BlockStateAccumulator)
                     cache.contracts.entry(info.code_hash).or_insert(code);
                 }
                 account.info = info;
-                match account.account_state {
-                    AccountState::None => account.account_state = AccountState::Touched,
-                    // A revived account exists again, without its old storage.
-                    AccountState::NotExisting => {
-                        account.account_state = AccountState::StorageCleared
-                    }
-                    _ => {}
+                if account.account_state == AccountState::None {
+                    account.account_state = AccountState::Touched;
                 }
             }
             None => *account = DbAccount::new_not_existing(),
@@ -682,9 +780,15 @@ pub struct EvmDb<'a> {
 }
 
 impl<'a> EvmDb<'a> {
-    /// Reads `db` for execution at `spec`, as a fork of `forked` if set.
-    pub fn new(db: &'a dyn DatabaseRef, spec: SpecId, forked: Option<u64>) -> Self {
-        Self { db, spec, forked }
+    /// Reads `db` for execution at `spec`.
+    pub fn new(db: &'a dyn DatabaseRef, spec: SpecId) -> Self {
+        Self { db, spec, forked: None }
+    }
+
+    /// Marks the database as a fork of `source_chain_id`.
+    pub const fn forked(mut self, source_chain_id: Option<u64>) -> Self {
+        self.forked = source_chain_id;
+        self
     }
 }
 
@@ -737,11 +841,6 @@ pub trait MaybeFullDatabase: DatabaseRef {
     /// Returns an owned, recursively merged view of all available accounts.
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
         self.maybe_as_full_db().cloned()
-    }
-
-    /// Returns the accounts if they are stored behind a shared, immutable allocation.
-    fn maybe_shared_full_db(&self) -> Option<Arc<AddressMap<DbAccount>>> {
-        None
     }
 
     /// Returns whether snapshots of this database use structural sharing.
@@ -803,10 +902,6 @@ impl<T: MaybeFullDatabase + ?Sized> MaybeFullDatabase for Box<T> {
         T::maybe_full_db(self)
     }
 
-    fn maybe_shared_full_db(&self) -> Option<Arc<AddressMap<DbAccount>>> {
-        T::maybe_shared_full_db(self)
-    }
-
     fn is_persistent(&self) -> bool {
         T::is_persistent(self)
     }
@@ -862,7 +957,7 @@ pub trait Db: MaybeFullDatabase + MaybeForkedDatabase + Send + Sync {
     fn set_code(&mut self, address: Address, code: Bytes) -> DatabaseResult<()> {
         let mut info = self.basic_ref(address)?.unwrap_or_default();
         if code.is_empty() {
-            info.code_hash = KECCAK256_EMPTY;
+            info.code_hash = KECCAK_EMPTY;
             info.code = None;
         } else {
             info.code_hash = keccak256(&code);
@@ -908,7 +1003,7 @@ pub trait Db: MaybeFullDatabase + MaybeForkedDatabase + Send + Sync {
                     account.balance,
                     nonce,
                     // set automatically from the code
-                    KECCAK256_EMPTY,
+                    KECCAK_EMPTY,
                     (!account.code.is_empty()).then(|| Bytecode::new_raw(account.code)),
                 ),
             );
@@ -1095,6 +1190,10 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
 }
 
 impl MaybeFullDatabase for EmptyDb {
+    fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
+        None
+    }
+
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
         Some(AddressMap::default())
     }
@@ -1169,10 +1268,6 @@ impl MaybeFullDatabase for StateDb {
         self.0.maybe_full_db()
     }
 
-    fn maybe_shared_full_db(&self) -> Option<Arc<AddressMap<DbAccount>>> {
-        self.0.maybe_shared_full_db()
-    }
-
     fn is_persistent(&self) -> bool {
         self.0.is_persistent()
     }
@@ -1206,7 +1301,14 @@ pub struct LegacyBlockEnv {
     pub basefee: Option<StringOrU64>,
     pub difficulty: Option<StringOrU64>,
     pub prevrandao: Option<B256>,
-    pub blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
+    pub blob_excess_gas_and_price: Option<LegacyBlobExcessGasAndPrice>,
+}
+
+/// Legacy blob excess gas and price structure from before v1.3.
+#[derive(Debug, Deserialize)]
+pub struct LegacyBlobExcessGasAndPrice {
+    pub excess_blob_gas: u64,
+    pub blob_gasprice: u128,
 }
 
 /// Legacy string or u64 type from before v1.3.
@@ -1247,9 +1349,15 @@ impl TryFrom<LegacyBlockEnv> for BlockEnv {
             difficulty: legacy.difficulty.and_then(|v| v.to_u256()).unwrap_or(U256::ZERO),
             prevrandao: legacy.prevrandao.or(Some(B256::ZERO)),
             slot_num: 0,
-            blob_excess_gas_and_price: legacy.blob_excess_gas_and_price.or_else(|| {
-                Some(BlobExcessGasAndPrice::new(0, BLOB_GASPRICE_UPDATE_FRACTION_PECTRA as u64))
-            }),
+            blob_excess_gas_and_price: legacy
+                .blob_excess_gas_and_price
+                .map(|v| BlobExcessGasAndPrice {
+                    excess_blob_gas: v.excess_blob_gas,
+                    blob_gasprice: v.blob_gasprice,
+                })
+                .or_else(|| {
+                    Some(BlobExcessGasAndPrice::new(0, BLOB_GASPRICE_UPDATE_FRACTION_PECTRA as u64))
+                }),
         })
     }
 }
@@ -1512,7 +1620,6 @@ mod test {
     use super::*;
     use crate::eth::backend::mem::{fork_db::ForkedDatabase, in_memory_db::MemDb};
     use alloy_consensus::Header;
-    use alloy_eips::eip4895::Withdrawal;
     use alloy_network::AnyNetwork;
     use alloy_provider::ProviderBuilder;
     use alloy_transport::mock::Asserter;
@@ -1680,6 +1787,8 @@ mod test {
 
     #[test]
     fn test_block_withdrawals_preserved() {
+        use alloy_eips::eip4895::Withdrawal;
+
         // create a block with withdrawals (like post-Shanghai blocks)
         let withdrawal = Withdrawal {
             index: 42,

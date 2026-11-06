@@ -8,9 +8,6 @@ const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
 pub(crate) struct PathState {
     pub(crate) depth: usize,
     pub(crate) call_depth: usize,
-    /// The `call_depth` of the frame that the EVM counts as depth 0 for the call depth limit: the
-    /// first frame of the current transaction or of a `vm.deployCode` constructor.
-    pub(crate) call_depth_base: usize,
     pub(crate) origin: Address,
     pub(crate) origin_word: SymExpr,
     pub(crate) gas_price: SymExpr,
@@ -35,9 +32,6 @@ pub(crate) struct PathState {
     needs_feasibility_check: bool,
     pub(crate) loop_jumps: HashMap<usize, u32>,
     pub(crate) expected_revert: Option<ExpectedRevert>,
-    /// Account of the first call, or reverting CREATE, that failed in or below this frame since
-    /// it was entered or since its last `vm.expectRevert`, which Forge reports as the reverter.
-    pub(crate) first_failed_callee: Option<Address>,
     pub(crate) assume_no_revert_next_call: Option<AssumeNoRevert>,
     pub(crate) expected_emit: Option<ExpectedEmit>,
     pub(crate) expected_calls: Vec<ExpectedCall>,
@@ -53,8 +47,6 @@ pub(crate) struct PathState {
     pub(crate) mapping_hook_keccak_preimages: HashMap<(Address, SymExpr), Arc<[SymExpr]>>,
     pub(crate) storage_hook_active: bool,
     pub(crate) pending_storage_hook_revert: bool,
-    /// Cheatcode writes that survive a revert of the frame that made them, as in Forge.
-    pub(crate) persistent_writes: Vec<PersistentWrite>,
 }
 
 impl PathState {
@@ -91,7 +83,6 @@ impl PathState {
         Self {
             depth: 0,
             call_depth: 0,
-            call_depth_base: 0,
             origin: caller,
             origin_word,
             gas_price,
@@ -113,7 +104,6 @@ impl PathState {
             needs_feasibility_check: false,
             loop_jumps: HashMap::default(),
             expected_revert: None,
-            first_failed_callee: None,
             assume_no_revert_next_call: None,
             expected_emit: None,
             expected_calls: Vec::new(),
@@ -129,7 +119,6 @@ impl PathState {
             mapping_hook_keccak_preimages: HashMap::default(),
             storage_hook_active: false,
             pending_storage_hook_revert: false,
-            persistent_writes: Vec::new(),
         }
     }
 
@@ -157,7 +146,6 @@ impl PathState {
         child.prank = SymbolicPrank::default();
         child.loop_jumps.clear();
         child.expected_revert = None;
-        child.first_failed_callee = None;
         child.assume_no_revert_next_call = None;
         child
     }
@@ -166,11 +154,6 @@ impl PathState {
     /// Forge's call isolation does for calls made by the test, handler, or invariant frame.
     pub(crate) const fn starts_isolated_transaction(&self, executor: &ExecutorView<'_>) -> bool {
         executor.isolate && self.call_depth == 0
-    }
-
-    /// Returns whether a CALL or CREATE issued by this frame exceeds the call depth limit.
-    pub(crate) const fn at_call_depth_limit(&self) -> bool {
-        self.call_depth - self.call_depth_base >= CALL_DEPTH_LIMIT as usize
     }
 
     pub(crate) fn storage_hook_child(&self, frame: CallFrame) -> Self {
@@ -334,10 +317,8 @@ impl PathState {
         // Inspector state survives child reverts and exceptional halts.
         self.block = child.block.clone();
         self.expected_calls = std::mem::take(&mut child.expected_calls);
-        self.expected_creates = std::mem::take(&mut child.expected_creates);
         self.call_mocks = std::mem::take(&mut child.call_mocks);
         self.function_mocks = std::mem::take(&mut child.function_mocks);
-        self.persistent_writes = std::mem::take(&mut child.persistent_writes);
     }
 
     /// Drops logs recorded by a failed call that started with `len` logs in `generation`.
@@ -359,7 +340,6 @@ impl PathState {
         self.discard_failed_call_logs(recorded_logs_len, recorded_logs_generation);
         self.access_record = reverted.access_record;
         self.expected_revert = reverted.expected_revert;
-        self.first_failed_callee = reverted.first_failed_callee;
         self.assume_no_revert_next_call = reverted.assume_no_revert_next_call;
         self.expected_emit = reverted.expected_emit;
         self.expected_calls = reverted.expected_calls;
@@ -954,120 +934,22 @@ impl PathState {
     }
 
     pub(crate) fn record_sload(&mut self, address: Address, slot: SymExpr) {
-        if let Some(record) = &mut self.access_record
-            && !record.stopped
-        {
+        if let Some(record) = &mut self.access_record {
             record.read(address, slot);
         }
     }
 
     pub(crate) fn record_sstore(&mut self, address: Address, slot: SymExpr) {
-        if let Some(record) = &mut self.access_record
-            && !record.stopped
-        {
+        if let Some(record) = &mut self.access_record {
             record.write(address, slot);
-        }
-    }
-
-    /// Ends a `count = 0` `vm.expectEmit` declared in this frame after a call from it returns
-    /// without reverting.
-    ///
-    /// Like Forge's `call_end`, static calls keep it. Callers skip calls that `vm.expectRevert`
-    /// handles, which also keep it.
-    pub(crate) fn end_expected_emit_after_call(&mut self, kind: CallKind) {
-        if !self.is_static
-            && !matches!(kind, CallKind::StaticCall)
-            && self.expected_emit.as_ref().is_some_and(|expected| {
-                expected.is_forbidden() && expected.depth == self.call_depth
-            })
-        {
-            self.expected_emit = None;
         }
     }
 
     pub(crate) fn expectations_satisfied(&self) -> bool {
         self.expected_revert.is_none()
-            && self.expected_emit.as_ref().is_none_or(ExpectedEmit::is_forbidden)
+            && self.expected_emit.as_ref().is_none_or(ExpectedEmit::is_satisfied)
             && self.expected_calls.iter().all(ExpectedCall::is_satisfied)
             && self.expected_creates.is_empty()
-    }
-
-    /// Sets a balance as `vm.deal` does, recording the write so it survives reverts.
-    pub(crate) fn set_persistent_balance(
-        &mut self,
-        cx: &mut SymCx,
-        executor: &ExecutorView<'_>,
-        address: Address,
-        value: SymExpr,
-    ) {
-        let previous = self.world.balance_word_for_address(cx, executor, address);
-        let delta = SymExpr::binop(cx, SymBinOp::Sub, value.clone(), previous);
-        self.world.set_balance_word(address, value);
-        self.persistent_writes.push(PersistentWrite::Balance(address, delta));
-    }
-
-    /// Sets a nonce as the nonce cheatcodes do, recording the write so it survives reverts.
-    pub(crate) fn set_persistent_nonce(
-        &mut self,
-        executor: &ExecutorView<'_>,
-        address: Address,
-        nonce: u64,
-    ) -> Result<(), SymbolicError> {
-        let previous = self.world.nonce(executor, address)?;
-        self.world.set_nonce(address, nonce);
-        let delta = i128::from(nonce) - i128::from(previous);
-        self.persistent_writes.push(PersistentWrite::Nonce(address, delta));
-        Ok(())
-    }
-
-    /// Reapplies the persistent writes recorded since `start` after a failed frame restored the
-    /// world.
-    ///
-    /// Forge's cheatcodes write balances and nonces outside the journal, so a revert only undoes
-    /// the journaled changes made on top of them: balances keep the write's wrapping delta, and
-    /// nonces keep its delta, saturated at the nonce bounds, unless the revert undoes the
-    /// account's creation, which resets the nonce. A failed frame that restored a snapshot
-    /// returns to the state from just before the first restore made since it started, so later
-    /// writes are dropped.
-    pub(crate) fn replay_persistent_writes(
-        &mut self,
-        cx: &mut SymCx,
-        executor: &ExecutorView<'_>,
-        start: usize,
-    ) -> Result<(), SymbolicError> {
-        let mut nonce_deltas = HashMap::<Address, i128>::default();
-        let mut created = HashSet::<Address>::default();
-        for write in self.persistent_writes.split_off(start) {
-            match write {
-                PersistentWrite::Balance(address, delta) => {
-                    let balance = self.world.balance_word_for_address(cx, executor, address);
-                    let balance = SymExpr::binop(cx, SymBinOp::Add, balance, delta.clone());
-                    self.world.set_balance_word(address, balance);
-                    self.persistent_writes.push(PersistentWrite::Balance(address, delta));
-                }
-                PersistentWrite::Nonce(address, delta) => {
-                    *nonce_deltas.entry(address).or_default() += delta;
-                }
-                PersistentWrite::Created(address) => {
-                    created.insert(address);
-                }
-                PersistentWrite::Restore => break,
-            }
-        }
-        // Each account's nonce writes are recorded again as one net change, so an enclosing
-        // replay keeps this replay's saturation.
-        for (address, delta) in nonce_deltas {
-            let previous = self.world.nonce(executor, address)?;
-            let nonce = if created.contains(&address) {
-                0
-            } else {
-                u64::try_from((i128::from(previous) + delta).max(0)).unwrap_or(u64::MAX)
-            };
-            if nonce != previous {
-                self.set_persistent_nonce(executor, address, nonce)?;
-            }
-        }
-        Ok(())
     }
 }
 
@@ -1098,33 +980,22 @@ impl SymbolicLog {
     pub(crate) fn into_parts(self) -> (Arc<[SymExpr]>, SymExpr, SymBytes, Address) {
         (self.topics, self.data_len, self.data, self.emitter)
     }
-
-    pub(crate) fn has_topics(&self) -> bool {
-        !self.topics.is_empty()
-    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct AccessRecord {
     reads: HashMap<Address, Vec<SymExpr>>,
     writes: HashMap<Address, Vec<SymExpr>>,
-    /// Set by `vm.stopRecord`, which keeps the recorded accesses but stops collecting new ones.
-    stopped: bool,
 }
 
 impl AccessRecord {
-    /// Stops collecting accesses while keeping the recorded ones, as `vm.stopRecord` does.
-    pub(crate) const fn stop(&mut self) {
-        self.stopped = true;
-    }
-
     pub(crate) fn read(&mut self, address: Address, slot: SymExpr) {
-        self.reads.entry(address).or_default().push(slot);
+        Self::push_unique_slot(self.reads.entry(address).or_default(), slot);
     }
 
     pub(crate) fn write(&mut self, address: Address, slot: SymExpr) {
         self.read(address, slot.clone());
-        self.writes.entry(address).or_default().push(slot);
+        Self::push_unique_slot(self.writes.entry(address).or_default(), slot);
     }
 
     pub(crate) fn addresses(&self) -> Vec<Address> {
@@ -1143,24 +1014,24 @@ impl AccessRecord {
     pub(crate) fn write_slots(&self, address: Address) -> Vec<SymExpr> {
         self.writes.get(&address).cloned().unwrap_or_default()
     }
+
+    fn push_unique_slot(slots: &mut Vec<SymExpr>, slot: SymExpr) {
+        if !slots.iter().any(|existing| existing == &slot) {
+            slots.push(slot);
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExpectedRevert {
     data: ExpectedRevertData,
     reverter: Option<SymExpr>,
-    count: u64,
     remaining: u64,
 }
 
 impl ExpectedRevert {
-    pub(crate) fn new(data: ExpectedRevertData, reverter: Option<SymExpr>, count: u64) -> Self {
-        let count = count.max(1);
-        Self { data, reverter, count, remaining: count }
-    }
-
-    pub(crate) const fn has_reverter(&self) -> bool {
-        self.reverter.is_some()
+    pub(crate) fn new(data: ExpectedRevertData, reverter: Option<SymExpr>, remaining: u64) -> Self {
+        Self { data, reverter, remaining: remaining.max(1) }
     }
 
     pub(crate) const fn consume_one(&mut self) -> bool {
@@ -1168,39 +1039,14 @@ impl ExpectedRevert {
         self.remaining == 0
     }
 
-    /// Returns whether Forge checks a reverter for a revert expected more than once, where it
-    /// reports the last failing call, which is the call itself unless it is a CREATE.
-    pub(crate) const fn repeats_with_reverter(&self) -> bool {
-        self.count > 1 && self.reverter.is_some()
-    }
-
-    /// Returns the reverter that Forge reports for a failed call: the call itself, `callee`, for
-    /// a revert expected more than once, otherwise the first call that failed since
-    /// `vm.expectRevert`.
-    pub(crate) const fn reverted_by(
-        &self,
-        callee: Option<Address>,
-        first_failed_callee: Option<Address>,
-    ) -> Option<Address> {
-        if self.count > 1 { callee } else { first_failed_callee }
-    }
-
-    /// Returns whether at least one expected revert has already matched.
-    pub(crate) const fn matched_any(&self) -> bool {
-        self.remaining < self.count
-    }
-
     pub(crate) fn match_condition(
         &self,
         cx: &mut SymCx,
-        reverter: Option<Address>,
+        reverter: Address,
         return_data: &SymReturnData,
     ) -> Option<SymBoolExpr> {
         let mut conditions = Vec::new();
-        // Like Forge, skip the reverter check when no failing call or reverting CREATE was seen.
-        if let Some(expected_reverter) = &self.reverter
-            && let Some(reverter) = reverter
-        {
+        if let Some(expected_reverter) = &self.reverter {
             conditions.push(expected_reverter.address_match_condition(cx, reverter));
         }
         match &self.data {
@@ -1294,19 +1140,8 @@ impl ExpectedCreate {
         kind: CreateKind,
         bytecode: &[u8],
     ) -> Option<SymBoolExpr> {
-        if self.bytecode != bytecode {
-            return None;
-        }
-        self.deployer_match_condition(cx, deployer, kind)
-    }
-
-    pub(crate) fn deployer_match_condition(
-        &self,
-        cx: &mut SymCx,
-        deployer: Address,
-        kind: CreateKind,
-    ) -> Option<SymBoolExpr> {
-        (self.kind == kind).then(|| self.deployer.address_match_condition(cx, deployer))
+        (self.kind == kind && self.bytecode == bytecode)
+            .then(|| self.deployer.address_match_condition(cx, deployer))
     }
 }
 
@@ -1528,34 +1363,19 @@ pub(crate) struct ExpectedEmit {
     emitter: Option<SymExpr>,
     remaining: u64,
     template: Option<SymbolicLog>,
-    /// Set by `vm.expectEmitAnonymous`, which lets a log without topics fill the template.
-    anonymous: bool,
-    /// Call depth of the frame that declared the expectation.
-    depth: usize,
 }
 
 impl ExpectedEmit {
-    pub(crate) const fn new(
+    pub(crate) fn new(
         checks: ExpectedEmitChecks,
         emitter: Option<SymExpr>,
         remaining: u64,
-        anonymous: bool,
-        depth: usize,
     ) -> Self {
-        Self { checks, emitter, remaining, template: None, anonymous, depth }
+        Self { checks, emitter, remaining: remaining.max(1), template: None }
     }
 
-    /// Returns whether this expectation forbids logs matching its template (`count = 0`).
-    ///
-    /// A `count >= 1` expectation is dropped once consumed, so a stored expectation with nothing
-    /// remaining is a `count = 0` expectation, which is met while no log matches it.
-    pub(crate) const fn is_forbidden(&self) -> bool {
-        self.remaining == 0
-    }
-
-    /// Returns whether this expectation was declared by `vm.expectEmitAnonymous`.
-    pub(crate) const fn is_anonymous(&self) -> bool {
-        self.anonymous
+    pub(crate) const fn is_satisfied(&self) -> bool {
+        self.template.is_none() && self.remaining == 0
     }
 
     pub(crate) const fn template(&self) -> Option<&SymbolicLog> {
@@ -1566,10 +1386,14 @@ impl ExpectedEmit {
         self.template = Some(log);
     }
 
-    /// Consumes one matching log and returns whether the expectation is met.
-    pub(crate) const fn consume_one(&mut self) -> bool {
+    pub(crate) fn consume_one(&mut self) -> bool {
         self.remaining = self.remaining.saturating_sub(1);
-        self.remaining == 0
+        if self.remaining == 0 {
+            self.template = None;
+            true
+        } else {
+            false
+        }
     }
 
     pub(crate) fn match_condition(
@@ -1582,15 +1406,16 @@ impl ExpectedEmit {
         if let Some(expected_emitter) = &self.emitter {
             conditions.push(expected_emitter.address_match_condition(cx, actual.emitter));
         }
-        // Like Forge, logs with different topic counts never match.
-        if template.topics.len() != actual.topics.len() {
-            return Some(SymBoolExpr::constant(cx, false));
-        }
-        for ((left, right), check) in
-            template.topics.iter().zip(actual.topics.iter()).zip(self.checks.topics)
-        {
-            if check {
-                conditions.push(SymBoolExpr::eq(cx, left.clone(), right.clone()));
+        for (idx, &check_topic) in self.checks.topics.iter().enumerate() {
+            if !check_topic {
+                continue;
+            }
+            match (template.topics.get(idx), actual.topics.get(idx)) {
+                (Some(left), Some(right)) => {
+                    conditions.push(SymBoolExpr::eq(cx, left.clone(), right.clone()));
+                }
+                (None, None) => {}
+                _ => return None,
             }
         }
 
@@ -1601,11 +1426,7 @@ impl ExpectedEmit {
                 actual.data_len.clone(),
             ));
             if template.data.len() != actual.data.len() {
-                // Different concrete sizes never match; buffers of a symbolic size cannot be
-                // compared byte by byte.
-                let concrete =
-                    template.data_len.as_const().is_some() && actual.data_len.as_const().is_some();
-                return concrete.then(|| SymBoolExpr::constant(cx, false));
+                return None;
             }
             conditions.extend((0..template.data.len()).map(|idx| {
                 let template = template.data.byte(cx, idx);
@@ -2129,7 +1950,7 @@ impl SymbolicWorld {
             .push((address, key.clone()));
     }
 
-    pub(crate) fn merge_replay_metadata_from(&mut self, other: &Self) {
+    fn merge_replay_metadata_from(&mut self, other: &Self) {
         for (symbol, slots) in &other.replay_storage_slots {
             for slot in slots {
                 self.record_replay_storage_slot(*symbol, slot.address, slot.slot);
@@ -2581,7 +2402,6 @@ pub(crate) struct SymbolicBlock {
     pub(crate) gaslimit: SymExpr,
     pub(crate) basefee: SymExpr,
     pub(crate) blob_basefee: SymExpr,
-    pub(crate) slot_num: SymExpr,
     pub(crate) block_hashes: HashMap<U256, SymExpr>,
     pub(crate) blob_hashes: Vec<B256>,
 }
@@ -2597,7 +2417,6 @@ impl SymbolicBlock {
             gaslimit: SymExpr::zero(cx),
             basefee: SymExpr::zero(cx),
             blob_basefee: SymExpr::zero(cx),
-            slot_num: SymExpr::zero(cx),
             block_hashes: HashMap::default(),
             blob_hashes: Vec::new(),
         }
@@ -2614,7 +2433,6 @@ impl SymbolicBlock {
             gaslimit: SymExpr::constant(cx, block.gas_limit),
             basefee: SymExpr::constant(cx, block.basefee),
             blob_basefee: SymExpr::constant(cx, block.blob_basefee),
-            slot_num: SymExpr::constant(cx, block.slot_num),
             block_hashes: HashMap::default(),
             blob_hashes: executor.blob_hashes.clone(),
         }
@@ -2682,18 +2500,4 @@ impl SymbolicBlock {
 
         Ok(result)
     }
-}
-
-/// A cheatcode write that survives a revert of the frame that made it, see
-/// [`PathState::replay_persistent_writes`].
-#[derive(Clone, Debug)]
-pub(crate) enum PersistentWrite {
-    /// Adds a wrapping delta to an account's balance.
-    Balance(Address, SymExpr),
-    /// Adds a delta to an account's nonce.
-    Nonce(Address, i128),
-    /// Marks an account created, so a revert that undoes the creation resets its nonce.
-    Created(Address),
-    /// Marks a snapshot restore.
-    Restore,
 }

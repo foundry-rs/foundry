@@ -28,7 +28,9 @@ pub(crate) fn db_with(accounts: &[(Address, u128)], slot: u64) -> InMemoryDB {
         db.insert_account_info(address, AccountInfo::default().with_balance(U256::from(*balance)));
     }
     for (address, code) in [(STORE_ADDRESS, STORE), (REVERT_ADDRESS, STORE_THEN_REVERT)] {
-        let info = AccountInfo::default().with_code(Bytecode::new_legacy(Bytes::from_static(code)));
+        let mut info =
+            AccountInfo::default().with_code(Bytecode::new_legacy(Bytes::from_static(code)));
+        db.insert_contract(&mut info);
         db.insert_account_info(&address, info);
     }
     db.insert_account_storage(&STORE_ADDRESS, &U256::ZERO, &U256::from(slot));
@@ -110,7 +112,7 @@ where
     assert_eq!(slot(&mut evm), U256::from(8));
     assert_eq!(nonce(&mut evm, caller), 3);
 
-    // Snapshots restore state; removal keeps later snapshots.
+    // Snapshots restore state; removal also drops later snapshots.
     let first = lifecycle.snapshot(&mut evm);
     let tx = FEN::tx_from_request(request(STORE_ADDRESS, 3, 11, chain_id)).unwrap();
     assert!(evm.transact(&tx).unwrap().commit().status);
@@ -122,7 +124,23 @@ where
     assert_eq!((slot(&mut evm), nonce(&mut evm, caller)), (U256::from(8), 3));
     assert!(lifecycle.revert(&mut evm, first, remove, phase).is_some());
     assert!(lifecycle.revert(&mut evm, first, remove, phase).is_none());
-    assert!(lifecycle.delete_snapshot(second), "later snapshot kept");
+    assert!(lifecycle.revert(&mut evm, second, remove, phase).is_none(), "later snapshot dropped");
+
+    // A nested frame rolls back only when it fails.
+    let failed = nested_frame(&mut evm, |evm| {
+        evm.state_mut().storage_slot(&STORE_ADDRESS, U256::ZERO).unwrap().set(U256::from(99));
+        Err::<(), _>("boom")
+    });
+    assert!(failed.is_err());
+    assert_eq!(slot(&mut evm), U256::from(8));
+    nested_frame(&mut evm, |evm| {
+        evm.state_mut().storage_slot(&STORE_ADDRESS, U256::ZERO).unwrap().set(U256::from(98));
+        Ok::<_, ()>(())
+    })
+    .unwrap();
+    assert_eq!(slot(&mut evm), U256::from(98));
+    evm.state_mut().clear_transaction_state();
+    assert_eq!(slot(&mut evm), U256::from(8));
 
     // A nested transaction sees in-flight writes and merges its changes as journaled writes of
     // the running transaction; a failed one only keeps its nonce increment and fee payment.
@@ -176,7 +194,7 @@ where
 
     // Rolling drops the fork's own writes but keeps persistent accounts.
     let rolled = db_with(&[(caller, ETHER)], 200);
-    lifecycle.roll_fork(&mut evm, None, rolled, fork_env, None, phase).unwrap();
+    lifecycle.roll_fork(&mut evm, None, rolled, fork_env, phase).unwrap();
     assert_eq!(slot(&mut evm), U256::from(200));
     assert_eq!(nonce(&mut evm, caller), 0);
     assert_eq!(balance(&mut evm, persistent), U256::from(6));
@@ -193,17 +211,39 @@ where
 }
 
 #[test]
-fn lifecycle() {
+fn eth_lifecycle() {
     lifecycle_suite::<EthEvmNetwork>(EthEvmFactory::default(), SpecId::PRAGUE);
+}
+
+#[test]
+fn tempo_lifecycle() {
     lifecycle_suite::<crate::evm::TempoEvmNetwork>(
         tempo_evm::TempoEvmFactory::default(),
         tempo_hardfork::TempoHardfork::default(),
     );
-    #[cfg(feature = "optimism")]
-    lifecycle_suite::<crate::evm::OpEvmNetwork>(op_evm2::OpEvmFactory, Default::default());
-    #[cfg(feature = "monad")]
-    lifecycle_suite::<crate::evm::MonadEvmNetwork>(monad_evm2::MonadEvmFactory, Default::default());
-    #[cfg(feature = "base")]
+}
+
+#[cfg(feature = "optimism")]
+#[test]
+fn op_lifecycle() {
+    lifecycle_suite::<crate::evm::OpEvmNetwork>(
+        op_evm2::OpEvmFactory,
+        op_evm2::OpSpecId::default(),
+    );
+}
+
+#[cfg(feature = "monad")]
+#[test]
+fn monad_lifecycle() {
+    lifecycle_suite::<crate::evm::MonadEvmNetwork>(
+        monad_evm2::MonadEvmFactory,
+        monad_evm2::MonadHardfork::default(),
+    );
+}
+
+#[cfg(feature = "base")]
+#[test]
+fn base_lifecycle() {
     lifecycle_suite::<crate::evm::BaseEvmNetwork>(
         base_evm2::BaseEvmFactory::default(),
         base_evm2::BaseSpecId::new(base_evm2::BaseUpgrade::Beryl),
@@ -268,11 +308,12 @@ fn spec_changes_keep_foundry_policy() {
     env.version.memory_limit = 1 << 20;
     let delegated = Address::with_last_byte(0xD7);
     let mut db = db_with(&[(caller, ETHER)], 0);
-    let info = AccountInfo::default().with_code(Bytecode::new_eip7702(STORE_ADDRESS));
+    let mut info = AccountInfo::default().with_code(Bytecode::new_eip7702(STORE_ADDRESS));
+    db.insert_contract(&mut info);
     db.insert_account_info(&delegated, info);
     let mut evm = FoundryEvmFactory::create_evm(&factory, db, env);
 
-    // An existing delegation resolves before Prague and runs in the delegating account.
+    // Like REVM, an existing delegation resolves before Prague and runs in the delegating account.
     let request = store_request::<EthEvmNetwork>(caller, delegated, 0, 42, 31337);
     assert!(
         evm.transact(&EthEvmNetwork::tx_from_request(request).unwrap()).unwrap().commit().status
@@ -280,8 +321,7 @@ fn spec_changes_keep_foundry_policy() {
     let stored = evm.state_mut().storage_slot_untracked(&delegated, &U256::ZERO).unwrap();
     assert_eq!(stored, U256::from(42));
 
-    let env = EvmEnv::new(SpecId::PRAGUE, *evm.version(), *evm.block());
-    factory.set_env(&mut evm, env);
+    factory.set_execution_spec(&mut evm, SpecId::PRAGUE);
 
     assert_eq!(evm.config_spec_id(), SpecId::PRAGUE);
     assert!(evm.feature(EvmFeatures::EIP7623), "fork features follow the new spec");
@@ -471,7 +511,7 @@ fn base_factory_plants_precompile_sentinels() {
     for address in foundry_evm_networks::BASE_CODE_SENTINEL_ADDRESSES {
         let info = evm.read_account_info(address).unwrap();
         let active = foundry_evm_networks::is_base_precompile_active_at(*address, spec.upgrade());
-        let has_code = info.is_some_and(|info| !info.is_empty_code_hash());
+        let has_code = info.is_some_and(|info| info.code_hash != alloy_primitives::KECCAK256_EMPTY);
         assert_eq!(has_code, active, "{address}");
         planted += usize::from(has_code);
     }
@@ -522,18 +562,6 @@ fn rpc_conversion_suite<FEN: FoundryEvmNetwork>() {
 }
 
 #[test]
-fn from_any_rpc_transaction_for_eth() {
-    let from = Address::random();
-    let tx = EthEvmNetwork::tx_from_any_rpc(&eth_rpc_transaction(from)).unwrap();
-
-    assert_eq!(tx.signer(), from);
-    assert_eq!(tx.nonce(), 42);
-    assert_eq!(tx.gas_limit(), 21001);
-    assert_eq!(tx.value(), U256::from(101));
-    assert_eq!(tx.kind(), TxKind::Call(Address::with_last_byte(0xBB)));
-}
-
-#[test]
 fn rpc_transactions_convert_natively() {
     rpc_conversion_suite::<EthEvmNetwork>();
     rpc_conversion_suite::<crate::evm::TempoEvmNetwork>();
@@ -581,6 +609,52 @@ fn celo_fee_currency_transactions_execute_as_eip1559() {
     assert_eq!((tx.max_fee_per_gas(), tx.max_priority_fee_per_gas()), (3, Some(1)));
     assert_eq!((tx.value(), tx.input().as_ref()), (U256::from(0x65), &[0x12, 0x34][..]));
     assert_eq!(tx.kind(), TxKind::Call(Address::with_last_byte(0xBB)));
+}
+
+#[test]
+fn captured_tempo_aa_rpc_transactions_convert_exactly() {
+    for json in [
+        include_str!("../../test-data/tempo-aa-sponsored-batch.json"),
+        include_str!("../../test-data/tempo-aa-nonce-lane.json"),
+        include_str!("../../test-data/tempo-aa-keychain.json"),
+        include_str!("../../test-data/tempo-aa-authorization-list.json"),
+    ] {
+        let rpc: AnyRpcTransaction = serde_json::from_str(json).unwrap();
+        let envelope = crate::evm::TempoEvmNetwork::envelope_from_any_rpc(&rpc).unwrap();
+        // The hash and the recovered signer only match if every signed field decoded.
+        assert_eq!(alloy_primitives::keccak256(envelope.encoded_2718()), rpc.tx_hash());
+        assert_eq!(envelope.recover_signer().unwrap(), rpc.from());
+        let tx = crate::evm::TempoEvmNetwork::tx_from_any_rpc(&rpc).unwrap();
+        assert_eq!((tx.signer(), tx.ty()), (rpc.from(), 0x76));
+    }
+}
+
+#[test]
+fn from_any_rpc_transaction_for_eth() {
+    let from = Address::random();
+    let tx = EthEvmNetwork::tx_from_any_rpc(&eth_rpc_transaction(from)).unwrap();
+
+    assert_eq!(tx.signer(), from);
+    assert_eq!(tx.nonce(), 42);
+    assert_eq!(tx.gas_limit(), 21001);
+    assert_eq!(tx.value(), U256::from(101));
+    assert_eq!(tx.kind(), TxKind::Call(Address::with_last_byte(0xBB)));
+}
+
+#[test]
+fn from_any_rpc_transaction_unknown_envelope_errors() {
+    let unknown = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
+        hash: B256::ZERO,
+        inner: UnknownTypedTransaction {
+            ty: AnyTxType(0xFF),
+            fields: Default::default(),
+            memo: Default::default(),
+        },
+    });
+    let any_tx = rpc_transaction(unknown, Address::random());
+
+    let err = EthEvmNetwork::tx_from_any_rpc(&any_tx).unwrap_err();
+    assert_eq!(err.to_string(), "cannot convert unknown transaction type 0xff to TxEnv");
 }
 
 #[test]
@@ -681,8 +755,6 @@ fn from_any_rpc_transaction_for_tempo_aa() {
 /// Decodes a captured Tempo `eth_getTransactionByHash` result.
 fn captured_tempo_aa(json: &str) -> Recovered<tempo_evm::TempoTxEnv> {
     let any_tx: AnyRpcTransaction = serde_json::from_str(json).unwrap();
-    let envelope = crate::evm::TempoEvmNetwork::envelope_from_any_rpc(&any_tx).unwrap();
-    assert_eq!(alloy_primitives::keccak256(envelope.encoded_2718()), any_tx.tx_hash());
     let tx = crate::evm::TempoEvmNetwork::tx_from_any_rpc(&any_tx).unwrap();
     let aa = tx.as_aa().unwrap();
     // Recovery over the recomputed signing hash only succeeds if every signed field decoded.

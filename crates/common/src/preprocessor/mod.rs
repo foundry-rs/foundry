@@ -1,6 +1,6 @@
 use crate::{errors::convert_solar_errors, fs::normalize_path};
 use foundry_compilers::{
-    ProjectPathsConfig, SourceParser, Updates, apply_updates,
+    ProjectPathsConfig, SourceParser, apply_updates,
     artifacts::{EvmVersion, SolcLanguage},
     error::Result,
     multi::{MultiCompiler, MultiCompilerInput, MultiCompilerLanguage},
@@ -20,7 +20,7 @@ use std::{
     ops::{ControlFlow, Range},
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -43,10 +43,6 @@ use deps::{ConstructorContext, PreprocessorDependencies, remove_bytecode_depende
 pub struct DynamicTestLinkingPreprocessor {
     /// Set when preprocessing changes any compiler input. Shared by clones.
     rewrote_sources: Arc<AtomicBool>,
-    /// One warning per compiler job that disabled DTL; printed after a successful compile.
-    /// Skipping the print when solc fails avoids duplicating solc's own diagnostics
-    /// (see <https://github.com/foundry-rs/foundry/issues/17913>).
-    pending_disable_warnings: Arc<Mutex<Vec<String>>>,
 }
 
 impl DynamicTestLinkingPreprocessor {
@@ -54,19 +50,11 @@ impl DynamicTestLinkingPreprocessor {
     pub fn rewrote_sources(&self) -> bool {
         self.rewrote_sources.load(Ordering::Relaxed)
     }
-
-    /// Takes the pending "dynamic test linking disabled" warnings.
-    pub fn take_disable_warnings(&self) -> Vec<String> {
-        self.pending_disable_warnings
-            .lock()
-            .map(|mut g| std::mem::take(&mut *g))
-            .unwrap_or_default()
-    }
 }
 
 impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        14
+        13
     }
 
     fn preprocess(
@@ -124,7 +112,6 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
                 (0, 8, 15..=25)
             );
         let original_sources = input.input.sources.clone();
-        let mut updates = Updates::default();
         let mut parser_paths = paths.clone();
         parser_paths.include_paths.extend(input.cli_settings.include_paths.iter().cloned());
         let mut compiler =
@@ -187,9 +174,9 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
             sources.extend(create_deploy_helpers(gcx, constructor_context, &data));
 
             // Generate and apply preprocessor source updates.
-            updates =
+            let updates =
                 remove_bytecode_dependencies(gcx, &deps, &data, &paths.root, use_uint160_return);
-            apply_updates(sources, updates.clone());
+            apply_updates(sources, updates);
 
             Ok(())
         });
@@ -215,20 +202,10 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
                     .as_deref()
                     .and_then(solar_error_summary)
                     .unwrap_or_else(|| "Solar analysis failed".to_string());
-                // Defer printing until after solc succeeds so a source error is not
-                // reported twice (Solar wording here, then solc with a location).
-                if let Ok(mut warnings) = self.pending_disable_warnings.lock() {
-                    warnings.push(format!(
-                        "dynamic test linking disabled for {affected} files: {reason}"
-                    ));
-                }
+                let _ = sh_warn!("dynamic test linking disabled for {affected} files: {reason}");
             }
-        } else {
-            // Lets source locations reported by the compiler be mapped back to the files on disk.
-            preprocessor_state.record_source_updates(&updates);
-            if input.input.sources != original_sources {
-                self.rewrote_sources.store(true, Ordering::Relaxed);
-            }
+        } else if input.input.sources != original_sources {
+            self.rewrote_sources.store(true, Ordering::Relaxed);
         }
 
         Ok(())
@@ -241,25 +218,6 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
     ) -> bool {
         // Context changes can alter rewriting eligibility even for previously native deployments.
         paths.is_test_or_script(source)
-    }
-
-    fn is_source_context_change_relevant(
-        &self,
-        previous: &BTreeSet<PathBuf>,
-        current: &BTreeSet<PathBuf>,
-    ) -> bool {
-        if !current.is_subset(previous) {
-            return true;
-        }
-        // Rewriting reads source units only to require a unique artifact path suffix and to avoid
-        // deploy helper path collisions. A removal affects neither unless the removed unit is a
-        // helper path or ends with another unit's path.
-        previous.difference(current).any(|removed| {
-            let mut suffix = removed.components();
-            is_deploy_helper_path(removed)
-                || std::iter::from_fn(|| suffix.next().map(|_| suffix.as_path()))
-                    .any(|suffix| !suffix.as_os_str().is_empty() && previous.contains(suffix))
-        })
     }
 }
 
@@ -326,16 +284,6 @@ impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
             self,
             source,
             paths.with_language_ref(),
-        )
-    }
-
-    fn is_source_context_change_relevant(
-        &self,
-        previous: &BTreeSet<PathBuf>,
-        current: &BTreeSet<PathBuf>,
-    ) -> bool {
-        <Self as Preprocessor<SolcCompiler>>::is_source_context_change_relevant(
-            self, previous, current,
         )
     }
 }

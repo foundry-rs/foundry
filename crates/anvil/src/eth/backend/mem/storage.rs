@@ -27,7 +27,10 @@ use anvil_core::eth::{
     block::{Block, create_block},
     transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
-use evm2_inspectors::tracing::{ParityTraceBuilder, PrecompileExclusion, types::CallKind};
+use evm2_inspectors::tracing::{
+    ParityTraceBuilder, TracingInspectorConfig,
+    types::{CallKind, CallTraceNode, TraceMemberOrder},
+};
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use parking_lot::RwLock;
 use std::{collections::VecDeque, fmt, path::PathBuf, sync::Arc, time::Duration};
@@ -273,11 +276,6 @@ impl InMemoryBlockStates {
             self.current_state_slot = true;
         }
         self
-    }
-
-    /// Returns whether a state for `hash` is retained in memory or on disk.
-    pub(crate) fn contains(&self, hash: &B256) -> bool {
-        self.states.contains_key(hash) || self.on_disk_states.contains_key(hash)
     }
 }
 
@@ -655,15 +653,19 @@ impl<N: Network> MinedTransaction<N> {
     /// Like simulated traces, these omit nested zero-value precompile calls identified during
     /// execution, regardless of subsequent changes to the node configuration.
     pub fn parity_traces(&self) -> Vec<LocalizedTransactionTrace> {
-        ParityTraceBuilder::new(self.info.traces.clone(), PrecompileExclusion::ZeroValue)
-            .into_localized_transaction_traces(RethTransactionInfo {
-                hash: Some(self.info.transaction_hash),
-                index: Some(self.info.transaction_index),
-                block_hash: Some(self.block_hash),
-                block_number: Some(self.block_number),
-                base_fee: None,
-                block_timestamp: None,
-            })
+        ParityTraceBuilder::new(
+            exclude_precompile_calls(self.info.traces.clone()),
+            None,
+            TracingInspectorConfig::default_parity(),
+        )
+        .into_localized_transaction_traces(RethTransactionInfo {
+            hash: Some(self.info.transaction_hash),
+            index: Some(self.info.transaction_index),
+            block_hash: Some(self.block_hash),
+            block_number: Some(self.block_number),
+            base_fee: None,
+            block_timestamp: None,
+        })
     }
 
     pub fn ots_internal_operations(&self) -> Vec<InternalOperation> {
@@ -691,6 +693,33 @@ impl<N: Network> MinedTransaction<N> {
             })
             .collect()
     }
+}
+
+/// Detaches precompile calls identified during execution from the call graph, as the tracing
+/// inspector does when configured to exclude precompile calls.
+///
+/// Mined transactions keep these calls for the Geth-style traces, which include them.
+fn exclude_precompile_calls(mut nodes: Vec<CallTraceNode>) -> Vec<CallTraceNode> {
+    for idx in 0..nodes.len() {
+        if nodes[idx].is_precompile()
+            && let Some(parent) = nodes[idx].parent
+            && let Some(position) = nodes[parent].children.iter().position(|&child| child == idx)
+        {
+            let parent = &mut nodes[parent];
+            parent.children.remove(position);
+            parent.ordering.retain_mut(|member| match member {
+                TraceMemberOrder::Call(child) if *child == position => false,
+                TraceMemberOrder::Call(child) => {
+                    if *child > position {
+                        *child -= 1;
+                    }
+                    true
+                }
+                _ => true,
+            });
+        }
+    }
+    nodes
 }
 
 /// Intermediary Anvil representation of a receipt

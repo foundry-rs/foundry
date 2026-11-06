@@ -1,5 +1,4 @@
-use alloy_dyn_abi::{JsonAbiExt, abi::AbiDecoderConfig};
-use alloy_json_abi::{Event, Function, JsonAbi, StateMutability};
+use alloy_json_abi::{Event, Function, JsonAbi};
 use alloy_primitives::{Address, B256, Bytes, Selector, map::HashMap};
 use foundry_compilers::artifacts::StorageLayout;
 use itertools::Either;
@@ -104,7 +103,7 @@ impl FuzzRunIdentifiedContracts {
         let mut targets_changed = false;
         for changes in state_changes {
             let address = changes.address;
-            // An account a call touched without changing it counts.
+            // Like REVM's touched flag, an account a call touched without changing it counts.
             if setup_contracts.contains_key(&address) || !(changes.is_changed() || changes.touched)
             {
                 continue;
@@ -251,34 +250,17 @@ impl TargetedContracts {
     }
 
     /// Returns whether the given transaction can be replayed or not with known contracts.
-    ///
-    /// The call must target a fuzzed function, carry arguments that ABI-decode with canonical
-    /// words, and send value only to a payable function. This checks ABI admission, not exact
-    /// fuzzer output: trailing calldata and non-strict dynamic layouts are allowed, and enum
-    /// variant bounds are not checked.
     pub fn can_replay(&self, tx: &BasicTxDetails) -> bool {
-        let calldata = &tx.call_details.calldata;
-        self.inner.get(&tx.call_details.target).is_some_and(|c| {
-            calldata
+        match self.inner.get(&tx.call_details.target) {
+            Some(c) => tx
+                .call_details
+                .calldata
                 .get(..4)
                 .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
                 .map(Selector::from)
-                .and_then(|selector| c.fuzzed_function_by_selector(selector))
-                .is_some_and(|function| {
-                    (function.state_mutability == StateMutability::Payable
-                        || tx.call_details.value.is_none_or(|value| value.is_zero()))
-                        // Decoding depth follows the function's type nesting, which the fuzzer
-                        // does not limit, so the default recursion limit would reject valid calls.
-                        && function
-                            .abi_decode_input_with_config(
-                                &calldata[4..],
-                                AbiDecoderConfig::new()
-                                    .validate_words(true)
-                                    .recursion_limit(usize::MAX),
-                            )
-                            .is_ok()
-                })
-        })
+                .is_some_and(|selector| c.fuzzed_function_by_selector(selector).is_some()),
+            None => false,
+        }
     }
 
     /// Identifies fuzzed contract and function based on given tx details and returns unique metric
@@ -703,7 +685,6 @@ pub fn is_optimization_invariant(func: &Function) -> bool {
 mod tests {
     use super::*;
     use crate::CallDetails;
-    use alloy_primitives::U256;
     use evm2::{
         bytecode::Bytecode,
         evm::{AccountInfo, PendingState, StorageOverlay},
@@ -797,39 +778,6 @@ mod tests {
         assert!(!targets.can_replay(&tx));
         assert!(targets.fuzzed_artifacts(&tx).1.is_none());
         assert!(targets.fuzzed_metric_key(&tx).is_none());
-    }
-
-    #[test]
-    fn targeted_contracts_replay_only_generatable_calls() {
-        let target = Address::repeat_byte(0x42);
-        let deep_signature = format!("deep(uint256{})", "[1]".repeat(17));
-        let targets = targeted_contracts_with_functions(
-            target,
-            &["set(uint8)", "deposit() payable", &deep_signature],
-        );
-        let set = Function::parse("set(uint8)").unwrap().selector();
-        let deposit = Function::parse("deposit()").unwrap().selector();
-        let deep = Function::parse(&deep_signature).unwrap().selector();
-        let set_calldata = |word: u64| {
-            let mut calldata = set.to_vec();
-            calldata.extend_from_slice(&U256::from(word).to_be_bytes::<32>());
-            calldata
-        };
-        let with_value = |value: u64, mut tx: BasicTxDetails| {
-            tx.call_details.value = Some(U256::from(value));
-            tx
-        };
-        let mut trailing = set_calldata(1);
-        trailing.extend_from_slice(&[0xaa; 20]);
-
-        assert!(targets.can_replay(&tx(target, set_calldata(0xff))));
-        assert!(!targets.can_replay(&tx(target, set.to_vec())));
-        assert!(!targets.can_replay(&tx(target, set_calldata(0x1ff))));
-        assert!(targets.can_replay(&tx(target, trailing)));
-        assert!(targets.can_replay(&with_value(0, tx(target, set_calldata(1)))));
-        assert!(!targets.can_replay(&with_value(1, tx(target, set_calldata(1)))));
-        assert!(targets.can_replay(&with_value(1, tx(target, deposit.to_vec()))));
-        assert!(targets.can_replay(&tx(target, [deep.as_slice(), &[0; 32]].concat())));
     }
 
     #[test]

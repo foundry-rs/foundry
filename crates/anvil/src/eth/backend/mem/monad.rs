@@ -153,9 +153,9 @@ pub(super) struct MonadRollbackProfile {
 }
 
 impl MonadRollbackProfile {
-    /// Rewinds the spec and the retained block's blob fee environment.
+    /// Rewinds cfg/spec, gas params, and the retained block's fee environment.
     pub(super) fn apply_env(&self, env: &mut EvmEnv) {
-        env.cfg_env.spec = SpecId::from(self.hardfork);
+        env.cfg_env.set_spec_and_mainnet_gas_params(SpecId::from(self.hardfork));
         env.block_env.blob_excess_gas_and_price = self.block_blob_excess_gas_and_price;
     }
 }
@@ -167,7 +167,9 @@ pub(super) fn normalize_access_list(
     if MonadHardfork::MonadTen.is_enabled_in(hardfork) {
         for item in &mut access_list.0 {
             item.storage_keys.sort_unstable();
-            item.storage_keys.dedup_by_key(|slot| monad_evm2::page::page_index((*slot).into()));
+            item.storage_keys.dedup_by_key(|slot| {
+                monad_evm2::page::page_index(U256::from_be_slice(slot.as_slice()))
+            });
         }
     }
     access_list
@@ -289,7 +291,7 @@ impl<N: Network> Backend<N> {
     /// Applies the Monad execution rules selected for a completed fork replay.
     pub(super) fn finalize_monad_fork_replay(&self, replay: &ForkReplay, evm_env: &mut EvmEnv) {
         let spec_id = SpecId::from(replay.hardfork());
-        evm_env.cfg_env.spec = spec_id;
+        evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec_id);
         self.fees.set_execution_rules(
             spec_id,
             self.networks.base_fee_params(replay.timestamp),

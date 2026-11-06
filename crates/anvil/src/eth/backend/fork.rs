@@ -54,7 +54,7 @@ use parking_lot::{
     RawRwLock, RwLock,
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
 };
-use std::{num::NonZeroU64, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tokio::sync::RwLock as AsyncRwLock;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -964,8 +964,6 @@ pub struct ClientForkConfig<N: Network = AnyNetwork> {
     pub(crate) endpoint_identity: ForkEndpointIdentity,
     /// Discovery identified a local node or could not rule out mutable source state.
     pub(crate) state_is_mutable: bool,
-    /// Tempo consensus epoch length reported by the fork source, if it exposes one.
-    pub(crate) tempo_epoch_length: Option<NonZeroU64>,
     /// The timestamp for the forked block
     pub timestamp: u64,
     /// The basefee of the forked block

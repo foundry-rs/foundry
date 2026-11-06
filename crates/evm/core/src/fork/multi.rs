@@ -8,9 +8,7 @@ use crate::{evm::EthEvmNetwork, opts::ForkContext};
 use alloy_eips::{BlockNumHash, eip7928::BlockAccessList};
 use alloy_network::AnyNetwork;
 use alloy_primitives::map::HashMap;
-use foundry_common::sh_warn;
 use foundry_config::Config;
-use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use foundry_fork_db::{
     BackendHandler, BlockchainDb, ForkBlock, SharedBackend, cache::BlockchainDbMeta,
 };
@@ -20,13 +18,12 @@ use futures::{
     stream::Fuse,
     task::{Context, Poll},
 };
-use revm::{context::BlockEnv, context_interface::block::BlobExcessGasAndPrice};
+use revm::context::BlockEnv;
 use std::{
-    collections::BTreeSet,
     fmt::{self, Write},
     pin::Pin,
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc::{Sender as OneshotSender, channel as oneshot_channel},
     },
@@ -217,6 +214,11 @@ impl MultiFork {
         rx.recv()?
     }
 
+    /// Rolls a fork to an already resolved exact block.
+    pub fn roll_fork_exact(&self, fork: ForkId, block: BlockNumHash) -> eyre::Result<ForkResult> {
+        self.roll_fork_exact_with_bal(fork, block, false)
+    }
+
     /// Rolls to an exact parent block, optionally warming its cache before transaction replay.
     pub(crate) fn roll_fork_exact_with_bal(
         &self,
@@ -242,6 +244,26 @@ impl MultiFork {
         trace!(?id, "get fork backend");
         let (sender, rx) = oneshot_channel();
         let req = Request::GetFork(id, sender);
+        self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()?)
+    }
+
+    /// Returns the immutable remote fork owned by the selected backend.
+    pub fn get_fork_info(&self, id: impl Into<ForkId>) -> eyre::Result<Option<Fork>> {
+        let (sender, rx) = oneshot_channel();
+        self.handler
+            .clone()
+            .try_send(Request::GetForkInfo(id.into(), sender))
+            .map_err(|e| eyre::eyre!("{e:?}"))?;
+        Ok(rx.recv()?)
+    }
+
+    /// Returns the corresponding fork url if it exists.
+    ///
+    /// Returns `None` if no matching fork is available.
+    pub fn get_fork_url(&self, id: impl Into<ForkId>) -> eyre::Result<Option<String>> {
+        let (sender, rx) = oneshot_channel();
+        let req = Request::GetForkUrl(id.into(), sender);
         self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
         Ok(rx.recv()?)
     }
@@ -286,6 +308,9 @@ enum Request {
     RollForkExact(ForkId, BlockNumHash, bool, CreateSender),
     /// Shutdowns the entire `MultiForkHandler`, see `ShutDownMultiFork`
     ShutDown(OneshotSender<()>),
+    /// Returns the Fork Url for the `ForkId` if it exists.
+    GetForkUrl(ForkId, OneshotSender<Option<String>>),
+    GetForkInfo(ForkId, OneshotSender<Option<Fork>>),
     /// Returns the options used to create the `ForkId` if it exists.
     GetForkOptions(ForkId, OneshotSender<Option<CreateFork>>),
 }
@@ -500,6 +525,13 @@ impl MultiForkHandler {
                     prefetch.stop();
                 }
                 let _ = sender.send(());
+            }
+            Request::GetForkInfo(fork_id, sender) => {
+                let _ = sender.send(self.forks.get(&fork_id).map(|fork| fork.fork.clone()));
+            }
+            Request::GetForkUrl(fork_id, sender) => {
+                let fork = self.forks.get(&fork_id).map(|f| f.opts.url.clone());
+                let _ = sender.send(fork);
             }
             Request::GetForkOptions(fork_id, sender) => {
                 let fork = self.forks.get(&fork_id).map(|f| f.opts.clone());
@@ -790,31 +822,14 @@ async fn create_fork(
         fork_context.source_chain_id,
         &resolved.block,
     );
-    // An endpoint without Anvil node info takes an explicitly selected network as its profile, so
-    // its recognized chain ID decides the family it belongs to. Fork contexts require a recognized
-    // hardfork, so a reported hardfork means node info reported the family.
-    let chain = fork_context.source_chain_id;
-    let source = match NetworkVariant::from_known_chain_id(chain) {
-        Ok(Some(network)) if fork_context.hardfork.is_none() => {
-            NetworkConfigs::default().with_rpc_identity(network, chain)
-        }
-        _ => fork_context.network_profile,
-    };
-    if !execution_networks.supports_fork_source(&source) {
-        let (fork, selected) =
-            (source.execution_profile_name(), execution_networks.execution_profile_name());
-        eyre::ensure!(
-            !require_endpoint_family_match,
-            "cannot create a `{fork}` fork with an EVM instantiated for `{selected}`; run the script with --rpc-url pointing to the forked chain to select its EVM"
+    if require_endpoint_family_match
+        && !execution_networks.supports_fork_source(&fork_context.network_profile)
+    {
+        eyre::bail!(
+            "cannot create a `{}` fork with an EVM instantiated for `{}`; run the script with --rpc-url pointing to the forked chain to select its EVM",
+            fork_context.network,
+            execution_networks.execution_network()
         );
-        // An explicit network selection is kept even when the fork belongs to another family, so
-        // warn once per source chain and family pair instead of failing.
-        static WARNED: Mutex<BTreeSet<(u64, &str, &str)>> = Mutex::new(BTreeSet::new());
-        if WARNED.lock().unwrap().insert((chain, fork, selected)) {
-            let _ = sh_warn!(
-                "fork of chain {chain} belongs to `{fork}`, but the selected network is `{selected}`, so the fork runs with `{selected}` rules"
-            );
-        }
     }
     if let Some(expected) = expected_identity {
         eyre::ensure!(
@@ -829,8 +844,7 @@ async fn create_fork(
     };
     let fork_id = ForkId::resolved(&fork.url, &resolved);
 
-    let block_env = cache_block_env(&evm_env.block, resolved.block.header.excess_blob_gas);
-    Ok((fork_id, fork, resolved, block_env, bal))
+    Ok((fork_id, fork, resolved, cache_block_env(&evm_env.block), bal))
 }
 
 /// Creates the backend of a resolved fork.
@@ -876,9 +890,8 @@ fn create_backend(
 /// Returns the block environment recorded in the fork cache's metadata.
 ///
 /// The disk cache keeps REVM's block environment layout, so existing caches stay valid.
-/// `excess_blob_gas` is the fork header's, which evm2 only keeps as the blob base fee.
-fn cache_block_env(block: &evm2::env::BlockEnv, excess_blob_gas: Option<u64>) -> BlockEnv {
-    let mut env = BlockEnv {
+fn cache_block_env(block: &evm2::env::BlockEnv) -> BlockEnv {
+    BlockEnv {
         number: block.number,
         beneficiary: block.beneficiary,
         timestamp: block.timestamp,
@@ -888,14 +901,7 @@ fn cache_block_env(block: &evm2::env::BlockEnv, excess_blob_gas: Option<u64>) ->
         prevrandao: Some(block.prevrandao.into()),
         slot_num: block.slot_num.saturating_to(),
         ..Default::default()
-    };
-    if let Some(excess_blob_gas) = excess_blob_gas {
-        env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice {
-            excess_blob_gas,
-            blob_gasprice: block.blob_basefee.saturating_to(),
-        });
     }
-    env
 }
 
 #[cfg(test)]
@@ -904,17 +910,17 @@ mod tests {
     use crate::opts::EvmOpts;
     use alloy_chains::NamedChain;
     use alloy_eips::eip7928::{AccountChanges, BlockAccessIndex, SlotChanges, StorageChange};
-    use alloy_network::{AnyHeader, AnyRpcBlock, AnyRpcHeader, TransactionBuilder};
+    use alloy_network::TransactionBuilder;
     use alloy_primitives::{Address, B256, U256, bytes};
     use alloy_provider::{Provider, ProviderBuilder, mock::Asserter};
-    use alloy_rpc_types::{Block, TransactionRequest};
+    use alloy_rpc_types::TransactionRequest;
     use alloy_serde::WithOtherFields;
+    use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
     use foundry_fork_db::AccountFetchPolicy;
     use foundry_test_utils::rpc::{
         spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_recording_method,
     };
     use futures::{channel::oneshot, task::noop_waker_ref};
-    use revm::primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE;
     use std::sync::mpsc::{Receiver as OneshotReceiver, TryRecvError};
 
     fn context(block_number: u64) -> ForkContext {
@@ -1153,11 +1159,8 @@ mod tests {
         let (env, _) = opts.env_at_fork::<EthEvmNetwork>(Some(&resolved)).await.unwrap();
         let path = Config::foundry_block_cache_dir(chain_id, resolved.number()).unwrap();
         assert!(!path.exists());
-        let meta = BlockchainDbMeta::new(
-            cache_block_env(&env.block, resolved.block.header.excess_blob_gas),
-            handle.http_endpoint(),
-        )
-        .with_fork_identity(resolved.hash(), resolved.source_id());
+        let meta = BlockchainDbMeta::new(cache_block_env(&env.block), handle.http_endpoint())
+            .with_fork_identity(resolved.hash(), resolved.source_id());
         let cached = BlockchainDb::new(meta.clone(), Some(path.clone()));
         let address = Address::with_last_byte(0x42);
         cached.storage().write().entry(address).or_default().insert(U256::ZERO, U256::from(42));
@@ -1458,8 +1461,7 @@ mod tests {
         }
         drop(backend);
 
-        let block_env = cache_block_env(&evm_env.block, fork.block.header.excess_blob_gas);
-        let meta = BlockchainDbMeta::new(block_env, endpoint.to_string())
+        let meta = BlockchainDbMeta::new(cache_block_env(&evm_env.block), endpoint.to_string())
             .with_fork_identity(fork_hash, source_id);
 
         let db = BlockchainDb::new(
@@ -1469,35 +1471,5 @@ mod tests {
         assert!(db.accounts().read().contains_key(&address));
         assert!(db.storage().read().contains_key(&address));
         assert_eq!(db.storage().read().get(&address).unwrap().len(), num_slots as usize);
-    }
-
-    #[test]
-    fn cache_block_env_records_blob_excess_gas() {
-        let fork_block = |excess_blob_gas| {
-            // A mainnet block after Prague and before Osaka.
-            let header =
-                AnyHeader { timestamp: 1_750_000_000, excess_blob_gas, ..Default::default() };
-            AnyRpcBlock::new(
-                Block::new(AnyRpcHeader::from_sealed(header.seal(B256::ZERO)), Default::default())
-                    .into(),
-            )
-        };
-        let cache_env = |block: &AnyRpcBlock| {
-            let env =
-                EvmOpts::default().fork_env_from_block::<EthEvmNetwork, AnyNetwork>(1, 1, block);
-            cache_block_env(&env.block, block.header.excess_blob_gas)
-        };
-
-        // The cache records revm's blob price for the header's excess blob gas.
-        let mut expected = BlockEnv::default();
-        expected.set_blob_excess_gas_and_price(62_652_416, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE);
-        assert_eq!(
-            cache_env(&fork_block(Some(62_652_416))).blob_excess_gas_and_price,
-            expected.blob_excess_gas_and_price
-        );
-        assert_eq!(
-            cache_env(&fork_block(None)).blob_excess_gas_and_price,
-            BlockEnv::default().blob_excess_gas_and_price
-        );
     }
 }

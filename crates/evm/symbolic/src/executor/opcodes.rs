@@ -1,5 +1,4 @@
 use super::*;
-use evm2::{constants::STACK_LIMIT, interpreter::opcode::OpCode};
 
 enum MappingStorageProvenance {
     None,
@@ -221,7 +220,6 @@ impl SymbolicExecutor {
                 std::mem::take(&mut outcome.state.mapping_storage_store_hooks);
             parent.mapping_hook_keccak_preimages =
                 std::mem::take(&mut outcome.state.mapping_hook_keccak_preimages);
-            parent.persistent_writes = std::mem::take(&mut outcome.state.persistent_writes);
             parent.storage_hook_active = false;
 
             match outcome.status {
@@ -230,9 +228,6 @@ impl SymbolicExecutor {
                     parent.block = outcome.state.block;
                 }
                 CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {
-                    parent.world.merge_replay_metadata_from(&outcome.state.world);
-                    let start = state.persistent_writes.len();
-                    parent.replay_persistent_writes(&mut self.cx, executor, start)?;
                     parent.return_data = outcome.state.frame.return_data;
                     parent.pending_storage_hook_revert = true;
                 }
@@ -312,7 +307,7 @@ impl SymbolicExecutor {
             Err(_) => true,
         }) {
             state.return_data = SymReturnData::empty(&mut self.cx);
-            return Ok(Some(StepOutcome::ExceptionalHalt));
+            return Ok(Some(StepOutcome::Revert));
         }
 
         let expanded_size_bound = state
@@ -338,7 +333,7 @@ impl SymbolicExecutor {
                 return Ok(None);
             }
             state.return_data = SymReturnData::empty(&mut self.cx);
-            return Ok(Some(StepOutcome::ExceptionalHalt));
+            return Ok(Some(StepOutcome::Revert));
         }
         let memory_limit = SymExpr::constant(&mut self.cx, U256::from(memory_limit));
         let within_limit = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, local_size, memory_limit);
@@ -369,7 +364,7 @@ impl SymbolicExecutor {
                 state.constraints = invalid_constraints;
                 state.set_corpus_seed_models(invalid_seed_models);
                 state.return_data = SymReturnData::empty(&mut self.cx);
-                Ok(Some(StepOutcome::ExceptionalHalt))
+                Ok(Some(StepOutcome::Revert))
             }
             (true, false) => {
                 state.constraints = valid_constraints;
@@ -378,7 +373,7 @@ impl SymbolicExecutor {
             (false, true) => {
                 state.constraints = invalid_constraints;
                 state.return_data = SymReturnData::empty(&mut self.cx);
-                Ok(Some(StepOutcome::ExceptionalHalt))
+                Ok(Some(StepOutcome::Revert))
             }
             (false, false) => Ok(Some(StepOutcome::AssumeRejected)),
         }
@@ -404,7 +399,7 @@ impl SymbolicExecutor {
                     .is_some_and(|end| end <= memory_limit);
             if !valid {
                 state.return_data = SymReturnData::empty(&mut self.cx);
-                return Ok(Some(StepOutcome::ExceptionalHalt));
+                return Ok(Some(StepOutcome::Revert));
             }
             state.memory.expand_range(&mut self.cx, offset.clone(), size.clone());
             return Ok(None);
@@ -467,18 +462,6 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::ExceptionalHalt);
         }
 
-        // The EVM halts a frame exceptionally before it runs an undefined opcode or one whose
-        // stack inputs or outputs do not fit, so the handlers below never see such a stack.
-        let fits = OpCode::new(op).is_some_and(|opcode| {
-            let height = state.stack.len();
-            let inputs = opcode.inputs() as usize;
-            height >= inputs && height - inputs + opcode.outputs() as usize <= STACK_LIMIT
-        });
-        if !fits {
-            state.return_data = SymReturnData::empty(&mut self.cx);
-            return Ok(StepOutcome::ExceptionalHalt);
-        }
-
         match op {
             opcode::PUSH0 => {
                 state.stack.push(SymExpr::zero(&mut self.cx))?;
@@ -500,32 +483,9 @@ impl SymbolicExecutor {
             }
             opcode::SWAP1..=opcode::SWAP16 => {
                 let n = (op - opcode::SWAP1 + 1) as usize;
-                state.stack.exchange(0, n)?;
+                state.stack.swap(n)?;
             }
-            opcode::DUPN | opcode::SWAPN | opcode::EXCHANGE => {
-                // EIP-8024: a missing trailing immediate reads as zero, like revm's padded code.
-                let immediate = code.opcode(&mut self.cx, state.pc)?.unwrap_or_default();
-                state.pc += 1;
-                let decoded = if op == opcode::EXCHANGE {
-                    decode_exchange_immediate(immediate)
-                } else {
-                    decode_stack_immediate(immediate).map(|n| (0, n))
-                };
-                let Some((n, m)) = decoded else {
-                    return Ok(StepOutcome::ExceptionalHalt);
-                };
-                if op == opcode::DUPN {
-                    let value = state.stack.peek(m - 1)?.clone();
-                    state.stack.push(value)?;
-                } else {
-                    state.stack.exchange(n, m)?;
-                }
-            }
-            opcode::STOP => {
-                // STOP returns no output; drop the return data of the frame's last call.
-                state.return_data = SymReturnData::empty(&mut self.cx);
-                return Ok(StepOutcome::Halt);
-            }
+            opcode::STOP => return Ok(StepOutcome::Halt),
             opcode::ADD | opcode::SUB | opcode::MUL | opcode::AND | opcode::OR | opcode::XOR => {
                 let bin_op = match op {
                     opcode::ADD => SymBinOp::Add,
@@ -596,10 +556,6 @@ impl SymbolicExecutor {
             opcode::SHL => state.shift_word(&mut self.cx, SymBinOp::Shl)?,
             opcode::SHR => state.shift_word(&mut self.cx, SymBinOp::Shr)?,
             opcode::SAR => state.shift_word(&mut self.cx, SymBinOp::Sar)?,
-            opcode::CLZ => {
-                let value = state.stack.pop()?;
-                state.stack.push(clz_word(&mut self.cx, value))?;
-            }
             opcode::KECCAK256 => {
                 let offset = state.stack.peek(0)?.clone();
                 let size = state.stack.peek(1)?.clone();
@@ -968,10 +924,6 @@ impl SymbolicExecutor {
             }
             opcode::SSTORE => {
                 if state.is_static {
-                    // Forge records the access in `step`, before the static-call check halts.
-                    if let Ok(key) = state.stack.peek(0).cloned() {
-                        state.record_sstore(state.storage_address, key);
-                    }
                     state.return_data = SymReturnData::empty(&mut self.cx);
                     return Ok(StepOutcome::ExceptionalHalt);
                 }
@@ -1372,10 +1324,6 @@ impl SymbolicExecutor {
                 let value = state.block.blob_basefee.clone();
                 state.stack.push(value)?;
             }
-            opcode::SLOTNUM => {
-                let value = state.block.slot_num.clone();
-                state.stack.push(value)?;
-            }
             opcode::LOG0 | opcode::LOG1 | opcode::LOG2 | opcode::LOG3 | opcode::LOG4 => {
                 if state.is_static {
                     state.return_data = SymReturnData::empty(&mut self.cx);
@@ -1432,7 +1380,6 @@ impl SymbolicExecutor {
                 }
                 return self.handle_log(
                     state,
-                    worklist,
                     SymbolicLog::new(log_topics, data_len, data, state.address),
                 );
             }
@@ -1540,12 +1487,6 @@ impl SymbolicExecutor {
         if state.call_depth != 0 {
             return Ok(StepOutcome::Revert);
         }
-        let data = state.return_data.read_concrete(&mut self.cx, "symbolic revert data");
-        // Like Forge's fuzz and invariant runners, a `vm.assumeNoRevert` rejection that reaches the
-        // top frame discards the run. Invariant predicates still treat it as a revert.
-        if !state.invariant_predicate && data.as_deref().is_ok_and(|data| data == MAGIC_ASSUME) {
-            return Ok(StepOutcome::AssumeRejected);
-        }
         // In `check*`/`prove*` tests, a `CheatcodeError` that reaches the top frame, such as an
         // unmet `vm.expectRevert`, is a failure. Invariant handlers treat it as a revert.
         // Match its selector independently of the memory address and the rest of the payload.
@@ -1557,7 +1498,9 @@ impl SymbolicExecutor {
             state.constraints = constraints;
             return Ok(StepOutcome::Failure);
         }
-        if data.is_ok_and(|data| is_assertion_revert(&data)) {
+        if let Ok(data) = state.return_data.read_concrete(&mut self.cx, "symbolic revert data")
+            && is_assertion_revert(&data)
+        {
             return Ok(StepOutcome::Failure);
         }
         Ok(StepOutcome::Revert)
@@ -1580,27 +1523,6 @@ const fn opcode_activation(op: u8) -> SpecId {
         opcode::TLOAD | opcode::TSTORE | opcode::MCOPY | opcode::BLOBHASH | opcode::BLOBBASEFEE => {
             SpecId::CANCUN
         }
-        opcode::CLZ => SpecId::OSAKA,
-        opcode::SLOTNUM | opcode::DUPN | opcode::SWAPN | opcode::EXCHANGE => SpecId::AMSTERDAM,
         _ => SpecId::FRONTIER,
     }
-}
-
-/// Decodes the EIP-8024 `DUPN`/`SWAPN` immediate into a stack depth.
-///
-/// Bytes `0x5b..=0x7f` are invalid so that the immediate is never a `JUMPDEST` or `PUSH` opcode.
-const fn decode_stack_immediate(immediate: u8) -> Option<usize> {
-    let x = immediate as usize;
-    if x <= 90 || x >= 128 { Some((x + 145) % 256) } else { None }
-}
-
-/// Decodes the EIP-8024 `EXCHANGE` immediate into a pair of stack depths `n < m`.
-const fn decode_exchange_immediate(immediate: u8) -> Option<(usize, usize)> {
-    let x = immediate as usize;
-    if x > 81 && x < 128 {
-        return None;
-    }
-    let k = x ^ 143;
-    let (q, r) = (k / 16, k % 16);
-    if q < r { Some((q + 1, r + 1)) } else { Some((r + 1, 29 - q)) }
 }

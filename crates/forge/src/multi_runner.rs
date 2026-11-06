@@ -323,7 +323,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         } else {
             db.clone()
         };
-        // Built from the shared config: the runner applies the contract's config before
+        // Built from the shared config, as before: the runner applies the contract's config before
         // `setUp` and keeps the shared trace and live-log settings.
         let executor = self.tcfg.executor(
             self.known_contracts.clone(),
@@ -526,7 +526,8 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
 
         self.sender = config.sender;
         self.evm_opts.networks = config.networks;
-        self.hardfork = resolve_execution_spec::<EvmFactoryFor<FEN>>(
+        self.hardfork = resolve_execution_spec(
+            &EvmFactoryFor::<FEN>::default(),
             config.evm_version,
             config.hardfork,
             &mut self.evm_env,
@@ -947,7 +948,8 @@ impl MultiContractRunnerBuilder {
         let fork_context = backend.fork().map(|fork| fork.context());
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
-        let hardfork = resolve_execution_spec::<EvmFactoryFor<FEN>>(
+        let hardfork = resolve_execution_spec(
+            &EvmFactoryFor::<FEN>::default(),
             self.config.evm_version,
             self.config.hardfork,
             &mut evm_env,

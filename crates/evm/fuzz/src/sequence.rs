@@ -102,19 +102,6 @@ impl SequencePlan {
     pub const fn source(&self) -> Option<usize> {
         self.source
     }
-
-    /// Replays an unmutated candidate before generating any continuation.
-    pub fn replay(mut self, transactions: Vec<BasicTxDetails>) -> Result<Self> {
-        if transactions.is_empty() {
-            return Err(eyre!("replay sequence has no transactions"));
-        }
-        self.initial = InitialSequence::Multiple(transactions);
-        self.fresh_weight = 0;
-        self.has_corpus_dir = true;
-        self.source = None;
-        Ok(self)
-    }
-
     pub fn next(
         &self,
         runner: &mut TestRunner,
@@ -591,11 +578,9 @@ impl SequenceMutator {
         } else {
             (0..rounds).map(|_| runner.rng().random_range(0..function.inputs.len())).collect()
         };
-        // Observed sub-calls and older corpus entries can match a selector without decoding, so
-        // keep their calldata instead of aborting the campaign.
-        let Ok(mut inputs) = function.abi_decode_input(&tx.call_details.calldata[4..]) else {
-            return Ok(());
-        };
+        let mut inputs = function
+            .abi_decode_input(&tx.call_details.calldata[4..])
+            .map_err(|err| eyre!("failed to load previous inputs: {err}"))?;
         while rounds > 0 {
             let index = indices[rounds - 1];
             inputs[index] = mutate_param_value(
@@ -885,25 +870,6 @@ mod tests {
         let decoded = function.abi_decode_input(&input.call_details.calldata[4..]).unwrap();
         assert_eq!(decoded[0].as_uint().unwrap().0, U256::from(42));
         assert_eq!((input.warp, input.roll, input.sender, input.call_details.value), metadata);
-    }
-
-    #[test]
-    fn abi_mutation_keeps_undecodable_calldata() {
-        let function = Function::parse("test(uint256)").unwrap();
-        let mut input = tx(1);
-        input.call_details.calldata = function.selector().to_vec().into();
-        let calldata = input.call_details.calldata.clone();
-
-        SequenceMutator::abi_mutate(
-            &mut input,
-            &function,
-            &mut TestRunner::deterministic(),
-            &state(),
-            &FuzzFixtures::default(),
-            0,
-        )
-        .unwrap();
-        assert_eq!(input.call_details.calldata, calldata);
     }
 
     #[test]

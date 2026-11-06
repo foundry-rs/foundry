@@ -173,9 +173,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                                 let body = output.run_func_body();
                                 let Some(last) = body.last() else { return false };
                                 let StmtKind::Expr(expr) = last.kind else { return false };
-                                // A call that returns nothing cannot be inspected, but runs
-                                // like any statement: `revert("x")`, `require(...)`, `f()`.
-                                should_continue(expr) || matches!(expr.kind, ExprKind::Call(..))
+                                should_continue(expr)
                             })
                         })
                     })
@@ -318,7 +316,8 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
         self.config.source_chain_id = fork_chain_id;
-        self.config.resolved_hardfork = resolve_execution_spec::<EvmFactoryFor<FEN>>(
+        self.config.resolved_hardfork = resolve_execution_spec(
+            &EvmFactoryFor::<FEN>::default(),
             self.config.foundry_config.evm_version,
             self.config.foundry_config.hardfork,
             &mut evm_env,

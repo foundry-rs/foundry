@@ -6,10 +6,8 @@ use figment::{
 };
 use foundry_compilers::ProjectPathsConfig;
 use heck::ToSnakeCase;
-use serde::de::Error as _;
 use std::{
     cell::OnceCell,
-    env,
     path::{Path, PathBuf},
 };
 
@@ -86,6 +84,8 @@ impl TomlFileProvider {
 
     /// Reads and processes the TOML configuration file, handling inheritance if configured.
     fn read(&self) -> Result<Map<Profile, Dict>, Error> {
+        use serde::de::Error as _;
+
         // Get the config file path and validate it exists
         let local_path = self.file();
         if !local_path.exists() {
@@ -650,6 +650,9 @@ impl Provider for DappEnvCompatProvider {
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        use serde::de::Error as _;
+        use std::env;
+
         let mut dict = Dict::new();
         if let Ok(val) = env::var("DAPP_TEST_NUMBER") {
             dict.insert(

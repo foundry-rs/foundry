@@ -8,7 +8,6 @@ use crate::{
     eth::{
         backend::{
             cheats::CheatsManager,
-            db::BlockChanges,
             evm::{
                 AnvilEvmNetwork, ExecResult, TxContext, TxPayload, TypesFor, evm_tx, exec_result,
             },
@@ -16,9 +15,9 @@ use crate::{
         error::{BlockchainError, InvalidTransactionError},
         pool::transactions::{PoolTransaction, TxMarker},
     },
-    mem::inspector::{AnvilInspector, InspectorTxConfig},
+    mem::inspector::{AnvilInspector, InspectorTxConfig, SharedInspector},
 };
-use alloy_consensus::{Eip658Value, Receipt, Transaction, TransactionEnvelope};
+use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom, Transaction, TransactionEnvelope};
 use alloy_eips::{
     eip6110::DEPOSIT_REQUEST_TYPE,
     eip7002::WITHDRAWAL_REQUEST_TYPE,
@@ -36,9 +35,8 @@ use evm2::{
     evm::{
         BEACON_ROOTS_ADDRESS, BUILDER_DEPOSIT_REQUEST_ADDRESS, BUILDER_EXIT_REQUEST_ADDRESS,
         BlockAccessIndex, BlockStateAccumulator, CONSOLIDATION_REQUEST_ADDRESS,
-        HISTORY_STORAGE_ADDRESS, SystemTx, TxResult, WITHDRAWAL_REQUEST_ADDRESS,
+        HISTORY_STORAGE_ADDRESS, SystemTx, WITHDRAWAL_REQUEST_ADDRESS,
     },
-    interpreter::InstrStop,
 };
 use foundry_evm_hardforks::FoundryHardfork;
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, FoundryTxType};
@@ -90,48 +88,63 @@ pub struct BlockExecutionResult {
     pub blob_gas_used: u64,
 }
 
-/// Builds the receipt of a transaction type that does not require network-specific metadata.
-///
-/// `eip8130_phase_statuses` are the per-phase statuses of a Base EIP-8130 transaction, and are
-/// ignored for other transaction types.
-pub(crate) fn build_receipt(
-    tx_type: FoundryTxType,
-    success: bool,
-    logs: Vec<Log>,
-    cumulative_gas_used: u64,
-    eip8130_phase_statuses: Option<Vec<u8>>,
-) -> FoundryReceiptEnvelope {
-    #[cfg(not(feature = "base"))]
-    let _ = eip8130_phase_statuses;
-    let receipt =
-        Receipt { status: Eip658Value::Eip658(success), cumulative_gas_used, logs }.with_bloom();
-    match tx_type {
-        FoundryTxType::Legacy => FoundryReceiptEnvelope::Legacy(receipt),
-        FoundryTxType::Eip2930 => FoundryReceiptEnvelope::Eip2930(receipt),
-        FoundryTxType::Eip1559 => FoundryReceiptEnvelope::Eip1559(receipt),
-        FoundryTxType::Eip4844 => FoundryReceiptEnvelope::Eip4844(receipt),
-        FoundryTxType::Eip7702 => FoundryReceiptEnvelope::Eip7702(receipt),
-        #[cfg(any(feature = "base", feature = "optimism"))]
-        FoundryTxType::Deposit => {
-            panic!("deposit receipts require fork-specific metadata")
-        }
-        #[cfg(feature = "optimism")]
-        FoundryTxType::PostExec => FoundryReceiptEnvelope::PostExec(receipt),
-        #[cfg(feature = "base")]
-        FoundryTxType::Eip8130 => {
-            FoundryReceiptEnvelope::Eip8130(alloy_consensus::ReceiptWithBloom {
+/// Receipt builder for transaction types that do not require network-specific metadata.
+#[derive(Debug, Default, Clone, Copy)]
+#[non_exhaustive]
+pub struct FoundryReceiptBuilder;
+
+impl FoundryReceiptBuilder {
+    fn wrap_receipt(
+        tx_type: FoundryTxType,
+        receipt: ReceiptWithBloom<Receipt>,
+        eip8130_phase_statuses: Option<Vec<u8>>,
+    ) -> FoundryReceiptEnvelope {
+        #[cfg(not(feature = "base"))]
+        let _ = eip8130_phase_statuses;
+        match tx_type {
+            FoundryTxType::Legacy => FoundryReceiptEnvelope::Legacy(receipt),
+            FoundryTxType::Eip2930 => FoundryReceiptEnvelope::Eip2930(receipt),
+            FoundryTxType::Eip1559 => FoundryReceiptEnvelope::Eip1559(receipt),
+            FoundryTxType::Eip4844 => FoundryReceiptEnvelope::Eip4844(receipt),
+            FoundryTxType::Eip7702 => FoundryReceiptEnvelope::Eip7702(receipt),
+            #[cfg(any(feature = "base", feature = "optimism"))]
+            FoundryTxType::Deposit => {
+                panic!("deposit receipts require fork-specific metadata")
+            }
+            #[cfg(feature = "optimism")]
+            FoundryTxType::PostExec => FoundryReceiptEnvelope::PostExec(receipt),
+            #[cfg(feature = "base")]
+            FoundryTxType::Eip8130 => FoundryReceiptEnvelope::Eip8130(ReceiptWithBloom {
                 receipt: base_common_consensus::Eip8130Receipt::new(
                     receipt.receipt,
                     eip8130_phase_statuses.unwrap_or_default(),
                 ),
                 logs_bloom: receipt.logs_bloom,
-            })
+            }),
+            FoundryTxType::Tempo => FoundryReceiptEnvelope::Tempo(receipt),
+            FoundryTxType::Celo => {
+                FoundryReceiptEnvelope::Unknown(alloy_network::AnyReceiptEnvelope {
+                    inner: receipt,
+                    r#type: foundry_primitives::CIP64_TX_TYPE,
+                })
+            }
         }
-        FoundryTxType::Tempo => FoundryReceiptEnvelope::Tempo(receipt),
-        FoundryTxType::Celo => FoundryReceiptEnvelope::Unknown(alloy_network::AnyReceiptEnvelope {
-            inner: receipt,
-            r#type: foundry_primitives::CIP64_TX_TYPE,
-        }),
+    }
+
+    /// Builds a typed receipt.
+    ///
+    /// `eip8130_phase_statuses` are the per-phase statuses of a Base EIP-8130 transaction, and are
+    /// ignored for other transaction types.
+    pub(crate) fn build_receipt(
+        tx_type: FoundryTxType,
+        success: bool,
+        logs: Vec<Log>,
+        cumulative_gas_used: u64,
+        eip8130_phase_statuses: Option<Vec<u8>>,
+    ) -> FoundryReceiptEnvelope {
+        let receipt = Receipt { status: Eip658Value::Eip658(success), cumulative_gas_used, logs }
+            .with_bloom();
+        Self::wrap_receipt(tx_type, receipt, eip8130_phase_statuses)
     }
 }
 
@@ -176,8 +189,8 @@ pub struct AnvilBlockExecutor<'a, N: AnvilEvmNetwork> {
     pub(crate) evm: Evm<'a, TypesFor<N>>,
     /// State changes of the block.
     pub(crate) state: BlockStateAccumulator,
-    /// Inspector lent to the EVM for each transaction.
-    pub(crate) inspector: AnvilInspector,
+    /// Inspector shared with the EVM.
+    pub(crate) inspector: SharedInspector<AnvilInspector>,
     /// Parent block hash — needed for the EIP-2935 system call.
     parent_hash: B256,
     /// Canonical Ethereum consensus transitions, disabled for other networks.
@@ -221,12 +234,14 @@ impl<N: AnvilEvmNetwork> fmt::Debug for AnvilBlockExecutor<'_, N> {
 impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
     /// Creates an executor over `evm`, inspecting with `inspector`.
     pub(crate) fn new(
-        evm: Evm<'a, TypesFor<N>>,
+        mut evm: Evm<'a, TypesFor<N>>,
         inspector: AnvilInspector,
         parent_hash: B256,
         is_cancun: bool,
         ethereum_transitions: Option<EthereumBlockTransitions>,
     ) -> Self {
+        let inspector = SharedInspector::new(inspector);
+        evm.set_inspector(inspector.clone());
         let precompiles = evm.precompiles().addresses().into_iter().collect();
         Self {
             evm,
@@ -296,58 +311,31 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
         Ok(self.evm.state_mut().storage_slot_untracked(&address, &slot)?)
     }
 
-    /// Executes and commits a system call without checking its outcome.
-    ///
-    /// A failed call commits no state, as evm2 rolls it back.
-    fn unchecked_system_call(
-        &mut self,
-        address: Address,
-        data: Bytes,
-    ) -> Result<TxResult<TypesFor<N>>, BlockchainError> {
-        let Ok(result) = self
-            .evm
-            .system_call(SystemTx::new(address, data))?
-            .commit_with(&mut BlockChanges::new(&mut self.state));
-        Ok(result)
-    }
-
-    /// Executes and commits a system call to the `name` contract, failing if it does not succeed.
-    fn system_call(
-        &mut self,
-        name: &'static str,
-        address: Address,
-        data: Bytes,
-    ) -> Result<Bytes, BlockchainError> {
-        let result = self.unchecked_system_call(address, data)?;
+    fn system_call(&mut self, address: Address, data: Bytes) -> Result<Bytes, BlockchainError> {
+        let result = self.evm.system_call(SystemTx::new(address, data))?.commit_to(&mut self.state);
         if result.stop.is_revert() {
-            return Err(BlockchainError::Message(format!(
-                "failed to apply {name} contract call: execution reverted: {}",
-                result.output
-            )));
+            return Err(InvalidTransactionError::Revert(Some(result.output)).into());
         }
         if !result.status {
             return Err(BlockchainError::Message(format!(
-                "failed to apply {name} contract call: execution halted: {}",
-                halt_reason_debug(result.stop)
+                "system call to {address} failed: {:?}",
+                result.stop
             )));
         }
         Ok(result.output)
     }
 
     /// Applies canonical Ethereum block-start transitions in consensus order.
-    ///
-    /// A failing block-start system call does not invalidate the block (EIP-2935, EIP-4788).
     pub(crate) fn apply_pre_execution_changes(&mut self) -> Result<(), BlockchainError> {
         let Some(transitions) = self.ethereum_transitions else { return Ok(()) };
         if transitions.hardfork >= EthereumHardfork::Prague {
-            let _ =
-                self.unchecked_system_call(HISTORY_STORAGE_ADDRESS, Bytes::from(self.parent_hash))?;
+            self.system_call(HISTORY_STORAGE_ADDRESS, Bytes::from(self.parent_hash))?;
         }
         if transitions.hardfork >= EthereumHardfork::Cancun {
             let root = transitions.parent_beacon_block_root.ok_or_else(|| {
                 BlockchainError::Message("missing parent beacon block root".to_string())
             })?;
-            let _ = self.unchecked_system_call(BEACON_ROOTS_ADDRESS, Bytes::from(root))?;
+            self.system_call(BEACON_ROOTS_ADDRESS, Bytes::from(root))?;
         }
         Ok(())
     }
@@ -402,13 +390,10 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
                 .state_mut()
                 .set_bal_index(BlockAccessIndex::new(self.receipts.len() as u64 + 1));
         }
-        let result = match self.evm.transact_with_inspector(&evm_tx, &mut self.inspector) {
-            Ok(executed) => {
-                let Ok(result) = executed.commit_with(&mut BlockChanges::new(&mut self.state));
-                exec_result::<N>(result)
-            }
+        let result = match self.evm.transact(&evm_tx) {
+            Ok(executed) => exec_result::<N>(executed.commit_to(&mut self.state)),
             Err(err) => {
-                self.inspector.discard_transaction(inspector_config);
+                self.inspector.borrow_mut().discard_transaction(inspector_config);
                 return Err(err.into());
             }
         };
@@ -429,7 +414,7 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
                 self.gas_used,
             )
         } else {
-            build_receipt(
+            FoundryReceiptBuilder::build_receipt(
                 tx.tx_type(),
                 result.status,
                 result.logs.clone(),
@@ -438,7 +423,7 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
             )
         };
         #[cfg(not(any(feature = "base", feature = "optimism")))]
-        let receipt = build_receipt(
+        let receipt = FoundryReceiptBuilder::build_receipt(
             tx.tx_type(),
             result.status,
             result.logs.clone(),
@@ -450,6 +435,7 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
         let precompiles = &self.precompiles;
         let traces = self
             .inspector
+            .borrow_mut()
             .finish_transaction(inspector_config, |address| precompiles.contains(address));
         Ok(CommittedTx { result, traces })
     }
@@ -478,36 +464,22 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
                     &self.receipts,
                     &mut requests,
                 )?;
-                let withdrawals = self.system_call(
-                    "withdrawal requests",
-                    WITHDRAWAL_REQUEST_ADDRESS,
-                    Bytes::new(),
-                )?;
+                let withdrawals = self.system_call(WITHDRAWAL_REQUEST_ADDRESS, Bytes::new())?;
                 if !withdrawals.is_empty() {
                     requests.push_request_with_type(WITHDRAWAL_REQUEST_TYPE, withdrawals);
                 }
-                let consolidations = self.system_call(
-                    "consolidation requests",
-                    CONSOLIDATION_REQUEST_ADDRESS,
-                    Bytes::new(),
-                )?;
+                let consolidations =
+                    self.system_call(CONSOLIDATION_REQUEST_ADDRESS, Bytes::new())?;
                 if !consolidations.is_empty() {
                     requests.push_request_with_type(CONSOLIDATION_REQUEST_TYPE, consolidations);
                 }
                 if transitions.hardfork >= EthereumHardfork::Amsterdam {
-                    let deposits = self.system_call(
-                        "builder deposit requests",
-                        BUILDER_DEPOSIT_REQUEST_ADDRESS,
-                        Bytes::new(),
-                    )?;
+                    let deposits =
+                        self.system_call(BUILDER_DEPOSIT_REQUEST_ADDRESS, Bytes::new())?;
                     if !deposits.is_empty() {
                         requests.push_request_with_type(BUILDER_DEPOSIT_REQUEST_TYPE, deposits);
                     }
-                    let exits = self.system_call(
-                        "builder exit requests",
-                        BUILDER_EXIT_REQUEST_ADDRESS,
-                        Bytes::new(),
-                    )?;
+                    let exits = self.system_call(BUILDER_EXIT_REQUEST_ADDRESS, Bytes::new())?;
                     if !exits.is_empty() {
                         requests.push_request_with_type(BUILDER_EXIT_REQUEST_TYPE, exits);
                     }
@@ -764,22 +736,6 @@ pub(crate) const fn block_blob_gas_limit(
     max_blob_gas_per_block: u64,
 ) -> u64 {
     if optimism_jovian { block_gas_limit } else { max_blob_gas_per_block }
-}
-
-/// Formats an exceptional halt for system call errors in `HaltReason` debug form, such as
-/// `OutOfGas(Basic)`.
-fn halt_reason_debug(stop: InstrStop) -> String {
-    let out_of_gas = match stop {
-        InstrStop::OutOfGas => "Basic",
-        InstrStop::MemoryOOG => "Memory",
-        InstrStop::MemoryLimitOOG => "MemoryLimit",
-        InstrStop::PrecompileOOG => "Precompile",
-        InstrStop::InvalidOperandOOG => "InvalidOperand",
-        InstrStop::ReentrancySentryOOG => "ReentrancySentry",
-        InstrStop::InvalidImmediateEncoding => return "OpcodeNotFound".to_string(),
-        stop => return format!("{stop:?}"),
-    };
-    format!("OutOfGas({out_of_gas})")
 }
 
 #[cfg(test)]

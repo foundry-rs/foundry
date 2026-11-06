@@ -23,7 +23,6 @@ use foundry_evm_traces::{
         quantity,
     },
 };
-use foundry_tui::{TuiMode, restore_terminal_on_panic, tui_mode};
 use serde_json::{Map, Value, json};
 use soldb_core::{
     ContractCreation, EvmWord, ExecutionCall, StepRecord, StepTable, TraceArtifacts,
@@ -34,6 +33,7 @@ use soldb_ethdebug::{EthdebugInfo, Instruction, SourceLocation, SourceMapContext
 use soldb_repl::{BreakpointTarget, DebuggerCommand, DebuggerState, Output, Renderer, Session};
 use soldb_tui::Exit;
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, BTreeSet, HashMap},
     io::{self, IsTerminal, Write},
     ops::Range,
@@ -85,8 +85,8 @@ impl SoldbDebugger {
 
     /// Runs the session.
     ///
-    /// If the full-screen view can run, it opens first. Then commands are read from stdin, one per
-    /// line, until `quit` or the end of the input, with a prompt if stdin is a terminal.
+    /// If stdin and stdout are terminals, the full-screen view opens first. Then commands are
+    /// read from stdin, one per line, until `quit` or the end of the input.
     pub(crate) fn try_run(self) -> Result<()> {
         let mut state = DebuggerState::new();
         state.load_trace_with_debug_info(self.trace, self.contracts)?;
@@ -105,21 +105,20 @@ impl SoldbDebugger {
         }
         let mut session = Session::new(state);
         let renderer = Renderer::new(Shell::get().out_supports_color());
-        // The prompt goes to stderr, so it shows even when stdout is piped.
-        let prompt = io::stdin().is_terminal();
+        let terminal = io::stdin().is_terminal() && io::stdout().is_terminal();
 
         emit(&renderer, vec![session.loaded()])?;
         emit(&renderer, session.initial_stop())?;
-        if tui_mode().is_interactive() && open_tui(&mut session)? == Flow::Quit {
-            return Ok(());
-        }
-        if prompt {
+        if terminal {
+            if open_tui(&mut session)? == Flow::Quit {
+                return Ok(());
+            }
             sh_eprintln!("Type `help` for the command list, `tui` for the full-screen view.")?;
         }
 
         let mut line = String::new();
         loop {
-            if prompt {
+            if terminal {
                 sh_eprint!("soldb> ")?;
                 io::stderr().flush()?;
             }
@@ -161,11 +160,7 @@ fn emit(renderer: &Renderer, outputs: Vec<Output>) -> Result<Flow> {
 
 /// Opens the full-screen view until the user leaves it.
 fn open_tui(session: &mut Session) -> Result<Flow> {
-    if let TuiMode::Fallback(reason) = tui_mode() {
-        sh_warn!("cannot open the full-screen view: {}", reason.as_str())?;
-        return Ok(Flow::Continue);
-    }
-    match restore_terminal_on_panic(|| soldb_tui::run(session)) {
+    match soldb_tui::run(session) {
         Ok(Exit::Repl) => Ok(Flow::Continue),
         Ok(Exit::Quit) => Ok(Flow::Quit),
         Err(error) if error.kind() == io::ErrorKind::Unsupported => {
@@ -662,8 +657,15 @@ fn contract_debug_info(
             Some(pc as u32)
         };
         if let Some(element) = index.and_then(|index| program.source_map.get(index as usize)) {
-            let context = instruction_context(element, program.build_sources, &mut used_sources);
-            instructions.extend(Instruction::from_bytecode(program.code, pc, context));
+            let mnemonic = op.map_or_else(
+                || Cow::Owned(format!("UNKNOWN(0x{byte:02x})")),
+                |op| Cow::Borrowed(op.as_str()),
+            );
+            instructions.push(Instruction::from_source_map(
+                pc as u64,
+                mnemonic,
+                instruction_context(element, program.build_sources, &mut used_sources),
+            ));
         }
         pc += 1 + op.map_or(0, |op| op.info().immediate_size() as usize);
     }
@@ -710,28 +712,6 @@ fn contract_debug_info(
     )
 }
 
-/// Checks that a SolDB bundle can be written to `dir`, before the run that records it.
-pub fn ensure_dump_dir(dir: &Path) -> Result<()> {
-    // Before 1.9, `--dump` wrote a single file, which a later run would otherwise fail on only
-    // after recording the trace.
-    if dir.exists() && !dir.is_dir() {
-        eyre::bail!(
-            "--dump now takes a directory, but {} is not one; remove it or pass a directory path",
-            dir.display()
-        );
-    }
-    // The bundle copies the compiler's sources under their project paths, and they can differ
-    // from the files on disk, so a directory with files, such as the project root, could have its
-    // files replaced.
-    if std::fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some()) {
-        eyre::bail!(
-            "cannot write the SolDB bundle to {}: the directory is not empty",
-            dir.display()
-        );
-    }
-    Ok(())
-}
-
 /// Writes a bundle that soldb's own tools read, for example
 /// `soldb profile --trace-file <dir>/trace.json --contracts <dir>/contracts.json`.
 ///
@@ -746,7 +726,15 @@ pub(crate) fn write_bundle(
     sources: &ContractSources,
     known_contracts: &ContractsByArtifact,
 ) -> Result<()> {
-    ensure_dump_dir(dir)?;
+    // The bundle copies the compiler's sources under their project paths, and they can differ
+    // from the files on disk, so a directory with files, such as the project root, could have its
+    // files replaced.
+    if std::fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some()) {
+        eyre::bail!(
+            "cannot write the SolDB bundle to {}: the directory is not empty",
+            dir.display()
+        );
+    }
     // One entry per deployed code, so code replaced at an address keeps its own source maps.
     let mut contracts = BTreeMap::<(Address, B256), CombinedJson>::new();
     let mut written_sources = HashSet::<PathBuf>::default();
@@ -908,6 +896,7 @@ mod tests {
             returndata: Bytes::new(),
             gas_remaining: 0,
             gas_refund_counter: 0,
+            gas_used: 0,
             gas_cost: 0,
             state_gas_cost: None,
             state_gas_reservoir: None,
@@ -1087,7 +1076,6 @@ mod tests {
                 json!({
                     "offset": instruction.offset,
                     "mnemonic": instruction.mnemonic(),
-                    "arguments": instruction.arguments(),
                     "context": serde_json::to_value(instruction).unwrap()["context"],
                 })
             })
@@ -1098,7 +1086,6 @@ mod tests {
                 {
                     "offset": 0,
                     "mnemonic": "PUSH1",
-                    "arguments": ["0x80"],
                     "context": {
                         "modifierDepth": 0,
                         "code": { "source": { "id": 0 }, "range": { "offset": 0, "length": 8 } },
@@ -1107,19 +1094,13 @@ mod tests {
                 {
                     "offset": 2,
                     "mnemonic": "JUMPDEST",
-                    "arguments": [],
                     "context": {
                         "modifierDepth": 0,
                         "code": { "source": { "id": 0 }, "range": { "offset": 9, "length": 3 } },
                         "invoke": {},
                     },
                 },
-                {
-                    "offset": 3,
-                    "mnemonic": "STOP",
-                    "arguments": [],
-                    "context": { "modifierDepth": 0, "return": {} },
-                },
+                { "offset": 3, "mnemonic": "STOP", "context": { "modifierDepth": 0, "return": {} } },
             ])
         );
     }

@@ -44,10 +44,9 @@ use std::{
 
 mod frontier;
 mod types;
-pub use frontier::FuzzBranchFrontier;
 use frontier::FuzzBranchFrontierArtifact;
 pub(super) use frontier::{
-    FuzzFrontierRecorder, StatefulFuzzBranchFrontierArtifact, comparison_result, merge_frontiers,
+    FuzzBranchFrontier, FuzzFrontierRecorder, StatefulFuzzBranchFrontierArtifact, merge_frontiers,
     write_frontier_artifact,
 };
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
@@ -1017,11 +1016,9 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     }
                     FuzzOutcome::CounterExample(CounterExampleOutcome {
                         exit_reason: status,
-                        counterexample: mut outcome,
+                        counterexample: outcome,
                         ..
                     }) => {
-                        // Keep the lines the failing input ran, as a failing unit test does.
-                        HitMaps::merge_opt(&mut worker.coverage, outcome.1.line_coverage.take());
                         if !is_persisted_replay {
                             inc_runs();
                         }

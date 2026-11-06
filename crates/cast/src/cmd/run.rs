@@ -64,7 +64,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceContext, TraceRequirements},
 };
-use foundry_evm_networks::{NetworkConfigs, NetworkVariant, arbitrum};
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use futures::{StreamExt, TryFutureExt};
 use std::sync::Arc;
 
@@ -113,9 +113,8 @@ pub struct RunArgs {
     /// Whether to attempt local replay of system transactions.
     ///
     /// Without this flag, ordinary block replay leaves out system transactions mined before the
-    /// target and warns about each one. ArbOS internal transactions (type `0x6a`) are always left
-    /// out without a warning. Replay support depends on the selected network. Canonical Monad
-    /// system transactions are replayed regardless of this flag.
+    /// target and warns about each one. Replay support depends on the selected network. Canonical
+    /// Monad system transactions are replayed regardless of this flag.
     #[arg(long, alias = "sys")]
     replay_system_txes: bool,
 
@@ -186,6 +185,12 @@ struct TargetFetch {
     provider: RetryProvider,
 }
 
+/// Fields only needed by the Monad-specific `execute_monad` path.
+#[cfg(feature = "monad")]
+struct MonadPrepared {
+    provider: RetryProvider,
+}
+
 /// Chain-specific gas limits for transactions replayed by `cast run`.
 enum ReplayGasLimits {
     Unchanged,
@@ -209,9 +214,8 @@ struct PreparedRun<FEN: FoundryEvmNetwork> {
     replay_gas_limits: ReplayGasLimits,
     /// The target's receipt, which the replay is checked against.
     receipt: Option<AnyTransactionReceipt>,
-    /// Provider of the Monad-specific `execute_monad` path.
     #[cfg(feature = "monad")]
-    monad_provider: RetryProvider,
+    monad: MonadPrepared,
 }
 
 impl RunArgs {
@@ -648,10 +652,7 @@ impl RunArgs {
                 full_transactions(block)?
                     .iter()
                     .take_while(|tx| tx.tx_hash() != tx_hash)
-                    .filter(|tx| {
-                        !is_arbos_internal_transaction(tx)
-                            && (!is_system_transaction(tx) || self.replay_system_txes)
-                    })
+                    .filter(|tx| !is_system_transaction(tx) || self.replay_system_txes)
                     .map(TransactionResponse::tx_hash),
             );
         }
@@ -672,7 +673,7 @@ impl RunArgs {
             replay_gas_limits,
             receipt,
             #[cfg(feature = "monad")]
-            monad_provider: provider,
+            monad: MonadPrepared { provider },
         })
     }
 }
@@ -716,7 +717,7 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
     fn prepare_target(&mut self) {
         let requirements = TraceRequirements::none()
             .with_calls(true)
-            .with_debug_recording(self.args.debug)
+            .with_debug(self.args.debug)
             .with_decode_internal(if self.tracing.decode_internal {
                 InternalTraceMode::Full
             } else {
@@ -809,12 +810,6 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
             let replay_system_txes = self.args.replay_system_txes;
             let mut skipped_system_txes = Vec::new();
             self.for_each_prefix_transaction(target_index, |_, tx| {
-                // ArbOS internal transactions open every Arbitrum block, Orbit chains included,
-                // and also report batch postings mid-block. They update ArbOS bookkeeping, which
-                // the replay cannot execute, so they are left out without a warning.
-                if is_arbos_internal_transaction(tx) {
-                    return Ok(());
-                }
                 if !is_system_transaction(tx) || replay_system_txes {
                     let replayed = self.transaction(tx).wrap_err_with(|| {
                         format!(
@@ -910,7 +905,7 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
             return None;
         }
         let gas_used = receipt.gas_used();
-        if arbitrum::is_arbitrum_chain(self.trace_context.chain().id()) {
+        if foundry_evm_networks::arbitrum::is_arbitrum_chain(self.trace_context.chain().id()) {
             // Nitro folds the L1 posting cost into the receipt's gas used.
             let l1_gas_used =
                 parse_nitro_l1_gas_used(receipt.other_fields().get("gasUsedForL1")).ok()?;
@@ -940,7 +935,7 @@ impl PreparedRun<MonadEvmNetwork> {
                 self.evm_env.block.number
             )
         })?;
-        let block_context = BlockContext::<MonadEvmNetwork>::fetch(&self.monad_provider, block)
+        let block_context = BlockContext::<MonadEvmNetwork>::fetch(&self.monad.provider, block)
             .await
             .wrap_err_with(|| {
                 format!(
@@ -985,10 +980,6 @@ impl PreparedRun<MonadEvmNetwork> {
 
 fn is_system_transaction(tx: &AnyRpcTransaction) -> bool {
     is_known_system_sender(tx.from()) || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
-}
-
-fn is_arbos_internal_transaction(tx: &AnyRpcTransaction) -> bool {
-    tx.transaction_type() == Some(arbitrum::ARBITRUM_INTERNAL_TX_TYPE)
 }
 
 fn full_transactions(block: &AnyRpcBlock) -> Result<&[AnyRpcTransaction]> {

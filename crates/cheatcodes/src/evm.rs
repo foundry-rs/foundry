@@ -7,7 +7,7 @@ use crate::{
 use alloy_consensus::{Transaction as _, Typed2718, transaction::SignerRecoverable};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{
-    Address, B256, Bytes, U256, hex, keccak256,
+    Address, B256, Bytes, KECCAK256_EMPTY, U256, hex, keccak256,
     map::{AddressMap, AddressSet, B256Map, HashMap},
 };
 use alloy_rlp::Decodable;
@@ -129,6 +129,17 @@ pub struct GasRecord {
     pub gas_used: u64,
     /// Depth at which the gas snapshot was taken.
     pub depth: usize,
+}
+
+/// Records `deal` cheatcodes
+#[derive(Clone, Debug)]
+pub struct DealRecord {
+    /// Target of the deal.
+    pub address: Address,
+    /// The balance of the address before deal was applied
+    pub old_balance: U256,
+    /// Balance after deal was applied
+    pub new_balance: U256,
 }
 
 /// Storage slot diff info.
@@ -389,7 +400,7 @@ impl Cheatcode for cloneAccountCall {
         let Self { source, target } = self;
 
         ccx.evm.state_mut().account(source)?.warm();
-        let slots = ccx.db().lifecycle().loaded_storage(ccx.evm.state(), source);
+        let slots = ccx.backend.backend().lifecycle().loaded_storage(ccx.evm.state(), source);
         let genesis = genesis_account(ccx.evm.state_mut(), source, slots)?;
         EvmFactoryFor::<FEN>::default().sync_transaction(ccx.evm);
         let (evm, db) = ccx.evm_db_mut();
@@ -819,6 +830,8 @@ impl Cheatcode for dealCall {
         // The balance survives reverts of the enclosing calls.
         let write = PersistentWrite::Balance(address, new_balance.wrapping_sub(old_balance));
         ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
+        let record = DealRecord { address, old_balance, new_balance };
+        ccx.state.eth_deals.push(record);
         EvmFactoryFor::<FEN>::default().refresh_transaction(ccx.evm);
         Ok(Default::default())
     }
@@ -852,38 +865,64 @@ impl Cheatcode for etchCall {
 
 impl Cheatcode for resetNonceCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { account: address } = *self;
-        let mut account = ccx.evm.state_mut().account(&address)?;
+        let Self { account } = self;
+        let mut account = ccx.evm.state_mut().account(account)?;
         // Per EIP-161, contract nonces start at 1. EOAs, including EIP-7702 delegated ones, start
         // at 0.
-        let is_eoa = account.is_empty_code_hash()
-            || account.code_hash().is_zero()
+        let code_hash = account.code_hash();
+        let is_eoa = code_hash == KECCAK256_EMPTY
+            || code_hash.is_zero()
             || account.load_code()?.is_eip7702();
-        drop(account);
         let nonce = if is_eoa { 0 } else { 1 };
+        account.touch();
+        account.warm();
+        let previous = account.nonce();
+        account.set_nonce(nonce);
+        let write = PersistentWrite::nonce(&account, previous);
+        drop(account);
+        // Nonce cheatcodes survive reverts of the enclosing calls.
+        ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
         debug!(target: "cheatcodes", nonce, "reset");
-        set_persistent_nonce(ccx, address, nonce)
+        Ok(Default::default())
     }
 }
 
 impl Cheatcode for setNonceCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account, newNonce } = *self;
+        let mut account = ccx.evm.state_mut().account(&account)?;
         // nonce must increment only
-        let current = ccx.evm.state_mut().account(&account)?.nonce();
+        let current = account.nonce();
         ensure!(
             newNonce >= current,
             "new nonce ({newNonce}) must be strictly equal to or higher than the \
              account's current nonce ({current})"
         );
-        set_persistent_nonce(ccx, account, newNonce)
+        account.touch();
+        account.warm();
+        let previous = account.nonce();
+        account.set_nonce(newNonce);
+        let write = PersistentWrite::nonce(&account, previous);
+        drop(account);
+        // Nonce cheatcodes survive reverts of the enclosing calls.
+        ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
+        Ok(Default::default())
     }
 }
 
 impl Cheatcode for setNonceUnsafeCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account, newNonce } = *self;
-        set_persistent_nonce(ccx, account, newNonce)
+        let mut account = ccx.evm.state_mut().account(&account)?;
+        account.touch();
+        account.warm();
+        let previous = account.nonce();
+        account.set_nonce(newNonce);
+        let write = PersistentWrite::nonce(&account, previous);
+        drop(account);
+        // Nonce cheatcodes survive reverts of the enclosing calls.
+        ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
+        Ok(Default::default())
     }
 }
 
@@ -927,9 +966,9 @@ impl Cheatcode for setLogoURICall {
 impl Cheatcode for coolCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target } = self;
-        let slots = ccx.db().lifecycle().loaded_storage(ccx.evm.state(), target);
-        // Precompiles and the addresses the transaction warmed for its coinbase, access list and
-        // chain stay warm. The rest of the transaction-base
+        let slots = ccx.backend.backend().lifecycle().loaded_storage(ccx.evm.state(), target);
+        // Like REVM's `WarmAddresses`, precompiles and the addresses the transaction warmed for
+        // its coinbase, access list and chain stay warm. The rest of the transaction-base
         // warmth, such as the recipient, is cooled.
         let keep = ccx.is_precompile(target) || ccx.state.tx_warm_addresses.contains(target);
         if !keep {
@@ -974,7 +1013,7 @@ impl Cheatcode for noAccessListCall {
 impl Cheatcode for warmSlotCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target, slot } = *self;
-        ccx.evm.state_mut().set_storage_warm(&target, slot.into(), true);
+        set_cold_slot(ccx, target, slot.into(), false);
         Ok(Default::default())
     }
 }
@@ -982,7 +1021,7 @@ impl Cheatcode for warmSlotCall {
 impl Cheatcode for coolSlotCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target, slot } = *self;
-        ccx.evm.state_mut().set_storage_warm(&target, slot.into(), false);
+        set_cold_slot(ccx, target, slot.into(), true);
         Ok(Default::default())
     }
 }
@@ -1450,7 +1489,7 @@ impl Cheatcode for executeTransactionCall {
         env.block.basefee = U256::ZERO;
         env.set_feature(EvmFeatures::FEE_CHARGE, false);
         env.set_feature(EvmFeatures::NONCE_CHECK, true);
-        // The transaction pays no fees, so the sender only needs to afford the value.
+        // As on master, which zeroes the gas price, the sender only needs to afford the value.
         env.set_feature(EvmFeatures::BALANCE_CHECK, false);
         env.set_feature(EvmFeatures::BALANCE_TOP_UP, false);
         let balance = ccx
@@ -1862,23 +1901,6 @@ pub(super) fn touch_account(state: &mut State<'_>, addr: Address) -> Result<()> 
     account.touch();
     account.warm();
     Ok(())
-}
-
-/// Sets the nonce of `address`, as a write that survives reverts of the enclosing calls.
-fn set_persistent_nonce<FEN: FoundryEvmNetwork>(
-    ccx: &mut CheatsCtxt<'_, '_, FEN>,
-    address: Address,
-    nonce: u64,
-) -> Result {
-    let mut account = ccx.evm.state_mut().account(&address)?;
-    account.touch();
-    account.warm();
-    let previous = account.nonce();
-    account.set_nonce(nonce);
-    let write = PersistentWrite::nonce(&account, previous);
-    drop(account);
-    ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
-    Ok(Default::default())
 }
 
 /// Loads the storage slot and marks it warm, as an `SLOAD` or `SSTORE` of it would.
@@ -2466,6 +2488,16 @@ fn get_contract_data<'a, FEN: FoundryEvmNetwork>(
 
     // Fallback to fuzzy matching if exact match fails
     artifacts.find_by_deployed_code(&code_bytes)
+}
+
+/// Helper function to set / unset cold storage slot of the target address.
+fn set_cold_slot<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
+    target: Address,
+    slot: U256,
+    cold: bool,
+) {
+    ccx.evm.state_mut().set_storage_warm(&target, slot, !cold);
 }
 
 #[cfg(test)]

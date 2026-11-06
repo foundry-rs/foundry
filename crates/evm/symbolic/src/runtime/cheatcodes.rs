@@ -29,7 +29,6 @@ pub(crate) const fn foundry_cheatcode_min_input_size(selector: [u8; 4]) -> Optio
         | getBlobBaseFeeCall::SELECTOR
         | getBlockNumberCall::SELECTOR
         | getBlockTimestampCall::SELECTOR
-        | getSlotNumberCall::SELECTOR
         | pauseGasMeteringCall::SELECTOR
         | resumeGasMeteringCall::SELECTOR
         | resetGasMeteringCall::SELECTOR
@@ -110,7 +109,6 @@ pub(crate) const fn foundry_cheatcode_min_input_size(selector: [u8; 4]) -> Optio
         | deleteStateSnapshotCall::SELECTOR
         | warpCall::SELECTOR
         | rollCall::SELECTOR
-        | rollSlotCall::SELECTOR
         | prevrandao_0Call::SELECTOR
         | prevrandao_1Call::SELECTOR
         | feeCall::SELECTOR

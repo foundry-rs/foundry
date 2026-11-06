@@ -1,7 +1,7 @@
 use super::{
     Cheatcodes, CheatsConfig, ChiselState, CmpOperands, CustomPrintTracer, DebugRecorder,
-    EdgeCovConfig, EdgeCovInspector, EdgeCovKind, EdgeCoverage, Fuzzer, LineCoverageCollector,
-    LogCollector, RevertDiagnostic, ScriptExecutionInspector, TempoLabels, TracingInspector,
+    EdgeCovConfig, EdgeCovInspector, EdgeCoverage, Fuzzer, LineCoverageCollector, LogCollector,
+    RevertDiagnostic, ScriptExecutionInspector, TempoLabels, TracingInspector,
 };
 use alloy_consensus::transaction::Recovered;
 use alloy_network::TransactionBuilder;
@@ -10,8 +10,7 @@ use alloy_primitives::{
     map::{AddressHashMap, AddressMap, AddressSet, HashSet},
 };
 use evm2::{
-    EvmFeatures, ExecutedTx, ExecutionError, Inspector, InspectorConfig, OpcodeSet,
-    TxResultWithState,
+    EvmFeatures, ExecutedTx, ExecutionError, Inspector, TxResultWithState,
     ethereum::intrinsic_and_floor_gas,
     evm::{DbResult, PendingState, PrewarmSet, State},
     interpreter::{GasTracker, Host, InstrStop, MessageKind, op},
@@ -24,15 +23,16 @@ use foundry_cheatcodes::{
 use foundry_common::{compile::Analysis, sh_warn};
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
+    FoundryInspectorExt,
     backend::transaction_error,
     constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER_CODEHASH},
     evm::{
         BlockEnvFor, DestructedAccount, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested,
         FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor,
         MessageFor, MessageResultFor, PersistentWrite, PreparedTx, SnapshotRestores,
-        TransactionRequestFor, TxFor, TxResultFor, TypesFor, cool_loaded, destructed_accounts,
-        evm_env, merge_pending_changes, merge_untracked_pending_changes_with_warmth,
-        release_inspector, warm_accounts, warm_set,
+        TransactionRequestFor, TxEnvFor, TxFor, TxResultFor, TypesFor, cool_loaded,
+        destructed_accounts, evm_env, merge_pending_changes,
+        merge_untracked_pending_changes_with_warmth, release_inspector, warm_accounts, warm_set,
     },
     precompiles::P256_VERIFY,
     utils::tx_warm_addresses,
@@ -356,31 +356,18 @@ struct InnerRoot {
     depth: u16,
     /// Sender of the nested transaction.
     caller: Address,
-    /// Origin the nested transaction reads instead of its sender, such as the running
-    /// transaction's origin for an isolated call.
-    origin: Option<Address>,
     /// Whether the root frame is a new call observed by the inspectors, such as a replayed
     /// transaction's, rather than a duplicate of the surrounding frame.
     observe: bool,
 }
 
-/// The opcodes at which execution cancellation is polled: every loop runs a jump, and every
-/// recursion runs a call or create.
-const CANCELLATION_POLL_OPCODES: OpcodeSet = {
-    let mut set = OpcodeSet::EMPTY;
-    set.insert(op::JUMP);
-    set.insert(op::JUMPI);
-    set.insert(op::CALL);
-    set.insert(op::CALLCODE);
-    set.insert(op::DELEGATECALL);
-    set.insert(op::STATICCALL);
-    set.insert(op::CREATE);
-    set.insert(op::CREATE2);
-    set
-};
-
-/// How many cancellation polls pass between reads of a campaign deadline.
-const DEADLINE_POLL_INTERVAL: u8 = 16;
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum OpcodeStepDispatch {
+    #[default]
+    None,
+    FuzzerOnly,
+    General,
+}
 
 /// An inspector that calls multiple inspectors in sequence.
 ///
@@ -488,20 +475,14 @@ pub struct InspectorStackInner {
     pub batch_rewrite_process_salt: Option<u64>,
     /// Shared cancellation state for interruptible EVM execution.
     execution_cancellation: Option<EvmExecutionCancellation>,
-    /// Counts cancellation polls; the deadline is read once every [`DEADLINE_POLL_INTERVAL`].
+    /// Amortizes deadline checks in the opcode hot path.
     cancellation_poll_counter: u8,
     /// Whether this inspector halted the current execution due to cancellation.
     execution_cancelled: bool,
     #[cfg(test)]
     early_exit_test_gate: Option<EarlyExitTestGate>,
-    has_static_step_inspectors: bool,
+    static_step_dispatch: OpcodeStepDispatch,
     has_static_step_end_inspectors: bool,
-    /// The opcodes the cheatcodes step, see [`Cheatcodes::steps`]. Refreshed where evm2 reads the
-    /// inspector config again, when a frame starts and when a message returns into it, since only
-    /// cheatcode calls change it.
-    cheat_steps: OpcodeSet,
-    /// Whether the cheatcodes stepped the running instruction.
-    cheat_stepped: bool,
 }
 
 /// Mutable references to both parts of [InspectorStack] and the backend the execution runs over,
@@ -512,7 +493,7 @@ pub struct InspectorStackRefMut<'a, FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// The backend the execution runs over.
     ///
     /// Cheatcodes and call isolation are only active with a backend.
-    pub backend: &'a mut dyn CheatcodesBackend<FEN>,
+    pub backend: Option<&'a mut dyn CheatcodesBackend<FEN>>,
 }
 
 impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
@@ -521,6 +502,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         cheats: &mut Cheatcodes<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
+        tx_env: &TxEnvFor<FEN>,
         message: &mut MessageFor<FEN>,
     ) -> Result<MessageResultFor<FEN>, ExecutionError> {
         let previous = self.synthetic_create_depth;
@@ -529,7 +511,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         // so isolate it as well.
         self.synthetic_create_depth = (message.depth == 2).then_some(2);
         let env = evm_env(evm);
-        let result = self.execute_on_frame_evm(Some(cheats), backend, evm, env, message);
+        let result = self.execute_on_frame_evm(Some(cheats), backend, evm, env, tx_env, message);
         self.synthetic_create_depth = previous;
         // Drop redirects left behind if nested execution aborted before their frames ended.
         self.pending_create2_redirects.truncate(create2_redirects);
@@ -548,13 +530,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let mut env = env.unwrap_or_else(|| evm_env(evm));
         env.version.initial_call_depth = depth;
         EvmFactoryFor::<FEN>::default().sync_transaction(evm);
-        let mut child = backend.backend().lifecycle().nested_evm(evm, tx, Some(env), None);
-        let previous = self.enter_inner_context(InnerRoot {
-            depth,
-            caller: tx.signer(),
-            origin: None,
-            observe: false,
-        });
+        let mut child = backend.backend().nested_evm(evm, tx, Some(env));
+        let previous =
+            self.enter_inner_context(InnerRoot { depth, caller: tx.signer(), observe: false });
         // `ORIGIN` reads the nested transaction's signer, not the origin of an isolated call the
         // transaction runs in.
         let origin_override = cheats.origin_override.take();
@@ -570,7 +548,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         child.set_inspector(InspectorStackRefMut {
             cheatcodes: Some(&mut *cheats),
             inner: &mut *self,
-            backend: &mut *backend,
+            backend: Some(&mut *backend),
         });
         let executed = child.transact(tx).map(ExecutedTx::detach);
         // SAFETY: The nested EVM runs over the lifecycle's owned databases.
@@ -760,6 +738,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     #[inline]
     pub fn set_fuzzer(&mut self, fuzzer: Fuzzer) {
         self.fuzzer = Some(fuzzer.into());
+        self.refresh_static_step_dispatch();
     }
 
     /// Set the Chisel inspector.
@@ -795,27 +774,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     /// Derives both the on/off gate and [`EdgeCovConfig`] from `corpus`.
     #[inline]
     pub fn collect_edge_coverage_with_config(&mut self, corpus: &FuzzCorpusConfig) {
-        self.edge_coverage = corpus.collect_evm_edge_coverage().then(|| {
-            let kind = if corpus.evm_edge_coverage_collision_free() {
-                EdgeCovKind::CollisionFree
-            } else {
-                EdgeCovKind::Hash
-            };
-            let include_call_depth = corpus.evm_edge_coverage_include_call_depth();
-            EdgeCovInspector::with_config(EdgeCovConfig::new(kind, include_call_depth)).into()
-        });
-        self.refresh_static_step_dispatch();
-    }
-
-    /// Drops the inspectors that only feed fuzz guidance: edge coverage, the fuzzer value
-    /// collector, and sancov collection. Calls whose coverage and collected values are never
-    /// merged back, such as invariant predicate checks, run faster without them.
-    #[inline]
-    pub fn disable_fuzz_instrumentation(&mut self) {
-        self.edge_coverage = None;
-        self.fuzzer = None;
-        self.sancov_edges = false;
-        self.sancov_trace_cmp = false;
+        self.edge_coverage = corpus
+            .collect_evm_edge_coverage()
+            .then(|| EdgeCovInspector::with_config(corpus.into()).into());
         self.refresh_static_step_dispatch();
     }
 
@@ -945,7 +906,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         InspectorStackRefMut {
             cheatcodes: self.cheatcodes.as_deref_mut(),
             inner: &mut self.inner,
-            backend,
+            backend: Some(backend),
         }
     }
 
@@ -1029,8 +990,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         &mut self,
     ) -> Option<(&mut Cheatcodes<FEN>, &mut dyn CheatcodesBackend<FEN>, &mut InspectorStackInner)>
     {
-        let cheats = self.cheatcodes.as_deref_mut()?;
-        Some((cheats, &mut *self.backend, &mut *self.inner))
+        match (self.cheatcodes.as_deref_mut(), self.backend.as_deref_mut()) {
+            (Some(cheats), Some(backend)) => Some((cheats, backend, &mut *self.inner)),
+            _ => None,
+        }
     }
 
     /// Whether a frame at `depth` runs as an isolated transaction: a top-level frame, or a
@@ -1038,6 +1001,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     fn isolates(&self, depth: u16) -> bool {
         self.inner.enable_isolation
             && !self.inner.in_inner_context
+            && self.backend.is_some()
             && (depth == 1 || self.inner.synthetic_create_depth == Some(depth))
     }
 
@@ -1089,8 +1053,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
 
         let stop = result.stop;
-        let backend = Some(&mut *self.backend);
-        let cheats = self.cheatcodes.as_deref_mut();
+        let backend = self.backend.as_deref_mut();
+        let cheats = self.cheatcodes.as_deref_mut().filter(|_| backend.is_some());
         'inspectors: {
             if let Some(tracer) = &mut self.inner.tracer
                 && changed!(
@@ -1142,8 +1106,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         {
             self.inner.tx_created.insert(address);
         }
-        let backend = Some(&mut *self.backend);
-        let cheats = self.cheatcodes.as_deref_mut();
+        let backend = self.backend.as_deref_mut();
+        let cheats = self.cheatcodes.as_deref_mut().filter(|_| backend.is_some());
         'inspectors: {
             if let Some(line_coverage) = &mut self.inner.line_coverage
                 && changed!(
@@ -1200,13 +1164,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         if message.destination == CHEATCODE_ADDRESS {
             return None;
         }
-        let backend = &mut *self.backend;
+        let backend = self.backend.as_deref_mut()?;
         let pending =
             backend.backend().lifecycle().pending_env().map(|env| (env.spec, env.chain_id()));
         let requested = self.cheatcodes.as_deref().and_then(|cheats| cheats.execution_evm_version);
         if pending.is_none() && requested.is_none() {
             return None;
         }
+        let tx_env = interp.host().tx_env().clone();
         let evm = interp.host();
         let running = evm_env(evm);
         // Same precedence as the next transaction's environment: `vm.setEvmVersion` overrides
@@ -1219,7 +1184,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let mut env = EvmFactoryFor::<FEN>::default().env_with_spec(running, spec);
         env.version.chain_id = chain_id;
         let cheatcodes = self.cheatcodes.as_deref_mut();
-        let result = self.inner.execute_on_frame_evm(cheatcodes, backend, evm, env, message);
+        let result =
+            self.inner.execute_on_frame_evm(cheatcodes, backend, evm, env, &tx_env, message);
         match result {
             Ok(result) => {
                 // evm2 runs the end hooks right after this hook returns a result.
@@ -1275,7 +1241,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             &version,
             message.caller,
             kind,
-            &message.input.to_bytes(),
+            &message.input.clone().into(),
             al_accounts,
             al_keys,
             message.value,
@@ -1324,7 +1290,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let mut request = TransactionRequestFor::<FEN>::default()
             .with_from(message.caller)
             .with_kind(kind)
-            .with_input(message.input.to_bytes())
+            .with_input(message.input.clone())
             .with_value(message.value)
             .with_nonce(nonce)
             .with_chain_id(env.chain_id())
@@ -1352,12 +1318,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             Err(err) => return not_executed(err.to_string().into_bytes().into()),
         };
 
-        let backend = &mut *self.backend;
+        let Some(backend) = self.backend.as_deref_mut() else {
+            return not_executed(Bytes::new());
+        };
         let source_fork = backend.backend().active_fork_id();
         let epoch = self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch);
         let fork_epoch = self.cheatcodes.as_deref().map(|cheats| cheats.fork_epoch);
         EvmFactoryFor::<FEN>::default().sync_transaction(evm);
-        let mut child = backend.backend().lifecycle().nested_evm(evm, &tx, Some(env), None);
+        let mut child = backend.backend().nested_evm(evm, &tx, Some(env));
         // The nested transaction continues the running one's network extension state, such as
         // Monad's reserve balance context and tracker.
         *child.ext_mut() = evm.ext().clone();
@@ -1368,23 +1336,20 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             match child.state_mut().account(address) {
                 Ok(mut account) => {
                     if account.exists() {
-                        account.mark_created();
+                        account.mark_created_keeping_storage();
                     }
                 }
                 Err(_) => return not_executed(Bytes::new()),
             }
         }
 
-        // The nested transaction reads the running transaction's origin, cheatcodes route
-        // environment changes through their opcode overrides while isolated, and fork revert
-        // diagnostics compare against the nested transaction's target.
-        let origin = self
-            .cheatcodes
-            .as_deref()
-            .and_then(|cheats| cheats.origin_override)
-            .unwrap_or(tx_origin);
+        // Cheatcodes route environment changes through their opcode overrides while isolated,
+        // the root frame reads the running transaction's origin, and fork revert diagnostics
+        // compare against the nested transaction's target.
         let previous_cheats = self.cheatcodes.as_deref_mut().map(|cheats| {
-            let previous = cheats.origin_override.take();
+            let previous = cheats.origin_override;
+            let origin = previous.unwrap_or(tx_origin);
+            cheats.origin_override = (origin != message.caller).then_some(origin);
             cheats.in_isolation_context = true;
             cheats.isolation_env = Some(outer_env);
             let root_call_target = mem::replace(
@@ -1400,7 +1365,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let previous_inner = self.inner.enter_inner_context(InnerRoot {
             depth: message.depth,
             caller: message.caller,
-            origin: (origin != message.caller).then_some(origin),
             observe: false,
         });
         let create2_redirects = self.inner.pending_create2_redirects.len();
@@ -1420,7 +1384,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         child.set_inspector(InspectorStackRefMut {
             cheatcodes: self.cheatcodes.as_deref_mut(),
             inner: &mut *self.inner,
-            backend: &mut *backend,
+            backend: Some(&mut *backend),
         });
         let executed = child.transact(&tx).map(|executed| executed.detach());
         // SAFETY: The nested EVM runs over the lifecycle's owned databases.
@@ -1488,7 +1452,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             .collect::<AddressSet>();
         let merged = if replaced {
             // Across another state replacement the running transaction keeps its warmth, and the
-            // nested transaction's on success. A restored snapshot keeps the
+            // nested transaction's on success. As on master, a restored snapshot keeps the
             // running transaction's base warmth, a fork switch brings the nested transaction's
             // warmth, and a switch back to the starting fork keeps both.
             let warmth = if restored {
@@ -1506,7 +1470,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             };
             child.commit_source(&executed.pending_state);
             // SAFETY: The nested EVM runs over the lifecycle's owned databases.
-            unsafe { backend.backend().lifecycle().end_frame_evm(evm, child) };
+            unsafe { backend.backend().end_frame_evm(evm, child) };
             if let Some(warmth) = warmth {
                 *evm.state_mut().prewarm_set_mut() = warmth;
             } else if fork_changed && !restored {
@@ -1628,7 +1592,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         interp: &mut InterpreterFor<'_, '_, FEN>,
         result: &MessageResultFor<FEN>,
     ) {
-        let backend = &*self.backend;
+        let Some(backend) = self.backend.as_deref() else { return };
         let switched = self.inner.isolated_source_fork.is_some_and(|(source, epoch)| {
             backend.backend().active_fork_id() != source
                 || epoch != self.cheatcodes.as_deref().map(|cheats| cheats.fork_epoch)
@@ -1656,9 +1620,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             return false;
         };
         warm_arbitrum_system_contract::<FEN>(interp);
-        if let Some(origin) = root.origin {
-            interp.host().tx_env_mut().origin = origin;
-        }
         if !root.observe
             && !matches!(message.kind, MessageKind::Create | MessageKind::Create2)
             && let Some(cheatcodes) = self.cheatcodes.as_deref()
@@ -1691,13 +1652,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 .recv_timeout(std::time::Duration::from_secs(1));
         }
 
-        // Other inspectors may step every opcode; only the poll opcodes count as polls.
-        if let Some(cancellation) = &self.inner.execution_cancellation
-            && CANCELLATION_POLL_OPCODES.contains(interp.opcode())
-        {
+        if let Some(cancellation) = &self.inner.execution_cancellation {
             let poll_deadline = self.inner.cancellation_poll_counter == 0;
             self.inner.cancellation_poll_counter =
-                (self.inner.cancellation_poll_counter + 1) % DEADLINE_POLL_INTERVAL;
+                self.inner.cancellation_poll_counter.wrapping_add(1);
             if cancellation.should_stop(poll_deadline) {
                 self.inner.execution_cancelled = true;
                 interp.set_stop(InstrStop::Stop);
@@ -1706,46 +1664,60 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
 
         let inner = &mut *self.inner;
-        if inner.has_static_step_inspectors {
-            if !storage_hook_active {
+        match inner.static_step_dispatch {
+            OpcodeStepDispatch::None => {}
+            OpcodeStepDispatch::FuzzerOnly => {
+                if !storage_hook_active && let Some(inspector) = &mut inner.fuzzer {
+                    Inspector::<TypesFor<FEN>>::step(&mut **inspector, interp);
+                }
+            }
+            OpcodeStepDispatch::General => {
+                if !storage_hook_active {
+                    call_inspectors!(
+                        [
+                            // These are sorted in definition order.
+                            &mut inner.edge_coverage,
+                            &mut inner.fuzzer,
+                            &mut inner.line_coverage,
+                        ],
+                        |inspector| Inspector::<TypesFor<FEN>>::step(&mut **inspector, interp),
+                    );
+                }
                 call_inspectors!(
                     [
                         // These are sorted in definition order.
-                        &mut inner.edge_coverage,
-                        &mut inner.line_coverage,
+                        &mut inner.chisel_state,
+                        &mut inner.printer,
+                        &mut inner.revert_diag,
+                        &mut inner.script_execution_inspector,
+                        &mut inner.tracer,
+                        &mut inner.debug_recorder,
                     ],
                     |inspector| Inspector::<TypesFor<FEN>>::step(&mut **inspector, interp),
                 );
             }
-            call_inspectors!(
-                [
-                    // These are sorted in definition order.
-                    &mut inner.chisel_state,
-                    &mut inner.printer,
-                    &mut inner.revert_diag,
-                    &mut inner.script_execution_inspector,
-                    &mut inner.tracer,
-                    &mut inner.debug_recorder,
-                ],
-                |inspector| Inspector::<TypesFor<FEN>>::step(&mut **inspector, interp),
-            );
         }
 
-        // Other inspectors may step instructions the cheatcodes do not.
-        let cheat_stepped = self.inner.cheat_steps.contains(interp.opcode());
-        self.inner.cheat_stepped = cheat_stepped;
         if let Some((cheats, backend, _)) = self.cheats_and_backend() {
-            if cheat_stepped {
-                crate::utils::cold_path();
-                cheats.step_hook(interp, backend);
-            } else {
-                cheats.pc = interp.pc();
+            // `vm.breakpoint` records this pc, so keep it current even when the step hook is off.
+            cheats.pc = interp.pc();
+            if cheats.has_opcode_overrides() {
+                cheats.step_opcode_overrides(interp.opcode());
+            }
+            if cheats.has_step_hooks() {
+                let opcode = interp.opcode();
+                if !cheats.has_recording_accesses_only_step_hook()
+                    || matches!(opcode, op::SLOAD | op::SSTORE)
+                {
+                    crate::utils::cold_path();
+                    cheats.step_hook(interp, backend);
+                }
             }
         }
 
-        // evm2 skips `step_end` if an inspector halted the frame in `step`. Only a stack with step
-        // inspectors can hold a recorder, so other stacks skip the check.
-        if self.inner.has_static_step_inspectors
+        // evm2 skips `step_end` if an inspector halted the frame in `step`. A recorder makes the
+        // dispatch general, so other dispatches skip the check.
+        if matches!(self.inner.static_step_dispatch, OpcodeStepDispatch::General)
             && let Some(recorder) = self.inner.debug_recorder.as_deref_mut()
             && interp.result().is_err()
         {
@@ -1770,26 +1742,18 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             );
         }
 
-        if self.inner.cheat_stepped
-            && let Some((cheats, backend, inner)) = self.cheats_and_backend()
+        if let Some(fuzzer) = &mut inner.fuzzer
+            && fuzzer.mapping_slots.is_some()
+        {
+            Inspector::<TypesFor<FEN>>::step_end(&mut **fuzzer, interp);
+        }
+
+        if let Some((cheats, backend, inner)) = self.cheats_and_backend()
+            && cheats.has_step_end_hooks()
         {
             crate::utils::cold_path();
             cheats.step_end_hook(interp, backend, inner);
         }
-    }
-
-    /// Reads the opcodes the cheatcodes step again.
-    fn refresh_cheat_steps(&mut self) {
-        self.inner.cheat_steps =
-            self.cheatcodes.as_deref().map_or(OpcodeSet::EMPTY, Cheatcodes::steps);
-    }
-
-    /// Refreshes the cheatcodes' opcodes after a message's end hooks finish mutating their state.
-    /// The message's frames overwrote whether the cheatcodes stepped the instruction that made it,
-    /// so that instruction's `step_end` runs the cheatcode hook whenever they step any instruction.
-    fn restore_cheat_stepped(&mut self) {
-        self.refresh_cheat_steps();
-        self.inner.cheat_stepped = self.inner.cheat_steps != OpcodeSet::EMPTY;
     }
 
     /// Rewrites a CREATE frame into a call to the CREATE2 factory if the cheatcodes request it.
@@ -1860,7 +1824,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         message.call_target = create2_deployer;
         message.code_address = create2_deployer;
         message.code = code;
-        message.input = Bytes::from(input).into();
+        message.input = input.into();
         message.salt = B256::ZERO;
         self.inner.pending_create2_redirects.push(message.depth);
         true
@@ -1899,45 +1863,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'_, FEN> {
-    #[inline]
-    fn inspector_config(&self) -> InspectorConfig {
-        let inner = &*self.inner;
-        #[cfg(test)]
-        if inner.early_exit_test_gate.is_some() {
-            return InspectorConfig::new();
-        }
-        let mut steps = self.cheatcodes.as_deref().map_or(OpcodeSet::EMPTY, Cheatcodes::steps);
-        if inner.execution_cancellation.is_some() {
-            steps = steps.union(CANCELLATION_POLL_OPCODES);
-        }
-        // evm2 reads the config after every call, so the common case without other stepping
-        // inspectors skips the union below.
-        if !inner.has_static_step_inspectors && !inner.has_static_step_end_inspectors {
-            return InspectorConfig::new().with_steps(steps);
-        }
-        // Steps the union of the opcodes of every inspector `step_inlined` and `step_end_inlined`
-        // call. An inspector that does not declare its opcodes steps all of them.
-        let inspectors: [Option<&dyn Inspector<TypesFor<FEN>>>; 8] = [
-            inner.tracer.as_deref().map(|i| i as _),
-            inner.chisel_state.as_deref().map(|i| i as _),
-            inner.debug_recorder.as_deref().map(|i| i as _),
-            inner.edge_coverage.as_deref().map(|i| i as _),
-            inner.line_coverage.as_deref().map(|i| i as _),
-            inner.printer.as_deref().map(|i| i as _),
-            inner.revert_diag.as_deref().map(|i| i as _),
-            inner.script_execution_inspector.as_deref().map(|i| i as _),
-        ];
-        for inspector in inspectors.into_iter().flatten() {
-            if steps == OpcodeSet::ALL {
-                break;
-            }
-            steps = steps.union(inspector.inspector_config().steps());
-        }
-        InspectorConfig::new().with_steps(steps)
-    }
-
     fn initialize_interp(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
-        self.refresh_cheat_steps();
         let depth = interp.message().depth;
         if let Some(cheats) = self.cheatcodes.as_deref_mut()
             && let Some(checkpoint) = interp.host().frame_checkpoint()
@@ -2107,7 +2033,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if let Some(outcome) = handle_arbitrum_system_call::<FEN>(
             interp,
             message,
-            self.backend.backend().active_fork_block_number(),
+            self.backend
+                .as_deref()
+                .and_then(|backend| backend.backend().active_fork_block_number()),
         ) {
             return Some(outcome);
         }
@@ -2140,7 +2068,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
     ) {
         // A frame handed off to a frame EVM already ran its end hooks there.
         if mem::take(&mut self.inner.env_handoff_ended) {
-            self.restore_cheat_stepped();
             return;
         }
         self.end_snapshot_frame(interp, message, result);
@@ -2150,7 +2077,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if self.inner.is_inner_context_root(message.depth) {
             self.capture_switch_warmth(interp, result);
             self.capture_executed_destructs(interp);
-            self.restore_cheat_stepped();
             return;
         }
 
@@ -2171,7 +2097,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if let Some(revert_diag) = self.inner.revert_diag.as_deref_mut() {
             revert_diag.frame_end();
         }
-        self.restore_cheat_stepped();
     }
 
     fn create(
@@ -2272,7 +2197,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
     ) {
         // A frame handed off to a frame EVM already ran its end hooks there.
         if mem::take(&mut self.inner.env_handoff_ended) {
-            self.restore_cheat_stepped();
             return;
         }
         // A redirected CREATE ends as the call to the factory, then becomes the CREATE result.
@@ -2287,7 +2211,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if self.inner.is_inner_context_root(message.depth) {
             self.capture_switch_warmth(interp, result);
             self.capture_executed_destructs(interp);
-            self.restore_cheat_stepped();
             return;
         }
 
@@ -2296,7 +2219,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if let Some(revert_diag) = self.inner.revert_diag.as_deref_mut() {
             revert_diag.frame_end();
         }
-        self.restore_cheat_stepped();
     }
 
     fn selfdestruct(
@@ -2318,6 +2240,24 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
     }
 }
 
+impl<FEN: FoundryEvmNetwork> FoundryInspectorExt<TypesFor<FEN>> for InspectorStackRefMut<'_, FEN> {
+    fn should_use_create2_factory(&mut self, depth: usize, message: &MessageFor<FEN>) -> bool {
+        self.cheatcodes
+            .as_deref_mut()
+            .is_some_and(|cheats| cheats.should_use_create2_factory(depth, message))
+    }
+
+    fn console_log(&mut self, msg: &str) {
+        if let Some(collector) = &mut self.inner.log_collector {
+            collector.console_log(msg);
+        }
+    }
+
+    fn create2_deployer(&self) -> Address {
+        self.inner.create2_deployer
+    }
+}
+
 impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     /// Cools the running transaction's loaded accounts and storage before an isolated STATICCALL,
     /// as for a separate transaction.
@@ -2329,7 +2269,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let is_precompile = interp.host().precompiles().contains(&recipient);
         let state = interp.host().state_mut();
         // Warmth carried across fork switches cools too.
-        if let Some(prewarm) = self.backend.backend().lifecycle().tx_prewarm() {
+        if let Some(prewarm) =
+            self.backend.as_deref().and_then(|backend| backend.backend().lifecycle().tx_prewarm())
+        {
             *state.prewarm_set_mut() = prewarm.clone();
         }
         // The recipient cools like any other account the transaction loaded, unlike the addresses
@@ -2339,8 +2281,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 .cheatcodes
                 .as_deref()
                 .is_some_and(|cheats| cheats.tx_warm_addresses.contains(&recipient))
+            && let Some(backend) = self.backend.as_deref_mut()
         {
-            let backend = &mut *self.backend;
             // Only take a mutable backend, which clones a borrowed one, if the lifecycle tracks
             // the recipient's warmth.
             if backend.backend().lifecycle().tracks_prewarm(&recipient) {
@@ -2402,14 +2344,23 @@ impl InspectorStackInner {
 
     #[inline]
     const fn refresh_static_step_dispatch(&mut self) {
-        self.has_static_step_inspectors = self.chisel_state.is_some()
-            || self.edge_coverage.is_some()
-            || self.line_coverage.is_some()
-            || self.printer.is_some()
-            || self.revert_diag.is_some()
-            || self.script_execution_inspector.is_some()
-            || self.tracer.is_some()
-            || self.debug_recorder.is_some();
+        self.static_step_dispatch = if self.chisel_state.is_none()
+            && self.edge_coverage.is_none()
+            && self.line_coverage.is_none()
+            && self.printer.is_none()
+            && self.revert_diag.is_none()
+            && self.script_execution_inspector.is_none()
+            && self.tracer.is_none()
+            && self.debug_recorder.is_none()
+        {
+            if self.fuzzer.is_some() {
+                OpcodeStepDispatch::FuzzerOnly
+            } else {
+                OpcodeStepDispatch::None
+            }
+        } else {
+            OpcodeStepDispatch::General
+        };
     }
 
     #[inline]
@@ -2438,17 +2389,23 @@ impl InspectorStackInner {
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
         env: EvmEnvFor<FEN>,
+        tx_env: &TxEnvFor<FEN>,
         message: &mut MessageFor<FEN>,
     ) -> Result<MessageResultFor<FEN>, ExecutionError> {
         // SAFETY: `evm` runs over the lifecycle's owned databases, and so does the frame EVM,
         // which only lives for this call; its inspector is released before its state moves back.
-        let mut frame = unsafe { backend.backend().lifecycle().begin_frame_evm(evm, env) };
-        frame.set_inspector(InspectorStackRefMut { cheatcodes, inner: self, backend });
+        let mut frame = unsafe { backend.backend().begin_frame_evm(evm, env) };
+        frame.set_inspector(InspectorStackRefMut {
+            cheatcodes,
+            inner: self,
+            backend: Some(backend),
+        });
+        *frame.tx_env_mut() = tx_env.clone();
         let result = Host::execute_message(&mut frame, message);
         // SAFETY: See above.
         let frame = unsafe { release_inspector(frame) };
         // SAFETY: See above.
-        unsafe { backend.backend().lifecycle().end_frame_evm(evm, frame) };
+        unsafe { backend.backend().end_frame_evm(evm, frame) };
         result
     }
 
@@ -2488,8 +2445,7 @@ impl InspectorStackInner {
         untracked: bool,
     ) -> eyre::Result<ExecutedNested<TypesFor<FEN>>> {
         let caller = prepared.tx().signer();
-        let previous =
-            self.enter_inner_context(InnerRoot { depth, caller, origin: None, observe: true });
+        let previous = self.enter_inner_context(InnerRoot { depth, caller, observe: true });
         // The replay reads its own transaction environment, not the surrounding execution's.
         let origin_override = cheats.origin_override.take();
         let gas_price = cheats.gas_price.take();
@@ -2503,8 +2459,11 @@ impl InspectorStackInner {
             &mut blob_hashes_override,
         );
         let in_replay = mem::replace(&mut cheats.in_replay, true);
-        let mut inspector =
-            InspectorStackRefMut { cheatcodes: Some(&mut *cheats), inner: &mut *self, backend };
+        let mut inspector = InspectorStackRefMut {
+            cheatcodes: Some(&mut *cheats),
+            inner: &mut *self,
+            backend: Some(backend),
+        };
         let executed = prepared.execute(evm, Some(&mut inspector), untracked);
         cheats.snapshot_restores = snapshot_restores;
         cheats.in_replay = in_replay;
@@ -2544,7 +2503,7 @@ fn apply_mocked_function<FEN: FoundryEvmNetwork>(
         // Check if any mock function set for call data or if catch-all mock function set
         // for selector.
         if let Some(target) = mocks
-            .get(&*message.input)
+            .get(&message.input[..])
             .or_else(|| message.input.get(..4).and_then(|selector| mocks.get(selector)))
         {
             let target = *target;
@@ -2622,9 +2581,8 @@ fn account_creation_state_gas<FEN: FoundryEvmNetwork>(
     if !features.contains(EvmFeatures::EIP8037)
         || !(is_create || !message.value.is_zero())
         || !evm
-            .state_mut()
-            .account(&message.destination)
-            .is_ok_and(|account| account.is_empty_for_new_account_gas(features))
+            .target_is_empty_for_new_account_gas(&message.destination, features)
+            .unwrap_or_default()
     {
         return 0;
     }
@@ -2678,16 +2636,28 @@ fn handle_arbitrum_system_call<FEN: FoundryEvmNetwork>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::executors::default_env;
-    use foundry_evm_core::backend::Backend;
-    use foundry_evm_traces::InternalTraceMode;
 
     #[test]
     fn opcode_dispatch_defaults_to_no_static_inspectors() {
         let stack = InspectorStackInner::default();
 
-        assert!(!stack.has_static_step_inspectors);
+        assert_eq!(stack.static_step_dispatch, OpcodeStepDispatch::None);
         assert!(!stack.has_static_step_end_inspectors);
+    }
+
+    #[test]
+    fn opcode_dispatch_uses_fuzzer_fast_path_when_fuzzer_is_only_static_step_inspector() {
+        let mut stack = InspectorStack::<EthEvmNetwork>::new();
+        stack.set_fuzzer(Fuzzer::new(16, None));
+
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::FuzzerOnly);
+        assert!(!stack.inner.has_static_step_end_inspectors);
+
+        stack.collect_line_coverage(true);
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::General);
+
+        stack.collect_line_coverage(false);
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::FuzzerOnly);
     }
 
     #[test]
@@ -2695,23 +2665,23 @@ mod tests {
         let mut stack = InspectorStack::<EthEvmNetwork>::new();
 
         stack.print(true);
-        assert!(stack.inner.has_static_step_inspectors);
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::General);
         assert!(stack.inner.has_static_step_end_inspectors);
 
         stack.print(false);
-        assert!(!stack.inner.has_static_step_inspectors);
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
         assert!(!stack.inner.has_static_step_end_inspectors);
 
         stack.tracing_requirements(TraceRequirements::none().with_calls(true));
-        assert!(stack.inner.has_static_step_inspectors);
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::General);
         assert!(stack.inner.has_static_step_end_inspectors);
 
         stack.tracing_requirements(TraceRequirements::none());
-        assert!(!stack.inner.has_static_step_inspectors);
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
         assert!(!stack.inner.has_static_step_end_inspectors);
 
         stack.set_chisel(0);
-        assert!(!stack.inner.has_static_step_inspectors);
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
         assert!(stack.inner.has_static_step_end_inspectors);
     }
 
@@ -2720,95 +2690,14 @@ mod tests {
         let mut stack = InspectorStack::<EthEvmNetwork>::new();
 
         stack.script(Address::with_last_byte(1));
-        assert!(stack.inner.has_static_step_inspectors);
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::General);
         assert!(!stack.inner.has_static_step_end_inspectors);
 
         let mut stack = InspectorStack::<EthEvmNetwork>::new();
         stack.collect_edge_coverage(true);
-        assert!(stack.inner.has_static_step_inspectors);
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::General);
         stack.collect_edge_coverage(false);
-        assert!(!stack.inner.has_static_step_inspectors);
-    }
-
-    #[test]
-    fn inspector_config_unions_the_opcodes_the_hooks_need() {
-        let mut backend = Backend::spawn(None, default_env::<EthEvmNetwork>()).unwrap();
-        let mut stack = InspectorStack::<EthEvmNetwork>::new();
-        let mut steps = |stack: &mut InspectorStack| {
-            stack.as_inspector(&mut backend).inspector_config().steps()
-        };
-        let set = |opcodes: &[u8]| opcodes.iter().copied().collect::<OpcodeSet>();
-
-        stack.set_cheatcodes(Cheatcodes::new(Default::default()));
-        assert_eq!(steps(&mut stack), OpcodeSet::EMPTY);
-
-        // Without other stepping inspectors, the fuzzer steps nothing and cancellation polls at
-        // jumps and calls.
-        let mut campaign = stack.clone();
-        campaign.set_fuzzer(Fuzzer::default());
-        assert_eq!(steps(&mut campaign), OpcodeSet::EMPTY);
-        campaign.set_execution_cancellation(EvmExecutionCancellation::early_exit(EarlyExit::new(
-            false,
-        )));
-        assert_eq!(
-            steps(&mut campaign),
-            set(&[
-                op::JUMP,
-                op::JUMPI,
-                op::CALL,
-                op::CALLCODE,
-                op::DELEGATECALL,
-                op::STATICCALL,
-                op::CREATE,
-                op::CREATE2,
-            ])
-        );
-
-        // Call traces only step for the revert diagnostic.
-        stack.tracing_requirements(TraceRequirements::none().with_calls(true));
-        assert_eq!(steps(&mut stack), set(&[op::REVERT, op::EXTCODESIZE]));
-
-        stack.cheatcodes.as_mut().unwrap().recording_accesses = true;
-        assert_eq!(steps(&mut stack), set(&[op::REVERT, op::EXTCODESIZE, op::SLOAD, op::SSTORE]));
-        stack.cheatcodes.as_mut().unwrap().recording_accesses = false;
-
-        // Internal decoding records only jumps.
-        stack.tracing_requirements(
-            TraceRequirements::none().with_decode_internal(InternalTraceMode::Simple),
-        );
-        assert_eq!(steps(&mut stack), set(&[op::REVERT, op::EXTCODESIZE, op::JUMP, op::JUMPDEST]));
-
-        stack.tracing_requirements(TraceRequirements::none().with_all_steps(true));
-        assert_eq!(steps(&mut stack), OpcodeSet::ALL);
-        stack.tracing_requirements(TraceRequirements::none().with_state_changes(true));
-        assert_eq!(steps(&mut stack), OpcodeSet::ALL);
-
-        // The fuzzer does not step, and cancellation polls at jumps and calls.
-        stack.tracing_requirements(TraceRequirements::none().with_calls(true));
-        stack.set_fuzzer(Fuzzer::default());
-        assert_eq!(steps(&mut stack), set(&[op::REVERT, op::EXTCODESIZE]));
-        stack.set_execution_cancellation(EvmExecutionCancellation::early_exit(EarlyExit::new(
-            false,
-        )));
-        assert_eq!(
-            steps(&mut stack),
-            set(&[
-                op::REVERT,
-                op::EXTCODESIZE,
-                op::JUMP,
-                op::JUMPI,
-                op::CALL,
-                op::CALLCODE,
-                op::DELEGATECALL,
-                op::STATICCALL,
-                op::CREATE,
-                op::CREATE2,
-            ])
-        );
-
-        // An inspector without its own config steps every opcode.
-        stack.print(true);
-        assert_eq!(steps(&mut stack), OpcodeSet::ALL);
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
     }
 
     #[test]

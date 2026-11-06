@@ -13,7 +13,6 @@ use foundry_compilers::{
 };
 use rayon::prelude::*;
 use std::{
-    cell::OnceCell,
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     str::FromStr,
@@ -182,8 +181,7 @@ impl<'a> Linker<'a> {
         canonical: bool,
     ) -> Result<(), LinkerError> {
         let file_relative = self.project_relative_path(file);
-        // Canonicalizing hits the file system, so only do it for a reference that needs it.
-        let canonical_file = OnceCell::new();
+        let canonical_file = self.canonical_path(&file_relative);
         let mut references = Vec::new();
         for (reference, libraries) in &bytecode.link_references {
             if !libraries.contains_key(name) {
@@ -197,9 +195,7 @@ impl<'a> Linker<'a> {
             if !canonical {
                 continue;
             }
-            let canonical_file =
-                canonical_file.get_or_init(|| self.canonical_path(&file_relative)).as_deref();
-            if !self.path_matches(Path::new(reference), &file_relative, canonical_file) {
+            if !self.path_matches(Path::new(reference), &file_relative, canonical_file.as_deref()) {
                 continue;
             }
             if let Some(id) =
@@ -692,12 +688,14 @@ impl<'a> Linker<'a> {
         let mut addresses = BTreeMap::new();
         let mut libs_to_deploy = Vec::new();
         for &id in &needed_libraries {
-            let address = self.configured_library_address(id, &libraries)?.unwrap_or_else(|| {
+            let address = if let Some(address) = self.configured_library_address(id, &libraries)? {
+                address
+            } else {
                 let address = sender.create(nonce);
                 nonce += 1;
                 libs_to_deploy.push((id, address));
                 address
-            });
+            };
             addresses.insert(id, address);
         }
 

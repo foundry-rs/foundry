@@ -546,7 +546,7 @@ impl VerifyBytecodeArgs {
                 endpoint_identity.as_ref(),
                 network_was_inferred,
             );
-            let (evm_env, mut executor) = crate::utils::get_tracing_executor::<FEN>(
+            let (evm_env, _, mut executor) = crate::utils::get_tracing_executor::<FEN>(
                 &mut fork_config,
                 deploy_block,
                 deploy_block,
@@ -829,7 +829,7 @@ impl VerifyBytecodeArgs {
                 endpoint_identity.as_ref(),
                 network_was_inferred,
             );
-            let (mut evm_env, executor) = crate::utils::get_tracing_executor::<FEN>(
+            let (mut evm_env, _tx, executor) = crate::utils::get_tracing_executor::<FEN>(
                 &mut fork_config,
                 simulation_block - 1, // env.fork_block_number
                 simulation_block,

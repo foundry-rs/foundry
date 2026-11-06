@@ -2721,12 +2721,12 @@ contract OptimizationTest {
     function invariant_optimize() public view returns (int256) { return queue.value(); }
 }
 "#);
-    // Seed 57 reaches 2 with two pops among four pushes. Dropping the pops reaches 4; dropping them
-    // in blocks with pushes would keep 2.
-    cmd.args(["test", "--fuzz-seed", "57", "-vv"]).assert_success().stdout_eq(str![[r#"
+    // Seed 3 reaches 3 with a pop among four pushes. Dropping the pop reaches 4; dropping it in a
+    // block with a push would keep 3.
+    cmd.args(["test", "--fuzz-seed", "3", "-vv"]).assert_success().stdout_eq(str![[r#"
 ...
 [PASS]
-	[Best sequence] (original: 9, shrunk: 5)
+	[Best sequence] (original: 12, shrunk: 5)
 [..]calldata=push() args=[]
 [..]calldata=push() args=[]
 [..]calldata=push() args=[]
@@ -2766,22 +2766,24 @@ contract OptimizationTest {
 ...
 [PASS]
 	[Best sequence] (original: 10, shrunk: 2)
-		sender=0x000000000000000000000000000000000000019e addr=[test/Optimization.t.sol:Handler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f roll=3448 calldata=start() args=[]
-		sender=0x00000000000000000000000000000000000002A9 addr=[test/Optimization.t.sol:Handler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f roll=1226 calldata=noop() args=[]
- invariant_optimize() (best: 4675, runs: 1, calls: 10)
+[..]roll=4324 calldata=start() args=[]
+[..]roll=1518 calldata=noop() args=[]
+ invariant_optimize() (best: 5843, runs: 1, calls: 10)
 ...
 "#]]);
     // The rerun replays the persisted witness, which must still reach the reported value.
     prj.update_config(|config| config.invariant.runs = 0);
-    cmd.forge_fuse().args(["test", "--fuzz-seed", "1", "-vv"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse().args(["test", "--fuzz-seed", "1", "-vv"]).assert_success().stdout_eq(str![[
+        r#"
 ...
 [PASS]
 	[Best sequence] (original: 2, shrunk: 2)
-		sender=0x000000000000000000000000000000000000019e addr=[test/Optimization.t.sol:Handler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f roll=3448 calldata=start() args=[]
-		sender=0x00000000000000000000000000000000000002A9 addr=[test/Optimization.t.sol:Handler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f roll=1226 calldata=noop() args=[]
- invariant_optimize() (best: 4675, runs: 0, calls: 0)
+[..]roll=4324 calldata=start() args=[]
+[..]roll=1518 calldata=noop() args=[]
+ invariant_optimize() (best: 5843, runs: 0, calls: 0)
 ...
-"#]]);
+"#
+    ]]);
 }
 
 #[forgetest]
@@ -2811,9 +2813,9 @@ contract OptimizationTest {
     function invariant_optimize() public view returns (int256) { return handler.score(); }
 }
 "#);
-    // Seed 2 calls penalize, earn, finish. Dropping penalize makes earn assert but keeps its warp,
+    // Seed 7 calls penalize, earn, finish. Dropping penalize makes earn assert but keeps its warp,
     // which scores 1000; the campaign would fail on that assertion, so the witness must keep it.
-    cmd.args(["test", "--fuzz-seed", "2", "-vv"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--fuzz-seed", "7", "-vv"]).assert_success().stdout_eq(str![[r#"
 ...
 [PASS]
 	[Best sequence] (original: 3, shrunk: 3)
@@ -3617,7 +3619,8 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 "#]]);
 }
 
-// Handler calls are committed within a run, while invariant predicate writes are discarded.
+// Handler calls are committed within a run, while invariant predicate writes are discarded and
+// each run starts again from the post-setup state.
 #[forgetest]
 fn invariant_checks_do_not_commit_state(prj: _, cmd: _) {
     prj.update_config(|config| {
@@ -3640,6 +3643,7 @@ contract Handler {
 
     function step() external {
         require(!poisoned, "predicate write leaked");
+        require(count < 4, "run baseline leaked");
         count++;
     }
 
@@ -3667,8 +3671,7 @@ contract InvariantCheckStateTest {
     }
 
     function afterInvariant() public view {
-        // Runs may resume from snapshots of earlier runs, so the count is at least the depth.
-        require(handler.count() >= 4, "handler state not retained");
+        require(handler.count() == 4, "handler state not retained");
         require(!handler.poisoned(), "predicate write leaked at end");
     }
 }
@@ -3777,136 +3780,4 @@ Assertion Tests: 1 assertion bug(s) found
 ...
 "#]]);
     }
-}
-
-// A handler call that reverts at its root frame commits none of its `deal` or nonce writes.
-#[forgetest_init]
-fn invariant_reverted_call_drops_persistent_writes(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.fuzz.seed = Some(U256::ONE);
-        config.invariant.runs = 2;
-        config.invariant.depth = 20;
-        config.invariant.fail_on_revert = false;
-    });
-    prj.add_test(
-        "RevertedCallWrites.t.sol",
-        r#"
-import "forge-std/Test.sol";
-
-address constant TARGET = 0x6Fd0A0CFF9A87aDF51695b40b4fA267855a8F4c6;
-address constant SENDER = 0x5316812db67073C4d4af8BB3000C5B86c2877e94;
-
-contract RevertingHandler is Test {
-    function dealThenRevert() external {
-        vm.deal(TARGET, 123);
-        revert();
-    }
-
-    function setNonceThenRevert() external {
-        vm.setNonce(TARGET, 5);
-        revert();
-    }
-
-    function nestedDealThenRevert() external {
-        try this.dealThenRevert() {} catch {}
-        revert();
-    }
-
-    function executeThenRevert() external {
-        // Transfers 17 wei from SENDER to TARGET at nonce 0 on chain 1.
-        vm.executeTransaction(hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856");
-        revert();
-    }
-
-    // Succeeds, so the campaign asserts the invariants after it.
-    function noop() external {}
-}
-
-contract RevertedCallWritesTest is Test {
-    function setUp() public {
-        vm.chainId(1);
-        vm.deal(SENDER, 1 ether);
-        new RevertingHandler();
-        // Sending from TARGET would bump its nonce itself.
-        targetSender(address(0x1000));
-    }
-
-    function invariant_reverted_writes_dropped() public view {
-        require(TARGET.balance == 0, "reverted balance committed");
-        require(vm.getNonce(TARGET) == 0, "reverted setNonce committed");
-        require(SENDER.balance == 1 ether, "reverted transaction balance committed");
-        require(vm.getNonce(SENDER) == 0, "reverted transaction nonce committed");
-    }
-}
-"#,
-    );
-
-    for isolate in [false, true] {
-        prj.update_config(|config| config.isolate = isolate);
-        cmd.forge_fuse()
-            .args(["test", "--mc", "RevertedCallWritesTest"])
-            .assert_success()
-            .stdout_eq(str![[r#"
-...
-Ran 1 test for test/RevertedCallWrites.t.sol:RevertedCallWritesTest
-[PASS] invariant_reverted_writes_dropped() ([..])
-...
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-...
-"#]]);
-    }
-}
-
-// Reverted handler calls are committed, so they must not roll back deals that earlier committed
-// transactions made. Isolation restores the pre-call state, which would mask this.
-#[forgetest_init]
-fn invariant_reverted_calls_keep_committed_deals(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.isolate = false;
-        config.invariant.runs = 4;
-        config.invariant.depth = 16;
-        config.invariant.fail_on_revert = false;
-    });
-
-    prj.add_test(
-        "InvariantDealRevertedCalls.t.sol",
-        r#"
-import "forge-std/Test.sol";
-
-contract DealHandler {
-    function succeed() external {}
-
-    function fail() external {
-        revert();
-    }
-}
-
-contract InvariantDealRevertedCallsTest is Test {
-    address constant SENDER = address(0xA11CE);
-
-    function setUp() public {
-        targetContract(address(new DealHandler()));
-        targetSender(SENDER);
-        vm.deal(SENDER, 100 ether);
-    }
-
-    function invariant_deal_survives_reverted_calls() public view {
-        assertEq(SENDER.balance, 100 ether);
-    }
-}
-"#,
-    );
-
-    assert_invariant(cmd.args(["test", "--fuzz-seed", "1"])).success().stdout_eq(str![[r#"
-...
-Ran 1 test for test/InvariantDealRevertedCalls.t.sol:InvariantDealRevertedCallsTest
-[PASS] invariant_deal_survives_reverted_calls() ([RUNS])
-
-[STATS]
-
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-
-"#]]);
 }

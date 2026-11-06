@@ -45,7 +45,6 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
-use foundry_debugger::ensure_dump_dir;
 use foundry_evm::{
     backend::Backend,
     core::{
@@ -254,7 +253,7 @@ pub struct ScriptArgs {
     #[arg(
         long,
         requires = "debug",
-        value_hint = ValueHint::DirPath,
+        value_hint = ValueHint::FilePath,
         value_name = "PATH"
     )]
     pub dump: Option<PathBuf>,
@@ -278,7 +277,9 @@ pub struct ScriptArgs {
     )]
     pub confirmations: u64,
 
-    /// Skips script confirmation prompts, including no-code targets and oversized contracts.
+    /// Disables interactive prompts that might appear when deploying big contracts.
+    ///
+    /// For more info on the contract size limit, see EIP-170: <https://eips.ethereum.org/EIPS/eip-170>
     #[arg(long)]
     pub non_interactive: bool,
 
@@ -459,10 +460,6 @@ impl ScriptArgs {
             );
         }
 
-        if let Some(dir) = &self.dump {
-            ensure_dump_dir(dir)?;
-        }
-
         if self.wallet_session.enabled {
             return self.run_wallet_session_wrapper();
         }
@@ -507,7 +504,6 @@ impl ScriptArgs {
                     } else {
                         bundled.broadcast().await?
                     };
-                    broadcasted.print_deployed_contracts()?;
                     if broadcasted.args.verify {
                         broadcasted.verify().await?;
                     }
@@ -724,7 +720,6 @@ impl ScriptArgs {
 
     async fn broadcast_bundle<FEN: FoundryEvmNetwork>(bundled: BundledState<FEN>) -> Result<()> {
         let broadcasted = bundled.wait_for_pending().await?.broadcast().await?;
-        broadcasted.print_deployed_contracts()?;
 
         if broadcasted.args.verify {
             broadcasted.verify().await?;
@@ -876,15 +871,11 @@ impl ScriptArgs {
         }
 
         // Only prompt if we're broadcasting and we've not disabled interactivity.
-        if prompt_user && !self.non_interactive {
-            if !dialoguer::console::Term::stderr().is_term() {
-                eyre::bail!(
-                    "contract above the code size limit requires confirmation; pass --non-interactive to continue without confirmation"
-                );
-            }
-            if !Confirm::new().with_prompt("Do you wish to continue?".to_string()).interact()? {
-                eyre::bail!("User canceled the script.");
-            }
+        if prompt_user
+            && !self.non_interactive
+            && !Confirm::new().with_prompt("Do you wish to continue?".to_string()).interact()?
+        {
+            eyre::bail!("User canceled the script.");
         }
 
         Ok(())
@@ -1037,7 +1028,6 @@ impl<N: Network> ScriptResult<N> {
                         exact_artifact_match,
                         init_code,
                         creator_code_addresses,
-                        label: None,
                     })
                 })
             })
@@ -1295,7 +1285,8 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
         self.source_chain_id = fork_chain_id;
-        self.hardfork = resolve_execution_spec::<EvmFactoryFor<FEN>>(
+        self.hardfork = resolve_execution_spec(
+            &EvmFactoryFor::<FEN>::default(),
             self.config.evm_version,
             self.config.hardfork,
             evm_env,

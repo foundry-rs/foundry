@@ -655,7 +655,7 @@ impl CallArgs {
 
             let trace_requirements = TraceRequirements::none()
                 .with_calls(true)
-                .with_debug_recording(debug)
+                .with_debug(debug)
                 .with_decode_internal(if tracing.decode_internal {
                     InternalTraceMode::Full
                 } else {
@@ -696,7 +696,6 @@ impl CallArgs {
                 );
                 evm_env.set_feature(EvmFeatures::FEE_CHARGE, false);
                 evm_env.set_feature(EvmFeatures::BALANCE_CHECK, false);
-                evm_env.set_feature(EvmFeatures::BALANCE_TOP_UP, false);
                 evm_env.block.basefee = executor.evm_env().block.basefee;
             }
             if tx.gas_price().is_some() {

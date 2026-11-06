@@ -1,10 +1,12 @@
 use std::fmt::{self, Display};
 
 use crate::{
-    Cheatcode, Cheatcodes, CheatcodesCore, CheatsCtxt, Result, Vm::*, expected_emit::ExpectedEmit,
+    Cheatcode, Cheatcodes, CheatcodesCore, CheatsCtxt, Result,
+    Vm::*,
+    expected_emit::{ExpectedEmit, observe_log},
 };
 use alloy_primitives::{
-    Address, Bytes, LogData as RawLog, U256, hex, keccak256,
+    Address, Bytes, Log, LogData as RawLog, U256, hex, keccak256,
     map::{HashMap, hash_map::Entry},
 };
 use alloy_sol_types::{SolCall, SolValue};
@@ -918,6 +920,14 @@ fn expect_emit<FEN: FoundryEvmNetwork>(
     }
 
     Ok(Default::default())
+}
+
+/// Observes `log` for the `expectEmit` cheatcodes, returning the failure reason of a mismatch.
+pub(crate) fn handle_expect_emit<FEN: FoundryEvmNetwork>(
+    state: &mut Cheatcodes<FEN>,
+    log: &Log,
+) -> Option<&'static str> {
+    observe_log(&mut state.expected_emits, log)
 }
 
 fn expect_create<FEN: FoundryEvmNetwork>(

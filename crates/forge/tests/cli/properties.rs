@@ -194,15 +194,15 @@ esac
 possible bug (2/3 agents): The fee is capped at 100 ether; src/Fee.sol:7 fee() caps the fee at 10 ether.
   agent 1: FeeCapTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: The fee is capped at 100 ether; src/Fee.sol:7 fee() caps the fee at 10 ether.
-    file: cache/properties/run-1/agent-1/tests/FeeCap.t.sol
+    file: cache/properties/agent-1/tests/FeeCap.t.sol
   agent 2: FeeLimitTest::testReachesCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: fee(amount) reaches the documented cap for large amounts (src/Fee.sol:7).
-    file: cache/properties/run-1/agent-2/tests/FeeLimit.t.sol
+    file: cache/properties/agent-2/tests/FeeLimit.t.sol
 1 possible bug(s) below the quorum of 2:
 single-agent (1/3 agents): A zero amount is charged; src/Fee.sol:11 charges() returns false below 100.
   agent 3: FeeChargesTest::testChargesZero (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: A zero amount is charged; src/Fee.sol:11 charges() returns false below 100.
-    file: cache/properties/run-1/agent-3/tests/FeeCharges.t.sol
+    file: cache/properties/agent-3/tests/FeeCharges.t.sol
 agent usage: 3000 input tokens, 600 output tokens, 0.03 USD
 added 2 generated test file(s):
   test/generated/run-1-agent-1/FeeSpec.t.sol
@@ -224,8 +224,8 @@ skipped 2 generated test file(s) that repeat a file of another agent or the proj
         ]]
     );
     // Forge keeps a copy of each test that an agent wrote, also of the failing ones.
-    assert!(prj.root().join("cache/properties/run-1/agent-3/tests/FeeCharges.t.sol").exists());
-    assert!(prj.root().join("cache/properties/run-1/agent-1/prompt.md").exists());
+    assert!(prj.root().join("cache/properties/agent-3/tests/FeeCharges.t.sol").exists());
+    assert!(prj.root().join("cache/properties/agent-1/prompt.md").exists());
 }
 
 // A kept test file keeps the file that it imports, while an unrelated file is dropped.
@@ -332,7 +332,7 @@ SOL
 no generated test file was kept
 
 "#]]).stderr_eq(str![[r#"
-Warning: 3 failing test(s) used something that Forge blocks (ffi, environment, network, or inline config), so they are not possible bugs: see cache/properties/run-1/report.json
+Warning: 3 failing test(s) used something that Forge blocks (ffi, environment, network, or inline config), so they are not possible bugs: see cache/properties/report.json
 
 "#]]);
     assert!(!marker.exists());
@@ -353,7 +353,7 @@ Warning: 3 failing test(s) used something that Forge blocks (ffi, environment, n
 
     cmd.forge_fuse().args(&args).args(["--agents", "1", "--allow-ffi"]).assert_success();
     assert!(marker.exists());
-    assert!(prj.root().join("test/generated/run-2-agent-1/Ffi.t.sol").exists());
+    assert!(prj.root().join("test/generated/run-1-agent-1/Ffi.t.sol").exists());
 }
 
 // Generated tests cannot read Forge's environment or open network connections. Their failures
@@ -384,7 +384,7 @@ SOL
 no generated test file was kept
 
 "#]]).stderr_eq(str![[r#"
-Warning: 4 failing test(s) used something that Forge blocks (ffi, environment, network, or inline config), so they are not possible bugs: see cache/properties/run-1/report.json
+Warning: 4 failing test(s) used something that Forge blocks (ffi, environment, network, or inline config), so they are not possible bugs: see cache/properties/report.json
 
 "#]]);
 
@@ -438,21 +438,21 @@ exit 3
 possible bug (2/2 agents): The fee is capped at 100 ether; src/Fee.sol:7 fee().
   agent 1: FeeCapTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: The fee is capped at 100 ether; src/Fee.sol:7 fee().
-    file: cache/properties/run-1/agent-1/tests/FeeCap.t.sol
+    file: cache/properties/agent-1/tests/FeeCap.t.sol
   agent 2: FeeCapTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: The fee is capped at 100 ether; src/Fee.sol:7 fee().
-    file: cache/properties/run-1/agent-2/tests/FeeCap.t.sol
+    file: cache/properties/agent-2/tests/FeeCap.t.sol
 no generated test file was kept
 
 "#]]).stderr_eq(str![[r#"
 Warning: 1 agent(s) reached the timeout, so Forge ended them and ran the tests that they wrote
-Error: agent 2: agent command failed (exit status: 3): see cache/properties/run-1/agent-2/agent.log
+Error: agent 2: agent command failed (exit status: 3): see cache/properties/agent-2/agent.log
 
 "#]]);
 
     assert_eq!(report(&prj)["timed_out"].to_string(), "[1]");
     assert_eq!(
-        fs::read_to_string(prj.root().join("cache/properties/run-1/agent-2/agent.log")).unwrap(),
+        fs::read_to_string(prj.root().join("cache/properties/agent-2/agent.log")).unwrap(),
         "quota exceeded\n"
     );
     // The process that the agent started in the background ended with it.
@@ -680,19 +680,19 @@ SOL
 possible bug (1/1 agents): The fee rounds up (contracts/Fee.sol:4).
   agent 1: FeeRoundingTest::testHiddenRoundsUp (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: The fee rounds up (contracts/Fee.sol:4).
-    file: cache/properties/run-1/agent-1/tests/FeeRounding.t.sol
+    file: cache/properties/agent-1/tests/FeeRounding.t.sol
 possible bug (1/1 agents): FeeInvariantTest::invariant_totalStaysZero
   agent 1: FeeInvariantTest::invariant_totalStaysZero (seed 24301: assertion failed: [..] != 0; counterexample: [..]; seed 12648430: assertion failed: [..] != 0; counterexample: [..])
-    file: cache/properties/run-1/agent-1/tests/FeeInvariant.t.sol
+    file: cache/properties/agent-1/tests/FeeInvariant.t.sol
 possible bug (1/1 agents): HandlerInvariantTest::invariant_one
   agent 1: HandlerInvariantTest::invariant_one (seed 24301: handler test/generated/run-1-agent-1/Handler.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..]; seed 12648430: handler test/generated/run-1-agent-1/Handler.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..])
-    file: cache/properties/run-1/agent-1/tests/Handler.t.sol
-1 generated test file(s) did not compile or were not allowed: see cache/properties/run-1/report.json
+    file: cache/properties/agent-1/tests/Handler.t.sol
+1 generated test file(s) did not compile or were not allowed: see cache/properties/report.json
 added 1 generated test file(s):
   test/generated/run-1-agent-1/FeeCheck.t.sol
 
 "#]]).stderr_eq(str![[r#"
-Warning: 1 failing test(s) used something that Forge blocks (ffi, environment, network, or inline config), so they are not possible bugs: see cache/properties/run-1/report.json
+Warning: 1 failing test(s) used something that Forge blocks (ffi, environment, network, or inline config), so they are not possible bugs: see cache/properties/report.json
 
 "#]]);
     assert_data_eq!(
@@ -718,7 +718,7 @@ no generated test file was kept
 "#]]);
     assert_eq!(
         report(&prj)["duplicates"].to_string(),
-        r#"["test/generated/run-3-agent-1/FeeCheck.t.sol"]"#
+        r#"["test/generated/run-2-agent-1/FeeCheck.t.sol"]"#
     );
 }
 
@@ -872,7 +872,7 @@ SOL
 "#,
     );
     cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
-1 generated test file(s) did not compile or were not allowed: see cache/properties/run-1/report.json
+1 generated test file(s) did not compile or were not allowed: see cache/properties/report.json
 added 1 generated test file(s):
   test/generated/run-1-agent-1/Passing.t.sol
 
@@ -972,15 +972,15 @@ esac
 possible bug (2/4 agents): shares(assets) returns one share per asset; src/Vault.sol:17 shares() halves the assets.
   agent 1: VaultBugTest::testShares (seed 24301: assertion failed: 5 != 10; seed 12648430: assertion failed: 5 != 10)
     claim: shares(assets) returns one share per asset; src/Vault.sol:17 shares() halves the assets.
-    file: cache/properties/run-1/agent-1/tests/VaultBug.t.sol
+    file: cache/properties/agent-1/tests/VaultBug.t.sol
   agent 2: VaultBugTest::testShares (seed 24301: assertion failed: 5 != 10; seed 12648430: assertion failed: 5 != 10)
     claim: shares(assets) returns one share per asset; src/Vault.sol:17 shares() halves the assets.
-    file: cache/properties/run-1/agent-2/tests/VaultBug.t.sol
+    file: cache/properties/agent-2/tests/VaultBug.t.sol
 1 possible bug(s) below the quorum of 2:
 single-agent (1/4 agents): deposit(amount) accepts a zero amount; src/Vault.sol:11 deposit() reverts ZeroAmount.
   agent 1: VaultBugTest::testDepositZero (seed 24301: ZeroAmount(); seed 12648430: ZeroAmount())
     claim: deposit(amount) accepts a zero amount; src/Vault.sol:11 deposit() reverts ZeroAmount.
-    file: cache/properties/run-1/agent-1/tests/VaultBug.t.sol
+    file: cache/properties/agent-1/tests/VaultBug.t.sol
 added 1 generated test file(s):
   test/generated/run-1-agent-3/VaultSpec.t.sol
 skipped 1 generated test file(s) that repeat a file of another agent or the project
@@ -1020,12 +1020,12 @@ SOL
         str![[r#"
 possible bug (1/1 agents): FeeCapTest::testDocumentedCap
   agent 1: FeeCapTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
-    file: cache/properties/run-1/agent-1/tests/FeeCap.t.sol
+    file: cache/properties/agent-1/tests/FeeCap.t.sol
 
 "#]],
     )
     .stderr_eq(str![[r#"
-Error: 1 project file(s) changed while the agents ran, so Forge kept no generated test: see cache/properties/run-1/report.json
+Error: 1 project file(s) changed while the agents ran, so Forge kept no generated test: see cache/properties/report.json
 
 "#]]);
 
@@ -1077,7 +1077,7 @@ SOL
     cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
 possible bug (1/1 agents): FeeCapTest::testDocumentedCap
   agent 1: FeeCapTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
-    file: cache/properties/run-1/agent-1/tests/FeeCap.t.sol
+    file: cache/properties/agent-1/tests/FeeCap.t.sol
 no generated test file was kept
 
 "#]]);
@@ -1147,15 +1147,15 @@ SOL
 possible bug (2/3 agents): @bug Fee.fee src/Fee.sol:7 — the fee is capped at 10 ether, not 100 ether.
   agent 1: FeeBugTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: @bug Fee.fee src/Fee.sol:7 — the fee is capped at 10 ether, not 100 ether.
-    file: cache/properties/run-1/agent-1/tests/FeeBug.t.sol
+    file: cache/properties/agent-1/tests/FeeBug.t.sol
   agent 2: FeeBugTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: @bug Fee.fee src/Fee.sol:8 — large amounts pay too little.
-    file: cache/properties/run-1/agent-2/tests/FeeBug.t.sol
+    file: cache/properties/agent-2/tests/FeeBug.t.sol
 1 possible bug(s) below the quorum of 2:
 single-agent (1/3 agents): @bug Fee.charges src/Fee.sol:11 — a zero amount is charged.
   agent 3: FeeBugTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: @bug Fee.charges src/Fee.sol:11 — a zero amount is charged.
-    file: cache/properties/run-1/agent-3/tests/FeeBug.t.sol
+    file: cache/properties/agent-3/tests/FeeBug.t.sol
 no generated test file was kept
 
 "#]]);
@@ -1264,43 +1264,43 @@ printf '{"input_tokens": 500, "output_tokens": 100, "cost_usd": 0.02}' > "$FORGE
 confirmed (2/3 agents): @bug Fee.confirmed src/Fee.sol:7 — the confirmed is wrong.
   agent 1: ConfirmedTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: @bug Fee.confirmed src/Fee.sol:7 — the confirmed is wrong.
-    file: cache/properties/run-1/agent-1/tests/Confirmed.t.sol
+    file: cache/properties/agent-1/tests/Confirmed.t.sol
   agent 2: ConfirmedTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: @bug Fee.confirmed src/Fee.sol:7 — the confirmed is wrong.
-    file: cache/properties/run-1/agent-2/tests/Confirmed.t.sol
+    file: cache/properties/agent-2/tests/Confirmed.t.sol
   verifier: Every disproof failed.
     evidence: src/Fee.sol:7: f = amount / 100;
 needs validation (2/3 agents): @bug Fee.missing src/Fee.sol:7 — the missing is wrong.
   agent 1: MissingTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: @bug Fee.missing src/Fee.sol:7 — the missing is wrong.
-    file: cache/properties/run-1/agent-1/tests/Missing.t.sol
+    file: cache/properties/agent-1/tests/Missing.t.sol
   agent 2: MissingTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: @bug Fee.missing src/Fee.sol:7 — the missing is wrong.
-    file: cache/properties/run-1/agent-2/tests/Missing.t.sol
-  verifier error: the verifier wrote no verdict: see cache/properties/run-1/verify-2/verifier.log
+    file: cache/properties/agent-2/tests/Missing.t.sol
+  verifier error: the verifier wrote no verdict: see cache/properties/verify-2/verifier.log
 needs validation (2/3 agents): @bug Fee.unresolved src/Fee.sol:7 — the unresolved is wrong.
   agent 1: UnresolvedTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: @bug Fee.unresolved src/Fee.sol:7 — the unresolved is wrong.
-    file: cache/properties/run-1/agent-1/tests/Unresolved.t.sol
+    file: cache/properties/agent-1/tests/Unresolved.t.sol
   agent 2: UnresolvedTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: @bug Fee.unresolved src/Fee.sol:7 — the unresolved is wrong.
-    file: cache/properties/run-1/agent-2/tests/Unresolved.t.sol
+    file: cache/properties/agent-2/tests/Unresolved.t.sol
   verifier: The docs are silent.
     unresolved: Whether the docs promise the floor.
 rejected (2/3 agents): @bug Fee.rejected src/Fee.sol:7 — the rejected is wrong.
   agent 1: RejectedTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: @bug Fee.rejected src/Fee.sol:7 — the rejected is wrong.
-    file: cache/properties/run-1/agent-1/tests/Rejected.t.sol
+    file: cache/properties/agent-1/tests/Rejected.t.sol
   agent 2: RejectedTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: @bug Fee.rejected src/Fee.sol:7 — the rejected is wrong.
-    file: cache/properties/run-1/agent-2/tests/Rejected.t.sol
+    file: cache/properties/agent-2/tests/Rejected.t.sol
   verifier: The cap is documented.
     evidence: src/Fee.sol:25: Charges 1% of `amount`, capped at 100 ether.
 1 possible bug(s) below the quorum of 2:
 single-agent (1/3 agents): @bug Fee.single src/Fee.sol:7 — the single is wrong.
   agent 3: SingleTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: @bug Fee.single src/Fee.sol:7 — the single is wrong.
-    file: cache/properties/run-1/agent-3/tests/Single.t.sol
+    file: cache/properties/agent-3/tests/Single.t.sol
 verifier usage: 2000 input tokens, 400 output tokens, 0.08 USD
 no generated test file was kept
 
@@ -1326,7 +1326,7 @@ no generated test file was kept
     // One run for each group above the quorum.
     let runs = fs::read_to_string(prj.root().join("cache/verifier-runs")).unwrap();
     assert_eq!(runs.lines().count(), 4);
-    assert!(prj.root().join("cache/properties/run-1/verify-1/prompt.md").exists());
+    assert!(prj.root().join("cache/properties/verify-1/prompt.md").exists());
 }
 
 // A verifier that leaves no usable verdict leaves its group in need of validation, with the reason.
@@ -1353,43 +1353,43 @@ esac
 confirmed (2/3 agents): @bug Fee.failing src/Fee.sol:7 — the failing is wrong.
   agent 1: FailingTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: @bug Fee.failing src/Fee.sol:7 — the failing is wrong.
-    file: cache/properties/run-1/agent-1/tests/Failing.t.sol
+    file: cache/properties/agent-1/tests/Failing.t.sol
   agent 2: FailingTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: @bug Fee.failing src/Fee.sol:7 — the failing is wrong.
-    file: cache/properties/run-1/agent-2/tests/Failing.t.sol
+    file: cache/properties/agent-2/tests/Failing.t.sol
   verifier: Every disproof failed.
-  verifier error: verifier command failed (exit status: 3): see cache/properties/run-1/verify-1/verifier.log
+  verifier error: verifier command failed (exit status: 3): see cache/properties/verify-1/verifier.log
 confirmed (2/3 agents): @bug Fee.slow src/Fee.sol:7 — the slow is wrong.
   agent 1: SlowTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: @bug Fee.slow src/Fee.sol:7 — the slow is wrong.
-    file: cache/properties/run-1/agent-1/tests/Slow.t.sol
+    file: cache/properties/agent-1/tests/Slow.t.sol
   agent 2: SlowTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: @bug Fee.slow src/Fee.sol:7 — the slow is wrong.
-    file: cache/properties/run-1/agent-2/tests/Slow.t.sol
+    file: cache/properties/agent-2/tests/Slow.t.sol
   verifier: Every disproof failed.
-  verifier error: the verifier reached the timeout: see cache/properties/run-1/verify-4/verifier.log
+  verifier error: the verifier reached the timeout: see cache/properties/verify-4/verifier.log
 needs validation (2/3 agents): @bug Fee.invalid src/Fee.sol:7 — the invalid is wrong.
   agent 1: InvalidTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: @bug Fee.invalid src/Fee.sol:7 — the invalid is wrong.
-    file: cache/properties/run-1/agent-1/tests/Invalid.t.sol
+    file: cache/properties/agent-1/tests/Invalid.t.sol
   agent 2: InvalidTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: @bug Fee.invalid src/Fee.sol:7 — the invalid is wrong.
-    file: cache/properties/run-1/agent-2/tests/Invalid.t.sol
-  verifier error: the verifier wrote an invalid verdict: unknown variant `maybe`, expected one of `confirmed`, `needs_validation`, `rejected` at line 1 column 19: see cache/properties/run-1/verify-2/verifier.log
+    file: cache/properties/agent-2/tests/Invalid.t.sol
+  verifier error: the verifier wrote an invalid verdict: unknown variant `maybe`, expected one of `confirmed`, `needs_validation`, `rejected` at line 1 column 19: see cache/properties/verify-2/verifier.log
 needs validation (2/3 agents): @bug Fee.noevidence src/Fee.sol:7 — the noevidence is wrong.
   agent 1: NoEvidenceTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: @bug Fee.noevidence src/Fee.sol:7 — the noevidence is wrong.
-    file: cache/properties/run-1/agent-1/tests/NoEvidence.t.sol
+    file: cache/properties/agent-1/tests/NoEvidence.t.sol
   agent 2: NoEvidenceTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: @bug Fee.noevidence src/Fee.sol:7 — the noevidence is wrong.
-    file: cache/properties/run-1/agent-2/tests/NoEvidence.t.sol
+    file: cache/properties/agent-2/tests/NoEvidence.t.sol
   verifier: Not a bug.
-  verifier error: the verifier rejected the group without evidence: see cache/properties/run-1/verify-3/verifier.log
+  verifier error: the verifier rejected the group without evidence: see cache/properties/verify-3/verifier.log
 1 possible bug(s) below the quorum of 2:
 single-agent (1/3 agents): @bug Fee.single src/Fee.sol:7 — the single is wrong.
   agent 3: SingleTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: @bug Fee.single src/Fee.sol:7 — the single is wrong.
-    file: cache/properties/run-1/agent-3/tests/Single.t.sol
+    file: cache/properties/agent-3/tests/Single.t.sol
 no generated test file was kept
 
 "#]]);
@@ -1460,14 +1460,14 @@ SOL
 possible bug (1/1 agents): The fee is capped at 100 ether (src/Fee.sol:7).
   agent 1: SharedTest::testCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: The fee is capped at 100 ether (src/Fee.sol:7).
-    file: cache/properties/run-1/agent-1/tests/Shared.t.sol
+    file: cache/properties/agent-1/tests/Shared.t.sol
 possible bug (1/1 agents): CycleATest::testA
   agent 1: CycleATest::testA (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
-    file: cache/properties/run-1/agent-1/tests/CycleA.t.sol
+    file: cache/properties/agent-1/tests/CycleA.t.sol
 possible bug (1/1 agents): CycleBTest::testB
   agent 1: CycleBTest::testB (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
-    file: cache/properties/run-1/agent-1/tests/CycleB.t.sol
-1 generated test file(s) did not compile or were not allowed: see cache/properties/run-1/report.json
+    file: cache/properties/agent-1/tests/CycleB.t.sol
+1 generated test file(s) did not compile or were not allowed: see cache/properties/report.json
 added 2 generated test file(s):
   test/generated/run-1-agent-1/Kept.t.sol
   test/generated/run-1-agent-1/KeptHelper.sol
@@ -1508,229 +1508,4 @@ added 4 generated test file(s):
 "#]]);
 
     cmd.forge_fuse().args(["test", "--match-path", "test/generated/**"]).assert_success();
-}
-
-// Distinct string literals must not collapse under duplicate detection: whitespace inside a
-// string and `//` inside a URL are significant, while comment-only differences still dedupe.
-#[forgetest_init]
-fn properties_keeps_tests_that_differ_only_inside_string_literals(prj: _, cmd: _) {
-    prj.add_source(
-        "Echo.sol",
-        r#"
-pragma solidity ^0.8.20;
-library Echo {
-    function echo(string memory value) internal pure returns (string memory) {
-        return value;
-    }
-}
-"#,
-    );
-    let args = properties_args(
-        &prj,
-        r#"
-for index in 1 2; do
-  case "$1:$index" in
-    whitespace:1 | duplicate:*) value="ab" ;;
-    whitespace:2) value="a b" ;;
-    urls:1) value="https://one.example" ;;
-    urls:2) value="https://two.example" ;;
-    *) exit 2 ;;
-  esac
-  cat > "$out/Case$index.t.sol" <<SOL
-pragma solidity ^0.8.20;
-import {Echo} from "../../../src/Echo.sol";
-// Fixture case $index.
-contract EchoSpecTest {
-  function testEcho() public pure {
-    require(keccak256(bytes(Echo.echo("$value"))) == keccak256(bytes("$value")), "echo changed");
-  }
-}
-SOL
-done
-"#,
-    );
-
-    for (mode, kept, duplicates) in [("duplicate", 1, 1), ("whitespace", 2, 0), ("urls", 2, 0)] {
-        // Fresh generated dirs between modes.
-        let generated = prj.root().join("test/generated");
-        if generated.exists() {
-            fs::remove_dir_all(&generated).unwrap();
-        }
-        let mut mode_args = args.clone();
-        // properties_args already wrote agent.sh; pass the mode as the first agent arg.
-        mode_args.extend(["--agent-arg".into(), mode.into(), "--agents".into(), "1".into()]);
-        cmd.forge_fuse().args(&mode_args).assert_success();
-        let report = report(&prj);
-        assert_eq!(report["kept"].as_array().unwrap().len(), kept, "mode={mode}");
-        assert_eq!(report["duplicates"].as_array().unwrap().len(), duplicates, "mode={mode}");
-    }
-}
-
-// Concurrent campaigns on one project must not share prompt/usage paths under cache/properties.
-#[forgetest_init]
-fn properties_isolates_concurrent_campaign_session_files(prj: _, cmd: _) {
-    prj.add_source("TargetA.sol", "pragma solidity ^0.8.20; contract TargetA {}");
-    prj.add_source("TargetB.sol", "pragma solidity ^0.8.20; contract TargetB {}");
-    let control = prj.root().join("concurrency-control");
-    fs::create_dir_all(&control).unwrap();
-    let agent = prj.root().join("agent.sh");
-    fs::write(
-        &agent,
-        r#"#!/bin/sh
-set -eu
-mode="$1"
-control="$2"
-if [ "$mode" = slow ]; then
-  : > "$control/ready"
-  while [ ! -f "$control/release" ]; do sleep 0.05; done
-  cp "$FORGE_PROPERTIES_PROMPT" "$control/observed-prompt.txt"
-elif [ "$mode" = fast ]; then
-  printf '{"input_tokens":22,"output_tokens":0,"cost_usd":0}\n' > "$FORGE_PROPERTIES_USAGE"
-elif [ "$mode" = solo ]; then
-  cp "$FORGE_PROPERTIES_PROMPT" "$control/solo-prompt.txt"
-else
-  exit 2
-fi
-"#,
-    )
-    .unwrap();
-    fs::set_permissions(&agent, fs::Permissions::from_mode(0o755)).unwrap();
-
-    let forge = cmd.cmd().get_program().to_owned();
-    let root = prj.root().to_path_buf();
-    let common = |mode: &str, target: &str| {
-        vec![
-            "properties".into(),
-            "--root".into(),
-            root.to_string_lossy().into_owned(),
-            "--target".into(),
-            target.into(),
-            "--agent-command".into(),
-            agent.to_string_lossy().into_owned(),
-            "--agent-arg".into(),
-            mode.into(),
-            "--agent-arg".into(),
-            control.to_string_lossy().into_owned(),
-            "--agents".into(),
-            "1".into(),
-            "--seed".into(),
-            "1".into(),
-            "--seed".into(),
-            "2".into(),
-            "--timeout".into(),
-            "20".into(),
-        ]
-    };
-
-    // Control: a solo campaign keeps TargetA in its prompt.
-    cmd.forge_fuse().args(common("solo", "src/TargetA.sol")).assert_success();
-    let solo = fs::read_to_string(control.join("solo-prompt.txt")).unwrap();
-    assert!(solo.contains("src/TargetA.sol"), "{solo}");
-
-    let forge_bin = forge;
-    let slow_args = common("slow", "src/TargetA.sol");
-    let slow = thread::spawn(move || {
-        std::process::Command::new(&forge_bin)
-            .args(&slow_args)
-            .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
-            .output()
-            .unwrap()
-    });
-
-    let ready = Instant::now();
-    while !control.join("ready").exists() {
-        assert!(ready.elapsed() < Duration::from_secs(15), "slow agent never became ready");
-        thread::sleep(Duration::from_millis(20));
-    }
-
-    cmd.forge_fuse().args(common("fast", "src/TargetB.sol")).assert_success();
-    fs::write(control.join("release"), b"").unwrap();
-    let slow_out = slow.join().unwrap();
-    assert!(slow_out.status.success(), "stderr={}", String::from_utf8_lossy(&slow_out.stderr));
-
-    let observed = fs::read_to_string(control.join("observed-prompt.txt")).unwrap();
-    assert!(
-        observed.contains("src/TargetA.sol") && !observed.contains("src/TargetB.sol"),
-        "slow campaign lost its prompt isolation:\n{observed}"
-    );
-    // Even the empty solo campaign keeps its own cache. The barrier fixes reservation order.
-    let properties = prj.root().join("cache/properties");
-    let slow_report = serde_json::from_slice::<serde_json::Value>(
-        &fs::read(properties.join("run-2/report.json")).unwrap(),
-    )
-    .unwrap();
-    let fast_report = serde_json::from_slice::<serde_json::Value>(
-        &fs::read(properties.join("run-3/report.json")).unwrap(),
-    )
-    .unwrap();
-    assert_data_eq!(slow_report["usage"].to_string(), str![["[]"]]);
-    assert_data_eq!(
-        fast_report["usage"].to_string(),
-        str![[r#"[{"agent":1,"usage":{"input_tokens":22,"output_tokens":0,"cost_usd":0.0}}]"#]]
-    );
-    assert_eq!(report(&prj), slow_report);
-}
-
-// A campaign that keeps no tests must not leave outputs that a later campaign reads as its own.
-#[forgetest_init]
-fn properties_does_not_reuse_usage_or_verdicts(prj: _, cmd: _) {
-    prj.add_source("Fee.sol", FEE);
-    let mut args = properties_args(
-        &prj,
-        r#"
-if [ "$1" = first ]; then
-  printf '{"input_tokens":22,"output_tokens":0,"cost_usd":0}' > "$FORGE_PROPERTIES_USAGE"
-fi
-cat > "$out/Bug.t.sol" <<SOL
-pragma solidity ^0.8.20;
-contract BugTest {
-    function test_$1() public pure { require(false); }
-}
-SOL
-"#,
-    );
-    args.extend(verifier_args(
-        &prj,
-        r#"
-if [ "$2" = first ]; then
-  printf '{"verdict":"confirmed","reason":"Earlier campaign","evidence":[]}' > "$FORGE_PROPERTIES_VERDICT"
-  printf '{"input_tokens":33,"output_tokens":0,"cost_usd":0}' > "$FORGE_PROPERTIES_USAGE"
-fi
-"#,
-    ));
-    args.extend(["--agents".into(), "1".into()]);
-
-    cmd.args(&args).args(["--agent-arg", "first", "--verifier-arg", "first"]).assert_success();
-    let first = report(&prj);
-    assert_data_eq!(first["kept"].to_string(), str![["[]"]]);
-    assert_data_eq!(
-        first["usage"].to_string(),
-        str![[r#"[{"agent":1,"usage":{"input_tokens":22,"output_tokens":0,"cost_usd":0.0}}]"#]]
-    );
-    assert_data_eq!(
-        first["possible_bugs"][0]["verification"].to_string(),
-        str![[
-            r#"{"verdict":"confirmed","reason":"Earlier campaign","evidence":[],"usage":{"input_tokens":33,"output_tokens":0,"cost_usd":0.0}}"#
-        ]]
-    );
-    assert!(!prj.root().join("test/generated/run-1-agent-1").exists());
-
-    cmd.forge_fuse()
-        .args(&args)
-        .args(["--agent-arg", "second", "--verifier-arg", "second"])
-        .assert_success();
-    let second = report(&prj);
-    assert_data_eq!(
-        second["possible_bugs"][0]["verification"].to_string(),
-        str![[
-            r#"{"verdict":"needs_validation","reason":"","evidence":[],"error":"the verifier wrote no verdict: see cache/properties/run-2/verify-1/verifier.log"}"#
-        ]]
-    );
-    assert_data_eq!(second["usage"].to_string(), str![["[]"]]);
-    // Earlier reports and their evidence remain intact even though their test dirs were empty.
-    let preserved = serde_json::from_slice::<serde_json::Value>(
-        &fs::read(prj.root().join("cache/properties/run-1/report.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(preserved, first);
 }

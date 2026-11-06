@@ -161,12 +161,14 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
         // meaningful Yul statement.
         let source_stmt = match &last_stmt.kind {
             HirStmtKind::UncheckedBlock(stmts) | HirStmtKind::Block(stmts) => {
-                stmts.last().unwrap_or_else(|| {
+                if let Some(stmt) = stmts.last() {
+                    stmt
+                } else {
                     // In the case where the block is empty, attempt to grab the statement
                     // before the block. Because we use saturating sub to get the second to
                     // last index, this can always be safely unwrapped.
                     &run_body[run_body.len().saturating_sub(2)]
-                })
+                }
             }
             _ => last_stmt,
         };

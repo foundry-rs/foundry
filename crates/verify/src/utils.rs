@@ -366,7 +366,7 @@ pub async fn get_tracing_executor<FEN>(
     execution_block: Option<&AnyRpcBlock>,
     evm_opts: EvmOpts,
     executor_builder: ExecutorBuilder<FEN>,
-) -> Result<(EvmEnvFor<FEN>, TracingExecutor<FEN>)>
+) -> Result<(EvmEnvFor<FEN>, TransactionRequestFor<FEN>, TracingExecutor<FEN>)>
 where
     FEN: FoundryEvmNetwork,
 {
@@ -389,6 +389,7 @@ where
     fork.extend_precompile_labels(fork_config);
 
     let evm_env = fork.evm_env;
+    let tx = fork.tx.clone();
     let executor = fork.into_executor(
         executor_builder,
         TraceRequirements::none().with_calls(true),
@@ -396,7 +397,7 @@ where
         None,
     )?;
 
-    Ok((evm_env, executor))
+    Ok((evm_env, tx, executor))
 }
 
 #[cfg(all(test, feature = "monad"))]
