@@ -42,7 +42,7 @@ use revm::{
         return_ok,
     },
     primitives::KECCAK_EMPTY,
-    state::Account,
+    state::{Account, EvmState},
 };
 use std::{
     ops::{Deref, DerefMut},
@@ -603,7 +603,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         ecx: &mut FoundryContextFor<'_, FEN>,
         fork_id: Option<U256>,
         transaction: B256,
-    ) -> eyre::Result<ContextUpdateFor<EvmFactoryFor<FEN>>> {
+    ) -> eyre::Result<(ContextUpdateFor<EvmFactoryFor<FEN>>, EvmState)> {
         self.with_snapshot_tracking(cheats, |inner, cheats| {
             let mut evm_env = ecx.evm_clone();
             if let Some(disable_fee_charge) = inner.outer_disable_fee_charge {
@@ -621,7 +621,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         cheats: &mut Cheatcodes<FEN>,
         ecx: &mut FoundryContextFor<'_, FEN>,
         tx_env: TxEnvFor<FEN>,
-    ) -> eyre::Result<()> {
+    ) -> eyre::Result<EvmState> {
         self.with_snapshot_tracking(cheats, |inner, cheats| {
             let mut evm_env = ecx.evm_clone();
             if let Some(disable_fee_charge) = inner.outer_disable_fee_charge {

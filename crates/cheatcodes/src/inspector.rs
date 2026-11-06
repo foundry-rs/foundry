@@ -64,6 +64,7 @@ use revm::{
         interpreter_types::{Jumps, LoopControl, MemoryTr, ReturnData},
     },
     primitives::hardfork::SpecId,
+    state::EvmState,
 };
 use std::{
     cmp::max,
@@ -92,22 +93,24 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<(), EVMError<DatabaseError>>;
 
-    /// Replays a historical transaction on the database. Inspector is assembled internally.
+    /// Replays a historical transaction on the database and returns the state it committed to the
+    /// journal. Inspector is assembled internally.
     fn transact_on_db(
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
         ecx: &mut FoundryContextFor<'_, FEN>,
         fork_id: Option<U256>,
         transaction: B256,
-    ) -> eyre::Result<ContextUpdateFor<EvmFactoryFor<FEN>>>;
+    ) -> eyre::Result<(ContextUpdateFor<EvmFactoryFor<FEN>>, EvmState)>;
 
-    /// Executes a `TransactionRequest` on the database. Inspector is assembled internally.
+    /// Executes a `TransactionRequest` on the database and returns the state it committed.
+    /// Inspector is assembled internally.
     fn transact_from_tx_on_db(
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
         ecx: &mut FoundryContextFor<'_, FEN>,
         tx: TxEnvFor<FEN>,
-    ) -> eyre::Result<()>;
+    ) -> eyre::Result<EvmState>;
 
     /// Runs a closure with a fresh nested EVM using the current environment and database.
     /// Unlike `with_nested_evm`, this starts an independent journal and does not write back.
@@ -201,7 +204,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         ecx: &mut FoundryContextFor<'_, FEN>,
         fork_id: Option<U256>,
         transaction: B256,
-    ) -> eyre::Result<ContextUpdateFor<EvmFactoryFor<FEN>>> {
+    ) -> eyre::Result<(ContextUpdateFor<EvmFactoryFor<FEN>>, EvmState)> {
         let evm_env = ecx.evm_clone();
         let outer_tx_env = ecx.tx_clone();
         let (db, inner) = ecx.db_journal_inner_mut();
@@ -213,7 +216,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         cheats: &mut Cheatcodes<FEN>,
         ecx: &mut FoundryContextFor<'_, FEN>,
         tx: TxEnvFor<FEN>,
-    ) -> eyre::Result<()> {
+    ) -> eyre::Result<EvmState> {
         let evm_env = ecx.evm_clone();
         let (db, inner) = ecx.db_journal_inner_mut();
         db.transact_from_tx(tx, evm_env, inner, cheats)
@@ -1579,6 +1582,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     if !active_delegations.is_empty() {
                         if let Err(err) = apply_authorization_nonces::<FEN>(
                             ecx,
+                            &mut self.isolated_snapshot_restores,
                             &active_delegations,
                             broadcast.new_origin,
                             chain_id,
@@ -1618,6 +1622,25 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         let prev = account.info.nonce;
                         account.info.nonce += 1;
                         debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
+                        if let Err(err) = crate::evm::persist_write(
+                            &mut self.isolated_snapshot_restores,
+                            ecx.db_mut(),
+                            broadcast.new_origin,
+                            |info| info.nonce += 1,
+                            &[],
+                        ) {
+                            return Some(CallOutcome {
+                                result: InterpreterResult {
+                                    result: InstructionResult::Revert,
+                                    output: Error::encode(err),
+                                    gas,
+                                },
+                                memory_offset: call.return_memory_offset.clone(),
+                                was_precompile_called: false,
+                                precompile_call_logs: vec![],
+                                charged_new_account_state_gas: call.charged_new_account_state_gas,
+                            });
+                        }
                     }
                 } else if broadcast.single_call {
                     let msg = "`staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead";
@@ -3770,6 +3793,7 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
 /// authority nonce.
 fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
     ecx: &mut FoundryContextFor<'_, FEN>,
+    snapshot_restores: &mut [JournaledState],
     authorizations: &[SignedAuthorization],
     sender: Address,
     chain_id: u64,
@@ -3787,6 +3811,13 @@ fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
         // The sender nonce has not been incremented for the transaction yet.
         if auth.nonce() == account.info.nonce + u64::from(authority == sender) {
             account.info.nonce += 1;
+            crate::evm::persist_write(
+                snapshot_restores,
+                ecx.db_mut(),
+                authority,
+                |info| info.nonce += 1,
+                &[],
+            )?;
         }
     }
     Ok(())

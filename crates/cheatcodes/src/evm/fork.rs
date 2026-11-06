@@ -16,7 +16,7 @@ use foundry_evm_core::{
     evm::{BlockEnvFor, EvmFactoryFor, FoundryContextFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     fork::CreateFork,
 };
-use revm::context::ContextTr;
+use revm::{context::ContextTr, state::EvmState};
 
 impl Cheatcode for activeForkCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
@@ -549,7 +549,14 @@ fn transact<FEN: FoundryEvmNetwork>(
     transaction: B256,
     fork_id: Option<U256>,
 ) -> Result {
-    let context_update = executor.transact_on_db(ccx.state, ccx.ecx, fork_id, transaction)?;
+    let (context_update, state) =
+        executor.transact_on_db(ccx.state, ccx.ecx, fork_id, transaction)?;
+    super::persist_child_state(
+        &mut ccx.state.isolated_snapshot_restores,
+        ccx.ecx.db_mut(),
+        &EvmState::default(),
+        &state,
+    )?;
     #[cfg(not(feature = "monad"))]
     let _ = context_update;
     #[cfg(feature = "monad")]
@@ -625,16 +632,17 @@ fn refresh_active_fork_state<FEN: FoundryEvmNetwork>(
         return Ok(());
     };
 
+    let slot = params.get(1).and_then(|v| v.as_str()).and_then(|s| s.parse::<U256>().ok());
     let (db, journaled_state) = ccx.ecx.db_journal_inner_mut();
-    if let Some(field) = account_field {
-        db.refresh_fork_account(address, field, journaled_state)?;
-    } else {
-        let Some(slot) =
-            params.get(1).and_then(|v| v.as_str()).and_then(|s| s.parse::<U256>().ok())
-        else {
-            return Ok(());
-        };
-        db.refresh_fork_storage(address, slot, journaled_state)?;
+    // The node change survives any revert, so it also goes to the journals that failing frames
+    // reinstate to undo snapshot restorations.
+    for journal in std::iter::once(journaled_state).chain(&mut ccx.state.isolated_snapshot_restores)
+    {
+        match (account_field, slot) {
+            (Some(field), _) => db.refresh_fork_account(address, field, journal)?,
+            (None, Some(slot)) => db.refresh_fork_storage(address, slot, journal)?,
+            (None, None) => return Ok(()),
+        }
     }
     Ok(())
 }

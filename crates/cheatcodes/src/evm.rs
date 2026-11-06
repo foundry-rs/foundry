@@ -41,9 +41,10 @@ use revm::{
     Database,
     bytecode::Bytecode,
     context::{Block, ContextTr, JournalTr, Transaction, result::ExecutionResult},
+    context_interface::journaled_state::JournalLoadError,
     inspector::JournalExt,
     primitives::hardfork::SpecId,
-    state::Account,
+    state::{Account, AccountInfo, EvmState},
 };
 use std::{
     collections::{BTreeMap, btree_map::Entry},
@@ -390,7 +391,11 @@ impl Cheatcode for loadAllocsCall {
 
         // Then, load the allocs into the database.
         let (db, inner) = ccx.ecx.db_journal_inner_mut();
-        db.load_allocs(&allocs, inner).map_err(|e| fmt_err!("failed to load allocs: {e}"))?;
+        // Nonces and storage bypass the journal, so they also go to the journals that failing
+        // frames reinstate, like the writes of `persist_write`.
+        for journal in std::iter::once(inner).chain(&mut ccx.state.isolated_snapshot_restores) {
+            db.load_allocs(&allocs, journal).map_err(|e| fmt_err!("failed to load allocs: {e}"))?;
+        }
         #[cfg(feature = "monad")]
         refresh_chain_journal(ccx.ecx);
         Ok(Default::default())
@@ -404,7 +409,10 @@ impl Cheatcode for cloneAccountCall {
         let account = ccx.ecx.journal_mut().load_account(*source)?;
         let genesis = genesis_account(account.data);
         let (db, inner) = ccx.ecx.db_journal_inner_mut();
-        db.clone_account(&genesis, target, inner)?;
+        // See `loadAllocs`.
+        for journal in std::iter::once(inner).chain(&mut ccx.state.isolated_snapshot_restores) {
+            db.clone_account(&genesis, target, journal)?;
+        }
         // Cloned account should persist in forked envs.
         ccx.ecx.db_mut().add_persistent_account(*target);
         #[cfg(feature = "monad")]
@@ -836,6 +844,13 @@ impl Cheatcode for dealCall {
         let old_balance = std::mem::replace(&mut account.info.balance, new_balance);
         let record = DealRecord { address, old_balance, new_balance };
         ccx.state.eth_deals.push(record);
+        persist_write(
+            &mut ccx.state.isolated_snapshot_restores,
+            ccx.ecx.db_mut(),
+            address,
+            |info| info.balance = new_balance,
+            &[],
+        )?;
         #[cfg(feature = "monad")]
         refresh_chain_journal(ccx.ecx);
         Ok(Default::default())
@@ -876,6 +891,13 @@ impl Cheatcode for resetNonceCall {
         let is_eoa = account.info.is_empty_code_hash() || code.is_eip7702();
         let nonce = if is_eoa { 0 } else { 1 };
         account.info.nonce = nonce;
+        persist_write(
+            &mut ccx.state.isolated_snapshot_restores,
+            ccx.ecx.db_mut(),
+            self.account,
+            |info| info.nonce = nonce,
+            &[],
+        )?;
         debug!(target: "cheatcodes", nonce, "reset");
         Ok(Default::default())
     }
@@ -893,6 +915,13 @@ impl Cheatcode for setNonceCall {
              account's current nonce ({current})"
         );
         account.info.nonce = newNonce;
+        persist_write(
+            &mut ccx.state.isolated_snapshot_restores,
+            ccx.ecx.db_mut(),
+            self.account,
+            |info| info.nonce = newNonce,
+            &[],
+        )?;
         Ok(Default::default())
     }
 }
@@ -902,6 +931,13 @@ impl Cheatcode for setNonceUnsafeCall {
         let Self { account, newNonce } = *self;
         let account = journaled_account(ccx.ecx, account)?;
         account.info.nonce = newNonce;
+        persist_write(
+            &mut ccx.state.isolated_snapshot_restores,
+            ccx.ecx.db_mut(),
+            self.account,
+            |info| info.nonce = newNonce,
+            &[],
+        )?;
         Ok(Default::default())
     }
 }
@@ -1353,7 +1389,13 @@ impl Cheatcode for broadcastRawTransactionCall {
             None
         };
 
-        executor.transact_from_tx_on_db(ccx.state, ccx.ecx, tx_env)?;
+        let state = executor.transact_from_tx_on_db(ccx.state, ccx.ecx, tx_env)?;
+        persist_child_state(
+            &mut ccx.state.isolated_snapshot_restores,
+            ccx.ecx.db_mut(),
+            &EvmState::default(),
+            &state,
+        )?;
         #[cfg(feature = "monad")]
         refresh_chain_journal(ccx.ecx);
 
@@ -1485,6 +1527,13 @@ impl Cheatcode for executeTransactionCall {
         let res = res.map_err(|e| fmt_err!("transaction execution failed: {e}"))?;
 
         // Merge state changes back into the parent journaled state.
+        let (db, journal) = ccx.ecx.db_journal_inner_mut();
+        persist_child_state(
+            &mut ccx.state.isolated_snapshot_restores,
+            db,
+            &journal.state,
+            &res.state,
+        )?;
         merge_child_state(ccx.ecx.journal_mut().evm_state_mut(), res.state, false);
 
         // Keep Monad reserve balances aligned with the state merged from the nested EVM while
@@ -1702,6 +1751,72 @@ fn track_snapshot_restore<FEN: FoundryEvmNetwork>(
     if ccx.state.in_isolation_context {
         ccx.state.pending_isolated_snapshot_journal = Some(restored.journal.clone());
     }
+}
+
+/// Applies a write that bypasses the journal, and so survives reverts of enclosing frames, to the
+/// journals that failing frames reinstate in place of the live one to undo snapshot restorations,
+/// so that the write also survives those frames.
+pub(crate) fn persist_write<DB: Database>(
+    journals: &mut [JournaledState],
+    db: &mut DB,
+    address: Address,
+    info: impl Fn(&mut AccountInfo),
+    slots: &[(U256, U256)],
+) -> Result<(), DB::Error> {
+    for journal in journals {
+        journal.load_account(db, address)?;
+        for &(key, value) in slots {
+            journal.sload(db, address, key, false).map_err(JournalLoadError::unwrap_db_error)?;
+            let account = journal.state.get_mut(&address).expect("account is loaded");
+            account.storage.get_mut(&key).expect("slot is loaded").present_value = value;
+        }
+        info(&mut journal.state.get_mut(&address).expect("account is loaded").info);
+    }
+    Ok(())
+}
+
+/// Persists the writes of a nested transaction, whose returned `child` state started from the
+/// accounts in `parent` or else from their original values, with [`persist_write`].
+///
+/// Only the fields the transaction changed are written: the other fields of `child` hold the live
+/// values, which can include a snapshot restoration that a failing frame must undo.
+fn persist_child_state<DB: Database>(
+    journals: &mut [JournaledState],
+    db: &mut DB,
+    parent: &EvmState,
+    child: &EvmState,
+) -> Result<(), DB::Error> {
+    if journals.is_empty() {
+        return Ok(());
+    }
+    for (&address, account) in child {
+        let base = parent.get(&address).map_or_else(|| account.original_info(), |p| p.info.clone());
+        let info = &account.info;
+        let balance = base.balance != info.balance;
+        let nonce = base.nonce != info.nonce;
+        let code = base.code_hash != info.code_hash;
+        let slots = account
+            .changed_storage_slots()
+            .map(|(&key, slot)| (key, slot.present_value))
+            .collect::<Vec<_>>();
+        if !balance && !nonce && !code && slots.is_empty() {
+            continue;
+        }
+        let write = |target: &mut AccountInfo| {
+            if balance {
+                target.balance = info.balance;
+            }
+            if nonce {
+                target.nonce = info.nonce;
+            }
+            if code {
+                target.code_hash = info.code_hash;
+                target.code.clone_from(&info.code);
+            }
+        };
+        persist_write(journals, db, address, write, &slots)?;
+    }
+    Ok(())
 }
 
 fn inner_revert_to_state<FEN: FoundryEvmNetwork>(

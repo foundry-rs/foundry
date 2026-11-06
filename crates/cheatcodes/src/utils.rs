@@ -259,8 +259,19 @@ impl Cheatcode for copyStorageCall {
         if let Ok(from_account) = ccx.ecx.journal_mut().load_account(*from) {
             let from_storage = from_account.storage.clone();
             if ccx.ecx.journal_mut().load_account(*to).is_ok() {
+                let slots = from_storage
+                    .iter()
+                    .map(|(&key, slot)| (key, slot.present_value))
+                    .collect::<Vec<_>>();
                 // SAFETY: We ensured the account was already loaded.
                 ccx.ecx.journal_mut().evm_state_mut().get_mut(to).unwrap().storage = from_storage;
+                crate::evm::persist_write(
+                    &mut ccx.state.isolated_snapshot_restores,
+                    ccx.ecx.db_mut(),
+                    *to,
+                    |_| {},
+                    &slots,
+                )?;
                 if let Some(arbitrary_storage) = &mut ccx.state.core.arbitrary_storage {
                     arbitrary_storage.mark_copy(from, to);
                 }

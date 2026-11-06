@@ -362,6 +362,9 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
     ) -> eyre::Result<ContextUpdateFor<F>>;
 
     /// Fetches the given transaction for the fork and executes it, committing the state in the DB
+    ///
+    /// Also returns the state the transaction committed to `journaled_state`, which is empty when
+    /// the transaction ran on another fork.
     fn transact(
         &mut self,
         id: Option<LocalForkId>,
@@ -370,16 +373,16 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
         outer_tx_env: &F::Tx,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn for<'db> FoundryInspectorExt<F::FoundryContext<'db>>,
-    ) -> eyre::Result<ContextUpdateFor<F>>;
+    ) -> eyre::Result<(ContextUpdateFor<F>, EvmState)>;
 
-    /// Executes a given TransactionRequest, commits the new state to the DB
+    /// Executes a given TransactionRequest, commits the new state to the DB and returns it.
     fn transact_from_tx(
         &mut self,
         tx_env: F::Tx,
         evm_env: EvmEnv<F::Spec, F::BlockEnv>,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn for<'db> FoundryInspectorExt<F::FoundryContext<'db>>,
-    ) -> eyre::Result<()>;
+    ) -> eyre::Result<EvmState>;
 
     /// Returns transaction-position context for a synthetic transaction on the active database.
     fn chain_context_for_synthetic_transaction(&self, tx: &F::Tx) -> eyre::Result<F::Chain> {
@@ -2294,7 +2297,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         inspector: &mut dyn for<'db> FoundryInspectorExt<
             <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'db>,
         >,
-    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
+    ) -> eyre::Result<(ContextUpdateFor<FEN::EvmFactory>, EvmState)> {
         trace!(?maybe_id, ?transaction, "execute transaction");
         let persistent_accounts = self.inner.persistent_accounts.clone();
         let id = self.ensure_fork(maybe_id)?;
@@ -2395,7 +2398,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         }
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
-        commit_transaction::<FEN>(
+        let state = commit_transaction::<FEN>(
             TransactionInputs {
                 evm_env,
                 tx_env,
@@ -2414,7 +2417,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         if let Some(position) = next_position {
             fork.position = position;
         }
-        Ok(context_update)
+        Ok((context_update, if affects_active { state } else { EvmState::default() }))
     }
 
     fn transact_from_tx(
@@ -2425,7 +2428,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         inspector: &mut dyn for<'db> FoundryInspectorExt<
             <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'db>,
         >,
-    ) -> eyre::Result<()> {
+    ) -> eyre::Result<EvmState> {
         trace!("execute signed transaction");
 
         // Run on a clone that includes the outer journal, then commit only the accounts the
@@ -2444,9 +2447,9 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
 
         db.commit(res.state.clone());
         update_state(&mut journaled_state.state, &mut db, None)?;
-        self.commit(res.state);
+        self.commit(res.state.clone());
 
-        Ok(())
+        Ok(res.state)
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {
@@ -3378,7 +3381,7 @@ fn update_env_block<N: Network, SPEC: Into<SpecId> + Copy, BLOCK: FoundryBlock>(
 }
 
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
-/// state, with an inspector.
+/// state, with an inspector. Returns the committed state.
 fn commit_transaction<FEN: FoundryEvmNetwork>(
     transaction: TransactionInputs<FEN>,
     journaled_state: &mut JournaledState,
@@ -3389,7 +3392,7 @@ fn commit_transaction<FEN: FoundryEvmNetwork>(
     inspector: &mut dyn for<'db> FoundryInspectorExt<
         <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'db>,
     >,
-) -> eyre::Result<()> {
+) -> eyre::Result<EvmState> {
     let TransactionInputs {
         evm_env,
         tx_env,
@@ -3415,8 +3418,14 @@ fn commit_transaction<FEN: FoundryEvmNetwork>(
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 
-    apply_state_changeset(base_state, res.state, journaled_state, fork, persistent_accounts)?;
-    Ok(())
+    apply_state_changeset(
+        base_state,
+        res.state.clone(),
+        journaled_state,
+        fork,
+        persistent_accounts,
+    )?;
+    Ok(res.state)
 }
 
 /// Helper method which updates data in the state with the data from the database.

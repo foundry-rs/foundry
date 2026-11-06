@@ -283,7 +283,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         inspector: &mut dyn for<'db> FoundryInspectorExt<
             <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'db>,
         >,
-    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
+    ) -> eyre::Result<(ContextUpdateFor<FEN::EvmFactory>, EvmState)> {
         self.backend_mut().transact(
             id,
             transaction,
@@ -302,7 +302,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         inspector: &mut dyn for<'db> FoundryInspectorExt<
             <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'db>,
         >,
-    ) -> eyre::Result<()> {
+    ) -> eyre::Result<EvmState> {
         self.backend_mut().transact_from_tx(tx_env, evm_env, journaled_state, inspector)
     }
 

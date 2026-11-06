@@ -264,6 +264,36 @@ contract NestedRestoreHelper {
         store.set(3);
         revert("outer reverted");
     }
+
+    function restoreWriteRevert(uint256 snapshotId, NestedRestoreStore store) external {
+        require(vm.revertToState(snapshotId), "restore failed");
+        vm.deal(address(0xa1), 3);
+        this.setNonces();
+        store.value();
+        vm.copyStorage(address(store), address(0xa4));
+        vm.cloneAccount(address(store), address(0xa6));
+        vm.signAndAttachDelegation(address(store), 0xa8);
+        vm.broadcast(address(0xa7));
+        store.mark(1);
+        require(vm.revertToState(snapshotId), "second restore failed");
+        revert("restore reverted");
+    }
+
+    function setNonces() external {
+        vm.setNonce(address(0xa2), 4);
+        vm.setNonceUnsafe(address(0xa3), 5);
+        vm.resetNonce(address(0xa5));
+    }
+
+    function restoreTransactRevert(uint256 snapshotId, bytes calldata rawTx, bool broadcast) external {
+        require(vm.revertToState(snapshotId), "restore failed");
+        if (broadcast) {
+            vm.broadcastRawTransaction(rawTx);
+        } else {
+            vm.executeTransaction(rawTx);
+        }
+        revert("restore reverted");
+    }
 }
 
 contract NestedRestoreConstructor {
@@ -458,6 +488,48 @@ abstract contract NestedRestoreFrameRevertBase is Test {
         expectHelperRevert(abi.encodeCall(helper.restoreFillRevert, (snapshotId, store, 1)), "restore reverted");
         assertUndone(0, 1);
         store.set(121);
+    }
+
+    /// Cheatcode writes that bypass the journal survive a failing frame that undoes the restoration
+    /// they followed, as they survive any other revert.
+    function testRevertedRestoreKeepsLaterUnjournaledWrites() public {
+        vm.setNonce(address(0xa5), 9);
+        uint256 snapshotId = prepare(20);
+        expectHelperRevert(abi.encodeCall(helper.restoreWriteRevert, (snapshotId, store)), "restore reverted");
+        assertUndone(20, 1);
+        assertEq(address(0xa1).balance, 3);
+        assertEq(vm.getNonce(address(0xa2)), 4);
+        assertEq(vm.getNonce(address(0xa3)), 5);
+        assertEq(vm.getNonce(address(0xa5)), 0);
+        assertEq(vm.load(address(0xa4), 0), bytes32(uint256(1)));
+        assertEq(vm.getNonce(address(0xa6)), 1);
+        assertEq(vm.load(address(0xa6), 0), bytes32(uint256(1)));
+        assertEq(address(0xa6).code.length, 0);
+        assertEq(vm.getNonce(address(0xa7)), 1);
+        assertEq(vm.getNonce(vm.addr(0xa8)), 1);
+    }
+
+    function testRevertedRestoreKeepsLaterExecutedTransaction() public {
+        revertedRestoreTransaction(false);
+    }
+
+    function testRevertedRestoreKeepsLaterRawTransaction() public {
+        revertedRestoreTransaction(true);
+    }
+
+    function revertedRestoreTransaction(bool broadcast) internal {
+        bytes memory rawTx = signedTransaction(abi.encodeCall(this.markStore, (99)));
+        uint256 snapshotId = prepare(20);
+        expectHelperRevert(
+            abi.encodeCall(helper.restoreTransactRevert, (snapshotId, rawTx, broadcast)), "restore reverted"
+        );
+        assertEq(store.marker(), 99);
+        assertEq(store.value(), 21);
+        assertEq(vm.getNonce(vm.addr(1)), 1);
+    }
+
+    function markStore(uint256 newMarker) external {
+        store.mark(newMarker);
     }
 
     function signedTransaction(bytes memory data) internal returns (bytes memory) {
