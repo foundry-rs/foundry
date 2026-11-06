@@ -309,65 +309,65 @@ Ran 9 tests for test/LibraryBacktrace.t.sol:LibraryBacktraceTest
 [FAIL: DivisionByZero()] testExternalDivisionByZero() ([GAS])
 ...
 Backtrace:
-  at ExternalMathLib.div
-  at LibraryConsumer.externalDivide
-  at LibraryBacktraceTest.testExternalDivisionByZero
+  at ExternalMathLib.div (src/libraries/ExternalMathLib.sol:12:28)
+  at LibraryConsumer.externalDivide (src/LibraryConsumer.sol:43:18)
+  at LibraryBacktraceTest.testExternalDivisionByZero (test/LibraryBacktrace.t.sol:49:9)
 
 [FAIL: panic: arithmetic underflow or overflow (0x11)] testExternalOverflow() ([GAS])
 ...
 Backtrace:
   at ExternalMathLib.mul
-  at LibraryConsumer.externalMultiply
-  at LibraryBacktraceTest.testExternalOverflow
+  at LibraryConsumer.externalMultiply (src/LibraryConsumer.sol:49:18)
+  at LibraryBacktraceTest.testExternalOverflow (test/LibraryBacktrace.t.sol:59:9)
 
 [FAIL: ExternalMathLib: value must be positive] testExternalRequire() ([GAS])
 ...
 Backtrace:
-  at ExternalMathLib.requirePositive
-  at LibraryConsumer.externalCheckPositive
-  at LibraryBacktraceTest.testExternalRequire
+  at ExternalMathLib.requirePositive (src/libraries/ExternalMathLib.sol:32:9)
+  at LibraryConsumer.externalCheckPositive (src/LibraryConsumer.sol:61:18)
+  at LibraryBacktraceTest.testExternalRequire (test/LibraryBacktrace.t.sol:64:9)
 
 [FAIL: Underflow()] testExternalUnderflow() ([GAS])
 ...
 Backtrace:
-  at ExternalMathLib.sub
-  at LibraryConsumer.externalSubtract
-  at LibraryBacktraceTest.testExternalUnderflow
+  at ExternalMathLib.sub (src/libraries/ExternalMathLib.sol:26:27)
+  at LibraryConsumer.externalSubtract (src/LibraryConsumer.sol:55:18)
+  at LibraryBacktraceTest.testExternalUnderflow (test/LibraryBacktrace.t.sol:54:9)
 
 [FAIL: DivisionByZero()] testInternalDivisionByZero() ([GAS])
 ...
 Backtrace:
-  at LibraryConsumer.internalDivide
-  at LibraryBacktraceTest.testInternalDivisionByZero
+  at LibraryConsumer.internalDivide (src/libraries/InternalMathLib.sol:12:28)
+  at LibraryBacktraceTest.testInternalDivisionByZero (test/LibraryBacktrace.t.sol:27:9)
 
 [FAIL: panic: arithmetic underflow or overflow (0x11)] testInternalOverflow() ([GAS])
 Traces:
 ...
 Backtrace:
   at LibraryConsumer.internalMultiply
-  at LibraryBacktraceTest.testInternalOverflow
+  at LibraryBacktraceTest.testInternalOverflow (test/LibraryBacktrace.t.sol:37:9)
 
 [FAIL: InternalMathLib: value must be positive] testInternalRequire() ([GAS])
 Traces:
 ...
 Backtrace:
-  at LibraryConsumer.internalCheckPositive
-  at LibraryBacktraceTest.testInternalRequire
+  at LibraryConsumer.internalCheckPositive (src/libraries/InternalMathLib.sol:32:9)
+  at LibraryBacktraceTest.testInternalRequire (test/LibraryBacktrace.t.sol:42:9)
 
 [FAIL: Underflow()] testInternalUnderflow() ([GAS])
 Traces:
 ...
 Backtrace:
-  at LibraryConsumer.internalSubtract
-  at LibraryBacktraceTest.testInternalUnderflow
+  at LibraryConsumer.internalSubtract (src/libraries/InternalMathLib.sol:26:27)
+  at LibraryBacktraceTest.testInternalUnderflow (test/LibraryBacktrace.t.sol:32:9)
 
 [FAIL: DivisionByZero()] testMixedLibraryFailure() ([GAS])
 Traces:
 ...
 Backtrace:
-  at ExternalMathLib.div
-  at LibraryConsumer.mixedCalculation
-  at LibraryBacktraceTest.testMixedLibraryFailure
+  at ExternalMathLib.div (src/libraries/ExternalMathLib.sol:12:28)
+  at LibraryConsumer.mixedCalculation (src/LibraryConsumer.sol:72:25)
+  at LibraryBacktraceTest.testMixedLibraryFailure (test/LibraryBacktrace.t.sol:72:9)
 
 Suite result: FAILED. 0 passed; 9 failed; 0 skipped; [ELAPSED]
 ...
@@ -612,7 +612,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 "#
     ]]);
 
-    // -vvv (verbosity 3): traces and backtrace WITHOUT source locations.
+    // -vvv (verbosity 3): traces and backtrace with source locations.
     cmd.forge_fuse()
         .args(["test", "--mc", "BacktraceVerbosityTest", "-vvv"])
         .assert_failure()
@@ -628,14 +628,14 @@ Traces:
     └─ ← [Revert] Simple revert message
 
 Backtrace:
-  at SimpleRevert.doRevert
-  at BacktraceVerbosityTest.testRevert
+  at SimpleRevert.doRevert (src/SimpleRevert.sol:7:9)
+  at BacktraceVerbosityTest.testRevert (test/BacktraceVerbosity.t.sol:16:9)
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 
-    // -vvvv (verbosity 4): traces with setup and backtrace WITHOUT source locations.
+    // -vvvv (verbosity 4): traces with setup and backtrace with source locations.
     cmd.forge_fuse()
         .args(["test", "--mc", "BacktraceVerbosityTest", "-vvvv"])
         .assert_failure()
@@ -656,8 +656,8 @@ Traces:
     └─ ← [Revert] Simple revert message
 
 Backtrace:
-  at SimpleRevert.doRevert
-  at BacktraceVerbosityTest.testRevert
+  at SimpleRevert.doRevert (src/SimpleRevert.sol:7:9)
+  at BacktraceVerbosityTest.testRevert (test/BacktraceVerbosity.t.sol:16:9)
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...

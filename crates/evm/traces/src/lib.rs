@@ -580,6 +580,28 @@ pub enum InternalTraceMode {
     Full,
 }
 
+/// Adds the opcodes that end a call frame or start a child call to `filter`.
+///
+/// A backtrace only needs the last step of each frame on the failing path, so recording these is
+/// enough for source locations.
+fn terminal_filter(filter: OpcodeFilter) -> OpcodeFilter {
+    [
+        OpCode::STOP,
+        OpCode::RETURN,
+        OpCode::REVERT,
+        OpCode::INVALID,
+        OpCode::SELFDESTRUCT,
+        OpCode::CALL,
+        OpCode::CALLCODE,
+        OpCode::DELEGATECALL,
+        OpCode::STATICCALL,
+        OpCode::CREATE,
+        OpCode::CREATE2,
+    ]
+    .into_iter()
+    .fold(filter, |filter, op| filter.enabled(op))
+}
+
 /// Opcode step recording granularity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StepRecording {
@@ -588,6 +610,10 @@ pub enum StepRecording {
     None,
     /// Record only JUMP/JUMPDEST steps.
     Jumps,
+    /// Record only the opcodes that can end a call frame or start a child call.
+    Terminal,
+    /// `Jumps` and `Terminal`.
+    JumpsAndTerminal,
     /// Record all opcode steps.
     All,
 }
@@ -596,7 +622,12 @@ impl StepRecording {
     const fn merge(self, other: Self) -> Self {
         match (self, other) {
             (Self::All, _) | (_, Self::All) => Self::All,
+            (Self::JumpsAndTerminal, _)
+            | (_, Self::JumpsAndTerminal)
+            | (Self::Jumps, Self::Terminal)
+            | (Self::Terminal, Self::Jumps) => Self::JumpsAndTerminal,
             (Self::Jumps, _) | (_, Self::Jumps) => Self::Jumps,
+            (Self::Terminal, _) | (_, Self::Terminal) => Self::Terminal,
             (Self::None, Self::None) => Self::None,
         }
     }
@@ -733,6 +764,15 @@ impl TraceRequirements {
         }
     }
 
+    /// Records the steps a backtrace needs for source locations: the last opcode of each call
+    /// frame. Does nothing unless calls are traced, or if all steps are already recorded.
+    pub const fn with_backtrace_steps(mut self, yes: bool) -> Self {
+        if yes && self.calls && !self.state_diff && !matches!(self.steps, StepRecording::All) {
+            self.steps = self.steps.merge(StepRecording::Terminal);
+        }
+        self
+    }
+
     pub fn into_config(self) -> Option<TracingInspectorConfig> {
         if !self.calls && self.steps == StepRecording::None && !self.state_diff {
             return None;
@@ -758,6 +798,10 @@ impl TraceRequirements {
                 StepRecording::Jumps => {
                     Some(OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST))
                 }
+                StepRecording::Terminal => Some(terminal_filter(OpcodeFilter::new())),
+                StepRecording::JumpsAndTerminal => Some(terminal_filter(
+                    OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST),
+                )),
             },
             exclude_precompile_calls: false,
             record_immediate_bytes: self.immediate_bytes,
@@ -1024,6 +1068,37 @@ mod tests {
             TraceRequirements::none().with_state_changes(true).with_verbosity(5),
             state_changes
         );
+    }
+
+    #[test]
+    fn backtrace_steps_record_only_terminal_opcodes() {
+        let cfg = TraceRequirements::none()
+            .with_verbosity(3)
+            .with_backtrace_steps(true)
+            .into_config()
+            .unwrap();
+        assert!(cfg.record_steps);
+        for op in [OpCode::STOP, OpCode::RETURN, OpCode::REVERT, OpCode::INVALID, OpCode::CALL] {
+            assert!(cfg.should_record_opcode(op), "{op}");
+        }
+        for op in [OpCode::ADD, OpCode::SSTORE, OpCode::JUMP, OpCode::JUMPDEST] {
+            assert!(!cfg.should_record_opcode(op), "{op}");
+        }
+
+        // Internal decoding keeps its jump steps.
+        assert_eq!(
+            TraceRequirements::none()
+                .with_steps(StepRecording::Jumps)
+                .with_verbosity(3)
+                .with_backtrace_steps(true),
+            TraceRequirements::none().with_calls(true).with_steps(StepRecording::JumpsAndTerminal)
+        );
+        // No calls traced, or all steps already recorded: unchanged.
+        assert_eq!(TraceRequirements::none().with_backtrace_steps(true), TraceRequirements::none());
+        let all = TraceRequirements::none().with_verbosity(5);
+        assert_eq!(all.with_backtrace_steps(true), all);
+        let debug = TraceRequirements::none().with_debug(true);
+        assert_eq!(debug.with_backtrace_steps(true), debug);
     }
 
     #[test]

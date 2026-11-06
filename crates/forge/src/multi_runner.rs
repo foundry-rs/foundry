@@ -462,6 +462,8 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     pub decode_internal: InternalTraceMode,
     /// Whether to record every opcode step without debugger snapshots.
     pub record_all_steps: bool,
+    /// Whether to record the steps backtraces need for source locations.
+    pub backtrace_steps: bool,
     /// Whether to enable call isolation.
     pub isolation: bool,
     /// Whether to exit early on test failure or if test run interrupted.
@@ -503,7 +505,8 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         );
         self.spec_id = self.evm_env.cfg_env.spec;
         self.isolation = config.isolate;
-        // `line_coverage`, `debug`, `decode_internal` and `record_all_steps` are Forge-specific
+        // `line_coverage`, `debug`, `decode_internal`, `record_all_steps` and `backtrace_steps` are
+        // Forge-specific
         // and not present in the config.
         // TODO: `self.evm_opts` and `self.evm_env` are only partially reconfigured.
         self.evm_opts.always_use_create_2_factory = config.always_use_create_2_factory;
@@ -570,11 +573,13 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
     }
 
     fn trace_requirements(&self) -> TraceRequirements {
+        let verbosity = self.config.tracing.verbosity.max(self.evm_opts.verbosity);
         TraceRequirements::none()
             .with_debug_recording(self.debug)
             .with_decode_internal(self.decode_internal)
             .with_all_steps(self.record_all_steps)
-            .with_verbosity(self.config.tracing.verbosity.max(self.evm_opts.verbosity))
+            .with_verbosity(verbosity)
+            .with_backtrace_steps(self.backtrace_steps && verbosity >= 3)
     }
 }
 
@@ -599,6 +604,8 @@ pub struct MultiContractRunnerBuilder {
     pub decode_internal: InternalTraceMode,
     /// Whether to record every opcode step without debugger snapshots.
     pub record_all_steps: bool,
+    /// Whether to record the steps backtraces need for source locations.
+    pub backtrace_steps: bool,
     /// Whether to enable call isolation
     pub isolation: bool,
     /// Whether to exit early on test failure.
@@ -643,6 +650,7 @@ impl MultiContractRunnerBuilder {
             isolation: false,
             decode_internal: Default::default(),
             record_all_steps: false,
+            backtrace_steps: false,
             fail_fast: false,
             multi_network: Default::default(),
             showmap: None,
@@ -714,6 +722,11 @@ impl MultiContractRunnerBuilder {
 
     pub const fn set_record_all_steps(mut self, enable: bool) -> Self {
         self.record_all_steps = enable;
+        self
+    }
+
+    pub const fn set_backtrace_steps(mut self, enable: bool) -> Self {
+        self.backtrace_steps = enable;
         self
     }
 
@@ -954,6 +967,7 @@ impl MultiContractRunnerBuilder {
                 debug: self.debug,
                 decode_internal: self.decode_internal,
                 record_all_steps: self.record_all_steps,
+                backtrace_steps: self.backtrace_steps,
                 inline_config,
                 isolation: self.isolation,
                 early_exit: EarlyExit::new(self.fail_fast),
