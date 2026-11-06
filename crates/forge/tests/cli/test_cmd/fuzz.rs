@@ -5790,7 +5790,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
             .stdout_eq(expected_output);
     };
 
-    test_literal(100, "testFuzz_Addr", "address", "0x6B175474E89094C44Da98b954EedeAC495271d0F");
+    test_literal(101, "testFuzz_Addr", "address", "0x6B175474E89094C44Da98b954EedeAC495271d0F");
     test_literal(200, "testFuzz_Number", "uint64", "1122334455 [1.122e9]");
     test_literal(300, "testFuzz_Integer", "int32", "-777");
     test_literal(
