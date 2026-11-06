@@ -1737,24 +1737,33 @@ fn record_account_changes<FEN: FoundryEvmNetwork, R>(
     let start = ccx.state.account_writes.len();
     let result = f(ccx)?;
     let fork_id = ccx.active_fork_id();
-    // Frames can only have journaled changes to accounts that were already loaded.
-    for (&address, account) in ccx.ecx.journal().evm_state() {
-        let Some(&(balance, nonce)) = before.get(&address) else { continue };
+    let state = ccx.ecx.journal().evm_state();
+    // Accounts left out of the journal keep their final values in the database across reverts.
+    for entry in &mut ccx.state.account_writes[start..] {
+        if entry.is_some_and(|(write_fork_id, address, _)| {
+            write_fork_id == fork_id && !state.contains_key(&address)
+        }) {
+            *entry = None;
+        }
+    }
+    for (&address, account) in state {
         let info = &account.info;
-        if info.balance != balance {
-            let write = if ccx.state.take_account_writes(start, fork_id, address, false) {
-                AccountWrite::Balance(info.balance)
-            } else {
-                AccountWrite::BalanceDelta(info.balance.wrapping_sub(balance))
-            };
+        // Frames can only have journaled changes to accounts that were already loaded.
+        let before = before.get(&address);
+        if ccx.state.take_account_writes(start, fork_id, address, false) {
+            ccx.state.record_account_write(fork_id, address, AccountWrite::Balance(info.balance));
+        } else if let Some(&(balance, _)) = before
+            && info.balance != balance
+        {
+            let write = AccountWrite::BalanceDelta(info.balance.wrapping_sub(balance));
             ccx.state.record_account_write(fork_id, address, write);
         }
-        if info.nonce != nonce {
-            let write = if ccx.state.take_account_writes(start, fork_id, address, true) {
-                AccountWrite::Nonce(info.nonce)
-            } else {
-                AccountWrite::NonceDelta(info.nonce.wrapping_sub(nonce))
-            };
+        if ccx.state.take_account_writes(start, fork_id, address, true) {
+            ccx.state.record_account_write(fork_id, address, AccountWrite::Nonce(info.nonce));
+        } else if let Some(&(_, nonce)) = before
+            && info.nonce != nonce
+        {
+            let write = AccountWrite::NonceDelta(info.nonce.wrapping_sub(nonce));
             ccx.state.record_account_write(fork_id, address, write);
         }
     }

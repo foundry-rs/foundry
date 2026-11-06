@@ -139,6 +139,11 @@ contract RevertedFrameHelper is Test {
         vm.deal(address(this), amount);
     }
 
+    function dealThenPay(address payable to, uint256 amount) external payable {
+        vm.deal(to, amount);
+        to.transfer(msg.value);
+    }
+
     receive() external payable {}
 
     function setNonceAfterCreate() external {
@@ -163,6 +168,15 @@ contract RevertedFrameOuter {
 
     function revertToStateBetweenWrites(RevertedFrameHelper helper, uint256 amount, uint256 snapshot) external payable {
         try helper.revertToStateBetweenWrites{value: msg.value}(amount, snapshot) {} catch {}
+    }
+
+    function transactionThenRead(RevertedFrameHelper helper, bytes calldata rawTx, bool broadcast, address target)
+        external
+        payable
+    {
+        try helper.receiveThenTransaction{value: msg.value}(rawTx, broadcast) {} catch {}
+        require(target.balance == 10, "transaction effects were not applied");
+        revert FrameEffectApplied();
     }
 }
 
@@ -263,6 +277,10 @@ contract RevertedFrameEffectsTest is Test {
     bytes constant HELPER_DEALS_ITSELF =
         hex"f884806483030d40945615deb798bb3e4dfa0139dfa1b3d433cc23b72f80a460056bb3000000000000000000000000000000000000000000000000000000000000000526a02a80c302883114835622449a4fefbd8294890c056bc1b2fa7844c8ebb6fd9800a0100ea23ab7b496b06b5a8898d10a1b83cb86254d04a81c50845ab72d83e47e53";
 
+    // Legacy call of `helper.dealThenPay(target, 5)` with 5 wei from `vm.addr(1)` at nonce 0.
+    bytes constant HELPER_DEALS_THEN_PAYS_TARGET =
+        hex"f8a5806483030d40945615deb798bb3e4dfa0139dfa1b3d433cc23b72f05b844b8a2a12b0000000000000000000000000000000000000000000000000000000000001234000000000000000000000000000000000000000000000000000000000000000526a094a11886949000c68a3b881aa7647c05bdc1c49999bdaab0a86288500297ff53a05694781980567aee193483a86e5b8d901f53eb37ce0eb14893af7b6a7de6d112";
+
     function test_transaction_into_reverted_receiver_executeTransaction() public {
         transactionIntoRevertedReceiver(TRANSFER_TO_HELPER, false, 17);
     }
@@ -275,6 +293,20 @@ contract RevertedFrameEffectsTest is Test {
         transactionIntoRevertedReceiver(HELPER_DEALS_ITSELF, false, 5);
     }
 
+    function test_deal_then_payment_in_transaction_then_reverted_read_executeTransaction() public {
+        dealThenPaymentThenRevertedRead(false);
+    }
+
+    function test_deal_then_payment_in_transaction_then_reverted_read_broadcastRawTransaction() public {
+        dealThenPaymentThenRevertedRead(true);
+    }
+
+    function test_deal_then_payment_to_unchanged_account_in_transaction_into_reverted_receiver() public {
+        vm.deal(target, 10);
+        transactionIntoRevertedReceiver(HELPER_DEALS_THEN_PAYS_TARGET, false, 0);
+        assertEq(target.balance, 10);
+    }
+
     /// The transaction's effects survive the revert, but the reverted call's value does not.
     function transactionIntoRevertedReceiver(bytes memory rawTx, bool broadcast, uint256 helperBalance) internal {
         vm.chainId(1);
@@ -285,6 +317,18 @@ contract RevertedFrameEffectsTest is Test {
         assertHelperReverted(success, result);
         assertEq(address(helper).balance, helperBalance);
         assertEq(address(this).balance, 1 ether);
+    }
+
+    /// The final balance of an account first touched by the transaction survives later reverts.
+    function dealThenPaymentThenRevertedRead(bool broadcast) internal {
+        vm.chainId(1);
+        vm.deal(vm.addr(1), 1 ether);
+        vm.deal(address(this), 1 ether);
+        (bool success, bytes memory result) = address(outer).call{value: 1 ether}(
+            abi.encodeCall(outer.transactionThenRead, (helper, HELPER_DEALS_THEN_PAYS_TARGET, broadcast, target))
+        );
+        assertHelperReverted(success, result);
+        assertEq(target.balance, 10);
     }
 
     function test_store_reverts_depth1() public {
