@@ -162,5 +162,11 @@ contract Repros {
             to: users.eve,
             amount: WITHDRAW_AMOUNT_6D
         });
+        flow.withdraw{ value: FLOW_MIN_FEE_WEI }({
+            // cmnt
+            streamId: defaultStreamId,
+            to: users.eve,
+            amount: WITHDRAW_AMOUNT_6D
+        });
     }
 }
