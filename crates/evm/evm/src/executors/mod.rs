@@ -132,6 +132,8 @@ pub struct Executor<FEN: FoundryEvmNetwork> {
     gas_limit: u64,
     /// Whether `failed()` should be called on the test contract to determine if the test failed.
     legacy_assertions: bool,
+    /// Whether committing setup calls should return retained storage observations for guidance.
+    collect_setup_storage: bool,
 }
 
 impl<FEN: FoundryEvmNetwork> Executor<FEN> {
@@ -183,7 +185,15 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             }
         }
 
-        Self { backend: Arc::new(backend), evm_env, tx, inspector, gas_limit, legacy_assertions }
+        Self {
+            backend: Arc::new(backend),
+            evm_env,
+            tx,
+            inspector,
+            gas_limit,
+            legacy_assertions,
+            collect_setup_storage: false,
+        }
     }
 
     fn clone_with_backend(&self, backend: Backend<FEN>) -> Self {
@@ -194,6 +204,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             inspector: self.inspector().clone(),
             gas_limit: self.gas_limit,
             legacy_assertions: self.legacy_assertions,
+            collect_setup_storage: self.collect_setup_storage,
         }
     }
 
@@ -738,11 +749,18 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         ext: Option<ChainFor<FEN>>,
     ) -> eyre::Result<RawCallResult<FEN>> {
         let mut stack = self.inspector().clone();
+        let collect_setup_storage = self.collect_setup_storage;
         let backend = self.backend_mut();
         let (execution, mut evm) = execute(backend, evm_env, tx, ext, &mut stack)?;
+        let suspended_storage = if collect_setup_storage {
+            backend.lifecycle().suspended_storage().collect()
+        } else {
+            Vec::new()
+        };
         evm.commit_source(&execution.state);
         backend.park(evm);
         let mut result = convert_executed_result(execution, stack, &*backend)?;
+        result.suspended_storage = suspended_storage;
         // The execution already committed its state into the backend.
         self.persist_inspector_state(&mut result);
         Ok(result)
@@ -1095,6 +1113,12 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             .inspect_err(|e| warn!(target: "forge::test", "failed calling {:?}: {e}", C::SIGNATURE))
             .unwrap_or_default()
     }
+
+    /// Enables returning retained storage observations from committing setup calls.
+    /// Disable this before running tests so campaigns do not copy setup-only metadata.
+    pub const fn set_collect_setup_storage(&mut self, enabled: bool) {
+        self.collect_setup_storage = enabled;
+    }
 }
 
 /// Attaches an EIP-7702 authorization list to `tx`, which then executes as a fee-less EIP-7702
@@ -1408,6 +1432,10 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// The state changes of the call: every account and storage slot it loaded, with their
     /// original and present values.
     pub state_changeset: PendingState,
+    /// Storage keys retained across context switches, with their originating forks. These are
+    /// observations for setup dictionary guidance, not additional execution state changes.
+    /// Populated only when setup storage collection is enabled for a committing call.
+    pub suspended_storage: Vec<(Option<U256>, Address, U256)>,
     /// The environment after the call
     pub evm_env: EvmEnvFor<FEN>,
     /// The cheatcode states after execution
@@ -1452,6 +1480,7 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
             sancov_cmp_values: None,
             transactions: None,
             state_changeset: PendingState::default(),
+            suspended_storage: Vec::new(),
             evm_env: default_env::<FEN>(),
             cheatcodes: Default::default(),
             created_address: None,
@@ -1773,6 +1802,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         sancov_cmp_values: None,
         transactions,
         state_changeset,
+        suspended_storage: Vec::new(),
         evm_env,
         cheatcodes,
         created_address,

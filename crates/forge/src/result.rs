@@ -8,7 +8,6 @@ use alloy_primitives::{
     Address, B256, Bytes, I256, Log, Selector, U256,
     map::{AddressHashMap, HashMap},
 };
-use evm2::evm::PendingState;
 use eyre::Report;
 use foundry_common::{ContractsByArtifact, get_contract_name, shell};
 use foundry_config::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
@@ -2175,7 +2174,7 @@ impl TestSetup {
         trace_kind: TraceKind,
         fork: Option<U256>,
     ) {
-        self.fuzz_storage.extend(fork, &raw.state_changeset);
+        self.fuzz_storage.extend(fork, &raw);
         extend!(self, raw, trace_kind);
     }
 
@@ -2192,8 +2191,12 @@ pub(crate) struct SetupStorage {
 }
 
 impl SetupStorage {
-    pub(crate) fn extend(&mut self, fork: Option<U256>, state: &PendingState) {
-        for change in state.account_changes() {
+    pub(crate) fn extend<FEN: FoundryEvmNetwork>(
+        &mut self,
+        fork: Option<U256>,
+        raw: &RawCallResult<FEN>,
+    ) {
+        for change in raw.state_changeset.account_changes() {
             let slots = self.slots.entry((fork, change.address)).or_default();
             if change.created || change.current.is_none() {
                 slots.clear();
@@ -2201,6 +2204,9 @@ impl SetupStorage {
             if change.current.is_some() {
                 slots.extend(change.storage.slots.keys().copied());
             }
+        }
+        for &(fork, address, slot) in &raw.suspended_storage {
+            self.slots.entry((fork, address)).or_default().insert(slot);
         }
     }
 }

@@ -530,7 +530,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
     pub fn setup(&mut self, call_setup: bool) -> TestSetup {
-        self._setup(call_setup).unwrap_or_else(|err| {
+        self.executor.set_collect_setup_storage(true);
+        let result = self._setup(call_setup);
+        self.executor.set_collect_setup_storage(false);
+        result.unwrap_or_else(|err| {
             if matches!(err.downcast_ref::<EvmError<FEN>>(), Some(EvmError::Skip(_))) {
                 TestSetup::skipped(err.to_string())
             } else {
@@ -5293,19 +5296,19 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             ) {
                 debug!(?calldata, spec=?self.executor.spec_id(), "applying before_test_setup");
                 // Apply before test configured calldata.
-                let Ok(call_result) = self.executor.to_mut().transact_raw(
-                    self.tcfg.sender,
-                    address,
-                    calldata,
-                    U256::ZERO,
-                ) else {
+                let executor = self.executor.to_mut();
+                executor.set_collect_setup_storage(true);
+                let call_result =
+                    executor.transact_raw(self.tcfg.sender, address, calldata, U256::ZERO);
+                executor.set_collect_setup_storage(false);
+                let Ok(call_result) = call_result else {
                     self.result.single_fail(None);
                     return Err(());
                 };
                 let reverted = call_result.reverted;
                 self.fuzz_storage
                     .to_mut()
-                    .extend(self.executor.backend().active_fork_id(), &call_result.state_changeset);
+                    .extend(self.executor.backend().active_fork_id(), &call_result);
                 // Merge tx result traces in unit test result.
                 self.result.extend_setup(call_result);
                 // To continue unit test execution the call should not revert.
