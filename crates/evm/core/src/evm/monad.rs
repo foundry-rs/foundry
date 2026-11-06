@@ -1,8 +1,9 @@
 //! Monad on evm2, using `monad-evm2`.
 
 use super::{
-    EvmEnv, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork, FoundryTxResultExt, SendableExt,
-    TxPayload, eth_envelope_from_any_rpc, eth_tx, with_eip7702_delegations,
+    EvmEnv, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork, FoundryExecutionHooks,
+    FoundryTxConversion, FoundryTxResultExt, SendableExt, TxPayload, eth_envelope_from_any_rpc,
+    eth_tx, with_eip7702_delegations,
 };
 use alloy_consensus::{TxLegacy, transaction::Recovered};
 use alloy_network::{AnyRpcTransaction, Ethereum};
@@ -150,7 +151,9 @@ impl FoundryTxResultExt for MonadTxResultExt {}
 impl FoundryEvmNetwork for MonadEvmNetwork {
     type Network = Ethereum;
     type EvmFactory = MonadEvmFactory;
+}
 
+impl FoundryTxConversion<Ethereum> for MonadEvmTypes {
     fn evm_tx(
         envelope: alloy_consensus::TxEnvelope,
         sender: Address,
@@ -195,19 +198,20 @@ impl FoundryEvmFactory for MonadEvmFactory {
     ) -> Box<dyn PrecompileProvider<MonadEvmTypes>> {
         Box::new(MonadPrecompiles::new(env.spec))
     }
+}
 
-    fn sync_transaction(&self, evm: &mut Evm<'_, MonadEvmTypes>) {
+impl FoundryExecutionHooks for MonadEvmTypes {
+    fn sync_transaction(evm: &mut Evm<'_, Self>) {
         // A database error surfaces again when execution next reads the account.
         let _ = sync_reserve_balance(evm);
     }
 
-    fn refresh_transaction(&self, evm: &mut Evm<'_, MonadEvmTypes>) {
-        self.refresh_switched_transaction(evm, &AddressMap::default());
+    fn refresh_transaction(evm: &mut Evm<'_, Self>) {
+        Self::refresh_switched_transaction(evm, &AddressMap::default());
     }
 
     fn refresh_switched_transaction(
-        &self,
-        evm: &mut Evm<'_, MonadEvmTypes>,
+        evm: &mut Evm<'_, Self>,
         original: &AddressMap<Option<AccountInfo>>,
     ) {
         // Foundry's writes, such as `deal` rebasing earlier journal entries, are not reserve

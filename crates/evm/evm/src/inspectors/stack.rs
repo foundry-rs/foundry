@@ -28,11 +28,11 @@ use foundry_evm_core::{
     constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER_CODEHASH},
     evm::{
         BlockEnvFor, DestructedAccount, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested,
-        FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor,
-        MessageFor, MessageResultFor, PersistentWrite, PreparedTx, SnapshotRestores,
-        TransactionRequestFor, TxFor, TxResultFor, TypesFor, cool_loaded, destructed_accounts,
-        evm_env, merge_pending_changes, merge_untracked_pending_changes_with_warmth,
-        release_inspector, warm_accounts, warm_set,
+        FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, FoundryExecutionHooks,
+        FoundryTxConversion, InterpreterFor, MessageFor, MessageResultFor, PersistentWrite,
+        PreparedTx, SnapshotRestores, TransactionRequestFor, TxFor, TxResultFor, TypesFor,
+        cool_loaded, destructed_accounts, evm_env, merge_pending_changes,
+        merge_untracked_pending_changes_with_warmth, release_inspector, warm_accounts, warm_set,
     },
     precompiles::P256_VERIFY,
     utils::tx_warm_addresses,
@@ -547,7 +547,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
     ) -> eyre::Result<TxResultFor<FEN>> {
         let mut env = env.unwrap_or_else(|| evm_env(evm));
         env.version.initial_call_depth = depth;
-        EvmFactoryFor::<FEN>::default().sync_transaction(evm);
+        TypesFor::<FEN>::sync_transaction(evm);
         let mut child = backend.backend().lifecycle().nested_evm(evm, tx, Some(env), None);
         let previous = self.enter_inner_context(InnerRoot {
             depth,
@@ -606,7 +606,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
             Ok(result)
         });
         // The nested transaction's changes are not the running transaction's execution.
-        EvmFactoryFor::<FEN>::default().refresh_transaction(evm);
+        TypesFor::<FEN>::refresh_transaction(evm);
         cheats.snapshot_restores = snapshot_restores;
         cheats.origin_override = origin_override;
         self.exit_inner_context(previous);
@@ -1347,7 +1347,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             );
             outcome
         };
-        let tx = match FEN::tx_from_request(request) {
+        let tx = match TypesFor::<FEN>::tx_from_request(request) {
             Ok(tx) => tx,
             Err(err) => return not_executed(err.to_string().into_bytes().into()),
         };
@@ -1356,7 +1356,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let source_fork = backend.backend().active_fork_id();
         let epoch = self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch);
         let fork_epoch = self.cheatcodes.as_deref().map(|cheats| cheats.fork_epoch);
-        EvmFactoryFor::<FEN>::default().sync_transaction(evm);
+        TypesFor::<FEN>::sync_transaction(evm);
         let mut child = backend.backend().lifecycle().nested_evm(evm, &tx, Some(env), None);
         // The nested transaction continues the running one's network extension state, such as
         // Monad's reserve balance context and tracker.
@@ -1553,7 +1553,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // The running transaction continues from the nested one's derived state, rebased onto
         // the merged state.
         evm.ext_mut().set_preserve_transaction_state(false);
-        EvmFactoryFor::<FEN>::default().refresh_transaction(evm);
+        TypesFor::<FEN>::refresh_transaction(evm);
         let mut block = *evm.block();
         block.basefee = outer_basefee;
         evm.set_block(block);

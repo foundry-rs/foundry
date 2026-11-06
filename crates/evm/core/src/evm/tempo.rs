@@ -1,8 +1,9 @@
 //! Tempo execution integration.
 
 use super::{
-    EvmEnv, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork, FoundryTxResultExt, SendableExt,
-    TransactionRequestFor, TxEnvelopeFor, TxPayload, placeholder_signature,
+    EvmEnv, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork, FoundryExecutionHooks,
+    FoundryTxConversion, FoundryTxResultExt, SendableExt, TransactionRequestFor, TxEnvelopeFor,
+    TxPayload, placeholder_signature,
 };
 use crate::{
     constants::{CALLER, SYSTEM_PRECOMPILE_STUB, TEST_CONTRACT_ADDRESS},
@@ -62,7 +63,11 @@ impl FoundryTxResultExt for TempoTxResultExt {}
 impl FoundryEvmNetwork for TempoEvmNetwork {
     type Network = TempoNetwork;
     type EvmFactory = TempoEvmFactory;
+}
 
+impl FoundryExecutionHooks for TempoEvmTypes {}
+
+impl FoundryTxConversion<TempoNetwork> for TempoEvmTypes {
     fn evm_tx(
         envelope: TempoNetworkTxEnvelope,
         sender: Address,
@@ -72,7 +77,7 @@ impl FoundryEvmNetwork for TempoEvmNetwork {
     }
 
     fn tx_from_request(
-        request: TransactionRequestFor<Self>,
+        request: TransactionRequestFor<TempoEvmNetwork>,
     ) -> eyre::Result<Recovered<TempoTxEnv>> {
         let sender =
             request.from().ok_or_else(|| eyre::eyre!("transaction request has no sender"))?;

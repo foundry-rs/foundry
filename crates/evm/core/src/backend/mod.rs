@@ -27,9 +27,10 @@ use crate::{
     evm::{
         BackingDb, BlockContext, ChainFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested,
         ExecutionLifecycle, ExecutionPhase, ForkDb, ForkInfo, ForkPosition, FoundryDatabase,
-        FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, PersistentWrite,
-        PreparedTx, SpecFor, StoredExt, TransactionRequestFor, TxFor, TxResultFor, TypesFor,
-        block_txs, evm_env, full_transactions, merge_untracked_nested_changes,
+        FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, FoundryExecutionHooks,
+        FoundryTxConversion, PersistentWrite, PreparedTx, SpecFor, StoredExt,
+        TransactionRequestFor, TxFor, TxResultFor, TypesFor, block_txs, evm_env, full_transactions,
+        merge_untracked_nested_changes,
     },
     fork::{CreateFork, Fork as RemoteFork, ForkId, ForkResult, MultiFork},
     opts::{EvmOpts, ExecutionSpecContext},
@@ -851,7 +852,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         // loaded accounts onto their results.
         if replayed && !self.is_active_fork(id) {
             self.lifecycle.rebase_onto_inactive(evm, Some(id))?;
-            self.lifecycle.factory().refresh_transaction(evm);
+            TypesFor::<FEN>::refresh_transaction(evm);
         }
         Ok(())
     }
@@ -891,7 +892,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         // as it was mined, in its block's environment.
         // <https://github.com/foundry-rs/foundry/issues/6538>
         let target = self.transaction_target(id, transaction)?;
-        let tx = FEN::tx_from_any_rpc(&target.transaction)?;
+        let tx = TypesFor::<FEN>::tx_from_any_rpc(&target.transaction)?;
         let active = self.is_active_fork(id);
         let mut env = if active {
             let mut env = evm_env(evm);
@@ -957,7 +958,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             (None, None)
         };
         // The replayed transaction's changes are not the running transaction's execution.
-        self.lifecycle.factory().sync_transaction(evm);
+        TypesFor::<FEN>::sync_transaction(evm);
         let mut prepared = if active {
             self.lifecycle.prepare_nested(evm, tx, Some(env), ext)
         } else {
@@ -1011,7 +1012,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     ) -> (PreparedTx<TypesFor<FEN>>, CowBackend<'_, FEN>) {
         trace!("execute signed transaction");
         // The nested transaction's changes are not the running transaction's execution.
-        self.lifecycle.factory().sync_transaction(evm);
+        TypesFor::<FEN>::sync_transaction(evm);
         (self.lifecycle.prepare_nested(evm, tx, env, None), CowBackend::new_borrowed(self))
     }
 
@@ -1033,9 +1034,9 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             }
             Some((id, position, cursor)) => {
                 self.retain_cursor(id, position, &cursor, None);
-                self.lifecycle.factory().refresh_transaction(evm);
+                TypesFor::<FEN>::refresh_transaction(evm);
             }
-            None => self.lifecycle.factory().refresh_transaction(evm),
+            None => TypesFor::<FEN>::refresh_transaction(evm),
         }
         result
     }
@@ -1377,7 +1378,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             && let Some(evm) = evm
         {
             evm.ext_mut().adopt_cursor(cursor);
-            self.lifecycle.factory().refresh_transaction(evm);
+            TypesFor::<FEN>::refresh_transaction(evm);
         } else {
             let context = self.lifecycle.forks_mut().context_mut(Some(id)).expect("fork exists");
             let mut ext = context.ext.get();
@@ -1546,7 +1547,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         for (position, rpc_tx) in transactions[..index].iter().enumerate() {
             let is_system =
                 is_known_system_sender(rpc_tx.from()) || rpc_tx.ty() == SYSTEM_TRANSACTION_TYPE;
-            let tx = match FEN::tx_from_any_rpc(rpc_tx) {
+            let tx = match TypesFor::<FEN>::tx_from_any_rpc(rpc_tx) {
                 Ok(tx) => tx,
                 // Deposits of networks without deposit support, and system envelopes without a
                 // native representation.

@@ -1,8 +1,8 @@
 //! Ethereum on evm2.
 
 use super::{
-    EvmEnv, FoundryEvmFactory, FoundryEvmNetwork, TxPayload, eth_envelope_from_any_rpc, eth_tx,
-    with_eip7702_delegations,
+    EvmEnv, FoundryEvmFactory, FoundryEvmNetwork, FoundryExecutionHooks, FoundryTxConversion,
+    TxPayload, eth_envelope_from_any_rpc, eth_tx, with_eip7702_delegations,
 };
 use alloy_consensus::transaction::Recovered;
 use alloy_network::{AnyRpcTransaction, Ethereum};
@@ -47,7 +47,11 @@ pub struct EthEvmNetwork;
 impl FoundryEvmNetwork for EthEvmNetwork {
     type Network = Ethereum;
     type EvmFactory = EthEvmFactory;
+}
 
+impl FoundryExecutionHooks for BaseEvmTypes {}
+
+impl FoundryTxConversion<Ethereum> for BaseEvmTypes {
     fn evm_tx(
         envelope: alloy_consensus::TxEnvelope,
         sender: Address,

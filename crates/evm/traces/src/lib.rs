@@ -778,7 +778,8 @@ mod tests {
         interpreter::InstrStop,
     };
     use foundry_evm_core::evm::{
-        EvmEnv, EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork, SpecFor, TransactionRequestFor,
+        EvmEnv, EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork, FoundryTxConversion, SpecFor,
+        TransactionRequestFor, TypesFor,
     };
     use snapbox::{assert_data_eq, str};
 
@@ -817,7 +818,7 @@ mod tests {
             .with_gas_limit(1_000_000)
             .with_max_fee_per_gas(0)
             .with_max_priority_fee_per_gas(0);
-        let tx = FEN::tx_from_request(request).unwrap();
+        let tx = TypesFor::<FEN>::tx_from_request(request).unwrap();
         assert!(evm.transact(&tx).unwrap().commit().status);
 
         let mut arena = evm.clear_inspector_as::<TracingInspector>().unwrap().into_traces();

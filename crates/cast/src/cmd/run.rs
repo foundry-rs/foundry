@@ -57,7 +57,7 @@ use foundry_config::{
 use foundry_evm::{
     core::evm::{
         EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork,
-        TempoEvmNetwork, TxFor, TypesFor,
+        FoundryTxConversion, TempoEvmNetwork, TxFor, TypesFor,
     },
     executors::{Executor, ExecutorBuilder, TracingExecutor},
     hardforks::FoundryHardfork,
@@ -706,8 +706,8 @@ async fn fetch_block_access_list(
 impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
     fn transaction(&self, tx: &AnyRpcTransaction) -> Result<Recovered<TxFor<FEN>>> {
         match self.replay_gas_limits.apply(tx)? {
-            Some(tx) => FEN::tx_from_any_rpc(&tx),
-            None => FEN::tx_from_any_rpc(tx),
+            Some(tx) => TypesFor::<FEN>::tx_from_any_rpc(&tx),
+            None => TypesFor::<FEN>::tx_from_any_rpc(tx),
         }
     }
 

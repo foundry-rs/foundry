@@ -4,8 +4,9 @@ Foundry executes every supported network family on [evm2](https://github.com/all
 execution contracts live in Rustdoc next to their owners:
 
 - Network families: [`FoundryEvmNetwork` and `FoundryEvmFactory`](../../crates/evm/core/src/evm/mod.rs),
-  with network-native transactions in [`evm::tx`](../../crates/evm/core/src/evm/tx.rs). Selection
-  and dispatch follow [Custom EVM integrations](./networks.md).
+  with network-native conversion in [`FoundryTxConversion`](../../crates/evm/core/src/evm/tx.rs)
+  and running-state synchronization in [`FoundryExecutionHooks`](../../crates/evm/core/src/evm/env.rs).
+  Selection and dispatch follow [Custom EVM integrations](./networks.md).
 - Backend and fork state: [`Backend`](../../crates/evm/core/src/backend/mod.rs) for the execution
   contract between the backend, the EVM and cheatcode inspectors, and
   [`ExecutionLifecycle`](../../crates/evm/core/src/evm/lifecycle.rs) for the accepted state of

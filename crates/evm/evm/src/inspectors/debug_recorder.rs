@@ -400,8 +400,8 @@ mod tests {
         evm::{AccountInfo, InMemoryDB},
     };
     use foundry_evm_core::evm::{
-        EthEvmNetwork, EvmEnv, EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork, SpecFor,
-        TransactionRequestFor,
+        EthEvmNetwork, EvmEnv, EvmFactoryFor, FoundryEvmFactory, FoundryTxConversion, SpecFor,
+        TransactionRequestFor, TypesFor,
     };
 
     /// Runs the recorder and records the interpreter's memory and stack before each step.
@@ -489,7 +489,7 @@ mod tests {
             .with_gas_limit(1_000_000)
             .with_max_fee_per_gas(0)
             .with_max_priority_fee_per_gas(0);
-        let tx = EthEvmNetwork::tx_from_request(request).unwrap();
+        let tx = TypesFor::<EthEvmNetwork>::tx_from_request(request).unwrap();
         let result = evm.transact(&tx).unwrap().commit();
         let Snapshots { recorder, steps } = *evm.clear_inspector_as::<Snapshots>().unwrap();
         assert!(result.status);

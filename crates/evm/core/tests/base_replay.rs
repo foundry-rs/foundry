@@ -22,8 +22,8 @@ use evm2::{
 use foundry_evm_core::{
     backend::Backend,
     evm::{
-        BaseEvmNetwork, EvmEnv, EvmEnvFor, FoundryEvmNetwork, FoundryTxResultExt, TxPayload,
-        TypesFor,
+        BaseEvmNetwork, EvmEnv, EvmEnvFor, FoundryEvmNetwork, FoundryTxConversion,
+        FoundryTxResultExt, TxPayload, TypesFor,
     },
     utils::get_blob_base_fee_update_fraction,
 };
@@ -167,7 +167,7 @@ fn replay_transfer_fixture(fixture: ReplayFixture) {
     assert_ne!(fixture.block.state_root.parse::<B256>().unwrap(), B256::ZERO);
     let raw = bytes(&fixture.transaction.raw);
     assert_eq!(keccak256(&raw), fixture.transaction.hash.parse::<B256>().unwrap());
-    let tx = BaseEvmNetwork::decode_tx(&raw).expect("decode Base transaction");
+    let tx = TypesFor::<BaseEvmNetwork>::decode_tx(&raw).expect("decode Base transaction");
     assert_eq!(tx.signer(), fixture.transaction.from.parse::<Address>().unwrap());
     let mut backend = seed_fixture_backend(&fixture, upgrade);
 
@@ -248,7 +248,7 @@ fn replays_successful_and_failed_base_deposits() {
     assert_eq!(envelope.encoded_2718()[0], 0x7e);
 
     let mut backend = simple_backend();
-    let tx = BaseEvmNetwork::evm_tx(envelope, sender, TxPayload::Signed).unwrap();
+    let tx = TypesFor::<BaseEvmNetwork>::evm_tx(envelope, sender, TxPayload::Signed).unwrap();
     let result = backend.inspect_commit(&tx, NoopInspector::default()).expect("execute deposit");
     assert!(result.status);
     assert_eq!(result.tx_gas_used(), 21_000);
@@ -262,7 +262,9 @@ fn replays_successful_and_failed_base_deposits() {
         reverter,
         AccountInfo::default().with_code(Bytecode::new_raw(Bytes::from_static(&[0xfe]))),
     );
-    let tx = BaseEvmNetwork::evm_tx(deposit_envelope(reverter), sender, TxPayload::Signed).unwrap();
+    let tx =
+        TypesFor::<BaseEvmNetwork>::evm_tx(deposit_envelope(reverter), sender, TxPayload::Signed)
+            .unwrap();
     let result =
         backend.inspect_commit(&tx, NoopInspector::default()).expect("execute failed deposit");
     assert!(!result.status && result.ext.is_failed_deposit());
@@ -313,7 +315,10 @@ fn converts_eip8130_from_any_rpc_transaction() {
     );
     let any = AnyRpcTransaction::new(WithOtherFields::new(any_tx));
 
-    let converted = BaseEvmNetwork::envelope_from_any_rpc(&any).unwrap();
+    let converted = TypesFor::<BaseEvmNetwork>::envelope_from_any_rpc(&any).unwrap();
     assert_eq!(converted.encoded_2718(), envelope.encoded_2718());
-    assert_eq!(BaseEvmNetwork::tx_from_any_rpc(&any).unwrap().signer(), signer.address());
+    assert_eq!(
+        TypesFor::<BaseEvmNetwork>::tx_from_any_rpc(&any).unwrap().signer(),
+        signer.address()
+    );
 }

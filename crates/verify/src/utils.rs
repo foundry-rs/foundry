@@ -29,7 +29,10 @@ use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::{
         decode::RevertDecoder,
-        evm::{ChainFor, EvmEnvFor, FoundryEvmNetwork, TransactionRequestFor, TypesFor},
+        evm::{
+            ChainFor, EvmEnvFor, FoundryEvmNetwork, FoundryTxConversion, TransactionRequestFor,
+            TypesFor,
+        },
     },
     executors::{ExecutorBuilder, TracingExecutor},
     opts::EvmOpts,
@@ -465,7 +468,7 @@ where
         caller.create(executor.backend_mut().basic(caller)?.map_or(0, |info| info.nonce))
     };
 
-    let tx = FEN::tx_from_request(request)?;
+    let tx = TypesFor::<FEN>::tx_from_request(request)?;
     let result = executor.transact_tx(*evm_env, &tx, ext)?;
     trace!(transact_result = ?result.exit_reason);
 

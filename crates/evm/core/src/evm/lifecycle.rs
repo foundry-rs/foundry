@@ -29,7 +29,7 @@
 
 use super::{
     AcceptedView, BackingDb, EvmEnv, ForkInfo, ForkPosition, ForkRegistry, FoundryEvmExt,
-    FoundryEvmFactory, LifecycleSnapshot, Parked, StoredExt, evm_env,
+    FoundryEvmFactory, FoundryExecutionHooks, LifecycleSnapshot, Parked, StoredExt, evm_env,
 };
 use crate::{
     backend::{RevertStateSnapshotAction, transaction_error},
@@ -1013,7 +1013,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
     fn suspend(&mut self, evm: &mut Evm<'_, F::Types>) -> Suspended {
         // Fold the running transaction's execution so far into its network state before the
         // state is replaced.
-        self.factory.sync_transaction(evm);
+        F::Types::sync_transaction(evm);
         let loaded_persistent = evm
             .state()
             .loaded_accounts()
@@ -1193,7 +1193,7 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
                 account.mark_created();
             }
         }
-        factory.refresh_switched_transaction(evm, &self.tx_original);
+        F::Types::refresh_switched_transaction(evm, &self.tx_original);
     }
 
     /// Applies `env`, deferring a spec or chain ID change while a transaction is in flight.

@@ -70,8 +70,14 @@ where
     let factory = EvmFactoryFor::<FEN>::default();
     let env = EvmEnv::new(spec, factory.version(spec, CHAIN_ID), Default::default());
     let store = |nonce, value| {
-        FEN::tx_from_request(store_request::<FEN>(caller, STORE_ADDRESS, nonce, value, CHAIN_ID))
-            .unwrap()
+        TypesFor::<FEN>::tx_from_request(store_request::<FEN>(
+            caller,
+            STORE_ADDRESS,
+            nonce,
+            value,
+            CHAIN_ID,
+        ))
+        .unwrap()
     };
     let mut backend = Backend::<FEN>::with_db(db_with(&[(caller, ETHER)], 1), env);
     let boundary = ExecutionPhase::Boundary;
@@ -332,7 +338,7 @@ fn persistent_account_takes_inactive_fork_code() {
     backend.add_persistent_account(STORE_ADDRESS);
 
     let request = store_request::<EthEvmNetwork>(caller, STORE_ADDRESS, 0, 5, CHAIN_ID);
-    let tx = EthEvmNetwork::tx_from_request(request).unwrap();
+    let tx = TypesFor::<EthEvmNetwork>::tx_from_request(request).unwrap();
     let prepared = backend.lifecycle.prepare_on_inactive(&mut evm, Some(fork), tx, None, None);
     let executed = prepared.unwrap().execute(&mut evm, None, false).unwrap();
     assert!(backend.lifecycle.store_executed(executed).status);

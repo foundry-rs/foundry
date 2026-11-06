@@ -51,7 +51,7 @@ use foundry_evm::{
         decode::RevertDecoder,
         evm::{
             BlockContext, ChainFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory,
-            FoundryEvmNetwork, TempoEvmNetwork, TxFor,
+            FoundryEvmNetwork, FoundryTxConversion, TempoEvmNetwork, TxFor, TypesFor,
         },
     },
     executors::{Executor, ExecutorBuilder, TracingExecutor},
@@ -723,7 +723,7 @@ impl CallArgs {
                     TxKind::Create => TraceKind::Deployment,
                     TxKind::Call(_) => TraceKind::Execution,
                 };
-                let tx = FEN::tx_from_request(tx)?;
+                let tx = TypesFor::<FEN>::tx_from_request(tx)?;
                 let ext = next_block_ext(&config, &executor, &evm_env, &tx).await?;
                 TraceResult::from_raw(executor.transact_tx(evm_env, &tx, Some(ext))?, trace_kind)
             } else {

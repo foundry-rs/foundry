@@ -12,21 +12,14 @@
 //! [`crate::backend::Backend`] layers RPC forks and Foundry's cheatcode policy on top of the
 //! lifecycle.
 
-use alloy_consensus::{
-    SignableTransaction, Signed,
-    transaction::{Recovered, SignerRecoverable},
-};
-use alloy_eips::{Decodable2718, Typed2718};
-use alloy_network::{
-    AnyRpcTransaction, Network, NetworkTransactionBuilder, TransactionBuilder, TransactionResponse,
-};
-use alloy_primitives::{Address, Signature, map::AddressMap};
+use alloy_consensus::{SignableTransaction, Signed, transaction::SignerRecoverable};
+use alloy_eips::Typed2718;
+use alloy_network::Network;
+use alloy_primitives::Signature;
 use alloy_rlp::Decodable;
 use evm2::{
-    Evm, EvmTypes, EvmTypesHost, ExecutionConfig, TxResult, Version,
-    env::BlockEnv,
-    evm::{AccountInfo, precompile::PrecompileProvider},
-    registry::TxRegistry,
+    Evm, EvmTypes, EvmTypesHost, ExecutionConfig, TxResult, Version, env::BlockEnv,
+    evm::precompile::PrecompileProvider, registry::TxRegistry,
 };
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
 use foundry_evm_hardforks::ExecutionSpec;
@@ -75,8 +68,8 @@ pub(crate) mod tests;
 
 /// Binds an Alloy network to an evm2 factory.
 ///
-/// The network owns the only conversion from its native Alloy transactions to its evm2
-/// transaction, so requests and signed envelopes stay network-native until execution.
+/// The factory's type family owns conversion from native Alloy transactions through
+/// [`FoundryTxConversion`]. Requests and signed envelopes stay network-native until execution.
 pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
     /// Alloy network used for RPC, signing and broadcasting.
     type Network: Network<
@@ -95,60 +88,7 @@ pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
         >;
 
     /// evm2 factory executing this network.
-    type EvmFactory: FoundryEvmFactory;
-
-    /// Converts a network envelope sent by `sender` into the evm2 transaction, once, right before
-    /// execution.
-    fn evm_tx(
-        envelope: TxEnvelopeFor<Self>,
-        sender: Address,
-        payload: TxPayload,
-    ) -> eyre::Result<Recovered<TxFor<Self>>>;
-
-    /// Converts a complete unsigned request into a simulated evm2 transaction.
-    ///
-    /// The request must name its sender and carry every field its transaction type needs; Foundry
-    /// fills defaults through [`TransactionBuilder`] before converting, never afterwards.
-    fn tx_from_request(
-        request: TransactionRequestFor<Self>,
-    ) -> eyre::Result<Recovered<TxFor<Self>>> {
-        let sender =
-            request.from().ok_or_else(|| eyre::eyre!("transaction request has no sender"))?;
-        let unsigned =
-            request.build_unsigned().map_err(|err| eyre::eyre!(err.error.to_string()))?;
-        let envelope = TxEnvelopeFor::<Self>::from(unsigned.into_signed(placeholder_signature()));
-        Self::evm_tx(envelope, sender, TxPayload::Simulated)
-    }
-
-    /// Converts a signed envelope into an evm2 transaction sent by its recovered signer.
-    fn tx_from_signed(envelope: TxEnvelopeFor<Self>) -> eyre::Result<Recovered<TxFor<Self>>> {
-        let sender = envelope.recover_signer()?;
-        Self::evm_tx(envelope, sender, TxPayload::Signed)
-    }
-
-    /// Decodes exactly the EIP-2718 bytes that were signed and converts them for execution.
-    fn decode_tx(mut bytes: &[u8]) -> eyre::Result<Recovered<TxFor<Self>>> {
-        let envelope = TxEnvelopeFor::<Self>::decode_2718(&mut bytes)?;
-        eyre::ensure!(bytes.is_empty(), "trailing bytes after the encoded transaction");
-        Self::tx_from_signed(envelope)
-    }
-
-    /// Converts a transaction fetched over RPC into this network's envelope.
-    ///
-    /// Fork RPC responses are network-agnostic ([`AnyRpcTransaction`]); envelopes this network
-    /// cannot represent fail with an error rather than being projected onto another type.
-    fn envelope_from_any_rpc(tx: &AnyRpcTransaction) -> eyre::Result<TxEnvelopeFor<Self>>;
-
-    /// Converts a transaction fetched over RPC into an evm2 transaction sent by its RPC sender,
-    /// as it executed on chain.
-    fn tx_from_any_rpc(tx: &AnyRpcTransaction) -> eyre::Result<Recovered<TxFor<Self>>> {
-        Self::evm_tx(Self::envelope_from_any_rpc(tx)?, tx.from(), TxPayload::Signed)
-    }
-}
-
-/// Returns the error for an RPC transaction whose envelope `target` cannot represent.
-pub(crate) fn unknown_transaction_type(tx: &AnyRpcTransaction, target: &str) -> eyre::Report {
-    eyre::eyre!("cannot convert unknown transaction type {:#04x} to {target}", tx.inner.inner.ty())
+    type EvmFactory: FoundryEvmFactory<Types: FoundryTxConversion<Self::Network>>;
 }
 
 /// Enables EIP-7702 delegation resolution on `version`.
@@ -162,12 +102,12 @@ pub(crate) const fn with_eip7702_delegations(mut version: Version) -> Version {
 
 /// Builds Foundry-configured EVMs for one evm2 [`EvmTypesHost`] family.
 ///
-/// Implementors provide configuration (version, registry, precompiles, extension state) and
-/// transaction construction. Construction and spec changes are provided on top, so every network
+/// Implementors provide configuration (version, registry, precompiles, extension state).
+/// Construction and spec changes are provided on top, so every network
 /// builds its EVM the same way.
 pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
     /// evm2 type family: spec, transaction, block, EVM and result extensions.
-    type Types: EvmTypes
+    type Types: FoundryExecutionHooks
         + EvmTypesHost<
             SpecId: ExecutionSpec + Default + Debug + PartialEq + Send + Sync + Unpin,
             Tx: Typed2718 + Clone + Debug + Send + Sync,
@@ -217,27 +157,6 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
     /// Ethereum.
     fn with_networks(&self, _networks: NetworkConfigs) -> Self {
         self.clone()
-    }
-
-    /// Folds the running transaction's execution so far into network state derived from it, such
-    /// as Monad's reserve-balance tracker. Call it before Foundry changes that state outside
-    /// execution, then call [`Self::refresh_transaction`].
-    fn sync_transaction(&self, _evm: &mut Evm<'_, Self::Types>) {}
-
-    /// Rebases network state derived from the running transaction's state onto that state after
-    /// Foundry changed it outside execution, such as cheatcode writes and isolated calls. The
-    /// change itself is not execution: Monad's reserve-balance tracker recomputes the thresholds
-    /// of its tracked accounts without recording debits or credits.
-    fn refresh_transaction(&self, _evm: &mut Evm<'_, Self::Types>) {}
-
-    /// Like [`Self::refresh_transaction`], after a fork switch accepted the running transaction's
-    /// changes: `original` holds the transaction-start info of the persistent accounts it carried.
-    fn refresh_switched_transaction(
-        &self,
-        evm: &mut Evm<'_, Self::Types>,
-        _original: &AddressMap<Option<AccountInfo>>,
-    ) {
-        self.refresh_transaction(evm);
     }
 
     /// Seeds network state into a newly created EVM, such as Tempo genesis or Base sentinels.
