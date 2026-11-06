@@ -1,5 +1,6 @@
 use crate::{CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::{I256, U256, U512, uint};
+use alloy_primitives::{B256, I256, U256, U512, keccak256, uint};
+use alloy_sol_types::SolCall;
 use foundry_evm_core::{
     abi::console::{format_units_int, format_units_uint},
     backend::GLOBAL_FAIL_SLOT,
@@ -8,7 +9,11 @@ use foundry_evm_core::{
     evm::FoundryEvmNetwork,
 };
 use itertools::Itertools;
-use revm::context::{ContextTr, JournalTr};
+use revm::{
+    bytecode::opcode as op,
+    context::{ContextTr, JournalTr},
+    interpreter::{Interpreter, interpreter_types::Jumps},
+};
 use std::{borrow::Cow, fmt};
 
 const EQ_REL_DELTA_RESOLUTION: U256 = uint!(18_U256);
@@ -192,6 +197,7 @@ type ComparisonResult<'a, T> = Result<(), ComparisonAssertionError<'a, T>>;
 fn handle_assertion_result<FEN: FoundryEvmNetwork, E>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     executor: &mut dyn CheatcodesExecutor<FEN>,
+    selector: [u8; 4],
     err: E,
     error_formatter: Option<&dyn Fn(&E) -> String>,
     error_msg: Option<&str>,
@@ -202,6 +208,12 @@ fn handle_assertion_result<FEN: FoundryEvmNetwork, E>(
     } else {
         Cow::Borrowed(error_msg)
     };
+    // The assertion is identified by its call site, cheatcode and message, without the reported
+    // values.
+    let site = ccx.state.assertion_sites.as_ref().map_or(B256::ZERO, |sites| sites.pending);
+    let identity = keccak256([site.as_slice(), &selector, error_msg.as_bytes()].concat());
+    ccx.state.assertion_failures.retain(|(id, _)| *id != identity);
+    ccx.state.assertion_failures.push((identity, msg.to_string()));
     handle_assertion_result_mono(ccx, executor, msg)
 }
 
@@ -256,7 +268,7 @@ macro_rules! impl_assertions {
                 let Self { $($arg),* } = self;
                 match $body {
                     Ok(()) => Ok(Default::default()),
-                    Err(err) => handle_assertion_result(ccx, executor, err, $error_formatter, None)
+                    Err(err) => handle_assertion_result(ccx, executor, Self::SELECTOR, err, $error_formatter, None)
                 }
             }
         }
@@ -271,7 +283,14 @@ macro_rules! impl_assertions {
                 match $body {
                     Ok(()) => Ok(Default::default()),
                     Err(assertion_err) => {
-                        handle_assertion_result(ccx, executor, assertion_err, $error_formatter, Some(err))
+                        handle_assertion_result(
+                            ccx,
+                            executor,
+                            Self::SELECTOR,
+                            assertion_err,
+                            $error_formatter,
+                            Some(err),
+                        )
                     }
                 }
             }
@@ -616,5 +635,107 @@ fn int_assert_approx_eq_rel(
             max_delta,
             real_delta: EqRelDelta::Defined(delta),
         })))
+    }
+}
+
+/// Tracks the call sites of assertions, including the internal function calls that led to them,
+/// so failures of different assertions stay apart even when they share a wrapper function.
+#[derive(Clone, Debug, Default)]
+pub struct AssertionSites {
+    /// Site of the latest call made by an executing frame.
+    pending: B256,
+    /// Tracking of each executing frame, indexed by call depth.
+    frames: Vec<SiteFrame>,
+}
+
+/// Call site tracking of one executing frame.
+#[derive(Clone, Debug, Default)]
+struct SiteFrame {
+    /// Site of the call that entered this frame.
+    entry: B256,
+    /// For each stack slot, the pc of the `PUSH` its value was copied from, if any.
+    pushed_at: Vec<Option<usize>>,
+    /// Highest pc executed so far, used to hash the executed part of initcode.
+    max_pc: usize,
+}
+
+impl AssertionSites {
+    /// Starts tracking a new frame at `depth`.
+    pub(crate) fn enter_frame(&mut self, depth: usize) {
+        // The outermost frame of a transaction runs at depth 1, so this starts a new transaction.
+        if depth <= 1 {
+            self.pending = B256::ZERO;
+        }
+        self.frames.resize_with(depth, Default::default);
+        self.frames.push(SiteFrame { entry: self.pending, ..Default::default() });
+    }
+
+    /// Records the site of external calls and tracks which stack values are pushed constants.
+    pub(crate) fn step(&mut self, interpreter: &mut Interpreter, depth: usize) {
+        let Some(frame) = self.frames.get_mut(depth) else { return };
+        let height = interpreter.stack.len();
+        frame.pushed_at.resize(height, None);
+        let pc = interpreter.bytecode.pc();
+        frame.max_pc = frame.max_pc.max(pc);
+        let opcode = interpreter.bytecode.opcode();
+        match opcode {
+            op::PUSH0..=op::PUSH32 => return frame.pushed_at.push(Some(pc)),
+            op::DUP1..=op::DUP16 => {
+                let n = (opcode - op::DUP1 + 1) as usize;
+                if let Some(slot) = height.checked_sub(n) {
+                    frame.pushed_at.push(frame.pushed_at[slot]);
+                }
+                return;
+            }
+            op::SWAP1..=op::SWAP16 => {
+                let n = (opcode - op::SWAP1 + 1) as usize;
+                if let Some(slot) = height.checked_sub(n + 1) {
+                    frame.pushed_at.swap(slot, height - 1);
+                }
+                return;
+            }
+            // Their stack effect depends on an immediate, so stop trusting the tracked slots.
+            op::SWAPN | op::EXCHANGE => frame.pushed_at.fill(None),
+            op::CALL
+            | op::CALLCODE
+            | op::DELEGATECALL
+            | op::STATICCALL
+            | op::CREATE
+            | op::CREATE2 => {
+                // Return labels pushed before jumping into internal functions tell call sites
+                // apart, while values that are not pushed constants, such as inputs, are ignored.
+                let code = interpreter.bytecode.original_bytes();
+                let is_return_label = |value: &U256| {
+                    usize::try_from(*value).is_ok_and(|label| {
+                        label > 0
+                            && code.get(label) == Some(&op::JUMPDEST)
+                            && code[label - 1] == op::JUMP
+                    })
+                };
+                let mut preimage = frame.entry.to_vec();
+                preimage.extend_from_slice(interpreter.input.target_address.as_slice());
+                // Initcode embeds constructor arguments, so constructors only hash executed code.
+                let code_hash = if interpreter.input.bytecode_address.is_some() {
+                    interpreter.bytecode.get_or_calculate_hash()
+                } else {
+                    keccak256(code.get(..=frame.max_pc).unwrap_or(&code))
+                };
+                preimage.extend_from_slice(code_hash.as_slice());
+                preimage.extend_from_slice(&pc.to_be_bytes());
+                for (value, pushed_at) in interpreter.stack.data().iter().zip(&frame.pushed_at) {
+                    if let Some(pushed_at) = pushed_at
+                        && is_return_label(value)
+                    {
+                        preimage.extend_from_slice(&pushed_at.to_be_bytes());
+                    }
+                }
+                self.pending = keccak256(preimage);
+            }
+            _ => {}
+        }
+        if let Some(info) = op::OpCode::info_by_op(opcode) {
+            frame.pushed_at.truncate(height.saturating_sub(info.inputs() as usize));
+            frame.pushed_at.extend(std::iter::repeat_n(None, info.outputs() as usize));
+        }
     }
 }

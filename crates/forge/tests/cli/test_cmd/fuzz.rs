@@ -1091,7 +1091,6 @@ contract StatelessPayableValueTest {
     assert_eq!(corpus_tx["value"], "0x7");
     assert_eq!(corpus_tx["sender"].as_str().unwrap().parse(), Ok(sender));
     assert_eq!(corpus_tx["target"].as_str().unwrap().parse(), Ok(target));
-    assert_eq!(corpus_tx["calldata"], failure.calldata.to_string());
 
     let frontier_path =
         frontier_root.join("StatelessPayableValueTest/testFuzz_payable/branch-frontiers.json");
@@ -1101,7 +1100,9 @@ contract StatelessPayableValueTest {
     assert_eq!(frontier_tx["value"], "0x7");
     assert_eq!(frontier_tx["sender"].as_str().unwrap().parse(), Ok(sender));
     assert_eq!(frontier_tx["target"].as_str().unwrap().parse(), Ok(target));
-    assert_eq!(frontier_tx["calldata"], failure.calldata.to_string());
+    assert_eq!(frontier_tx["calldata"], corpus_tx["calldata"]);
+    // The failure keeps the value while its argument is minimized.
+    assert_eq!(failure.calldata[4..], [0; 32]);
 
     let replay = cmd
         .forge_fuse()
@@ -5198,17 +5199,17 @@ contract CounterTest is Test {
 }
    "#,
     );
-    // Tests should fail and record counterexample with value 200.
+    // Tests should fail and record the minimized counterexample with value 0.
     cmd.args(["test", "-j1"]).assert_failure().stdout_eq(str![[r#"
 ...
 Failing tests:
 Encountered 1 failing test in test/Counter.t.sol:CounterTest
-[FAIL: EvmError: Revert; counterexample: calldata=0x5c7f60d700000000000000000000000000000000000000000000000000000000000000c8 args=[200]] testFuzz_SetNumber(uint256) (runs: 6, [AVG_GAS])
+[FAIL: EvmError: Revert; counterexample: calldata=0x5c7f60d70000000000000000000000000000000000000000000000000000000000000000 args=[0]] testFuzz_SetNumber(uint256) (runs: 6, [AVG_GAS])
 ...
 
 "#]]);
 
-    // Change test to assume counterexample 2 is discarded.
+    // Change test to assume counterexample 0 is discarded.
     prj.add_test(
         "Counter.t.sol",
         r#"
@@ -5216,7 +5217,7 @@ import {Test} from "forge-std/Test.sol";
 
 contract CounterTest is Test {
     function testFuzz_SetNumber(uint256 x) public pure {
-        vm.assume(x != 200);
+        vm.assume(x != 0);
     }
 }
    "#,
@@ -5274,12 +5275,12 @@ contract CounterTest is Test {
 }
    "#,
     );
-    // Test should fail with replayed counterexample 200 (0 runs).
+    // Test should fail with replayed counterexample 0 (0 runs).
     cmd.forge_fuse().args(["test", "-j1"]).assert_failure().stdout_eq(str![[r#"
 ...
 Failing tests:
 Encountered 1 failing test in test/Counter.t.sol:CounterTest
-[FAIL: EvmError: Revert; counterexample: calldata=0x5c7f60d700000000000000000000000000000000000000000000000000000000000000c8 args=[200]] testFuzz_SetNumber(uint256) (runs: 0, [AVG_GAS])
+[FAIL: EvmError: Revert; counterexample: calldata=0x5c7f60d70000000000000000000000000000000000000000000000000000000000000000 args=[0]] testFuzz_SetNumber(uint256) (runs: 0, [AVG_GAS])
 ...
 
 "#]]);
@@ -5411,6 +5412,8 @@ fn fuzz_failure_persist(prj: _, cmd: _) {
     assert!(!persist_dir.exists());
     prj.update_config(|config| {
         config.fuzz.failure_persist_dir = Some(persist_dir.clone());
+        // Minimized counterexamples of fresh campaigns are equal, so keep the raw ones.
+        config.invariant.shrink_run_limit = 0;
     });
 
     prj.add_test(
@@ -6466,4 +6469,80 @@ Warning: Persisted failure for [..] was recorded at fork block 0 but is replayed
 ...
 "#]])
         .stderr_eq(str![""]);
+}
+
+// Failing fuzz inputs are minimized to the smallest values that fail the same way.
+#[forgetest_init]
+fn fuzz_minimizes_counterexample_values(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(1u32));
+        config.optimizer = Some(true);
+    });
+    prj.add_test(
+        "Minimize.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Checker is Test {
+    constructor(uint256 x) {
+        assertEq(x, 7);
+    }
+}
+
+interface Comparisons {
+    function assertGt(uint256, uint256) external pure;
+    function assertLt(uint256, uint256) external pure;
+}
+
+contract MinimizeTest is Test {
+    function testFuzz_gated(uint256 x, uint256 y) public pure {
+        assert(!(x > 1000 && y > 5000));
+    }
+
+    // Zero fails with a different message.
+    function testFuzz_require(uint256 x) public pure {
+        require(x != 0, "zero");
+        require(x < 10, "too big");
+    }
+
+    // Zero fails a different assertion, while the reported values may change.
+    function testFuzz_assert(uint256 x) public pure {
+        assertGt(x, 0);
+        assertLe(x, 100);
+    }
+
+    // Both assertions share the optimized `assertEq` wrapper and differ only by call site.
+    function testFuzz_site(uint256 a, uint256 b) public pure {
+        if (a > 1000) {
+            if (b > 5000) assertEq(b, 0);
+            else assertEq(a, 7);
+        }
+    }
+
+    // Constructor arguments must not keep the assertion from minimizing.
+    function testFuzz_ctor(uint256 x) public {
+        if (x > 1000) new Checker(x);
+    }
+
+    // Assertions called through the same function pointer must stay apart.
+    function testFuzz_selector(uint256 x) public pure {
+        Comparisons cmp = Comparisons(address(vm));
+        function(uint256, uint256) external pure check = x == 0 ? cmp.assertGt : cmp.assertLt;
+        check(x, 1);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "-j1"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 6 tests for test/Minimize.t.sol:MinimizeTest
+[FAIL: assertion failed: 101 > 100; counterexample: calldata=0xfad068450000000000000000000000000000000000000000000000000000000000000065 args=[101]] testFuzz_assert(uint256) (runs: 0, [AVG_GAS])
+[FAIL: assertion failed: 1001 != 7; counterexample: calldata=0x1e23fbd300000000000000000000000000000000000000000000000000000000000003e9 args=[1001]] testFuzz_ctor(uint256) (runs: 0, [AVG_GAS])
+[FAIL: panic: assertion failed (0x01); counterexample: calldata=0x0e7b28f700000000000000000000000000000000000000000000000000000000000003e90000000000000000000000000000000000000000000000000000000000001389 args=[1001, 5001]] testFuzz_gated(uint256,uint256) (runs: 0, [AVG_GAS])
+[FAIL: too big; counterexample: calldata=0xa706b283000000000000000000000000000000000000000000000000000000000000000a args=[10]] testFuzz_require(uint256) (runs: 0, [AVG_GAS])
+[FAIL: assertion failed: 1 >= 1; counterexample: calldata=0xd29e0eb80000000000000000000000000000000000000000000000000000000000000001 args=[1]] testFuzz_selector(uint256) (runs: 0, [AVG_GAS])
+[FAIL: assertion failed: 5001 != 0; counterexample: calldata=0x11e5359500000000000000000000000000000000000000000000000000000000000003e90000000000000000000000000000000000000000000000000000000000001389 args=[1001, 5001]] testFuzz_site(uint256,uint256) (runs: 0, [AVG_GAS])
+...
+"#]]);
 }

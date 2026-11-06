@@ -208,6 +208,13 @@ impl SharedFuzzState {
     }
 }
 
+/// Minimizes the calldata of a failing counterexample.
+///
+/// The second argument replays candidate calldata and returns whether it still fails the same
+/// way. Returns the minimized calldata when it differs from the counterexample's.
+pub type CounterexampleMinimizer<'a> =
+    &'a dyn Fn(&BaseCounterExample, &mut dyn FnMut(&Bytes) -> bool) -> Option<Bytes>;
+
 /// Wrapper around an [`Executor`] which provides fuzzing support using [`proptest`].
 ///
 /// After instantiation, calling `fuzz` will proceed to hammer the deployed smart contract with
@@ -274,6 +281,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         progress: Option<&ProgressBar>,
         early_exit: &EarlyExit,
         tokio_handle: &tokio::runtime::Handle,
+        minimize: Option<CounterexampleMinimizer<'_>>,
     ) -> Result<FuzzTestResult> {
         let shared_state = SharedFuzzState::new(state, self.config.timeout, early_exit.clone());
         // Every run would append its steps to the shared step table, so the campaign runs without
@@ -309,9 +317,28 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 r
             })
             .collect::<Result<Vec<_>>>();
-        self.executor_f.inspector_mut().debug_recorder = recorder;
 
-        let (mut result, shown_case) = self.aggregate_results(workers?, func, &shared_state);
+        let (mut result, mut shown_case) = self.aggregate_results(workers?, func, &shared_state);
+        if let Some(minimize) = minimize {
+            // Tell assertion call sites apart only while minimizing.
+            if let Some(cheats) = self.executor_f.inspector_mut().cheatcodes.as_mut() {
+                cheats.assertion_sites = Some(Default::default());
+            }
+            let minimized = self.minimize_counterexample(
+                &mut result,
+                &mut shown_case,
+                func,
+                address,
+                rd,
+                early_exit,
+                minimize,
+            );
+            if let Some(cheats) = self.executor_f.inspector_mut().cheatcodes.as_mut() {
+                cheats.assertion_sites = None;
+            }
+            minimized?;
+        }
+        self.executor_f.inspector_mut().debug_recorder = recorder;
         if self.executor_f.inspector().debug_recorder.is_some()
             && let Some(case) = shown_case
         {
@@ -326,8 +353,31 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         &mut self,
         result: &mut FuzzTestResult,
         address: Address,
-        (mut tx, run): (BasicTxDetails, Option<FuzzRunMetadata>),
+        (tx, run): (BasicTxDetails, Option<FuzzRunMetadata>),
     ) -> Result<()> {
+        let (_, call, success) = self.replay_case(address, tx, run.as_ref())?;
+        // State outside the EVM, such as files or environment variables, can change the outcome.
+        if success != result.success {
+            let _ = sh_warn!(
+                "the debugged fuzz case {} when run again, unlike in the campaign, so the debugger \
+                 may show a different path",
+                if success { "passed" } else { "failed" }
+            );
+        }
+        result.traces = call.traces;
+        result.debug_bytecodes = call.debug_bytecodes;
+        result.breakpoints = call.cheatcodes.map(|cheats| cheats.breakpoints.clone());
+        Ok(())
+    }
+
+    /// Runs `tx` against `address` as the campaign ran the fuzz `run`, returning the resolved
+    /// transaction, the call, and whether the test passed.
+    fn replay_case(
+        &mut self,
+        address: Address,
+        mut tx: BasicTxDetails,
+        run: Option<&FuzzRunMetadata>,
+    ) -> Result<(BasicTxDetails, RawCallResult<FEN>, bool)> {
         if let Some(cheats) = self.executor_f.inspector_mut().cheatcodes.as_mut()
             && let Some(run) = run
             && let Some(seed) = run.seed.or(self.config.seed)
@@ -343,26 +393,95 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         let mut call = self.executor_f.call_raw(
             tx.sender,
             tx.call_details.target,
-            tx.call_details.calldata,
+            tx.call_details.calldata.clone(),
             tx.call_details.value.unwrap_or_default(),
         )?;
-        // State outside the EVM, such as files or environment variables, can change the outcome.
         let success = should_ignore_revert(
             self.config.fail_on_revert,
             address,
             call.reverter,
             self.executor_f.inspector().extra_cheatcode_addresses(),
         ) || self.executor_f.is_raw_call_mut_success(address, &mut call);
-        if success != result.success {
-            let _ = sh_warn!(
-                "the debugged fuzz case {} when run again, unlike in the campaign, so the debugger \
-                 may show a different path",
-                if success { "passed" } else { "failed" }
-            );
+        Ok((tx, call, success))
+    }
+
+    /// Replaces the counterexample of a failed `result` with a minimized one that fails the same
+    /// way: same reverter and same kind of revert.
+    #[expect(clippy::too_many_arguments)]
+    fn minimize_counterexample(
+        &mut self,
+        result: &mut FuzzTestResult,
+        shown_case: &mut Option<(BasicTxDetails, Option<FuzzRunMetadata>)>,
+        func: &Function,
+        address: Address,
+        rd: &RevertDecoder,
+        early_exit: &EarlyExit,
+        minimize: CounterexampleMinimizer<'_>,
+    ) -> Result<()> {
+        if result.success || result.skipped {
+            return Ok(());
         }
-        result.traces = call.traces;
-        result.debug_bytecodes = call.debug_bytecodes;
-        result.breakpoints = call.cheatcodes.map(|cheats| cheats.breakpoints.clone());
+        let (Some(CounterExample::Single(counterexample)), Some((tx, run))) =
+            (&result.counterexample, shown_case.clone())
+        else {
+            return Ok(());
+        };
+        let (_, original, original_success) =
+            self.replay_case(address, tx.clone(), run.as_ref())?;
+        if original_success {
+            return Ok(());
+        }
+        let expected_kind = original.failure_kind();
+        let fails_same_way = |call: &RawCallResult<FEN>, success: bool| {
+            !success
+                && call.result.as_ref() != MAGIC_ASSUME
+                && call.skip_reason().is_none()
+                && call.reverter == original.reverter
+                && call.failure_kind() == expected_kind
+        };
+        let mut still_fails = |calldata: &Bytes| {
+            if early_exit.should_stop() {
+                return false;
+            }
+            let mut candidate = tx.clone();
+            candidate.call_details.calldata = calldata.clone();
+            self.replay_case(address, candidate, run.as_ref())
+                .is_ok_and(|(_, call, success)| fails_same_way(&call, success))
+        };
+        let Some(calldata) = minimize(counterexample, &mut still_fails) else {
+            return Ok(());
+        };
+
+        let mut minimized = tx;
+        minimized.call_details.calldata = calldata;
+        let (minimized, call, success) = self.replay_case(address, minimized, run.as_ref())?;
+        if !fails_same_way(&call, success) {
+            return Ok(());
+        }
+        let fuzz = counterexample.fuzz;
+        let args = minimized
+            .call_details
+            .calldata
+            .get(4..)
+            .map_or_else(Vec::new, |data| func.abi_decode_input(data).unwrap_or_default());
+        result.reason = call
+            .skip_reason()
+            .map(|reason| reason.to_string())
+            .or_else(|| rd.maybe_decode(&call.result, call.exit_reason))
+            .filter(|reason| !reason.is_empty());
+        result.labels.clone_from(&call.labels);
+        result.traces.clone_from(&call.traces);
+        result.debug_bytecodes.clone_from(&call.debug_bytecodes);
+        result.breakpoints = call.cheatcodes.as_ref().map(|cheats| cheats.breakpoints.clone());
+        result.fork_block_number = call.fork_block_number;
+        if !self.config.show_logs {
+            result.logs.clone_from(&call.logs);
+        }
+        result.counterexample = Some(CounterExample::Single(
+            BaseCounterExample::from_fuzz_tx(&minimized, args, call.traces)
+                .with_fuzz_metadata(fuzz),
+        ));
+        *shown_case = Some((minimized, run));
         Ok(())
     }
 
