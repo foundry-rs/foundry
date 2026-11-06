@@ -1569,6 +1569,9 @@ impl SymbolicExecutor {
                     "symbolic vm.revertToState snapshot",
                 )?;
                 let success = state.world.restore_snapshot(id);
+                if success {
+                    state.persistent_writes.push(PersistentWrite::Restore);
+                }
                 if success
                     && (selector == revertToAndDeleteCall::SELECTOR
                         || selector == revertToStateAndDeleteCall::SELECTOR)

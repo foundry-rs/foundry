@@ -2370,6 +2370,16 @@ contract CheatHelper {
         revert();
     }
 
+    function restoreAndRevert() external {
+        uint256 snapshot = VM.snapshotState();
+        VM.deal(address(0x2005), 10);
+        VM.setNonce(address(0x2005), 7);
+        VM.revertToState(snapshot);
+        VM.deal(address(0x2005), 20);
+        VM.setNonce(address(0x2005), 11);
+        revert();
+    }
+
     function dealSelfAndRevert() external payable {
         VM.deal(address(this), 123);
         revert();
@@ -2486,6 +2496,14 @@ contract SymbolicCheatWritesSurviveRevert is Test {
         assertEq(vm.getNonce(killable), 0);
     }
 
+    function checkWritesBeforeSnapshotRestoreSurvive() public {
+        // A failed frame returns to the state from just before its first snapshot restore.
+        (bool ok,) = address(helper).call(abi.encodeCall(CheatHelper.restoreAndRevert, ()));
+        assertFalse(ok);
+        assertEq(address(0x2005).balance, 10);
+        assertEq(vm.getNonce(address(0x2005)), 7);
+    }
+
     function checkRolledBackDealFails(uint256 amount) public {
         vm.assume(amount != 0);
         (bool ok,) = address(helper).call(abi.encodeCall(CheatHelper.writeAndRevert, (amount)));
@@ -2505,13 +2523,14 @@ contract SymbolicCheatWritesSurviveRevert is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 5 tests for test/SymbolicCheatWritesSurviveRevert.t.sol:SymbolicCheatWritesSurviveRevert
+Ran 6 tests for test/SymbolicCheatWritesSurviveRevert.t.sol:SymbolicCheatWritesSurviveRevert
 [FAIL: assertion failed: [..] != 0; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkRolledBackDealFails(uint256) ([METRICS])
 [PASS] checkSymbolicTargetWriteSurvivesRevert(address) ([METRICS])
+[PASS] checkWritesBeforeSnapshotRestoreSurvive() ([METRICS])
 [PASS] checkWritesSurviveAsDeltas() ([METRICS])
 [PASS] checkWritesSurviveFailedFrames() ([METRICS])
 [PASS] checkWritesSurviveNestedRevert(uint256) ([METRICS])
-Suite result: FAILED. 4 passed; 1 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 5 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

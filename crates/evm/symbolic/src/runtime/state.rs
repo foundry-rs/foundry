@@ -1026,7 +1026,9 @@ impl PathState {
     /// Forge's cheatcodes write balances and nonces outside the journal, so a revert only undoes
     /// the journaled changes made on top of them: balances keep the write's wrapping delta, and
     /// nonces keep its delta, saturated at the nonce bounds, unless the revert undoes the
-    /// account's creation, which resets the nonce.
+    /// account's creation, which resets the nonce. A failed frame that restored a snapshot
+    /// returns to the state from just before the first restore made since it started, so later
+    /// writes are dropped.
     pub(crate) fn replay_persistent_writes(
         &mut self,
         cx: &mut SymCx,
@@ -1049,6 +1051,7 @@ impl PathState {
                 PersistentWrite::Created(address) => {
                     created.insert(address);
                 }
+                PersistentWrite::Restore => break,
             }
         }
         // Each account's nonce writes are recorded again as one net change, so an enclosing
@@ -2694,4 +2697,6 @@ pub(crate) enum PersistentWrite {
     Nonce(Address, i128),
     /// Marks an account created, so a revert that undoes the creation resets its nonce.
     Created(Address),
+    /// Marks a snapshot restore.
+    Restore,
 }
