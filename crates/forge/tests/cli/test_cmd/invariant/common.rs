@@ -2721,18 +2721,18 @@ contract OptimizationTest {
     function invariant_optimize() public view returns (int256) { return queue.value(); }
 }
 "#);
-    // Seed 3 reaches 3 with a pop among four pushes. Dropping the pop reaches 4; dropping it in a
-    // block with a push would keep 3.
-    cmd.args(["test", "--fuzz-seed", "3", "-vv"]).assert_success().stdout_eq(str![[r#"
+    // Seed 57 reaches 2 with two pops among four pushes. Dropping the pops reaches 4; dropping them
+    // in blocks with pushes would keep 2.
+    cmd.args(["test", "--fuzz-seed", "57", "-vv"]).assert_success().stdout_eq(str![[r#"
 ...
 [PASS]
-	[Best sequence] (original: 10, shrunk: 2)
+	[Best sequence] (original: 9, shrunk: 5)
 [..]calldata=push() args=[]
-		sender=0x00000000000000000000000000000000000000e1 addr=[test/Optimization.t.sol:Queue]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=sum() args=[]
- invariant_optimize() (best: 1, runs: 1, calls: 12)
-
-╭----------+----------+-------+---------+----------╮
-| Contract | Selector | Calls | Reverts | Discards |
+[..]calldata=push() args=[]
+[..]calldata=push() args=[]
+[..]calldata=push() args=[]
+[..]calldata=sum() args=[]
+ invariant_optimize() (best: 4, runs: 1, calls: 12)
 ...
 "#]]);
 }
@@ -2811,28 +2811,17 @@ contract OptimizationTest {
     function invariant_optimize() public view returns (int256) { return handler.score(); }
 }
 "#);
-    // Seed 7 calls penalize, earn, finish. Dropping penalize makes earn assert but keeps its warp,
+    // Seed 2 calls penalize, earn, finish. Dropping penalize makes earn assert but keeps its warp,
     // which scores 1000; the campaign would fail on that assertion, so the witness must keep it.
-    cmd.args(["test", "--fuzz-seed", "7", "-vv"]).assert_success().stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-Ran 1 test for test/Optimization.t.sol:OptimizationTest
-[PASS] invariant_optimize() (best: 0, runs: 1, calls: 3)
-
-╭----------+----------+-------+---------+----------╮
-| Contract | Selector | Calls | Reverts | Discards |
-+==================================================+
-| Handler  | earn     | 2     | 0       | 0        |
-|----------+----------+-------+---------+----------|
-| Handler  | penalize | 1     | 0       | 0        |
-╰----------+----------+-------+---------+----------╯
-
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-
+    cmd.args(["test", "--fuzz-seed", "2", "-vv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] (original: 3, shrunk: 3)
+[..]calldata=penalize() args=[]
+[..]calldata=earn() args=[]
+[..]calldata=finish() args=[]
+ invariant_optimize() (best: 12, runs: 1, calls: 3)
+...
 "#]]);
 }
 
