@@ -840,3 +840,189 @@ Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
+
+#[forgetest]
+fn arc_fork_usdc_transfers(prj: _, cmd: _) {
+    prj.add_test("ArcUsdc.t.sol", include_str!("../fixtures/ArcUsdc.t.sol"));
+    cmd.env("FOUNDRY_ISOLATE", "false");
+
+    cmd.args([
+        "test",
+        "--match-contract",
+        "ArcUsdcTest",
+        "--evm-version",
+        "osaka",
+        "--fork-url",
+        "https://rpc.testnet.arc.io",
+        "--fork-block-number",
+        "67646765",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 7 tests for test/ArcUsdc.t.sol:ArcUsdcTest
+[PASS] testForkUsdcAuthorityRejectsUnauthorizedCaller() ([GAS])
+[PASS] testForkUsdcTransfer() ([GAS])
+[PASS] testForkUsdcTransferFrom() ([GAS])
+[PASS] testForkUsdcTransferFromRejectsBlockedSpender() ([GAS])
+[PASS] testForkUsdcTransferRejectsBlockedRecipient() ([GAS])
+[PASS] testForkUsdcTransferRollsBack() ([GAS])
+[PASS] testForkUsdcZeroAndSelfTransfer() ([GAS])
+Suite result: ok. 7 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest]
+fn arc_fork_usdc_transfers_created_in_setup(prj: _, cmd: _) {
+    prj.add_test("ArcUsdc.t.sol", include_str!("../fixtures/ArcUsdc.t.sol"));
+    prj.add_test(
+        "ArcUsdcCheatcodeFork.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "./ArcUsdc.t.sol";
+
+contract ArcUsdcCheatcodeForkTest is ArcUsdcTest {
+    function setUp() public override {
+        vm.createSelectFork("https://rpc.testnet.arc.io", 67_646_765);
+        super.setUp();
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-contract", "ArcUsdcCheatcodeForkTest", "--evm-version", "osaka"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 7 tests for test/ArcUsdcCheatcodeFork.t.sol:ArcUsdcCheatcodeForkTest
+[PASS] testForkUsdcAuthorityRejectsUnauthorizedCaller() ([GAS])
+[PASS] testForkUsdcTransfer() ([GAS])
+[PASS] testForkUsdcTransferFrom() ([GAS])
+[PASS] testForkUsdcTransferFromRejectsBlockedSpender() ([GAS])
+[PASS] testForkUsdcTransferRejectsBlockedRecipient() ([GAS])
+[PASS] testForkUsdcTransferRollsBack() ([GAS])
+[PASS] testForkUsdcZeroAndSelfTransfer() ([GAS])
+Suite result: ok. 7 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest]
+fn arc_fork_usdc_transfer_created_in_test(prj: _, cmd: _) {
+    prj.add_test("ArcUsdc.t.sol", include_str!("../fixtures/ArcUsdc.t.sol"));
+    prj.add_test(
+        "ArcUsdcLateFork.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "./ArcUsdc.t.sol";
+
+contract ArcUsdcLateForkTest is ArcUsdcTest {
+    function testForkUsdcTransferAfterCreatingFork() public {
+        vm.createSelectFork("https://rpc.testnet.arc.io", 67_646_765);
+        super.setUp();
+        testForkUsdcTransfer();
+    }
+}
+"#,
+    );
+
+    for isolate in ["false", "true"] {
+        cmd.forge_fuse();
+        cmd.env("FOUNDRY_ISOLATE", isolate);
+        cmd.args([
+            "test",
+            "--match-test",
+            "testForkUsdcTransferAfterCreatingFork",
+            "--evm-version",
+            "osaka",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/ArcUsdcLateFork.t.sol:ArcUsdcLateForkTest
+[PASS] testForkUsdcTransferAfterCreatingFork() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}
+
+#[forgetest]
+async fn arc_fork_usdc_transfer_after_switching_forks(prj: _, cmd: _) {
+    let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+    prj.add_test("ArcUsdc.t.sol", include_str!("../fixtures/ArcUsdc.t.sol"));
+    prj.add_test(
+        "ArcUsdcSwitchFork.t.sol",
+        &r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "./ArcUsdc.t.sol";
+
+contract ArcUsdcSwitchForkTest is ArcUsdcTest {
+    function testForkUsdcTransferAfterSwitchingForks() public {
+        uint256 arcFork = vm.createFork("https://rpc.testnet.arc.io", 67_646_765);
+        uint256 ethereumFork = vm.createSelectFork("ETHEREUM_RPC_URL", 0);
+        vm.etch(AUTHORITY, hex"604260005260206000f3");
+        vm.etch(CONTROL, hex"604260005260206000f3");
+        assertOrdinaryCode();
+
+        vm.selectFork(arcFork);
+        super.setUp();
+        testForkUsdcTransfer();
+        super.setUp();
+        testForkUsdcTransferFrom();
+
+        vm.selectFork(ethereumFork);
+        assertOrdinaryCode();
+
+        vm.selectFork(arcFork);
+        require(SENDER.balance == 7 ether, "fork sender balance lost");
+        require(RECIPIENT.balance == 3 ether, "fork recipient balance lost");
+        super.setUp();
+        testForkUsdcTransfer();
+    }
+
+    function assertOrdinaryCode() internal view {
+        require(block.chainid == 31337, "wrong Ethereum chain");
+        (bool success, bytes memory result) = AUTHORITY.staticcall("");
+        require(success && abi.decode(result, (uint256)) == 0x42, "authority shadows ordinary code");
+        (success, result) = CONTROL.staticcall(abi.encodeWithSignature("isBlocklisted(address)", SENDER));
+        require(success && abi.decode(result, (uint256)) == 0x42, "control shadows ordinary code");
+    }
+}
+"#
+        .replace("ETHEREUM_RPC_URL", &handle.http_endpoint()),
+    );
+    for start_on_arc in [false, true] {
+        let cmd = cmd.forge_fuse();
+        cmd.env("FOUNDRY_ISOLATE", "false");
+        cmd.args([
+            "test",
+            "--match-test",
+            "testForkUsdcTransferAfterSwitchingForks",
+            "--evm-version",
+            "osaka",
+        ]);
+        if start_on_arc {
+            cmd.args([
+                "--fork-url",
+                "https://rpc.testnet.arc.io",
+                "--fork-block-number",
+                "67646765",
+            ]);
+        }
+        cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/ArcUsdcSwitchFork.t.sol:ArcUsdcSwitchForkTest
+[PASS] testForkUsdcTransferAfterSwitchingForks() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}
