@@ -36,6 +36,8 @@ const SNAPSHOT_SLOT_BUDGET: usize = 1 << 20;
 const MAX_PREFIX_DEPTHS: usize = 4;
 /// Distinct values a slot may take before it is treated as a distribution rather than a set.
 const MAX_SET_VALUES: usize = 64;
+/// Least share of its find rate that a state keeps when every call made from it reverts.
+const MIN_LIVENESS: f64 = 0.01;
 
 /// Slots at or above 2^128 are treated as computed (mapping or dynamic array) slots.
 const COMPUTED_SLOT: U256 = U256::from_limbs([0, 0, 1, 0]);
@@ -78,11 +80,26 @@ fn storage_stats<FEN: FoundryEvmNetwork>(executor: &Executor<FEN>) -> (usize, Ad
 struct Energy {
     picks: u32,
     finds: u32,
+    /// Calls made by the runs started from this state, and how many of them reverted.
+    calls: u64,
+    reverted: u64,
 }
 
 impl Energy {
+    /// How often runs from this state find new coverage or a new state, scaled down by how
+    /// often their calls revert.
+    ///
+    /// A state where most handlers revert, such as a protocol an admin call has paused, has few
+    /// reachable successors, so runs resumed from it spend their calls on reverts. The squared
+    /// success rate makes that penalty steep while [`MIN_LIVENESS`] keeps every state in the
+    /// schedule.
     fn productivity(self) -> f64 {
-        f64::from(self.finds + 1) / f64::from(self.picks + 1)
+        let finds = f64::from(self.finds + 1) / f64::from(self.picks + 1);
+        if self.calls == 0 {
+            return finds;
+        }
+        let success = 1.0 - self.reverted as f64 / self.calls as f64;
+        finds * (success * success).max(MIN_LIVENESS)
     }
 }
 
@@ -109,6 +126,8 @@ enum Start {
 pub(super) struct RunStart<FEN: FoundryEvmNetwork> {
     pub executor: Executor<FEN>,
     pub prefix: Arc<[BasicTxDetails]>,
+    /// A feature first reached by the prefix's last call, identifying the state it produced.
+    pub state: Option<u64>,
 }
 
 /// Per-worker pool of snapshots and the state features seen so far.
@@ -177,7 +196,11 @@ impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
                 let snapshot = &mut self.snapshots[index];
                 snapshot.energy.picks += 1;
                 self.cardinality.clone_from(&snapshot.cardinality);
-                RunStart { executor: snapshot.executor.clone(), prefix: snapshot.prefix.clone() }
+                RunStart {
+                    executor: snapshot.executor.clone(),
+                    prefix: snapshot.prefix.clone(),
+                    state: snapshot.features.first().copied(),
+                }
             }
         }
     }
@@ -211,7 +234,7 @@ impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
         self.current = Start::Setup;
         self.setup.picks += 1;
         self.cardinality.clone_from(&self.setup_cardinality);
-        RunStart { executor: setup.clone(), prefix: Arc::from([]) }
+        RunStart { executor: setup.clone(), prefix: Arc::from([]), state: None }
     }
 
     fn feature(&self, parts: impl std::hash::Hash) -> u64 {
@@ -331,18 +354,20 @@ impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
         });
     }
 
-    /// Credits the run's starting state when the run found new coverage or a new state.
-    pub(super) fn finish_run(&mut self, new_coverage: bool) {
-        if !(new_coverage || self.run_found) {
-            return;
-        }
-        match self.current {
-            Start::Setup => self.setup.finds += 1,
-            Start::Snapshot(index) => {
-                if let Some(snapshot) = self.snapshots.get_mut(index) {
-                    snapshot.energy.finds += 1;
-                }
-            }
+    /// Records the run's calls and reverts against its starting state, and credits the state
+    /// when the run found new coverage or a new state.
+    pub(super) fn finish_run(&mut self, new_coverage: bool, calls: u64, reverted: u64) {
+        let energy = match self.current {
+            Start::Setup => &mut self.setup,
+            Start::Snapshot(index) => match self.snapshots.get_mut(index) {
+                Some(snapshot) => &mut snapshot.energy,
+                None => return,
+            },
+        };
+        energy.calls += calls;
+        energy.reverted += reverted;
+        if new_coverage || self.run_found {
+            energy.finds += 1;
         }
     }
 }
@@ -421,6 +446,19 @@ mod tests {
         let account = changeset.remove(&Address::repeat_byte(0x11)).unwrap();
         changeset.insert(CHEATCODE_ADDRESS, account);
         assert!(snapshots.observe(&changeset).is_empty());
+    }
+
+    #[test]
+    fn reverting_runs_lower_a_states_productivity() {
+        let live = Energy { picks: 4, finds: 2, calls: 400, reverted: 40 };
+        let dead = Energy { picks: 4, finds: 2, calls: 400, reverted: 360 };
+        let untried = Energy { picks: 0, finds: 0, calls: 0, reverted: 0 };
+        assert!(dead.productivity() < live.productivity());
+        let expected_live = 0.6 * 0.81;
+        let expected_dead = 0.6 * MIN_LIVENESS;
+        assert!((live.productivity() - expected_live).abs() < 1e-9);
+        assert!((dead.productivity() - expected_dead).abs() < 1e-9);
+        assert_eq!(untried.productivity(), 1.0);
     }
 
     #[test]
