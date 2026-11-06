@@ -146,10 +146,7 @@ contract RevertedFrameOuter {
         helper.dealAfterReceive{value: msg.value}(amount);
     }
 
-    function revertToStateBetweenWrites(RevertedFrameHelper helper, uint256 amount, uint256 snapshot)
-        external
-        payable
-    {
+    function revertToStateBetweenWrites(RevertedFrameHelper helper, uint256 amount, uint256 snapshot) external payable {
         try helper.revertToStateBetweenWrites{value: msg.value}(amount, snapshot) {} catch {}
     }
 }
@@ -222,9 +219,8 @@ contract RevertedFrameEffectsTest is Test {
         uint256 forkB = vm.createFork("mainnet", 14_608_401);
         RevertedFrameHelper forkHelper = new RevertedFrameHelper();
         vm.deal(address(this), 1 ether);
-        (bool success, bytes memory result) = address(forkHelper).call{value: 1 ether}(
-            abi.encodeCall(forkHelper.dealThenSelectForks, (0, forkB, forkA))
-        );
+        (bool success, bytes memory result) =
+            address(forkHelper).call{value: 1 ether}(abi.encodeCall(forkHelper.dealThenSelectForks, (0, forkB, forkA)));
         assertHelperReverted(success, result);
         assertEq(address(forkHelper).balance, 0);
         assertEq(address(this).balance, 1 ether);
