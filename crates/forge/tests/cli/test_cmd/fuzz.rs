@@ -6467,3 +6467,258 @@ Warning: Persisted failure for [..] was recorded at fork block 0 but is replayed
 "#]])
         .stderr_eq(str![""]);
 }
+
+// Storage keys read as zero during setup must remain available to both fuzzers, even when the
+// execution engine represents the slot implicitly. The runtime-derived key is not a PUSH literal.
+#[forgetest_init]
+fn setup_zero_storage_guidance(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.runs = 512;
+        config.fuzz.dictionary.dictionary_weight = 100;
+        config.fuzz.dictionary.include_push_bytes = false;
+        config.invariant.runs = 512;
+        config.invariant.depth = 1;
+        config.invariant.shrink_run_limit = 0;
+        config.invariant.dictionary = config.fuzz.dictionary;
+    });
+    prj.add_test(
+        "SetupStorage.t.sol",
+        r#"
+contract GuidedChild {
+    bool public broken;
+
+    function slot() public view returns (uint256) {
+        return uint256(keccak256(abi.encode(address(this), uint256(0x123456))));
+    }
+
+    function probe() external view {
+        uint256 key = slot();
+        uint256 value;
+        assembly { value := sload(key) }
+        require(value == 0);
+    }
+
+    function step(uint256 value) external {
+        if (value == slot()) broken = true;
+    }
+}
+
+abstract contract GuidanceBase {
+    GuidedChild internal child;
+
+    function testFuzz_seed(uint256 value) public view {
+        require(value != child.slot(), "SLOT_FOUND");
+    }
+
+    function invariant_seed() public view {
+        require(!child.broken(), "SLOT_FOUND");
+    }
+
+    function targetContracts() public view returns (address[] memory targets) {
+        targets = new address[](1);
+        targets[0] = address(child);
+    }
+}
+
+contract CreatedGuidance is GuidanceBase {
+    function setUp() public {
+        child = new GuidedChild();
+        child.probe();
+    }
+}
+
+contract ExistingGuidance is GuidanceBase {
+    constructor() { child = new GuidedChild(); }
+    function setUp() public { child.probe(); }
+}
+
+contract ConstructorGuidance is GuidanceBase {
+    constructor() {
+        child = new GuidedChild();
+        child.probe();
+    }
+}
+
+contract BeforeTestGuidance is GuidanceBase {
+    function beforeTestSetup(bytes4) public pure returns (bytes[] memory calls) {
+        calls = new bytes[](1);
+        calls[0] = abi.encodeWithSelector(this.prepare.selector);
+    }
+
+    function prepare() public {
+        child = new GuidedChild();
+        child.probe();
+    }
+}
+
+interface SnapshotVm {
+    function snapshotState() external returns (uint256);
+    function revertToState(uint256) external returns (bool);
+}
+
+contract SnapshotGuidance is CreatedGuidance {
+    SnapshotVm constant vm = SnapshotVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function beforeTestSetup(bytes4) public pure returns (bytes[] memory calls) {
+        calls = new bytes[](1);
+        calls[0] = abi.encodeWithSelector(this.prepare.selector);
+    }
+
+    function prepare() public {
+        uint256 snapshot = vm.snapshotState();
+        child.step(child.slot());
+        require(child.broken());
+        require(vm.revertToState(snapshot));
+        require(!child.broken());
+    }
+}
+"#,
+    );
+
+    for contract in [
+        "CreatedGuidance",
+        "ExistingGuidance",
+        "ConstructorGuidance",
+        "BeforeTestGuidance",
+        "SnapshotGuidance",
+    ] {
+        cmd.forge_fuse()
+            .args(["test", "--mc", contract, "--mt", "testFuzz_seed"])
+            .assert_failure()
+            .stdout_eq(str![[r#"
+...
+[FAIL: SLOT_FOUND; counterexample: [..]] testFuzz_seed(uint256) (runs: [..], [AVG_GAS])
+...
+"#]]);
+
+        // Invariant campaigns do not apply beforeTestSetup.
+        if !matches!(contract, "BeforeTestGuidance" | "SnapshotGuidance") {
+            cmd.forge_fuse()
+                .args(["test", "--mc", contract, "--mt", "invariant_seed"])
+                .assert_failure()
+                .stdout_eq(str![[r#"
+...
+[FAIL: SLOT_FOUND]
+...
+ invariant_seed() (runs: [..], calls: [..], reverts: 0)
+...
+"#]]);
+        }
+    }
+
+    // Without storage guidance neither the random generator nor bytecode literals supply the key.
+    prj.clear_cache_dir();
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_FUZZ_INCLUDE_STORAGE", "false");
+    cmd.env("FOUNDRY_INVARIANT_INCLUDE_STORAGE", "false");
+    cmd.args(["test", "--mc", "CreatedGuidance"]).assert_success();
+}
+
+#[forgetest_init]
+async fn fork_setup_storage_guidance(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.runs = 512;
+        config.fuzz.dictionary.dictionary_weight = 100;
+        config.fuzz.dictionary.include_push_bytes = false;
+    });
+    prj.add_test(
+        "ForkSetupStorage.t.sol",
+        &r#"
+interface Vm {
+    function createSelectFork(string calldata) external returns (uint256);
+    function makePersistent(address) external;
+    function setNonceUnsafe(address, uint64) external;
+    function store(address, bytes32, bytes32) external;
+    function load(address, bytes32) external view returns (bytes32);
+}
+
+contract GuidedStorage {
+    function slot(uint256 salt) public view returns (uint256) {
+        return uint256(keccak256(abi.encode(address(this), salt)));
+    }
+
+    function probe(uint256 salt) external view {
+        uint256 key = slot(salt);
+        uint256 value;
+        assembly { value := sload(key) }
+        require(value == 0);
+    }
+}
+
+contract ForkedGuidance {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    GuidedStorage child;
+
+    function persistent() internal pure virtual returns (bool) { return false; }
+
+    function setUp() public {
+        child = new GuidedStorage();
+        child.probe(1);
+        if (persistent()) vm.makePersistent(address(child));
+    }
+
+    function beforeTestSetup(bytes4) public pure returns (bytes[] memory calls) {
+        calls = new bytes[](1);
+        calls[0] = abi.encodeWithSelector(this.prepare.selector);
+    }
+
+    function prepare() public {
+        address previous = address(child);
+        vm.createSelectFork("RPC_URL");
+        if (!persistent()) {
+            // Reuse the address on a different fork; its old slot observations must not leak.
+            vm.setNonceUnsafe(address(this), 1);
+            child = new GuidedStorage();
+            require(address(child) == previous, "different child address");
+        }
+        child.probe(2);
+        vm.store(address(child), bytes32(child.slot(2)), bytes32(child.slot(3)));
+    }
+
+    function testFuzz_previous(uint256 value) public view {
+        require(value != child.slot(1), "PREVIOUS_KEY_FOUND");
+    }
+
+    function testFuzz_current(uint256 value) public view {
+        require(value != child.slot(3), "CURRENT_VALUE_FOUND");
+    }
+
+    function test_currentState() public view {
+        require(vm.load(address(child), bytes32(child.slot(2))) == bytes32(child.slot(3)));
+    }
+}
+
+contract PersistentGuidance is ForkedGuidance {
+    function persistent() internal pure override returns (bool) { return true; }
+}
+"#
+        .replace("RPC_URL", &handle.http_endpoint()),
+    );
+
+    cmd.args(["test", "--mc", "^ForkedGuidance$", "--mt", "testFuzz_previous"]).assert_success();
+    cmd.forge_fuse()
+        .args(["test", "--mc", "^PersistentGuidance$", "--mt", "testFuzz_previous"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: PREVIOUS_KEY_FOUND; counterexample: [..]] testFuzz_previous(uint256) (block: 0) (runs: [..], [AVG_GAS])
+...
+"#]]);
+
+    for contract in ["ForkedGuidance", "PersistentGuidance"] {
+        cmd.forge_fuse()
+            .args(["test", "--mc", &format!("^{contract}$"), "--mt", "testFuzz_current"])
+            .assert_failure()
+            .stdout_eq(str![[r#"
+...
+[FAIL: CURRENT_VALUE_FOUND; counterexample: [..]] testFuzz_current(uint256) (block: 0) (runs: [..], [AVG_GAS])
+...
+"#]]);
+        cmd.forge_fuse()
+            .args(["test", "--mc", &format!("^{contract}$"), "--mt", "test_currentState"])
+            .assert_success();
+    }
+}

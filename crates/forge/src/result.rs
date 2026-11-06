@@ -8,6 +8,7 @@ use alloy_primitives::{
     Address, B256, Bytes, I256, Log, Selector, U256,
     map::{AddressHashMap, HashMap},
 };
+use evm2::evm::PendingState;
 use eyre::Report;
 use foundry_common::{ContractsByArtifact, get_contract_name, shell};
 use foundry_config::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
@@ -30,7 +31,7 @@ use foundry_evm::{
 use foundry_evm_symbolic::{SymbolicStats, SymbolicStopReason, SymbolicStorageAssignment};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap as Map},
+    collections::{BTreeMap, BTreeSet, HashMap as Map},
     fmt::{self, Write},
     path::PathBuf,
     sync::OnceLock,
@@ -2148,6 +2149,8 @@ pub struct TestSetup {
     pub fork_block_number: Option<u64>,
     /// Cached setup-derived fuzz dictionary for stateless fuzz tests.
     pub(crate) fuzz_state: OnceLock<EvmFuzzState>,
+    /// Storage keys observed during setup, including implicit zero slots of created accounts.
+    pub(crate) fuzz_storage: SetupStorage,
 
     /// The reason the setup failed, if it did.
     pub reason: Option<String>,
@@ -2170,12 +2173,35 @@ impl TestSetup {
         &mut self,
         raw: RawCallResult<FEN>,
         trace_kind: TraceKind,
+        fork: Option<U256>,
     ) {
+        self.fuzz_storage.extend(fork, &raw.state_changeset);
         extend!(self, raw, trace_kind);
     }
 
     pub fn merge_coverages(&mut self, other_coverage: Option<HitMaps>) {
         HitMaps::merge_opt(&mut self.coverage, other_coverage);
+    }
+}
+
+/// Setup storage observations, scoped to the fork on which they were made. Values are deliberately
+/// not retained: the dictionary must use the accepted state at the start of each test.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SetupStorage {
+    pub(crate) slots: BTreeMap<(Option<U256>, Address), BTreeSet<U256>>,
+}
+
+impl SetupStorage {
+    pub(crate) fn extend(&mut self, fork: Option<U256>, state: &PendingState) {
+        for change in state.account_changes() {
+            let slots = self.slots.entry((fork, change.address)).or_default();
+            if change.created || change.current.is_none() {
+                slots.clear();
+            }
+            if change.current.is_some() {
+                slots.extend(change.storage.slots.keys().copied());
+            }
+        }
     }
 }
 
