@@ -12,7 +12,7 @@ use foundry_common::shell;
 use foundry_compilers::{FileFilter, solc::SolcLanguage, utils::SOLC_EXTENSIONS};
 use foundry_config::{
     SkipBuildFilters,
-    filter::{expand_globs, is_ignored_path},
+    filter::{expand_ignore_globs, is_ignored_path},
     lint::Severity,
 };
 use std::path::PathBuf;
@@ -54,11 +54,8 @@ impl LintArgs {
         let project = config.ephemeral_project()?;
         let path_config = config.project_paths();
 
-        // Expand ignore globs and canonicalize from the get go
-        let ignored = expand_globs(&config.root, config.lint.ignore.iter())?
-            .iter()
-            .flat_map(foundry_common::fs::canonicalize_path)
-            .collect::<Vec<_>>();
+        // Expand ignore globs, keeping project paths and their canonical forms.
+        let ignored = expand_ignore_globs(&config.root, config.lint.ignore.iter())?;
 
         let cwd = std::env::current_dir()?;
         let mut input = match &self.paths[..] {
