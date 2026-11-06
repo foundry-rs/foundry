@@ -1,6 +1,6 @@
 //! Submit attached fork evidence as an application transaction on a separate local Tempo node.
 
-use super::evidence;
+use super::evidence::{self, Identity};
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, JsonAbiExt, Specifier};
 use alloy_network::{ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{B256, U256};
@@ -30,8 +30,8 @@ pub(super) async fn verify(
         spawn(config.with_tempo_consensus_seed(Some(B256::repeat_byte(0x53)))).await;
     let provider = handle.http_provider();
     let destination_identity =
-        provider.client().request::<_, Value>("anvil_tempoConsensusIdentity", ()).await.unwrap();
-    assert_ne!(destination_identity["identity"], serde_json::to_value(&identity.identity).unwrap());
+        provider.client().request::<_, Identity>("anvil_tempoConsensusIdentity", ()).await.unwrap();
+    assert_ne!(destination_identity.identity, identity.identity);
     let senders = provider.get_accounts().await.unwrap();
     let deployment =
         TransactionRequest::default().from(senders[0]).transaction_type(2).with_input(initcode);
@@ -39,6 +39,7 @@ pub(super) async fn verify(
     let gas = provider.estimate_gas(deployment.clone().into()).await.unwrap();
     let deployment = evidence::transact(&provider, senders[0], deployment.gas_limit(gas)).await;
     assert!(deployment.status());
+    assert_eq!(deployment.block_number(), Some(1));
     let address = deployment.contract_address().unwrap();
 
     let submit = &abi.functions["submit"][0];
@@ -63,7 +64,7 @@ pub(super) async fn verify(
     let gas = provider.estimate_gas(transaction.clone().into()).await.unwrap();
     let receipt = evidence::transact(&provider, senders[1], transaction.gas_limit(gas)).await;
     assert!(receipt.status());
-    assert!(receipt.block_number().is_some());
+    assert_eq!(receipt.block_number(), Some(2));
     // Tempo receipts also contain fee-token logs, including on application reverts.
     let logs = receipt.logs().iter().filter(|log| log.address() == address).collect::<Vec<_>>();
     assert_eq!(logs.len(), 1);
@@ -92,6 +93,6 @@ pub(super) async fn verify(
     );
     let rejected = evidence::transact(&provider, senders[1], transaction).await;
     assert!(!rejected.status());
-    assert!(rejected.block_number().is_some());
+    assert_eq!(rejected.block_number(), Some(3));
     assert!(!rejected.logs().iter().any(|log| log.address() == address));
 }

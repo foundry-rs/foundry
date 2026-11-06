@@ -18,8 +18,8 @@ use serde_json::{Value, json};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Identity {
-    identity: Bytes,
+pub(super) struct Identity {
+    pub(super) identity: Bytes,
     epoch_length: u64,
     from_epoch: u64,
 }
