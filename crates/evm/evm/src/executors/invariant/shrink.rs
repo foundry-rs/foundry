@@ -207,6 +207,8 @@ pub struct CheckSequenceOutcome {
     pub sequence_assertion_failure: bool,
     /// Innermost reverter for a sequence assertion, used to recognize legacy handler identities.
     pub sequence_reverter: Option<Address>,
+    /// Value-independent identity of the failing call, see [`RawCallResult::failure_kind`].
+    pub failure_kind: Bytes,
 }
 
 pub struct ShrunkSequence {
@@ -231,7 +233,7 @@ pub struct HandlerReplayOutcome {
 
 /// Resets the progress bar before each shrink. `position = Some((i, N))` renders
 /// `[i/N] Shrink: <label>` for multi-invariant campaigns.
-pub(crate) fn reset_shrink_progress(
+pub fn reset_shrink_progress(
     config: &InvariantConfig,
     progress: Option<&ProgressBar>,
     label: &str,
@@ -865,6 +867,7 @@ impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for CheckSequencePolicy<'_> {
                 handler_edge_fingerprint(snapshot_edge_fingerprint(&call_result), target, selector);
             let sequence_reverter = call_result.reverter.or(Some(target));
             let site = CheckSequenceFailureSite::SequenceCall { target, selector, fingerprint };
+            let failure_kind = call_result.failure_kind();
             return Some(CheckSequenceOutcome {
                 success: false,
                 replayed_entirely: false,
@@ -874,6 +877,7 @@ impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for CheckSequencePolicy<'_> {
                 failure_site: Some(site),
                 sequence_assertion_failure: true,
                 sequence_reverter,
+                failure_kind,
             });
         }
         if call_result.reverted && options.fail_on_revert {
@@ -887,9 +891,11 @@ impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for CheckSequencePolicy<'_> {
                     failure_site: None,
                     sequence_assertion_failure: false,
                     sequence_reverter: None,
+                    failure_kind: Bytes::new(),
                 });
             }
             let site = sequence_call_failure_site(&calls[idx], &call_result);
+            let failure_kind = call_result.failure_kind();
             return Some(CheckSequenceOutcome {
                 success: false,
                 replayed_entirely: false,
@@ -899,6 +905,7 @@ impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for CheckSequencePolicy<'_> {
                 failure_site: Some(site),
                 sequence_assertion_failure: false,
                 sequence_reverter: None,
+                failure_kind,
             });
         }
         None
@@ -911,22 +918,13 @@ impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for CheckSequencePolicy<'_> {
     ) -> eyre::Result<CheckSequenceOutcome> {
         // Unlike optimization mode we intentionally do not apply trailing warp/roll before the
         // invariant call: those delays would not be representable in the final shrunk sequence.
-        let (success, replayed_entirely, reason, failure_site) = finish_sequence_check(
+        finish_sequence_check(
             executor,
             self.test_address,
             self.calldata.clone(),
             &self.options,
-        )?;
-        Ok(CheckSequenceOutcome {
-            success,
-            replayed_entirely,
-            reason,
-            calls_count: counters.calls_executed,
-            reverts: counters.reverts,
-            failure_site,
-            sequence_assertion_failure: false,
-            sequence_reverter: None,
-        })
+            counters,
+        )
     }
 }
 
@@ -935,7 +933,19 @@ fn finish_sequence_check<FEN: FoundryEvmNetwork>(
     test_address: Address,
     calldata: Bytes,
     options: &CheckSequenceOptions<'_>,
-) -> eyre::Result<(bool, bool, Option<String>, Option<CheckSequenceFailureSite>)> {
+    counters: &ReplayCounters,
+) -> eyre::Result<CheckSequenceOutcome> {
+    let outcome = |success, reason, failure_site, failure_kind| CheckSequenceOutcome {
+        success,
+        replayed_entirely: true,
+        reason,
+        calls_count: counters.calls_executed,
+        reverts: counters.reverts,
+        failure_site,
+        sequence_assertion_failure: false,
+        sequence_reverter: None,
+        failure_kind,
+    };
     let handle_terminal_failure =
         |call_result: RawCallResult<FEN>, site_kind: TerminalFailureSite| {
             let should_ignore_failure = options.expect_assertion_failure
@@ -943,17 +953,18 @@ fn finish_sequence_check<FEN: FoundryEvmNetwork>(
                 && !did_fail_on_assert(&call_result, &call_result.state_changeset);
 
             if should_ignore_failure {
-                return (true, true, None, None);
+                return outcome(true, None, None, Bytes::new());
             }
 
             let site = terminal_failure_site(site_kind, test_address, &calldata, &call_result);
+            let failure_kind = call_result.failure_kind();
             let reason = if options.expect_assertion_failure {
                 assertion_failure_reason(call_result, options.rd)
             } else {
                 call_failure_reason(call_result, options.rd)
             };
 
-            (false, true, reason, Some(site))
+            outcome(false, reason, Some(site), failure_kind)
         };
 
     let (invariant_result, mut success) =
@@ -976,7 +987,7 @@ fn finish_sequence_check<FEN: FoundryEvmNetwork>(
         }
     }
 
-    Ok((success, true, None, None))
+    Ok(outcome(success, None, None, Bytes::new()))
 }
 
 #[derive(Clone, Copy)]

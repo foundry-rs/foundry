@@ -3746,3 +3746,143 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 }
+
+// Failing invariant sequences report the smallest argument values that still break the invariant
+// the same way, with the failure reason of the minimized sequence. Smaller values that fail another
+// assertion through the same wrapper, which the optimizer compiles to one call, are rejected.
+#[forgetest_init]
+fn invariant_minimizes_counterexample_values(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+        config.invariant.runs = 64;
+        config.invariant.depth = 32;
+    });
+    prj.add_test(
+        "InvariantMinimize.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Gate {
+    uint256 public a;
+    uint256 public b;
+
+    function setA(uint256 x) external {
+        a = x;
+    }
+
+    function setB(uint256 x) external {
+        b = x;
+    }
+}
+
+contract InvariantMinimizeTest is Test {
+    Gate gate;
+
+    function setUp() public {
+        gate = new Gate();
+    }
+
+    function invariant_gate() public view {
+        if (gate.a() > 1000) {
+            if (gate.b() > 5000) assertEq(gate.b(), 0);
+            else assertEq(gate.a(), 7);
+        }
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "InvariantMinimizeCtor.t.sol",
+        r#"
+import "forge-std/Test.sol";
+import {Gate} from "./InvariantMinimize.t.sol";
+
+contract Checker is Test {
+    constructor(uint256 x) {
+        assertEq(x, 7);
+    }
+}
+
+// Constructor arguments must not keep the assertion from minimizing.
+contract InvariantMinimizeCtorTest is Test {
+    Gate gate;
+
+    function setUp() public {
+        gate = new Gate();
+    }
+
+    function invariant_ctor() public {
+        if (gate.a() > 1000) new Checker(gate.a());
+    }
+}
+
+interface Comparisons {
+    function assertGt(uint256, uint256) external pure;
+    function assertLt(uint256, uint256) external pure;
+}
+
+contract Toggle {
+    uint256 public x;
+    bool public touched;
+
+    function set(uint256 v) external {
+        x = v;
+        touched = true;
+    }
+}
+
+// Assertions called through the same function pointer must stay apart.
+contract InvariantMinimizeSelectorTest is Test {
+    Toggle toggle;
+
+    function setUp() public {
+        toggle = new Toggle();
+    }
+
+    function invariant_selector() public view {
+        if (!toggle.touched()) return;
+        uint256 x = toggle.x();
+        Comparisons cmp = Comparisons(address(vm));
+        function(uint256, uint256) external pure check = x == 0 ? cmp.assertGt : cmp.assertLt;
+        check(x, 1);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--fuzz-seed", "1", "--mc", "^InvariantMinimizeTest$"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantMinimize.t.sol:InvariantMinimizeTest
+[FAIL: assertion failed: 5001 != 0]
+	[Sequence] (original: 10, shrunk: 2)
+		sender=0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38 addr=[test/InvariantMinimize.t.sol:Gate]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setB(uint256) args=[5001]
+		sender=0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38 addr=[test/InvariantMinimize.t.sol:Gate]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setA(uint256) args=[1001]
+...
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--fuzz-seed", "1", "--mc", "^InvariantMinimizeCtorTest$"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantMinimizeCtor.t.sol:InvariantMinimizeCtorTest
+[FAIL: assertion failed: 1001 != 7]
+	[Sequence] (original: [..], shrunk: 1)
+		sender=[..] calldata=setA(uint256) args=[1001]
+...
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--fuzz-seed", "1", "--mc", "^InvariantMinimizeSelectorTest$"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantMinimizeCtor.t.sol:InvariantMinimizeSelectorTest
+[FAIL: assertion failed: 1 >= 1]
+	[Sequence] (original: [..], shrunk: 1)
+		sender=[..] calldata=set(uint256) args=[1]
+...
+"#]]);
+}
