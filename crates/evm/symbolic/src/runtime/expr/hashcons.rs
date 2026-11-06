@@ -17,7 +17,25 @@ pub(in crate::runtime) struct HashConsed<T> {
 
 struct HashConsedInner<T> {
     hash: u64,
+    /// Summary bits of the whole subtree, computed once from the children's bits.
+    flags: u8,
+    /// Upper bound on the value's unsigned bit width, computed once from the children's.
+    bits: u16,
     value: T,
+}
+
+/// Summary bits a hash-consed value derives from its own kind and its children's bits, so
+/// subtree queries such as "contains an unsigned division" take constant time.
+pub(in crate::runtime) trait NodeFlags {
+    /// Returns this node's bits, including those of every child.
+    fn flags(&self) -> u8 {
+        0
+    }
+
+    /// Returns an upper bound on this node's unsigned bit width, from its children's.
+    fn bits(&self) -> u16 {
+        256
+    }
 }
 
 impl<T> HashConsed<T> {
@@ -42,6 +60,16 @@ impl<T> HashConsed<T> {
     #[inline]
     pub(in crate::runtime) fn value(&self) -> &T {
         &self.inner.value
+    }
+
+    #[inline]
+    pub(in crate::runtime) fn flags(&self) -> u8 {
+        self.inner.flags
+    }
+
+    #[inline]
+    pub(in crate::runtime) fn bits(&self) -> u16 {
+        self.inner.bits
     }
 }
 
@@ -127,7 +155,7 @@ impl<T> HashCons<T> {
     }
 }
 
-impl<T: Eq + Hash> HashCons<T> {
+impl<T: Eq + Hash + NodeFlags> HashCons<T> {
     pub(in crate::runtime) fn make(&mut self, value: T) -> HashConsed<T> {
         if self.table.len() >= self.gc_threshold {
             self.table.retain(|entry| entry.value.strong_count() != 0);
@@ -166,7 +194,9 @@ impl<T: Eq + Hash> HashCons<T> {
                     let _ = entry.remove();
                 }
                 Entry::Vacant(entry) => {
-                    let inner = Arc::new(HashConsedInner { hash, value });
+                    let flags = value.flags();
+                    let bits = value.bits();
+                    let inner = Arc::new(HashConsedInner { hash, flags, bits, value });
                     entry.insert(HashConsEntry { hash, value: Arc::downgrade(&inner) });
                     return HashConsed { inner };
                 }

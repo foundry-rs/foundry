@@ -24,7 +24,7 @@ pub use executor_view::ExecutorView;
 pub(crate) use expr::*;
 pub(crate) use memory::*;
 pub(crate) use precompiles::*;
-pub(crate) use solver::{BranchFeasibility, SmtLibSubprocessSolver};
+pub(crate) use solver::{BATCH_STOPPED, BranchFeasibility, SmtLibSubprocessSolver};
 pub(crate) use state::*;
 pub(crate) use symbols::*;
 

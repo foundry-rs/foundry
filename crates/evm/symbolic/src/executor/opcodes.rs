@@ -296,6 +296,130 @@ impl SymbolicExecutor {
         Ok(true)
     }
 
+    /// In an equivalence check, forks a memory access whose offset is symbolic but provably takes
+    /// few values into one path per value, with the offset concrete, like hevm's branching on
+    /// symbolic values up to `--max-width`. A loop over a computed length, such as a hex string's,
+    /// otherwise writes at symbolic offsets on every iteration, and every later read becomes a
+    /// choice over all those writes.
+    fn concretize_small_memory_offset(
+        &mut self,
+        state: &mut PathState,
+        worklist: &mut VecDeque<PathState>,
+        offset: &SymExpr,
+    ) -> Result<Option<StepOutcome>, SymbolicError> {
+        if self.equivalence.is_none()
+            || offset.as_const().is_some()
+            || state.constrained_usize_checked(&mut self.cx, offset).is_some()
+        {
+            return Ok(None);
+        }
+        let low = state.lower_bound_usize(offset);
+        let values = match state.upper_bound_usize(&mut self.cx, offset) {
+            Some(high) if high >= low && high - low < MAX_CONCRETIZED_MEMORY_OFFSETS => {
+                (low..=high).map(U256::from).collect::<Vec<_>>()
+            }
+            _ => match self.enumerate_offset_values(state, offset)? {
+                Some(values) => values,
+                None => return Ok(None),
+            },
+        };
+        trace!(values = values.len(), "concretizing symbolic memory offset");
+        if let [value] = values.as_slice() {
+            let value = *value;
+            state.stack.pop()?;
+            state.stack.push(SymExpr::constant(&mut self.cx, value))?;
+            let at = SymBoolExpr::eq_word_const(&mut self.cx, offset, value);
+            state.constraints.push(at);
+            state.pin(offset, value);
+            return Ok(None);
+        }
+        // The values cover every feasible one, so the forks partition the path.
+        for value in values {
+            let mut fork = state.clone();
+            fork.pc = fork.pc.saturating_sub(1);
+            fork.depth = fork.depth.saturating_sub(1);
+            fork.stack.pop()?;
+            fork.stack.push(SymExpr::constant(&mut self.cx, value))?;
+            let at = SymBoolExpr::eq_word_const(&mut self.cx, offset, value);
+            fork.constraints.push(at);
+            fork.pin(offset, value);
+            fork.defer_feasibility_check();
+            worklist.push_back(fork);
+        }
+        Ok(Some(StepOutcome::Forked))
+    }
+
+    /// Lists every value `offset` may take on this path with the solver, or returns `None` when
+    /// there are more than [`MAX_ENUMERATED_MEMORY_OFFSETS`]. Offsets that had too many are
+    /// remembered so later accesses do not ask again.
+    fn enumerate_offset_values(
+        &mut self,
+        state: &PathState,
+        offset: &SymExpr,
+    ) -> Result<Option<Vec<U256>>, SymbolicError> {
+        if self.unenumerable_offsets.contains(offset) {
+            return Ok(None);
+        }
+        // Only an offset whose varying part is narrow, such as a length computed from a value's
+        // magnitude, can take few values; skip the solver for the rest, such as calldata words.
+        let core = offset.split_added_constant().map_or_else(|| offset.clone(), |(core, _)| core);
+        if core.unsigned_bits() > MAX_ENUMERATED_OFFSET_BITS {
+            self.unenumerable_offsets.insert(offset.clone());
+            return Ok(None);
+        }
+        let replayable = state.world.replay_storage_symbols();
+        // One query rules out a varying part that ranges widely.
+        let low = state.lower_bound_usize(&core);
+        let mut too_wide = state.constraints.clone();
+        too_wide.push(SymBoolExpr::cmp_word_const(
+            &mut self.cx,
+            SymCmpOp::Uge,
+            &core,
+            U256::from(low.saturating_add(MAX_ENUMERATED_MEMORY_OFFSETS)),
+        ));
+        match self.solver.is_sat_with_replayable_storage(&mut self.cx, &too_wide, &replayable) {
+            Ok(false) => {}
+            Ok(true) | Err(SymbolicError::SolverUnknown) => {
+                self.unenumerable_offsets.insert(offset.clone());
+                return Ok(None);
+            }
+            Err(err) => return Err(err),
+        }
+        let mut constraints = state.constraints.clone();
+        let mut values = Vec::new();
+        loop {
+            self.check_timeout()?;
+            match self.solver.is_sat_with_replayable_storage(
+                &mut self.cx,
+                &constraints,
+                &replayable,
+            ) {
+                Ok(false) => return Ok(Some(values)),
+                Ok(true) => {}
+                Err(SymbolicError::SolverUnknown) => break,
+                Err(err) => return Err(err),
+            }
+            if values.len() >= MAX_ENUMERATED_MEMORY_OFFSETS {
+                break;
+            }
+            let model = match self.solver.model_with_replayable_storage(
+                &mut self.cx,
+                &constraints,
+                &replayable,
+            ) {
+                Ok(model) => model,
+                Err(SymbolicError::SolverUnknown) => break,
+                Err(err) => return Err(err),
+            };
+            let Ok(value) = offset.eval_model(&model) else { break };
+            values.push(value);
+            let other = SymBoolExpr::eq_word_const(&mut self.cx, offset, value).not(&mut self.cx);
+            constraints.push(other);
+        }
+        self.unenumerable_offsets.insert(offset.clone());
+        Ok(None)
+    }
+
     fn guard_fixed_memory_access(
         &mut self,
         executor: &ExecutorView<'_>,
@@ -311,6 +435,9 @@ impl SymbolicExecutor {
             Ok(offset) => host_max_offset.is_none_or(|max| *offset > max),
             Err(_) => true,
         }) {
+            if self.ignores_out_of_gas() {
+                return Ok(Some(StepOutcome::AssumeRejected));
+            }
             state.return_data = SymReturnData::empty(&mut self.cx);
             return Ok(Some(StepOutcome::ExceptionalHalt));
         }
@@ -331,19 +458,59 @@ impl SymbolicExecutor {
             SymBoolExpr::constant(&mut self.cx, false)
         };
         let size = SymExpr::constant(&mut self.cx, U256::from(size));
-        let local_size =
-            state.memory.size_after_range_expansion_word(&mut self.cx, offset.clone(), size);
+        let local_size = state.memory.size_after_range_expansion_word(
+            &mut self.cx,
+            offset.clone(),
+            size.clone(),
+        );
         if let Some(local_size) = local_size.as_const() {
             if local_size <= U256::from(memory_limit) {
                 return Ok(None);
             }
+            if self.ignores_out_of_gas() {
+                return Ok(Some(StepOutcome::AssumeRejected));
+            }
             state.return_data = SymReturnData::empty(&mut self.cx);
             return Ok(Some(StepOutcome::ExceptionalHalt));
+        }
+        if self.ignores_out_of_gas() {
+            return self.modulo_gas_memory_guard(executor, state, offset, &size);
         }
         let memory_limit = SymExpr::constant(&mut self.cx, U256::from(memory_limit));
         let within_limit = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, local_size, memory_limit);
         let valid_access = SymBoolExpr::and(&mut self.cx, vec![representable, within_limit]);
         self.apply_memory_access_guard(state, worklist, valid_access)
+    }
+
+    /// Leaves out, in an equivalence check modulo gas, the inputs whose memory access could run
+    /// out of gas: a nonempty access must keep its offset and size each within 8 MiB (or half the
+    /// memory limit, when smaller). Expanding memory to 8 MiB already costs more gas than any block
+    /// holds, so every input this drops runs out of gas on a real chain, and every input it keeps
+    /// fits the memory limit and replays within Foundry's default gas limit. Unlike tracking the
+    /// exact memory size, the condition does not grow with each access, so later queries stay
+    /// small.
+    fn modulo_gas_memory_guard(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        state: &mut PathState,
+        offset: &SymExpr,
+        size: &SymExpr,
+    ) -> Result<Option<StepOutcome>, SymbolicError> {
+        let half = U256::from((executor.memory_limit / 2).min(1 << 23).saturating_sub(32));
+        let empty = SymBoolExpr::eq_word_const(&mut self.cx, size, U256::ZERO);
+        let offset_fits = SymBoolExpr::cmp_word_const(&mut self.cx, SymCmpOp::Ule, offset, half);
+        let size_fits = SymBoolExpr::cmp_word_const(&mut self.cx, SymCmpOp::Ule, size, half);
+        let fits = SymBoolExpr::and(&mut self.cx, vec![offset_fits, size_fits]);
+        let valid = SymBoolExpr::or(&mut self.cx, vec![empty, fits]);
+        if valid.as_const() == Some(true) {
+            return Ok(None);
+        }
+        let (constraints, feasible) = self.constraints_with_condition(state, valid)?;
+        if !feasible {
+            return Ok(Some(StepOutcome::AssumeRejected));
+        }
+        state.constraints = constraints;
+        Ok(None)
     }
 
     fn apply_memory_access_guard(
@@ -403,6 +570,9 @@ impl SymbolicExecutor {
                     .and_then(|end| u64::try_from(end & !31usize).ok())
                     .is_some_and(|end| end <= memory_limit);
             if !valid {
+                if self.ignores_out_of_gas() {
+                    return Ok(Some(StepOutcome::AssumeRejected));
+                }
                 state.return_data = SymReturnData::empty(&mut self.cx);
                 return Ok(Some(StepOutcome::ExceptionalHalt));
             }
@@ -442,6 +612,13 @@ impl SymbolicExecutor {
             SymBoolExpr::and(&mut self.cx, vec![size_fits, offset_fits, local_fits]);
         let valid_access = SymBoolExpr::or(&mut self.cx, vec![zero_size, nonzero_valid]);
 
+        if self.ignores_out_of_gas() {
+            let outcome = self.modulo_gas_memory_guard(executor, state, offset, size)?;
+            if outcome.is_none() {
+                state.memory.expand_range(&mut self.cx, offset.clone(), size.clone());
+            }
+            return Ok(outcome);
+        }
         let outcome = self.apply_memory_access_guard(state, worklist, valid_access)?;
         if outcome.is_none() {
             state.memory.expand_range(&mut self.cx, offset.clone(), size.clone());
@@ -486,7 +663,8 @@ impl SymbolicExecutor {
             opcode::PUSH1..=opcode::PUSH32 => {
                 let n = (op - opcode::PUSH1 + 1) as usize;
                 let end = state.pc.saturating_add(n);
-                if end > code.len() {
+                // Like revm, an equivalence check reads PUSH data past the end of code as zero.
+                if end > code.len() && self.equivalence.is_none() {
                     return Err(SymbolicError::InvalidBytecode("truncated PUSH data"));
                 }
                 let value = code.push_data_word(&mut self.cx, state.pc, n);
@@ -647,12 +825,38 @@ impl SymbolicExecutor {
                             }
                         }
                         let max_limit = self.config.max_calldata_bytes as usize;
-                        let max_size = self.solver_upper_bound_usize(
-                            state,
-                            &size,
-                            max_limit,
-                            "symbolic SHA3 size",
-                        )?;
+                        // An equivalence check hashes a region without a static size bound to a
+                        // symbol named by the whole memory, the offset and the size, so equal
+                        // memory gives the two programs the same hash, as an uninterpreted
+                        // function would, without asking the solver for a bound first.
+                        let unbounded = self.equivalence.is_some()
+                            && state
+                                .upper_bound_usize(&mut self.cx, &size)
+                                .is_none_or(|bound| bound > max_limit);
+                        let bound = if unbounded {
+                            Err(SymbolicError::Unsupported("symbolic SHA3 size"))
+                        } else {
+                            self.solver_upper_bound_usize(
+                                state,
+                                &size,
+                                max_limit,
+                                "symbolic SHA3 size",
+                            )
+                        };
+                        let max_size = match bound {
+                            Ok(max_size) => max_size,
+                            Err(SymbolicError::Unsupported(_)) if self.equivalence.is_some() => {
+                                let mut identity = state.memory.identity_exprs(&mut self.cx);
+                                identity.push(offset);
+                                identity.push(size);
+                                let digest = ExpressionDigests::identity(identity.iter());
+                                let hash =
+                                    SymExpr::var(&mut self.cx, &format!("keccak_{digest:x}"));
+                                state.stack.push(hash)?;
+                                return Ok(StepOutcome::Continue);
+                            }
+                            Err(err) => return Err(err),
+                        };
                         let bytes = state.memory.read_byte_exprs_symbolic_size(
                             &mut self.cx,
                             offset,
@@ -670,6 +874,11 @@ impl SymbolicExecutor {
                     opcode::ORIGIN => state.origin_word.clone(),
                     _ => state.callvalue.clone(),
                 };
+                if matches!(op, opcode::CALLER | opcode::ORIGIN)
+                    && state.sequence_sender.as_ref() == Some(&value)
+                {
+                    state.sender_observed = true;
+                }
                 state.stack.push(value)?;
             }
             opcode::BLOCKHASH => {
@@ -745,6 +954,22 @@ impl SymbolicExecutor {
             }
             opcode::CALLDATALOAD => {
                 let offset = state.stack.pop()?;
+                // A read the path proves lies within symbolic-length calldata needs no size
+                // checks, which keeps the solver queries of decoded arguments small.
+                if let Some(start) =
+                    offset.as_const().and_then(|offset| usize::try_from(offset).ok())
+                    && let Some((low, high)) = state.calldata_size_range()
+                {
+                    if start.saturating_add(32) <= low {
+                        let value = state.calldata.load_word_in_range(&mut self.cx, start);
+                        state.stack.push(value)?;
+                        return Ok(StepOutcome::Continue);
+                    }
+                    if high <= start {
+                        state.stack.push(SymExpr::zero(&mut self.cx))?;
+                        return Ok(StepOutcome::Continue);
+                    }
+                }
                 let value = state.calldata.load_word(&mut self.cx, offset);
                 state.stack.push(value)?;
             }
@@ -904,6 +1129,11 @@ impl SymbolicExecutor {
             opcode::MLOAD => {
                 let offset = state.stack.peek(0)?.clone();
                 if let Some(outcome) =
+                    self.concretize_small_memory_offset(state, worklist, &offset)?
+                {
+                    return Ok(outcome);
+                }
+                if let Some(outcome) =
                     self.guard_fixed_memory_access(executor, state, worklist, &offset, 32)?
                 {
                     return Ok(outcome);
@@ -914,6 +1144,11 @@ impl SymbolicExecutor {
             }
             opcode::MSTORE => {
                 let offset = state.stack.peek(0)?.clone();
+                if let Some(outcome) =
+                    self.concretize_small_memory_offset(state, worklist, &offset)?
+                {
+                    return Ok(outcome);
+                }
                 if let Some(outcome) =
                     self.guard_fixed_memory_access(executor, state, worklist, &offset, 32)?
                 {
@@ -926,6 +1161,11 @@ impl SymbolicExecutor {
             }
             opcode::MSTORE8 => {
                 let offset = state.stack.peek(0)?.clone();
+                if let Some(outcome) =
+                    self.concretize_small_memory_offset(state, worklist, &offset)?
+                {
+                    return Ok(outcome);
+                }
                 if let Some(outcome) =
                     self.guard_fixed_memory_access(executor, state, worklist, &offset, 1)?
                 {
@@ -1102,7 +1342,13 @@ impl SymbolicExecutor {
             opcode::JUMPI => {
                 let dest = state.stack.pop()?;
                 let cond = state.stack.pop()?;
-                match cond.as_const().map(|value| !value.is_zero()) {
+                // A condition decided by values the path pinned needs no branch.
+                let decided = cond.as_const().or_else(|| {
+                    (!state.pinned.is_empty())
+                        .then(|| state.constrained_expr_value(&mut self.cx, &cond))
+                        .flatten()
+                });
+                match decided.map(|value| !value.is_zero()) {
                     Some(true) => {
                         let Some(dest) = self.resolve_jump_destination(
                             state,
@@ -1145,6 +1391,17 @@ impl SymbolicExecutor {
                                 return Ok(StepOutcome::Continue);
                             }
                         };
+                        if self.merges_states()
+                            && dest > state.pc
+                            && let Some(stack) = self.try_merge_forward_jump(
+                                executor, code, jumpdests, state, &true_cond, dest,
+                            )
+                        {
+                            trace!(dest, "merged forward jump");
+                            state.stack = stack;
+                            state.pc = dest;
+                            return Ok(StepOutcome::Continue);
+                        }
                         let op_pc = state.pc.saturating_sub(1);
                         let _branch_span = trace_span!("jumpi_branch", pc = op_pc, dest).entered();
                         let false_cond = true_cond.clone().not(&mut self.cx);
@@ -1202,7 +1459,13 @@ impl SymbolicExecutor {
                 state.stack.push(size)?;
             }
             opcode::GAS => {
-                let gas = state.fresh_gasleft(&mut self.cx);
+                // An equivalence check gives each program its own unconstrained gas readings.
+                let gas = if let Some(mode) = &mut self.equivalence {
+                    mode.reads_gas = true;
+                    state.fresh_word(&mut self.cx, "gas")
+                } else {
+                    state.fresh_gasleft(&mut self.cx)
+                };
                 state.stack.push(gas)?;
             }
             opcode::JUMPDEST => {}
@@ -1348,8 +1611,10 @@ impl SymbolicExecutor {
                 state.stack.push(hash)?;
             }
             opcode::COINBASE => {
-                let coinbase = state.block.coinbase;
-                let coinbase = SymExpr::constant(&mut self.cx, address_word(coinbase));
+                let coinbase = match state.block.coinbase_word.clone() {
+                    Some(coinbase) => coinbase,
+                    None => SymExpr::constant(&mut self.cx, address_word(state.block.coinbase)),
+                };
                 state.stack.push(coinbase)?;
             }
             opcode::TIMESTAMP => {
@@ -1390,11 +1655,11 @@ impl SymbolicExecutor {
                     return Ok(outcome);
                 }
                 let offset = state.stack.pop()?;
-                if offset.contains_gasleft() {
+                if !self.symbolic_gas() && offset.contains_gasleft() {
                     return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
                 }
                 let size = state.stack.pop()?;
-                if size.contains_gasleft() {
+                if !self.symbolic_gas() && size.contains_gasleft() {
                     return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
                 }
                 let (data_len, data) = match state.constrained_usize_checked(&mut self.cx, &size) {
@@ -1425,7 +1690,7 @@ impl SymbolicExecutor {
                 let mut log_topics = Vec::with_capacity(topics);
                 for _ in 0..topics {
                     let topic = state.stack.pop()?;
-                    if topic.contains_gasleft() {
+                    if !self.symbolic_gas() && topic.contains_gasleft() {
                         return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
                     }
                     log_topics.push(topic);
@@ -1440,6 +1705,53 @@ impl SymbolicExecutor {
         };
 
         Ok(StepOutcome::Continue)
+    }
+
+    /// Merges a forward `JUMPI` into one path, like hevm, when its fall-through side is a short
+    /// run of pure instructions that reaches the jump target with the stack at the same depth:
+    /// returns the stack at the target, each slot `ite(taken, jumped, fell through)`.
+    ///
+    /// Only instructions that read the stack, calldata or the call environment and write only the
+    /// stack are run, so the two sides can differ only in their stacks, and a merge that would
+    /// add a constraint, a symbol or a branch is given up.
+    fn try_merge_forward_jump(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        code: &SymCode,
+        jumpdests: &JumpTable,
+        state: &PathState,
+        taken: &SymBoolExpr,
+        dest: usize,
+    ) -> Option<SymStack> {
+        let mut fallthrough = state.clone();
+        let mut worklist = VecDeque::new();
+        let mut paths = 0usize;
+        for _ in 0..MERGE_FORWARD_JUMP_BUDGET {
+            if fallthrough.pc == dest {
+                break;
+            }
+            let op = code.opcode(&mut self.cx, fallthrough.pc).ok()??;
+            if !is_mergeable_opcode(op) {
+                return None;
+            }
+            match self.step(
+                executor,
+                code,
+                jumpdests,
+                &mut fallthrough,
+                &mut worklist,
+                &mut paths,
+                op,
+            ) {
+                Ok(StepOutcome::Continue) if worklist.is_empty() => {}
+                _ => return None,
+            }
+        }
+        let unchanged = fallthrough.pc == dest
+            && fallthrough.stack.len() == state.stack.len()
+            && fallthrough.constraints.len() == state.constraints.len()
+            && fallthrough.next_symbol == state.next_symbol;
+        unchanged.then(|| state.stack.merge(&mut self.cx, taken, &fallthrough.stack))
     }
 
     fn resolve_jump_destination(
@@ -1491,7 +1803,7 @@ impl SymbolicExecutor {
         offset: &SymExpr,
         size: &SymExpr,
     ) -> Result<Option<StepOutcome>, SymbolicError> {
-        if offset.contains_gasleft() || size.contains_gasleft() {
+        if !self.symbolic_gas() && (offset.contains_gasleft() || size.contains_gasleft()) {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
         let return_data_len = state.return_data.len_word.clone();
@@ -1564,6 +1876,15 @@ impl SymbolicExecutor {
     }
 }
 
+/// Most values a symbolic memory offset may take for an equivalence check to fork on each.
+const MAX_CONCRETIZED_MEMORY_OFFSETS: usize = 128;
+
+/// Widest varying part, in bits, of a symbolic memory offset whose values the solver lists.
+const MAX_ENUMERATED_OFFSET_BITS: usize = 8;
+
+/// Most values the solver lists for a symbolic memory offset whose bounds are unknown.
+const MAX_ENUMERATED_MEMORY_OFFSETS: usize = 80;
+
 /// Returns the activation fork for opcodes implemented by the symbolic executor.
 const fn opcode_activation(op: u8) -> SpecId {
     match op {
@@ -1603,4 +1924,27 @@ const fn decode_exchange_immediate(immediate: u8) -> Option<(usize, usize)> {
     let k = x ^ 143;
     let (q, r) = (k / 16, k % 16);
     if q < r { Some((q + 1, r + 1)) } else { Some((r + 1, 29 - q)) }
+}
+
+/// Most instructions the fall-through side of a forward jump may run to be merged.
+const MERGE_FORWARD_JUMP_BUDGET: usize = 100;
+
+/// Returns whether `op` reads only the stack, calldata or the call environment and writes only
+/// the stack, so running it speculatively leaves no other trace.
+const fn is_mergeable_opcode(op: u8) -> bool {
+    matches!(
+        op,
+        opcode::ADD..=opcode::SIGNEXTEND
+            | opcode::LT..=opcode::SAR
+            | opcode::ADDRESS
+            | opcode::CALLER
+            | opcode::CALLVALUE
+            | opcode::CALLDATALOAD
+            | opcode::CALLDATASIZE
+            | opcode::POP
+            | opcode::JUMPDEST
+            | opcode::PUSH0..=opcode::PUSH32
+            | opcode::DUP1..=opcode::DUP16
+            | opcode::SWAP1..=opcode::SWAP16
+    )
 }

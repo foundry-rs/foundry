@@ -1828,7 +1828,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         };
         Ok((
             InvariantWorkerOutput { plan: reported_plan, result: worker_result },
-            frontier_recorder.into_frontiers(),
+            frontier_recorder.into_recorded_frontiers(),
         ))
     }
 

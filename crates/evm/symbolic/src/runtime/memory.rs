@@ -39,6 +39,24 @@ impl SymStack {
     pub(crate) const fn len(&self) -> usize {
         self.0.len()
     }
+
+    /// Returns the stack whose slots are `ite(condition, self, other)`, for stacks of one depth.
+    pub(crate) fn merge(&self, cx: &mut SymCx, condition: &SymBoolExpr, other: &Self) -> Self {
+        debug_assert_eq!(self.0.len(), other.0.len());
+        Self(
+            self.0
+                .iter()
+                .zip(&other.0)
+                .map(|(then, otherwise)| {
+                    if then == otherwise {
+                        then.clone()
+                    } else {
+                        SymExpr::ite(cx, condition.clone(), then.clone(), otherwise.clone())
+                    }
+                })
+                .collect(),
+        )
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -46,6 +64,10 @@ pub(crate) enum BoundedCopySize {
     Concrete(usize),
     Symbolic { size: SymExpr, max_size: usize },
 }
+
+/// Buffers longer than this read a word at a symbolic offset from their whole words, since a
+/// byte-wise read grows with the square of their length.
+pub(crate) const SYMBOLIC_WORD_READ_MIN_LEN: usize = 64;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SymMemory {
@@ -259,6 +281,14 @@ impl SymMemory {
         } else {
             let size = Self::size_after_access_word(cx, offset.clone(), 32);
             self.expand_to(cx, size);
+            // Without symbolic-offset writes, memory is one buffer, zero past what was written,
+            // whose words give a read of linear size.
+            if let Some(len) = self.concrete_writes_end()
+                && len > SYMBOLIC_WORD_READ_MIN_LEN
+                && let Some(bytes) = self.read_stored_bytes(cx, 0, len)
+            {
+                return Ok(bytes.word_at_symbolic(cx, &offset));
+            }
             // Share the byte-read path so symbolic writes are included.
             Ok(self.read_bytes_offset(cx, offset, 32).word_at(cx, 0))
         }
@@ -367,6 +397,13 @@ impl SymMemory {
         };
         self.read_bytes_offset_with_bounds(cx, offset, 32, minimum_offset, maximum_offset)
             .word_at(cx, 0)
+    }
+
+    /// Returns the end of everything written when every write has a concrete offset.
+    fn concrete_writes_end(&self) -> Option<usize> {
+        self.symbolic_writes.iter().try_fold(self.materialized_size, |end, write| {
+            Some(end.max(write.concrete_offset()?.checked_add(write.bytes.len())?))
+        })
     }
 
     fn read_stored_bytes(&self, cx: &mut SymCx, offset: usize, size: usize) -> Option<SymBytes> {
@@ -576,6 +613,19 @@ impl SymMemory {
 
     pub(crate) fn size_word(&self, cx: &mut SymCx) -> SymExpr {
         self.logical_size.clone().unwrap_or_else(|| SymExpr::zero(cx))
+    }
+
+    /// Returns expressions that together identify the whole contents of this memory: equal
+    /// lists mean equal memory.
+    pub(crate) fn identity_exprs(&self, cx: &mut SymCx) -> Vec<SymExpr> {
+        let mut exprs = self.read_bytes(cx, 0, self.materialized_size).materialize(cx);
+        exprs.push(SymExpr::constant(cx, U256::from(self.materialized_size)));
+        for write in &self.symbolic_writes {
+            exprs.push(write.offset.clone());
+            exprs.push(SymExpr::constant(cx, U256::from(write.bytes.len())));
+            exprs.extend(write.bytes.materialize(cx));
+        }
+        exprs
     }
 
     pub(crate) fn size_after_range_expansion_word(

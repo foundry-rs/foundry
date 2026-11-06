@@ -3,7 +3,7 @@
 use super::*;
 use std::{
     io::{BufRead, BufReader, Read},
-    process::{Child, ChildStdin, Output},
+    process::{Child, Output},
     sync::mpsc::{Receiver, RecvTimeoutError},
     thread::JoinHandle,
 };
@@ -12,6 +12,8 @@ use wait_timeout::ChildExt;
 mod fallback;
 mod normalize;
 mod reasoning;
+mod routing;
+mod session;
 mod smt;
 
 use fallback::{checked_mul_guard_branch_model, constraints_prefer_hard_arith_fallback_first};
@@ -23,13 +25,16 @@ use reasoning::{
     CheckedXorResult, checked_xor_result, product_monotonic_unsat_normalized,
     remove_implied_monotonic_constraints,
 };
+use routing::{QueryBucket, query_bucket};
+use session::{SolverSession, run_solver_query};
 use smt::write_smt_assertions;
 
 pub(crate) use fallback::{
     fallback_bounded_model, fallback_single_var_model, hard_arith_fallback_model,
 };
 
-const Z3_QUERY_END: &str = "foundry-query-complete";
+/// Extra wall-clock time a session solver gets past its own per-query limit before it is killed.
+const SESSION_TIMEOUT_GRACE: Duration = Duration::from_secs(1);
 
 /// Errors that arise when parsing or constructing solver commands from configuration.
 #[derive(Debug, thiserror::Error)]
@@ -99,6 +104,24 @@ pub(crate) struct SolverCommand {
     args: Vec<String>,
     display: String,
     smt_timeout: bool,
+    /// Known solver name, used to route queries to the solver suited to them.
+    name: Option<&'static str>,
+    /// Extra arguments that let the solver answer queries in one long-lived process, or `None`
+    /// when it runs one process per query.
+    session_args: Option<&'static [&'static str]>,
+    /// How the solver takes a per-query time limit in milliseconds in session mode.
+    session_timeout_flag: Option<SessionTimeoutFlag>,
+}
+
+/// Command-line spelling of a solver's per-query time limit in milliseconds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SessionTimeoutFlag {
+    /// The flag, then the limit as its own argument.
+    Separate(&'static str),
+    /// The flag with the limit appended.
+    Joined(&'static str),
+    /// No flag: each query sets `(set-option :timeout ms)`.
+    SmtOption,
 }
 
 impl SolverCommand {
@@ -113,7 +136,68 @@ impl SolverCommand {
             .chain(args.iter().map(String::as_str))
             .collect::<Vec<_>>()
             .join(" ");
-        Ok(Self { program, args, display, smt_timeout })
+        Ok(Self {
+            program,
+            args,
+            display,
+            smt_timeout,
+            name: None,
+            session_args: None,
+            session_timeout_flag: None,
+        })
+    }
+
+    /// Marks this command as the known solver `name`, able to run as a session with
+    /// `session_args`.
+    const fn known(
+        mut self,
+        name: &'static str,
+        session_args: &'static [&'static str],
+        session_timeout_flag: Option<SessionTimeoutFlag>,
+    ) -> Self {
+        self.name = Some(name);
+        self.session_args = Some(session_args);
+        self.session_timeout_flag = session_timeout_flag;
+        self
+    }
+
+    /// Whether the solver can answer queries in one long-lived process.
+    pub(crate) const fn session_capable(&self) -> bool {
+        self.session_args.is_some()
+    }
+
+    /// Whether a session separates queries with `(reset)` instead of `(push 1)`/`(pop 1)`.
+    ///
+    /// Inside a pushed scope z3 switches to its incremental solver, which skips the bit-blasting
+    /// preprocessing that makes hard bit-vector queries tractable (one query here took 5.8 s
+    /// plainly and over 20 s pushed). `(reset)` keeps the fast one-shot solver. Bitwuzla 0.9.1
+    /// crashes on `(get-model)` after `(reset)`, so it and cvc5 keep using scopes. The incremental
+    /// solver still wins on some queries (one ite-heavy query took 3.4 s scoped and over 25 s
+    /// one-shot), so `z3-inc` names z3 kept in scoped mode, to race against `z3`.
+    pub(crate) fn session_resets(&self) -> bool {
+        self.name == Some("z3")
+    }
+
+    /// Returns the command line that starts this solver as a session.
+    pub(crate) fn session_command(&self, timeout: Option<u32>) -> Self {
+        let mut command = self.clone();
+        command
+            .args
+            .extend(self.session_args.unwrap_or_default().iter().map(|arg| arg.to_string()));
+        if let Some(flag) = self.session_timeout_flag
+            && let Some(seconds) = timeout.filter(|seconds| *seconds > 0)
+        {
+            let ms = u64::from(seconds) * 1000;
+            match flag {
+                SessionTimeoutFlag::Separate(flag) => {
+                    command.args.push(flag.to_string());
+                    command.args.push(ms.to_string());
+                }
+                SessionTimeoutFlag::Joined(flag) => command.args.push(format!("{flag}{ms}")),
+                SessionTimeoutFlag::SmtOption => {}
+            }
+        }
+        command
     }
 }
 
@@ -139,8 +223,27 @@ pub(crate) struct SmtLibSubprocessSolver {
     smt_max_query_bytes: u64,
     smt_build_time: Duration,
     smt_max_query_time: Duration,
-    z3_session: Option<Z3Session>,
+    /// Long-lived solver processes, per parallel worker and configured solver.
+    sessions: Vec<Vec<Option<SolverSession>>>,
+    /// Number of queries a batch may solve at once.
+    jobs: usize,
+    /// Wall-clock deadline of the whole run; queries never run past it.
+    deadline: Option<Instant>,
+    /// Models of recent satisfiable queries, tried on new queries before the solver, when
+    /// [`Self::set_reuse_models`] turned reuse on.
+    recent_models: Option<VecDeque<SymbolicModel>>,
+    model_reuse_hits: usize,
 }
+
+/// Result of a batch query stopped because another query of the batch was satisfiable.
+pub(crate) const BATCH_STOPPED: &str = "solver query stopped: another batch query was satisfiable";
+
+/// How often a racing query checks whether its batch stopped.
+const BATCH_STOP_POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+/// SMT-LIB text of a query, its routing bucket, and the solvers to race in order with their
+/// portfolio indexes.
+type BuiltQuery = (String, QueryBucket, Vec<(usize, SolverCommand)>);
 
 impl SmtLibSubprocessSolver {
     /// Constructs a subprocess solver from Foundry symbolic config.
@@ -167,8 +270,83 @@ impl SmtLibSubprocessSolver {
             smt_max_query_bytes: 0,
             smt_build_time: Duration::ZERO,
             smt_max_query_time: Duration::ZERO,
-            z3_session: None,
+            sessions: Vec::new(),
+            jobs: 1,
+            deadline: None,
+            recent_models: None,
+            model_reuse_hits: 0,
         }
+    }
+
+    /// Turns on trying the models of recent satisfiable queries on each new query before the
+    /// solver, which settles most feasibility checks along a path, as KLEE's counterexample cache
+    /// does. Satisfiable queries then also ask the solver for a model.
+    pub(crate) fn set_reuse_models(&mut self, reuse: bool) {
+        self.recent_models = reuse.then(VecDeque::new);
+    }
+
+    /// Returns whether a recent model, with unassigned symbols set to zero, satisfies every
+    /// constraint, which proves them satisfiable.
+    fn recent_model_satisfies(&self, constraints: &[SymBoolExpr]) -> bool {
+        let Some(models) = &self.recent_models else { return false };
+        if constraints.is_empty() || constraints.iter().any(SymBoolExpr::contains_gasleft) {
+            return false;
+        }
+        models.iter().any(|model| eval_model_constraints(constraints, &ZeroDefaultModel(model)))
+    }
+
+    /// Remembers a model for [`Self::recent_model_satisfies`].
+    fn remember_model(&mut self, model: &SymbolicModel) {
+        let Some(models) = &mut self.recent_models else { return };
+        if models.len() >= RECENT_MODELS {
+            models.pop_back();
+        }
+        models.push_front(model.clone());
+    }
+
+    /// Sets how many queries a batch may solve in parallel.
+    pub(crate) fn set_jobs(&mut self, jobs: usize) {
+        self.jobs = jobs.max(1);
+    }
+
+    /// Sets the time limit, in seconds, of each query.
+    pub(crate) const fn set_query_timeout(&mut self, timeout: Option<u32>) {
+        self.timeout = timeout;
+    }
+
+    /// Sets the wall-clock deadline queries must finish by.
+    pub(crate) const fn set_deadline(&mut self, deadline: Option<Instant>) {
+        self.deadline = deadline;
+    }
+
+    /// Returns the time limit, in whole seconds, the next query may use: the configured limit,
+    /// capped by what is left before the deadline.
+    fn query_timeout(&self) -> Result<Option<u32>, SymbolicError> {
+        let Some(deadline) = self.deadline else { return Ok(self.timeout) };
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(SymbolicError::Timeout(self.timeout.unwrap_or_default()));
+        }
+        let remaining = u32::try_from(remaining.as_secs().max(1)).unwrap_or(u32::MAX);
+        Ok(Some(
+            self.timeout.filter(|timeout| *timeout > 0).map_or(remaining, |t| t.min(remaining)),
+        ))
+    }
+
+    /// Returns worker `worker`'s sessions, one slot per configured solver.
+    fn worker_sessions(
+        &mut self,
+        worker: usize,
+        commands: usize,
+    ) -> &mut Vec<Option<SolverSession>> {
+        if self.sessions.len() <= worker {
+            self.sessions.resize_with(worker + 1, Vec::new);
+        }
+        let sessions = &mut self.sessions[worker];
+        if sessions.len() < commands {
+            sessions.resize_with(commands, || None);
+        }
+        sessions
     }
 
     /// Returns solver counters collected by this backend.
@@ -191,6 +369,7 @@ impl SmtLibSubprocessSolver {
                 .as_millis()
                 .try_into()
                 .unwrap_or(u64::MAX),
+            model_reuse_hits: self.model_reuse_hits,
         }
     }
 
@@ -285,6 +464,23 @@ impl SmtLibSubprocessSolver {
         &mut self,
         cx: &mut SymCx,
         constraints: &[SymBoolExpr],
+    ) -> Result<SymbolicModel, SymbolicError> {
+        let model = self.model_refining(cx, constraints, KECCAK_REFINEMENT_ROUNDS)?;
+        self.remember_model(&model);
+        Ok(model)
+    }
+
+    /// Returns a model, refining up to `rounds` times a model whose Keccak values are not the
+    /// real hashes of its preimages.
+    ///
+    /// Each Keccak node is an unconstrained symbol to the solver, so its model may pick any hash.
+    /// A refinement adds, for each wrong hash, the fact that this preimage hashes to its real
+    /// value, which is sound because Keccak is a function, and solves again.
+    fn model_refining(
+        &mut self,
+        cx: &mut SymCx,
+        constraints: &[SymBoolExpr],
+        rounds: usize,
     ) -> Result<SymbolicModel, SymbolicError> {
         // Local witnesses may decide the feasibility of gas-dependent branches, but a model assigns
         // `gasleft()` a concrete value the engine cannot replay faithfully, so fail closed here.
@@ -381,7 +577,10 @@ impl SmtLibSubprocessSolver {
             self.cache_model_result(cache_key, model.clone());
             return Ok(model);
         }
-        let output = match self.query_normalized(cx, &smt_constraints, true, constraints) {
+        // A model with wrong Keccak values is refined below rather than rejected in the race.
+        let has_keccak = constraints.iter().any(SymBoolExpr::contains_keccak);
+        let validated = if has_keccak { &[][..] } else { constraints };
+        let output = match self.query_normalized(cx, &smt_constraints, true, validated) {
             Ok(output) => output,
             Err(SymbolicError::SolverUnknown) => {
                 if let Some(model) =
@@ -399,6 +598,37 @@ impl SmtLibSubprocessSolver {
         };
         let mut lines = output.lines();
         match lines.next().unwrap_or_default().trim() {
+            "sat" if has_keccak => {
+                let symbols = model_symbols_for_constraints(cx, constraints);
+                let model = parse_model_with_symbols(&output, &symbols)?;
+                if eval_model_constraints(constraints, &model) {
+                    self.cache_sat_result(cache_key.clone(), true);
+                    self.cache_model_result(cache_key, model.clone());
+                    return Ok(model);
+                }
+                let (lemmas, pins) = keccak_lemmas(cx, constraints, &model);
+                if lemmas.is_empty() || rounds == 0 {
+                    return parse_and_validate_model(cx, &output, constraints);
+                }
+                // Keeping this model's preimages and fixing their real hashes usually settles at
+                // once; a solver that moves the preimages every round may never converge otherwise.
+                let mut pinned = constraints.to_vec();
+                pinned.extend(pins);
+                if let Ok(model) = self.model_refining(cx, &pinned, 0) {
+                    return Ok(model);
+                }
+                trace!(lemmas = lemmas.len(), "model: refining Keccak values");
+                let mut refined = constraints.to_vec();
+                refined.extend(lemmas);
+                // Pinning the hashes of this model's preimages alone lets the next model move the
+                // collision to other preimages: also tie hash equality to preimage equality.
+                for lemma in hash_congruence_lemmas(cx, constraints) {
+                    if !refined.contains(&lemma) {
+                        refined.push(lemma);
+                    }
+                }
+                self.model_refining(cx, &refined, rounds - 1)
+            }
             "sat" => {
                 let model = parse_and_validate_model(cx, &output, constraints)?;
                 self.cache_sat_result(cache_key.clone(), true);
@@ -432,6 +662,24 @@ impl SmtLibSubprocessSolver {
         constraints: &[SymBoolExpr],
         defer_hard_arith_without_witness: bool,
     ) -> Result<BranchFeasibility, SymbolicError> {
+        match self.sat_prepare(cx, constraints, defer_hard_arith_without_witness)? {
+            SatStep::Done(result) => Ok(result),
+            SatStep::Query { cache_key, smt_constraints } => {
+                let want_model = self.recent_models.is_some();
+                let output = self.query_normalized(cx, &smt_constraints, want_model, &[]);
+                self.sat_finish(cx, constraints, cache_key, &smt_constraints, output)
+            }
+        }
+    }
+
+    /// Settles a satisfiability check without the SMT solver when caches or local reasoning can,
+    /// and otherwise returns the normalized query to send.
+    fn sat_prepare(
+        &mut self,
+        cx: &mut SymCx,
+        constraints: &[SymBoolExpr],
+        defer_hard_arith_without_witness: bool,
+    ) -> Result<SatStep, SymbolicError> {
         self.sat_queries += 1;
         let smt_constraints =
             normalize_sat_constraints(cx, constraints, &mut self.normalization_cache);
@@ -439,13 +687,17 @@ impl SmtLibSubprocessSolver {
         if let Some(result) = self.sat_cache.get(&cache_key) {
             self.sat_cache_hits += 1;
             trace!(result, "is_sat: normalized cache hit");
-            return Ok(if *result { BranchFeasibility::Sat } else { BranchFeasibility::Unsat });
+            return Ok(SatStep::Done(if *result {
+                BranchFeasibility::Sat
+            } else {
+                BranchFeasibility::Unsat
+            }));
         }
         if self.has_cached_unsat_subset(&cache_key) {
             self.sat_cache_hits += 1;
             trace!("is_sat: normalized unsat subset cache hit");
             self.cache_sat_result(cache_key, false);
-            return Ok(BranchFeasibility::Unsat);
+            return Ok(SatStep::Done(BranchFeasibility::Unsat));
         }
         if defer_hard_arith_without_witness
             && let Some((condition, base)) = constraints.split_last()
@@ -466,7 +718,7 @@ impl SmtLibSubprocessSolver {
             self.sat_cache_hits += 1;
             trace!("is_sat: branch complement unsat cache hit");
             self.cache_sat_result(cache_key, true);
-            return Ok(BranchFeasibility::Sat);
+            return Ok(SatStep::Done(BranchFeasibility::Sat));
         }
 
         self.reserve_query()?;
@@ -482,12 +734,12 @@ impl SmtLibSubprocessSolver {
         if constraints_are_directly_unsat(cx, &smt_constraints) {
             trace!("is_sat: direct contradiction");
             self.cache_sat_result(cache_key, false);
-            return Ok(BranchFeasibility::Unsat);
+            return Ok(SatStep::Done(BranchFeasibility::Unsat));
         }
         if product_monotonic_unsat_normalized(&smt_constraints) {
             trace!("is_sat: monotonic product contradiction");
             self.cache_sat_result(cache_key, false);
-            return Ok(BranchFeasibility::Unsat);
+            return Ok(SatStep::Done(BranchFeasibility::Unsat));
         }
         if let Some(result) = checked_xor_result(constraints) {
             let sat = matches!(result, CheckedXorResult::Model(_));
@@ -496,26 +748,30 @@ impl SmtLibSubprocessSolver {
             if let CheckedXorResult::Model(model) = result {
                 self.cache_model_result(cache_key, model);
             }
-            return Ok(if sat { BranchFeasibility::Sat } else { BranchFeasibility::Unsat });
+            return Ok(SatStep::Done(if sat {
+                BranchFeasibility::Sat
+            } else {
+                BranchFeasibility::Unsat
+            }));
         }
         if !constraints.is_empty()
             && eval_model_constraints(constraints, &SymbolicModel::default())
             && !constraints.iter().any(SymBoolExpr::contains_gasleft)
         {
             self.cache_sat_result(cache_key, true);
-            return Ok(BranchFeasibility::Sat);
+            return Ok(SatStep::Done(BranchFeasibility::Sat));
         }
         if let Some(model) = fallback_single_var_model(&smt_constraints)
             && eval_model_constraints(constraints, &model)
         {
             self.cache_sat_result(cache_key, true);
-            return Ok(BranchFeasibility::Sat);
+            return Ok(SatStep::Done(BranchFeasibility::Sat));
         }
         if let Some(model) = fallback_bounded_model(&smt_constraints)
             && eval_model_constraints(constraints, &model)
         {
             self.cache_sat_result(cache_key, true);
-            return Ok(BranchFeasibility::Sat);
+            return Ok(SatStep::Done(BranchFeasibility::Sat));
         }
         if checked_mul_guard_branch_model(
             cx,
@@ -527,21 +783,40 @@ impl SmtLibSubprocessSolver {
         {
             trace!("is_sat: validated constructive checked-multiply guard model");
             self.cache_sat_result(cache_key, true);
-            return Ok(BranchFeasibility::Sat);
+            return Ok(SatStep::Done(BranchFeasibility::Sat));
         }
         if constraints_prefer_hard_arith_fallback_first(cx, &smt_constraints) {
             if validated_hard_arith_fallback_model(cx, &smt_constraints, constraints).is_some() {
                 self.heuristic_witnesses += 1;
                 trace!("is_sat: validated hard arithmetic fallback model before solver");
                 self.cache_sat_result(cache_key, true);
-                return Ok(BranchFeasibility::Sat);
+                return Ok(SatStep::Done(BranchFeasibility::Sat));
             }
             if defer_hard_arith_without_witness {
                 trace!("is_sat: deferring hard arithmetic branch without local witness");
-                return Ok(BranchFeasibility::NeedsSolver);
+                return Ok(SatStep::Done(BranchFeasibility::NeedsSolver));
             }
         }
-        let output = match self.query_normalized(cx, &smt_constraints, false, constraints) {
+        if self.recent_model_satisfies(constraints) {
+            trace!("is_sat: recent model satisfies the constraints");
+            self.model_reuse_hits += 1;
+            self.cache_sat_result(cache_key, true);
+            return Ok(SatStep::Done(BranchFeasibility::Sat));
+        }
+        Ok(SatStep::Query { cache_key, smt_constraints })
+    }
+
+    /// Interprets the solver's answer to a query [`Self::sat_prepare`] returned.
+    fn sat_finish(
+        &mut self,
+        cx: &mut SymCx,
+        constraints: &[SymBoolExpr],
+        cache_key: Vec<SymBoolExpr>,
+        smt_constraints: &[SymBoolExpr],
+        output: Result<String, SymbolicError>,
+    ) -> Result<BranchFeasibility, SymbolicError> {
+        let smt_constraints = smt_constraints.to_vec();
+        let output = match output {
             Ok(output) => output,
             Err(SymbolicError::SolverUnknown) => {
                 if validated_hard_arith_fallback_model(cx, &smt_constraints, constraints).is_some()
@@ -557,6 +832,12 @@ impl SmtLibSubprocessSolver {
         };
         match output.lines().next().unwrap_or_default().trim() {
             "sat" => {
+                if self.recent_models.is_some() && output.contains("define-fun") {
+                    let symbols = model_symbols_for_constraints(cx, constraints);
+                    if let Ok(model) = parse_model_with_symbols(&output, &symbols) {
+                        self.remember_model(&model);
+                    }
+                }
                 self.cache_sat_result(cache_key, true);
                 Ok(BranchFeasibility::Sat)
             }
@@ -615,6 +896,149 @@ impl SmtLibSubprocessSolver {
         model: bool,
         model_constraints: &[SymBoolExpr],
     ) -> Result<String, SymbolicError> {
+        let timeout = self.query_timeout()?;
+        let (smt, bucket, ordered_commands) = self.build_query(cx, smt_constraints, model)?;
+        let sessions = std::mem::take(self.worker_sessions(0, ordered_commands.len()));
+        let started = Instant::now();
+        let (result, sessions) = run_solver_commands(
+            &ordered_commands,
+            &smt,
+            timeout,
+            model.then_some((cx, model_constraints)),
+            sessions,
+            None,
+        );
+        *self.worker_sessions(0, ordered_commands.len()) = sessions;
+        self.finish_query(bucket, &ordered_commands, started.elapsed(), result)
+    }
+
+    /// Returns satisfiability of each constraint set, sending the ones local reasoning cannot
+    /// settle to the solver portfolio up to [`Self::set_jobs`] at a time.
+    ///
+    /// Each set comes with the storage symbols concrete replay can set on its path.
+    ///
+    /// With `stop_at_sat`, the first satisfiable query stops the queries still running or not yet
+    /// started, whose results are then `Err(SymbolicError::Solver(BATCH_STOPPED))`: they were not
+    /// decided, and the caller re-runs them if that satisfiable result turns out not to count.
+    pub(crate) fn is_sat_batch(
+        &mut self,
+        cx: &mut SymCx,
+        queries: &[(Vec<SymBoolExpr>, SymbolicVars)],
+        stop_at_sat: bool,
+    ) -> Vec<Result<bool, SymbolicError>> {
+        let stop = AtomicBool::new(false);
+        let mut results = (0..queries.len()).map(|_| None).collect::<Vec<_>>();
+        let mut pending = Vec::new();
+        for (index, (constraints, replayable)) in queries.iter().enumerate() {
+            // Local reasoning on a large batch can take long on its own: stop at the deadline.
+            if let Err(err) = self.query_timeout() {
+                results[index] = Some(Err(err));
+                continue;
+            }
+            let step = self.with_replayable_storage(replayable, |solver| {
+                solver.sat_prepare(cx, constraints, false)
+            });
+            match step {
+                Ok(SatStep::Done(result)) => results[index] = Some(result.into_result()),
+                Ok(SatStep::Query { cache_key, smt_constraints }) => {
+                    pending.push((index, cache_key, smt_constraints));
+                }
+                Err(err) => results[index] = Some(Err(err)),
+            }
+        }
+
+        for chunk in pending.chunks(self.jobs.max(1)) {
+            if stop.load(Ordering::SeqCst) {
+                for (index, ..) in chunk {
+                    results[*index] = Some(Err(SymbolicError::Solver(BATCH_STOPPED.to_string())));
+                }
+                continue;
+            }
+            let timeout = match self.query_timeout() {
+                Ok(timeout) => timeout,
+                Err(err) => {
+                    for (index, ..) in chunk {
+                        let _ = &err;
+                        results[*index] =
+                            Some(Err(SymbolicError::Timeout(self.timeout.unwrap_or_default())));
+                    }
+                    continue;
+                }
+            };
+            let mut built = Vec::with_capacity(chunk.len());
+            let want_model = self.recent_models.is_some();
+            for (index, _, smt_constraints) in chunk {
+                match self.build_query(cx, smt_constraints, want_model) {
+                    Ok(query) => built.push((*index, query)),
+                    Err(err) => results[*index] = Some(Err(err)),
+                }
+            }
+            let workers = built.len();
+            let commands_len = built.first().map_or(0, |(_, (_, _, commands))| commands.len());
+            let mut worker_sessions = (0..workers)
+                .map(|worker| std::mem::take(self.worker_sessions(worker, commands_len)))
+                .collect::<Vec<_>>();
+            let started = Instant::now();
+            let outcomes = thread::scope(|scope| {
+                let handles = built
+                    .iter()
+                    .zip(worker_sessions.iter_mut())
+                    .map(|((_, (smt, _, commands)), sessions)| {
+                        let taken = std::mem::take(sessions);
+                        let stop = &stop;
+                        scope.spawn(move || {
+                            let run = run_solver_commands(
+                                commands,
+                                smt,
+                                timeout,
+                                None,
+                                taken,
+                                stop_at_sat.then_some(stop),
+                            );
+                            let sat = run.0.output.as_ref().is_ok_and(|output| {
+                                output.lines().next().is_some_and(|line| line.trim() == "sat")
+                            });
+                            if stop_at_sat && sat {
+                                stop.store(true, Ordering::SeqCst);
+                            }
+                            run
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                handles
+                    .into_iter()
+                    .map(|handle| handle.join().expect("solver worker panicked"))
+                    .collect::<Vec<_>>()
+            });
+            let elapsed = started.elapsed();
+            let mut outcomes = outcomes.into_iter();
+            for (worker, (index, (_, bucket, commands))) in built.into_iter().enumerate() {
+                let (result, sessions) = outcomes.next().expect("one outcome per query");
+                *self.worker_sessions(worker, commands.len()) = sessions;
+                let output = self.finish_query(bucket, &commands, elapsed, result);
+                let (_, constraints_replayable) = &queries[index];
+                let (constraints, _) = &queries[index];
+                let (_, cache_key, smt_constraints) = chunk
+                    .iter()
+                    .find(|(pending_index, ..)| *pending_index == index)
+                    .expect("built query is pending");
+                let result = self.with_replayable_storage(constraints_replayable, |solver| {
+                    solver.sat_finish(cx, constraints, cache_key.clone(), smt_constraints, output)
+                });
+                results[index] = Some(result.and_then(BranchFeasibility::into_result));
+            }
+            drop(worker_sessions);
+        }
+        results.into_iter().map(|result| result.expect("every query has a result")).collect()
+    }
+
+    /// Builds the SMT-LIB text of a query and picks the solver order for it.
+    fn build_query(
+        &mut self,
+        cx: &SymCx,
+        smt_constraints: &[SymBoolExpr],
+        model: bool,
+    ) -> Result<BuiltQuery, SymbolicError> {
         self.smt_queries += 1;
         let build_started = Instant::now();
         let mut vars = SymbolicVars::default();
@@ -622,15 +1046,15 @@ impl SmtLibSubprocessSolver {
             constraint.collect_vars(&mut vars);
         }
 
+        let bucket = query_bucket(smt_constraints);
         let configured_commands = self.commands()?.to_vec();
-        let ordered_commands = self.portfolio_scheduler.ordered_commands(&configured_commands);
-        let commands =
-            ordered_commands.iter().map(|(_, command)| command.clone()).collect::<Vec<_>>();
+        let ordered_commands =
+            self.portfolio_scheduler.ordered_commands(&configured_commands, bucket);
 
         let mut smt = String::with_capacity(256 + smt_constraints.len().saturating_mul(192));
         smt.push_str("(set-logic QF_BV)\n");
-        if commands.iter().all(|command| command.smt_timeout)
-            && let Some(timeout) = self.timeout.filter(|timeout| *timeout > 0)
+        if ordered_commands.iter().all(|(_, command)| command.smt_timeout)
+            && let Some(timeout) = self.query_timeout()?.filter(|timeout| *timeout > 0)
         {
             let _ = writeln!(smt, "(set-option :timeout {})", timeout.saturating_mul(1000));
         }
@@ -649,30 +1073,25 @@ impl SmtLibSubprocessSolver {
         self.smt_build_time += build_started.elapsed();
         if self.dump_smt {
             let query = self.queries;
-            let _ = writeln!(std::io::stderr(), "--- symbolic SMT query {query} ---\n{smt}");
+            let _ = writeln!(
+                std::io::stderr(),
+                "--- symbolic SMT query {query} ({bucket:?}) ---\n{smt}"
+            );
         }
+        Ok((smt, bucket, ordered_commands))
+    }
 
-        let started = Instant::now();
-        let result = if let [command] = commands.as_slice()
-            && command.smt_timeout
-            && command.program == "z3"
-            && command.args == ["-in", "-smt2"]
-        {
-            let output = self.query_z3(command, &smt).into_result();
-            SolverCommandRun { output, summaries: Vec::new() }
-        } else {
-            run_solver_commands(
-                cx,
-                &commands,
-                &smt,
-                self.timeout,
-                model.then_some(model_constraints),
-            )
-        };
-        let query_time = started.elapsed();
+    /// Records a solved query's timing and portfolio outcomes and returns its output.
+    fn finish_query(
+        &mut self,
+        bucket: QueryBucket,
+        ordered_commands: &[(usize, SolverCommand)],
+        query_time: Duration,
+        result: SolverCommandRun,
+    ) -> Result<String, SymbolicError> {
         self.solver_time += query_time;
         self.smt_max_query_time = self.smt_max_query_time.max(query_time);
-        self.portfolio_scheduler.record(&ordered_commands, &result.summaries);
+        self.portfolio_scheduler.record(bucket, ordered_commands, &result.summaries);
         if self.dump_smt && !result.summaries.is_empty() {
             let _ = write!(
                 std::io::stderr(),
@@ -681,28 +1100,6 @@ impl SmtLibSubprocessSolver {
             );
         }
         result.output
-    }
-
-    fn query_z3(&mut self, command: &SolverCommand, smt: &str) -> SolverProcessOutcome {
-        let mut session = match self.z3_session.take() {
-            Some(session) => session,
-            None => match Z3Session::spawn(command) {
-                Ok(session) => session,
-                Err(err) => return SolverProcessOutcome::Error(err),
-            },
-        };
-        let outcome = session.query(command, smt, self.timeout);
-        match outcome {
-            output @ SolverProcessOutcome::Output(_) => {
-                self.z3_session = Some(session);
-                output
-            }
-            SolverProcessOutcome::Error(_) => {
-                drop(session);
-                run_solver_process(command, smt, self.timeout, &AtomicBool::new(false))
-            }
-            other => other,
-        }
     }
 }
 
@@ -833,6 +1230,65 @@ fn collect_solver_vars(constraint: &SymBoolExpr, vars: &mut SymbolicVars) -> boo
     visit_bool(constraint, vars)
 }
 
+/// Most recent models kept for reuse.
+const RECENT_MODELS: usize = 32;
+
+/// A model that assigns zero to every symbol it does not mention.
+struct ZeroDefaultModel<'a>(&'a SymbolicModel);
+
+impl SymbolicModelLookup for ZeroDefaultModel<'_> {
+    fn value(&self, name: Symbol) -> Option<U256> {
+        Some(self.0.get(&name).copied().unwrap_or_default())
+    }
+}
+
+/// Most rounds of Keccak model refinement.
+const KECCAK_REFINEMENT_ROUNDS: usize = 8;
+
+/// Returns, for each Keccak node whose model value is not the real hash of its model preimage,
+/// the lemma "this preimage hashes to its real value".
+/// Returns, for each Keccak node whose model value is not the real hash of its model preimage, the
+/// lemma that this preimage hashes to its real value, and the pin that fixes both.
+fn keccak_lemmas(
+    cx: &mut SymCx,
+    constraints: &[SymBoolExpr],
+    model: &SymbolicModel,
+) -> (Vec<SymBoolExpr>, Vec<SymBoolExpr>) {
+    let mut nodes = Vec::new();
+    let mut seen = HashSet::<SymExpr>::default();
+    for constraint in constraints {
+        let _ = visit_unique::<()>(None, Some(constraint), |expr| {
+            if matches!(expr.kind(), SymExprKind::Keccak { .. }) && seen.insert(expr.clone()) {
+                nodes.push(expr.clone());
+            }
+            ControlFlow::Continue(())
+        });
+    }
+    let mut lemmas = Vec::new();
+    let mut pins = Vec::new();
+    for node in nodes {
+        let SymExprKind::Keccak { name, len, bytes } = node.kind() else { continue };
+        let Some(assigned) = model.get(name).copied() else { continue };
+        let Ok(real) = node.eval_model(model) else { continue };
+        if assigned == real {
+            continue;
+        }
+        let Ok(length) = len.eval_model(model) else { continue };
+        let Ok(length) = usize::try_from(length) else { continue };
+        let mut premise = vec![SymBoolExpr::eq_word_const(cx, len, U256::from(length))];
+        for byte in bytes.iter().take(length) {
+            let Ok(value) = byte.eval_model(model) else { continue };
+            premise.push(SymBoolExpr::eq_word_const(cx, byte, value));
+        }
+        let premise = SymBoolExpr::and(cx, premise);
+        let hashes = SymBoolExpr::eq_word_const(cx, &node, real);
+        let not_premise = premise.clone().not(cx);
+        lemmas.push(SymBoolExpr::or(cx, vec![not_premise, hashes.clone()]));
+        pins.extend([premise, hashes]);
+    }
+    (lemmas, pins)
+}
+
 /// Returns a hard-arithmetic fallback model only after validating it against original constraints.
 fn validated_hard_arith_fallback_model(
     cx: &SymCx,
@@ -843,9 +1299,20 @@ fn validated_hard_arith_fallback_model(
     eval_model_constraints(original_constraints, &model).then_some(model)
 }
 
+/// Result of [`SmtLibSubprocessSolver::sat_prepare`].
+enum SatStep {
+    /// Settled without the SMT solver.
+    Done(BranchFeasibility),
+    /// Needs the SMT solver on `smt_constraints`.
+    Query { cache_key: Vec<SymBoolExpr>, smt_constraints: Vec<SymBoolExpr> },
+}
+
+/// Orders the configured solvers for each query by bucket, from a default order per bucket and
+/// each solver's recent results on queries of that bucket.
 #[derive(Clone, Debug, Default)]
 struct PortfolioScheduler {
-    history: Vec<VecDeque<PortfolioSchedulerSignal>>,
+    /// Recent signals per bucket and configured solver.
+    history: [Vec<VecDeque<PortfolioSchedulerSignal>>; QueryBucket::ALL.len()],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -885,13 +1352,19 @@ impl PortfolioSchedulerSignal {
 }
 
 impl PortfolioScheduler {
-    /// Returns configured commands ordered by recent portfolio performance.
-    fn ordered_commands(&mut self, commands: &[SolverCommand]) -> Vec<(usize, SolverCommand)> {
-        self.history.resize_with(commands.len(), VecDeque::new);
+    /// Returns configured commands ordered for a query of `bucket`: by recent performance on
+    /// that bucket, then by the bucket's default order, then as configured.
+    fn ordered_commands(
+        &mut self,
+        commands: &[SolverCommand],
+        bucket: QueryBucket,
+    ) -> Vec<(usize, SolverCommand)> {
+        self.history[bucket.index()].resize_with(commands.len(), VecDeque::new);
         let mut ordered = commands.iter().cloned().enumerate().collect::<Vec<_>>();
-        ordered.sort_by(|(left_index, _), (right_index, _)| {
-            self.score(*right_index)
-                .cmp(&self.score(*left_index))
+        ordered.sort_by(|(left_index, left), (right_index, right)| {
+            self.score(bucket, *right_index)
+                .cmp(&self.score(bucket, *left_index))
+                .then_with(|| bucket.prior_rank(left.name).cmp(&bucket.prior_rank(right.name)))
                 .then_with(|| left_index.cmp(right_index))
         });
         ordered
@@ -900,13 +1373,16 @@ impl PortfolioScheduler {
     /// Records one query's portfolio summaries against original configured solver indexes.
     fn record(
         &mut self,
+        bucket: QueryBucket,
         ordered_commands: &[(usize, SolverCommand)],
         summaries: &[SolverRunSummary],
     ) {
         for summary in summaries {
             let Some(run_index) = summary.index else { continue };
             let Some((configured_index, _)) = ordered_commands.get(run_index) else { continue };
-            let Some(history) = self.history.get_mut(*configured_index) else { continue };
+            let Some(history) = self.history[bucket.index()].get_mut(*configured_index) else {
+                continue;
+            };
             let signal = PortfolioSchedulerSignal::from_summary(summary);
             if matches!(signal, PortfolioSchedulerSignal::Neutral) {
                 continue;
@@ -918,9 +1394,9 @@ impl PortfolioScheduler {
         }
     }
 
-    /// Returns the recent-performance score for one configured solver index.
-    fn score(&self, index: usize) -> i64 {
-        self.history
+    /// Returns the recent-performance score for one configured solver index on `bucket`.
+    fn score(&self, bucket: QueryBucket, index: usize) -> i64 {
+        self.history[bucket.index()]
             .get(index)
             .into_iter()
             .flatten()
@@ -961,7 +1437,7 @@ pub(crate) fn solver_commands_for_config(
 /// Returns the default command for a known solver name.
 pub(crate) fn named_solver_command(solver: &str) -> Result<SolverCommand, SolverConfigError> {
     let (parts, smt_timeout) = match solver {
-        "z3" => (vec!["z3", "-in", "-smt2"], true),
+        "z3" | "z3-inc" => (vec!["z3", "-in", "-smt2"], true),
         "yices" => (vec!["yices-smt2", "--bvconst-in-decimal"], false),
         "cvc5" => (
             vec![
@@ -987,11 +1463,38 @@ pub(crate) fn named_solver_command(solver: &str) -> Result<SolverCommand, Solver
         ),
         "bitwuzla" => (vec!["bitwuzla", "--produce-models"], false),
         "bitwuzla-abs" => (vec!["bitwuzla", "--produce-models", "--abstraction"], false),
+        "bitwuzla-prop" => (vec!["bitwuzla", "--produce-models", "--bv-solver", "prop"], false),
         // Preserve existing behavior for custom z3-compatible executable names/paths.
         custom => (vec![custom, "-in", "-smt2"], true),
     };
+    let session = match solver {
+        "z3" | "z3-inc" => Some((&[][..], Some(SessionTimeoutFlag::SmtOption))),
+        "cvc5" | "cvc5-int" => {
+            Some((&["--incremental"][..], Some(SessionTimeoutFlag::Joined("--tlimit-per="))))
+        }
+        "bitwuzla" | "bitwuzla-abs" | "bitwuzla-prop" => {
+            Some((&[][..], Some(SessionTimeoutFlag::Separate("-T"))))
+        }
+        _ => None,
+    };
+    let name = match solver {
+        "z3" => Some("z3"),
+        "z3-inc" => Some("z3-inc"),
+        "yices" => Some("yices"),
+        "cvc5" => Some("cvc5"),
+        "cvc5-int" => Some("cvc5-int"),
+        "bitwuzla" => Some("bitwuzla"),
+        "bitwuzla-abs" => Some("bitwuzla-abs"),
+        "bitwuzla-prop" => Some("bitwuzla-prop"),
+        _ => None,
+    };
     let parts = parts.into_iter().map(str::to_string).collect::<Vec<_>>();
-    SolverCommand::new(parts, smt_timeout)
+    let command = SolverCommand::new(parts, smt_timeout)?;
+    Ok(match (name, session) {
+        (Some(name), Some((args, flag))) => command.known(name, args, flag),
+        (Some(name), None) => SolverCommand { name: Some(name), ..command },
+        _ => command,
+    })
 }
 
 /// Returns the command for one configured portfolio entry.
@@ -1049,7 +1552,10 @@ struct SolverProcessResult {
 
 #[derive(Debug)]
 struct ScheduledSolver {
+    /// Position in this query's launch order.
     index: usize,
+    /// Configured index, which selects the solver's session slot.
+    slot: usize,
     command: SolverCommand,
     launch_after: Duration,
 }
@@ -1113,41 +1619,74 @@ impl SolverRunSummary {
 }
 
 /// Runs one or more solver commands and returns the first decisive SMT-LIB response.
+///
+/// `commands` pairs each solver with its configured index, which selects its slot in
+/// `sessions`; the sessions still usable are returned with the result. A `sat` answer whose model
+/// fails validation is not decisive, and the first other `sat` or `unsat` answer cancels the rest.
 fn run_solver_commands(
-    cx: &SymCx,
-    commands: &[SolverCommand],
+    commands: &[(usize, SolverCommand)],
     smt: &str,
     timeout: Option<u32>,
-    model_constraints: Option<&[SymBoolExpr]>,
-) -> SolverCommandRun {
-    if commands.is_empty() {
-        return SolverCommandRun {
-            output: Err(SymbolicError::Solver("symbolic solver portfolio is empty".to_string())),
-            summaries: Vec::new(),
-        };
+    validate_model: Option<(&SymCx, &[SymBoolExpr])>,
+    mut sessions: Vec<Option<SolverSession>>,
+    stop: Option<&AtomicBool>,
+) -> (SolverCommandRun, Vec<Option<SolverSession>>) {
+    let stopped = || stop.is_some_and(|stop| stop.load(Ordering::SeqCst));
+    if stopped() {
+        let output = Err(SymbolicError::Solver(BATCH_STOPPED.to_string()));
+        return (SolverCommandRun { output, summaries: Vec::new() }, sessions);
     }
-    if commands.len() == 1 {
-        let output =
-            run_solver_process(&commands[0], smt, timeout, &AtomicBool::new(false)).into_result();
-        return SolverCommandRun { output, summaries: Vec::new() };
+    if commands.is_empty() {
+        let output = Err(SymbolicError::Solver("symbolic solver portfolio is empty".to_string()));
+        return (SolverCommandRun { output, summaries: Vec::new() }, sessions);
+    }
+    let slots = commands.iter().map(|(index, _)| index + 1).max().unwrap_or_default();
+    if sessions.len() < slots {
+        sessions.resize_with(slots, || None);
+    }
+    if let [(index, command)] = commands {
+        let never = AtomicBool::new(false);
+        let (outcome, session) = run_solver_query(
+            command,
+            smt,
+            timeout,
+            stop.unwrap_or(&never),
+            sessions[*index].take(),
+        );
+        sessions[*index] = session;
+        let output = match outcome {
+            SolverProcessOutcome::Cancelled if stopped() => {
+                Err(SymbolicError::Solver(BATCH_STOPPED.to_string()))
+            }
+            outcome => outcome.into_result(),
+        };
+        return (SolverCommandRun { output, summaries: Vec::new() }, sessions);
     }
 
     let cancel = Arc::new(AtomicBool::new(false));
     let (tx, rx) = mpsc::channel();
-    thread::scope(|scope| {
+    let run = thread::scope(|scope| {
         let started_at = Instant::now();
         let mut pending = scheduled_portfolio(commands);
         let mut running = 0usize;
 
         let mut saw_unknown = false;
-        let mut saw_unsat = false;
         let mut saw_invalid_sat_model = false;
         let mut errors = Vec::new();
         let mut decisive = None;
         let mut summaries = Vec::new();
+        let mut batch_stopped = false;
 
         while running > 0 || !pending.is_empty() {
-            if decisive.is_none() {
+            // Another query of the batch already found a satisfiable pair: stop this race.
+            if decisive.is_none() && !batch_stopped && stopped() {
+                batch_stopped = true;
+                cancel.store(true, Ordering::SeqCst);
+                while let Some(solver) = pending.pop_front() {
+                    summaries.push(summary_for_unstarted_solver(solver));
+                }
+            }
+            if decisive.is_none() && !batch_stopped {
                 let now = started_at.elapsed();
                 let mut launched = false;
                 while pending
@@ -1158,19 +1697,31 @@ fn run_solver_commands(
                     let tx = tx.clone();
                     let cancel = Arc::clone(&cancel);
                     let started_after = started_at.elapsed();
+                    let session = sessions[solver.slot].take();
+                    // A solver started late gets only what is left of the query's limit.
+                    let timeout = remaining_timeout(timeout, started_after);
                     running += 1;
                     launched = true;
                     scope.spawn(move || {
                         let start = Instant::now();
-                        let outcome = run_solver_process(&solver.command, smt, timeout, &cancel);
-                        let _ = tx.send(SolverProcessResult {
-                            index: solver.index,
-                            display: solver.command.display,
-                            scheduled_after: solver.launch_after,
-                            started_after,
-                            elapsed: start.elapsed(),
-                            outcome,
-                        });
+                        let (outcome, session) = match timeout {
+                            Some(0) => (SolverProcessOutcome::Unknown, session),
+                            timeout => {
+                                run_solver_query(&solver.command, smt, timeout, &cancel, session)
+                            }
+                        };
+                        let _ = tx.send((
+                            SolverProcessResult {
+                                index: solver.index,
+                                display: solver.command.display,
+                                scheduled_after: solver.launch_after,
+                                started_after,
+                                elapsed: start.elapsed(),
+                                outcome,
+                            },
+                            solver.slot,
+                            session,
+                        ));
                     });
                 }
             }
@@ -1179,15 +1730,22 @@ fn run_solver_commands(
                 continue;
             }
 
-            let result = if decisive.is_none() {
-                next_portfolio_launch_wait(started_at, &pending)
-                    .map_or_else(|| rx.recv().ok(), |wait| rx.recv_timeout(wait).ok())
+            let result = if decisive.is_none() && !batch_stopped {
+                // Wake up regularly to notice the batch stopping.
+                let launch_wait = next_portfolio_launch_wait(started_at, &pending);
+                let wait = match (launch_wait, stop) {
+                    (Some(wait), Some(_)) => Some(wait.min(BATCH_STOP_POLL_INTERVAL)),
+                    (None, Some(_)) => Some(BATCH_STOP_POLL_INTERVAL),
+                    (wait, None) => wait,
+                };
+                wait.map_or_else(|| rx.recv().ok(), |wait| rx.recv_timeout(wait).ok())
             } else {
                 rx.recv().ok()
             };
-            let Some(result) = result else {
+            let Some((result, slot, session)) = result else {
                 continue;
             };
+            sessions[slot] = session;
             running = running.saturating_sub(1);
             let SolverProcessResult {
                 index,
@@ -1197,7 +1755,7 @@ fn run_solver_commands(
                 elapsed,
                 outcome,
             } = result;
-            if decisive.is_some() {
+            if decisive.is_some() || batch_stopped {
                 summaries.push(summary_for_cancelled_solver_result(
                     index,
                     display,
@@ -1208,11 +1766,15 @@ fn run_solver_commands(
                 ));
                 continue;
             }
+            let first_line = match &outcome {
+                SolverProcessOutcome::Output(output) => {
+                    output.lines().next().unwrap_or_default().trim().to_string()
+                }
+                _ => String::new(),
+            };
             match outcome {
-                SolverProcessOutcome::Output(output)
-                    if output.lines().next().unwrap_or_default().trim() == "sat" =>
-                {
-                    if let Some(constraints) = model_constraints
+                SolverProcessOutcome::Output(output) if first_line == "sat" => {
+                    if let Some((cx, constraints)) = validate_model
                         && let Err(err) = validate_solver_model_output(cx, &output, constraints)
                     {
                         summaries.push(
@@ -1234,31 +1796,23 @@ fn run_solver_commands(
                             .winner(),
                     );
                     decisive = Some(output);
-                    cancel.store(true, Ordering::SeqCst);
-                    while let Some(solver) = pending.pop_front() {
-                        summaries.push(summary_for_unstarted_solver(solver));
-                    }
                 }
-                SolverProcessOutcome::Output(output)
-                    if output.lines().next().unwrap_or_default().trim() == "unsat" =>
-                {
+                SolverProcessOutcome::Output(output) if first_line == "unsat" => {
                     summaries.push(
                         SolverRunSummary::new(display, elapsed, SolverOutcome::Unsat)
-                            .with_schedule(index, scheduled_after, Some(started_after)),
+                            .with_schedule(index, scheduled_after, Some(started_after))
+                            .winner(),
                     );
-                    saw_unsat = true;
+                    decisive = Some(output);
                 }
-                SolverProcessOutcome::Output(output)
-                    if output.lines().next().unwrap_or_default().trim() == "unknown" =>
-                {
+                SolverProcessOutcome::Output(_) if first_line == "unknown" => {
                     summaries.push(
                         SolverRunSummary::new(display, elapsed, SolverOutcome::Unknown)
                             .with_schedule(index, scheduled_after, Some(started_after)),
                     );
                     saw_unknown = true;
                 }
-                SolverProcessOutcome::Output(output) => {
-                    let first_line = output.lines().next().unwrap_or_default().trim().to_string();
+                SolverProcessOutcome::Output(_) => {
                     summaries.push(
                         SolverRunSummary::new(display.clone(), elapsed, SolverOutcome::Unexpected)
                             .with_schedule(index, scheduled_after, Some(started_after))
@@ -1288,22 +1842,20 @@ fn run_solver_commands(
                     errors.push(format!("{display}: {err}"));
                 }
             }
-        }
-
-        if decisive.is_none()
-            && saw_unsat
-            && let Some(summary) =
-                summaries.iter_mut().find(|summary| summary.outcome == SolverOutcome::Unsat)
-        {
-            summary.winner = true;
+            if decisive.is_some() {
+                cancel.store(true, Ordering::SeqCst);
+                while let Some(solver) = pending.pop_front() {
+                    summaries.push(summary_for_unstarted_solver(solver));
+                }
+            }
         }
 
         let output = if let Some(output) = decisive {
             Ok(output)
+        } else if batch_stopped {
+            Err(SymbolicError::Solver(BATCH_STOPPED.to_string()))
         } else if saw_invalid_sat_model {
             Err(SymbolicError::Solver(errors.join("; ")))
-        } else if saw_unsat {
-            Ok("unsat\n".to_string())
         } else if saw_unknown {
             Err(SymbolicError::SolverUnknown)
         } else {
@@ -1311,21 +1863,34 @@ fn run_solver_commands(
         };
 
         SolverCommandRun { output, summaries }
-    })
+    });
+    (run, sessions)
 }
 
 /// Returns the staged launch plan for a configured portfolio.
-fn scheduled_portfolio(commands: &[SolverCommand]) -> VecDeque<ScheduledSolver> {
+fn scheduled_portfolio(commands: &[(usize, SolverCommand)]) -> VecDeque<ScheduledSolver> {
     commands
         .iter()
         .cloned()
         .enumerate()
-        .map(|(index, command)| ScheduledSolver {
+        .map(|(index, (slot, command))| ScheduledSolver {
             index,
+            slot,
             command,
             launch_after: portfolio_launch_delay(index),
         })
         .collect()
+}
+
+/// Returns what is left of `timeout`, in whole seconds rounded up, once `elapsed` has passed:
+/// `Some(0)` when nothing is, and `None` for no limit.
+fn remaining_timeout(timeout: Option<u32>, elapsed: Duration) -> Option<u32> {
+    let seconds = timeout.filter(|seconds| *seconds > 0)?;
+    let left = Duration::from_secs(seconds.into()).saturating_sub(elapsed);
+    if left.is_zero() {
+        return Some(0);
+    }
+    Some(u32::try_from(left.as_secs_f64().ceil() as u64).unwrap_or(u32::MAX))
 }
 
 /// Returns when the solver at `index` should be started, relative to query start.
@@ -1423,117 +1988,6 @@ fn format_solver_portfolio_summaries(summaries: &[SolverRunSummary]) -> String {
         let _ = writeln!(output);
     }
     output
-}
-
-struct Z3Session {
-    child: SolverChild,
-    stdin: ChildStdin,
-    stdout: Receiver<Result<String, String>>,
-    stderr: Receiver<String>,
-    stdout_thread: Option<JoinHandle<()>>,
-    stderr_thread: Option<JoinHandle<()>>,
-}
-
-impl Z3Session {
-    fn spawn(command: &SolverCommand) -> Result<Self, String> {
-        let mut child = spawn_solver_process(command)?;
-        let stdin = child.child_mut().stdin.take().expect("piped solver stdin is available");
-        let stdout = child.child_mut().stdout.take().expect("piped solver stdout is available");
-        let stderr = child.child_mut().stderr.take().expect("piped solver stderr is available");
-
-        let (stdout_tx, stdout_rx) = mpsc::channel();
-        let stdout_thread = thread::spawn(move || {
-            for line in BufReader::new(stdout).lines() {
-                let line = line.map_err(|err| format!("failed to read solver output: {err}"));
-                let failed = line.is_err();
-                if stdout_tx.send(line).is_err() || failed {
-                    break;
-                }
-            }
-        });
-        let (stderr_tx, stderr_rx) = mpsc::channel();
-        let stderr_thread = thread::spawn(move || {
-            let mut stderr = BufReader::new(stderr);
-            let mut output = String::new();
-            let _ = stderr.read_to_string(&mut output);
-            let _ = stderr_tx.send(output);
-        });
-
-        Ok(Self {
-            child,
-            stdin,
-            stdout: stdout_rx,
-            stderr: stderr_rx,
-            stdout_thread: Some(stdout_thread),
-            stderr_thread: Some(stderr_thread),
-        })
-    }
-
-    fn query(
-        &mut self,
-        command: &SolverCommand,
-        smt: &str,
-        timeout: Option<u32>,
-    ) -> SolverProcessOutcome {
-        if let Err(err) = self
-            .stdin
-            .write_all(b"(reset)\n")
-            .and_then(|_| self.stdin.write_all(smt.as_bytes()))
-            .and_then(|_| writeln!(self.stdin, "(echo \"{Z3_QUERY_END}\")"))
-            .and_then(|_| self.stdin.flush())
-        {
-            return SolverProcessOutcome::Error(format!("failed to write solver query: {err}"));
-        }
-
-        let started_at = Instant::now();
-        let timeout = timeout
-            .filter(|seconds| *seconds > 0)
-            .map(|seconds| Duration::from_secs(seconds.into()));
-        let mut output = String::new();
-        loop {
-            let Some(wait) = solver_wait_duration(started_at.elapsed(), timeout) else {
-                return SolverProcessOutcome::Unknown;
-            };
-            match self.stdout.recv_timeout(wait) {
-                Ok(Ok(line)) if line == Z3_QUERY_END => {
-                    return SolverProcessOutcome::Output(output);
-                }
-                Ok(Ok(line)) => {
-                    output.push_str(&line);
-                    output.push('\n');
-                }
-                Ok(Err(err)) => return SolverProcessOutcome::Error(err),
-                Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => {
-                    let stderr =
-                        self.stderr.recv_timeout(SOLVER_CANCEL_CHECK_INTERVAL).unwrap_or_default();
-                    return match self.child.child_mut().try_wait() {
-                        Ok(Some(status)) => SolverProcessOutcome::Error(solver_exit_error(
-                            command, status, &output, &stderr,
-                        )),
-                        Ok(None) => SolverProcessOutcome::Error(
-                            "solver stdout closed before the query completed".to_string(),
-                        ),
-                        Err(err) => SolverProcessOutcome::Error(format!(
-                            "failed to query solver process status: {err}"
-                        )),
-                    };
-                }
-            }
-        }
-    }
-}
-
-impl Drop for Z3Session {
-    fn drop(&mut self) {
-        self.child.terminate();
-        if let Some(thread) = self.stdout_thread.take() {
-            let _ = thread.join();
-        }
-        if let Some(thread) = self.stderr_thread.take() {
-            let _ = thread.join();
-        }
-    }
 }
 
 fn spawn_solver_process(command: &SolverCommand) -> Result<SolverChild, String> {

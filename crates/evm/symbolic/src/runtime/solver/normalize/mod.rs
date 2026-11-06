@@ -374,8 +374,16 @@ pub(super) fn sorted_bool_exprs_are_subset(
 }
 
 /// Normalizes one boolean expression into an equivalent, solver-friendlier form.
+///
+/// The result is memoized per context: nested `ite` conditions normalize the same subterms many
+/// times otherwise.
 pub(crate) fn normalize_bool_for_solver(cx: &mut SymCx, expr: SymBoolExpr) -> SymBoolExpr {
-    expr.fold(cx, &mut normalize_bool_node_for_solver)
+    if let Some(normalized) = cx.normalized_bool(&expr) {
+        return normalized;
+    }
+    let normalized = expr.fold(cx, &mut normalize_bool_node_for_solver);
+    cx.memoize_normalized_bool(expr, normalized.clone());
+    normalized
 }
 
 impl SymBoolExpr {
@@ -437,6 +445,24 @@ fn normalize_cmp_for_solver(
                 // `SymExpr::binop` folds a zero factor away, so the non-zero filter is only a
                 // defensive guard against `MAX / 0` should that folding ever change.
                 return SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ule, value, U256::MAX / factor);
+            }
+        }
+        for (quotient, expected) in [(&left, &right), (&right, &left)] {
+            if let Some(factor) = expected.as_const().filter(|value| !value.is_zero())
+                && let SymExprKind::Ite(condition, zero, raw) = quotient.kind()
+                && zero.as_const().is_some_and(|value| value.is_zero())
+                && let Some((denominator, other)) = ConstraintContext::mul_div_operands(raw)
+                && other.as_const() == Some(factor)
+                && *condition == SymBoolExpr::eq(cx, denominator.clone(), zero.clone())
+            {
+                // Solidity's checked multiplication by a constant k > 0 tests
+                // ite(x == 0, 0, (x * k mod 2^256) / x) == k, which holds iff x != 0 and the
+                // product does not wrap, that is x <= MAX / k. Keep that linear bound instead of
+                // asking SMT to divide by a symbolic word.
+                let nonzero = condition.clone().not(cx);
+                let bound =
+                    SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ule, denominator, U256::MAX / factor);
+                return SymBoolExpr::and(cx, vec![nonzero, bound]);
             }
         }
         if right.as_const().is_some_and(|value| value.is_zero())
@@ -1417,6 +1443,17 @@ impl ConstraintContext {
                     max: numerator.max / denominator.min,
                 })
             }
+            SymExprKind::BinOp(SymBinOp::URem, value, modulus) => {
+                // A nonzero constant modulus bounds the remainder below it.
+                let modulus = modulus.as_const().filter(|modulus| !modulus.is_zero())?;
+                let value = self.interval_cached(value, intervals, remaining);
+                if let Some(value) = value
+                    && value.max < modulus
+                {
+                    return Some(value);
+                }
+                Some(WordInterval { min: U256::ZERO, max: modulus - U256::ONE })
+            }
             SymExprKind::BinOp(SymBinOp::Shr, value, shift) => {
                 let shift = shift.as_const()?;
                 if shift >= U256::from(256) {
@@ -1448,13 +1485,11 @@ pub(crate) fn normalize_expr_for_solver(cx: &mut SymCx, expr: SymExpr) -> SymExp
     if !expr.contains_ite() {
         return expr;
     }
-    // Normalizing an `ite` condition re-normalizes the words inside it, so nested `ite`s would
-    // otherwise be re-traversed once per enclosing level.
-    if let Some(normalized) = cx.solver_normalized_word(&expr) {
+    if let Some(normalized) = cx.normalized_word(&expr) {
         return normalized;
     }
     let normalized = expr.fold(cx, &mut normalize_expr_node_for_solver);
-    cx.record_solver_normalized_word(expr, normalized.clone());
+    cx.memoize_normalized_word(expr, normalized.clone());
     normalized
 }
 
@@ -1772,6 +1807,16 @@ impl SymExpr {
     }
 
     fn normalize_eq_zero_for_solver(&self, cx: &mut SymCx) -> Option<SymBoolExpr> {
+        // Ite chains share subtrees, which an unmemoized walk would revisit exponentially often.
+        if let Some(normalized) = cx.normalized_zero_test(self, true) {
+            return normalized;
+        }
+        let normalized = self.normalize_eq_zero_for_solver_uncached(cx);
+        cx.memoize_normalized_zero_test(self.clone(), true, normalized.clone());
+        normalized
+    }
+
+    fn normalize_eq_zero_for_solver_uncached(&self, cx: &mut SymCx) -> Option<SymBoolExpr> {
         if let Some((numerator, denominator)) = self.udiv_operands() {
             // `a / b == 0 => b == 0 || a < b`.
             return Some(Self::udiv_zero_condition(cx, numerator, denominator));
@@ -1801,6 +1846,16 @@ impl SymExpr {
     }
 
     fn normalize_ne_zero_for_solver(&self, cx: &mut SymCx) -> Option<SymBoolExpr> {
+        // Ite chains share subtrees, which an unmemoized walk would revisit exponentially often.
+        if let Some(normalized) = cx.normalized_zero_test(self, false) {
+            return normalized;
+        }
+        let normalized = self.normalize_ne_zero_for_solver_uncached(cx);
+        cx.memoize_normalized_zero_test(self.clone(), false, normalized.clone());
+        normalized
+    }
+
+    fn normalize_ne_zero_for_solver_uncached(&self, cx: &mut SymCx) -> Option<SymBoolExpr> {
         if let Some((numerator, denominator)) = self.udiv_operands() {
             // `a / b != 0 => b != 0 && a >= b`.
             return Some(Self::udiv_nonzero_condition(cx, numerator, denominator));
@@ -2096,8 +2151,23 @@ impl ConstraintContext {
                 .unsigned_bits_cached(left, bit_widths, remaining)?
                 .saturating_add(self.unsigned_bits_cached(right, bit_widths, remaining)?)
                 .min(256),
-            SymExprKind::BinOp(SymBinOp::UDiv, left, _) => {
-                self.unsigned_bits_cached(left, bit_widths, remaining)?
+            SymExprKind::BinOp(SymBinOp::UDiv, left, right) => {
+                let bits = self.unsigned_bits_cached(left, bit_widths, remaining)?;
+                match right.as_const() {
+                    Some(divisor) if !divisor.is_zero() => {
+                        bits.saturating_sub(divisor.bit_len() - 1).max(1)
+                    }
+                    _ => bits,
+                }
+            }
+            SymExprKind::BinOp(SymBinOp::URem, left, right) => {
+                let bits = self.unsigned_bits_cached(left, bit_widths, remaining)?;
+                match right.as_const() {
+                    Some(modulus) if !modulus.is_zero() => {
+                        bits.min((modulus - U256::ONE).bit_len().max(1))
+                    }
+                    _ => bits,
+                }
             }
             SymExprKind::Ite(_, left, right) => self
                 .unsigned_bits_cached(left, bit_widths, remaining)?
@@ -2113,5 +2183,30 @@ impl ConstraintContext {
             .unwrap_or(bits);
         bit_widths.insert(expr.clone(), bits);
         Some(bits)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ite(x == 0, 0, (x * k) / x) == k is Solidity's checked multiplication by a constant.
+    #[test]
+    fn checked_mul_by_constant_guard_becomes_linear() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let factor = U256::from(999_753_147_373_018_515_u64);
+        let k = SymExpr::constant(&mut cx, factor);
+        let zero = SymExpr::zero(&mut cx);
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, x.clone(), k.clone());
+        let raw = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, x.clone());
+        let is_zero = SymBoolExpr::eq(&mut cx, x.clone(), zero.clone());
+        let quotient = SymExpr::ite(&mut cx, is_zero.clone(), zero, raw);
+        let guard = SymBoolExpr::eq(&mut cx, quotient, k);
+
+        let nonzero = is_zero.not(&mut cx);
+        let bound = SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &x, U256::MAX / factor);
+        let expected = SymBoolExpr::and(&mut cx, vec![nonzero, bound]);
+        assert_eq!(normalize_bool_for_solver(&mut cx, guard), expected);
     }
 }

@@ -2245,7 +2245,9 @@ mod tests {
         }
 
         // The solver stats schema must list exactly the serialized `SymbolicStats` fields.
-        let stats = serde_json::to_value(SymbolicStats::default()).unwrap();
+        // Fields skipped when zero are serialized once nonzero.
+        let stats = SymbolicStats { model_reuse_hits: 1, ..Default::default() };
+        let stats = serde_json::to_value(stats).unwrap();
         let mut expected = stats.as_object().unwrap().keys().collect::<Vec<_>>();
         let mut actual = result_defs["solver_stats"]["properties"]
             .as_object()

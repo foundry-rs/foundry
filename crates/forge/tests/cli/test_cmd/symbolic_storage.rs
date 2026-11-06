@@ -629,7 +629,7 @@ Ran 7 tests for test/SymbolicStorageLayoutAlias.t.sol:SymbolicStorageLayoutAlias
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicKeyBoundedIndexCannotReachListElement(uint256,uint256,uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicKeyBoundedIndexCannotReachNextSlot(uint256,uint256,uint256) ([METRICS])
 [PASS] checkSymbolicKeyBoundedIndexCannotReachOwner(uint256,uint256,uint256) ([METRICS])
-[FAIL: incomplete symbolic execution (Error): solver error: solver model does not satisfy path constraints involving symbolic Keccak heuristic] checkSymbolicKeyIndexCannotReachOwner(uint256,uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicKeyIndexCannotReachOwner(uint256,uint256,uint256) ([METRICS])
 Suite result: FAILED. 1 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);

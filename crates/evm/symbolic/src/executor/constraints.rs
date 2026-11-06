@@ -149,7 +149,7 @@ impl SymbolicExecutor {
         if let Some(value) = state.constrained_word(&mut self.cx, expr) {
             return Ok(Some(value));
         }
-        if expr.contains_gasleft() {
+        if !self.symbolic_gas() && expr.contains_gasleft() {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
 

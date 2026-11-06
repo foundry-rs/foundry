@@ -19,10 +19,30 @@ impl SymbolicExecutor {
             deadline: None,
             nested_deferred_mode: DeferredPathMode::Skip,
             stateless_retry_safe: true,
+            equivalence: None,
+            unenumerable_offsets: HashSet::default(),
+            handler_counterexamples: Vec::new(),
         }
     }
 
-    fn reset_run_state(&mut self, use_wall_clock_deadline: bool) {
+    /// Whether an equivalence check leaves out inputs that run out of gas.
+    pub(super) fn ignores_out_of_gas(&self) -> bool {
+        self.equivalence.is_some_and(|mode| mode.ignore_out_of_gas)
+    }
+
+    /// Whether forward jumps over pure instructions merge into one path, as an equivalence check
+    /// may ask for.
+    pub(super) fn merges_states(&self) -> bool {
+        self.equivalence.is_some_and(|mode| mode.merge_states)
+    }
+
+    /// Whether `GAS` is an ordinary unconstrained symbol, as in an equivalence check.
+    pub(super) const fn symbolic_gas(&self) -> bool {
+        self.equivalence.is_some()
+    }
+
+    pub(super) fn reset_run_state(&mut self, use_wall_clock_deadline: bool) {
+        self.unenumerable_offsets.clear();
         self.deferred_incomplete = None;
         self.nested_deferred_mode = DeferredPathMode::Skip;
         self.stateless_retry_safe = true;
@@ -34,6 +54,7 @@ impl SymbolicExecutor {
         } else {
             None
         };
+        self.solver.set_deadline(self.deadline);
     }
 
     pub(super) fn check_timeout(&self) -> Result<(), SymbolicError> {
@@ -47,6 +68,7 @@ impl SymbolicExecutor {
 
     /// Defers an incomplete result until all counterexample-producing modeled paths are explored.
     pub(super) fn defer_incomplete(&mut self, reason: &'static str) {
+        debug!(reason, "deferred incomplete");
         if self
             .deferred_incomplete
             .is_none_or(|reason| reason == DeferredIncomplete::HardArithmetic)
@@ -96,7 +118,7 @@ impl SymbolicExecutor {
     }
 
     /// Returns any deferred incomplete reason.
-    fn deferred_incomplete(&self) -> Option<(SymbolicStopReason, String)> {
+    pub(super) fn deferred_incomplete(&self) -> Option<(SymbolicStopReason, String)> {
         match self.deferred_incomplete? {
             DeferredIncomplete::Unsupported(reason) => Some((
                 SymbolicStopReason::Stuck,
@@ -296,6 +318,34 @@ impl SymbolicExecutor {
         input: SymbolicInvariantRunInput<'_>,
     ) -> SymbolicInvariantRunResult {
         self.reset_run_state(true);
+        self.handler_counterexamples.clear();
+        // A collecting search shares one deadline across many handler paths, so no single query
+        // may spend more than a slice of it: an unknown query defers its path instead.
+        let query_timeout = self.config.timeout;
+        if let Some(deadline) = input.deadline {
+            self.deadline = Some(deadline);
+            self.solver.set_deadline(self.deadline);
+            if input.collect_handler_failures {
+                let budget = deadline.saturating_duration_since(Instant::now()).as_secs();
+                let slice = u32::try_from(budget / INVARIANT_QUERY_SLICES).unwrap_or(u32::MAX);
+                let slice = slice.max(1);
+                self.solver.set_query_timeout(Some(
+                    query_timeout.filter(|timeout| *timeout > 0).map_or(slice, |t| t.min(slice)),
+                ));
+            }
+        }
+        let result = self.run_invariant_collecting(input);
+        self.solver.set_query_timeout(query_timeout);
+        if let SymbolicInvariantRunResult::Incomplete { kind, reason, .. } = &result {
+            debug!(?kind, reason, "symbolic invariant search incomplete");
+        }
+        result
+    }
+
+    fn run_invariant_collecting(
+        &mut self,
+        input: SymbolicInvariantRunInput<'_>,
+    ) -> SymbolicInvariantRunResult {
         self.solver.clear_context_caches();
         self.cx = SymCx::new();
         if let Err(err) = self.solver.check_available() {
@@ -314,6 +364,12 @@ impl SymbolicExecutor {
                 stats: self.solver.stats(),
             },
         }
+    }
+
+    /// Returns the handler counterexamples the last invariant run collected, each a
+    /// [`SymbolicInvariantRunResult::Counterexample`] of kind handler.
+    pub fn take_handler_counterexamples(&mut self) -> Vec<SymbolicInvariantRunResult> {
+        std::mem::take(&mut self.handler_counterexamples)
     }
 
     /// Searches for invariant-breaking inputs after one symbolic handler call.
@@ -642,15 +698,37 @@ impl SymbolicExecutor {
         }
 
         let path_limit = self.config.path_width() as usize;
+        let mut root_noop_kept = false;
+        let mut collected_handlers = Vec::new();
         let mut frontier = vec![initial];
         for depth in 0..input.depth {
             self.check_timeout()?;
             let mut next_frontier = Vec::new();
+            // A collecting search shares what is left of the deadline evenly among the calls of
+            // this depth still to run, so one expensive handler cannot starve the others.
+            let mut calls_left = frontier.len() * input.targets.len() * senders.len();
             for sequence in frontier {
                 self.check_timeout()?;
                 for (target_idx, target) in input.targets.iter().enumerate() {
+                    // Whether every path of this handler's calls from the first sender was
+                    // explored and none read the sender: then the other senders reach the same
+                    // states and failures, so they are skipped.
+                    let mut sender_free = true;
                     for (sender_idx, sender) in senders.iter().copied().enumerate() {
                         self.check_timeout()?;
+                        if sender_idx > 0 && sender_free {
+                            calls_left = calls_left.saturating_sub(1);
+                            continue;
+                        }
+                        let call_deadline = self
+                            .deadline
+                            .filter(|_| input.collect_handler_failures)
+                            .map(|deadline| {
+                                let now = Instant::now();
+                                let share = calls_left.max(1) as u32;
+                                now + deadline.saturating_duration_since(now) / share
+                            });
+                        calls_left = calls_left.saturating_sub(1);
                         let prefix = format!("sequence_{depth}_{target_idx}_{sender_idx}");
                         let calldatas = SymbolicCalldata::variants_with_prefix(
                             &target.function,
@@ -659,18 +737,45 @@ impl SymbolicExecutor {
                             &prefix,
                         )?;
                         for calldata in calldatas {
+                            // Each step may advance the block by up to the campaign's delays,
+                            // as the concrete campaign warps and rolls between calls.
+                            let mut state = sequence.state.clone();
+                            let mut constraints = Vec::new();
+                            let mut delay = |name: &str, max: Option<u32>, word: &mut SymExpr| {
+                                let max = max.filter(|max| *max > 0)?;
+                                let delay = SymExpr::var(&mut self.cx, &format!("{prefix}_{name}"));
+                                constraints.push(SymBoolExpr::cmp_word_const(
+                                    &mut self.cx,
+                                    SymCmpOp::Ule,
+                                    &delay,
+                                    U256::from(max),
+                                ));
+                                *word = SymExpr::binop(
+                                    &mut self.cx,
+                                    SymBinOp::Add,
+                                    word.clone(),
+                                    delay.clone(),
+                                );
+                                Some(delay)
+                            };
+                            let warp =
+                                delay("warp", input.max_time_delay, &mut state.block.timestamp);
+                            let roll =
+                                delay("roll", input.max_block_delay, &mut state.block.number);
                             let step = SequenceStepTemplate {
                                 sender,
                                 address: target.address,
                                 contract_name: target.contract_name.clone(),
                                 function: target.function.clone(),
                                 calldata,
+                                warp,
+                                roll,
                             };
                             let calldata = step.calldata.call_data(&mut self.cx);
-                            let constraints = step.calldata.constraints().to_vec();
+                            constraints.extend_from_slice(step.calldata.constraints());
                             let mut call = self.prepare_sequence_call(
                                 &input.executor,
-                                sequence.state.clone(),
+                                state,
                                 target.address,
                                 sender,
                                 &target.function,
@@ -678,24 +783,81 @@ impl SymbolicExecutor {
                                 constraints,
                             )?;
 
-                            while let Some(outcome) = self.execute_sequence_call_next(
-                                &input.executor,
-                                &mut call,
-                                &mut completed_paths,
-                            )? {
+                            // The path limit bounds each handler call; the deadline bounds the
+                            // whole search.
+                            let mut call_paths = 0usize;
+                            loop {
+                                let outcome = match self.execute_sequence_call_next(
+                                    &input.executor,
+                                    &mut call,
+                                    &mut call_paths,
+                                ) {
+                                    Ok(Some(outcome)) => outcome,
+                                    Ok(None) => break,
+                                    // A collecting search gives up on this call alone and keeps
+                                    // looking through the other handlers.
+                                    Err(SymbolicError::Unsupported(reason))
+                                        if input.collect_handler_failures =>
+                                    {
+                                        self.defer_incomplete(reason);
+                                        sender_free = false;
+                                        break;
+                                    }
+                                    Err(SymbolicError::SolverUnknown)
+                                        if input.collect_handler_failures =>
+                                    {
+                                        self.defer_solver_unknown();
+                                        sender_free = false;
+                                        break;
+                                    }
+                                    Err(err) => return Err(err),
+                                };
+                                completed_paths += 1;
+                                sender_free &= !outcome.state.sender_observed;
+                                if call_deadline.is_some_and(|deadline| Instant::now() >= deadline)
+                                {
+                                    self.defer_incomplete(
+                                        "handler call exceeded its share of the deadline",
+                                    );
+                                    // This outcome is still checked; the call's other paths are
+                                    // not.
+                                    call.worklist.clear();
+                                    call.deferred_worklist.clear();
+                                    sender_free = false;
+                                }
                                 let mut steps = sequence.steps.clone();
                                 steps.push(step.clone());
 
-                                let post_state = match outcome.status {
+                                let handler = (target.address, target.function.selector().0);
+                                let ignored = input.ignored_handler_failures.contains(&handler)
+                                    || collected_handlers.contains(&handler);
+                                let status = match outcome.status {
+                                    CallStatus::Failure if ignored => CallStatus::Revert,
+                                    status => status,
+                                };
+                                let post_state = match status {
                                     CallStatus::Failure => {
                                         let (sequence, storage) =
                                             self.materialize_sequence(&steps, &outcome.state)?;
-                                        return Ok(SymbolicInvariantRunResult::Counterexample {
-                                            kind: SymbolicInvariantCounterexampleKind::Handler,
-                                            sequence,
-                                            storage,
-                                            stats: self.stats_with_paths(completed_paths),
-                                        });
+                                        let counterexample =
+                                            SymbolicInvariantRunResult::Counterexample {
+                                                kind: SymbolicInvariantCounterexampleKind::Handler,
+                                                sequence,
+                                                storage,
+                                                stats: self.stats_with_paths(completed_paths),
+                                            };
+                                        if !input.collect_handler_failures {
+                                            return Ok(counterexample);
+                                        }
+                                        trace!(?handler, "collected symbolic handler failure");
+                                        collected_handlers.push(handler);
+                                        self.handler_counterexamples.push(counterexample);
+                                        // One failure per handler is kept, so this call's other
+                                        // paths can only find the same one again.
+                                        call.worklist.clear();
+                                        call.deferred_worklist.clear();
+                                        sender_free = false;
+                                        continue;
                                     }
                                     CallStatus::Revert | CallStatus::ExceptionalHalt => {
                                         if input.fail_on_revert {
@@ -723,20 +885,42 @@ impl SymbolicExecutor {
                                     }
                                     CallStatus::Success => outcome.state,
                                 };
+                                // With the invariant checked after every call, a call that left the
+                                // world unchanged adds nothing the parent sequence did not: its
+                                // state was checked already and its extensions are the parent's.
+                                // A root's first no-op child stands for checking the root once.
+                                let unchanged = post_state.world.same_state(&sequence.state.world);
+                                if unchanged
+                                    && input.check_interval == 1
+                                    && steps.len() < input.depth
+                                {
+                                    let root = sequence.steps.is_empty();
+                                    if !root || std::mem::replace(&mut root_noop_kept, true) {
+                                        continue;
+                                    }
+                                }
+                                if next_frontier.len() >= path_limit {
+                                    self.defer_incomplete("symbolic invariant frontier limit");
+                                    continue;
+                                }
                                 if symbolic_invariant_should_check(
                                     steps.len(),
                                     input.depth,
                                     input.check_interval,
                                 ) {
-                                    for mut invariant_outcome in self.execute_invariant_check(
+                                    // The path limit bounds each check like each handler call.
+                                    let mut check_paths = 0usize;
+                                    let checked = self.execute_invariant_check(
                                         &input.executor,
                                         &post_state,
                                         input.invariant_address,
                                         input.sender,
                                         input.invariant,
                                         after_invariant_for(steps.len()),
-                                        &mut completed_paths,
-                                    )? {
+                                        &mut check_paths,
+                                    )?;
+                                    completed_paths += check_paths;
+                                    for mut invariant_outcome in checked {
                                         if invariant_outcome.failed {
                                             let (sequence, storage) = self.materialize_sequence(
                                                 &steps,
@@ -760,7 +944,10 @@ impl SymbolicExecutor {
                                     next_frontier.push(SequencePath { state: post_state, steps });
                                 }
 
-                                if completed_paths >= path_limit {
+                                // Without a deadline the path limit also bounds the whole search.
+                                // Handler failures a collecting search found are kept for the
+                                // caller.
+                                if input.deadline.is_none() && completed_paths >= path_limit {
                                     return Ok(SymbolicInvariantRunResult::Incomplete {
                                         kind: SymbolicStopReason::Stuck,
                                         reason: format!(
@@ -775,6 +962,13 @@ impl SymbolicExecutor {
                 }
             }
 
+            debug!(
+                depth,
+                frontier = next_frontier.len(),
+                completed_paths,
+                handler_failures = collected_handlers.len(),
+                "finished symbolic invariant depth"
+            );
             if next_frontier.is_empty() {
                 break;
             }
@@ -827,3 +1021,6 @@ const fn symbolic_invariant_should_check(
             && sequence_len != 0
             && sequence_len.is_multiple_of(check_interval as usize))
 }
+
+/// Number of slices of a collecting invariant search's budget; each query may use one.
+const INVARIANT_QUERY_SLICES: u64 = 16;

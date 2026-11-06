@@ -336,6 +336,7 @@ fn word_from_extracted_bytes(bytes: &[SymExpr]) -> Option<SymExpr> {
         .enumerate()
         .find_map(|(idx, byte)| byte.extracted_byte_source(idx))?;
 
+    let mut memo = HashMap::default();
     for (idx, byte) in bytes.iter().take(32).enumerate() {
         if let Some(byte_source) = byte.extracted_byte_source(idx) {
             if byte_source != source {
@@ -345,7 +346,7 @@ fn word_from_extracted_bytes(bytes: &[SymExpr]) -> Option<SymExpr> {
         }
 
         let byte = byte.as_const()?;
-        if source.known_byte(idx) != Some(byte.to::<u8>()) {
+        if source.known_byte_cached(idx, &mut memo) != Some(byte.to::<u8>()) {
             return None;
         }
     }
@@ -411,6 +412,82 @@ impl fmt::Debug for SymExprKind {
     }
 }
 
+/// The subtree contains an unsigned division.
+pub(in crate::runtime) const FLAG_UDIV: u8 = 1;
+/// The subtree contains a raw `gasleft()` symbol.
+pub(in crate::runtime) const FLAG_GASLEFT: u8 = 1 << 1;
+/// The subtree contains a Keccak node.
+pub(in crate::runtime) const FLAG_KECCAK: u8 = 1 << 2;
+/// The word subtree contains an if-then-else outside Boolean conditions.
+pub(in crate::runtime) const FLAG_ITE: u8 = 1 << 3;
+
+impl super::hashcons::NodeFlags for SymExprKind {
+    fn flags(&self) -> u8 {
+        let words = |exprs: &[SymExpr]| exprs.iter().fold(0, |flags, expr| flags | expr.flags());
+        match self {
+            Self::Const(_) | Self::Var(_) => 0,
+            Self::GasLeft(_) => FLAG_GASLEFT,
+            Self::Keccak { len, bytes, .. } => FLAG_KECCAK | len.flags() | words(bytes),
+            Self::Hash { bytes, .. } => words(bytes),
+            Self::Not(value) => value.flags(),
+            Self::BinOp(op, left, right) => {
+                let own = if matches!(op, SymBinOp::UDiv) { FLAG_UDIV } else { 0 };
+                own | left.flags() | right.flags()
+            }
+            Self::TernOp(_, first, second, third) => first.flags() | second.flags() | third.flags(),
+            // An ITE condition's own ITEs do not make the word an ITE.
+            Self::Ite(condition, then, otherwise) => {
+                FLAG_ITE | (condition.flags() & !FLAG_ITE) | then.flags() | otherwise.flags()
+            }
+        }
+    }
+
+    fn bits(&self) -> u16 {
+        let shift =
+            |right: &SymExpr| right.as_const().and_then(|shift| usize::try_from(shift).ok());
+        let bits = match self {
+            Self::Const(value) => value.bit_len().max(1),
+            Self::BinOp(SymBinOp::And, left, right) => match right.as_const() {
+                Some(mask) => left.unsigned_bits().min(mask.bit_len()),
+                None => 256,
+            },
+            Self::BinOp(SymBinOp::Add, left, right) => {
+                left.unsigned_bits().max(right.unsigned_bits()).saturating_add(1).min(256)
+            }
+            Self::BinOp(SymBinOp::Or | SymBinOp::Xor, left, right) => {
+                left.unsigned_bits().max(right.unsigned_bits())
+            }
+            Self::BinOp(SymBinOp::Mul, left, right) => {
+                left.unsigned_bits().saturating_add(right.unsigned_bits()).min(256)
+            }
+            Self::BinOp(SymBinOp::Shl, left, right) => shift(right)
+                .map_or(256, |shift| left.unsigned_bits().saturating_add(shift).min(256)),
+            Self::BinOp(SymBinOp::Shr, left, right) => {
+                shift(right).map_or(256, |shift| left.unsigned_bits().saturating_sub(shift).max(1))
+            }
+            Self::BinOp(SymBinOp::UDiv, left, right) => match right.as_const() {
+                // Dividing by a constant of at least 2**k drops at least k bits.
+                Some(divisor) if !divisor.is_zero() => {
+                    left.unsigned_bits().saturating_sub(divisor.bit_len() - 1).max(1)
+                }
+                _ => left.unsigned_bits(),
+            },
+            // A nonzero constant modulus bounds the remainder below it. A symbolic modulus
+            // can be zero, which leaves the dividend in SMT-LIB and zero in the EVM.
+            Self::BinOp(SymBinOp::URem, left, right) => match right.as_const() {
+                Some(modulus) if !modulus.is_zero() => {
+                    left.unsigned_bits().min((modulus - U256::ONE).bit_len().max(1))
+                }
+                _ => left.unsigned_bits(),
+            },
+            Self::TernOp(_, _, _, modulus) => modulus.unsigned_bits(),
+            Self::Ite(_, left, right) => left.unsigned_bits().max(right.unsigned_bits()),
+            _ => 256,
+        };
+        u16::try_from(bits).unwrap_or(256)
+    }
+}
+
 impl SymExprKind {
     pub(in crate::runtime) const fn get_var(&self) -> Option<Symbol> {
         match self {
@@ -435,6 +512,11 @@ impl SymExprKind {
 impl SymExpr {
     pub(in crate::runtime) fn kind(&self) -> &SymExprKind {
         self.kind.value()
+    }
+
+    #[inline]
+    pub(in crate::runtime) fn flags(&self) -> u8 {
+        self.kind.flags()
     }
 
     pub(in crate::runtime) fn from_kind(cx: &mut SymCx, kind: SymExprKind) -> Self {
@@ -1139,8 +1221,9 @@ impl SymExpr {
         }
 
         let source = source?;
+        let mut memo = HashMap::default();
         for (index, seen) in seen.into_iter().enumerate() {
-            if !seen && source.known_byte(index) != Some(0) {
+            if !seen && source.known_byte_cached(index, &mut memo) != Some(0) {
                 return None;
             }
         }
@@ -1343,7 +1426,6 @@ impl SymExpr {
         let mut pending = vec![self.clone()];
         let mut seen_words = HashSet::<Self>::default();
         let mut leaf_conditions = IndexSet::<SymBoolExpr>::default();
-        let mut bit_widths = HashMap::default();
         let mut remaining = MAX_BITWISE_BOOL_WORD_VISITS;
         while let Some(word) = pending.pop() {
             if !seen_words.insert(word.clone()) {
@@ -1364,7 +1446,7 @@ impl SymExpr {
                 continue;
             }
 
-            if word.unsigned_bits_cached(&mut bit_widths, &mut remaining) == Some(1) {
+            if word.unsigned_bits() == 1 {
                 let zero = Self::zero(cx);
                 let (word, zero) = Self::ordered_commutative_operands(word, zero);
                 let zero_check =
@@ -1456,20 +1538,24 @@ impl SymExpr {
     }
 
     pub(crate) fn contains_keccak(&self) -> bool {
-        self.visit_bool(|expr| matches!(expr.kind(), SymExprKind::Keccak { .. }))
+        self.flags() & FLAG_KECCAK != 0
     }
 
     pub(crate) fn contains_gasleft(&self) -> bool {
-        self.visit_bool(|expr| expr.is_raw_gasleft())
+        self.flags() & FLAG_GASLEFT != 0
     }
 
     pub(crate) fn contains_udiv(&self) -> bool {
-        self.visit_bool(|expr| matches!(expr.kind(), SymExprKind::BinOp(SymBinOp::UDiv, _, _)))
+        self.flags() & FLAG_UDIV != 0
     }
 
     pub(crate) fn contains_ite(&self) -> bool {
-        let mut visited = HashSet::<&Self>::default();
-        self.contains_ite_cached(&mut visited, false)
+        let contains = self.flags() & FLAG_ITE != 0;
+        debug_assert_eq!(contains, {
+            let mut visited = HashSet::<&Self>::default();
+            self.contains_ite_cached(&mut visited, false)
+        });
+        contains
     }
 
     fn contains_ite_cached<'a>(&'a self, visited: &mut HashSet<&'a Self>, memoize: bool) -> bool {
@@ -1523,29 +1609,56 @@ impl SymExpr {
     }
 
     pub(crate) fn known_byte(&self, index: usize) -> Option<u8> {
+        self.known_byte_cached(index, &mut HashMap::default())
+    }
+
+    /// Like [`Self::known_byte`], sharing `memo` across calls: without it, shared subterms of deep
+    /// `ite` and bitwise chains are re-walked once per path through them, which is exponential.
+    pub(crate) fn known_byte_cached<'a>(
+        &'a self,
+        index: usize,
+        memo: &mut HashMap<(&'a Self, usize), Option<u8>>,
+    ) -> Option<u8> {
         debug_assert!(index < 32);
         match self.kind() {
-            SymExprKind::Const(value) => Some(value.to_be_bytes::<32>()[index]),
+            SymExprKind::Const(value) => return Some(value.to_be_bytes::<32>()[index]),
             SymExprKind::Var(_)
             | SymExprKind::GasLeft(_)
             | SymExprKind::Keccak { .. }
-            | SymExprKind::Hash { .. } => None,
-            SymExprKind::Not(value) => value.known_byte(index).map(|byte| !byte),
+            | SymExprKind::Hash { .. }
+            | SymExprKind::TernOp(..) => return None,
+            _ => {}
+        }
+        if let Some(byte) = memo.get(&(self, index)) {
+            return *byte;
+        }
+        let byte = match self.kind() {
+            SymExprKind::Not(value) => value.known_byte_cached(index, memo).map(|byte| !byte),
             SymExprKind::Ite(_, then_expr, else_expr) => {
-                let then_byte = then_expr.known_byte(index)?;
-                let else_byte = else_expr.known_byte(index)?;
-                (then_byte == else_byte).then_some(then_byte)
+                let then_byte = then_expr.known_byte_cached(index, memo);
+                then_byte.and_then(|then_byte| {
+                    let else_byte = else_expr.known_byte_cached(index, memo)?;
+                    (then_byte == else_byte).then_some(then_byte)
+                })
             }
             SymExprKind::BinOp(op, left, right) => match op {
-                SymBinOp::And => match (left.known_byte(index), right.known_byte(index)) {
-                    (Some(left), Some(right)) => Some(left & right),
-                    (Some(0), _) | (_, Some(0)) => Some(0),
-                    _ => None,
-                },
-                SymBinOp::Or => Some(left.known_byte(index)? | right.known_byte(index)?),
-                SymBinOp::Xor => Some(left.known_byte(index)? ^ right.known_byte(index)?),
-                SymBinOp::Shl => {
-                    let shift = right.as_const()?;
+                SymBinOp::And => {
+                    match (
+                        left.known_byte_cached(index, memo),
+                        right.known_byte_cached(index, memo),
+                    ) {
+                        (Some(left), Some(right)) => Some(left & right),
+                        (Some(0), _) | (_, Some(0)) => Some(0),
+                        _ => None,
+                    }
+                }
+                SymBinOp::Or => left
+                    .known_byte_cached(index, memo)
+                    .and_then(|left| Some(left | right.known_byte_cached(index, memo)?)),
+                SymBinOp::Xor => left
+                    .known_byte_cached(index, memo)
+                    .and_then(|left| Some(left ^ right.known_byte_cached(index, memo)?)),
+                SymBinOp::Shl => right.as_const().and_then(|shift| {
                     if shift >= U256::from(256) {
                         return Some(0);
                     }
@@ -1554,10 +1667,13 @@ impl SymExpr {
                         return None;
                     }
                     let source_index = index + shift / 8;
-                    if source_index >= 32 { Some(0) } else { left.known_byte(source_index) }
-                }
-                SymBinOp::Shr => {
-                    let shift = right.as_const()?;
+                    if source_index >= 32 {
+                        Some(0)
+                    } else {
+                        left.known_byte_cached(source_index, memo)
+                    }
+                }),
+                SymBinOp::Shr => right.as_const().and_then(|shift| {
                     if shift >= U256::from(256) {
                         return Some(0);
                     }
@@ -1566,8 +1682,12 @@ impl SymExpr {
                         return None;
                     }
                     let byte_shift = shift / 8;
-                    if index < byte_shift { Some(0) } else { left.known_byte(index - byte_shift) }
-                }
+                    if index < byte_shift {
+                        Some(0)
+                    } else {
+                        left.known_byte_cached(index - byte_shift, memo)
+                    }
+                }),
                 SymBinOp::Add
                 | SymBinOp::Sub
                 | SymBinOp::Mul
@@ -1577,105 +1697,148 @@ impl SymExpr {
                 | SymBinOp::SRem
                 | SymBinOp::Sar => None,
             },
-            SymExprKind::TernOp(_, _, _, _) => None,
-        }
+            SymExprKind::Const(_)
+            | SymExprKind::Var(_)
+            | SymExprKind::GasLeft(_)
+            | SymExprKind::Keccak { .. }
+            | SymExprKind::Hash { .. }
+            | SymExprKind::TernOp(..) => unreachable!("leaf handled before the memo"),
+        };
+        memo.insert((self, index), byte);
+        byte
     }
 
-    pub(crate) fn known_word(&self) -> Option<U256> {
+    /// Returns the bytes this word is known to hold, memoized in `cx` per node, so repeated
+    /// queries on growing expressions cost once per new node instead of once per walk.
+    pub(in crate::runtime) fn known_bytes(&self, cx: &mut SymCx) -> KnownBytes {
+        match self.kind() {
+            SymExprKind::Const(value) => return value.to_be_bytes::<32>().map(Some),
+            SymExprKind::Var(_)
+            | SymExprKind::GasLeft(_)
+            | SymExprKind::Keccak { .. }
+            | SymExprKind::Hash { .. }
+            | SymExprKind::TernOp(..) => return [None; 32],
+            _ => {}
+        }
+        if let Some(bytes) = cx.cached_known_bytes(self) {
+            return bytes;
+        }
+        let mut out = [None; 32];
+        match self.kind() {
+            SymExprKind::Not(value) => {
+                let bytes = value.known_bytes(cx);
+                for (out, byte) in out.iter_mut().zip(bytes) {
+                    *out = byte.map(|byte| !byte);
+                }
+            }
+            SymExprKind::Ite(_, then_expr, else_expr) => {
+                let then_bytes = then_expr.known_bytes(cx);
+                if then_bytes.iter().any(Option::is_some) {
+                    let else_bytes = else_expr.known_bytes(cx);
+                    for ((out, then_byte), else_byte) in
+                        out.iter_mut().zip(then_bytes).zip(else_bytes)
+                    {
+                        *out = then_byte.filter(|byte| Some(*byte) == else_byte);
+                    }
+                }
+            }
+            SymExprKind::BinOp(op, left, right) => match op {
+                SymBinOp::And | SymBinOp::Or | SymBinOp::Xor => {
+                    let left_bytes = left.known_bytes(cx);
+                    let right_bytes = right.known_bytes(cx);
+                    for ((out, left), right) in out.iter_mut().zip(left_bytes).zip(right_bytes) {
+                        *out = match (op, left, right) {
+                            (SymBinOp::And, Some(left), Some(right)) => Some(left & right),
+                            (SymBinOp::And, Some(0), _) | (SymBinOp::And, _, Some(0)) => Some(0),
+                            (SymBinOp::Or, Some(left), Some(right)) => Some(left | right),
+                            (SymBinOp::Xor, Some(left), Some(right)) => Some(left ^ right),
+                            _ => None,
+                        };
+                    }
+                }
+                SymBinOp::Shl | SymBinOp::Shr => {
+                    if let Some(shift) = right.as_const() {
+                        if shift >= U256::from(256) {
+                            out = [Some(0); 32];
+                        } else {
+                            let shift = usize::try_from(shift).expect("checked byte shift");
+                            if shift % 8 == 0 {
+                                let bytes = left.known_bytes(cx);
+                                let byte_shift = shift / 8;
+                                for (index, out) in out.iter_mut().enumerate() {
+                                    *out = if matches!(op, SymBinOp::Shl) {
+                                        bytes.get(index + byte_shift).copied().unwrap_or(Some(0))
+                                    } else if index < byte_shift {
+                                        Some(0)
+                                    } else {
+                                        bytes[index - byte_shift]
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
+                SymBinOp::Add
+                | SymBinOp::Sub
+                | SymBinOp::Mul
+                | SymBinOp::UDiv
+                | SymBinOp::URem
+                | SymBinOp::SDiv
+                | SymBinOp::SRem
+                | SymBinOp::Sar => {}
+            },
+            SymExprKind::Const(_)
+            | SymExprKind::Var(_)
+            | SymExprKind::GasLeft(_)
+            | SymExprKind::Keccak { .. }
+            | SymExprKind::Hash { .. }
+            | SymExprKind::TernOp(..) => unreachable!("leaf handled before the memo"),
+        }
+        cx.memoize_known_bytes(self.clone(), out);
+        out
+    }
+
+    /// Returns the word's value when all of its bytes are known, memoized in `cx`.
+    pub(crate) fn known_word_in(&self, cx: &mut SymCx) -> Option<U256> {
+        if let SymExprKind::Const(value) = self.kind() {
+            return Some(*value);
+        }
+        let bytes = self.known_bytes(cx);
         let mut word = [0u8; 32];
-        for (idx, byte) in word.iter_mut().enumerate() {
-            *byte = self.known_byte(idx)?;
+        for (out, byte) in word.iter_mut().zip(bytes) {
+            *out = byte?;
         }
         Some(U256::from_be_bytes(word))
     }
 
-    pub(crate) fn unsigned_bits(&self) -> usize {
-        let mut bit_widths = HashMap::default();
-        let mut remaining = usize::MAX;
-        self.unsigned_bits_cached(&mut bit_widths, &mut remaining).unwrap_or(256)
+    /// Splits `t + c` with a constant `c` into `(t, c)`.
+    pub(crate) fn split_added_constant(&self) -> Option<(Self, U256)> {
+        fn walk<'a>(expr: &'a SymExpr, core: &mut Option<&'a SymExpr>, sum: &mut U256) -> bool {
+            if let Some(constant) = expr.as_const() {
+                *sum = sum.wrapping_add(constant);
+                return true;
+            }
+            if let SymExprKind::BinOp(SymBinOp::Add, left, right) = expr.kind() {
+                return walk(left, core, sum) && walk(right, core, sum);
+            }
+            // A second addend, even the same one again (`2 * t`), is not a single addend.
+            if core.is_some() {
+                return false;
+            }
+            *core = Some(expr);
+            true
+        }
+        let mut core = None;
+        let mut sum = U256::ZERO;
+        if !walk(self, &mut core, &mut sum) || sum.is_zero() {
+            return None;
+        }
+        core.map(|core| (core.clone(), sum))
     }
 
-    fn unsigned_bits_cached(
-        &self,
-        bit_widths: &mut HashMap<Self, usize>,
-        remaining: &mut usize,
-    ) -> Option<usize> {
-        if let Some(bits) = bit_widths.get(self) {
-            return Some(*bits);
-        }
-
-        let mut pending = vec![(self.clone(), false)];
-        while let Some((expr, children_visited)) = pending.pop() {
-            if bit_widths.contains_key(&expr) {
-                continue;
-            }
-            if !children_visited {
-                if *remaining == 0 {
-                    return None;
-                }
-                *remaining -= 1;
-                pending.push((expr.clone(), true));
-                match expr.kind() {
-                    SymExprKind::BinOp(SymBinOp::And, left, right)
-                        if right.as_const().is_some() =>
-                    {
-                        pending.push((left.clone(), false));
-                    }
-                    SymExprKind::BinOp(SymBinOp::Add | SymBinOp::Mul, left, right)
-                    | SymExprKind::Ite(_, left, right) => {
-                        pending.push((right.clone(), false));
-                        pending.push((left.clone(), false));
-                    }
-                    SymExprKind::BinOp(SymBinOp::Shl | SymBinOp::Shr, left, right)
-                        if right
-                            .as_const()
-                            .and_then(|shift| usize::try_from(shift).ok())
-                            .is_some() =>
-                    {
-                        pending.push((left.clone(), false));
-                    }
-                    SymExprKind::BinOp(SymBinOp::UDiv, left, _) => {
-                        pending.push((left.clone(), false));
-                    }
-                    SymExprKind::TernOp(_, _, _, modulus) => {
-                        pending.push((modulus.clone(), false));
-                    }
-                    _ => {}
-                }
-                continue;
-            }
-
-            let bits = match expr.kind() {
-                SymExprKind::Const(value) => value.bit_len().max(1),
-                SymExprKind::BinOp(SymBinOp::And, left, right) => {
-                    if let Some(mask) = right.as_const() {
-                        bit_widths[left].min(mask.bit_len())
-                    } else {
-                        256
-                    }
-                }
-                SymExprKind::BinOp(SymBinOp::Add, left, right) => {
-                    bit_widths[left].max(bit_widths[right]).saturating_add(1).min(256)
-                }
-                SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
-                    bit_widths[left].saturating_add(bit_widths[right]).min(256)
-                }
-                SymExprKind::BinOp(SymBinOp::Shl, left, right) => right
-                    .as_const()
-                    .and_then(|shift| usize::try_from(shift).ok())
-                    .map_or(256, |shift| bit_widths[left].saturating_add(shift).min(256)),
-                SymExprKind::BinOp(SymBinOp::Shr, left, right) => right
-                    .as_const()
-                    .and_then(|shift| usize::try_from(shift).ok())
-                    .map_or(256, |shift| bit_widths[left].saturating_sub(shift).max(1)),
-                SymExprKind::BinOp(SymBinOp::UDiv, left, _) => bit_widths[left],
-                SymExprKind::TernOp(_, _, _, modulus) => bit_widths[modulus],
-                SymExprKind::Ite(_, left, right) => bit_widths[left].max(bit_widths[right]),
-                _ => 256,
-            };
-            bit_widths.insert(expr, bits);
-        }
-        bit_widths.get(self).copied()
+    /// Returns an upper bound on the value's unsigned bit width, computed once per node.
+    pub(crate) fn unsigned_bits(&self) -> usize {
+        usize::from(self.kind.bits())
     }
 
     pub(crate) fn extracted_byte(&self, cx: &mut SymCx, index: usize) -> Self {
@@ -2548,5 +2711,29 @@ mod tests {
         });
         assert_eq!(result, ControlFlow::Break(42));
         assert_eq!(visits, 2);
+    }
+
+    // Solidity's bounded mint takes amount % 1e30, so the remainder fits in 100 bits and
+    // comparisons the width decides fold without a solver query.
+    #[test]
+    fn remainder_and_quotient_by_constant_narrow_width() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let modulus = SymExpr::constant(&mut cx, U256::from(10).pow(U256::from(30)));
+        let remainder = SymExpr::binop(&mut cx, SymBinOp::URem, x.clone(), modulus);
+        assert_eq!(remainder.unsigned_bits(), 100);
+        let divisor = SymExpr::constant(&mut cx, U256::from(10).pow(U256::from(18)));
+        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, x.clone(), divisor);
+        assert_eq!(quotient.unsigned_bits(), 197);
+        let symbolic = SymExpr::var(&mut cx, "m");
+        let unbounded = SymExpr::binop(&mut cx, SymBinOp::URem, x, symbolic);
+        assert_eq!(unbounded.unsigned_bits(), 256);
+
+        let half = U256::MAX >> 1;
+        let above = SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ugt, &remainder, half);
+        assert_eq!(above, SymBoolExpr::constant(&mut cx, false));
+        let below_zero =
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ult, &unbounded, U256::ZERO);
+        assert_eq!(below_zero, SymBoolExpr::constant(&mut cx, false));
     }
 }

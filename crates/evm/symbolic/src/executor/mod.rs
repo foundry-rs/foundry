@@ -8,6 +8,7 @@ mod calls;
 mod cheatcodes;
 mod constraints;
 mod create;
+mod equivalence;
 mod invariant;
 mod opcodes;
 mod run;
@@ -79,6 +80,10 @@ struct SequenceStepTemplate {
     contract_name: Option<String>,
     function: Function,
     calldata: SymbolicCalldata,
+    /// Symbolic block timestamp advance before the call.
+    warp: Option<SymExpr>,
+    /// Symbolic block number advance before the call.
+    roll: Option<SymExpr>,
 }
 
 #[derive(Debug)]
@@ -140,6 +145,7 @@ impl SymbolicExecutor {
                     .timeout
                     .filter(|seconds| *seconds > 0)
                     .map(|seconds| Instant::now() + Duration::from_secs(seconds.into()));
+                self.solver.set_deadline(self.deadline);
             }
             self.check_timeout()?;
             trace!("escalating deferred hard arithmetic branch to SMT solver");
@@ -384,6 +390,8 @@ impl SymbolicExecutor {
                 let op = match op {
                     CallPathOpcode::Execute(op) => op,
                     CallPathOpcode::Halt => {
+                        // Running off the end of the code is an implicit STOP with no output.
+                        state.return_data = SymReturnData::empty(&mut self.cx);
                         if *completed_paths >= path_limit {
                             return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
                         }
@@ -399,7 +407,7 @@ impl SymbolicExecutor {
 
                 let _step_span = matches!(kind, CallPathKind::Sequence)
                     .then(|| trace_span!("symbolic_step", pc = state.pc, op).entered());
-                match self.step(
+                let step = self.step(
                     executor,
                     code,
                     code.jump_table(),
@@ -407,7 +415,28 @@ impl SymbolicExecutor {
                     &mut *worklist,
                     completed_paths,
                     op,
-                )? {
+                );
+                let step = match step {
+                    Ok(step) => step,
+                    // An equivalence check ends the frame on the conditions revm halts on.
+                    Err(
+                        SymbolicError::StackOverflow
+                        | SymbolicError::StackUnderflow
+                        | SymbolicError::InvalidJump(_),
+                    ) if self.equivalence.is_some() => {
+                        state.return_data = SymReturnData::empty(&mut self.cx);
+                        StepOutcome::ExceptionalHalt
+                    }
+                    Err(SymbolicError::UnsupportedOpcode(undefined))
+                        if self.equivalence.is_some()
+                            && opcode::OpCode::new(undefined).is_none() =>
+                    {
+                        state.return_data = SymReturnData::empty(&mut self.cx);
+                        StepOutcome::ExceptionalHalt
+                    }
+                    Err(err) => return Err(err),
+                };
+                match step {
                     StepOutcome::Continue => {}
                     StepOutcome::Halt => {
                         if *completed_paths >= path_limit {

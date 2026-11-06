@@ -585,6 +585,96 @@ symbolic execution. Dependency storage keyed by symbolic calldata is still
 explored symbolically, but it can replay-filter to `Incomplete` or `mismatch`
 instead of a confirmed counterexample if the required slot is not concrete.
 
+## Equivalence Checking
+
+`forge equivalence` checks whether two runtime bytecodes behave the same for
+every input, like `hevm equivalence`. Both codes run at one account from the
+same pre-state, on shared symbolic calldata and a shared symbolic environment.
+On every pair of feasible paths it compares:
+
+- whether the call succeeded or reverted,
+- the return or revert data,
+- when both succeed, the emitted logs (emitter, topics and data, in order) and
+  the storage, balance, nonce and code of every account either code changed.
+
+```sh
+forge equivalence --code-a "$(forge inspect A deployedBytecode)" \
+  --code-b "$(forge inspect B deployedBytecode)"
+forge equivalence --code-a-file a.hex --code-b-file b.hex --sig "transfer(address,uint256)"
+```
+
+The model matches hevm's:
+
+- Calldata has a symbolic length of at most `--max-calldata` bytes (default
+  1024), and reads past its end are zero. `--sig` limits it to ABI-encoded calls
+  of one function, and `--calldata-lengths` to fixed lengths.
+- Storage starts arbitrary; `--empty-storage` starts it empty, as for a freshly
+  deployed contract.
+- The sender, the origin, the call value (unless `--value` fixes it), the
+  block number, timestamp, prevrandao, gas limit, base fee, chain ID and
+  coinbase, the gas price, and the balances, code sizes and code hashes of
+  accounts without known code are symbolic. The contracts run at one fixed
+  address, so an address read from calldata can be their own, where each sees
+  its own code.
+- Each code reads its own unconstrained `GAS`.
+- Calls into unknown code answer with fresh success flags and return data (at
+  most `--max-returndata` bytes), as one fixed unknown function of the call's
+  inputs: the n-th call of either code with the same target, value, calldata,
+  caller storage and balance, and state of unknown code gets the same answer. A
+  `STATICCALL` is always abstracted. A state-changing `CALL` may re-enter, so
+  it stops the check unless `--promise-no-reent` promises that it doesn't; the
+  callee then gets the value if it succeeds and may send ether back.
+  `DELEGATECALL` and `CALLCODE` into unknown code stop the check.
+- Stack overflow and underflow, invalid jumps and undefined opcodes end the call
+  as exceptional halts, and `PUSH` data past the end of code reads as zero.
+- `keccak256` of a region whose size may exceed the modeled bound is a symbol
+  named by the whole memory, the offset and the size.
+- A memory access whose offset is symbolic but takes at most a few dozen values,
+  such as a byte written at a length computed from a number's magnitude, forks
+  into one path per value, like hevm's branching up to `--max-width`; each path
+  pins the offset, so later offsets that differ from it by a constant, and
+  branches they decide, need no solver.
+
+Gas is not priced, so balances only move by value transfers and
+self-destructs, and code that spends more gas to do the same thing is
+equivalent. Running out of memory gas is modeled, so a code that runs out of
+gas where the other doesn't is not equivalent; `--ignore-out-of-gas` leaves
+those inputs out, which compares the codes modulo gas as hevm and the Solidity
+optimizer do.
+
+When no solver is configured, the check races the installed solvers among
+bitwuzla, cvc5 (with integer blasting) and z3, and orders them per query: cvc5
+first for queries that multiply or divide two symbolic words, bitwuzla first for
+the rest, adjusted by how each solver did on earlier queries of the same kind.
+Without bitwuzla it also races z3 in incremental mode (`z3-inc`), since z3's
+one-shot and incremental solvers each answer some queries far faster than the
+other. `--solver` picks one solver instead. Solvers run as long-lived processes that
+answer one query after another, and pair queries are solved up to
+`--solver-jobs` at a time (the number of CPUs by default).
+
+Without `--sig`, calldata is split into one job per function selector the
+dispatchers compare against, plus one job for calldata that matches none of
+them. A selector job's calldata is the selector followed by fresh words, so each
+ABI argument is one symbol, and a `CALLDATALOAD` that the path proves lies
+within the calldata reads that symbol without size checks. Each path of the
+first code is paired with the paths the second code takes under the same
+constraints; models of earlier satisfiable queries are tried before the solver,
+and a model whose Keccak values are not the real hashes of its preimages is
+refined with the real values and solved again. `--merge-states` merges forward
+jumps over short runs of pure instructions into one path, like hevm, which
+trades paths for larger expressions.
+
+A counterexample is replayed through the concrete executor with the model's
+environment and pre-state, and printed with both results and every storage
+slot, balance, nonce and code that differs; the command then exits with a
+non-zero status. A model that answers calls into unknown code, depends on
+`GAS`, or needs `tx.origin` to differ from the sender is reported as
+unconfirmed when plain execution does not reproduce it, as hevm does. `--json`
+prints the same result as JSON. `Equivalent` is scoped to the modeled EVM
+surface and the configured bounds (calldata and return-data sizes, loop
+iterations, depth and paths); a check that cannot finish reports an incomplete
+result instead.
+
 ## Configuration
 
 The primary configuration path is native Foundry config.
@@ -671,9 +761,14 @@ the first entry starts immediately, the second starts shortly after if the query
 is still unresolved, and later entries are treated as rescue solvers. If a solver
 finishes without a decisive result and no other solver is running, the next
 pending entry starts immediately. The first `sat` response wins after its model
-is validated for model-producing queries. `unsat` responses are used only after
-all configured solvers that were needed to rule out `sat` have finished, and
-`unknown` results only win if no configured solver returns a decisive response.
+is validated for model-producing queries, and the first `unsat` response wins
+too; either cancels the other solvers. `unknown` results only win if no configured
+solver returns a decisive response. Known solvers (z3, bitwuzla, cvc5) run as
+long-lived processes that answer queries one after another inside
+`(push 1)`/`(pop 1)`, which saves their start-up time on every query; the
+solver order of each query depends on whether it multiplies or divides symbolic
+words, is `ite`-heavy, or neither, and on how each solver did on earlier queries
+of that kind.
 A nonempty `symbolic.solver_command` overrides both
 `symbolic.solver_portfolio` and `symbolic.solver`; otherwise a nonempty
 portfolio overrides `symbolic.solver`. Portfolio entries without whitespace,

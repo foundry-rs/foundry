@@ -26,8 +26,50 @@ impl SymBytes {
         cx.mk_bytes_kind(kind)
     }
 
+    /// Returns the bytes a sized buffer was cut from, whose bytes past the size are not zeroed.
+    pub(crate) fn without_size(&self) -> Self {
+        match self.kind() {
+            SymBytesKind::Sized { bytes, .. } => bytes.without_size(),
+            _ => self.clone(),
+        }
+    }
+
     fn kind(&self) -> &SymBytesKind {
         self.kind.value()
+    }
+
+    /// Reads the 32-byte word at a symbolic `offset`, zero past the end, as 32 bytes, each taken
+    /// from the whole word that holds it. This is exact, its size is linear in the buffer's where
+    /// a byte-wise read at a symbolic offset is quadratic, and because every byte stays its own
+    /// term, solvers relate overlapping reads at nearby offsets as they would array reads.
+    pub(crate) fn word_at_symbolic(&self, cx: &mut SymCx, offset: &SymExpr) -> SymExpr {
+        let words =
+            (0..self.len().div_ceil(32)).map(|idx| self.word_at(cx, idx * 32)).collect::<Vec<_>>();
+        let five = SymExpr::constant(cx, U256::from(5));
+        let low_mask = SymExpr::constant(cx, U256::from(31));
+        let eight = SymExpr::constant(cx, U256::from(8));
+        let last = SymExpr::constant(cx, U256::from(31));
+        let byte_mask = SymExpr::constant(cx, U256::from(0xff));
+        let mut bytes = Vec::with_capacity(32);
+        for idx in 0..32u64 {
+            let position = SymExpr::add_const(cx, offset.clone(), U256::from(idx));
+            // An offset near 2^256 wraps; bytes past the end of the buffer are zero instead.
+            let wrapped = SymBoolExpr::cmp(cx, SymCmpOp::Ult, position.clone(), offset.clone());
+            let index = SymExpr::binop(cx, SymBinOp::Shr, position.clone(), five.clone());
+            let mut word = SymExpr::zero(cx);
+            for (word_idx, candidate) in words.iter().enumerate().rev() {
+                let at = SymBoolExpr::eq_word_const(cx, &index, U256::from(word_idx));
+                word = SymExpr::ite(cx, at, candidate.clone(), word);
+            }
+            let within = SymExpr::binop(cx, SymBinOp::And, position, low_mask.clone());
+            let from_end = SymExpr::binop(cx, SymBinOp::Sub, last.clone(), within);
+            let shift = SymExpr::binop(cx, SymBinOp::Mul, from_end, eight.clone());
+            let shifted = SymExpr::binop(cx, SymBinOp::Shr, word, shift);
+            let byte = SymExpr::binop(cx, SymBinOp::And, shifted, byte_mask.clone());
+            let zero = SymExpr::zero(cx);
+            bytes.push(SymExpr::ite(cx, wrapped, zero, byte));
+        }
+        SymExpr::from_bytes(cx, bytes)
     }
 
     pub(crate) fn empty(cx: &mut SymCx) -> Self {
@@ -309,6 +351,32 @@ impl SymBytes {
             }
             SymBytesKind::Word(word) if offset == 0 => word.clone(),
             SymBytesKind::Word(_) if offset >= 32 => SymExpr::zero(cx),
+            SymBytesKind::Sized { bytes, size, max_size } => {
+                // Read the whole word, then clear the bytes at and past the symbolic size, rather
+                // than guarding each of its 32 bytes.
+                let word = if bytes.len() > *max_size {
+                    bytes.slice_concrete(cx, 0, *max_size).word_at(cx, offset)
+                } else {
+                    bytes.word_at(cx, offset)
+                };
+                if word.as_const() == Some(U256::ZERO) {
+                    return word;
+                }
+                let start = SymExpr::constant(cx, U256::from(offset));
+                let past = SymBoolExpr::cmp(cx, SymCmpOp::Ule, size.clone(), start.clone());
+                let available = SymExpr::binop(cx, SymBinOp::Sub, size.clone(), start);
+                let full =
+                    SymBoolExpr::cmp_word_const(cx, SymCmpOp::Uge, &available, U256::from(32));
+                let eight = SymExpr::constant(cx, U256::from(8));
+                let kept_bits = SymExpr::binop(cx, SymBinOp::Mul, available, eight);
+                let all = SymExpr::constant(cx, U256::MAX);
+                let dropped = SymExpr::binop(cx, SymBinOp::Shr, all, kept_bits);
+                let mask = SymExpr::not(cx, dropped);
+                let partial = SymExpr::binop(cx, SymBinOp::And, word.clone(), mask);
+                let in_range = SymExpr::ite(cx, full, word, partial);
+                let zero = SymExpr::zero(cx);
+                SymExpr::ite(cx, past, zero, in_range)
+            }
             SymBytesKind::Slice { bytes, offset: base_offset, len } => {
                 if offset.checked_add(32).is_some_and(|end| end <= *len)
                     && let Some(base_offset) = base_offset.eval()
@@ -623,3 +691,5 @@ impl SymBytes {
         Ok(())
     }
 }
+
+impl super::expr::hashcons::NodeFlags for SymBytesKind {}

@@ -13,8 +13,27 @@ impl SymCalldata {
         Self { size_word: SymExpr::constant(cx, U256::from(size)), size, bytes }
     }
 
+    /// Calldata of a symbolic length of at most `bytes.len()`, whose bytes past its end are zero.
+    pub(crate) fn with_size_word(bytes: SymBytes, size_word: SymExpr) -> Self {
+        Self { size: bytes.len(), size_word, bytes }
+    }
+
     pub(crate) fn size_word(&self) -> SymExpr {
         self.size_word.clone()
+    }
+
+    /// Returns the symbol of a symbolic size and the most bytes the calldata may hold.
+    pub(crate) fn symbolic_size(&self) -> Option<(Symbol, usize)> {
+        match self.size_word.kind() {
+            SymExprKind::Var(symbol) => Some((*symbol, self.size)),
+            _ => None,
+        }
+    }
+
+    /// Reads the word at `offset` as if every byte up to the largest size were present, for a
+    /// read the path proves lies within the calldata.
+    pub(crate) fn load_word_in_range(&self, cx: &mut SymCx, offset: usize) -> SymExpr {
+        self.bytes.without_size().word_at(cx, offset)
     }
 
     pub(crate) fn load_word(&self, cx: &mut SymCx, offset: SymExpr) -> SymExpr {
@@ -29,6 +48,9 @@ impl SymCalldata {
     }
 
     fn load_dynamic(&self, cx: &mut SymCx, offset: &SymExpr) -> SymExpr {
+        if self.size > SYMBOLIC_WORD_READ_MIN_LEN {
+            return self.bytes.word_at_symbolic(cx, offset);
+        }
         let mut result = SymExpr::zero(cx);
         for candidate in (0..self.size).rev() {
             let candidate_expr = SymExpr::constant(cx, U256::from(candidate));

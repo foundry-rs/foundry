@@ -1134,6 +1134,7 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             readCallersCall::SELECTOR => {
+                state.sender_observed = true;
                 Ok(CheatcodeOutcome::Continue(state.read_callers_words(&mut self.cx)))
             }
             addrCall::SELECTOR => {
@@ -1385,7 +1386,7 @@ impl SymbolicExecutor {
                 let target =
                     read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
                 let value = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
-                if value.contains_gasleft() {
+                if !self.symbolic_gas() && value.contains_gasleft() {
                     return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
                 }
                 let value = state

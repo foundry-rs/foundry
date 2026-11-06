@@ -25,7 +25,23 @@ pub(in crate::runtime) enum SymBoolExprKind {
     Cmp(SymCmpOp, SymExpr, SymExpr),
 }
 
+impl super::hashcons::NodeFlags for SymBoolExprKind {
+    fn flags(&self) -> u8 {
+        match self {
+            Self::Const(_) => 0,
+            Self::Not(value) => value.flags(),
+            Self::And(values) => values.iter().fold(0, |flags, value| flags | value.flags()),
+            Self::Cmp(_, left, right) => left.flags() | right.flags(),
+        }
+    }
+}
+
 impl SymBoolExpr {
+    #[inline]
+    pub(in crate::runtime) fn flags(&self) -> u8 {
+        self.kind.flags()
+    }
+
     #[inline]
     pub(in crate::runtime) fn stable_hash_cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.kind.stable_hash_cmp(&other.kind)
@@ -92,6 +108,42 @@ impl SymBoolExpr {
             };
         }
 
+        // An unsigned comparison against a constant that the other side's bit width decides,
+        // such as Solidity's bounds check `(x & 0xf) < 16`.
+        if matches!(op, SymCmpOp::Ult | SymCmpOp::Ugt | SymCmpOp::Ule | SymCmpOp::Uge) {
+            let decided = match (left.as_const(), right.as_const()) {
+                (None, Some(constant)) => {
+                    let max = unsigned_max(&left);
+                    match op {
+                        SymCmpOp::Ult if max < constant => Some(true),
+                        SymCmpOp::Ule if max <= constant => Some(true),
+                        SymCmpOp::Ugt if max <= constant => Some(false),
+                        SymCmpOp::Uge if max < constant => Some(false),
+                        // Nothing is below zero.
+                        SymCmpOp::Ult if constant.is_zero() => Some(false),
+                        SymCmpOp::Uge if constant.is_zero() => Some(true),
+                        _ => None,
+                    }
+                }
+                (Some(constant), None) => {
+                    let max = unsigned_max(&right);
+                    match op {
+                        SymCmpOp::Ugt if max < constant => Some(true),
+                        SymCmpOp::Uge if max <= constant => Some(true),
+                        SymCmpOp::Ult if max <= constant => Some(false),
+                        SymCmpOp::Ule if max < constant => Some(false),
+                        SymCmpOp::Ugt if constant.is_zero() => Some(false),
+                        SymCmpOp::Ule if constant.is_zero() => Some(true),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if let Some(value) = decided {
+                return Self::constant(cx, value);
+            }
+        }
+
         match op {
             SymCmpOp::Eq => {
                 if let Some(condition) = Self::ite_eq_arm(cx, &left, &right)
@@ -110,7 +162,7 @@ impl SymBoolExpr {
                         if let Some(condition) = Self::bool_word_eq_const(cx, &left, *right_value) {
                             return condition;
                         }
-                        if let Some(left_value) = left.known_word() {
+                        if let Some(left_value) = left.known_word_in(cx) {
                             // `known(a) == const => const`.
                             return Self::constant(cx, left_value == *right_value);
                         }
@@ -122,7 +174,7 @@ impl SymBoolExpr {
                         if let Some(condition) = Self::bool_word_eq_const(cx, &right, *left_value) {
                             return condition;
                         }
-                        if let Some(right_value) = right.known_word() {
+                        if let Some(right_value) = right.known_word_in(cx) {
                             // `const == known(a) => const`.
                             return Self::constant(cx, *left_value == right_value);
                         }
@@ -492,16 +544,31 @@ impl SymBoolExpr {
         }
     }
 
+    /// Returns `(word, value, true)` when this predicate is `word == value` for a symbolic
+    /// word and a constant value, and `(word, value, false)` when it is the negation of one.
+    pub(crate) fn word_const_equality(&self) -> Option<(&SymExpr, U256, bool)> {
+        let (cmp, holds) = match self.kind() {
+            SymBoolExprKind::Not(inner) => (inner, false),
+            _ => (self, true),
+        };
+        let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = cmp.kind() else { return None };
+        match (left.as_const(), right.as_const()) {
+            (None, Some(value)) => Some((left, value, holds)),
+            (Some(value), None) => Some((right, value, holds)),
+            _ => None,
+        }
+    }
+
     pub(crate) fn contains_keccak(&self) -> bool {
-        self.visit_bool(|expr| matches!(expr.kind(), SymExprKind::Keccak { .. }))
+        self.flags() & FLAG_KECCAK != 0
     }
 
     pub(crate) fn contains_gasleft(&self) -> bool {
-        self.visit_bool(|expr| expr.is_raw_gasleft())
+        self.flags() & FLAG_GASLEFT != 0
     }
 
     pub(crate) fn contains_udiv(&self) -> bool {
-        self.visit_bool(|expr| expr.contains_udiv())
+        self.flags() & FLAG_UDIV != 0
     }
 
     pub(crate) fn implies_unsigned_less_or_equal(
@@ -906,4 +973,10 @@ pub(crate) fn visit_unique<'a, B>(
         }
     }
     ControlFlow::Continue(())
+}
+
+/// Returns the largest value `expr` can take by its bit width, when that is below `2^256 - 1`.
+fn unsigned_max(expr: &SymExpr) -> U256 {
+    let bits = expr.unsigned_bits();
+    if bits < 256 { (U256::ONE << bits) - U256::ONE } else { U256::MAX }
 }

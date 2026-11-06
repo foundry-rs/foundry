@@ -395,7 +395,8 @@
         "smt_input_bytes": { "type": "integer", "minimum": 0 },
         "smt_max_query_bytes": { "type": "integer", "minimum": 0 },
         "smt_build_time_ms": { "type": "integer", "minimum": 0 },
-        "smt_max_query_time_ms": { "type": "integer", "minimum": 0 }
+        "smt_max_query_time_ms": { "type": "integer", "minimum": 0 },
+        "model_reuse_hits": { "type": "integer", "minimum": 0 }
       }
     },
     "assumption": {

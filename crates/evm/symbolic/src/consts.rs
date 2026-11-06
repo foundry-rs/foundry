@@ -46,3 +46,6 @@ pub(crate) const FALLBACK_MODEL_MAX_VARS: usize = 5;
 pub(crate) const FALLBACK_MODEL_MAX_CANDIDATES_PER_VAR: usize = 24;
 pub(crate) const FALLBACK_MODEL_MAX_ASSIGNMENTS: usize =
     FALLBACK_MODEL_MAX_CANDIDATES_PER_VAR * FALLBACK_MODEL_MAX_CANDIDATES_PER_VAR;
+
+/// Largest symbolic calldata whose feasible size range a path computes by scanning every size.
+pub(crate) const MAX_CALLDATA_SIZE_RANGE_SCAN: usize = 1 << 14;

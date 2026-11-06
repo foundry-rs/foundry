@@ -12,11 +12,23 @@ pub(crate) struct SymCx {
     /// Ordered so that the closest hash below a constant is a range lookup.
     concrete_keccak_preimages: BTreeMap<U256, Arc<[SymExpr]>>,
     cache: SymCxCache,
-    /// Solver normalization results for `ite`-containing words, keyed by the input word.
-    ///
-    /// Keys are strong hash-consed handles, so the map is bounded like the SAT cache.
-    solver_normalized_words: HashMap<SymExpr, SymExpr>,
+    /// Memoized context-free solver normalization of words, which is a pure function.
+    normalized_words: HashMap<SymExpr, SymExpr>,
+    /// Memoized context-free solver normalization of predicates.
+    normalized_bools: HashMap<SymBoolExpr, SymBoolExpr>,
+    /// Memoized solver forms of `word == 0` (`true`) and `word != 0` (`false`), `None` when the
+    /// word has no special form.
+    normalized_zero_tests: HashMap<(SymExpr, bool), Option<SymBoolExpr>>,
+    /// Memoized bytes each word is known to hold whatever its symbols are, a pure function of
+    /// the word.
+    known_bytes: HashMap<SymExpr, KnownBytes>,
 }
+
+/// The byte at each of a word's 32 positions, when it is known.
+pub(in crate::runtime) type KnownBytes = [Option<u8>; 32];
+
+/// Most memoized normalizations kept per kind before the memo starts over.
+const MAX_NORMALIZATION_MEMO: usize = 1 << 20;
 
 struct SymCxCache {
     zero: SymExpr,
@@ -47,8 +59,22 @@ impl SymCx {
             replayable_inputs: SymbolicVars::default(),
             concrete_keccak_preimages: BTreeMap::new(),
             cache: SymCxCache { zero, one, bool_true, bool_false, bytes_empty },
-            solver_normalized_words: HashMap::default(),
+            normalized_words: HashMap::default(),
+            normalized_bools: HashMap::default(),
+            normalized_zero_tests: HashMap::default(),
+            known_bytes: HashMap::default(),
         }
+    }
+
+    pub(in crate::runtime) fn cached_known_bytes(&self, expr: &SymExpr) -> Option<KnownBytes> {
+        self.known_bytes.get(expr).copied()
+    }
+
+    pub(in crate::runtime) fn memoize_known_bytes(&mut self, expr: SymExpr, bytes: KnownBytes) {
+        if self.known_bytes.len() >= MAX_NORMALIZATION_MEMO {
+            self.known_bytes.clear();
+        }
+        self.known_bytes.insert(expr, bytes);
     }
 
     pub(in crate::runtime) fn mk_expr_kind(&mut self, expr: SymExprKind) -> SymExpr {
@@ -64,6 +90,62 @@ impl SymCx {
             return self.cache.bytes_empty.clone();
         }
         SymBytes { kind: self.bytes.make(bytes) }
+    }
+
+    /// Returns the memoized normalization of `expr`.
+    pub(in crate::runtime) fn normalized_word(&self, expr: &SymExpr) -> Option<SymExpr> {
+        self.normalized_words.get(expr).cloned()
+    }
+
+    /// Memoizes the normalization of `expr`.
+    pub(in crate::runtime) fn memoize_normalized_word(
+        &mut self,
+        expr: SymExpr,
+        normalized: SymExpr,
+    ) {
+        if self.normalized_words.len() >= MAX_NORMALIZATION_MEMO {
+            self.normalized_words.clear();
+        }
+        self.normalized_words.insert(expr, normalized);
+    }
+
+    /// Returns the memoized normalization of `expr`.
+    pub(in crate::runtime) fn normalized_bool(&self, expr: &SymBoolExpr) -> Option<SymBoolExpr> {
+        self.normalized_bools.get(expr).cloned()
+    }
+
+    /// Memoizes the normalization of `expr`.
+    pub(in crate::runtime) fn memoize_normalized_bool(
+        &mut self,
+        expr: SymBoolExpr,
+        normalized: SymBoolExpr,
+    ) {
+        if self.normalized_bools.len() >= MAX_NORMALIZATION_MEMO {
+            self.normalized_bools.clear();
+        }
+        self.normalized_bools.insert(expr, normalized);
+    }
+
+    /// Returns the memoized solver form of a zero test of `expr`, `Some(None)` when it has none.
+    pub(in crate::runtime) fn normalized_zero_test(
+        &self,
+        expr: &SymExpr,
+        is_zero: bool,
+    ) -> Option<Option<SymBoolExpr>> {
+        self.normalized_zero_tests.get(&(expr.clone(), is_zero)).cloned()
+    }
+
+    /// Memoizes the solver form of a zero test of `expr`.
+    pub(in crate::runtime) fn memoize_normalized_zero_test(
+        &mut self,
+        expr: SymExpr,
+        is_zero: bool,
+        normalized: Option<SymBoolExpr>,
+    ) {
+        if self.normalized_zero_tests.len() >= MAX_NORMALIZATION_MEMO {
+            self.normalized_zero_tests.clear();
+        }
+        self.normalized_zero_tests.insert((expr, is_zero), normalized);
     }
 
     pub(in crate::runtime::expr) fn cached_zero(&self) -> SymExpr {
@@ -118,26 +200,6 @@ impl SymCx {
     ) -> Option<U256> {
         let (&hash, _) = self.concrete_keccak_preimages.range(..=value).next_back()?;
         (value - hash < U256::ONE << offset_bits).then_some(hash)
-    }
-
-    /// Returns the memoized solver normalization of `expr`.
-    pub(in crate::runtime) fn solver_normalized_word(&self, expr: &SymExpr) -> Option<SymExpr> {
-        self.solver_normalized_words.get(expr).cloned()
-    }
-
-    /// Memoizes the solver normalization of `expr`.
-    ///
-    /// A full map is cleared rather than frozen: a miss on a nested `ite` chain re-traverses it
-    /// once per nesting level, so later words must stay cacheable.
-    pub(in crate::runtime) fn record_solver_normalized_word(
-        &mut self,
-        expr: SymExpr,
-        normalized: SymExpr,
-    ) {
-        if self.solver_normalized_words.len() >= SYMBOLIC_SOLVER_SAT_CACHE_MAX_ENTRIES {
-            self.solver_normalized_words.clear();
-        }
-        self.solver_normalized_words.insert(expr, normalized);
     }
 }
 

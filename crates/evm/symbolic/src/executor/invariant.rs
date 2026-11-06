@@ -132,6 +132,8 @@ impl SymbolicExecutor {
                 contract_name: input.target.contract_name.clone(),
                 function: input.target.function.clone(),
                 calldata,
+                warp: None,
+                roll: None,
             };
             let call_data = step.calldata.call_data(&mut self.cx);
             let constraints = step.calldata.constraints().to_vec();
@@ -308,6 +310,8 @@ impl SymbolicExecutor {
         state.expected_emit = None;
         state.origin = sender;
         state.origin_word = SymExpr::constant(&mut self.cx, address_word(sender));
+        state.sequence_sender = Some(state.origin_word.clone());
+        state.sender_observed = false;
         let callvalue = SymExpr::zero(&mut self.cx);
         state.frame =
             CallFrame::new(&mut self.cx, target, target, sender, callvalue, false, calldata);
@@ -356,6 +360,9 @@ impl SymbolicExecutor {
             .map(|step| {
                 let args = step.calldata.model_to_args(&mut self.cx, &model)?;
                 let calldata = Bytes::from(step.function.abi_encode_input(&args)?);
+                let delay = |delay: &Option<SymExpr>| {
+                    delay.as_ref().and_then(|delay| delay.eval_model(&model).ok())
+                };
                 Ok(SymbolicInvariantStep {
                     sender: step.sender,
                     address: step.address,
@@ -364,6 +371,8 @@ impl SymbolicExecutor {
                     signature: step.function.signature(),
                     args,
                     calldata,
+                    warp: delay(&step.warp),
+                    roll: delay(&step.roll),
                 })
             })
             .collect::<Result<Vec<_>, SymbolicError>>()?;
