@@ -221,6 +221,7 @@ impl SymbolicExecutor {
                 std::mem::take(&mut outcome.state.mapping_storage_store_hooks);
             parent.mapping_hook_keccak_preimages =
                 std::mem::take(&mut outcome.state.mapping_hook_keccak_preimages);
+            parent.persistent_writes = std::mem::take(&mut outcome.state.persistent_writes);
             parent.storage_hook_active = false;
 
             match outcome.status {
@@ -229,6 +230,9 @@ impl SymbolicExecutor {
                     parent.block = outcome.state.block;
                 }
                 CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {
+                    parent.world.merge_replay_metadata_from(&outcome.state.world);
+                    let start = state.persistent_writes.len();
+                    parent.replay_persistent_writes(&mut self.cx, executor, start)?;
                     parent.return_data = outcome.state.frame.return_data;
                     parent.pending_storage_hook_revert = true;
                 }

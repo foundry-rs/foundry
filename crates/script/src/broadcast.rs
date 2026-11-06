@@ -469,6 +469,9 @@ where
         .collect()
 }
 
+/// Returns the operations of the sequence that are left to send or recover. From the first sequence
+/// with a recorded revert on, the script never reached operations that were not yet submitted, so
+/// only operations that were already submitted are left.
 pub(crate) fn remaining_operation_indices<N: Network>(
     sequence: &ScriptSequenceKind<N>,
     sequence_index: usize,
@@ -476,9 +479,43 @@ pub(crate) fn remaining_operation_indices<N: Network>(
 where
     N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
 {
+    let after_revert = sequence.sequences()[..=sequence_index]
+        .iter()
+        .any(|deployment| !deployment.reverted.is_empty());
     (0..sequence.sequences()[sequence_index].transactions.len())
-        .filter(|&index| !is_operation_completed(sequence, sequence_index, index))
+        .filter(|&index| {
+            !is_operation_completed(sequence, sequence_index, index)
+                && (!after_revert || is_operation_submitted(sequence, sequence_index, index))
+        })
         .collect()
+}
+
+/// Returns the error for operations that resume must not send: the script stops at a failed call,
+/// so it never reached the operations without a submission in the first sequence with a recorded
+/// revert or in a later one.
+pub(crate) fn refused_after_revert<N: Network>(
+    sequence: &ScriptSequenceKind<N>,
+) -> Option<eyre::Report>
+where
+    N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
+{
+    let reverted =
+        sequence.sequences().iter().position(|deployment| !deployment.reverted.is_empty())?;
+    let refused = (reverted..sequence.sequences().len()).any(|index| {
+        (0..sequence.sequences()[index].transactions.len()).any(|operation| {
+            !is_operation_completed(sequence, index, operation)
+                && !is_operation_submitted(sequence, index, operation)
+        })
+    });
+    refused.then(|| {
+        sequence.label_error(
+            reverted,
+            eyre::eyre!(
+                "transaction {} reverted, so the script would not have sent the operations after it; resume will not send them. Pass `--broadcast --start-fresh` to archive this broadcast and run the script again",
+                sequence.sequences()[reverted].reverted.iter().format(", ")
+            ),
+        )
+    })
 }
 
 /// Returns true if the operation has a receipt or a recorded revert for its own hash.
@@ -508,6 +545,21 @@ where
         deployment.reverted.contains(&hash)
             || deployment.receipts.iter().any(|receipt| receipt.transaction_hash() == hash)
     })
+}
+
+/// Returns true if the operation was already submitted, or may have been: it has a recorded hash or
+/// a saved signed or delegated attempt.
+fn is_operation_submitted<N: Network>(
+    sequence: &ScriptSequenceKind<N>,
+    sequence_index: usize,
+    index: usize,
+) -> bool
+where
+    N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
+{
+    sequence.sequences()[sequence_index].transactions[index].hash.is_some()
+        || sequence.signed_payload(sequence_index, index).is_some()
+        || sequence.delegated_status(sequence_index, index).is_some()
 }
 
 fn remaining_sender_addresses<N: Network>(sequence: &ScriptSequenceKind<N>) -> AddressHashSet
@@ -1209,6 +1261,13 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     .then(|| format!("chain {}: {}", deployment.chain, hashes.iter().format(", ")))
             })
             .collect::<Vec<_>>();
+        // Saved attempts after a recorded revert are recovered above, but the new work is refused
+        // once they are resolved. Until then, the warning below points to `--resume`.
+        if unresolved.is_empty()
+            && let Some(err) = refused_after_revert(&self.sequence)
+        {
+            return Err(err);
+        }
         if !shell::is_json() {
             sh_println!("\n\n==========================")?;
         }
@@ -2296,6 +2355,28 @@ mod tests {
         sequence.sequences_mut()[0].receipts.push(second_receipt);
 
         assert_eq!(remaining_operation_indices(&sequence, 0), [0]);
+    }
+
+    #[test]
+    fn recorded_revert_leaves_only_submitted_operations() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut deployment = ScriptSequence::<Ethereum> {
+            chain: 1,
+            transactions: [planned_tx(SIGNED_TX), planned_tx(OTHER_SIGNED_TX)].into(),
+            ..Default::default()
+        };
+        deployment.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
+        let mut sequence = ScriptSequenceKind::new_single(deployment, false, None).unwrap();
+        let reverted =
+            sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX), true).unwrap();
+        sequence.sequences_mut()[0].reverted.push(reverted);
+        assert!(remaining_operation_indices(&sequence, 0).is_empty());
+        assert!(refused_after_revert(&sequence).is_some());
+
+        // An attempt saved before the revert was recorded is recovered, and nothing is refused.
+        sequence.persist_signed_payload(0, 1, Bytes::from_static(OTHER_SIGNED_TX), true).unwrap();
+        assert_eq!(remaining_operation_indices(&sequence, 0), [1]);
+        assert!(refused_after_revert(&sequence).is_none());
     }
 
     #[test]

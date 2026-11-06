@@ -1218,6 +1218,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             } else {
                 0
             };
+            // Storage states this run reached, as the index of the call that produced each and a
+            // feature that call reached first. A resumed run starts from its snapshot's state.
+            let mut frontier_states = start
+                .state
+                .map(|state| (start.prefix.len() - 1, state))
+                .into_iter()
+                .collect::<Vec<_>>();
             let mut frontier_run = (frontier_limit > 0
                 || (collect_live
                     && LiveInvariantSolver::accepts_sequence(
@@ -1253,6 +1260,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
             let mut call_cmp_values = Vec::new();
             let mut call_new_coverage = false;
+            let mut run_reverts = 0u64;
             let mut coverage_prefix_len = 0;
             let mut assertion_failure = false;
             let mut pre_merge_edges_hash = None;
@@ -1389,6 +1397,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             }
                             let (handler_target, handler_selector) =
                                 handler.take().expect("feedback precedes campaign checks");
+                            if result.reverted {
+                                run_reverts += 1;
+                            }
                             let state_changeset = std::mem::take(&mut result.state_changeset);
                             let reverted = result.reverted;
                             if !result.reverted {
@@ -1508,6 +1519,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             }
                             if !reverted {
                                 let novel = snapshots.observe(&state_changeset);
+                                if let Some(&state) = novel.first()
+                                    && let Some(history) = &frontier_run
+                                {
+                                    frontier_states.push((history.inputs.len() - 1, state));
+                                }
                                 // Targets created mid-run are dropped at its end, so states
                                 // holding them are not resumed.
                                 if current_run.created_contracts.is_empty() {
@@ -1617,7 +1633,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 frontier_recorder
                     .capture_sequence(&frontier_run.inputs, &frontier_run.cmp_seq[..len]);
                 if let Some(solver) = live_solver {
-                    solver.lock().unwrap().submit(frontier_run, config.depth as usize);
+                    solver.lock().unwrap().submit(
+                        frontier_run,
+                        config.depth as usize,
+                        &frontier_states,
+                    );
                 }
             }
             let optimization = current_run.optimization_value.map(|v| {
@@ -1664,7 +1684,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             for fuzz_run in &current_run.fuzz_runs {
                 campaign_state.record_call(fuzz_run.gas);
             }
-            snapshots.finish_run(current_run.new_coverage);
+            snapshots.finish_run(
+                current_run.new_coverage,
+                current_run.fuzz_runs.len() as u64,
+                run_reverts,
+            );
             current_run.drop_corpus_payloads();
             invariant_test.end_run(current_run, gas_report_samples);
             runs += 1;

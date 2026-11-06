@@ -53,6 +53,8 @@ pub(crate) struct PathState {
     pub(crate) mapping_hook_keccak_preimages: HashMap<(Address, SymExpr), Arc<[SymExpr]>>,
     pub(crate) storage_hook_active: bool,
     pub(crate) pending_storage_hook_revert: bool,
+    /// Cheatcode writes that survive a revert of the frame that made them, as in Forge.
+    pub(crate) persistent_writes: Vec<PersistentWrite>,
 }
 
 impl PathState {
@@ -127,6 +129,7 @@ impl PathState {
             mapping_hook_keccak_preimages: HashMap::default(),
             storage_hook_active: false,
             pending_storage_hook_revert: false,
+            persistent_writes: Vec::new(),
         }
     }
 
@@ -334,6 +337,7 @@ impl PathState {
         self.expected_creates = std::mem::take(&mut child.expected_creates);
         self.call_mocks = std::mem::take(&mut child.call_mocks);
         self.function_mocks = std::mem::take(&mut child.function_mocks);
+        self.persistent_writes = std::mem::take(&mut child.persistent_writes);
     }
 
     /// Drops logs recorded by a failed call that started with `len` logs in `generation`.
@@ -986,6 +990,84 @@ impl PathState {
             && self.expected_emit.as_ref().is_none_or(ExpectedEmit::is_forbidden)
             && self.expected_calls.iter().all(ExpectedCall::is_satisfied)
             && self.expected_creates.is_empty()
+    }
+
+    /// Sets a balance as `vm.deal` does, recording the write so it survives reverts.
+    pub(crate) fn set_persistent_balance(
+        &mut self,
+        cx: &mut SymCx,
+        executor: &ExecutorView<'_>,
+        address: Address,
+        value: SymExpr,
+    ) {
+        let previous = self.world.balance_word_for_address(cx, executor, address);
+        let delta = SymExpr::binop(cx, SymBinOp::Sub, value.clone(), previous);
+        self.world.set_balance_word(address, value);
+        self.persistent_writes.push(PersistentWrite::Balance(address, delta));
+    }
+
+    /// Sets a nonce as the nonce cheatcodes do, recording the write so it survives reverts.
+    pub(crate) fn set_persistent_nonce(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        address: Address,
+        nonce: u64,
+    ) -> Result<(), SymbolicError> {
+        let previous = self.world.nonce(executor, address)?;
+        self.world.set_nonce(address, nonce);
+        let delta = i128::from(nonce) - i128::from(previous);
+        self.persistent_writes.push(PersistentWrite::Nonce(address, delta));
+        Ok(())
+    }
+
+    /// Reapplies the persistent writes recorded since `start` after a failed frame restored the
+    /// world.
+    ///
+    /// Forge's cheatcodes write balances and nonces outside the journal, so a revert only undoes
+    /// the journaled changes made on top of them: balances keep the write's wrapping delta, and
+    /// nonces keep its delta, saturated at the nonce bounds, unless the revert undoes the
+    /// account's creation, which resets the nonce. A failed frame that restored a snapshot
+    /// returns to the state from just before the first restore made since it started, so later
+    /// writes are dropped.
+    pub(crate) fn replay_persistent_writes(
+        &mut self,
+        cx: &mut SymCx,
+        executor: &ExecutorView<'_>,
+        start: usize,
+    ) -> Result<(), SymbolicError> {
+        let mut nonce_deltas = HashMap::<Address, i128>::default();
+        let mut created = HashSet::<Address>::default();
+        for write in self.persistent_writes.split_off(start) {
+            match write {
+                PersistentWrite::Balance(address, delta) => {
+                    let balance = self.world.balance_word_for_address(cx, executor, address);
+                    let balance = SymExpr::binop(cx, SymBinOp::Add, balance, delta.clone());
+                    self.world.set_balance_word(address, balance);
+                    self.persistent_writes.push(PersistentWrite::Balance(address, delta));
+                }
+                PersistentWrite::Nonce(address, delta) => {
+                    *nonce_deltas.entry(address).or_default() += delta;
+                }
+                PersistentWrite::Created(address) => {
+                    created.insert(address);
+                }
+                PersistentWrite::Restore => break,
+            }
+        }
+        // Each account's nonce writes are recorded again as one net change, so an enclosing
+        // replay keeps this replay's saturation.
+        for (address, delta) in nonce_deltas {
+            let previous = self.world.nonce(executor, address)?;
+            let nonce = if created.contains(&address) {
+                0
+            } else {
+                u64::try_from((i128::from(previous) + delta).max(0)).unwrap_or(u64::MAX)
+            };
+            if nonce != previous {
+                self.set_persistent_nonce(executor, address, nonce)?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -2047,7 +2129,7 @@ impl SymbolicWorld {
             .push((address, key.clone()));
     }
 
-    fn merge_replay_metadata_from(&mut self, other: &Self) {
+    pub(crate) fn merge_replay_metadata_from(&mut self, other: &Self) {
         for (symbol, slots) in &other.replay_storage_slots {
             for slot in slots {
                 self.record_replay_storage_slot(*symbol, slot.address, slot.slot);
@@ -2600,4 +2682,18 @@ impl SymbolicBlock {
 
         Ok(result)
     }
+}
+
+/// A cheatcode write that survives a revert of the frame that made it, see
+/// [`PathState::replay_persistent_writes`].
+#[derive(Clone, Debug)]
+pub(crate) enum PersistentWrite {
+    /// Adds a wrapping delta to an account's balance.
+    Balance(Address, SymExpr),
+    /// Adds a delta to an account's nonce.
+    Nonce(Address, i128),
+    /// Marks an account created, so a revert that undoes the creation resets its nonce.
+    Created(Address),
+    /// Marks a snapshot restore.
+    Restore,
 }
