@@ -16,7 +16,7 @@ use foundry_evm_core::{
     evm::{BlockEnvFor, EvmFactoryFor, FoundryContextFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     fork::CreateFork,
 };
-use revm::{context::ContextTr, state::EvmState};
+use revm::context::ContextTr;
 
 impl Cheatcode for activeForkCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
@@ -554,7 +554,7 @@ fn transact<FEN: FoundryEvmNetwork>(
     super::persist_child_state(
         &mut ccx.state.isolated_snapshot_restores,
         ccx.ecx.db_mut(),
-        &EvmState::default(),
+        None,
         &state,
     )?;
     #[cfg(not(feature = "monad"))]

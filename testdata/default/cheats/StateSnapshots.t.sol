@@ -182,6 +182,10 @@ contract NestedRestoreStore {
             slots[i] = i;
         }
     }
+
+    function destroy() external {
+        selfdestruct(payable(address(this)));
+    }
 }
 
 contract NestedRestoreHelper {
@@ -312,6 +316,7 @@ abstract contract NestedRestoreFrameRevertBase is Test {
 
     NestedRestoreStore store;
     NestedRestoreHelper helper;
+    NestedRestoreStore created;
 
     function setUp() public {
         store = new NestedRestoreStore();
@@ -532,6 +537,34 @@ abstract contract NestedRestoreFrameRevertBase is Test {
 
     function markStore(uint256 newMarker) external {
         store.mark(newMarker);
+    }
+
+    /// An account created by the transaction stays created in the current transaction, so a
+    /// `selfdestruct` deletes it and burns its balance.
+    function testRevertedRestoreKeepsLaterTransactionCreation() public {
+        bytes memory rawTx = signedTransaction(abi.encodeCall(this.createStore, ()));
+        uint256 snapshotId = prepare(20);
+        expectHelperRevert(abi.encodeCall(helper.restoreTransactRevert, (snapshotId, rawTx, false)), "restore reverted");
+        vm.deal(address(created), 3);
+        created.destroy();
+        assertEq(address(created).balance, 0);
+    }
+
+    function createStore() external {
+        created = new NestedRestoreStore();
+    }
+
+    /// An account destroyed by a committed transaction stays deleted.
+    function testRevertedRestoreKeepsLaterTransactionDestruction() public {
+        bytes memory rawTx = signedTransaction(abi.encodeCall(this.createAndDestroyStore, ()));
+        uint256 snapshotId = prepare(20);
+        expectHelperRevert(abi.encodeCall(helper.restoreTransactRevert, (snapshotId, rawTx, true)), "restore reverted");
+        assertEq(address(created).code.length, 0);
+    }
+
+    function createAndDestroyStore() external {
+        created = new NestedRestoreStore();
+        created.destroy();
     }
 
     function signedTransaction(bytes memory data) internal returns (bytes memory) {

@@ -44,7 +44,7 @@ use revm::{
     context_interface::journaled_state::JournalLoadError,
     inspector::JournalExt,
     primitives::hardfork::SpecId,
-    state::{Account, AccountInfo, EvmState},
+    state::{Account, AccountInfo, AccountStatus, EvmState},
 };
 use std::{
     collections::{BTreeMap, btree_map::Entry},
@@ -1393,7 +1393,7 @@ impl Cheatcode for broadcastRawTransactionCall {
         persist_child_state(
             &mut ccx.state.isolated_snapshot_restores,
             ccx.ecx.db_mut(),
-            &EvmState::default(),
+            None,
             &state,
         )?;
         #[cfg(feature = "monad")]
@@ -1531,7 +1531,7 @@ impl Cheatcode for executeTransactionCall {
         persist_child_state(
             &mut ccx.state.isolated_snapshot_restores,
             db,
-            &journal.state,
+            Some(&journal.state),
             &res.state,
         )?;
         merge_child_state(ccx.ecx.journal_mut().evm_state_mut(), res.state, false);
@@ -1776,21 +1776,41 @@ pub(crate) fn persist_write<DB: Database>(
 }
 
 /// Persists the writes of a nested transaction, whose returned `child` state started from the
-/// accounts in `parent` or else from their original values, with [`persist_write`].
+/// accounts in `parent` or else from their original values, with [`persist_write`]. The state was
+/// merged into `parent` with its account status, or committed to the database, which keeps no
+/// account status, when `parent` is `None`.
 ///
-/// Only the fields the transaction changed are written: the other fields of `child` hold the live
-/// values, which can include a snapshot restoration that a failing frame must undo.
+/// Only the fields and status flags the transaction changed are written, except for accounts that
+/// are new to `parent` or deleted by the commit: the rest of `child` holds the live values, which
+/// can include a snapshot restoration that a failing frame must undo.
 fn persist_child_state<DB: Database>(
     journals: &mut [JournaledState],
     db: &mut DB,
-    parent: &EvmState,
+    parent: Option<&EvmState>,
     child: &EvmState,
 ) -> Result<(), DB::Error> {
     if journals.is_empty() {
         return Ok(());
     }
     for (&address, account) in child {
-        let base = parent.get(&address).map_or_else(|| account.original_info(), |p| p.info.clone());
+        let parent_account = parent.and_then(|parent| parent.get(&address));
+        if parent.is_some() && parent_account.is_none() {
+            // Like `merge_child_state`, which inserts accounts without journaling them, so that
+            // reverts do not make them cold and drop their local status flags.
+            for journal in journals.iter_mut() {
+                journal.state.entry(address).or_insert_with(|| account.clone());
+            }
+        } else if parent.is_none() && account.is_selfdestructed() {
+            // The database commit deletes the account.
+            for journal in journals.iter_mut() {
+                journal.load_account(db, address)?;
+                let target = journal.state.get_mut(&address).expect("account is loaded");
+                target.info = AccountInfo::default();
+                target.storage.values_mut().for_each(|slot| slot.present_value = U256::ZERO);
+            }
+            continue;
+        }
+        let base = parent_account.map_or_else(|| account.original_info(), |p| p.info.clone());
         let info = &account.info;
         let balance = base.balance != info.balance;
         let nonce = base.nonce != info.nonce;
@@ -1799,7 +1819,15 @@ fn persist_child_state<DB: Database>(
             .changed_storage_slots()
             .map(|(&key, slot)| (key, slot.present_value))
             .collect::<Vec<_>>();
-        if !balance && !nonce && !code && slots.is_empty() {
+        // Like `merge_child_state`, which keeps the warmth of the parent's accounts.
+        let status = if parent.is_some() {
+            account.status
+                - parent_account.map_or(AccountStatus::empty(), |p| p.status)
+                - AccountStatus::Cold
+        } else {
+            AccountStatus::empty()
+        };
+        if !balance && !nonce && !code && slots.is_empty() && status.is_empty() {
             continue;
         }
         let write = |target: &mut AccountInfo| {
@@ -1815,6 +1843,9 @@ fn persist_child_state<DB: Database>(
             }
         };
         persist_write(journals, db, address, write, &slots)?;
+        for journal in journals.iter_mut() {
+            journal.state.get_mut(&address).expect("account is loaded").status |= status;
+        }
     }
     Ok(())
 }
