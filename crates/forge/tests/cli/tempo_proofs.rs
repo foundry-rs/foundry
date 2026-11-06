@@ -1,5 +1,6 @@
 //! Consume fresh Tempo HTTP evidence with the independent upstream Solidity verifiers.
 
+use alloy_primitives::B256;
 use anvil::{NodeConfig, spawn};
 use foundry_common::fs::read_json_file;
 use foundry_compilers::artifacts::{
@@ -16,6 +17,7 @@ use tokio::time::timeout;
 
 mod evidence;
 mod sources;
+mod submission;
 
 #[forgetest]
 async fn tempo_proofs_fork(prj: _, cmd: _) {
@@ -58,24 +60,39 @@ async fn tempo_proofs_fork(prj: _, cmd: _) {
     )
     .await
     .expect("collect fresh Tempo HTTP evidence within 60 seconds");
-    proof["fork"] =
-        timeout(Duration::from_secs(60), evidence::collect_fork(config, bytecode, deployed))
-            .await
-            .expect("collect local two-node fork evidence within 60 seconds");
+    let fork_seed = B256::repeat_byte(0x52);
+    proof["fork"] = timeout(
+        Duration::from_secs(60),
+        evidence::collect_fork(config.clone(), bytecode, deployed, fork_seed),
+    )
+    .await
+    .expect("collect local two-node fork evidence within 60 seconds");
+    let receiver = read_json_file::<ConfigurableContractArtifact>(
+        &prj.artifacts().join("TempoProofVerifier.sol/TempoProofReceiver.json"),
+    )
+    .unwrap();
+    timeout(
+        Duration::from_secs(60),
+        submission::verify(config, receiver, fork_seed, &proof["fork"]),
+    )
+    .await
+    .expect("submit fork evidence to a local Tempo receiver over HTTP within 60 seconds");
     prj.create_file("fixtures/proofs.json", &serde_json::to_string_pretty(&proof).unwrap());
     cmd.forge_fuse().args(["test", "--offline"]).assert_success().stdout_eq(str![[r#"
 No files changed, compilation skipped
 
-Ran 31 tests for test/TempoProof.t.sol:TempoProofTest
+Ran 33 tests for test/TempoProof.t.sol:TempoProofTest
 [PASS] test_certified_storage_proof() ([GAS])
 [PASS] test_fork_historical_certified_storage_proof() ([GAS])
 [PASS] test_fork_imported_account_certified_storage_proof() ([GAS])
 [PASS] test_fork_receiver_accepts_certified_storage_proof() ([GAS])
+[PASS] test_fork_receiver_accepts_historical_and_repeated_evidence() ([GAS])
 [PASS] test_fork_receiver_rejects_other_identity() ([GAS])
 [PASS] test_fork_reject_mixed_account_proof() ([GAS])
 [PASS] test_fork_reject_mixed_storage_proof() ([GAS])
 [PASS] test_fork_reject_upstream_key() ([GAS])
 [PASS] test_fork_updated_certified_storage_proof() ([GAS])
+[PASS] test_receiver_rejects_rotated_identity() ([GAS])
 [PASS] test_reject_changed_account_proof() ([GAS])
 [PASS] test_reject_changed_epoch() ([GAS])
 [PASS] test_reject_changed_header() ([GAS])
@@ -98,9 +115,9 @@ Ran 31 tests for test/TempoProof.t.sol:TempoProofTest
 [PASS] test_rotation_rejects_unannounced_key() ([GAS])
 [PASS] test_rotation_rejects_unauthenticated_boundary() ([GAS])
 [PASS] test_rotation_rejects_wrong_epoch() ([GAS])
-Suite result: ok. 31 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 33 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 31 tests passed, 0 failed, 0 skipped (31 total tests)
+Ran 1 test suite [ELAPSED]: 33 tests passed, 0 failed, 0 skipped (33 total tests)
 
 "#]]);
 }

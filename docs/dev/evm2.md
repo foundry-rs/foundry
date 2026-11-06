@@ -23,32 +23,30 @@ serialize, so existing caches stay readable. revm does not execute anything.
 
 ## Known divergences from revm
 
-Foundry releases before evm2 executed on revm. These differences are accepted: do not adjust gas
-snapshots or tests to reproduce the revm behavior.
+These compatibility differences affect execution, gas reports and Anvil library integrations.
 
 - **Recipient balance overflow**: evm2's `State::transfer` saturates the recipient's balance at
-  `type(uint256).max` instead of failing the transfer, as revm's `OverflowPayment` did. A value
-  call that would overflow the recipient therefore succeeds: the sender loses the full value and
-  the excess is burned. It is reachable only through `vm.deal` or `anvil_setBalance`, and concrete
-  execution disagrees with the symbolic engine, which models revm's failure.
-- **Arbitrary storage warmth**: revm read every slot warm after `vm.setArbitraryStorage`. On evm2,
-  slots of an arbitrary-storage account warm on first access as usual, so a first read costs 2,000
-  more gas.
-- **Fork warmth across transactions**: revm kept a journal per fork across transactions, so state
-  touched in `setUp` stayed warm after `vm.selectFork` or `vm.rollFork` in a test, and with
-  `isolate` its `vm.rollFork` cooled slots the test had already read. On evm2, warmth is per
-  transaction and survives fork switches within it in both isolation modes (`Issue3110`,
-  `Issue3220`, `Issue5739`, `Issue8006`, `PersistentWrites`).
-- **`vm.transact` cheatcode access**: revm ran `vm.transact` over a fresh backend that denied
-  cheatcodes to `vm.allowCheatcodes` accounts. On evm2 those accounts can call cheatcodes inside
-  `vm.transact`, as in other calls.
-- **Amsterdam isolation**: revm never set the nonce of an isolated call's transaction, so isolated
-  `CREATE`s after the first skipped EIP-8037 account-creation state gas. On evm2, every isolated
-  `CREATE` pays it, as a non-isolated one does.
-- **`vm.setEvmVersion`**: evm2 changes the spec only between frames, so a change applies from the
-  next call or create, not from the next opcode. revm also reported 6,000 more gas per test after
-  `vm.setEvmVersion("amsterdam")` in `setUp`, even after switching back, because its stipend
-  computation kept the EIP-2780 flag set.
-- **Anvil `PrecompileFactory`**: library users return a fixed `(Address, PrecompileId,
-  DynPrecompile)` list. revm's `install` hook, which could customize the precompile map, has no
-  equivalent.
+  `type(uint256).max` instead of halting with revm's `OverflowPayment`. Overflow alone does not
+  fail the call: the sender loses the full value and the excess is burned if the transfer commits.
+  The symbolic engine still models revm's failure.
+- **Arbitrary storage warmth**: with `vm.setArbitraryStorage`, the revm inspector warmed slots
+  before `SLOAD`. evm2 leaves otherwise-cold slots cold until the opcode accesses them, costing
+  2,000 more gas per cold read on Berlin and later.
+- **Fork warmth**: warmth resets between transactions instead of leaking from `setUp` through
+  revm's retained fork journals. Within a transaction, forks retain their own warmth and persistent
+  accounts carry warmth across switches. Isolated calls are separate transactions; an isolated
+  call that switches forks can replace the outer transaction's warmth with its own. See
+  [`ForkSwitch.t.sol`](../../testdata/default/cheats/ForkSwitch.t.sol).
+- **`vm.transact` cheatcode access**: accounts granted `vm.allowCheatcodes` retain access inside
+  `vm.transact`; revm's fresh replay backend did not preserve those permissions.
+- **Amsterdam isolation**: isolated `CREATE`s use the creator's current nonce for EIP-8037
+  account-creation gas, as non-isolated creates do. revm reused the outer transaction's nonce and
+  could skip that charge after the first creation.
+- **`vm.setEvmVersion`**: new calls, creates and executed transactions use the requested spec;
+  running frames keep theirs, unlike revm's opcode-level changes. revm also reported 6,000 more
+  gas per test after `vm.setEvmVersion("amsterdam")` in `setUp`, even after switching back, because
+  its stipend computation kept the EIP-2780 flag set.
+- **Anvil `PrecompileFactory`**: library users must enumerate custom precompiles as
+  `(Address, PrecompileId, DynPrecompile)` entries. Anvil no longer exposes `install` for customizing
+  the precompile map or adding dynamic address lookup; this is an Anvil API limitation, not a
+  limitation of evm2's `PrecompileProvider`.

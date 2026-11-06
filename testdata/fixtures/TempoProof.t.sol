@@ -263,4 +263,26 @@ contract TempoProofTest {
         vm.expectRevert(abi.encodeWithSignature("Error(string)", "vote signature"));
         receiver.submit(evidence, height, account, bytes32(0), 42);
     }
+
+    function test_receiver_rejects_rotated_identity() public {
+        require(this.verifyAfterHandoff(), "authenticated rotated storage");
+        TempoProofReceiver other = new TempoProofReceiver(initialKey);
+        vm.expectRevert(abi.encodeWithSignature("Error(string)", "vote signature"));
+        other.submit(successor, successorHeight, account, bytes32(0), 42);
+    }
+
+    function test_fork_receiver_accepts_historical_and_repeated_evidence() public {
+        TempoProofReceiver receiver = new TempoProofReceiver(forkKey);
+        vm.expectEmit(true, true, true, true, address(receiver));
+        emit TempoProofReceiver.ProofAccepted(
+            forkUpdated.subject.payload, forkUpdatedHeight, forkAccount, bytes32(0), 43
+        );
+        receiver.submit(forkUpdated, forkUpdatedHeight, forkAccount, bytes32(0), 43);
+        vm.expectEmit(true, true, true, true, address(receiver));
+        emit TempoProofReceiver.ProofAccepted(forkEvidence.subject.payload, forkHeight, forkAccount, bytes32(0), 42);
+        receiver.submit(forkEvidence, forkHeight, forkAccount, bytes32(0), 42);
+        vm.expectEmit(true, true, true, true, address(receiver));
+        emit TempoProofReceiver.ProofAccepted(forkEvidence.subject.payload, forkHeight, forkAccount, bytes32(0), 42);
+        receiver.submit(forkEvidence, forkHeight, forkAccount, bytes32(0), 42);
+    }
 }
