@@ -8651,6 +8651,8 @@ async fn tempo_consensus_fork_infers_epoch_length_from_chain_config() {
 
 mod subscriptions;
 
+mod create_token;
+
 #[cfg(feature = "cli")]
 mod epoch_warning;
 
