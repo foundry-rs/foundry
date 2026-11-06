@@ -12,7 +12,10 @@ use foundry_evm_core::{constants::DEFAULT_CREATE2_DEPLOYER, evm::FoundryEvmNetwo
 use foundry_evm_fuzz::strategies::BoundMutator;
 use proptest::prelude::Strategy;
 use rand::{Rng, RngCore, seq::SliceRandom};
-use revm::context::{ContextTr, JournalTr};
+use revm::{
+    Database,
+    context::{ContextTr, JournalTr},
+};
 use std::path::PathBuf;
 
 /// Contains locations of traces ignored via cheatcodes.
@@ -259,6 +262,22 @@ impl Cheatcode for copyStorageCall {
         if let Ok(from_account) = ccx.ecx.journal_mut().load_account(*from) {
             let from_storage = from_account.storage.clone();
             if ccx.ecx.journal_mut().load_account(*to).is_ok() {
+                // The replacement bypasses the journal, so it also goes to the journals that
+                // failing frames reinstate. Slots present only on the target keep their entries,
+                // which rollback records may reference, but take the value a reload would read.
+                let db = ccx.ecx.db_mut();
+                for (journal, _) in &mut ccx.state.isolated_snapshot_restores {
+                    journal.load_account(db, *to)?;
+                    let account = journal.state.get_mut(to).expect("account is loaded");
+                    let created = account.is_created();
+                    for (key, slot) in &mut account.storage {
+                        if !from_storage.contains_key(key) {
+                            slot.present_value =
+                                if created { U256::ZERO } else { db.storage(*to, *key)? };
+                        }
+                    }
+                    account.storage.extend(from_storage.clone());
+                }
                 // SAFETY: We ensured the account was already loaded.
                 ccx.ecx.journal_mut().evm_state_mut().get_mut(to).unwrap().storage = from_storage;
                 if let Some(arbitrary_storage) = &mut ccx.state.core.arbitrary_storage {

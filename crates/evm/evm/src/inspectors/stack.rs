@@ -42,7 +42,7 @@ use revm::{
         return_ok,
     },
     primitives::KECCAK_EMPTY,
-    state::Account,
+    state::{Account, EvmState},
 };
 use std::{
     ops::{Deref, DerefMut},
@@ -429,6 +429,8 @@ struct PendingCallTrace {
 struct IsolatedFrameCheckpoint {
     checkpoint: JournalCheckpoint,
     restore_len: usize,
+    /// Cheatcode account write count when the frame started.
+    account_writes: usize,
     return_depth: usize,
     is_create: bool,
     failed: bool,
@@ -603,7 +605,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         ecx: &mut FoundryContextFor<'_, FEN>,
         fork_id: Option<U256>,
         transaction: B256,
-    ) -> eyre::Result<ContextUpdateFor<EvmFactoryFor<FEN>>> {
+    ) -> eyre::Result<(ContextUpdateFor<EvmFactoryFor<FEN>>, EvmState)> {
         self.with_snapshot_tracking(cheats, |inner, cheats| {
             let mut evm_env = ecx.evm_clone();
             if let Some(disable_fee_charge) = inner.outer_disable_fee_charge {
@@ -621,7 +623,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         cheats: &mut Cheatcodes<FEN>,
         ecx: &mut FoundryContextFor<'_, FEN>,
         tx_env: TxEnvFor<FEN>,
-    ) -> eyre::Result<()> {
+    ) -> eyre::Result<EvmState> {
         self.with_snapshot_tracking(cheats, |inner, cheats| {
             let mut evm_env = ecx.evm_clone();
             if let Some(disable_fee_charge) = inner.outer_disable_fee_charge {
@@ -1547,13 +1549,21 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             && cheats.isolated_snapshot_restores.len() > frame.restore_len
         {
             cheats.isolated_snapshot_restores.truncate(frame.restore_len + 1);
-            let mut journal = cheats.isolated_snapshot_restores.pop().unwrap();
+            let (mut journal, account_writes) = cheats.isolated_snapshot_restores.pop().unwrap();
             journal.checkpoint_revert(frame.checkpoint);
             journal.depth = frame.return_depth;
             if cheats.isolated_snapshot_restores.is_empty() {
                 cheats.pending_isolated_snapshot_journal = None;
             }
             ecx.set_journal_inner(journal);
+            // The reinstated journal discards the account writes replayed by `call_end`, so restore
+            // its matching write history and replay it. Deltas already reflected in the saved
+            // journal must not be applied twice. The root frame starts before its writes are
+            // cleared.
+            if frame.return_depth > 0 {
+                cheats.account_writes[..account_writes.len()].copy_from_slice(&account_writes);
+                cheats.replay_account_writes(ecx, frame.account_writes, account_writes.len());
+            }
         }
 
         // The caller only needs the first restoration made since it started, so drop the ones a
@@ -1695,6 +1705,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                     selfdestructed_i: journal.selfdestructed_addresses.len(),
                 },
                 restore_len,
+                account_writes: cheats.account_writes.len(),
                 return_depth: journal.depth,
                 is_create: matches!(frame_input, FrameInput::Create(_)),
                 failed: false,
