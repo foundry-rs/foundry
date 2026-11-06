@@ -94,6 +94,76 @@ contract RevertedFrameHelper is Test {
         }
         revert FrameEffectApplied();
     }
+
+    function dealAfterReceive(uint256 amount) external payable {
+        vm.deal(address(this), amount);
+        revert FrameEffectApplied();
+    }
+
+    function dealThenRevertToOwnState(uint256 amount) external payable {
+        vm.deal(address(this), amount);
+        vm.revertToState(vm.snapshotState());
+        revert FrameEffectApplied();
+    }
+
+    function revertToStateBetweenWrites(uint256 amount, uint256 snapshot) external payable {
+        vm.deal(address(this), amount);
+        vm.revertToState(snapshot);
+        vm.setNonce(address(this), 50);
+        revert FrameEffectApplied();
+    }
+
+    function dealThenSelectForks(uint256 amount, uint256 otherFork, uint256 thisFork) external payable {
+        vm.deal(address(this), amount);
+        vm.selectFork(otherFork);
+        vm.selectFork(thisFork);
+        revert FrameEffectApplied();
+    }
+
+    function dealThenExecuteTransaction(uint256 amount, bytes calldata rawTx) external payable {
+        vm.deal(address(this), amount);
+        vm.executeTransaction(rawTx);
+        revert FrameEffectApplied();
+    }
+
+    function receiveThenTransaction(bytes calldata rawTx, bool broadcast) external payable {
+        if (broadcast) {
+            vm.broadcastRawTransaction(rawTx);
+        } else {
+            vm.executeTransaction(rawTx);
+        }
+        revert FrameEffectApplied();
+    }
+
+    function dealSelf(uint256 amount) external {
+        vm.deal(address(this), amount);
+    }
+
+    function dealThenPay(address payable to, uint256 amount) external payable {
+        vm.deal(to, amount);
+        to.transfer(msg.value);
+    }
+
+    receive() external payable {}
+
+    function setNonceAfterCreate() external {
+        new RevertedFrameProbe();
+        vm.setNonce(address(this), 50);
+        revert FrameEffectApplied();
+    }
+
+    function broadcastAfterCreate(bool authorize) external {
+        new RevertedFrameProbe();
+        if (authorize) {
+            vm.broadcast(address(0xBEEF));
+            vm.signAndAttachDelegation(address(0xCAFE), 1);
+        } else {
+            vm.broadcast(address(this));
+        }
+        (bool success,) = address(0xCAFE).call("");
+        require(success);
+        revert FrameEffectApplied();
+    }
 }
 
 contract RevertedFrameOuter {
@@ -103,6 +173,23 @@ contract RevertedFrameOuter {
 
     function run(RevertedFrameHelper helper, FrameEffect effect, address target, RevertedFrameProbe probe) external {
         helper.run(effect, target, probe);
+    }
+
+    function dealAfterReceive(RevertedFrameHelper helper, uint256 amount) external payable {
+        helper.dealAfterReceive{value: msg.value}(amount);
+    }
+
+    function revertToStateBetweenWrites(RevertedFrameHelper helper, uint256 amount, uint256 snapshot) external payable {
+        try helper.revertToStateBetweenWrites{value: msg.value}(amount, snapshot) {} catch {}
+    }
+
+    function transactionThenRead(RevertedFrameHelper helper, bytes calldata rawTx, bool broadcast, address target)
+        external
+        payable
+    {
+        try helper.receiveThenTransaction{value: msg.value}(rawTx, broadcast) {} catch {}
+        require(target.balance == 10, "transaction effects were not applied");
+        revert FrameEffectApplied();
     }
 }
 
@@ -130,6 +217,131 @@ contract RevertedFrameEffectsTest is Test {
         runAndCatch(FrameEffect.Deal, true);
         // Master behavior: persists.
         assertEq(target.balance, 123);
+    }
+
+    function test_deal_after_receive_persists_depth1() public {
+        vm.deal(address(this), 1 ether);
+        (bool success, bytes memory result) =
+            address(helper).call{value: 1 ether}(abi.encodeCall(helper.dealAfterReceive, (0)));
+        assertHelperReverted(success, result);
+        assertEq(address(helper).balance, 0);
+        assertEq(address(this).balance, 1 ether);
+    }
+
+    function test_deal_after_receive_persists_depth2() public {
+        vm.deal(address(this), 1 ether);
+        (bool success, bytes memory result) =
+            address(outer).call{value: 1 ether}(abi.encodeCall(outer.dealAfterReceive, (helper, 5 ether)));
+        assertHelperReverted(success, result);
+        assertEq(address(helper).balance, 5 ether);
+        assertEq(address(outer).balance, 0);
+        assertEq(address(this).balance, 1 ether);
+    }
+
+    function test_deal_after_receive_persists_across_state_revert() public {
+        vm.deal(address(this), 1 ether);
+        (bool success, bytes memory result) =
+            address(helper).call{value: 1 ether}(abi.encodeCall(helper.dealThenRevertToOwnState, (0)));
+        assertHelperReverted(success, result);
+        assertEq(address(helper).balance, 0);
+        assertEq(address(this).balance, 1 ether);
+    }
+
+    function test_writes_around_earlier_state_revert_persist_depth2() public {
+        vm.deal(address(this), 1 ether);
+        uint256 snapshot = vm.snapshotState();
+        outer.revertToStateBetweenWrites{value: 1 ether}(helper, 0, snapshot);
+        assertEq(address(helper).balance, 0);
+        assertEq(vm.getNonce(address(helper)), 50);
+        assertEq(address(outer).balance, 1 ether);
+    }
+
+    function test_deal_after_receive_persists_across_fork_round_trip() public {
+        uint256 forkA = vm.createSelectFork("mainnet", 14_608_400);
+        uint256 forkB = vm.createFork("mainnet", 14_608_401);
+        RevertedFrameHelper forkHelper = new RevertedFrameHelper();
+        vm.deal(address(this), 1 ether);
+        (bool success, bytes memory result) =
+            address(forkHelper).call{value: 1 ether}(abi.encodeCall(forkHelper.dealThenSelectForks, (0, forkB, forkA)));
+        assertHelperReverted(success, result);
+        assertEq(address(forkHelper).balance, 0);
+        assertEq(address(this).balance, 1 ether);
+    }
+
+    function test_deal_after_receive_persists_across_unrelated_transaction() public {
+        vm.chainId(1);
+        vm.deal(0x5316812db67073C4d4af8BB3000C5B86c2877e94, 1 ether);
+        vm.deal(address(this), 1 ether);
+        // Legacy transfer of 17 wei from 0x5316812db67073C4d4af8BB3000C5B86c2877e94 at nonce 0.
+        bytes memory rawTx =
+            hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856";
+        (bool success, bytes memory result) =
+            address(helper).call{value: 1 ether}(abi.encodeCall(helper.dealThenExecuteTransaction, (0, rawTx)));
+        assertHelperReverted(success, result);
+        assertEq(address(helper).balance, 0);
+        assertEq(address(this).balance, 1 ether);
+    }
+
+    // Legacy transfer of 17 wei from `vm.addr(1)` to `helper` at nonce 0.
+    bytes constant TRANSFER_TO_HELPER =
+        hex"f860806483030d40945615deb798bb3e4dfa0139dfa1b3d433cc23b72f118026a066dbe2c4aae4bc73b1449d99ba2c9bd71a92906f076b5c1865f71184786034cda03d96901336922ac434aeceddd5391a31686ac4b568ff1cabc6dcd4a591a16903";
+
+    // Legacy call of `helper.dealSelf(5)` from `vm.addr(1)` at nonce 0.
+    bytes constant HELPER_DEALS_ITSELF =
+        hex"f884806483030d40945615deb798bb3e4dfa0139dfa1b3d433cc23b72f80a460056bb3000000000000000000000000000000000000000000000000000000000000000526a02a80c302883114835622449a4fefbd8294890c056bc1b2fa7844c8ebb6fd9800a0100ea23ab7b496b06b5a8898d10a1b83cb86254d04a81c50845ab72d83e47e53";
+
+    // Legacy call of `helper.dealThenPay(target, 5)` with 5 wei from `vm.addr(1)` at nonce 0.
+    bytes constant HELPER_DEALS_THEN_PAYS_TARGET =
+        hex"f8a5806483030d40945615deb798bb3e4dfa0139dfa1b3d433cc23b72f05b844b8a2a12b0000000000000000000000000000000000000000000000000000000000001234000000000000000000000000000000000000000000000000000000000000000526a094a11886949000c68a3b881aa7647c05bdc1c49999bdaab0a86288500297ff53a05694781980567aee193483a86e5b8d901f53eb37ce0eb14893af7b6a7de6d112";
+
+    function test_transaction_into_reverted_receiver_executeTransaction() public {
+        transactionIntoRevertedReceiver(TRANSFER_TO_HELPER, false, 17);
+    }
+
+    function test_transaction_into_reverted_receiver_broadcastRawTransaction() public {
+        transactionIntoRevertedReceiver(TRANSFER_TO_HELPER, true, 17);
+    }
+
+    function test_deal_in_transaction_into_reverted_receiver() public {
+        transactionIntoRevertedReceiver(HELPER_DEALS_ITSELF, false, 5);
+    }
+
+    function test_deal_then_payment_in_transaction_then_reverted_read_executeTransaction() public {
+        dealThenPaymentThenRevertedRead(false);
+    }
+
+    function test_deal_then_payment_in_transaction_then_reverted_read_broadcastRawTransaction() public {
+        dealThenPaymentThenRevertedRead(true);
+    }
+
+    function test_deal_then_payment_to_unchanged_account_in_transaction_into_reverted_receiver() public {
+        vm.deal(target, 10);
+        transactionIntoRevertedReceiver(HELPER_DEALS_THEN_PAYS_TARGET, false, 0);
+        assertEq(target.balance, 10);
+    }
+
+    /// The transaction's effects survive the revert, but the reverted call's value does not.
+    function transactionIntoRevertedReceiver(bytes memory rawTx, bool broadcast, uint256 helperBalance) internal {
+        vm.chainId(1);
+        vm.deal(vm.addr(1), 1 ether);
+        vm.deal(address(this), 1 ether);
+        (bool success, bytes memory result) =
+            address(helper).call{value: 1 ether}(abi.encodeCall(helper.receiveThenTransaction, (rawTx, broadcast)));
+        assertHelperReverted(success, result);
+        assertEq(address(helper).balance, helperBalance);
+        assertEq(address(this).balance, 1 ether);
+    }
+
+    /// The final balance of an account first touched by the transaction survives later reverts.
+    function dealThenPaymentThenRevertedRead(bool broadcast) internal {
+        vm.chainId(1);
+        vm.deal(vm.addr(1), 1 ether);
+        vm.deal(address(this), 1 ether);
+        (bool success, bytes memory result) = address(outer).call{value: 1 ether}(
+            abi.encodeCall(outer.transactionThenRead, (helper, HELPER_DEALS_THEN_PAYS_TARGET, broadcast, target))
+        );
+        assertHelperReverted(success, result);
+        assertEq(target.balance, 10);
     }
 
     function test_store_reverts_depth1() public {
@@ -162,6 +374,28 @@ contract RevertedFrameEffectsTest is Test {
         runAndCatch(FrameEffect.SetNonce, true);
         // Master behavior: persists.
         assertEq(vm.getNonce(target), 123);
+    }
+
+    function test_setNonce_after_create_persists_depth1() public {
+        (bool success, bytes memory result) = address(helper).call(abi.encodeCall(helper.setNonceAfterCreate, ()));
+        assertHelperReverted(success, result);
+        assertEq(vm.getNonce(address(helper)), 50);
+    }
+
+    function test_broadcast_after_create_keeps_only_broadcast_nonce() public {
+        uint64 nonce = vm.getNonce(address(helper));
+        (bool success, bytes memory result) = address(helper).call(abi.encodeCall(helper.broadcastAfterCreate, (false)));
+        assertHelperReverted(success, result);
+        assertEq(vm.getNonce(address(helper)), nonce + 1);
+    }
+
+    function test_authorization_after_create_keeps_only_authorization_nonce() public {
+        address authority = vm.addr(1);
+        vm.etch(authority, type(RevertedFrameHelper).runtimeCode);
+        uint64 nonce = vm.getNonce(authority);
+        (bool success, bytes memory result) = authority.call(abi.encodeCall(helper.broadcastAfterCreate, (true)));
+        assertHelperReverted(success, result);
+        assertEq(vm.getNonce(authority), nonce + 1);
     }
 
     function test_setNonceUnsafe_persists_depth1() public {
@@ -362,6 +596,10 @@ contract RevertedFrameEffectsTest is Test {
         } else {
             (success, result) = address(helper).call(abi.encodeCall(helper.run, (effect, target, probe)));
         }
+        assertHelperReverted(success, result);
+    }
+
+    function assertHelperReverted(bool success, bytes memory result) internal {
         assertTrue(!success, "helper did not revert");
         assertEq(result, abi.encodeWithSelector(FrameEffectApplied.selector), "unexpected helper revert");
     }

@@ -1,6 +1,6 @@
 use crate::{
     Cheatcode, Cheatcodes, CheatcodesCore, CheatcodesExecutor, CheatsCtxt, DatabaseExt, Result,
-    Vm::*, json::json_value_to_token,
+    Vm::*, evm::record_account_changes, inspector::AccountWrite, json::json_value_to_token,
 };
 use alloy_dyn_abi::DynSolValue;
 use alloy_evm::EvmEnv;
@@ -529,6 +529,7 @@ fn record_fork_roll<FEN: FoundryEvmNetwork>(
     let active_fork_id = ccx.active_fork_id();
     let rolled_fork_id = target_fork_id.or(active_fork_id);
     ccx.state.env_overrides.clear_implicit_basefee(rolled_fork_id);
+    ccx.state.reset_account_writes(rolled_fork_id);
     if target_fork_id.is_none() || target_fork_id == active_fork_id {
         ccx.state.fork_block_number_override = ccx.active_fork_block_number();
         ccx.state.commit_created_account_changes(active_fork_id);
@@ -549,8 +550,9 @@ fn transact<FEN: FoundryEvmNetwork>(
     transaction: B256,
     fork_id: Option<U256>,
 ) -> Result {
-    let (context_update, state) =
-        executor.transact_on_db(ccx.state, ccx.ecx, fork_id, transaction)?;
+    let (context_update, state) = record_account_changes(ccx, |ccx| {
+        Ok(executor.transact_on_db(ccx.state, ccx.ecx, fork_id, transaction)?)
+    })?;
     super::persist_child_state(
         &mut ccx.state.isolated_snapshot_restores,
         ccx.ecx.db_mut(),
@@ -634,15 +636,32 @@ fn refresh_active_fork_state<FEN: FoundryEvmNetwork>(
 
     let slot = params.get(1).and_then(|v| v.as_str()).and_then(|s| s.parse::<U256>().ok());
     let (db, journaled_state) = ccx.ecx.db_journal_inner_mut();
-    // The node change survives any revert, so it also goes to the journals that failing frames
-    // reinstate to undo snapshot restorations.
-    for journal in std::iter::once(journaled_state).chain(&mut ccx.state.isolated_snapshot_restores)
-    {
+    for (journal, _) in &mut ccx.state.isolated_snapshot_restores {
         match (account_field, slot) {
-            (Some(field), _) => db.refresh_fork_account(address, field, journal)?,
+            (Some(ForkAccountField::Code), _) => {
+                db.refresh_fork_account(address, ForkAccountField::Code, journal)?;
+            }
             (None, Some(slot)) => db.refresh_fork_storage(address, slot, journal)?,
-            (None, None) => return Ok(()),
+            _ => {}
         }
+    }
+    if let Some(field) = account_field {
+        db.refresh_fork_account(address, field, journaled_state)?;
+        // A saved journal may contain the account even when the restored live journal does not.
+        let write = match field {
+            ForkAccountField::Balance => {
+                AccountWrite::Balance(journaled_state.load_account(db, address)?.data.info.balance)
+            }
+            ForkAccountField::Nonce => {
+                AccountWrite::Nonce(journaled_state.load_account(db, address)?.data.info.nonce)
+            }
+            ForkAccountField::Code => return Ok(()),
+        };
+        let fork_id = ccx.active_fork_id();
+        ccx.state.record_account_write(ccx.ecx.db_mut(), fork_id, address, write)?;
+    } else {
+        let Some(slot) = slot else { return Ok(()) };
+        db.refresh_fork_storage(address, slot, journaled_state)?;
     }
     Ok(())
 }

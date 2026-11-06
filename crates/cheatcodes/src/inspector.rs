@@ -53,7 +53,7 @@ use foundry_evm_traces::{
 use itertools::Itertools;
 use rand::Rng;
 use revm::{
-    Inspector, JournalEntry,
+    Database, Inspector, JournalEntry,
     bytecode::opcode as op,
     context::{Cfg, ContextTr, Host, JournalTr, Transaction, TransactionType, result::EVMError},
     context_interface::{CreateScheme, transaction::SignedAuthorization},
@@ -74,6 +74,9 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
+#[cfg(feature = "monad")]
+use foundry_evm_core::evm::refresh_chain_journal;
+
 mod env_overrides;
 pub use env_overrides::EnvOverrideState;
 
@@ -93,8 +96,8 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<(), EVMError<DatabaseError>>;
 
-    /// Replays a historical transaction on the database and returns the state it committed to the
-    /// journal. Inspector is assembled internally.
+    /// Replays a historical transaction on the database and returns its committed state.
+    /// Inspector is assembled internally.
     fn transact_on_db(
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
@@ -103,7 +106,7 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
         transaction: B256,
     ) -> eyre::Result<(ContextUpdateFor<EvmFactoryFor<FEN>>, EvmState)>;
 
-    /// Executes a `TransactionRequest` on the database and returns the state it committed.
+    /// Executes a `TransactionRequest` on the database and returns its committed state.
     /// Inspector is assembled internally.
     fn transact_from_tx_on_db(
         &mut self,
@@ -570,7 +573,24 @@ struct CreatedAccountsFrame {
     recorded_logs: usize,
     /// Recorded log buffer generation when the frame started.
     recorded_logs_generation: u64,
+    /// Account write count when the frame started.
+    account_writes: usize,
 }
+
+/// A balance or nonce written outside revm's journal, which survives reverts of the frame.
+#[derive(Clone, Copy, Debug)]
+pub enum AccountWrite {
+    Balance(U256),
+    Nonce(u64),
+    /// A wrapping change made by a nested transaction, which applies on top of the frame's value.
+    BalanceDelta(U256),
+    /// A wrapping change made by a nested transaction, which applies on top of the frame's value.
+    NonceDelta(u64),
+}
+
+/// Balances and nonces written outside the journal on a fork, in write order. `None` once the
+/// state was replaced after the write.
+pub type AccountWrites = Vec<Option<(Option<LocalForkId>, Address, AccountWrite)>>;
 
 #[derive(Clone, Copy, Debug)]
 struct CreatedAccountChange {
@@ -585,6 +605,8 @@ struct CreatedAccountChange {
 struct CreatedAccountsSnapshot {
     fork_id: Option<LocalForkId>,
     bindings: AddressHashMap<usize>,
+    /// Account writes represented by the snapshot.
+    account_writes: AccountWrites,
 }
 
 /// An EVM inspector that handles calls to various cheatcodes, each with their own behavior.
@@ -679,6 +701,10 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 
     /// Creation lists captured by state snapshots.
     created_accounts_snapshots: HashMap<U256, CreatedAccountsSnapshot>,
+
+    /// Balances and nonces written outside the journal in the root transaction, replayed when a
+    /// frame fails.
+    pub account_writes: AccountWrites,
 
     /// The information of the debug step recording.
     pub record_debug_steps_info: Option<RecordDebugStepInfo>,
@@ -784,9 +810,9 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// top-level transaction when isolation is disabled) and must be unwound by failing frames.
     pub track_isolated_snapshots: bool,
 
-    /// Journals replaced by snapshot restorations that may need to be reinstated when an
-    /// enclosing frame of the tracked transaction fails.
-    pub isolated_snapshot_restores: Vec<JournaledState>,
+    /// Journals replaced by snapshot restorations, with their account writes, that may need to be
+    /// reinstated when an enclosing frame of the tracked transaction fails.
+    pub isolated_snapshot_restores: Vec<(JournaledState, AccountWrites)>,
 
     /// Whether the next snapshot restoration is the first one since its calling frame started,
     /// and so must be recorded in `isolated_snapshot_restores`.
@@ -830,6 +856,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             created_account_changes: Default::default(),
             created_accounts_frames: Default::default(),
             created_accounts_snapshots: Default::default(),
+            account_writes: Default::default(),
             record_debug_steps_info: Default::default(),
             expected_emits: Default::default(),
             expected_creates: Default::default(),
@@ -991,18 +1018,19 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             .extend(accounts.into_iter().map(|(address, creation)| ((fork_id, address), creation)));
     }
 
-    /// Captures creation ordering alongside a state snapshot.
+    /// Captures creation ordering and account writes alongside a state snapshot.
     pub(crate) fn snapshot_created_accounts(
         &mut self,
         snapshot_id: U256,
         fork_id: Option<LocalForkId>,
     ) {
         let bindings = self.created_account_bindings(fork_id);
+        let account_writes = self.account_writes.clone();
         self.created_accounts_snapshots
-            .insert(snapshot_id, CreatedAccountsSnapshot { fork_id, bindings });
+            .insert(snapshot_id, CreatedAccountsSnapshot { fork_id, bindings, account_writes });
     }
 
-    /// Restores creation ordering from a state snapshot.
+    /// Restores creation ordering and account writes from a state snapshot.
     pub(crate) fn revert_created_accounts(&mut self, snapshot_id: U256, remove: bool) {
         let snapshot = if remove {
             self.created_accounts_snapshots.remove(&snapshot_id)
@@ -1010,6 +1038,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             self.created_accounts_snapshots.get(&snapshot_id).cloned()
         };
         if let Some(snapshot) = snapshot {
+            // Writes made after the snapshot are superseded. Keep the length so that open frames
+            // keep their checkpoints.
+            let (restored, later) = self.account_writes.split_at_mut(snapshot.account_writes.len());
+            restored.copy_from_slice(&snapshot.account_writes);
+            later.fill(None);
             self.created_account_bindings.retain(|(fork_id, _), _| *fork_id != snapshot.fork_id);
             self.created_account_bindings.extend(
                 snapshot
@@ -1041,9 +1074,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             self.created_account_bindings.clear();
             self.created_account_changes.clear();
             self.created_accounts_frames.clear();
-            // Earlier snapshots contain no creations from the new root transaction.
+            self.account_writes.clear();
+            // Earlier snapshots contain no creations or account writes from the new root
+            // transaction.
             for snapshot in self.created_accounts_snapshots.values_mut() {
                 snapshot.bindings.clear();
+                snapshot.account_writes.clear();
             }
         }
         self.created_accounts_frames.push(CreatedAccountsFrame {
@@ -1052,11 +1088,134 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             checkpoint: self.created_account_changes.len(),
             recorded_logs: self.core.recorded_logs.as_ref().map_or(0, Vec::len),
             recorded_logs_generation: self.core.recorded_logs_generation,
+            account_writes: self.account_writes.len(),
         });
+    }
+
+    /// Records a balance or nonce written outside the journal, including in journals that failing
+    /// frames may reinstate. Keep their provenance too, since another restoration can supersede
+    /// the live write history before those frames fail.
+    pub(crate) fn record_account_write<DB: Database>(
+        &mut self,
+        db: &mut DB,
+        fork_id: Option<LocalForkId>,
+        address: Address,
+        write: AccountWrite,
+    ) -> std::result::Result<(), DB::Error> {
+        let record = Some((fork_id, address, write));
+        for (journal, writes) in &mut self.isolated_snapshot_restores {
+            journal.load_account(db, address)?;
+            let info = &mut journal.state.get_mut(&address).expect("account is loaded").info;
+            match write {
+                AccountWrite::Balance(balance) => info.balance = balance,
+                AccountWrite::Nonce(nonce) => info.nonce = nonce,
+                AccountWrite::BalanceDelta(delta) => {
+                    info.balance = info.balance.wrapping_add(delta);
+                }
+                AccountWrite::NonceDelta(delta) => info.nonce = info.nonce.wrapping_add(delta),
+            }
+            writes.resize(self.account_writes.len() + 1, None);
+            writes[self.account_writes.len()] = record;
+        }
+        self.account_writes.push(record);
+        Ok(())
+    }
+
+    /// Drops the writes to `address`'s balance, or nonce, recorded since `start`, and returns
+    /// whether one of them set the value rather than changing it.
+    pub(crate) fn take_account_writes(
+        &mut self,
+        start: usize,
+        fork_id: Option<LocalForkId>,
+        address: Address,
+        nonce: bool,
+    ) -> bool {
+        let mut set = false;
+        for entry in &mut self.account_writes[start..] {
+            if let Some((write_fork_id, write_address, write)) = *entry
+                && write_fork_id == fork_id
+                && write_address == address
+                && matches!(write, AccountWrite::Nonce(_) | AccountWrite::NonceDelta(_)) == nonce
+            {
+                set |= matches!(write, AccountWrite::Balance(_) | AccountWrite::Nonce(_));
+                *entry = None;
+            }
+        }
+        set
+    }
+
+    /// Stops replaying the account writes of a fork whose state was replaced.
+    pub(crate) fn reset_account_writes(&mut self, fork_id: Option<LocalForkId>) {
+        for entry in &mut self.account_writes {
+            if entry.is_some_and(|(write_fork_id, ..)| write_fork_id == fork_id) {
+                *entry = None;
+            }
+        }
+    }
+
+    /// Re-applies the active fork's account writes recorded since `start` after a failed frame was
+    /// reverted.
+    ///
+    /// Balances and nonces written outside the journal survive the revert, but revm undoes the
+    /// frame's transfers and nonce bumps relative to them. This restores the values that were set.
+    ///
+    /// The state already reflects the deltas recorded before `reflected`, which revm's relative
+    /// reverts keep, so those only apply on top of a value set earlier in the replay.
+    pub fn replay_account_writes(
+        &self,
+        ecx: &mut FoundryContextFor<'_, FEN>,
+        start: usize,
+        reflected: usize,
+    ) {
+        let fork_id = ecx.db().active_fork_id();
+        let writes = || {
+            self.account_writes
+                .iter()
+                .enumerate()
+                .skip(start)
+                .filter_map(|(i, entry)| Some((i, entry.as_ref()?)))
+                .filter(move |(_, (write_fork_id, ..))| *write_fork_id == fork_id)
+                .map(|(i, (_, address, write))| (i, address, write))
+        };
+        let state = ecx.journal_mut().evm_state_mut();
+        // Accounts and fields, `true` for the nonce, whose value the replay has set.
+        let mut set = HashSet::new();
+        for (i, address, write) in writes() {
+            if let Some(account) = state.get_mut(address) {
+                let info = &mut account.info;
+                match *write {
+                    AccountWrite::Balance(balance) => {
+                        info.balance = balance;
+                        set.insert((address, false));
+                    }
+                    AccountWrite::Nonce(nonce) => {
+                        info.nonce = nonce;
+                        set.insert((address, true));
+                    }
+                    AccountWrite::BalanceDelta(delta) => {
+                        if i >= reflected || set.contains(&(address, false)) {
+                            info.balance = info.balance.wrapping_add(delta);
+                        }
+                    }
+                    AccountWrite::NonceDelta(delta) => {
+                        if i >= reflected || set.contains(&(address, true)) {
+                            info.nonce = info.nonce.wrapping_add(delta);
+                        }
+                    }
+                }
+            }
+        }
+        #[cfg(feature = "monad")]
+        if writes().any(|(.., write)| {
+            matches!(write, AccountWrite::Balance(_) | AccountWrite::BalanceDelta(_))
+        }) {
+            refresh_chain_journal(ecx);
+        }
     }
 
     fn finish_created_accounts_frame(
         &mut self,
+        ecx: &mut FoundryContextFor<'_, FEN>,
         success: bool,
         kind: CreatedAccountsFrameKind,
         depth: usize,
@@ -1071,6 +1230,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         };
         let checkpoint = frame.checkpoint;
         self.created_accounts_frames.pop();
+        // `on_revert` cleans up the root frame.
+        if !success && depth > 0 {
+            self.replay_account_writes(ecx, frame.account_writes, self.account_writes.len());
+        }
         if !success {
             // Logs of a failed frame are reverted. If the buffer was replaced inside the frame,
             // every log it holds was recorded by the frame.
@@ -1513,19 +1676,20 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
                 // Reset deploy from code flag for upcoming calls.
                 broadcast.deploy_from_code = false;
+                let new_origin = broadcast.new_origin;
 
                 // At the target depth we set `msg.sender` & tx.origin.
                 // We are simulating the caller as being an EOA, so *both* must be set to the
                 // broadcast.origin.
-                ecx.tx_mut().set_caller(broadcast.new_origin);
+                ecx.tx_mut().set_caller(new_origin);
 
-                call.caller = broadcast.new_origin;
+                call.caller = new_origin;
                 // Add a `legacy` transaction to the VecDeque. We use a legacy transaction here
                 // because we only need the from, to, value, and data. We can later change this
                 // into 1559, in the cli package, relatively easily once we
                 // know the target chain supports EIP-1559.
                 if !call.is_static {
-                    if let Err(err) = ecx.journal_mut().load_account(broadcast.new_origin) {
+                    if let Err(err) = ecx.journal_mut().load_account(new_origin) {
                         return Some(CallOutcome {
                             result: InterpreterResult {
                                 result: InstructionResult::Revert,
@@ -1543,11 +1707,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     let chain_id = ecx.cfg().chain_id();
                     let rpc = ecx.db().active_fork_url();
                     let fee_token = ecx.tx().fee_token();
-                    let nonce =
-                        ecx.journal().evm_state().get(&broadcast.new_origin).unwrap().info.nonce;
+                    let nonce = ecx.journal().evm_state().get(&new_origin).unwrap().info.nonce;
 
                     let mut tx_req = TransactionRequestFor::<FEN>::default()
-                        .with_from(broadcast.new_origin)
+                        .with_from(new_origin)
                         .with_to(call.transfer_to())
                         .with_value(call.transfer_value().unwrap_or_default())
                         .with_input(input)
@@ -1582,9 +1745,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     if !active_delegations.is_empty() {
                         if let Err(err) = apply_authorization_nonces::<FEN>(
                             ecx,
-                            &mut self.isolated_snapshot_restores,
+                            self,
                             &active_delegations,
-                            broadcast.new_origin,
+                            new_origin,
                             chain_id,
                         ) {
                             return Some(CallOutcome {
@@ -1614,21 +1777,15 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     // Isolated transactions increment the nonce during execution. Nested
                     // broadcasts do not start a separate transaction and need this increment.
                     if !isolate_call {
-                        let account = ecx
-                            .journal_mut()
-                            .evm_state_mut()
-                            .get_mut(&broadcast.new_origin)
-                            .unwrap();
+                        let account =
+                            ecx.journal_mut().evm_state_mut().get_mut(&new_origin).unwrap();
                         let prev = account.info.nonce;
                         account.info.nonce += 1;
-                        debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
-                        if let Err(err) = crate::evm::persist_write(
-                            &mut self.isolated_snapshot_restores,
-                            ecx.db_mut(),
-                            broadcast.new_origin,
-                            |info| info.nonce += 1,
-                            &[],
-                        ) {
+                        let write = AccountWrite::NonceDelta(1);
+                        let fork_id = ecx.db().active_fork_id();
+                        if let Err(err) =
+                            self.record_account_write(ecx.db_mut(), fork_id, new_origin, write)
+                        {
                             return Some(CallOutcome {
                                 result: InterpreterResult {
                                     result: InstructionResult::Revert,
@@ -1641,6 +1798,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                                 charged_new_account_state_gas: call.charged_new_account_state_gas,
                             });
                         }
+                        debug!(target: "cheatcodes", address=%new_origin, nonce=prev+1, prev, "incremented nonce");
                     }
                 } else if broadcast.single_call {
                     let msg = "`staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead";
@@ -2279,6 +2437,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         let curr_depth = ecx.journal().depth();
 
         self.finish_created_accounts_frame(
+            ecx,
             outcome.result.is_ok(),
             CreatedAccountsFrameKind::Call,
             curr_depth,
@@ -2693,6 +2852,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         let curr_depth = ecx.journal().depth();
 
         self.finish_created_accounts_frame(
+            ecx,
             outcome.result.is_ok(),
             CreatedAccountsFrameKind::Create,
             curr_depth,
@@ -3793,7 +3953,7 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
 /// authority nonce.
 fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
     ecx: &mut FoundryContextFor<'_, FEN>,
-    snapshot_restores: &mut [JournaledState],
+    cheats: &mut Cheatcodes<FEN>,
     authorizations: &[SignedAuthorization],
     sender: Address,
     chain_id: u64,
@@ -3811,13 +3971,9 @@ fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
         // The sender nonce has not been incremented for the transaction yet.
         if auth.nonce() == account.info.nonce + u64::from(authority == sender) {
             account.info.nonce += 1;
-            crate::evm::persist_write(
-                snapshot_restores,
-                ecx.db_mut(),
-                authority,
-                |info| info.nonce += 1,
-                &[],
-            )?;
+            let write = AccountWrite::NonceDelta(1);
+            let fork_id = ecx.db().active_fork_id();
+            cheats.record_account_write(ecx.db_mut(), fork_id, authority, write)?;
         }
     }
     Ok(())

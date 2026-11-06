@@ -263,11 +263,10 @@ impl Cheatcode for copyStorageCall {
             let from_storage = from_account.storage.clone();
             if ccx.ecx.journal_mut().load_account(*to).is_ok() {
                 // The replacement bypasses the journal, so it also goes to the journals that
-                // failing frames reinstate, like the writes of `persist_write`. Slots only the
-                // target has keep their entries, which the journal's revert entries may reference,
-                // but take the value a reload would read.
+                // failing frames reinstate. Slots present only on the target keep their entries,
+                // which rollback records may reference, but take the value a reload would read.
                 let db = ccx.ecx.db_mut();
-                for journal in &mut ccx.state.isolated_snapshot_restores {
+                for (journal, _) in &mut ccx.state.isolated_snapshot_restores {
                     journal.load_account(db, *to)?;
                     let account = journal.state.get_mut(to).expect("account is loaded");
                     let created = account.is_created();
