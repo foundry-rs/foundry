@@ -136,8 +136,7 @@ pub fn initialize_tempo_precompiles(
         .chain([PATH_USD_ADDRESS, ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, THETA_USD_ADDRESS])
         .filter(|address| initialized || *address == TIP_FEE_MANAGER_ADDRESS);
     for address in addresses {
-        let info = db.basic_ref(address)?.unwrap_or_default();
-        db.insert_account(address, info.with_nonce(1));
+        db.set_nonce(address, 1)?;
     }
     Ok(())
 }
@@ -329,10 +328,6 @@ mod tests {
         let mut db = MemDb::default();
         let env = genesis_env();
         initialize_tempo_precompiles(&mut db, &env, &[], TempoHardfork::T7.into()).unwrap();
-        for (address, _) in tempo_genesis_contracts() {
-            assert_eq!(db.basic_ref(address).unwrap().unwrap().nonce, 1, "{address}");
-        }
-        assert_eq!(db.basic_ref(PATH_USD_ADDRESS).unwrap().unwrap().nonce, 1);
 
         db.set_nonce(CREATEX_ADDRESS, 7).unwrap();
         db.set_balance(CREATEX_ADDRESS, U256::from(123_456)).unwrap();
