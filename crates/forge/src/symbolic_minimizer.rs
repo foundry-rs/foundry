@@ -167,7 +167,7 @@ impl<'a> SequenceMinimizer<'a> {
             true,
             || false,
             || {},
-            |shrinker| {
+            |shrinker, _| {
                 let candidate_calls = sequence_from_shrink(&base_calls, shrinker);
                 if candidate_calls == *current_calls {
                     return None;
