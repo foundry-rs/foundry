@@ -2767,7 +2767,7 @@ contract OptimizationTest {
 [PASS]
 	[Best sequence] (original: 10, shrunk: 2)
 		sender=0x000000000000000000000000000000000000019e addr=[test/Optimization.t.sol:Handler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f roll=3448 calldata=start() args=[]
-		sender=0x00000000000000000000000000000000000002A9 addr=[test/Optimization.t.sol:Handler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f roll=1226 calldata=noop() args=[]
+		sender=0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f addr=[test/Optimization.t.sol:Handler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f roll=1226 calldata=noop() args=[]
  invariant_optimize() (best: 4675, runs: 1, calls: 10)
 ...
 "#]]);
@@ -2778,7 +2778,7 @@ contract OptimizationTest {
 [PASS]
 	[Best sequence] (original: 2, shrunk: 2)
 		sender=0x000000000000000000000000000000000000019e addr=[test/Optimization.t.sol:Handler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f roll=3448 calldata=start() args=[]
-		sender=0x00000000000000000000000000000000000002A9 addr=[test/Optimization.t.sol:Handler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f roll=1226 calldata=noop() args=[]
+		sender=0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f addr=[test/Optimization.t.sol:Handler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f roll=1226 calldata=noop() args=[]
  invariant_optimize() (best: 4675, runs: 0, calls: 0)
 ...
 "#]]);
