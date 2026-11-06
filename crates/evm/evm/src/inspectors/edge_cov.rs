@@ -171,6 +171,8 @@ pub struct EdgeCovInspector {
     /// Comparison operand log for CmpLog-style guided fuzzing.
     cmp_log: Option<Vec<CmpOperands>>,
     cmp_site_counts: HashMap<CmpSiteKey, u8>,
+    /// Operands of the last `SUB`, logged when the next `JUMPI` branches on its result.
+    last_sub: Option<CmpOperands>,
 }
 
 impl fmt::Debug for EdgeCovInspector {
@@ -221,6 +223,7 @@ impl EdgeCovInspector {
             dense_hitcount: HashMap::default(),
             cmp_log: None,
             cmp_site_counts: HashMap::default(),
+            last_sub: None,
         }
     }
 
@@ -231,6 +234,7 @@ impl EdgeCovInspector {
         } else {
             self.cmp_log = None;
             self.cmp_site_counts.clear();
+            self.last_sub = None;
         }
     }
 
@@ -244,6 +248,7 @@ impl EdgeCovInspector {
             cmp_log.clear();
         }
         self.cmp_site_counts.clear();
+        self.last_sub = None;
     }
 
     /// Get an immutable reference to the comparison operand log.
@@ -336,6 +341,18 @@ impl EdgeCovInspector {
         }
     }
 
+    /// Logs the last `SUB` as an equality comparison when a `JUMPI` at `address` branches on its
+    /// nonzero result: solc compiles `if (a == b)` to `SUB` + `JUMPI`.
+    fn store_sub_branch(&mut self, condition: U256, address: Address) {
+        if let Some(sub) = self.last_sub.take()
+            && sub.address == address
+            && !condition.is_zero()
+            && condition == sub.op1.wrapping_sub(sub.op2)
+        {
+            self.store_cmp(sub);
+        }
+    }
+
     #[cold]
     fn do_step<CTX>(&mut self, interp: &mut Interpreter, context: &mut CTX)
     where
@@ -399,6 +416,17 @@ impl EdgeCovInspector {
                     });
                 }
             }
+            op @ opcode::SUB => {
+                if let (Ok(op1), Ok(op2)) = (interp.stack.peek(0), interp.stack.peek(1)) {
+                    self.last_sub =
+                        Some(CmpOperands { op1, op2, pc: current_pc, address, opcode: op });
+                }
+            }
+            opcode::JUMPI => {
+                if let Ok(condition) = interp.stack.peek(1) {
+                    self.store_sub_branch(condition, address);
+                }
+            }
             _ => {}
         }
     }
@@ -442,7 +470,14 @@ where
         if self.cmp_log.is_some()
             && matches!(
                 op,
-                opcode::EQ | opcode::LT | opcode::GT | opcode::SLT | opcode::SGT | opcode::ISZERO
+                opcode::EQ
+                    | opcode::LT
+                    | opcode::GT
+                    | opcode::SLT
+                    | opcode::SGT
+                    | opcode::ISZERO
+                    | opcode::SUB
+                    | opcode::JUMPI
             )
         {
             self.do_cmp_step(interp);
@@ -691,5 +726,30 @@ mod tests {
 
         assert_eq!(inspector.get_cmp_log().len(), usize::from(MAX_CMP_OBSERVATIONS_PER_SITE) + 1);
         assert_eq!(inspector.get_cmp_log().last().unwrap().pc, 2);
+    }
+
+    #[test]
+    fn sub_is_logged_only_when_next_jumpi_branches_on_its_nonzero_result() {
+        let mut inspector = EdgeCovInspector::with_cmp_log();
+        let address = Address::repeat_byte(0xaa);
+        let sub = CmpOperands {
+            op1: U256::from(7),
+            op2: U256::from(42),
+            pc: 3,
+            address,
+            opcode: opcode::SUB,
+        };
+        let result = sub.op1.wrapping_sub(sub.op2);
+
+        inspector.last_sub = Some(sub);
+        inspector.store_sub_branch(result, Address::ZERO);
+        inspector.last_sub = Some(CmpOperands { op2: sub.op1, ..sub });
+        inspector.store_sub_branch(U256::ZERO, address);
+        assert!(inspector.get_cmp_log().is_empty());
+
+        inspector.last_sub = Some(sub);
+        inspector.store_sub_branch(result, address);
+        inspector.store_sub_branch(result, address);
+        assert_eq!(inspector.get_cmp_log(), [sub]);
     }
 }
