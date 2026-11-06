@@ -3,6 +3,7 @@
 use crate::utils::http_provider_with_signer;
 use alloy_chains::NamedChain;
 use alloy_consensus::Transaction;
+use alloy_eips::eip7825::MAX_TX_GAS_LIMIT_OSAKA as TX_GAS_LIMIT_CAP;
 use alloy_genesis::Genesis;
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U64, U256, bytes, uint};
@@ -15,16 +16,14 @@ use alloy_serde::WithOtherFields;
 use anvil::{
     EthereumHardfork, NodeConfig,
     eth::{
+        backend::env::BlobExcessGasAndPrice,
         error::{BlockchainError, InvalidTransactionError},
         fees::INITIAL_BASE_FEE,
     },
     spawn,
 };
-use foundry_evm::constants::HARDHAT_CONSOLE_ADDRESS;
+use foundry_evm_core::constants::HARDHAT_CONSOLE_ADDRESS;
 use foundry_evm_networks::arbitrum;
-use revm::{
-    context_interface::block::BlobExcessGasAndPrice, primitives::eip7825::TX_GAS_LIMIT_CAP,
-};
 
 const GAS_TRANSFER: u64 = 21_000;
 
@@ -620,6 +619,25 @@ async fn test_estimate_gas_without_from_with_gas_price_uses_transfer_fast_path()
     let gas = api.estimate_gas(WithOtherFields::new(tx), None, Default::default()).await.unwrap();
 
     assert_eq!(gas, U256::from(GAS_TRANSFER));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas_without_from_with_gas_price_does_not_fund_caller() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let contract = Address::random();
+    // Reverts if `BALANCE(ORIGIN)` is zero.
+    api.anvil_set_code(contract, bytes!("323115600757005b5f5ffd")).await.unwrap();
+
+    let tx =
+        TransactionRequest::default().with_to(contract).with_gas_price(INITIAL_BASE_FEE as u128);
+    let error =
+        api.estimate_gas(WithOtherFields::new(tx), None, Default::default()).await.unwrap_err();
+
+    assert!(matches!(
+        error,
+        BlockchainError::InvalidTransaction(InvalidTransactionError::Revert(Some(data)))
+            if data.is_empty()
+    ));
 }
 
 #[tokio::test(flavor = "multi_thread")]

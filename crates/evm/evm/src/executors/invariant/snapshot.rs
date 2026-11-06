@@ -17,10 +17,10 @@ use alloy_primitives::{
     Address, U256,
     map::{AddressMap, HashMap, HashSet},
 };
+use evm2::evm::PendingState;
 use foundry_evm_core::{constants::CHEATCODE_ADDRESS, evm::FoundryEvmNetwork};
 use foundry_evm_fuzz::BasicTxDetails;
 use proptest::{prelude::Rng, test_runner::TestRunner};
-use revm::state::Account;
 use std::{
     hash::{BuildHasher, BuildHasherDefault, DefaultHasher},
     sync::Arc,
@@ -50,23 +50,26 @@ fn log2_bin(value: U256) -> u16 {
 
 /// Storage slots held by the executor's backend, and its nonzero computed slots per contract.
 fn storage_stats<FEN: FoundryEvmNetwork>(executor: &Executor<FEN>) -> (usize, AddressMap<u64>) {
-    let backend = executor.backend();
-    let mem_db = &backend.mem_db().cache.accounts;
-    let fork_db = backend.active_fork_db().map(|db| &db.cache.accounts);
-    // Cloning the backend copies both databases.
-    let slots = mem_db
-        .values()
-        .chain(fork_db.into_iter().flat_map(|accounts| accounts.values()))
-        .map(|account| account.storage.len())
+    let lifecycle = executor.backend().lifecycle();
+    let forks = lifecycle.forks();
+    let local = forks.context(None).and_then(|context| context.cache.as_deref());
+    let active = lifecycle.active().cache.as_deref();
+    let fork = forks.active().and(active);
+    // Cloning the backend copies the local and the active fork's accepted state.
+    let slots = local
+        .into_iter()
+        .chain(fork)
+        .flat_map(|cache| cache.storage.values())
+        .map(|storage| storage.slots.len())
         .sum();
-    // Calls only read and write the active database, which holds a copy of the persistent
+    // Calls only read and write the active context, which holds a copy of the persistent
     // accounts, so count entries there alone.
-    let cardinality = fork_db
-        .unwrap_or(mem_db)
-        .iter()
-        .filter_map(|(address, account)| {
-            let computed = account
-                .storage
+    let cardinality = active
+        .into_iter()
+        .flat_map(|cache| &cache.storage)
+        .filter_map(|(address, storage)| {
+            let computed = storage
+                .slots
                 .iter()
                 .filter(|(slot, value)| **slot >= COMPUTED_SLOT && !value.is_zero())
                 .count() as u64;
@@ -243,9 +246,25 @@ impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
 
     /// Compresses an accepted call's storage writes into features and returns the ones no call
     /// reached before.
-    pub(super) fn observe(&mut self, changeset: &AddressMap<Account>) -> Vec<u64> {
+    pub(super) fn observe(&mut self, changeset: &PendingState) -> Vec<u64> {
+        self.observe_writes(changeset.account_changes().map(|changes| {
+            let writes = changes
+                .storage
+                .changed_slots()
+                .map(|(slot, value)| (*slot, value.original, value.current))
+                .collect();
+            (changes.address, writes)
+        }))
+    }
+
+    /// Compresses each account's `(slot, original, present)` storage writes into features.
+    fn observe_writes(
+        &mut self,
+        changeset: impl IntoIterator<Item = (Address, Vec<(U256, U256, U256)>)>,
+    ) -> Vec<u64> {
         let mut features = Vec::new();
-        for (address, account) in changeset {
+        for (address, storage) in changeset {
+            let address = &address;
             if *address == CHEATCODE_ADDRESS {
                 continue;
             }
@@ -253,19 +272,17 @@ impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
             // Mapping keys and array indices are not part of the state's shape: fold them. A
             // slot's set can fill up mid-call, so visit writes by folded slot and value, not in
             // storage map order or by keys, which can be random addresses.
-            let mut writes = account
-                .storage
-                .iter()
-                .filter(|(_, value)| value.is_changed())
-                .map(|(slot, value)| {
-                    let computed = *slot >= COMPUTED_SLOT;
-                    (if computed { U256::MAX } else { *slot }, computed, value)
+            let mut writes = storage
+                .into_iter()
+                .filter(|(_, original, present)| original != present)
+                .map(|(slot, original, present)| {
+                    let computed = slot >= COMPUTED_SLOT;
+                    (if computed { U256::MAX } else { slot }, computed, original, present)
                 })
                 .collect::<Vec<_>>();
-            writes.sort_unstable_by_key(|(slot_key, _, value)| (*slot_key, value.present_value));
-            for (slot_key, computed, value) in writes {
-                let present = value.present_value;
-                if computed && value.original_value.is_zero() != present.is_zero() {
+            writes.sort_unstable_by_key(|(slot_key, _, _, present)| (*slot_key, *present));
+            for (slot_key, computed, original, present) in writes {
+                if computed && original.is_zero() != present.is_zero() {
                     let count = self.cardinality.entry(*address).or_default();
                     if present.is_zero() {
                         *count = count.saturating_sub(1);
@@ -375,37 +392,23 @@ impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::executors::ExecutorBuilder;
-    use alloy_evm::EvmEnv;
+    use crate::executors::{ExecutorBuilder, test_executor};
     use alloy_primitives::Bytes;
     use foundry_evm_core::{
-        backend::{Backend, DatabaseExt},
-        evm::EthEvmNetwork,
+        evm::{EthEvmNetwork, ExecutionPhase},
         fork::CreateFork,
         opts::EvmOpts,
     };
     use foundry_evm_fuzz::CallDetails;
-    use revm::{
-        context::{JournalInner, TxEnv},
-        state::EvmStorageSlot,
-    };
 
-    fn write(slot: U256, original: U256, present: U256) -> AddressMap<Account> {
-        let mut account = Account::default();
-        let mut storage = EvmStorageSlot::new(original, Default::default());
-        storage.present_value = present;
-        account.storage.insert(slot, storage);
-        AddressMap::from_iter([(Address::repeat_byte(0x11), account)])
+    type Writes = Vec<(Address, Vec<(U256, U256, U256)>)>;
+
+    fn write(slot: U256, original: U256, present: U256) -> Writes {
+        vec![(Address::repeat_byte(0x11), vec![(slot, original, present)])]
     }
 
     fn executor() -> Executor<EthEvmNetwork> {
-        let backend = Backend::spawn(None).unwrap();
-        ExecutorBuilder::default().build(
-            EvmEnv::default(),
-            TxEnv::default(),
-            backend,
-            Default::default(),
-        )
+        test_executor(ExecutorBuilder::default(), Default::default())
     }
 
     fn snapshots() -> StateSnapshots<EthEvmNetwork> {
@@ -417,12 +420,14 @@ mod tests {
         let mut snapshots = snapshots();
         let slot = U256::from(3);
         for value in 1..=MAX_SET_VALUES as u64 {
-            assert!(!snapshots.observe(&write(slot, U256::ZERO, U256::from(value))).is_empty());
+            assert!(
+                !snapshots.observe_writes(write(slot, U256::ZERO, U256::from(value))).is_empty()
+            );
         }
         // Past the set limit the slot is a distribution: 1000 and 1001 share a bin.
-        assert!(!snapshots.observe(&write(slot, U256::ZERO, U256::from(1000))).is_empty());
-        assert!(snapshots.observe(&write(slot, U256::ZERO, U256::from(1001))).is_empty());
-        assert!(!snapshots.observe(&write(slot, U256::ZERO, U256::from(1 << 20))).is_empty());
+        assert!(!snapshots.observe_writes(write(slot, U256::ZERO, U256::from(1000))).is_empty());
+        assert!(snapshots.observe_writes(write(slot, U256::ZERO, U256::from(1001))).is_empty());
+        assert!(!snapshots.observe_writes(write(slot, U256::ZERO, U256::from(1 << 20))).is_empty());
     }
 
     #[test]
@@ -430,22 +435,21 @@ mod tests {
         let mut snapshots = snapshots();
         let entry = |i: u64| U256::MAX - U256::from(i);
         // First entry: new value and new cardinality bin.
-        assert!(!snapshots.observe(&write(entry(0), U256::ZERO, U256::ONE)).is_empty());
+        assert!(!snapshots.observe_writes(write(entry(0), U256::ZERO, U256::ONE)).is_empty());
         // Second entry: same value, but the count moves to the next bin.
-        assert!(!snapshots.observe(&write(entry(1), U256::ZERO, U256::ONE)).is_empty());
+        assert!(!snapshots.observe_writes(write(entry(1), U256::ZERO, U256::ONE)).is_empty());
         // Third entry: count 3 shares the bin of 2.
-        assert!(snapshots.observe(&write(entry(2), U256::ZERO, U256::ONE)).is_empty());
-        assert!(!snapshots.observe(&write(entry(3), U256::ZERO, U256::ONE)).is_empty());
+        assert!(snapshots.observe_writes(write(entry(2), U256::ZERO, U256::ONE)).is_empty());
+        assert!(!snapshots.observe_writes(write(entry(3), U256::ZERO, U256::ONE)).is_empty());
     }
 
     #[test]
     fn unchanged_and_cheatcode_writes_are_ignored() {
         let mut snapshots = snapshots();
-        assert!(snapshots.observe(&write(U256::ZERO, U256::ONE, U256::ONE)).is_empty());
+        assert!(snapshots.observe_writes(write(U256::ZERO, U256::ONE, U256::ONE)).is_empty());
         let mut changeset = write(U256::ZERO, U256::ZERO, U256::ONE);
-        let account = changeset.remove(&Address::repeat_byte(0x11)).unwrap();
-        changeset.insert(CHEATCODE_ADDRESS, account);
-        assert!(snapshots.observe(&changeset).is_empty());
+        changeset[0].0 = CHEATCODE_ADDRESS;
+        assert!(snapshots.observe_writes(changeset).is_empty());
     }
 
     #[test]
@@ -481,12 +485,12 @@ mod tests {
         let mut snapshots = StateSnapshots::new(10, &setup, 1);
         snapshots.start(&mut TestRunner::deterministic(), &setup);
         // 4 -> 3 entries: a new value and a new cardinality bin.
-        assert!(!snapshots.observe(&write(entry(0), U256::ONE, U256::ZERO)).is_empty());
+        assert!(!snapshots.observe_writes(write(entry(0), U256::ONE, U256::ZERO)).is_empty());
         // 3 -> 2 entries share a bin.
-        assert!(snapshots.observe(&write(entry(1), U256::ONE, U256::ZERO)).is_empty());
+        assert!(snapshots.observe_writes(write(entry(1), U256::ONE, U256::ZERO)).is_empty());
         // 2 -> 1 and 1 -> 0 entries each reach a new bin.
-        assert!(!snapshots.observe(&write(entry(2), U256::ONE, U256::ZERO)).is_empty());
-        assert!(!snapshots.observe(&write(entry(3), U256::ONE, U256::ZERO)).is_empty());
+        assert!(!snapshots.observe_writes(write(entry(2), U256::ONE, U256::ZERO)).is_empty());
+        assert!(!snapshots.observe_writes(write(entry(3), U256::ONE, U256::ZERO)).is_empty());
     }
 
     #[test]
@@ -541,22 +545,23 @@ mod tests {
             .map(|round| {
                 let mut snapshots = snapshots();
                 for i in 1..MAX_SET_VALUES as u64 {
-                    snapshots.observe(&write(entry(100 + i), U256::ZERO, U256::from(i)));
+                    snapshots.observe_writes(write(entry(100 + i), U256::ZERO, U256::from(i)));
                 }
                 // One call fills the folded entry set: which value stays exact depends on the
                 // order the two writes are visited in. Alternate which key holds which value, as
                 // with keys derived from random senders.
-                let mut account = Account::default();
                 let keys = if round % 2 == 0 { [1, 2] } else { [2, 1] };
-                for (i, value) in keys.into_iter().zip([U256::from(1000), U256::from(1u64 << 40)]) {
-                    let mut storage = EvmStorageSlot::new(U256::ZERO, Default::default());
-                    storage.present_value = value;
-                    account.storage.insert(entry(i), storage);
-                }
-                let filled = snapshots
-                    .observe(&AddressMap::from_iter([(Address::repeat_byte(0x11), account)]));
-                let next =
-                    snapshots.observe(&write(entry(3), U256::ZERO, U256::from((1u64 << 40) + 1)));
+                let storage = keys
+                    .into_iter()
+                    .zip([U256::from(1000), U256::from(1u64 << 40)])
+                    .map(|(i, value)| (entry(i), U256::ZERO, value))
+                    .collect();
+                let filled = snapshots.observe_writes(vec![(Address::repeat_byte(0x11), storage)]);
+                let next = snapshots.observe_writes(write(
+                    entry(3),
+                    U256::ZERO,
+                    U256::from((1u64 << 40) + 1),
+                ));
                 (filled, next)
             })
             .collect::<Vec<_>>();
@@ -577,18 +582,11 @@ mod tests {
             fork_url: Some(foundry_test_utils::rpc::next_http_rpc_endpoint()),
             ..Default::default()
         };
-        backend
-            .create_select_fork(
-                CreateFork {
-                    enable_caching: false,
-                    url: evm_opts.fork_url.clone().unwrap(),
-                    evm_opts,
-                },
-                &mut EvmEnv::default(),
-                &mut TxEnv::default(),
-                &mut JournalInner::new(),
-            )
-            .unwrap();
+        let fork =
+            CreateFork { enable_caching: false, url: evm_opts.fork_url.clone().unwrap(), evm_opts };
+        let mut evm = backend.create_evm();
+        backend.create_select_fork(fork, &mut evm, ExecutionPhase::Boundary).unwrap();
+        backend.park(evm);
 
         // Selecting the fork copied the persistent account, so both databases hold its entries.
         let (slots, cardinality) = storage_stats(&setup);

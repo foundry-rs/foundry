@@ -8,7 +8,7 @@ use alloy_serde::WithOtherFields;
 use alloy_signer::{Signature, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
 use anvil::{NodeConfig, spawn};
-use foundry_evm::hardfork::EthereumHardfork;
+use foundry_evm_hardforks::EthereumHardfork;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_send_eip7702_tx() {

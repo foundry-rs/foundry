@@ -1,5 +1,4 @@
 use super::{hashcons::HashConsed, *};
-use foundry_evm::revm::interpreter::instructions::i256::i256_cmp;
 
 /// Bounds both the number of distinct word nodes inspected by constant-ITE equality expansion and
 /// the unfolded size of the Boolean expression it could produce.
@@ -829,8 +828,8 @@ impl SymCmpOp {
             Self::Ugt => left > right,
             Self::Ule => left <= right,
             Self::Uge => left >= right,
-            Self::Slt => i256_cmp(&left, &right).is_lt(),
-            Self::Sgt => i256_cmp(&left, &right).is_gt(),
+            Self::Slt => I256::from_raw(left) < I256::from_raw(right),
+            Self::Sgt => I256::from_raw(left) > I256::from_raw(right),
         }
     }
 }

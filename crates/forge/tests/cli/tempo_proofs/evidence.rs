@@ -82,11 +82,11 @@ async fn record(provider: &RetryProvider, height: u64, account: Option<Address>)
     let raw_header = provider.debug_get_raw_header(BlockId::number(height)).await.unwrap();
     let block = provider.get_block_by_number(height.into()).await.unwrap().unwrap();
     assert_eq!(block.header.hash, finalization.digest);
-    let mut cursor = finalization.certificate.as_ref();
+    let mut cursor = commonware_codec::Copying(finalization.certificate.as_ref());
     let epoch = UInt::<u64>::read(&mut cursor).unwrap().0;
     let view = UInt::<u64>::read(&mut cursor).unwrap().0;
     let parent = UInt::<u64>::read(&mut cursor).unwrap().0;
-    let (payload, signatures) = cursor.split_at(32);
+    let (payload, signatures) = cursor.0.split_at(32);
     assert_eq!(B256::from_slice(payload), finalization.digest);
     assert_eq!((epoch, view), (finalization.epoch, finalization.view));
     assert_eq!(signatures.len(), 96);

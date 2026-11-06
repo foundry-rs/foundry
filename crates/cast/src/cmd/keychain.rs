@@ -32,14 +32,13 @@ use foundry_common::{
         read_tempo_accounts_store, tempo_accounts_store_path,
     },
 };
-use foundry_evm::hardfork::TempoHardfork;
 use foundry_wallets::{
     BrowserWalletOpts, WalletOpts, WalletSigner, wallet_browser::signer::BrowserSigner,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::fmt::Display;
-use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
+use tempo_alloy::{TempoNetwork, chainspec::hardfork::TempoHardfork, provider::TempoProviderExt};
 use tempo_contracts::precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, DEFAULT_FEE_TOKEN,
     IAccountKeychain::{
@@ -596,6 +595,7 @@ const fn key_type_name(t: KeyType) -> &'static str {
         KeyType::Secp256k1 => "secp256k1",
         KeyType::P256 => "p256",
         KeyType::WebAuthn => "webauthn",
+        KeyType::ConfigurableAccount => "configurableaccount",
     }
 }
 
@@ -604,6 +604,7 @@ const fn key_type_label(t: KeyType) -> &'static str {
         KeyType::Secp256k1 => "Secp256k1",
         KeyType::P256 => "P256",
         KeyType::WebAuthn => "WebAuthn",
+        KeyType::ConfigurableAccount => "ConfigurableAccount",
     }
 }
 

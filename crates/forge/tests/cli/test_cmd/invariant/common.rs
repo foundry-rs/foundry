@@ -3693,6 +3693,170 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 }
 
+#[forgetest_init]
+fn invariant_recorded_failures_do_not_poison_later_checks(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 5;
+        config.invariant.shrink_run_limit = 0;
+        config.invariant.fail_on_revert = false;
+        config.assertions_revert = false;
+        config.legacy_assertions = true;
+        config.fuzz.seed = Some(U256::from(119u32));
+    });
+    prj.add_test(
+        "RecordedFailure.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract OncePoisonHandler {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    bool immutable snapshotFailure;
+    uint256 public counter;
+    bool private _failed;
+
+    constructor(bool snapshotFailure_) { snapshotFailure = snapshotFailure_; }
+
+    function failed() external view returns (bool) { return _failed; }
+
+    function step() external {
+        counter++;
+        if (counter == 1) {
+            if (snapshotFailure) {
+                uint256 snapshot = vm.snapshotState();
+                vm.assertEq(uint256(1), uint256(2));
+                require(vm.revertToState(snapshot), "snapshot missing");
+                // Reassert after restoring the global failure slot.
+                vm.assertEq(uint256(1), uint256(2));
+            } else {
+                _failed = true;
+                vm.assertEq(uint256(1), uint256(2));
+            }
+        }
+    }
+}
+
+abstract contract RecordedFailureTest is Test {
+    OncePoisonHandler handler;
+
+    function invariant_counter_below_three() public view {
+        require(handler.counter() < 3, "counter reached 3");
+    }
+}
+
+contract SnapshotPoisonTest is RecordedFailureTest {
+    function setUp() public {
+        handler = new OncePoisonHandler(true);
+        targetContract(address(handler));
+    }
+}
+
+contract LegacyPoisonTest is RecordedFailureTest {
+    function setUp() public {
+        handler = new OncePoisonHandler(false);
+        targetContract(address(handler));
+    }
+}
+"#,
+    );
+
+    for contract in ["SnapshotPoisonTest", "LegacyPoisonTest"] {
+        cmd.forge_fuse()
+            .args(["test", "--match-contract", contract])
+            .assert_with(&[("[SEQUENCE]", r"\[Sequence\].*(\n\t\t.*)*")])
+            .failure()
+            .stdout_eq(str![[r#"
+...
+[FAIL: counter reached 3]
+	[SEQUENCE]
+
+Assertion Tests: 1 assertion bug(s) found
+[FAIL: assertion failed] test/RecordedFailure.t.sol:OncePoisonHandler::step
+	[SEQUENCE]
+ invariant_counter_below_three() (runs: 1, calls: 3, reverts: 0)
+...
+"#]]);
+    }
+}
+
+// A handler call that reverts at its root frame commits none of its `deal` or nonce writes.
+#[forgetest_init]
+fn invariant_reverted_call_drops_persistent_writes(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::ONE);
+        config.invariant.runs = 2;
+        config.invariant.depth = 20;
+        config.invariant.fail_on_revert = false;
+    });
+    prj.add_test(
+        "RevertedCallWrites.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+address constant TARGET = 0x6Fd0A0CFF9A87aDF51695b40b4fA267855a8F4c6;
+address constant SENDER = 0x5316812db67073C4d4af8BB3000C5B86c2877e94;
+
+contract RevertingHandler is Test {
+    function dealThenRevert() external {
+        vm.deal(TARGET, 123);
+        revert();
+    }
+
+    function setNonceThenRevert() external {
+        vm.setNonce(TARGET, 5);
+        revert();
+    }
+
+    function nestedDealThenRevert() external {
+        try this.dealThenRevert() {} catch {}
+        revert();
+    }
+
+    function executeThenRevert() external {
+        // Transfers 17 wei from SENDER to TARGET at nonce 0 on chain 1.
+        vm.executeTransaction(hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856");
+        revert();
+    }
+
+    // Succeeds, so the campaign asserts the invariants after it.
+    function noop() external {}
+}
+
+contract RevertedCallWritesTest is Test {
+    function setUp() public {
+        vm.chainId(1);
+        vm.deal(SENDER, 1 ether);
+        new RevertingHandler();
+        // Sending from TARGET would bump its nonce itself.
+        targetSender(address(0x1000));
+    }
+
+    function invariant_reverted_writes_dropped() public view {
+        require(TARGET.balance == 0, "reverted balance committed");
+        require(vm.getNonce(TARGET) == 0, "reverted setNonce committed");
+        require(SENDER.balance == 1 ether, "reverted transaction balance committed");
+        require(vm.getNonce(SENDER) == 0, "reverted transaction nonce committed");
+    }
+}
+"#,
+    );
+
+    for isolate in [false, true] {
+        prj.update_config(|config| config.isolate = isolate);
+        cmd.forge_fuse()
+            .args(["test", "--mc", "RevertedCallWritesTest"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/RevertedCallWrites.t.sol:RevertedCallWritesTest
+[PASS] invariant_reverted_writes_dropped() ([..])
+...
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}
+
 // Reverted handler calls are committed, so they must not roll back deals that earlier committed
 // transactions made. Isolation restores the pre-call state, which would mask this.
 #[forgetest_init]

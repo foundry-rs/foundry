@@ -1,31 +1,24 @@
-//! Anvil specific [`revm::Inspector`] implementation
+//! Anvil specific [`evm2::Inspector`] implementation
 
 use crate::eth::macros::node_info;
-use alloy_evm::precompiles::PrecompilesMap;
 use alloy_primitives::{Address, B256, Log, LogData, U256};
-use alloy_sol_types::SolValue;
-use foundry_evm::{
-    call_inspectors,
-    decode::decode_console_logs,
-    inspectors::{LogCollector, TracingInspector},
-    traces::{
-        CallTraceDecoder, CallTraceNode, SparsedTraceArena, TracingInspectorConfig,
-        render_trace_arena_inner,
-    },
+use alloy_sol_types::{SolEvent, SolInterface, SolValue};
+use evm2::{
+    EvmTypes, Inspector,
+    interpreter::{GasTracker, InstrStop, Interpreter, Message, MessageKind, MessageResult},
 };
-use revm::{
-    Inspector,
-    context::{ContextTr, JournalTr},
-    inspector::JournalExt,
-    interpreter::{
-        CallInputs, CallOutcome, CreateInputs, CreateOutcome, CreateScheme, Interpreter,
-        interpreter::EthInterpreter,
-    },
+use evm2_inspectors::{
+    tracing::{TracingInspector, TracingInspectorConfig, types::CallTraceNode},
+    transfer::{TRANSFER_EVENT_TOPIC, TRANSFER_LOG_EMITTER, TransferInspector},
 };
-use revm_inspectors::transfer::{TRANSFER_EVENT_TOPIC, TRANSFER_LOG_EMITTER, TransferInspector};
+use foundry_common::{ErrorExt, fmt::ConsoleFmt};
+use foundry_evm_core::{
+    abi::console, constants::HARDHAT_CONSOLE_ADDRESS, decode::decode_console_logs,
+};
+use foundry_evm_traces::{CallTraceDecoder, SparsedTraceArena, render_trace_arena_inner};
 use std::sync::Arc;
 
-/// The [`revm::Inspector`] used when transacting in the evm
+/// The [`evm2::Inspector`] used when transacting in the evm
 #[derive(Clone, Debug, Default)]
 pub struct AnvilInspector {
     /// Collects all traces
@@ -36,6 +29,32 @@ pub struct AnvilInspector {
     pub transfer: Option<TransferInspector>,
     /// Collects canonical and synthetic transfer logs for an `eth_simulateV1` response.
     simulation_logs: Option<SimulationLogCollector>,
+    /// Number of frames the tracer has entered.
+    ///
+    /// Tempo emits fee-token logs before the root frame starts; the tracer must not see hooks
+    /// outside a frame.
+    tracer_depth: usize,
+}
+
+/// Collects `LOG` opcode logs and Hardhat-style `console.sol` calls.
+#[derive(Clone, Debug, Default)]
+pub struct LogCollector {
+    /// The collected logs.
+    pub logs: Vec<Log>,
+}
+
+impl LogCollector {
+    fn hardhat_log(&mut self, data: &[u8]) -> alloy_sol_types::Result<()> {
+        let decoded = console::hh::ConsoleCalls::abi_decode(data)?;
+        for line in decoded.fmt(Default::default()).lines() {
+            self.logs.push(Log::new_unchecked(
+                HARDHAT_CONSOLE_ADDRESS,
+                vec![console::ds::log::SIGNATURE_HASH],
+                line.abi_encode().into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -137,7 +156,7 @@ impl AnvilInspector {
     pub fn finish_transaction(
         &mut self,
         config: &InspectorTxConfig,
-        precompiles: &PrecompilesMap,
+        is_precompile: impl Fn(&Address) -> bool,
     ) -> Vec<CallTraceNode> {
         // Print before draining so the tracer is still populated.
         if config.print_traces {
@@ -150,9 +169,8 @@ impl AnvilInspector {
         // Record inclusion using the executing EVM's map, while retaining the full Geth graph.
         for node in &mut traces {
             if node.parent.is_some() && !node.trace.kind.is_any_create() {
-                node.trace.maybe_precompile = Some(
-                    node.trace.value.is_zero() && precompiles.get(&node.trace.address).is_some(),
-                );
+                node.trace.maybe_precompile =
+                    Some(node.trace.value.is_zero() && is_precompile(&node.trace.address));
             }
         }
 
@@ -172,15 +190,15 @@ impl AnvilInspector {
         self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().set_steps(false)));
 
         // Reset log collector for next tx.
-        self.log_collector = config.print_logs.then(|| LogCollector::Capture { logs: Vec::new() });
+        self.log_collector = config.print_logs.then(LogCollector::default);
     }
 
     /// Called after the inspecting the evm
     ///
     /// This will log all `console.sol` logs
     pub fn print_logs(&self) {
-        if let Some(LogCollector::Capture { logs }) = &self.log_collector {
-            print_logs(logs);
+        if let Some(collector) = &self.log_collector {
+            print_logs(&collector.logs);
         }
     }
 
@@ -199,25 +217,25 @@ impl AnvilInspector {
         }
     }
 
-    /// Configures the `Tracer` [`revm::Inspector`]
+    /// Configures the `Tracer` [`evm2::Inspector`]
     pub fn with_tracing(mut self) -> Self {
         self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().set_steps(false)));
         self
     }
 
-    /// Configures the `TracingInspector` [`revm::Inspector`]
+    /// Configures the `TracingInspector` [`evm2::Inspector`]
     pub fn with_tracing_config(mut self, config: TracingInspectorConfig) -> Self {
         self.tracer = Some(TracingInspector::new(config));
         self
     }
 
-    /// Configures the `Tracer` [`revm::Inspector`] with a log collector
+    /// Configures the `Tracer` [`evm2::Inspector`] with a log collector
     pub fn with_log_collector(mut self) -> Self {
-        self.log_collector = Some(LogCollector::Capture { logs: Vec::new() });
+        self.log_collector = Some(LogCollector::default());
         self
     }
 
-    /// Configures the `Tracer` [`revm::Inspector`] with a transfer event collector
+    /// Configures the `Tracer` [`evm2::Inspector`] with a transfer event collector
     pub fn with_transfers(mut self) -> Self {
         self.transfer = Some(TransferInspector::new(false).with_logs(true));
         self
@@ -251,7 +269,7 @@ impl AnvilInspector {
         })
     }
 
-    /// Configures the `Tracer` [`revm::Inspector`] with a trace printer
+    /// Configures the `Tracer` [`evm2::Inspector`] with a trace printer
     pub fn with_trace_printer(mut self) -> Self {
         self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().with_state_diffs()));
         self
@@ -284,123 +302,160 @@ fn print_traces(tracer: TracingInspector, decoder: Arc<CallTraceDecoder>) {
     node_info!(Traces = %format!("\n{}", trace));
 }
 
-impl<CTX> Inspector<CTX, EthInterpreter> for AnvilInspector
-where
-    CTX: ContextTr<Journal: JournalExt>,
-{
-    fn initialize_interp(&mut self, interp: &mut Interpreter, ecx: &mut CTX) {
+impl<T: EvmTypes> Inspector<T> for AnvilInspector {
+    fn initialize_interp(&mut self, interp: &mut Interpreter<'_, '_, T>) {
         if let Some(collector) = &mut self.simulation_logs {
-            collector.sync_journal_logs(ecx.journal().logs());
+            collector.sync_journal_logs(interp.host().logs());
         }
-        call_inspectors!([&mut self.tracer], |inspector| {
-            inspector.initialize_interp(interp, ecx);
-        });
-    }
-
-    fn step(&mut self, interp: &mut Interpreter, ecx: &mut CTX) {
-        if let Some(collector) = &mut self.simulation_logs {
-            collector.sync_journal_logs(ecx.journal().logs());
-        }
-        call_inspectors!([&mut self.tracer], |inspector| {
-            inspector.step(interp, ecx);
-        });
-    }
-
-    fn step_end(&mut self, interp: &mut Interpreter, ecx: &mut CTX) {
-        call_inspectors!([&mut self.tracer], |inspector| {
-            inspector.step_end(interp, ecx);
-        });
-        if let Some(collector) = &mut self.simulation_logs {
-            collector.sync_journal_logs(ecx.journal().logs());
+        if let Some(tracer) = &mut self.tracer {
+            Inspector::<T>::initialize_interp(tracer, interp);
         }
     }
 
-    #[allow(clippy::redundant_clone)]
-    fn log(&mut self, ecx: &mut CTX, log: Log) {
-        call_inspectors!([&mut self.tracer, &mut self.log_collector], |inspector| {
-            inspector.log(ecx, log.clone());
-        });
+    fn step(&mut self, interp: &mut Interpreter<'_, '_, T>) {
         if let Some(collector) = &mut self.simulation_logs {
-            collector.push_canonical_log(log, ecx.journal().logs().len());
+            collector.sync_journal_logs(interp.host().logs());
+        }
+        if let Some(tracer) = self.tracer.as_mut().filter(|_| self.tracer_depth > 0) {
+            Inspector::<T>::step(tracer, interp);
         }
     }
 
-    #[allow(clippy::redundant_clone)]
-    fn log_full(&mut self, interp: &mut Interpreter, ecx: &mut CTX, log: Log) {
-        call_inspectors!([&mut self.tracer, &mut self.log_collector], |inspector| {
-            inspector.log_full(interp, ecx, log.clone());
-        });
+    fn step_end(&mut self, interp: &mut Interpreter<'_, '_, T>) {
+        if let Some(tracer) = self.tracer.as_mut().filter(|_| self.tracer_depth > 0) {
+            Inspector::<T>::step_end(tracer, interp);
+        }
         if let Some(collector) = &mut self.simulation_logs {
-            collector.push_canonical_log(log, ecx.journal().logs().len());
+            collector.sync_journal_logs(interp.host().logs());
         }
     }
 
-    fn call(&mut self, ecx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
+    fn log(&mut self, log: &Log, host: &mut T::Host<'_>) {
+        if let Some(tracer) = self.tracer.as_mut().filter(|_| self.tracer_depth > 0) {
+            Inspector::<T>::log(tracer, log, host);
+        }
+        if let Some(collector) = &mut self.log_collector {
+            collector.logs.push(log.clone());
+        }
         if let Some(collector) = &mut self.simulation_logs {
-            collector.sync_journal_logs(ecx.journal().logs());
+            // The hook runs before the log is recorded.
+            collector.push_canonical_log(log.clone(), host.logs().len() + 1);
+        }
+    }
+
+    fn call(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, T>,
+        message: &mut Message<T>,
+    ) -> Option<MessageResult<T>> {
+        if let Some(collector) = &mut self.simulation_logs {
+            collector.sync_journal_logs(interp.host().logs());
             collector.frame_start();
-            if inputs.scheme.is_call()
-                && let Some(value) = inputs.transfer_value()
-            {
-                collector.push_transfer(inputs.transfer_from(), inputs.transfer_to(), value);
+            // CALLCODE keeps the value in the calling account, so it is not a transfer.
+            if message.kind == MessageKind::Call {
+                collector.push_transfer(message.caller, message.destination, message.value);
             }
         }
-        call_inspectors!(
-            #[ret]
-            [&mut self.tracer, &mut self.log_collector, &mut self.transfer],
-            |inspector| inspector.call(ecx, inputs).map(Some),
-        );
+        if let Some(transfer) = &mut self.transfer
+            && let Some(result) = Inspector::<T>::call(transfer, interp, message)
+        {
+            return Some(result);
+        }
+        if let Some(tracer) = &mut self.tracer {
+            self.tracer_depth += 1;
+            if let Some(result) = Inspector::<T>::call(tracer, interp, message) {
+                return Some(result);
+            }
+        }
+        if let Some(collector) = &mut self.log_collector
+            && message.destination == HARDHAT_CONSOLE_ADDRESS
+            && let Err(err) = collector.hardhat_log(&message.input)
+        {
+            return Some(MessageResult::<T> {
+                stop: InstrStop::Revert,
+                gas: GasTracker::new_with_execution_gas_and_reservoir(
+                    message.gas_limit,
+                    message.reservoir,
+                ),
+                output: err.abi_encode_revert(),
+                ..Default::default()
+            });
+        }
         None
     }
 
-    fn call_end(&mut self, ecx: &mut CTX, inputs: &CallInputs, outcome: &mut CallOutcome) {
+    fn call_end(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, T>,
+        message: &Message<T>,
+        result: &mut MessageResult<T>,
+    ) {
         if let Some(tracer) = &mut self.tracer {
-            tracer.call_end(ecx, inputs, outcome);
+            self.tracer_depth = self.tracer_depth.saturating_sub(1);
+            Inspector::<T>::call_end(tracer, interp, message, result);
         }
         if let Some(collector) = &mut self.simulation_logs {
-            collector.sync_journal_logs(ecx.journal().logs());
-            collector.frame_end(outcome.instruction_result().is_ok(), ecx.journal().logs().len());
+            let logs = interp.host().logs();
+            collector.sync_journal_logs(logs);
+            collector.frame_end(result.is_success(), logs.len());
         }
     }
 
-    fn create(&mut self, ecx: &mut CTX, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
+    fn create(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, T>,
+        message: &mut Message<T>,
+    ) -> Option<MessageResult<T>> {
         if let Some(collector) = &mut self.simulation_logs {
-            collector.sync_journal_logs(ecx.journal().logs());
+            collector.sync_journal_logs(interp.host().logs());
             collector.frame_start();
-            if matches!(inputs.scheme(), CreateScheme::Create | CreateScheme::Create2 { .. })
-                && let Ok(account) = ecx.journal_mut().load_account(inputs.caller())
-            {
-                let address = inputs.created_address(account.data.info.nonce);
-                collector.push_transfer(inputs.caller(), address, inputs.value());
-            }
+            collector.push_transfer(message.caller, message.destination, message.value);
         }
-        call_inspectors!(
-            #[ret]
-            [&mut self.tracer, &mut self.transfer],
-            |inspector| inspector.create(ecx, inputs).map(Some),
-        );
+        if let Some(transfer) = &mut self.transfer
+            && let Some(result) = Inspector::<T>::create(transfer, interp, message)
+        {
+            return Some(result);
+        }
+        if let Some(tracer) = &mut self.tracer {
+            self.tracer_depth += 1;
+            return Inspector::<T>::create(tracer, interp, message);
+        }
         None
     }
 
-    fn create_end(&mut self, ecx: &mut CTX, inputs: &CreateInputs, outcome: &mut CreateOutcome) {
+    fn create_end(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, T>,
+        message: &Message<T>,
+        result: &mut MessageResult<T>,
+    ) {
         if let Some(tracer) = &mut self.tracer {
-            tracer.create_end(ecx, inputs, outcome);
+            self.tracer_depth = self.tracer_depth.saturating_sub(1);
+            Inspector::<T>::create_end(tracer, interp, message, result);
         }
         if let Some(collector) = &mut self.simulation_logs {
-            collector.sync_journal_logs(ecx.journal().logs());
-            collector.frame_end(
-                outcome.instruction_result().is_ok() && outcome.address.is_some(),
-                ecx.journal().logs().len(),
-            );
+            let logs = interp.host().logs();
+            collector.sync_journal_logs(logs);
+            collector
+                .frame_end(result.is_success() && result.created_address.is_some(), logs.len());
         }
     }
 
-    fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
-        call_inspectors!([&mut self.tracer, &mut self.transfer], |inspector| {
-            Inspector::<CTX, EthInterpreter>::selfdestruct(inspector, contract, target, value)
-        });
+    fn selfdestruct(
+        &mut self,
+        contract: &Address,
+        target: &Address,
+        value: &U256,
+        host: &mut T::Host<'_>,
+    ) {
+        if let Some(tracer) = &mut self.tracer {
+            Inspector::<T>::selfdestruct(tracer, contract, target, value, host);
+        }
+        if let Some(transfer) = &mut self.transfer {
+            Inspector::<T>::selfdestruct(transfer, contract, target, value, host);
+        }
         if let Some(collector) = &mut self.simulation_logs {
-            collector.push_transfer(contract, target, value);
+            collector.push_transfer(*contract, *target, *value);
         }
     }
 }
