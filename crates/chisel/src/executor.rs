@@ -117,7 +117,6 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                 .ok_or_else(|| eyre::eyre!("No bytecode found for `REPL` contract"))?;
             Ok((bytecode.into_owned(), output.final_pc(contract)?))
         })?;
-        let final_pc = final_pc.unwrap_or_default();
         let mut runner = self.build_runner(final_pc).await?;
         runner.run(bytecode)
     }
@@ -297,7 +296,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
         })
     }
 
-    async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner<FEN>> {
+    async fn build_runner(&mut self, final_pc: Option<usize>) -> Result<ChiselRunner<FEN>> {
         let backend = if let Some(backend) = &self.config.cached_backend {
             backend.clone()
         } else {
@@ -680,7 +679,7 @@ mod tests {
 
     async fn assert_celo_transfer_precompile(config: SessionSourceConfig<EthEvmNetwork>) {
         let mut source = SessionSource::<EthEvmNetwork>::new(config).unwrap();
-        let mut runner = source.build_runner(0).await.unwrap();
+        let mut runner = source.build_runner(None).await.unwrap();
         let from = Address::with_last_byte(1);
         let to = Address::with_last_byte(2);
         let amount = U256::from(4);
@@ -733,7 +732,7 @@ mod tests {
         })
         .unwrap();
 
-        let runner = source.build_runner(0).await.unwrap();
+        let runner = source.build_runner(None).await.unwrap();
         assert_eq!(
             runner.executor.inspector().extra_cheatcode_addresses(),
             &[MONAD_CHEATCODE_ADDRESS]

@@ -85,7 +85,7 @@ pub struct InspectorStackBuilder<BLOCK: Clone> {
     /// Whether to print all opcode traces into the console. Useful for debugging the EVM.
     pub print: Option<bool>,
     /// The chisel state inspector.
-    pub chisel_state: Option<usize>,
+    pub chisel_state: Option<ChiselState>,
     /// Whether to enable call isolation.
     /// In isolation mode all top-level calls are executed as a separate transaction in a separate
     /// EVM context, enabling more precise gas accounting and transaction state changes.
@@ -178,8 +178,8 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
 
     /// Set the Chisel inspector.
     #[inline]
-    pub const fn chisel_state(mut self, final_pc: usize) -> Self {
-        self.chisel_state = Some(final_pc);
+    pub fn chisel_state(mut self, final_pc: Option<usize>) -> Self {
+        self.chisel_state = Some(ChiselState::new(final_pc));
         self
     }
 
@@ -731,9 +731,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
 
     /// Set the Chisel inspector.
     #[inline]
-    pub fn set_chisel(&mut self, final_pc: usize) {
-        self.chisel_state = Some(ChiselState::new(final_pc).into());
-        self.refresh_static_step_end_dispatch();
+    pub fn set_chisel(&mut self, chisel: ChiselState) {
+        self.chisel_state = Some(chisel.into());
+        self.refresh_static_opcode_dispatch();
     }
 
     /// Set whether to enable the line coverage collector.
@@ -1472,6 +1472,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 call_inspectors!(
                     [
                         // These are sorted in definition order.
+                        &mut self.chisel_state,
                         &mut self.printer,
                         &mut self.revert_diag,
                         &mut self.script_execution_inspector,
@@ -1606,6 +1607,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
 
         call_inspectors!(
             [
+                &mut self.chisel_state,
                 &mut self.line_coverage,
                 &mut self.tracer,
                 &mut self.cheatcodes,
@@ -2432,7 +2434,8 @@ impl InspectorStackInner {
 
     #[inline]
     const fn refresh_static_step_dispatch(&mut self) {
-        self.static_step_dispatch = if self.edge_coverage.is_none()
+        self.static_step_dispatch = if self.chisel_state.is_none()
+            && self.edge_coverage.is_none()
             && self.line_coverage.is_none()
             && self.printer.is_none()
             && self.revert_diag.is_none()
@@ -2582,8 +2585,8 @@ mod tests {
         assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
         assert!(!stack.inner.has_static_step_end_inspectors);
 
-        stack.set_chisel(0);
-        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
+        stack.set_chisel(ChiselState::new(None));
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::General);
         assert!(stack.inner.has_static_step_end_inspectors);
     }
 
