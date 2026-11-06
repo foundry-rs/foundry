@@ -14,6 +14,11 @@ use std::mem::replace;
 /// The max length of arrays we fuzz for is 256.
 const MAX_ARRAY_LEN: usize = 256;
 
+/// Share of dictionary picks that take a typed sample of the parameter type when the type has
+/// any. The rest come from the untyped pool, which also holds account addresses, bytecode
+/// constants and storage words without a layout.
+const TYPED_SAMPLE_SHARE: f64 = 0.8;
+
 /// Length of a dynamic array: mostly short, sometimes medium, rarely long. Every level of a
 /// nested array draws its own length, so a uniform length up to `MAX_ARRAY_LEN` gave two levels
 /// an average of 16k elements and single calls of several MiB of calldata.
@@ -177,17 +182,20 @@ fn fuzz_param_from_state_inner(
     let value = || {
         let state = state.clone();
         let param = param.clone();
-        // Generate a bias and use it to pick samples or non-persistent values (50 / 50).
-        // Use `Index` instead of `Selector` when selecting a value to avoid iterating over the
-        // entire dictionary.
-        any::<(bool, prop::sample::Index)>().prop_map(move |(bias, index)| {
-            state.with_dictionary(|dict| {
-                let values = if bias { dict.samples(&param) } else { None }
-                    .unwrap_or_else(|| dict.values())
-                    .as_slice();
-                values[index.index(values.len())]
-            })
-        })
+        // Mostly pick a typed sample of the parameter type, otherwise a value from the untyped
+        // pool. Use `Index` instead of `Selector` when selecting a value to avoid iterating over
+        // the entire dictionary.
+        (proptest::bool::weighted(TYPED_SAMPLE_SHARE), any::<prop::sample::Index>()).prop_map(
+            move |(typed, index)| {
+                state.with_dictionary(|dict| {
+                    let values = if typed { dict.samples(&param) } else { None }
+                        .filter(|samples| !samples.is_empty())
+                        .unwrap_or_else(|| dict.values())
+                        .as_slice();
+                    values[index.index(values.len())]
+                })
+            },
+        )
     };
 
     // Convert the value based on the parameter type
@@ -670,6 +678,27 @@ mod tests {
     }
 
     #[test]
+    fn typed_samples_are_preferred_over_the_value_pool() {
+        let word = |value: u64| B256::from(U256::from(value));
+        let mut literals = LiteralMaps::default();
+        literals.words.entry(DynSolType::Uint(256)).or_default().extend([1, 2, 3].map(word));
+        let mut state = EvmFuzzState::test();
+        state.seed_literals(literals);
+        state.collect_values((100..200).map(word));
+
+        let strategy = super::fuzz_param_from_state(&DynSolType::Uint(256), &state);
+        let mut runner = TestRunner::deterministic();
+        let typed = (0..1000)
+            .filter(|_| {
+                let value = strategy.new_tree(&mut runner).unwrap().current();
+                matches!(value.as_uint(), Some((value, 256)) if value <= U256::from(3))
+            })
+            .count();
+        // About `TYPED_SAMPLE_SHARE` of the draws are typed samples, the rest pool values.
+        assert!((700..=900).contains(&typed), "typed samples drawn {typed} of 1000");
+    }
+
+    #[test]
     fn string_fixtures_are_emitted_verbatim() {
         let fixture = DynSolValue::String("  padded fixture  \0".to_string());
         let strategy = super::fuzz_param_with_fixtures(
@@ -882,12 +911,22 @@ mod tests {
         let ty = value.as_type().unwrap();
         let mut state = EvmFuzzState::test();
         state.collect_sample_values([value.clone()], 8);
+        // Other typed samples, so a struct generated field by field rarely equals the recorded one.
+        state.collect_sample_values(
+            [
+                DynSolValue::Address(Address::repeat_byte(0x55)),
+                DynSolValue::Uint(U256::from(1), 256),
+                DynSolValue::Uint(U256::from(2), 32),
+            ],
+            8,
+        );
 
         let strategy = super::fuzz_param_from_state(&ty, &state);
         let mut runner = TestRunner::deterministic();
         let reused =
             (0..200).filter(|_| strategy.new_tree(&mut runner).unwrap().current() == value).count();
-        // About half the draws reuse the recorded struct whole.
+        // About half the draws reuse the recorded struct whole; one in eight of the rest rebuilds
+        // it from the typed samples.
         assert!((50..=150).contains(&reused), "reused {reused} of 200");
     }
 }

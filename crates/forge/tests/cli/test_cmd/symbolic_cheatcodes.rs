@@ -2289,6 +2289,253 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 }
 
 #[forgetest_init]
+fn symbolic_cheat_writes_survive_reverting_call(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_cheat_writes_survive_reverting_call");
+
+    prj.add_test(
+        "SymbolicCheatWritesSurviveRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+address constant TARGET = address(0x1234);
+address constant SET = address(0x1001);
+address constant UNSAFE = address(0x1002);
+address constant RESET = address(0x1003);
+Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+interface StorageHookVm {
+    function registerSstoreHook(address target, bytes4 callback) external;
+}
+
+contract Probe {}
+
+contract HookedStore {
+    uint256 value;
+
+    function store() external {
+        value = 1;
+    }
+}
+
+contract DealingStoreHook {
+    constructor(address target) {
+        StorageHookVm(address(VM)).registerSstoreHook(target, DealingStoreHook.onStore.selector);
+    }
+
+    function onStore(address, bytes32, bytes32, bytes32) external {
+        VM.deal(address(0x2004), 1);
+        revert();
+    }
+}
+
+contract Killable {
+    function kill() external {
+        selfdestruct(payable(msg.sender));
+    }
+}
+
+contract RevertingConstructor {
+    constructor() {
+        VM.deal(address(0x2003), 1);
+        VM.setNonce(address(this), 10);
+        revert();
+    }
+}
+
+contract CheatHelper {
+    function writeAndRevert(uint256 amount) external {
+        VM.deal(TARGET, amount);
+        VM.setNonce(SET, 7);
+        VM.setNonceUnsafe(UNSAFE, 3);
+        VM.resetNonce(RESET);
+        VM.store(TARGET, 0, bytes32(uint256(1)));
+        revert();
+    }
+
+    function dealAndHalt(address who) external {
+        VM.deal(who, 1);
+        assembly {
+            invalid()
+        }
+    }
+
+    function dealAndRevert(address who) external {
+        VM.deal(who, 1);
+        revert();
+    }
+
+    function deployAndRevert() external {
+        address deployed = VM.deployCode("SymbolicCheatWritesSurviveRevert.t.sol:Probe");
+        VM.setNonce(deployed, 10);
+        revert();
+    }
+
+    function restoreAndRevert() external {
+        uint256 snapshot = VM.snapshotState();
+        VM.deal(address(0x2005), 10);
+        VM.setNonce(address(0x2005), 7);
+        VM.revertToState(snapshot);
+        VM.deal(address(0x2005), 20);
+        VM.setNonce(address(0x2005), 11);
+        revert();
+    }
+
+    function dealSelfAndRevert() external payable {
+        VM.deal(address(this), 123);
+        revert();
+    }
+
+    function setNonceCreateAndRevert() external {
+        VM.setNonce(address(this), 123);
+        new Probe();
+        revert();
+    }
+
+    function nestedNonceAndRevert() external {
+        new Probe();
+        try this.lowerNonceAndRevert() {} catch {}
+        VM.setNonce(address(this), 5);
+        revert();
+    }
+
+    function lowerNonceAndRevert() external {
+        new Probe();
+        VM.setNonceUnsafe(address(this), 0);
+        revert();
+    }
+
+    function destroyedNonceAndRevert() external {
+        Killable killable = new Killable();
+        killable.kill();
+        VM.setNonce(address(killable), 10);
+        revert();
+    }
+}
+
+contract Forwarder {
+    function forward(CheatHelper helper, uint256 amount) external {
+        helper.writeAndRevert(amount);
+    }
+}
+
+// Like Forge, balance and nonce cheatcode writes survive the revert of the frame that made them,
+// while storage writes roll back.
+contract SymbolicCheatWritesSurviveRevert is Test {
+    CheatHelper helper;
+    Forwarder forwarder;
+
+    function setUp() public {
+        helper = new CheatHelper();
+        forwarder = new Forwarder();
+    }
+
+    function checkWritesSurviveNestedRevert(uint256 amount) public {
+        vm.setNonce(UNSAFE, 9);
+        vm.setNonce(RESET, 4);
+        (bool ok,) = address(forwarder).call(abi.encodeCall(Forwarder.forward, (helper, amount)));
+        assertFalse(ok);
+        assertEq(TARGET.balance, amount);
+        assertEq(vm.getNonce(SET), 7);
+        assertEq(vm.getNonce(UNSAFE), 3);
+        assertEq(vm.getNonce(RESET), 0);
+        assertEq(vm.load(TARGET, 0), bytes32(0));
+    }
+
+    function checkWritesSurviveFailedFrames() public {
+        (bool ok,) = address(helper).call(abi.encodeCall(CheatHelper.dealAndHalt, (address(0x2001))));
+        assertFalse(ok);
+        vm.expectRevert();
+        helper.dealAndRevert(address(0x2002));
+        address created = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        try new RevertingConstructor() {} catch {}
+        address deployed = vm.computeCreateAddress(address(helper), vm.getNonce(address(helper)));
+        (ok,) = address(helper).call(abi.encodeCall(CheatHelper.deployAndRevert, ()));
+        assertFalse(ok);
+        HookedStore hooked = new HookedStore();
+        new DealingStoreHook(address(hooked));
+        (ok,) = address(hooked).call(abi.encodeCall(HookedStore.store, ()));
+        assertFalse(ok);
+        assertEq(address(0x2001).balance, 1);
+        assertEq(address(0x2002).balance, 1);
+        assertEq(address(0x2003).balance, 1);
+        assertEq(address(0x2004).balance, 1);
+        // Undoing the creation resets the nonce.
+        assertEq(vm.getNonce(created), 0);
+        assertEq(vm.getNonce(deployed), 0);
+    }
+
+    function checkSymbolicTargetWriteSurvivesRevert(address who) public {
+        (bool ok,) = address(helper).call(abi.encodeCall(CheatHelper.dealAndRevert, (who)));
+        assertFalse(ok);
+        assertEq(who.balance, 1);
+    }
+
+    function checkWritesSurviveAsDeltas() public {
+        // The revert still undoes the call value and CREATE nonce bump made after the write.
+        vm.deal(address(this), 5);
+        CheatHelper funded = new CheatHelper();
+        (bool ok,) = address(funded).call{value: 5}(abi.encodeCall(CheatHelper.dealSelfAndRevert, ()));
+        assertFalse(ok);
+        assertEq(address(funded).balance, 118);
+
+        CheatHelper creator = new CheatHelper();
+        (ok,) = address(creator).call(abi.encodeCall(CheatHelper.setNonceCreateAndRevert, ()));
+        assertFalse(ok);
+        assertEq(vm.getNonce(address(creator)), 123);
+
+        // The inner revert saturates the nonce at 0; the outer one undoes only its own bump.
+        CheatHelper nested = new CheatHelper();
+        (ok,) = address(nested).call(abi.encodeCall(CheatHelper.nestedNonceAndRevert, ()));
+        assertFalse(ok);
+        assertEq(vm.getNonce(address(nested)), 4);
+
+        CheatHelper destroyer = new CheatHelper();
+        address killable = vm.computeCreateAddress(address(destroyer), vm.getNonce(address(destroyer)));
+        (ok,) = address(destroyer).call(abi.encodeCall(CheatHelper.destroyedNonceAndRevert, ()));
+        assertFalse(ok);
+        assertEq(vm.getNonce(killable), 0);
+    }
+
+    function checkWritesBeforeSnapshotRestoreSurvive() public {
+        // A failed frame returns to the state from just before its first snapshot restore.
+        (bool ok,) = address(helper).call(abi.encodeCall(CheatHelper.restoreAndRevert, ()));
+        assertFalse(ok);
+        assertEq(address(0x2005).balance, 10);
+        assertEq(vm.getNonce(address(0x2005)), 7);
+    }
+
+    function checkRolledBackDealFails(uint256 amount) public {
+        vm.assume(amount != 0);
+        (bool ok,) = address(helper).call(abi.encodeCall(CheatHelper.writeAndRevert, (amount)));
+        assertFalse(ok);
+        assertEq(TARGET.balance, 0);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicCheatWritesSurviveRevert",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 6 tests for test/SymbolicCheatWritesSurviveRevert.t.sol:SymbolicCheatWritesSurviveRevert
+[FAIL: assertion failed: [..] != 0; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkRolledBackDealFails(uint256) ([METRICS])
+[PASS] checkSymbolicTargetWriteSurvivesRevert(address) ([METRICS])
+[PASS] checkWritesBeforeSnapshotRestoreSurvive() ([METRICS])
+[PASS] checkWritesSurviveAsDeltas() ([METRICS])
+[PASS] checkWritesSurviveFailedFrames() ([METRICS])
+[PASS] checkWritesSurviveNestedRevert(uint256) ([METRICS])
+Suite result: FAILED. 5 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
 fn symbolic_expect_call_follows_function_mock_redirect(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_expect_call_follows_function_mock_redirect");
 
