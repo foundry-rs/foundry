@@ -64,7 +64,7 @@ const DEFAULT_QUORUM: usize = 2;
 /// The focus of each agent without `--focus`, by agent number, wrapping: the four strategy lanes
 /// of ultrafuzz's smoke benchmark (MIT). On an audited vault, five runs of four agents with these
 /// focuses found 3.6 distinct real bugs per run against 2.2 without, at a lower cost and with
-/// the same hit rate on the audit's findings.
+/// the same hit rate on the audit's findings. A single agent gets no focus.
 const DEFAULT_FOCUSES: [&str; 4] = [
     "block and time transitions, accrual, vesting, auctions, deadlines, stale snapshots, and \
      sequences whose result depends on elapsed time.",
@@ -163,7 +163,7 @@ pub struct PropertiesArgs {
     /// FORGE_PROPERTIES_CONTEXT  absolute paths of the --context files, one per line
     /// FORGE_PROPERTIES_OUT      absolute, empty directory for the agent's tests
     /// FORGE_PROPERTIES_SEED     the agent's own seed, in hex
-    /// FORGE_PROPERTIES_FOCUS    the agent's focus, as in the task; empty with --no-focus
+    /// FORGE_PROPERTIES_FOCUS    the agent's focus, as in the task, or empty
     /// FORGE_PROPERTIES_USAGE    file where the agent can write its model usage as JSON:
     ///                           {"input_tokens": N, "output_tokens": N, "cost_usd": X}
     ///
@@ -222,11 +222,11 @@ pub struct PropertiesArgs {
     agents: usize,
 
     /// An area for one agent to search first. Agent N gets the Nth focus, wrapping. Can be given
-    /// more than once.
+    /// at most --agents times.
     ///
-    /// Without it, agents get built-in focuses: time and sequence effects, external dependency
-    /// boundaries, stored state against live balances, and limit and view functions across
-    /// lifecycle states.
+    /// Without it, two or more agents get built-in focuses: time and sequence effects, external
+    /// dependency boundaries, stored state against live balances, and limit and view functions
+    /// across lifecycle states.
     #[arg(long, value_name = "TEXT")]
     focus: Vec<String>,
 
@@ -486,6 +486,7 @@ impl PropertiesArgs {
         ensure!(self.agents > 0, "--agents must be greater than zero");
         let quorum = self.quorum.unwrap_or(self.agents.min(DEFAULT_QUORUM));
         ensure!((1..=self.agents).contains(&quorum), "--quorum must be between 1 and --agents");
+        ensure!(self.focus.len() <= self.agents, "--focus can be given at most --agents times");
         ensure!(
             self.target.iter().all(|path| workspace::is_safe_relative_path(path)),
             "--target paths must be project-relative paths"
@@ -930,17 +931,20 @@ impl Campaign<'_> {
         let out_dir = workspace.path().join(&out);
         ensure_inside(workspace.path(), &out_dir, &out)?;
         fs::create_dir_all(&out_dir)?;
-        let focus = (!args.no_focus).then(|| {
-            if args.focus.is_empty() {
-                DEFAULT_FOCUSES[(id - 1) % DEFAULT_FOCUSES.len()].to_owned()
-            } else {
-                args.focus[(id - 1) % args.focus.len()].clone()
-            }
-        });
+        let focuses = if args.no_focus || (args.focus.is_empty() && args.agents == 1) {
+            vec![]
+        } else if args.focus.is_empty() {
+            DEFAULT_FOCUSES.to_vec()
+        } else {
+            args.focus.iter().map(String::as_str).collect()
+        };
+        let focus = (!focuses.is_empty()).then(|| focuses[(id - 1) % focuses.len()]);
+        // The other agents have other focuses only when each agent has its own.
+        let distinct = args.agents > 1 && args.agents <= focuses.len();
         let prompt = cache.join("prompt.md");
         fs::write(
             &prompt,
-            session_prompt(&inputs.targets, &inputs.context, &out_dir, focus.as_deref()),
+            session_prompt(&inputs.targets, &inputs.context, &out_dir, focus, distinct),
         )?;
         let usage_path = cache.join("usage.json");
         let log_path = cache.join("agent.log");
@@ -1500,6 +1504,7 @@ fn session_prompt(
     context: &[PathBuf],
     out: &Path,
     focus: Option<&str>,
+    distinct: bool,
 ) -> String {
     let list = |paths: &[PathBuf]| {
         paths.iter().map(|path| format!("- {}\n", path.display())).collect::<String>()
@@ -1527,9 +1532,10 @@ fn session_prompt(
         out.display()
     ));
     if let Some(focus) = focus {
+        let others = if distinct { " (the other agents have other focuses)" } else { "" };
         prompt.push_str(&format!(
-            "\nYour focus (the other agents have other focuses): {focus} Trace a small number of \
-             concrete high-signal paths in this area first; then widen if budget is left.\n"
+            "\nYour focus{others}: {focus} Trace a small number of concrete high-signal paths in \
+             this area first; then widen if budget is left.\n"
         ));
     }
     prompt
