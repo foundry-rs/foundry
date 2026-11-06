@@ -664,8 +664,23 @@ pub struct CoverageItem {
     pub loc: SourceLocation,
     /// An alternative source location used only to find the item's bytecode anchor.
     pub anchor_loc: Option<SourceLocation>,
+    /// A direct custom-error guard, used only if its body has no unique instruction.
+    pub(crate) revert_guard: Option<RevertGuard>,
+    /// Straight-line storage-alias statements may use their proven function exit.
+    pub(crate) alias_function: Option<SourceLocation>,
+    /// A direct call with exactly one reference to its nonvirtual internal callee.
+    pub(crate) unique_callee: Option<SourceLocation>,
     /// The number of times this item was hit.
     pub hits: u32,
+}
+
+/// The source condition and payload of a direct, argument-free custom-error revert.
+#[derive(Clone, Debug)]
+pub(crate) struct RevertGuard {
+    pub condition: SourceLocation,
+    pub statement: SourceLocation,
+    pub function: SourceLocation,
+    pub selector: [u8; 4],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
