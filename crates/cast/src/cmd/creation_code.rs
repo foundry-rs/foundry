@@ -2,9 +2,12 @@ use super::interface::load_abi_from_file;
 use alloy_consensus::Transaction;
 use alloy_dyn_abi::{DynSolType, Specifier};
 use alloy_json_abi::{Constructor, JsonAbi};
+use alloy_network::{AnyNetwork, ReceiptResponse};
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::{Provider, ext::TraceApi};
-use alloy_rpc_types::trace::parity::{Action, CreateAction, CreateOutput, TraceOutput};
+use alloy_rpc_types::trace::parity::{
+    Action, CreateAction, CreateOutput, LocalizedTransactionTrace, TraceOutput,
+};
 use clap::Parser;
 use eyre::{OptionExt, Result, eyre};
 use foundry_cli::{
@@ -38,6 +41,14 @@ pub struct CreationCodeArgs {
     #[arg(long)]
     only_args: bool,
 
+    /// Find the creation code using only the RPC, without Etherscan.
+    ///
+    /// The deployment block is found by a binary search over historical state, which requires an
+    /// archive node. Contracts deployed by other contracts also require `trace_block` support.
+    /// `--only-args` and `--without-args` also require `--abi-path`.
+    #[arg(long)]
+    rpc_only: bool,
+
     #[command(flatten)]
     etherscan: EtherscanOpts,
 
@@ -47,10 +58,15 @@ pub struct CreationCodeArgs {
 
 impl CreationCodeArgs {
     pub async fn run(self) -> Result<()> {
+        if self.rpc_only && (self.only_args || self.without_args) && self.abi_path.is_none() {
+            eyre::bail!(
+                "`--abi-path` is required with `--rpc-only` when using `--only-args` or `--without-args`"
+            );
+        }
         let mut config = self.load_config()?;
-        let Self { contract, disassemble, without_args, only_args, abi_path, .. } = self;
+        let Self { contract, disassemble, without_args, only_args, abi_path, rpc_only, .. } = self;
 
-        let bytecode = fetch_creation_code(&mut config, contract).await?;
+        let bytecode = fetch_creation_code(&mut config, contract, rpc_only).await?;
         let bytecode = parse_code_output(
             bytecode,
             contract,
@@ -159,11 +175,20 @@ pub(crate) fn constructor_args_offset(constructor: &Constructor, bytecode: &[u8]
 }
 
 /// Connects to the configured RPC, pins `config.chain` to it, and fetches the creation code of
-/// `contract` using its Etherscan creation transaction.
-pub(crate) async fn fetch_creation_code(config: &mut Config, contract: Address) -> Result<Bytes> {
+/// `contract`, either from its Etherscan creation transaction or, with `rpc_only`, from the RPC
+/// alone.
+pub(crate) async fn fetch_creation_code(
+    config: &mut Config,
+    contract: Address,
+    rpc_only: bool,
+) -> Result<Bytes> {
     let provider = utils::get_provider(config)?;
     let chain = provider.get_chain_id().await?.into();
     config.chain = Some(chain);
+
+    if rpc_only {
+        return fetch_creation_code_from_rpc(&provider, contract).await;
+    }
 
     let client = config
         .get_etherscan_config_with_chain(Some(chain))?
@@ -186,6 +211,78 @@ pub(crate) async fn fetch_creation_code(config: &mut Config, contract: Address) 
         .trace_transaction(creation_tx_hash)
         .await
         .map_err(|e| eyre!("Could not fetch traces for transaction {}: {}", creation_tx_hash, e))?;
+    init_code_from_traces(traces, contract)
+}
+
+/// Fetches the creation code of `contract` using only RPC calls.
+///
+/// The deployment block is the first block in which the address has code. A transaction in that
+/// block that created the contract directly carries the creation code as its input. Otherwise the
+/// contract was created by another contract, and the code is taken from the block's traces.
+async fn fetch_creation_code_from_rpc<P: Provider<AnyNetwork>>(
+    provider: &P,
+    contract: Address,
+) -> Result<Bytes> {
+    let latest = provider.get_block_number().await?;
+    let block = find_deployment_block(latest, |number| async move {
+        let code = provider.get_code_at(contract).number(number).await?;
+        Ok(!code.is_empty())
+    })
+    .await?
+    .ok_or_else(|| eyre!("No contract code found at {contract}"))?;
+    if block == 0 {
+        eyre::bail!("Contract {contract} has code since genesis and has no creation transaction");
+    }
+
+    let receipts = provider
+        .get_block_receipts(block.into())
+        .await?
+        .ok_or_else(|| eyre!("Could not fetch receipts of block {block}"))?;
+    if let Some(receipt) =
+        receipts.iter().find(|receipt| receipt.contract_address() == Some(contract))
+    {
+        let tx_hash = receipt.transaction_hash();
+        let tx = provider
+            .get_transaction_by_hash(tx_hash)
+            .await?
+            .ok_or_else(|| eyre!("Could not find creation tx {tx_hash}"))?;
+        return Ok(tx.input().clone());
+    }
+
+    let traces = provider
+        .trace_block(block.into())
+        .await
+        .map_err(|e| eyre!("Could not fetch traces for block {block}: {e}"))?;
+    init_code_from_traces(traces, contract)
+}
+
+/// Returns the first block number in `0..=latest` for which `has_code` is true, assuming the
+/// address keeps its code once deployed, or `None` if it has no code at `latest`.
+async fn find_deployment_block<F, Fut>(latest: u64, mut has_code: F) -> Result<Option<u64>>
+where
+    F: FnMut(u64) -> Fut,
+    Fut: Future<Output = Result<bool>>,
+{
+    if !has_code(latest).await? {
+        return Ok(None);
+    }
+    let (mut low, mut high) = (0, latest);
+    while low < high {
+        let mid = low + (high - low) / 2;
+        if has_code(mid).await? {
+            high = mid;
+        } else {
+            low = mid + 1;
+        }
+    }
+    Ok(Some(high))
+}
+
+/// Returns the init code of the last trace in `traces` that created `contract`.
+fn init_code_from_traces(
+    traces: impl IntoIterator<Item = LocalizedTransactionTrace>,
+    contract: Address,
+) -> Result<Bytes> {
     traces
         .into_iter()
         .filter(|trace| {
@@ -279,6 +376,24 @@ mod tests {
             err.to_string(),
             "Could not find constructor arguments matching the ABI in the creation bytecode"
         );
+    }
+
+    #[tokio::test]
+    async fn finds_first_block_with_code() {
+        for (latest, deployed) in [(0, 0), (1, 1), (10, 1), (10, 7), (1_000_000, 999_999)] {
+            let probes = std::cell::Cell::new(0);
+            let found = find_deployment_block(latest, |number| {
+                probes.set(probes.get() + 1);
+                async move { Ok(number >= deployed) }
+            })
+            .await
+            .unwrap();
+            assert_eq!(found, Some(deployed));
+            assert!(probes.get() <= 2 + latest.max(1).ilog2() as usize, "{probes:?} probes");
+        }
+
+        let found = find_deployment_block(10, |_| async { Ok(false) }).await.unwrap();
+        assert_eq!(found, None);
     }
 
     #[tokio::test]

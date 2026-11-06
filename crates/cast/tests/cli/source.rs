@@ -632,3 +632,127 @@ interface Token_2 {
     );
     server.abort();
 }
+
+// Init code that returns the one-byte runtime code `0xfe`.
+const RPC_ONLY_INIT_CODE: &str = "6001600c60003960016000f3fe";
+
+// Deploys `init_code` from the first dev account with empty blocks before and after it, and returns
+// the address of the created contract. The gas limit is fixed because estimation does not account
+// for contracts created during construction.
+async fn deploy_between_empty_blocks(
+    api: &anvil::eth::EthApi<foundry_primitives::FoundryNetwork>,
+    handle: &anvil::NodeHandle,
+    init_code: Bytes,
+) -> Address {
+    api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let tx = alloy_rpc_types::TransactionRequest::default()
+        .with_from(from)
+        .with_deploy_code(init_code)
+        .with_gas_limit(1_000_000);
+    let receipt = provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+    api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
+    receipt.contract_address().unwrap()
+}
+
+// tests that creation code and constructor args are found without Etherscan
+// <https://github.com/foundry-rs/foundry/issues/11104>
+#[casttest]
+async fn creation_code_rpc_only(prj: _, cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let args = U256::from(42).abi_encode();
+    let init_code = Bytes::from([hex::decode(RPC_ONLY_INIT_CODE).unwrap(), args].concat());
+    let contract = deploy_between_empty_blocks(&api, &handle, init_code).await.to_string();
+
+    cmd.args(["creation-code", &contract, "--rpc-only", "--rpc-url", &endpoint])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x6001600c60003960016000f3fe000000000000000000000000000000000000000000000000000000000000002a
+
+"#]]);
+
+    let abi = prj.root().join("abi.json");
+    fs::write(&abi, r#"[{"type":"constructor","inputs":[{"name":"value","type":"uint256"}]}]"#)
+        .unwrap();
+    let abi = abi.to_str().unwrap();
+
+    cmd.cast_fuse()
+        .args(["creation-code", &contract, "--rpc-only", "--only-args", "--abi-path", abi])
+        .args(["--rpc-url", &endpoint])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x000000000000000000000000000000000000000000000000000000000000002a
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args(["constructor-args", &contract, "--rpc-only", "--abi-path", abi])
+        .args(["--rpc-url", &endpoint])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x000000000000000000000000000000000000000000000000000000000000002a → Uint(42, 256)
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args(["constructor-args", &contract, "--rpc-only", "--rpc-url", &endpoint])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+error: the following required arguments were not provided:
+  --abi-path <ABI_PATH>
+
+Usage: cast constructor-args --abi-path <ABI_PATH> --rpc-only --rpc-url <URL> <CONTRACT>
+
+For more information, try '--help'.
+
+"#]]);
+}
+
+// tests that the creation code of a contract created by another contract is found in the traces
+#[casttest]
+async fn creation_code_rpc_only_from_traces(cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    // Init code that copies `RPC_ONLY_INIT_CODE` from offset 16 into memory and creates it.
+    let factory_init_code = format!("600d6010600039600d60006000f05000{RPC_ONLY_INIT_CODE}");
+    let factory =
+        deploy_between_empty_blocks(&api, &handle, hex::decode(factory_init_code).unwrap().into())
+            .await;
+    let child = factory.create(1).to_string();
+
+    cmd.args(["creation-code", &child, "--rpc-only", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x6001600c60003960016000f3fe
+
+"#]]);
+}
+
+// tests that an address without code is reported
+#[casttest]
+async fn creation_code_rpc_only_without_code(cmd: _) {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    cmd.args(["creation-code", &Address::repeat_byte(0x11).to_string(), "--rpc-only"])
+        .args(["--rpc-url", &handle.http_endpoint()])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: No contract code found at 0x1111111111111111111111111111111111111111
+
+"#]]);
+}
+
+// tests that splitting the creation code requires the ABI before any RPC call is made
+#[casttest]
+fn creation_code_rpc_only_requires_abi_for_args(cmd: _) {
+    for flag in ["--only-args", "--without-args"] {
+        cmd.cast_fuse()
+            .args(["creation-code", &Address::ZERO.to_string(), "--rpc-only", flag])
+            .args(["--rpc-url", "http://127.0.0.1:1"])
+            .assert_failure()
+            .stderr_eq(str![[r#"
+Error: `--abi-path` is required with `--rpc-only` when using `--only-args` or `--without-args`
+
+"#]]);
+    }
+}
