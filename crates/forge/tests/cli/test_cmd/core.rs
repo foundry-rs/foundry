@@ -2,6 +2,7 @@
 
 use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
 use foundry_test_utils::{str, util::OutputExt};
+use regex::Regex;
 use serde_json::Value;
 
 #[forgetest_init]
@@ -632,20 +633,23 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 }
 
 #[forgetest_init]
-fn rerun_with_only_setup_failure_runs_all_tests(prj: _, cmd: _) {
-    prj.add_test(
-        "RerunSetupFail.t.sol",
-        r#"
+fn rerun_with_only_setup_failure_runs_failed_suite(prj: _, cmd: _) {
+    prj.update_config(|config| config.test_pattern = Some(Regex::new(r"^test\w*").unwrap().into()));
+    let source = r#"
 import "forge-std/Test.sol";
 
 contract OnlySetupFails is Test {
+    bool constant SETUP_OK = false;
+
     function setUp() public {
-        assertTrue(false);
+        assertTrue(SETUP_OK);
     }
 
     function testA() public {
         assertTrue(true);
     }
+
+    function invariant_excludedByConfig() public {}
 }
 
 contract HealthyContract is Test {
@@ -653,27 +657,234 @@ contract HealthyContract is Test {
         assertTrue(true);
     }
 }
-"#,
-    );
+"#;
+    prj.add_test("RerunSetupFail.t.sol", source);
 
     cmd.args(["test", "-j1"]).assert_failure();
 
-    // With no replayable failures recorded, `--rerun` falls back to a regular run instead of
-    // selecting zero tests.
+    // The failed `setUp()` is recorded, so `--rerun` runs only its suite again.
     cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure().stdout_eq(str![[r#"
 No files changed, compilation skipped
-
-Ran 1 test for test/RerunSetupFail.t.sol:HealthyContract
-[PASS] testC() ([GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test for test/RerunSetupFail.t.sol:OnlySetupFails
 [FAIL: assertion failed] setUp() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+...
+"#]]);
+
+    // Once `setUp()` passes, only the tests the configured pattern selected run again.
+    prj.add_test("RerunSetupFail.t.sol", &source.replace("SETUP_OK = false", "SETUP_OK = true"));
+    cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/RerunSetupFail.t.sol:OnlySetupFails
+[PASS] testA() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+    assert!(!prj.root().join("cache/test-failures").exists());
+}
+
+// A failed `setUp()` is rerun along with the failed tests of other suites.
+#[forgetest_init]
+fn rerun_includes_setup_failure_next_to_test_failures(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.test_pattern = Some(Regex::new(r"^testC\w*").unwrap().into())
+    });
+    let source = r#"
+import "forge-std/Test.sol";
+
+contract SetupFails is Test {
+    bool constant SETUP_OK = false;
+
+    function setUp() public {
+        assertTrue(SETUP_OK);
+    }
+
+    function testA() public {}
+
+    function testZ() public {}
+
+    function invariant_excludedByFilter() public {}
+}
+
+contract TestFails is Test {
+    function testB() public {
+        assertTrue(false);
+    }
+
+    function testC() public {}
+}
+"#;
+    prj.add_test("RerunMixed.t.sol", source);
+
+    // Rerun selection must override the configured pattern, just as the initial CLI filter does.
+    cmd.args(["test", "--match-test", "^test[AB]", "-j1"]).assert_failure();
+    cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/RerunMixed.t.sol:SetupFails
+[FAIL: assertion failed] setUp() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/RerunMixed.t.sol:TestFails
+[FAIL: assertion failed] testB() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 2 test suites [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
+...
+"#]]);
+
+    // Once `setUp()` passes, only the tests the original run selected run again.
+    prj.add_test("RerunMixed.t.sol", &source.replace("SETUP_OK = false", "SETUP_OK = true"));
+    cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/RerunMixed.t.sol:SetupFails
+[PASS] testA() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/RerunMixed.t.sol:TestFails
+[FAIL: assertion failed] testB() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
 Ran 2 test suites [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
 ...
 "#]]);
+}
+
+#[forgetest_init]
+fn rerun_includes_all_suite_failures(prj: _, cmd: _) {
+    prj.add_test(
+        "RerunSuites.t.sol",
+        r#"
+contract ConstructorFails {
+    constructor() {
+        revert("constructor failed");
+    }
+
+    function testA() public {}
+}
+
+contract InvalidHook {
+    function afterInvariant() public {}
+    function afterinvariant() public {}
+    function testB() public {}
+}
+
+contract SetupFails {
+    function setUp() public {
+        revert("setup failed");
+    }
+
+    function testC() public {}
+}
+
+contract Healthy {
+    function testD() public {}
+}
+
+contract TestFails {
+    function testE() public {
+        revert("test failed");
+    }
+
+    function testF() public {}
+}
+"#,
+    );
+
+    cmd.args(["test", "-j1"]).assert_failure();
+    cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/RerunSuites.t.sol:ConstructorFails
+[FAIL: constructor failed] constructor() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/RerunSuites.t.sol:InvalidHook
+[FAIL: multiple afterInvariant functions] afterInvariant() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/RerunSuites.t.sol:SetupFails
+[FAIL: setup failed] setUp() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/RerunSuites.t.sol:TestFails
+[FAIL: test failed] testE() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 4 test suites [ELAPSED]: 0 tests passed, 4 failed, 0 skipped (4 total tests)
+...
+"#]]);
+}
+
+// A suite skipped in `setUp()` is not recorded, so `--rerun` runs only the failed suite.
+#[forgetest_init]
+fn rerun_excludes_skipped_setup(prj: _, cmd: _) {
+    prj.add_test(
+        "RerunSkipped.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SetupSkips is Test {
+    function setUp() public {
+        vm.skip(true);
+    }
+
+    function testA() public {}
+}
+
+contract TestFails is Test {
+    function testB() public {
+        assertTrue(false);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "-j1"]).assert_failure();
+    assert_eq!(
+        std::fs::read_to_string(prj.root().join("cache/test-failures")).unwrap(),
+        r#"{"version":1,"failures":[{"contract":"test/RerunSkipped.t.sol:TestFails","test":"testB"}]}"#
+    );
+    cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/RerunSkipped.t.sol:TestFails
+[FAIL: assertion failed] testB() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+...
+"#]]);
+}
+
+// `forge fuzz` cannot run unit tests, so a failed `setUp()` records only its fuzz tests.
+#[forgetest_init]
+fn rerun_fuzz_only_records_runnable_blocked_tests(prj: _, cmd: _) {
+    prj.add_test(
+        "RerunFuzzOnly.t.sol",
+        r#"
+contract SetupFails {
+    function setUp() public {
+        revert("setup failed");
+    }
+
+    function testUnit() public {}
+
+    function testFuzz(uint256) public {}
+}
+"#,
+    );
+
+    cmd.args(["fuzz", "run", "-j1"]).assert_failure();
+    assert_eq!(
+        std::fs::read_to_string(prj.root().join("cache/test-failures")).unwrap(),
+        r#"{"version":1,"failures":[{"contract":"test/RerunFuzzOnly.t.sol:SetupFails","test":"testFuzz"}]}"#
+    );
 }
 
 #[forgetest_init]

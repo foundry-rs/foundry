@@ -3391,6 +3391,7 @@ fn merge_suite_results(
         if let Some(base_suite) = base.get_mut(&suite_id) {
             base_suite.test_results.extend(other_suite.test_results);
             base_suite.warnings.extend(other_suite.warnings);
+            base_suite.blocked_tests.extend(other_suite.blocked_tests);
             base_suite.duration = base_suite.duration.max(other_suite.duration);
         } else {
             base.insert(suite_id, other_suite);
@@ -3476,12 +3477,20 @@ fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
             .results
             .iter()
             .flat_map(|(contract, suite)| {
-                suite.test_results.iter().filter(|(_, result)| result.status.is_failure()).flat_map(
-                    move |(test_name, test_result)| {
+                // Tests blocked by a suite failure, such as a failed `setUp()`, rerun by name.
+                let blocked_tests = suite
+                    .blocked_tests
+                    .iter()
+                    .map(|test| test.split('(').next().unwrap_or(test).to_owned());
+                suite
+                    .test_results
+                    .iter()
+                    .filter(|(_, result)| result.status.is_failure())
+                    .flat_map(|(test_name, test_result)| {
                         rerun_filter_matches(test_name, test_result)
-                            .map(move |test| RerunFailure { contract: contract.clone(), test })
-                    },
-                )
+                    })
+                    .chain(blocked_tests)
+                    .map(move |test| RerunFailure { contract: contract.clone(), test })
             })
             .collect::<Vec<_>>();
 
