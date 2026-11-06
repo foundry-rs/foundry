@@ -2165,7 +2165,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
     /// Replays the persistent writes made in the frame at `depth` or deeper after the frame
     /// failed and the writes were rolled back, as writes of the enclosing frame. A transaction's
-    /// writes are dropped when its root frame ends; a nested one merges its changes itself.
+    /// writes are dropped when its root frame ends, and a failed root frame does not replay the
+    /// writes its rollback undid; a nested one merges its changes itself.
     fn replay_persistent_writes(
         &mut self,
         interp: &mut InterpreterFor<'_, '_, FEN>,
@@ -2178,7 +2179,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         let root = usize::from(interp.version().initial_call_depth);
         let state = interp.host().state_mut();
         let mut failed = None;
-        if !success {
+        if !success && depth > root {
             // Without the frame's rollback, such as without the inspector stack, every write of
             // the frame was undone. A context switch in the frame can leave later writes below
             // its checkpoint, which the rollback keeps.
