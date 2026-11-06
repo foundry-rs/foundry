@@ -1186,11 +1186,11 @@ pub fn check_sequence_value<FEN: FoundryEvmNetwork>(
             last_call_scored =
                 handlers_succeeded(&executor, test_address, &gate_targets, &call_result);
             // Campaigns drop rejected calls. A failed gate stops them under `fail_on_revert`, and
-            // an assertion failure is a handler bug that fails the test in any configuration.
+            // an assertion failure, even a caught one that passes the gate, is a handler bug that
+            // fails the test in any configuration.
             if kind == CampaignCallKind::AssumptionRejected
-                || (!last_call_scored
-                    && (fail_on_revert
-                        || did_fail_on_assert(&call_result, &call_result.state_changeset)))
+                || did_fail_on_assert(&call_result, &call_result.state_changeset)
+                || (!last_call_scored && fail_on_revert)
             {
                 return Ok(None);
             }

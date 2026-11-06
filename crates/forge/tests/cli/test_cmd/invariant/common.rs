@@ -2084,6 +2084,65 @@ Assertion Tests: 1 assertion bug(s) found
 "#]]);
 }
 
+// A caught `vm.assert*` is a handler assertion failure whether or not the invariant is checked
+// after the call.
+#[forgetest_init]
+fn invariant_fail_on_caught_vm_assert(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+    });
+
+    prj.add_test(
+        "InvariantFailOnCaughtVmAssert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract VmAssertHandler {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function caughtVmAssert() external {
+        try vm.assertTrue(false, "custom message") {} catch {}
+    }
+}
+
+contract InvariantCaughtVmAssertInterval1 is Test {
+    function setUp() public {
+        targetContract(address(new VmAssertHandler()));
+    }
+
+    /// forge-config: default.invariant.check_interval = 1
+    function invariant_caught_vm_assert() public view {}
+}
+
+contract InvariantCaughtVmAssertInterval2 is Test {
+    function setUp() public {
+        targetContract(address(new VmAssertHandler()));
+    }
+
+    /// forge-config: default.invariant.check_interval = 2
+    function invariant_caught_vm_assert() public view {}
+}
+"#,
+    );
+
+    for interval in [1, 2] {
+        assert_invariant(cmd.forge_fuse().args([
+            "test",
+            "--mc",
+            &format!("InvariantCaughtVmAssertInterval{interval}"),
+        ]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Assertion Tests: 1 assertion bug(s) found
+[FAIL: assertion failed] test/InvariantFailOnCaughtVmAssert.t.sol:VmAssertHandler::caughtVmAssert
+...
+"#]]);
+    }
+}
+
 #[forgetest_init]
 fn invariant_shrink_with_assert(prj: _, cmd: _) {
     prj.update_config(|config| {
