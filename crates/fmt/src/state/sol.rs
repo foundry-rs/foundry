@@ -704,11 +704,18 @@ impl<'ast> State<'_, 'ast> {
                         self.s.offset(-self.ind);
                         self.print_comments(body_span.lo(), CommentConfig::skip_ws());
                     } else {
-                        // A trailing comment is printed after a space even when the break before it
-                        // is taken, so shift that break back to match an own-line comment.
-                        let nbsp = isize::from(cmnt.style.is_trailing());
-                        self.zerobreak();
-                        self.s.offset(-self.ind - nbsp);
+                        // A trailing line comment moves to its own line, where it is isolated on
+                        // the next run, so break explicitly and let it be
+                        // printed as isolated.
+                        if cmnt.style.is_trailing()
+                            && matches!(cmnt.kind, ast::CommentKind::Line)
+                            && !cmnt.is_doc
+                        {
+                            self.hardbreak();
+                        } else {
+                            self.zerobreak();
+                        }
+                        self.s.offset(-self.ind);
                         self.print_comments(body_span.lo(), CommentConfig::skip_ws());
                         self.s.offset(-self.ind);
                     }

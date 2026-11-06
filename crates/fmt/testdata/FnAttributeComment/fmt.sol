@@ -17,4 +17,16 @@ contract C {
     {
         a = 1;
     }
+
+    function blockCommentBeforeBody() internal returns (uint256 a) /* note */ {
+        a = 1;
+    }
+}
+
+function freeFunctionBeforeBody()
+    pure
+    returns (uint256 a)
+// note
+{
+    a = 1;
 }

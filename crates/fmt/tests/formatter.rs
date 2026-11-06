@@ -973,3 +973,29 @@ fn fractional_and_wide_number_literals() {
     let expected = "contract C {\n    function f() external {\n        1.25e-2;\n        1e100;\n        1.2e3;\n    }\n}\n";
     assert_eq!(format(source, Path::new("test.sol"), Arc::default()), expected);
 }
+
+#[test]
+fn trailing_comment_before_fn_body_is_idempotent() {
+    let cases = [
+        (
+            "contract C {\n    function f() internal returns (uint256 a) // note\n    {\n        a = 1;\n    }\n}\n",
+            IndentStyle::Space,
+        ),
+        (
+            "contract C {\n    function f() internal returns (uint256 a) // note\n    {\n        a = 1;\n    }\n}\n",
+            IndentStyle::Tab,
+        ),
+        ("function f() pure returns (uint256 a) // note\n{ a = 1; }\n", IndentStyle::Space),
+        ("function f() pure returns (uint256 a) // note\n{ a = 1; }\n", IndentStyle::Tab),
+        (
+            "contract C {\n    function f() internal returns (uint256 a) /* note */ {\n        a = 1;\n    }\n}\n",
+            IndentStyle::Space,
+        ),
+    ];
+    for (source, style) in cases {
+        let config = Arc::new(FormatterConfig { style, ..Default::default() });
+        let once = format(source, Path::new("test.sol"), config.clone());
+        let twice = format(&once, Path::new("test.sol"), config);
+        assert_eq!(once, twice, "not idempotent for {source:?} ({style:?})\n{once}");
+    }
+}
