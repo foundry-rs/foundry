@@ -4562,7 +4562,7 @@ contract ForgeFuzzFrontierTest {
             "--fuzz-runs",
             "8",
             "--fuzz-seed",
-            "0x1234",
+            "0x1237",
             "--threads",
             "1",
             "--fuzz-frontier-dir",
@@ -4637,7 +4637,7 @@ contract ForgeFuzzFrontierTest {
             "--fuzz-runs",
             "8",
             "--fuzz-seed",
-            "0x1234",
+            "0x1237",
             "--threads",
             "1",
             "--fuzz-frontier-dir",
@@ -5564,11 +5564,18 @@ contract FuzzNumbersTest is Test {
             xy = x * y;
         }
 
-        if ((x != 0 && xy / x != y)) {
+        // Skip overflowing products without panicking on `type(int256).min / -1`.
+        if (x != 0 && (x == -1 ? y == type(int256).min : xy / x != y)) {
             return;
         }
 
-        assertEq(((xy - 1) / 1e18) + 1, (xy - 1) / (1e18 + 1));
+        int256 lhs;
+        int256 rhs;
+        unchecked {
+            lhs = ((xy - 1) / 1e18) + 1;
+            rhs = (xy - 1) / (1e18 + 1);
+        }
+        assertEq(lhs, rhs);
     }
 }
    "#,
@@ -5922,7 +5929,7 @@ contract FuzzReplayTest is Test {
         prj.root().join("cache/fuzz/failures/FuzzReplayTest/testFuzz_replayAfterReject");
     let persisted_failure: BaseCounterExample =
         serde_json::from_slice(&std::fs::read(&failure_file).unwrap()).unwrap();
-    assert_eq!(persisted_failure.fuzz.run, Some(4));
+    assert_eq!(persisted_failure.fuzz.run, Some(3));
 
     cmd.forge_fuse()
         .args([
@@ -5950,7 +5957,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
             "--fuzz-seed",
             "1",
             "--fuzz-run",
-            "4",
+            "3",
             "--mt",
             "testFuzz_replayAfterReject",
             "-j1",

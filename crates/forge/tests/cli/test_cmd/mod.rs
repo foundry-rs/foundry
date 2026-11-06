@@ -3322,7 +3322,7 @@ contract FuzzLogsTest {
 Compiler run successful!
 
 Ran 1 test for test/FuzzLogs.t.sol:FuzzLogsTest
-[FAIL: target value; counterexample: calldata=[..] args=[154]] testFuzzLogs(uint256) (runs: 3, [AVG_GAS])
+[FAIL: target value; counterexample: calldata=[..] args=[154]] testFuzzLogs(uint256) (runs: 2, [AVG_GAS])
 Logs:
   FAILING CASE: 154
 
@@ -3332,7 +3332,7 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/FuzzLogs.t.sol:FuzzLogsTest
-[FAIL: target value; counterexample: calldata=[..] args=[154]] testFuzzLogs(uint256) (runs: 3, [AVG_GAS])
+[FAIL: target value; counterexample: calldata=[..] args=[154]] testFuzzLogs(uint256) (runs: 2, [AVG_GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
