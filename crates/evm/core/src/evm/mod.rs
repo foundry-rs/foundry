@@ -251,14 +251,16 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
     ) -> Evm<'a, Self::Types> {
         let factory = self.configure_for(&db, &env);
         let is_forked = db.is_forked_mode();
-        let mut evm = factory.new_evm(db, env);
+        let ext = factory.evm_ext(&env);
+        let mut evm = factory.new_evm_with_ext(db, env, ext);
         factory.initialize_evm(&mut evm, is_forked);
         evm
     }
 
-    /// Creates a Foundry-configured EVM without seeding network state.
+    /// Creates a Foundry-configured EVM with fresh extension state, without seeding network state.
     ///
-    /// Use this when the EVM's state is replaced right away, as for nested transactions.
+    /// For inherited extension state, configure the factory with [`Self::configure_for`] and use
+    /// [`Self::new_evm_with_ext`] instead.
     fn new_evm<'a>(
         &self,
         db: impl FoundryDatabase + 'a,
@@ -271,6 +273,9 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
 
     /// Creates a Foundry-configured EVM with the given network extension state, such as the
     /// running EVM's for a nested frame.
+    ///
+    /// The factory must already be configured for the source database and environment. This
+    /// neither reconfigures it nor seeds network state; `db` may be a temporary placeholder.
     fn new_evm_with_ext<'a>(
         &self,
         db: impl FoundryDatabase + 'a,
