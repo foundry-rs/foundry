@@ -44,9 +44,10 @@ use std::{
 
 mod frontier;
 mod types;
+pub use frontier::FuzzBranchFrontier;
 use frontier::FuzzBranchFrontierArtifact;
 pub(super) use frontier::{
-    FuzzBranchFrontier, FuzzFrontierRecorder, StatefulFuzzBranchFrontierArtifact, merge_frontiers,
+    FuzzFrontierRecorder, StatefulFuzzBranchFrontierArtifact, comparison_result, merge_frontiers,
     write_frontier_artifact,
 };
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
