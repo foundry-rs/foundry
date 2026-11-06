@@ -6294,7 +6294,6 @@ dependencies = [
  "sha2 0.11.1",
  "smolgen",
  "solar-compiler",
- "syn 3.0.9",
  "tempfile",
  "tempo-alloy 1.16.0",
  "tempo-primitives 1.16.0",
