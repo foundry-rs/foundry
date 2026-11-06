@@ -1734,3 +1734,54 @@ fi
     .unwrap();
     assert_eq!(preserved, first);
 }
+
+// Agent N gets the Nth `--focus`, wrapping, or a built-in focus without the flag. `--no-focus`
+// gives every agent the same task.
+#[forgetest_init]
+fn properties_gives_each_agent_a_focus(prj: _, cmd: _) {
+    prj.add_source("Fee.sol", FEE);
+    fs::create_dir_all(prj.root().join("cache")).unwrap();
+    let focuses = prj.root().join("cache/focuses");
+    let args = properties_args(
+        &prj,
+        &format!(
+            r#"
+prompt="$FORGE_PROPERTIES_PROMPT"
+if [ -n "$FORGE_PROPERTIES_FOCUS" ]; then
+    grep -qF "Your focus (the other agents have other focuses): $FORGE_PROPERTIES_FOCUS Trace" "$prompt"
+else
+    ! grep -q 'Your focus' "$prompt"
+fi
+echo "$agent $FORGE_PROPERTIES_FOCUS" >> {focuses}
+{FEE_SPEC}
+"#,
+            focuses = focuses.display()
+        ),
+    );
+    let read = || {
+        let text = fs::read_to_string(&focuses).unwrap();
+        fs::remove_file(&focuses).unwrap();
+        let mut lines = text.lines().map(String::from).collect::<Vec<_>>();
+        lines.sort();
+        lines.join("\n")
+    };
+
+    cmd.args(&args).args(["--agents", "3", "--focus", "rounding", "--focus", "pause"]);
+    cmd.assert_success();
+    assert_data_eq!(read(), str!["1 rounding\n2 pause\n3 rounding"]);
+
+    cmd.forge_fuse().args(&args).args(["--agents", "5"]).assert_success();
+    assert_data_eq!(
+        read(),
+        str![[r#"
+1 block and time transitions, accrual, vesting, auctions, deadlines, stale snapshots, and sequences whose result depends on elapsed time.
+2 stale, reverting, zero, extreme, or adversarial oracle, strategy, pool, token, gauge, hook, and callback values.
+3 cached or stored balances, donations, fees, rewards, bad debt, utilization, exchange rates, and state that can diverge from live balances.
+4 agreement of max, preview, and view functions before, during, and after lifecycle transitions, especially empty, paused, removed, nested, and terminal states.
+5 block and time transitions, accrual, vesting, auctions, deadlines, stale snapshots, and sequences whose result depends on elapsed time.
+"#]]
+    );
+
+    cmd.forge_fuse().args(&args).args(["--agents", "2", "--no-focus"]).assert_success();
+    assert_data_eq!(read(), str!["1 \n2 "]);
+}
