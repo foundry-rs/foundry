@@ -1195,6 +1195,7 @@ impl SymbolicExecutor {
             match self.join_call_outcome(
                 executor,
                 state,
+                &original_world,
                 outcome,
                 failed_callee,
                 assume_no_revert.as_ref(),
@@ -1204,7 +1205,6 @@ impl SymbolicExecutor {
                     return Ok(StepOutcome::Failure);
                 }
                 JoinedCallOutcome::ExceptionalHalt(mut parent) => {
-                    parent.world = original_world.clone();
                     parent.end_expected_emit_after_call(kind);
                     parent.return_data = SymReturnData::empty(&mut self.cx);
                     parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
@@ -1212,7 +1212,6 @@ impl SymbolicExecutor {
                     parents.push_back(parent);
                 }
                 JoinedCallOutcome::ExpectedRevert(mut parent) => {
-                    parent.world = original_world.clone();
                     parent.return_data = SymReturnData::from_concrete_bytes(
                         &mut self.cx,
                         DUMMY_CALL_OUTPUT.to_vec(),
@@ -1245,7 +1244,6 @@ impl SymbolicExecutor {
                     parents.push_back(parent);
                 }
                 JoinedCallOutcome::Revert { mut parent, child } => {
-                    parent.world = original_world.clone();
                     parent.return_data = child.frame.return_data;
                     parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;
