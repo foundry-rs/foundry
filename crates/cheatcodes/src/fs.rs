@@ -616,7 +616,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
         reservoir: ccx.gas.reservoir(),
         caller,
         code: Bytecode::new_raw(input.clone()),
-        input,
+        input: input.into(),
         value,
         salt,
         ..Default::default()

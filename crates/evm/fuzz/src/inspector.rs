@@ -53,7 +53,7 @@ impl<T: EvmTypes> Inspector<T> for Fuzzer {
                 depth: self.call_depth - 1,
                 caller: message.caller,
                 target: message.destination,
-                calldata: message.input.clone(),
+                calldata: message.input.to_bytes(),
                 value: (!message.value.is_zero()).then_some(message.value),
             });
         }
@@ -178,7 +178,7 @@ impl Fuzzer {
             .account(&target)
             .and_then(|mut account| account.load_code())
             .expect("failed to load account");
-        call.input = tx.call_details.calldata;
+        call.input = tx.call_details.calldata.into();
         call.caller = tx.sender;
         call.destination = target;
         call.call_target = target;

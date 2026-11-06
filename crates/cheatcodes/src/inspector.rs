@@ -1403,7 +1403,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // Handle mocked calls
         if let Some(mocks) = self.core.mocked_calls.get_mut(&call.call_target)
             && let Some(return_data_queue) =
-                mock::find_mock_returns(mocks, &call.input, transfer_value(call))
+                mock::find_mock_returns(mocks, &call.input.to_bytes(), transfer_value(call))
             && let Some(return_data) = return_data_queue.front().map(|x| x.to_owned())
         {
             if let Some(value) = transfer_value(call) {
@@ -1504,7 +1504,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         .with_from(new_origin)
                         .with_to(target)
                         .with_value(transfer_value(call).unwrap_or_default())
-                        .with_input(call.input.clone())
+                        .with_input(call.input.to_bytes())
                         .with_nonce(nonce)
                         .with_chain_id(chain_id);
                     if is_fixed_gas_limit {
@@ -1632,7 +1632,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 oldNonce: old_nonce,
                 newNonce: 0, // updated on call_end
                 value: call.value,
-                data: call.input.clone(),
+                data: call.input.to_bytes(),
                 reverted: false,
                 deployedCode: Bytes::new(),
                 storageAccesses: vec![], // updated on step
@@ -1821,7 +1821,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             call.depth == active.depth
                 && call.caller == CHEATCODE_ADDRESS
                 && call.destination == active.callback_target
-                && call.input == active.callback_input
+                && *call.input == *active.callback_input
         })
     }
 
@@ -2528,7 +2528,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             self.core.intercept_next_create_call = false;
 
             // Return a revert with the initcode as error data
-            return Some(message_result(input, InstrStop::Revert, input.input.clone()));
+            return Some(message_result(input, InstrStop::Revert, input.input.to_bytes()));
         }
 
         let mut caller_changed = false;
@@ -2585,7 +2585,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     .with_from(broadcast.new_origin)
                     .with_kind(TxKind::Create)
                     .with_value(input.value)
-                    .with_input(input.input.clone())
+                    .with_input(input.input.to_bytes())
                     .with_nonce(nonce);
                 if let Some(fee_token) = self.fee_token {
                     tx_req.set_fee_token(fee_token);
@@ -2646,7 +2646,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 oldNonce: 0,            // new contract starts with nonce 0
                 newNonce: 1,            // updated on create_end (contracts start with nonce 1)
                 value: input.value,
-                data: input.input.clone(),
+                data: input.input.to_bytes(),
                 reverted: false,
                 deployedCode: Bytes::new(), // updated on create_end
                 storageAccesses: vec![],    // updated on create_end
@@ -3184,7 +3184,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             destination: hook.callback_target,
             call_target: hook.callback_target,
             caller: CHEATCODE_ADDRESS,
-            input: input.clone(),
+            input: input.clone().into(),
             code,
             code_address: hook.callback_target,
             ..Default::default()
