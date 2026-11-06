@@ -14,7 +14,7 @@ use solar::{
     ast::BoxSlice,
     interface::SpannedOption,
     parse::{
-        ast::{self, ImportItems, Span},
+        ast::{self, Span},
         interface::BytePos,
     },
 };
@@ -216,6 +216,7 @@ impl<'ast> State<'_, 'ast> {
         let ast::ImportDirective { path, items } = import;
         self.word("import ");
 
+        use ast::ImportItems;
         use config::NamespaceImportStyle as NIStyle;
 
         match (items, self.config.namespace_import_style) {

@@ -57,12 +57,14 @@ use foundry_evm::{
     },
     traces::CallKind,
 };
-use foundry_wallets::wallet_browser::{error::BrowserWalletError, signer::BrowserSigner};
+use foundry_wallets::{
+    TempoAccountsWallet,
+    wallet_browser::{error::BrowserWalletError, signer::BrowserSigner},
+};
 use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use itertools::Itertools;
 use tempo_alloy::{
     TempoNetwork,
-    accounts::TempoAccountsWallet,
     chainspec::hardfork::TempoHardfork,
     rpc::{TempoTransactionReceipt, TempoTransactionRequest},
 };
@@ -469,53 +471,16 @@ where
         .collect()
 }
 
-/// Returns the operations of the sequence that are left to send or recover. From the first sequence
-/// with a recorded revert on, the script never reached operations that were not yet submitted, so
-/// only operations that were already submitted are left.
-pub(crate) fn remaining_operation_indices<N: Network>(
+fn remaining_operation_indices<N: Network>(
     sequence: &ScriptSequenceKind<N>,
     sequence_index: usize,
 ) -> Vec<usize>
 where
     N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
 {
-    let after_revert = sequence.sequences()[..=sequence_index]
-        .iter()
-        .any(|deployment| !deployment.reverted.is_empty());
     (0..sequence.sequences()[sequence_index].transactions.len())
-        .filter(|&index| {
-            !is_operation_completed(sequence, sequence_index, index)
-                && (!after_revert || is_operation_submitted(sequence, sequence_index, index))
-        })
+        .filter(|&index| !is_operation_completed(sequence, sequence_index, index))
         .collect()
-}
-
-/// Returns the error for operations that resume must not send: the script stops at a failed call,
-/// so it never reached the operations without a submission in the first sequence with a recorded
-/// revert or in a later one.
-pub(crate) fn refused_after_revert<N: Network>(
-    sequence: &ScriptSequenceKind<N>,
-) -> Option<eyre::Report>
-where
-    N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
-{
-    let reverted =
-        sequence.sequences().iter().position(|deployment| !deployment.reverted.is_empty())?;
-    let refused = (reverted..sequence.sequences().len()).any(|index| {
-        (0..sequence.sequences()[index].transactions.len()).any(|operation| {
-            !is_operation_completed(sequence, index, operation)
-                && !is_operation_submitted(sequence, index, operation)
-        })
-    });
-    refused.then(|| {
-        sequence.label_error(
-            reverted,
-            eyre::eyre!(
-                "transaction {} reverted, so the script would not have sent the operations after it; resume will not send them. Pass `--broadcast --start-fresh` to archive this broadcast and run the script again",
-                sequence.sequences()[reverted].reverted.iter().format(", ")
-            ),
-        )
-    })
 }
 
 /// Returns true if the operation has a receipt or a recorded revert for its own hash.
@@ -545,21 +510,6 @@ where
         deployment.reverted.contains(&hash)
             || deployment.receipts.iter().any(|receipt| receipt.transaction_hash() == hash)
     })
-}
-
-/// Returns true if the operation was already submitted, or may have been: it has a recorded hash or
-/// a saved signed or delegated attempt.
-fn is_operation_submitted<N: Network>(
-    sequence: &ScriptSequenceKind<N>,
-    sequence_index: usize,
-    index: usize,
-) -> bool
-where
-    N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
-{
-    sequence.sequences()[sequence_index].transactions[index].hash.is_some()
-        || sequence.signed_payload(sequence_index, index).is_some()
-        || sequence.delegated_status(sequence_index, index).is_some()
 }
 
 fn remaining_sender_addresses<N: Network>(sequence: &ScriptSequenceKind<N>) -> AddressHashSet
@@ -1261,13 +1211,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     .then(|| format!("chain {}: {}", deployment.chain, hashes.iter().format(", ")))
             })
             .collect::<Vec<_>>();
-        // Saved attempts after a recorded revert are recovered above, but the new work is refused
-        // once they are resolved. Until then, the warning below points to `--resume`.
-        if unresolved.is_empty()
-            && let Some(err) = refused_after_revert(&self.sequence)
-        {
-            return Err(err);
-        }
         if !shell::is_json() {
             sh_println!("\n\n==========================")?;
         }
@@ -2041,71 +1984,6 @@ fn resume_script_failure(error: &str) -> String {
     format!("Resume re-ran the script to collect signers, but it failed: {error}")
 }
 
-impl<FEN: FoundryEvmNetwork> BroadcastedState<FEN> {
-    /// Prints recorded creations with successful receipts, including factory deployments.
-    pub(crate) fn print_deployed_contracts(&self) -> Result<()> {
-        if shell::is_json() {
-            return Ok(());
-        }
-
-        for sequence in self.sequence.sequences() {
-            let mined = sequence
-                .receipts
-                .iter()
-                .map(|receipt| receipt.transaction_hash())
-                .collect::<HashSet<_>>();
-            let rows = sequence
-                .transactions
-                .iter()
-                .filter(|tx| tx.hash.is_some_and(|hash| mined.contains(&hash)))
-                .flat_map(|tx| {
-                    let direct = tx.call_kind.is_any_create().then_some(tx).and_then(|tx| {
-                        Some((
-                            tx.label.as_deref(),
-                            tx.contract_name.as_deref(),
-                            tx.contract_address?,
-                        ))
-                    });
-                    direct.into_iter().chain(tx.additional_contracts.iter().map(|contract| {
-                        (
-                            contract.label.as_deref(),
-                            contract.contract_name.as_deref(),
-                            contract.address,
-                        )
-                    }))
-                })
-                .map(|(label, name, address)| {
-                    (label, name.filter(|name| !name.is_empty()).unwrap_or("-"), address)
-                })
-                .collect::<Vec<_>>();
-            if rows.is_empty() {
-                continue;
-            }
-
-            let has_labels = rows.iter().any(|(label, ..)| label.is_some());
-            let label_width = rows
-                .iter()
-                .map(|(label, ..)| label.map_or(1, |label| label.chars().count()))
-                .max()
-                .unwrap_or(0);
-            let name_width =
-                rows.iter().map(|(_, name, _)| name.chars().count()).max().unwrap_or(0);
-            sh_status!("\nDeployed contracts (chain {}):", sequence.chain)?;
-            for (label, name, address) in rows {
-                if has_labels {
-                    sh_status!(
-                        "  {:<label_width$}  {name:<name_width$}  {address}",
-                        label.unwrap_or("-")
-                    )?;
-                } else {
-                    sh_status!("  {name:<name_width$}  {address}")?;
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2355,28 +2233,6 @@ mod tests {
         sequence.sequences_mut()[0].receipts.push(second_receipt);
 
         assert_eq!(remaining_operation_indices(&sequence, 0), [0]);
-    }
-
-    #[test]
-    fn recorded_revert_leaves_only_submitted_operations() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut deployment = ScriptSequence::<Ethereum> {
-            chain: 1,
-            transactions: [planned_tx(SIGNED_TX), planned_tx(OTHER_SIGNED_TX)].into(),
-            ..Default::default()
-        };
-        deployment.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
-        let mut sequence = ScriptSequenceKind::new_single(deployment, false, None).unwrap();
-        let reverted =
-            sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX), true).unwrap();
-        sequence.sequences_mut()[0].reverted.push(reverted);
-        assert!(remaining_operation_indices(&sequence, 0).is_empty());
-        assert!(refused_after_revert(&sequence).is_some());
-
-        // An attempt saved before the revert was recorded is recovered, and nothing is refused.
-        sequence.persist_signed_payload(0, 1, Bytes::from_static(OTHER_SIGNED_TX), true).unwrap();
-        assert_eq!(remaining_operation_indices(&sequence, 0), [1]);
-        assert!(refused_after_revert(&sequence).is_none());
     }
 
     #[test]

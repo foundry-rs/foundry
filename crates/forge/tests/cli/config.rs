@@ -200,7 +200,6 @@ max_test_rejects = 65536
 dictionary_weight = 40
 include_storage = true
 include_push_bytes = true
-include_view_values = false
 max_fuzz_dictionary_addresses = 15728640
 max_fuzz_dictionary_values = 9830400
 max_fuzz_dictionary_literals = 6553600
@@ -237,7 +236,6 @@ call_override = false
 dictionary_weight = 80
 include_storage = true
 include_push_bytes = true
-include_view_values = false
 max_fuzz_dictionary_addresses = 15728640
 max_fuzz_dictionary_values = 9830400
 max_fuzz_dictionary_literals = 6553600
@@ -274,7 +272,6 @@ use_fuzz_corpus = false
 corpus_seed_limit = 32
 use_fuzz_frontiers = false
 check_invariant_frontiers = false
-live = false
 frontier_limit = 256
 solver = "z3"
 timeout = 30
@@ -399,7 +396,6 @@ fn can_extract_config_values(prj: _, cmd: _) {
             corpus_seed_limit: 17,
             use_fuzz_frontiers: true,
             check_invariant_frontiers: true,
-            live: true,
             frontier_limit: 11,
             frontier_ids: vec![4, 9],
             frontier_pcs: vec![123, 456],
@@ -2290,7 +2286,6 @@ fn test_default_config(prj: _, cmd: _) {
     "dictionary_weight": 40,
     "include_storage": true,
     "include_push_bytes": true,
-    "include_view_values": false,
     "max_fuzz_dictionary_addresses": 15728640,
     "max_fuzz_dictionary_values": 9830400,
     "max_fuzz_dictionary_literals": 6553600,
@@ -2330,7 +2325,6 @@ fn test_default_config(prj: _, cmd: _) {
     "dictionary_weight": 80,
     "include_storage": true,
     "include_push_bytes": true,
-    "include_view_values": false,
     "max_fuzz_dictionary_addresses": 15728640,
     "max_fuzz_dictionary_values": 9830400,
     "max_fuzz_dictionary_literals": 6553600,
@@ -2372,7 +2366,6 @@ fn test_default_config(prj: _, cmd: _) {
     "corpus_seed_limit": 32,
     "use_fuzz_frontiers": false,
     "check_invariant_frontiers": false,
-    "live": false,
     "frontier_limit": 256,
     "solver": "z3",
     "timeout": 30,

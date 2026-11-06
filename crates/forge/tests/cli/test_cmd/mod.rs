@@ -44,7 +44,6 @@ mod symbolic_false_pass_prevention;
 mod symbolic_helpers;
 mod symbolic_invariant;
 mod symbolic_limits;
-mod symbolic_live;
 mod symbolic_memory;
 mod symbolic_opcodes;
 mod symbolic_parity;
@@ -1960,97 +1959,6 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
-// A cheatcode fork takes the `--fork-retries` and `--fork-retry-backoff` of the run, and the
-// retry settings of the `rpc_endpoints` entry it names by alias or by the URL `vm.rpcUrl` returns.
-// <https://github.com/foundry-rs/foundry/issues/18071>
-#[forgetest]
-async fn fork_cheatcode_retry_settings(prj: _, cmd: _) {
-    let chain_id_requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let counter = chain_id_requests.clone();
-    let router =
-        axum::Router::new().fallback(move |axum::Json(body): axum::Json<serde_json::Value>| {
-            let requests =
-                if let serde_json::Value::Array(requests) = body { requests } else { vec![body] };
-            let chain_id = requests.iter().filter(|request| request["method"] == "eth_chainId");
-            counter.fetch_add(chain_id.count(), std::sync::atomic::Ordering::SeqCst);
-            async {
-                (
-                    axum::http::StatusCode::TOO_MANY_REQUESTS,
-                    axum::Json(serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "error": { "code": -32005, "message": "Too Many Requests" },
-                    })),
-                )
-            }
-        });
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let endpoint = format!("http://{}", listener.local_addr().unwrap());
-    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    std::fs::write(
-        prj.config(),
-        format!(
-            r#"[rpc_endpoints]
-stub = {{ endpoint = "{endpoint}/stub", retries = 2, retry_backoff = 1 }}
-late = {{ endpoint = "${{FORK_RETRY_SETTINGS_LATE_URL}}", retries = 2, retry_backoff = 1 }}
-plain = "{endpoint}/plain"
-"#
-        ),
-    )
-    .unwrap();
-
-    prj.add_test(
-        "ForkRetries.t.sol",
-        &format!(
-            r#"
-interface Vm {{
-    function createSelectFork(string calldata urlOrAlias) external returns (uint256 forkId);
-    function rpcUrl(string calldata rpcAlias) external view returns (string memory json);
-    function setEnv(string calldata name, string calldata value) external;
-}}
-
-Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
-
-contract ByUrl {{
-    function testFork() public {{
-        vm.createSelectFork(vm.rpcUrl("stub"));
-    }}
-}}
-
-contract ByLateUrl {{
-    function testFork() public {{
-        vm.setEnv("FORK_RETRY_SETTINGS_LATE_URL", "{endpoint}/late");
-        vm.createSelectFork(vm.rpcUrl("late"));
-    }}
-}}
-
-contract ByAlias {{
-    function testFork() public {{
-        vm.createSelectFork("stub");
-    }}
-}}
-
-contract Plain {{
-    function testFork() public {{
-        vm.createSelectFork("plain");
-    }}
-}}
-"#
-        ),
-    );
-
-    // Each attempt sends one `eth_chainId`, so a fork with `n` retries sends `n + 1`.
-    let mut attempts = |args: &[&str]| {
-        cmd.forge_fuse().args(["test", "--no-storage-caching"]).args(args).assert_failure();
-        chain_id_requests.swap(0, std::sync::atomic::Ordering::SeqCst)
-    };
-    let cli = ["--fork-retries", "4", "--fork-retry-backoff", "1"];
-    assert_eq!(attempts(&["--mc", "ByUrl"]), 3);
-    assert_eq!(attempts(&[&["--mc", "ByLateUrl"][..], &cli].concat()), 3);
-    assert_eq!(attempts(&[&["--mc", "ByAlias"][..], &cli].concat()), 3);
-    assert_eq!(attempts(&[&["--mc", "Plain"][..], &cli].concat()), 5);
-}
-
 // <https://github.com/foundry-rs/foundry/issues/7574>
 #[forgetest]
 async fn failed_fork_test_reports_block_number(prj: _, cmd: _) {
@@ -3411,7 +3319,7 @@ contract FuzzLogsTest {
 Compiler run successful!
 
 Ran 1 test for test/FuzzLogs.t.sol:FuzzLogsTest
-[FAIL: target value; counterexample: calldata=[..] args=[154]] testFuzzLogs(uint256) (runs: 2, [AVG_GAS])
+[FAIL: target value; counterexample: calldata=[..] args=[154]] testFuzzLogs(uint256) (runs: 3, [AVG_GAS])
 Logs:
   FAILING CASE: 154
 
@@ -3421,7 +3329,7 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/FuzzLogs.t.sol:FuzzLogsTest
-[FAIL: target value; counterexample: calldata=[..] args=[154]] testFuzzLogs(uint256) (runs: 2, [AVG_GAS])
+[FAIL: target value; counterexample: calldata=[..] args=[154]] testFuzzLogs(uint256) (runs: 3, [AVG_GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -5127,18 +5035,6 @@ contract Dummy {
     cmd.assert_success();
 
     assert!(dump_path.exists());
-
-    // A file, such as a dump in the single-file format of 1.8, is rejected before the run.
-    let file_path = prj.root().join("old_dump.json");
-    std::fs::write(&file_path, "{}").unwrap();
-    cmd.forge_fuse()
-        .args(["test", "--mt", "testDummy", "--debug", "--dump", file_path.to_str().unwrap()])
-        .assert_failure()
-        .stdout_eq(str![""])
-        .stderr_eq(str![[r#"
-Error: --dump now takes a directory, but [..]old_dump.json is not one; remove it or pass a directory path
-
-"#]]);
 }
 
 #[forgetest]
@@ -6002,7 +5898,7 @@ Traces:
     │   ├─  storage changes:
     │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
-    ├─ [..] SLOAD 0x1f → (0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f01)
+    ├─ [..] SLOAD
     ├─ [..] MLOAD
     ├─ [..] MLOAD
     ├─ [..] Counter::number() [staticcall]
@@ -8066,42 +7962,5 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
-"#]]);
-}
-
-// Rolling the active fork keeps the state of a non-default test sender, which is not persistent
-// by default, as the caller of the test.
-#[forgetest_init]
-fn fork_roll_keeps_sender_state(prj: _, cmd: _) {
-    let endpoint = rpc::next_http_archive_rpc_url();
-    prj.add_test(
-        "ForkRollSender.t.sol",
-        &r#"
-import {Test} from "forge-std/Test.sol";
-
-contract ForkRollSenderTest is Test {
-    function test_rollKeepsSenderBalance() public {
-        vm.createSelectFork("<url>", 21_000_000);
-        vm.deal(msg.sender, 123 ether);
-        vm.rollFork(21_000_001);
-        assertEq(msg.sender.balance, 123 ether);
-    }
-}
-   "#
-        .replace("<url>", &endpoint),
-    );
-
-    cmd.args([
-        "test",
-        "--mt",
-        "test_rollKeepsSenderBalance",
-        "--sender",
-        "0x000000000000000000000000000000000000Ab0B",
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
-...
-[PASS] test_rollKeepsSenderBalance() ([GAS])
-...
 "#]]);
 }

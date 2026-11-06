@@ -4,11 +4,10 @@ use crate::{
     Cheatcode, CheatcodesBackend, CheatcodesCore, CheatsConfig, CheatsCtxt, Error, Result,
     Vm::{self, AccountAccess},
     evm::{
-        GasRecord, RecordAccess, append_storage_access, mark_account_accesses_reverted,
+        DealRecord, GasRecord, RecordAccess, append_storage_access, mark_account_accesses_reverted,
         merge_recorded_frame,
         mock::{self, MockCallDataContext, MockCallReturnData},
         prank::Prank,
-        touch_account,
     },
     expected_emit::{self, ExpectedEmitTracker},
     script::Broadcast,
@@ -29,13 +28,14 @@ use alloy_primitives::{
 use alloy_rpc_types::AccessList;
 use alloy_sol_types::{SolCall, SolInterface};
 use evm2::{
-    EvmTypesHost, ExecutionError, OpcodeSet,
+    EvmTypesHost, ExecutionError, TxResultWithState,
     evm::{State, StateSnapshot},
     interpreter::{
         Gas, GasTracker, Host, InstrStop, Interpreter, MessageExt, MessageKind, MessageResultExt,
         derive_create_destination, op,
     },
 };
+use eyre::WrapErr;
 use foundry_common::{
     FoundryTransactionBuilder, SELECTOR_LEN, TransactionMaybeSigned,
     mapping_slots::{
@@ -49,9 +49,10 @@ use foundry_evm_core::{
     backend::{LocalForkId, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     evm::{
-        BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor,
-        MessageFor, MessageResultFor, PersistentWrite, SnapshotRestores, SpecFor,
-        TransactionRequestFor, TxFor, TxResultFor, restore_access_warmth,
+        BlockEnvFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryEvmFor,
+        FoundryEvmNetwork, InterpreterFor, MessageFor, MessageResultFor, PersistentWrite,
+        SnapshotRestores, SpecFor, TransactionRequestFor, TxEnvFor, TxFor, TxResultFor, TypesFor,
+        evm_env, release_inspector, restore_access_warmth,
     },
 };
 use foundry_evm_traces::{
@@ -85,6 +86,7 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
         cheats: &mut Cheatcodes<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
+        tx_env: &TxEnvFor<FEN>,
         message: &mut MessageFor<FEN>,
     ) -> Result<MessageResultFor<FEN>, ExecutionError>;
 
@@ -160,7 +162,192 @@ pub(crate) fn exec_create<FEN: FoundryEvmNetwork>(
         nonce,
     );
     message.call_target = message.destination;
-    Ok(executor.exec_message(ccx.state, ccx.backend, ccx.evm, &mut message)?)
+    Ok(executor.exec_message(ccx.state, ccx.backend, ccx.evm, ccx.tx_env, &mut message)?)
+}
+
+/// [`CheatcodesExecutor`] that runs nested executions with only the [`Cheatcodes`] inspector.
+#[derive(Debug, Default, Clone, Copy)]
+struct TransparentCheatcodesExecutor;
+
+impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesExecutor {
+    fn exec_message(
+        &mut self,
+        cheats: &mut Cheatcodes<FEN>,
+        backend: &mut dyn CheatcodesBackend<FEN>,
+        evm: &mut FoundryEvmFor<'_, FEN>,
+        tx_env: &TxEnvFor<FEN>,
+        message: &mut MessageFor<FEN>,
+    ) -> Result<MessageResultFor<FEN>, ExecutionError> {
+        let env = evm_env(evm);
+        // SAFETY: `evm` runs over the lifecycle's owned databases, and so does the frame EVM,
+        // which only lives for this call; its inspector is released before its state moves back.
+        let mut frame = unsafe { backend.backend().begin_frame_evm(evm, env) };
+        frame.set_inspector(CheatcodesInspector { cheats, backend: &mut *backend });
+        *frame.tx_env_mut() = tx_env.clone();
+        let result = Host::execute_message(&mut frame, message);
+        // SAFETY: See above.
+        let frame = unsafe { release_inspector(frame) };
+        // SAFETY: See above.
+        unsafe { backend.backend().end_frame_evm(evm, frame) };
+        result
+    }
+
+    fn nested_transaction(
+        &mut self,
+        cheats: &mut Cheatcodes<FEN>,
+        backend: &mut dyn CheatcodesBackend<FEN>,
+        evm: &mut FoundryEvmFor<'_, FEN>,
+        depth: u16,
+        tx: &Recovered<TxFor<FEN>>,
+        env: Option<EvmEnvFor<FEN>>,
+    ) -> eyre::Result<TxResultFor<FEN>> {
+        EvmFactoryFor::<FEN>::default().sync_transaction(evm);
+        let mut child = backend.backend().nested_evm(evm, tx, env);
+        // The nested transaction's calls do not apply access lists to the running one.
+        let applied_access_list = cheats.applied_access_list.take();
+        child.set_inspector(CheatcodesInspector { cheats: &mut *cheats, backend: &mut *backend });
+        let executed = child.transact(tx).map(|executed| executed.detach());
+        let merged = match executed {
+            Ok(TxResultWithState { result, pending_state, .. }) => {
+                // A failed transaction keeps its nonce increment.
+                foundry_evm_core::evm::merge_untracked_pending_changes_with_warmth(
+                    evm.state_mut(),
+                    &mut child,
+                    pending_state,
+                    // Without the inspector stack, destroyed accounts keep no pre-destruct state.
+                    Default::default(),
+                )
+                .map(|persistent| (result, persistent))
+                .map_err(Into::into)
+            }
+            Err(err) => Err(eyre::eyre!("{err:?}")),
+        };
+        drop(child);
+        cheats.applied_access_list = applied_access_list;
+        let (result, persistent) = merged?;
+        cheats.record_persistent(usize::from(depth).saturating_sub(1), evm.state(), persistent);
+        // The nested transaction's changes are not the running transaction's execution.
+        EvmFactoryFor::<FEN>::default().refresh_transaction(evm);
+        Ok(result)
+    }
+
+    // Without the inspector stack's nested-root handling, replayed transactions run without
+    // cheatcodes, which would take their root frame for a top-level call; only their logs reach
+    // `expectEmit` and `recordLogs`.
+    fn transact(
+        &mut self,
+        cheats: &mut Cheatcodes<FEN>,
+        backend: &mut dyn CheatcodesBackend<FEN>,
+        evm: &mut FoundryEvmFor<'_, FEN>,
+        _depth: u16,
+        fork_id: Option<U256>,
+        transaction: B256,
+    ) -> eyre::Result<TxResultFor<FEN>> {
+        let (prepared, _) = backend.backend().prepare_transact(
+            fork_id,
+            transaction,
+            evm,
+            0,
+            cheats.isolation_env.as_ref(),
+        )?;
+        let executed = prepared
+            .execute(evm, None, false)
+            .wrap_err("backend: failed committing transaction")?;
+        let result = backend.backend_mut().store_executed(evm, executed);
+        result.logs.iter().for_each(|log| cheats.log_hook(log));
+        Ok(result)
+    }
+
+    fn transact_from_tx(
+        &mut self,
+        cheats: &mut Cheatcodes<FEN>,
+        backend: &mut dyn CheatcodesBackend<FEN>,
+        evm: &mut FoundryEvmFor<'_, FEN>,
+        depth: u16,
+        tx: &Recovered<TxFor<FEN>>,
+        env: Option<EvmEnvFor<FEN>>,
+    ) -> eyre::Result<TxResultFor<FEN>> {
+        let (result, persistent) = backend.backend_mut().transact_from_tx(tx, evm, env, None)?;
+        cheats.record_persistent(usize::from(depth).saturating_sub(1), evm.state(), persistent);
+        result.logs.iter().for_each(|log| cheats.log_hook(log));
+        Ok(result)
+    }
+
+    fn console_log(&mut self, _msg: &str) {}
+}
+
+/// The [`Cheatcodes`] inspector together with the backend the execution runs over, as an evm2
+/// inspector on its own.
+///
+/// Nested executions started by cheatcodes are only observed by the cheatcodes. Use the inspector
+/// stack of `foundry-evm` to have them observed by tracing, coverage and other inspectors.
+pub struct CheatcodesInspector<'a, FEN: FoundryEvmNetwork> {
+    /// The cheatcode state.
+    pub cheats: &'a mut Cheatcodes<FEN>,
+    /// The backend the execution runs over.
+    pub backend: &'a mut dyn CheatcodesBackend<FEN>,
+}
+
+impl<FEN: FoundryEvmNetwork> evm2::Inspector<TypesFor<FEN>> for CheatcodesInspector<'_, FEN> {
+    fn initialize_interp(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
+        self.cheats.initialize_interp_hook(interp);
+    }
+
+    fn step(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
+        self.cheats.step_opcode_overrides(interp.opcode());
+        self.cheats.step_hook(interp, self.backend);
+    }
+
+    fn step_end(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
+        self.cheats.step_end_hook(interp, self.backend, &mut TransparentCheatcodesExecutor);
+    }
+
+    fn log(&mut self, log: &Log, _host: &mut FoundryEvmFor<'_, FEN>) {
+        self.cheats.log_hook(log);
+    }
+
+    fn call(
+        &mut self,
+        interp: &mut InterpreterFor<'_, '_, FEN>,
+        message: &mut MessageFor<FEN>,
+    ) -> Option<MessageResultFor<FEN>> {
+        if self.cheats.is_storage_hook_callback(message) {
+            return None;
+        }
+        self.cheats.call_with_executor(
+            interp,
+            message,
+            self.backend,
+            &mut TransparentCheatcodesExecutor,
+            false,
+        )
+    }
+
+    fn call_end(
+        &mut self,
+        interp: &mut InterpreterFor<'_, '_, FEN>,
+        message: &MessageFor<FEN>,
+        result: &mut MessageResultFor<FEN>,
+    ) {
+        self.cheats.call_end_hook(interp, message, result, self.backend);
+    }
+
+    fn create(
+        &mut self,
+        interp: &mut InterpreterFor<'_, '_, FEN>,
+        message: &mut MessageFor<FEN>,
+    ) -> Option<MessageResultFor<FEN>> {
+        self.cheats.create_hook(interp, message, self.backend)
+    }
+
+    fn create_end(
+        &mut self,
+        interp: &mut InterpreterFor<'_, '_, FEN>,
+        message: &MessageFor<FEN>,
+        result: &mut MessageResultFor<FEN>,
+    ) {
+        self.cheats.create_end_hook(interp, message, result, self.backend);
+    }
 }
 
 macro_rules! try_or_return {
@@ -206,6 +393,11 @@ pub fn revert_frame<T: EvmTypesHost>(interp: &mut Interpreter<'_, '_, T>, output
 pub(crate) fn transfer_value<E>(message: &MessageExt<E>) -> Option<U256> {
     matches!(message.kind, MessageKind::Call | MessageKind::CallCode | MessageKind::StaticCall)
         .then_some(message.value)
+}
+
+/// Returns whether a message executes in a static context.
+pub(crate) fn is_static<E>(message: &MessageExt<E>) -> bool {
+    message.caller_is_static || message.kind == MessageKind::StaticCall
 }
 
 /// Helps collecting transactions from different forks.
@@ -715,6 +907,9 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// payloads, so user-crafted `FOUNDRY::SKIP` revert data never skips a test on its own.
     pub skip_payloads: Vec<Bytes>,
 
+    /// All recorded ETH `deal`s.
+    pub eth_deals: Vec<DealRecord>,
+
     /// Writes that survive reverts of the enclosing calls, with the depth of the frame that made
     /// them and the journal length right after them, replayed when that frame or an enclosing one
     /// reverts and its rollback undid them.
@@ -806,8 +1001,8 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// depositing it fails, and whether the constructor ran in an isolated call.
     pub deploy_code_output: Option<(Bytes, bool)>,
 
-    /// The `vm.accessList` the running transaction last applied to a call or create. It replaces
-    /// the transaction's access list when computing its stipend.
+    /// The `vm.accessList` the running transaction last applied to a call or create. As on
+    /// master, it replaces the transaction's access list when computing its stipend.
     pub applied_access_list: Option<AccessList>,
 }
 
@@ -862,6 +1057,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             broadcast: Default::default(),
             broadcastable_transactions: Default::default(),
             skip_payloads: Default::default(),
+            eth_deals: Default::default(),
             persistent_writes: Default::default(),
             frame_rollback: Default::default(),
             persistent_write_snapshots: Default::default(),
@@ -1182,15 +1378,17 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // but only if the backend is in forking mode
         backend.backend().ensure_cheatcode_access_forking_mode(&caller)?;
 
+        let tx_env = interp.host().tx_env().clone();
         apply_dispatch(
             &decoded,
             &mut CheatsCtxt {
                 state: self,
                 evm: interp.host(),
                 backend,
+                tx_env: &tx_env,
                 gas,
                 caller,
-                is_static: message.is_static(),
+                is_static: is_static(message),
                 depth: message.depth.into(),
             },
             executor,
@@ -1212,14 +1410,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // but only if the backend is in forking mode
         backend.backend().ensure_cheatcode_access_forking_mode(&caller)?;
 
+        let tx_env = interp.host().tx_env().clone();
         crate::monad::apply_monad_cheatcode(
             &mut CheatsCtxt {
                 state: self,
                 evm: interp.host(),
                 backend,
+                tx_env: &tx_env,
                 gas,
                 caller,
-                is_static: message.is_static(),
+                is_static: is_static(message),
                 depth: message.depth.into(),
             },
             &message.input,
@@ -1256,8 +1456,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.origin_override = (origin != tx_origin).then_some(origin);
     }
 
-    /// Applies the configured `vm.accessList` to the running transaction on every call and
-    /// create. Access lists do not exist before Berlin, and nested transactions, such as
+    /// Applies the configured `vm.accessList` to the running transaction, as master did on every
+    /// call and create. Access lists do not exist before Berlin, and nested transactions, such as
     /// isolated calls, keep their own.
     fn apply_access_list(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
         if let Some(access_list) = &self.core.access_list
@@ -1320,9 +1520,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // Cheatcodes return the gas they did not spend, as `message_result` does.
         let mut gas = GasTracker::new(call.gas_limit);
         if target == CHEATCODE_ADDRESS {
-            // `vm.breakpoint` records the calling instruction, which frames running without
-            // inspector steps do not track.
-            self.pc = interp.pc();
             let (stop, output) =
                 match self.apply_cheatcode(interp, call, backend, &mut gas, executor) {
                     Ok(retdata) => (InstrStop::Return, retdata.into()),
@@ -1388,7 +1585,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             if let Some(changes) = prank.changes_for(curr_depth, call.caller) {
                 if let Some(new_caller) = changes.caller {
                     // Ensure new caller is loaded, warm and touched
-                    let _ = touch_account(interp.host().state_mut(), new_caller);
+                    if let Ok(mut account) = interp.host().state_mut().account(&new_caller) {
+                        account.touch();
+                        account.warm();
+                    }
                     call.caller = new_caller;
                 }
                 if let Some(new_origin) = changes.origin {
@@ -1403,21 +1603,14 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // Handle mocked calls
         if let Some(mocks) = self.core.mocked_calls.get_mut(&call.call_target)
             && let Some(return_data_queue) =
-                mock::find_mock_returns(mocks, &call.input.to_bytes(), transfer_value(call))
+                mock::find_mock_returns(mocks, &call.input.clone().into(), transfer_value(call))
             && let Some(return_data) = return_data_queue.front().map(|x| x.to_owned())
         {
-            if let Some(value) = transfer_value(call) {
-                let checkpoint = interp.host().state().checkpoint();
-                let transferred =
-                    interp.host().state_mut().transfer(&call.caller, &call.destination, &value);
-                // A reverting mock checks the balance but keeps no transfer, and a failed
-                // transfer keeps no partial debit.
-                if return_data.reverts || !matches!(transferred, Ok(true)) {
-                    let evm = interp.host();
-                    let features = evm.version().features;
-                    evm.state_mut().rollback(checkpoint, features);
-                }
-                match transferred {
+            if let Some(value) = transfer_value(call)
+                && !return_data.reverts
+            {
+                let state = interp.host().state_mut();
+                match state.transfer(&call.caller, &call.destination, &value) {
                     Ok(true) => {}
                     Ok(false) => {
                         return Some(message_result(call, InstrStop::OutOfFunds, Bytes::new()));
@@ -1477,7 +1670,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 // because we only need the from, to, value, and data. We can later change this
                 // into 1559, in the cli package, relatively easily once we
                 // know the target chain supports EIP-1559.
-                if !call.is_static() {
+                if !is_static(call) {
                     let evm = interp.host();
                     // Reading the nonce warms the broadcaster.
                     let nonce = match evm.state_mut().account(&new_origin) {
@@ -1504,7 +1697,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         .with_from(new_origin)
                         .with_to(target)
                         .with_value(transfer_value(call).unwrap_or_default())
-                        .with_input(call.input.to_bytes())
+                        .with_input(call.input.clone())
                         .with_nonce(nonce)
                         .with_chain_id(chain_id);
                     if is_fixed_gas_limit {
@@ -1632,7 +1825,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 oldNonce: old_nonce,
                 newNonce: 0, // updated on call_end
                 value: call.value,
-                data: call.input.to_bytes(),
+                data: call.input.clone().into(),
                 reverted: false,
                 deployedCode: Bytes::new(),
                 storageAccesses: vec![], // updated on step
@@ -1706,7 +1899,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
     /// Whether the given address has arbitrary storage.
     pub fn has_arbitrary_storage(&self, address: &Address) -> bool {
-        self.core.arbitrary_storage.as_ref().is_some_and(|s| s.values.contains_key(address))
+        match &self.core.arbitrary_storage {
+            Some(storage) => storage.values.contains_key(address),
+            None => false,
+        }
     }
 
     /// Whether the given slot of address with arbitrary storage should be overwritten.
@@ -1717,19 +1913,25 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         address: &Address,
         storage_slot: U256,
     ) -> bool {
-        self.core.arbitrary_storage.as_ref().is_some_and(|storage| {
-            storage.overwrites.contains(address)
-                && storage
-                    .values
-                    .get(address)
-                    .and_then(|arbitrary_values| arbitrary_values.get(&storage_slot))
-                    .is_none()
-        })
+        match &self.core.arbitrary_storage {
+            Some(storage) => {
+                storage.overwrites.contains(address)
+                    && storage
+                        .values
+                        .get(address)
+                        .and_then(|arbitrary_values| arbitrary_values.get(&storage_slot))
+                        .is_none()
+            }
+            None => false,
+        }
     }
 
     /// Whether the given address is a copy of an address with arbitrary storage.
     pub fn is_arbitrary_storage_copy(&self, address: &Address) -> bool {
-        self.core.arbitrary_storage.as_ref().is_some_and(|s| s.copies.contains_key(address))
+        match &self.core.arbitrary_storage {
+            Some(storage) => storage.copies.contains_key(address),
+            None => false,
+        }
     }
 
     /// Registers an SLOAD callback, replacing the existing callback for `target`.
@@ -1821,52 +2023,69 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             call.depth == active.depth
                 && call.caller == CHEATCODE_ADDRESS
                 && call.destination == active.callback_target
-                && *call.input == *active.callback_input
+                && call.input[..] == active.callback_input[..]
         })
     }
 
-    /// Returns the opcodes for which [`Self::step_hook`] and [`Self::step_end_hook`] must run.
-    ///
-    /// This is the only place that decides which instructions the cheatcodes step: the inspector
-    /// asks the EVM for these opcodes, and skips the hooks for every other instruction.
-    pub fn steps(&self) -> OpcodeSet {
-        if self.is_storage_hook_active()
-            || self.has_storage_hooks()
-            || self.broadcast.is_some()
+    #[inline(always)]
+    pub fn has_step_hooks(&self) -> bool {
+        self.broadcast.is_some()
             || self.gas_metering.paused
             || self.gas_metering.reset
-            || self.gas_metering.touched
-            || self.gas_metering.recording
+            || self.recording_accesses
             || self.recorded_account_diffs_stack.is_some()
             || !self.allowed_mem_writes.is_empty()
             || self.core.mapping_slots.is_some()
+            || self.gas_metering.recording
+            || self.has_active_env_overrides()
+            || self.has_storage_hooks()
+    }
+
+    /// Whether `ORIGIN` or `GASPRICE` reads an overridden value; only those instructions need
+    /// [`Self::step_opcode_overrides`].
+    #[inline(always)]
+    pub const fn has_opcode_overrides(&self) -> bool {
+        self.origin_override.is_some() || self.gas_price.is_some()
+    }
+
+    /// Marks an `ORIGIN` or `GASPRICE` instruction whose pushed value `step_end` overrides.
+    #[inline(always)]
+    pub const fn step_opcode_overrides(&mut self, opcode: u8) {
+        self.pending_origin_override = opcode == op::ORIGIN && self.origin_override.is_some();
+        self.pending_gas_price = opcode == op::GASPRICE && self.gas_price.is_some();
+    }
+
+    #[inline(always)]
+    pub const fn has_step_end_hooks(&self) -> bool {
+        self.gas_metering.paused
+            || self.gas_metering.touched
             || self.core.arbitrary_storage.is_some()
+            || self.core.mapping_slots.is_some()
+            || self.has_active_env_overrides()
+            || self.pending_origin_override
+            || self.pending_gas_price
+            || self.pending_emit_failure.is_some()
+            || self.has_storage_hooks()
             || self.deploy_code_depth.is_some()
-        {
-            return OpcodeSet::ALL;
-        }
-        let mut steps = OpcodeSet::EMPTY;
-        // A log that fails `expectEmit` reverts its frame in the `step_end` of the instruction
-        // that emitted it.
-        if !self.expected_emits.is_empty() || self.pending_emit_failure.is_some() {
-            steps = steps.union(LOG_EMITTING_OPCODES);
-        }
-        if self.recording_accesses {
-            steps = steps.union(opcodes([op::SLOAD, op::SSTORE]));
-        }
-        // Origin and gas price overrides rewrite what these instructions push.
-        if self.origin_override.is_some() || self.gas_price.is_some() {
-            steps = steps.union(opcodes([op::ORIGIN, op::GASPRICE]));
-        }
-        if self.has_active_env_overrides() {
-            steps = steps.union(opcodes([op::BASEFEE, op::GASPRICE, op::CHAINID, op::BLOBHASH]));
-        }
-        steps
     }
 
     #[inline(always)]
     pub fn has_log_hooks(&self) -> bool {
         !self.expected_emits.is_empty() || self.core.recorded_logs.is_some()
+    }
+
+    #[inline(always)]
+    pub fn has_recording_accesses_only_step_hook(&self) -> bool {
+        self.recording_accesses
+            && self.broadcast.is_none()
+            && !self.gas_metering.paused
+            && !self.gas_metering.reset
+            && self.recorded_account_diffs_stack.is_none()
+            && self.allowed_mem_writes.is_empty()
+            && self.core.mapping_slots.is_none()
+            && !self.has_storage_hooks()
+            && !self.gas_metering.recording
+            && !self.has_active_env_overrides()
     }
 
     #[inline(always)]
@@ -1893,7 +2112,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
     }
 
-    /// Called before each instruction in [`Self::steps`] executes.
+    /// Called before each instruction executes.
     ///
     /// Kept out of line: it runs only while a cheatcode needs per-instruction work, and inlining
     /// it into the inspector's per-instruction hook enlarges that hook's frame for every opcode.
@@ -1905,12 +2124,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) {
         self.pc = interp.pc();
 
+        if !self.has_step_hooks() {
+            return;
+        }
+
         let depth = usize::from(interp.message().depth) + 1;
         let opcode = interp.opcode();
-
-        // Marks an `ORIGIN` or `GASPRICE` instruction whose pushed value `step_end` overrides.
-        self.pending_origin_override = opcode == op::ORIGIN && self.origin_override.is_some();
-        self.pending_gas_price = opcode == op::GASPRICE && self.gas_price.is_some();
 
         if self.broadcast.is_some() {
             self.set_gas_limit_type(interp);
@@ -2024,7 +2243,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
     }
 
-    /// Called after each instruction in [`Self::steps`] executes.
+    /// Called after each instruction executes.
     ///
     /// Kept out of line for the same reason as [`Self::step_hook`].
     #[inline(never)]
@@ -2034,6 +2253,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         backend: &mut dyn CheatcodesBackend<FEN>,
         executor: &mut dyn CheatcodesExecutor<FEN>,
     ) {
+        if !self.has_step_end_hooks() {
+            return;
+        }
+
         // `deployCode`: keep the constructor's output, which it reports if depositing it fails.
         if let Some(depth) = self.deploy_code_depth
             && usize::from(interp.message().depth) == depth + 1
@@ -2121,7 +2344,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// Called when a log is emitted.
     pub fn log_hook(&mut self, log: &Log) {
         if !self.expected_emits.is_empty()
-            && let Some(reason) = crate::expected_emit::observe_log(&mut self.expected_emits, log)
+            && let Some(reason) = expect::handle_expect_emit(self, log)
         {
             // The emitting frame reverts once its `LOG` instruction finishes.
             self.pending_emit_failure = Some(reason);
@@ -2165,8 +2388,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
     /// Replays the persistent writes made in the frame at `depth` or deeper after the frame
     /// failed and the writes were rolled back, as writes of the enclosing frame. A transaction's
-    /// writes are dropped when its root frame ends, and a failed root frame does not replay the
-    /// writes its rollback undid; a nested one merges its changes itself.
+    /// writes are dropped when its root frame ends; a nested one merges its changes itself.
     fn replay_persistent_writes(
         &mut self,
         interp: &mut InterpreterFor<'_, '_, FEN>,
@@ -2179,7 +2401,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         let root = usize::from(interp.version().initial_call_depth);
         let state = interp.host().state_mut();
         let mut failed = None;
-        if !success && depth > root {
+        if !success {
             // Without the frame's rollback, such as without the inspector stack, every write of
             // the frame was undone. A context switch in the frame can leave later writes below
             // its checkpoint, which the rollback keeps.
@@ -2457,7 +2679,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if let Some(unmet) = expected_emit::check_call_emits(
             &mut self.expected_emits,
             curr_depth,
-            call.is_static(),
+            is_static(call),
             outcome.is_success(),
         ) {
             set_revert(outcome, unmet.encode(|| self.signatures_identifier()));
@@ -2528,7 +2750,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             self.core.intercept_next_create_call = false;
 
             // Return a revert with the initcode as error data
-            return Some(message_result(input, InstrStop::Revert, input.input.to_bytes()));
+            return Some(message_result(input, InstrStop::Revert, input.input.clone().into()));
         }
 
         let mut caller_changed = false;
@@ -2539,7 +2761,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         {
             if let Some(new_caller) = changes.caller {
                 // Ensure new caller is loaded, warm and touched
-                let _ = touch_account(interp.host().state_mut(), new_caller);
+                if let Ok(mut account) = interp.host().state_mut().account(&new_caller) {
+                    account.touch();
+                    account.warm();
+                }
                 input.caller = new_caller;
                 caller_changed = true;
             }
@@ -2585,7 +2810,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     .with_from(broadcast.new_origin)
                     .with_kind(TxKind::Create)
                     .with_value(input.value)
-                    .with_input(input.input.to_bytes())
+                    .with_input(input.input.clone())
                     .with_nonce(nonce);
                 if let Some(fee_token) = self.fee_token {
                     tx_req.set_fee_token(fee_token);
@@ -2646,7 +2871,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 oldNonce: 0,            // new contract starts with nonce 0
                 newNonce: 1,            // updated on create_end (contracts start with nonce 1)
                 value: input.value,
-                data: input.input.to_bytes(),
+                data: input.input.clone().into(),
                 reverted: false,
                 deployedCode: Bytes::new(), // updated on create_end
                 storageAccesses: vec![],    // updated on create_end
@@ -2795,9 +3020,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             merge_recorded_frame(recorded_account_diffs_stack, last_depth);
         }
 
-        // Match successful creates against expected_creates; a failed create deploys nothing.
+        // Match the create against expected_creates
         if !self.expected_creates.is_empty()
-            && outcome.is_success()
             && let Some(address) = outcome.created_address
             && let Ok(mut account) = interp.host().state_mut().account(&address)
         {
@@ -3162,6 +3386,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             }
         };
 
+        let tx_env = interp.host().tx_env().clone();
         let depth = interp.message().depth.saturating_add(1);
         let gas_limit = interp.gas().remaining();
         let evm = interp.host();
@@ -3196,7 +3421,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             callback_target: hook.callback_target,
             callback_input: input,
         });
-        let result = executor.exec_message(self, backend, evm, &mut message);
+        let result = executor.exec_message(self, backend, evm, &tx_env, &mut message);
         self.active_storage_hook = None;
         self.restore_storage_hook_inspector_state(inspector_state);
         // The callback is instrumentation: accesses it warmed stay cold for the hooked frame.
@@ -3605,34 +3830,6 @@ fn disallowed_mem_write<T: EvmTypesHost>(
     revert_frame(interpreter, revert_string.as_bytes());
 }
 
-/// The instructions during which the running frame can emit a log: `LOG*`, and the message and
-/// self-destruct instructions, such as for logs of precompiles and value transfers.
-const LOG_EMITTING_OPCODES: OpcodeSet = opcodes([
-    op::LOG0,
-    op::LOG1,
-    op::LOG2,
-    op::LOG3,
-    op::LOG4,
-    op::CALL,
-    op::CALLCODE,
-    op::DELEGATECALL,
-    op::STATICCALL,
-    op::CREATE,
-    op::CREATE2,
-    op::SELFDESTRUCT,
-]);
-
-/// Returns the set of `ops`.
-const fn opcodes<const N: usize>(ops: [u8; N]) -> OpcodeSet {
-    let mut set = OpcodeSet::EMPTY;
-    let mut i = 0;
-    while i < N {
-        set.insert(ops[i]);
-        i += 1;
-    }
-    set
-}
-
 /// Returns true if the kind of account access is a call.
 const fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
     matches!(
@@ -3777,7 +3974,6 @@ fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
     }
     Ok(writes)
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3829,7 +4025,8 @@ mod tests {
     #[test]
     fn default_cheatcodes_have_no_opcode_hooks() {
         let cheats = Cheatcodes::<EthEvmNetwork>::new(Arc::default());
-        assert_eq!(cheats.steps(), OpcodeSet::EMPTY);
+        assert!(!cheats.has_step_hooks());
+        assert!(!cheats.has_step_end_hooks());
         assert!(!cheats.has_log_hooks());
     }
 
@@ -3838,51 +4035,41 @@ mod tests {
         let mut cheats = Cheatcodes::<EthEvmNetwork>::new(Arc::default());
 
         cheats.recording_accesses = true;
-        assert_eq!(cheats.steps(), [op::SLOAD, op::SSTORE].into_iter().collect());
+        assert!(cheats.has_step_hooks());
+        assert!(!cheats.has_step_end_hooks());
+        assert!(cheats.has_recording_accesses_only_step_hook());
 
         cheats.recording_accesses = false;
         cheats.gas_metering.touched = true;
-        assert_eq!(cheats.steps(), OpcodeSet::ALL);
+        assert!(!cheats.has_step_hooks());
+        assert!(cheats.has_step_end_hooks());
+        assert!(!cheats.has_recording_accesses_only_step_hook());
 
         cheats.gas_metering.touched = false;
         cheats.register_storage_load_hook(Address::ZERO, Address::ZERO, [0; 4]);
-        assert_eq!(cheats.steps(), OpcodeSet::ALL);
+        assert!(cheats.has_step_hooks());
+        assert!(cheats.has_step_end_hooks());
+        assert!(!cheats.has_recording_accesses_only_step_hook());
     }
 
     #[test]
-    fn combined_cheatcodes_step_every_opcode_any_needs() {
+    fn mixed_step_hooks_disable_record_access_fast_path() {
         let mut cheats = Cheatcodes::<EthEvmNetwork>::new(Arc::default());
         cheats.recording_accesses = true;
-        cheats.gas_price = Some(1);
-        cheats.env_overrides.update(None, |o| o.chain_id = Some(1));
-        assert_eq!(
-            cheats.steps(),
-            [
-                op::SLOAD,
-                op::SSTORE,
-                op::ORIGIN,
-                op::GASPRICE,
-                op::BASEFEE,
-                op::CHAINID,
-                op::BLOBHASH
-            ]
-            .into_iter()
-            .collect()
-        );
 
         cheats.gas_metering.reset = true;
-        assert_eq!(cheats.steps(), OpcodeSet::ALL);
+        assert!(!cheats.has_recording_accesses_only_step_hook());
+
+        cheats.gas_metering.reset = false;
+        cheats.env_overrides.update(None, |o| o.basefee = Some(1));
+        assert!(!cheats.has_recording_accesses_only_step_hook());
     }
 
     #[test]
     fn env_override_hook_predicates() {
         fn assert_hooks(cheats: &Cheatcodes, active: bool, case: &str) {
-            let steps = if active {
-                [op::BASEFEE, op::GASPRICE, op::CHAINID, op::BLOBHASH].into_iter().collect()
-            } else {
-                OpcodeSet::EMPTY
-            };
-            assert_eq!(cheats.steps(), steps, "{case}");
+            assert_eq!(cheats.has_step_hooks(), active, "step hooks: {case}");
+            assert_eq!(cheats.has_step_end_hooks(), active, "step_end hooks: {case}");
         }
 
         let mut cheats = Cheatcodes::<EthEvmNetwork>::new(Arc::default());
@@ -3987,12 +4174,12 @@ mod tests {
         let mut cheats = cheats(false, None);
         let target = Address::repeat_byte(0x11);
         let slot = U256::from(7);
-        assert_eq!(cheats.steps(), OpcodeSet::EMPTY);
+        assert!(!cheats.has_step_end_hooks());
 
         Vm::setArbitraryStorage_1Call { target, overwrite: true }
             .apply_context(&mut cheats.core)
             .unwrap();
-        assert_eq!(cheats.steps(), OpcodeSet::ALL);
+        assert!(cheats.has_step_end_hooks());
         assert!(cheats.has_arbitrary_storage(&target));
         assert!(cheats.should_overwrite_arbitrary_storage(&target, slot));
 

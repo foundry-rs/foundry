@@ -1,10 +1,10 @@
 use super::{
     backend::{
-        db::{CacheDB, DatabaseRef, apply_block_overrides, apply_state_overrides},
+        db::{CacheDB, DatabaseRef, apply_state_overrides},
         env::{BlobExcessGasAndPrice, BlockEnv},
         mem::{
-            BlockRequest, CallOutcome, ConsoleLogs, GasEstimateCallOptions, MonadReplayContext,
-            halt_reason, sanitize_simulation_blocks,
+            BlockRequest, CallOutcome, GasEstimateCallOptions, MonadReplayContext,
+            sanitize_simulation_blocks,
         },
     },
     preserve_simulation_request_fields,
@@ -423,22 +423,9 @@ impl<N: Network> EthApi<N> {
 
     /// Sets the code of a contract.
     ///
-    /// Native Tempo precompiles reject empty and unchanged writes as well to preserve their account
-    /// markers. For TIP20, nonempty code marks the token as initialized.
-    ///
     /// Handler for RPC call: `anvil_setCode`
     pub async fn anvil_set_code(&self, address: Address, code: Bytes) -> Result<()> {
         node_info!("anvil_setCode");
-        let _lifecycle = self.lifecycle_lock.read().await;
-        if self.backend.is_tempo()
-            && let Some(name) =
-                backend::tempo::native_precompile_name(address, self.backend.tempo_hardfork())
-        {
-            return Err(RpcError::invalid_params(format!(
-                "cannot set code for native Tempo precompile {name} at {address}: calls are handled natively and do not execute account bytecode; code writes are rejected to preserve native account markers, including TIP20 initialization"
-            ))
-            .into());
-        }
         self.backend.set_code(address, code).await?;
         #[cfg(feature = "base")]
         self.invalidate_base_eip8130_pool();
@@ -711,7 +698,6 @@ impl<N: Network> EthApi<N> {
         let _reset = self.reset_lock.lock().await;
         let staged_fork = if let Some(fork) = self.backend.get_fork() {
             let mut validation_config = self.backend.node_config.read().await.clone();
-            validation_config.warn_if_fork_headers_withheld(&url);
             let (expected_identity, block_number, block_hash) = {
                 let config = fork.config.read();
                 (config.endpoint_identity, config.block_number, config.block_hash)
@@ -719,7 +705,7 @@ impl<N: Network> EthApi<N> {
             // A new URL replaces an offline discovery hint. Resolve the actual source identity so
             // unsupported networks cannot be hidden behind the previous endpoint's hint.
             validation_config.fork_chain_id = None;
-            let (provider, endpoint_identity, tempo_epoch_length) = validation_config
+            let (provider, endpoint_identity) = validation_config
                 .replacement_fork_provider(
                     &url,
                     expected_identity,
@@ -728,16 +714,6 @@ impl<N: Network> EthApi<N> {
                     self.instance_id(),
                 )
                 .await?;
-            // Consensus is already built, so a replacement cannot change its schedule.
-            if let Some(epoch_length) = tempo_epoch_length
-                && epoch_length.get() != self.backend.tempo_consensus_identity().await?.epoch_length
-            {
-                return Err(BlockchainError::Message(
-                    "replacement fork endpoint reveals a different Tempo epoch length; use \
-                     anvil_reset to rebuild consensus"
-                        .to_string(),
-                ));
-            }
             Some((fork, provider, endpoint_identity))
         } else {
             None
@@ -861,26 +837,13 @@ impl<N: Network> EthApi<N> {
         Ok(self.backend.get_blob_by_versioned_hash(hash)?)
     }
 
-    /// Returns the blobs for a Beacon API `block_id`.
-    ///
-    /// With `--block-time`, a numeric `block_id` is a beacon slot whose length is the block time
-    /// rounded up to whole seconds, as beacon clients address blobs by slot.
-    ///
-    /// Handler for Beacon API call: `GET /eth/v1/beacon/blobs/{block_id}`
-    pub async fn anvil_get_blobs_by_block_id(
+    /// Handler for RPC call: `anvil_getBlobsByBlockId`
+    pub fn anvil_get_blobs_by_block_id(
         &self,
         block_id: impl Into<BlockId>,
         versioned_hashes: Vec<B256>,
     ) -> Result<Option<Vec<Blob>>> {
         node_info!("anvil_getBlobsByBlockId");
-        let block_id = block_id.into();
-        let block_time = self.backend.node_config.read().await.block_time;
-        if let BlockId::Number(BlockNumber::Number(slot)) = block_id
-            && let Some(block_time) = block_time
-        {
-            let seconds_per_slot = block_time.as_secs() + u64::from(block_time.subsec_nanos() != 0);
-            return Ok(self.backend.get_blobs_by_slot(slot, seconds_per_slot, &versioned_hashes));
-        }
         Ok(self.backend.get_blobs_by_block_id(block_id, versioned_hashes)?)
     }
 
@@ -908,17 +871,16 @@ impl<N: Network> EthApi<N> {
     pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
         node_info!("anvil_reset");
         let _reset = self.reset_lock.lock().await;
-        let warning = if let Some(forking) = forking {
+        if let Some(forking) = forking {
             let staged = self.backend.prepare_fork_reset(forking, self.instance_id()).await?;
             let _lifecycle = self.lifecycle_lock.write().await;
             // Stop an old-context block before publishing the replacement DB and environment.
             let _mining = self.backend.lock_mining().await;
-            let warning = self.backend.commit_fork_reset(staged).await?;
+            self.backend.commit_fork_reset(staged).await?;
             self.reset_instance_id();
             self.pool.clear();
             self.pool_snapshots.lock().clear();
             self.fee_history_cache.lock().clear();
-            warning
         } else {
             let _lifecycle = self.lifecycle_lock.write().await;
             // Unlike fork preparation, memory preparation snapshots live local fee state and does
@@ -930,12 +892,6 @@ impl<N: Network> EthApi<N> {
             self.pool.clear();
             self.pool_snapshots.lock().clear();
             self.fee_history_cache.lock().clear();
-            None
-        };
-        drop(_reset);
-        // Diagnostics describe the completed reset and must not hold its lifecycle or state locks.
-        if let Some(warning) = warning {
-            let _ = sh_warn!("{warning}");
         }
         Ok(())
     }
@@ -1995,12 +1951,7 @@ impl EthApi<FoundryNetwork> {
                     request,
                     fees,
                     block_env,
-                    GasEstimateCallOptions::new(
-                        gas_limit,
-                        false,
-                        monad_context,
-                        ConsoleLogs::OnFailure,
-                    ),
+                    GasEstimateCallOptions::new(gas_limit, false, monad_context),
                 )
                 .try_into()?;
             return match result {
@@ -2114,7 +2065,6 @@ impl EthApi<FoundryNetwork> {
                         highest_gas_limit.min(MIN_TRANSACTION_GAS) as u64,
                         disable_fee_charge,
                         monad_context.clone(),
-                        ConsoleLogs::Never,
                     ),
                 );
                 if let Ok(GasEstimationCallResult::Success(gas)) = probe.try_into() {
@@ -2123,9 +2073,7 @@ impl EthApi<FoundryNetwork> {
             }
         }
 
-        // Execute the call without writing to db. Its console logs are printed only if it fails,
-        // where they explain the error. A successful estimate is usually followed by the
-        // transaction itself, which prints them.
+        // execute the call without writing to db
         let ethres = self.backend.call_with_state_typed_gas_limit(
             &state,
             request.clone(),
@@ -2135,7 +2083,6 @@ impl EthApi<FoundryNetwork> {
                 highest_gas_limit as u64,
                 disable_fee_charge,
                 monad_context.clone(),
-                ConsoleLogs::OnFailure,
             ),
         );
 
@@ -2166,8 +2113,7 @@ impl EthApi<FoundryNetwork> {
         let mut mid_gas_limit =
             std::cmp::min(gas_used * 3, (highest_gas_limit + lowest_gas_limit) / 2);
 
-        // Binary search for the ideal gas limit. The probes do not print console logs: a probe that
-        // runs out of gas is expected, and the call above already succeeded.
+        // Binary search for the ideal gas limit
         while lowest_gas_limit + 1 < highest_gas_limit {
             let ethres = self.backend.call_with_state_typed_gas_limit(
                 &state,
@@ -2178,7 +2124,6 @@ impl EthApi<FoundryNetwork> {
                     mid_gas_limit as u64,
                     disable_fee_charge,
                     monad_context.clone(),
-                    ConsoleLogs::Never,
                 ),
             );
 
@@ -2216,14 +2161,12 @@ impl EthApi<FoundryNetwork> {
         trace!(target: "rpc::api", "executing eth request");
         // Fork reset and RPC URL replacement take the write lock internally after their fallible
         // remote staging work. Memory reset takes it before staging because it snapshots live
-        // state. Identity, snapshot, chain-rewind, and SetCode methods also lock internally to keep
-        // direct API callers safe. Nested reads of this fair RwLock can deadlock behind a queued
-        // writer. Consensus queries snapshot their source under the backend DB lock before any
-        // upstream I/O.
+        // state. Identity, snapshot, and chain-rewind methods also lock internally to keep direct
+        // API callers safe without recursively acquiring this fair RwLock. Consensus queries
+        // snapshot their source under the backend DB lock before any upstream I/O.
         let _lifecycle = if matches!(
             &request,
             EthRequest::Reset(_)
-                | EthRequest::SetCode(_, _)
                 | EthRequest::SetRpcUrl(_)
                 | EthRequest::NodeInfo(_)
                 | EthRequest::AnvilMetadata(_)
@@ -5040,7 +4983,7 @@ impl EthApi<FoundryNetwork> {
                             apply_state_overrides(state_overrides, &mut cache_db)?;
                         }
                         if let Some(block_overrides) = overrides.block {
-                            apply_block_overrides(*block_overrides, &mut cache_db, &mut block);
+                            cache_db.apply_block_overrides(*block_overrides, &mut block);
                         }
                         this.do_estimate_gas_with_state(request, &cache_db, block, monad_context)
                     },
@@ -5712,10 +5655,7 @@ impl EthApi<FoundryNetwork> {
         self.backend.tempo_consensus_identity().await
     }
 
-    /// Schedules a new identity two epochs after the next block's epoch.
-    ///
-    /// The first boundary announces a full DKG; the following boundary publishes the new key.
-    /// The returned `fromEpoch` is the first epoch that uses it.
+    /// Schedules a new identity for the epoch following the next block's epoch.
     ///
     /// Handler for `anvil_tempoRotateConsensusIdentity`; unavailable on non-Tempo networks.
     pub async fn anvil_tempo_rotate_consensus_identity(&self) -> Result<TempoConsensusIdentity> {
@@ -5855,7 +5795,7 @@ fn execution_error(exit: InstrStop) -> Option<String> {
     } else if exit.is_revert() {
         Some("execution reverted".to_string())
     } else {
-        Some(halt_reason(exit))
+        Some(format!("{exit:?}"))
     }
 }
 
@@ -5934,7 +5874,6 @@ fn reward_at_percentile(rewards: &[u128], percentile: f64) -> u128 {
 mod tests {
     use super::*;
     use crate::{NodeConfig, spawn};
-    use foundry_evm_core::constants::HARDHAT_CONSOLE_ADDRESS;
 
     #[cfg(feature = "base")]
     #[tokio::test(flavor = "multi_thread")]
@@ -5998,51 +5937,6 @@ mod tests {
 
         assert_eq!(api.backend.evm_env().read().block_env.basefee, 456);
         assert_eq!(api.base_fee().unwrap(), Some(U256::from(crate::eth::fees::INITIAL_BASE_FEE)));
-    }
-
-    // Gas estimation runs the call at the highest gas limit, then once per step of a binary
-    // search. Console logs are printed only when the estimation fails, and then once.
-    #[tokio::test]
-    async fn estimate_gas_prints_console_logs_only_on_failure() {
-        let (api, handle) = spawn(NodeConfig::test()).await;
-        let from = handle.dev_accounts().next().unwrap();
-        // Calls `console.log(uint256)` with 1, then stops or reverts.
-        let mut log =
-            alloy_primitives::hex!("63f82c50f160e01b60005260016004526000600060246000").to_vec();
-        log.push(0x73);
-        log.extend_from_slice(HARDHAT_CONSOLE_ADDRESS.as_slice());
-        log.extend_from_slice(&[0x5a, 0xfa, 0x50]);
-        let succeeds = Address::repeat_byte(0x42);
-        let reverts = Address::repeat_byte(0x43);
-        api.anvil_set_code(succeeds, [log.as_slice(), &[0x00]].concat().into()).await.unwrap();
-        api.anvil_set_code(reverts, [log.as_slice(), &[0x60, 0x00, 0x80, 0xfd]].concat().into())
-            .await
-            .unwrap();
-
-        for (to, expected) in [(succeeds, ""), (reverts, " INFO node::console: 1\n")] {
-            let request = api
-                .parse_transaction_request(WithOtherFields::new(
-                    TransactionRequest::default().from(from).to(to),
-                ))
-                .unwrap();
-            let file = tempfile::NamedTempFile::new().unwrap();
-            let subscriber = tracing_subscriber::fmt()
-                .with_env_filter("off,node::console=info")
-                .without_time()
-                .with_ansi(false)
-                .with_writer(Arc::new(file.reopen().unwrap()))
-                .finish();
-            let _subscriber = tracing::subscriber::set_default(subscriber);
-            // Runs on this thread, so the subscriber above sees the logs.
-            let result = api
-                .backend
-                .with_database_at_and_context(None, |state, block, monad_context| {
-                    api.do_estimate_gas_with_state(request, &state, block, monad_context)
-                })
-                .await;
-            assert_eq!(result.is_ok(), to == succeeds);
-            assert_eq!(std::fs::read_to_string(file.path()).unwrap(), expected);
-        }
     }
 
     // Regression test for <https://github.com/foundry-rs/foundry/issues/13680>.
@@ -6132,19 +6026,5 @@ mod tests {
         assert_eq!(response.blob_gas_used_ratio.len(), 6);
         assert_eq!(response.base_fee_per_blob_gas.len(), 6);
         assert_eq!(rewards.len(), 6);
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn set_code_waits_for_lifecycle_before_native_guard() {
-        let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
-        let lifecycle = api.lifecycle_lock.write().await;
-        let mut write = std::pin::pin!(
-            api.anvil_set_code(foundry_evm_core::tempo::PATH_USD_ADDRESS, Bytes::new())
-        );
-
-        assert!(futures::poll!(write.as_mut()).is_pending());
-        drop(lifecycle);
-        let error = tokio::time::timeout(Duration::from_secs(5), write).await.unwrap().unwrap_err();
-        assert!(matches!(error, BlockchainError::RpcError(_)));
     }
 }

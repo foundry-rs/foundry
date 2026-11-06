@@ -595,7 +595,6 @@ const fn key_type_name(t: KeyType) -> &'static str {
         KeyType::Secp256k1 => "secp256k1",
         KeyType::P256 => "p256",
         KeyType::WebAuthn => "webauthn",
-        KeyType::ConfigurableAccount => "configurableaccount",
     }
 }
 
@@ -604,7 +603,6 @@ const fn key_type_label(t: KeyType) -> &'static str {
         KeyType::Secp256k1 => "Secp256k1",
         KeyType::P256 => "P256",
         KeyType::WebAuthn => "WebAuthn",
-        KeyType::ConfigurableAccount => "ConfigurableAccount",
     }
 }
 
@@ -2576,14 +2574,11 @@ async fn run_key_auth_sign(
         let authorization = args.into_authorization(None)?;
         let key_type = authorization.key_type;
         let signature_hash = authorization.signature_hash();
-        let signed =
-            foundry_common::tempo::sign_key_authorization_with_browser(&browser, authorization)
-                .await?;
+        let signed = browser.sign_key_authorization(authorization).await?;
         return print_signed_key_authorization(&signed, signature_hash, signer_address, key_type);
     }
 
-    let (signer, tempo_access_key) =
-        foundry_common::tempo::maybe_signer(&wallet, Some(chain_id)).await?;
+    let (signer, tempo_access_key) = wallet.maybe_signer_for_chain(chain_id).await?;
     let signer_address = match (&signer, &tempo_access_key) {
         (Some(signer), None) => signer.address(),
         (None, Some(wallet)) => wallet.key_id()?,
@@ -2903,8 +2898,7 @@ pub(crate) async fn resolve_keychain_root_signer(
     print_sponsor_hash: bool,
 ) -> Result<KeychainRootSigner> {
     const WHAT: &str = "AccountKeychain transaction";
-    let (signer, tempo_access_key) =
-        foundry_common::tempo::maybe_signer(&send_tx.eth.wallet, None).await?;
+    let (signer, tempo_access_key) = send_tx.eth.wallet.maybe_signer().await?;
     if let Some(browser) = send_tx.browser.run::<TempoNetwork>().await? {
         ensure_root_sender(browser.address(), expected_from, WHAT)?;
         return Ok(KeychainRootSigner::Browser(browser));

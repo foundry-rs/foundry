@@ -68,7 +68,7 @@ use foundry_config::{
     filter::GlobMatcher,
     fs_permissions::FsAccessPermission,
 };
-use foundry_debugger::{DebuggerBuilder, ensure_dump_dir};
+use foundry_debugger::DebuggerBuilder;
 use foundry_evm::{
     backend::Backend,
     core::evm::{EthEvmNetwork, EvmFactoryFor, FoundryEvmNetwork, TempoEvmNetwork},
@@ -87,10 +87,10 @@ use rand::Rng;
 use regex::Regex;
 use solar::ast::{ContractKind as SolarContractKind, ItemKind};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fmt::Write,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, mpsc::channel},
+    sync::{Arc, LazyLock, Mutex, mpsc::channel},
     time::{Duration, Instant},
 };
 use tempfile::TempDir;
@@ -567,7 +567,7 @@ pub struct TestArgs {
     #[arg(
         long,
         requires = "debug",
-        value_hint = ValueHint::DirPath,
+        value_hint = ValueHint::FilePath,
         value_name = "PATH"
     )]
     dump: Option<PathBuf>,
@@ -858,11 +858,7 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_SYMBOLIC_CHECK_INVARIANT_FRONTIERS")]
     pub symbolic_check_invariant_frontiers: bool,
 
-    /// Assist invariant campaigns with one bounded live symbolic worker.
-    #[arg(long, env = "FOUNDRY_SYMBOLIC_LIVE")]
-    pub symbolic_live: bool,
-
-    /// Maximum number of imported or live branch frontiers to try per test.
+    /// Maximum number of fuzz branch frontiers to try for one symbolic test.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_FRONTIER_LIMIT", value_name = "COUNT")]
     pub symbolic_frontier_limit: Option<usize>,
 
@@ -1621,9 +1617,6 @@ impl TestArgs {
     /// Returns the test results for all matching tests.
     pub async fn compile_and_run(&mut self) -> Result<TestOutcome> {
         self.ensure_mutation_mode_compatible(false)?;
-        if let Some(dir) = &self.dump {
-            ensure_dump_dir(dir)?;
-        }
         let compiled = self.compile_project().await?;
         self.run_tests(
             &compiled.project_root,
@@ -2694,25 +2687,20 @@ impl TestArgs {
                 if let Some(gas_report) = &mut gas_report {
                     gas_report.analyze(result.traces.iter().map(|(_, a)| &a.arena), &decoder).await;
 
-                    if !result.gas_report_traces.is_empty() {
+                    for trace in &result.gas_report_traces {
                         decoder.clear_addresses();
 
-                        // Identify the setup and deployment traces once to collect identities
-                        // created in setUp and constructor; every sampled run starts from them.
+                        // Re-execute setup and deployment traces to collect identities created in
+                        // setUp and constructor.
                         for (kind, arena) in &result.traces {
                             if !kind.is_execution() {
                                 decoder.identify_scoped(arena, &mut identifier);
                             }
                         }
-                        let identities = decoder.address_identities();
 
-                        for trace in &result.gas_report_traces {
-                            decoder.restore_address_identities(&identities);
-
-                            for arena in trace {
-                                decoder.identify_scoped(arena, &mut identifier);
-                                gas_report.analyze([arena], &decoder).await;
-                            }
+                        for arena in trace {
+                            decoder.identify_scoped(arena, &mut identifier);
+                            gas_report.analyze([arena], &decoder).await;
                         }
                     }
                 }
@@ -3142,7 +3130,6 @@ impl Provider for TestArgs {
             "use_fuzz_corpus" => self.symbolic_use_fuzz_corpus.then_some(true),
             "corpus_seed_limit" => self.symbolic_corpus_seed_limit,
             "use_fuzz_frontiers" => self.symbolic_use_fuzz_frontiers.then_some(true),
-            "live" => self.symbolic_live.then_some(true),
             "check_invariant_frontiers" =>
                 self.symbolic_check_invariant_frontiers.then_some(true),
             "frontier_limit" => self.symbolic_frontier_limit,
@@ -3198,7 +3185,8 @@ fn spawn_backend<FEN: FoundryEvmNetwork>(
 ) -> Result<Backend<FEN>> {
     // Configure the hardfork before seeding network state, using the resolved fork.
     let configure_env = |env: &mut _, context| {
-        resolve_execution_spec::<EvmFactoryFor<FEN>>(
+        resolve_execution_spec(
+            &EvmFactoryFor::<FEN>::default(),
             config.evm_version,
             config.hardfork,
             env,
@@ -3216,7 +3204,10 @@ fn spawn_backend<FEN: FoundryEvmNetwork>(
 }
 
 fn parse_opcode(s: &str) -> Result<OpCode, String> {
-    OpCode::parse(s).ok_or_else(|| format!("invalid opcode: {s}"))
+    static OPCODES: LazyLock<HashMap<&str, OpCode>> = LazyLock::new(|| {
+        (0..=u8::MAX).filter_map(OpCode::new).map(|op| (op.as_str(), op)).collect()
+    });
+    OPCODES.get(s).copied().ok_or_else(|| format!("invalid opcode: {s}"))
 }
 
 const fn apply_mutation_compiler_overrides(config: &mut Config) {

@@ -1,7 +1,7 @@
 use crate::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     evm::{
-        EvmEnv, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork, SpecFor, SpecOf,
+        EvmEnv, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork, SpecFor,
         TransactionRequestFor, TypesFor,
     },
     fork::{CreateFork, Fork},
@@ -1373,27 +1373,28 @@ impl ExecutionSpecContext {
 /// Returns the exact namespaced hardfork, when applicable, so execution and trace decoding can use
 /// the same hardfork.
 pub fn resolve_execution_spec<F: FoundryEvmFactory>(
+    factory: &F,
     evm_version: EvmVersion,
     configured_hardfork: Option<FoundryHardfork>,
     evm_env: &mut EvmEnv<F::Types>,
     context: ExecutionSpecContext,
-    explicit_spec: Option<SpecOf<F>>,
+    explicit_spec: Option<crate::evm::SpecOf<F>>,
 ) -> Option<FoundryHardfork> {
-    let configured_spec = evm_spec_id::<SpecOf<F>>(evm_version);
+    let configured_spec = evm_spec_id::<crate::evm::SpecOf<F>>(evm_version);
     let (spec, hardfork) = if let Some(spec) = explicit_spec {
         (spec, spec.reported_hardfork())
     } else if let Some((hardfork, spec)) = configured_hardfork
-        .filter(|&hardfork| SpecOf::<F>::from_foundry_hardfork(hardfork).is_some())
+        .filter(|&hardfork| crate::evm::SpecOf::<F>::from_foundry_hardfork(hardfork).is_some())
         .or_else(|| context.hardfork(evm_env.block.timestamp.saturating_to(), configured_spec))
         .and_then(|hardfork| {
-            SpecOf::<F>::from_foundry_hardfork(hardfork).map(|spec| (hardfork, spec))
+            crate::evm::SpecOf::<F>::from_foundry_hardfork(hardfork).map(|spec| (hardfork, spec))
         })
     {
         (spec, Some(hardfork))
     } else {
         (configured_spec, configured_spec.reported_hardfork())
     };
-    *evm_env = F::default().env_with_spec(*evm_env, spec);
+    *evm_env = factory.env_with_spec(*evm_env, spec);
     hardfork
 }
 
@@ -1829,6 +1830,7 @@ mod tests {
         let mut before = monad_env(activation - 1);
         assert_eq!(
             resolve_execution_spec::<EvmFactoryFor<MonadEvmNetwork>>(
+                &Default::default(),
                 config.evm_version,
                 config.hardfork,
                 &mut before,
@@ -1842,6 +1844,7 @@ mod tests {
         let mut after = monad_env(activation);
         assert_eq!(
             resolve_execution_spec::<EvmFactoryFor<MonadEvmNetwork>>(
+                &Default::default(),
                 config.evm_version,
                 config.hardfork,
                 &mut after,
@@ -1865,6 +1868,7 @@ mod tests {
 
         assert_eq!(
             resolve_execution_spec::<EvmFactoryFor<MonadEvmNetwork>>(
+                &Default::default(),
                 config.evm_version,
                 config.hardfork,
                 &mut env,
@@ -1886,6 +1890,7 @@ mod tests {
 
         assert_eq!(
             resolve_execution_spec::<EvmFactoryFor<MonadEvmNetwork>>(
+                &Default::default(),
                 config.evm_version,
                 config.hardfork,
                 &mut env,
@@ -1905,6 +1910,7 @@ mod tests {
 
         assert_eq!(
             resolve_execution_spec::<EvmFactoryFor<EthEvmNetwork>>(
+                &Default::default(),
                 config.evm_version,
                 config.hardfork,
                 &mut env,
@@ -1919,6 +1925,7 @@ mod tests {
             FoundryHardfork::Ethereum(foundry_evm_hardforks::EthereumHardfork::Frontier);
         assert_eq!(
             resolve_execution_spec::<EvmFactoryFor<EthEvmNetwork>>(
+                &Default::default(),
                 config.evm_version,
                 config.hardfork,
                 &mut env,
@@ -1938,6 +1945,7 @@ mod tests {
             let mut env = env_at::<EthEvmNetwork>(sepolia, timestamp);
             env.spec = evm2::SpecId::LONDON;
             let resolved = resolve_execution_spec::<EvmFactoryFor<EthEvmNetwork>>(
+                &Default::default(),
                 EvmVersion::Prague,
                 None,
                 &mut env,
@@ -1993,6 +2001,7 @@ mod tests {
 
         assert_eq!(
             resolve_execution_spec::<EvmFactoryFor<EthEvmNetwork>>(
+                &Default::default(),
                 config.evm_version,
                 config.hardfork,
                 &mut env,
@@ -2016,6 +2025,7 @@ mod tests {
 
         assert_eq!(
             resolve_execution_spec::<EvmFactoryFor<OpEvmNetwork>>(
+                &Default::default(),
                 config.evm_version,
                 config.hardfork,
                 &mut env,
@@ -2035,6 +2045,7 @@ mod tests {
 
         assert_eq!(
             resolve_execution_spec::<EvmFactoryFor<OpEvmNetwork>>(
+                &Default::default(),
                 config.evm_version,
                 config.hardfork,
                 &mut env,
@@ -2059,6 +2070,7 @@ mod tests {
 
         assert_eq!(
             resolve_execution_spec::<EvmFactoryFor<MonadEvmNetwork>>(
+                &Default::default(),
                 configured.evm_version,
                 configured.hardfork,
                 &mut env,
@@ -2072,6 +2084,7 @@ mod tests {
         configured.hardfork = None;
         assert_eq!(
             resolve_execution_spec::<EvmFactoryFor<MonadEvmNetwork>>(
+                &Default::default(),
                 configured.evm_version,
                 configured.hardfork,
                 &mut env,
