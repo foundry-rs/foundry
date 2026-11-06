@@ -193,10 +193,12 @@ fn expect_create_tests_should_fail(prj: _, cmd: _) {
 [FAIL: expected CREATE2 call by address 0x7fa9385be102ac3eac297483dd6233d62b3e1496 for bytecode [..] but not found] testShouldFailExpectCreate2WrongBytecode() ([GAS])
 [FAIL: expected CREATE2 call by address 0x0000000000000000000000000000000000000000 for bytecode [..] but not found] testShouldFailExpectCreate2WrongDeployer() ([GAS])
 [FAIL: expected CREATE2 call by address 0x7fa9385be102ac3eac297483dd6233d62b3e1496 for bytecode [..] but not found] testShouldFailExpectCreate2WrongScheme() ([GAS])
+[FAIL: expected CREATE call by address [..] for bytecode 0x but not found] testShouldFailExpectCreateNestedHalt() ([GAS])
+[FAIL: expected CREATE call by address 0x7fa9385be102ac3eac297483dd6233d62b3e1496 for bytecode 0x but not found] testShouldFailExpectCreateReverted() ([GAS])
 [FAIL: expected CREATE call by address 0x7fa9385be102ac3eac297483dd6233d62b3e1496 for bytecode [..] but not found] testShouldFailExpectCreateWrongBytecode() ([GAS])
 [FAIL: expected CREATE call by address 0x0000000000000000000000000000000000000000 for bytecode [..] but not found] testShouldFailExpectCreateWrongDeployer() ([GAS])
 [FAIL: expected CREATE call by address 0x7fa9385be102ac3eac297483dd6233d62b3e1496 for bytecode [..] but not found] testShouldFailExpectCreateWrongScheme() ([GAS])
-Suite result: FAILED. 0 passed; 8 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 10 failed; 0 skipped; [ELAPSED]
 ...
 
 "#]]);

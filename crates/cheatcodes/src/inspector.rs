@@ -2793,8 +2793,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             merge_recorded_frame(recorded_account_diffs_stack, last_depth);
         }
 
-        // Match the create against expected_creates
+        // Match successful creates against expected_creates; a failed create deploys nothing.
         if !self.expected_creates.is_empty()
+            && outcome.result.is_ok()
             && let (Some(address), Some(call)) = (outcome.address, call)
             && let Ok(created_acc) = ecx.journal_mut().load_account(address)
         {

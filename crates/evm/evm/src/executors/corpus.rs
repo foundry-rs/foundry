@@ -927,6 +927,16 @@ impl WorkerCorpus {
         )
     }
 
+    /// Executes an assistant candidate without mutating or crediting an existing corpus entry.
+    pub fn replay_sequence(
+        &mut self,
+        inputs: Vec<BasicTxDetails>,
+        runner: &mut TestRunner,
+    ) -> Result<SequencePlan> {
+        self.current_mutated_index = None;
+        self.fresh_sequence(runner)?.replay(inputs)
+    }
+
     pub fn new<FEN: FoundryEvmNetwork>(
         id: usize,
         config: FuzzCorpusConfig,
