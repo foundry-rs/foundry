@@ -278,7 +278,7 @@ impl<'a> AnchorIndex<'a> {
         let mut returns = Vec::new();
         for (ic, (pc, instruction)) in InstIter::new(self.bytecode).with_pc().enumerate() {
             if instruction.opcode.get() != opcode::JUMPDEST
-                || !self.source_map.get(ic).is_some_and(&exact)
+                || !self.source_map.get(ic).is_some_and(exact)
             {
                 continue;
             }
