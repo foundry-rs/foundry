@@ -495,6 +495,7 @@ abstract contract NestedRestoreFrameRevertBase is Test {
     function testRevertedRestoreKeepsLaterUnjournaledWrites() public {
         vm.setNonce(address(0xa5), 9);
         uint256 snapshotId = prepare(20);
+        vm.store(address(0xa4), bytes32(uint256(5)), bytes32(uint256(99)));
         expectHelperRevert(abi.encodeCall(helper.restoreWriteRevert, (snapshotId, store)), "restore reverted");
         assertUndone(20, 1);
         assertEq(address(0xa1).balance, 3);
@@ -502,6 +503,7 @@ abstract contract NestedRestoreFrameRevertBase is Test {
         assertEq(vm.getNonce(address(0xa3)), 5);
         assertEq(vm.getNonce(address(0xa5)), 0);
         assertEq(vm.load(address(0xa4), 0), bytes32(uint256(1)));
+        assertEq(vm.load(address(0xa4), bytes32(uint256(5))), bytes32(0));
         assertEq(vm.getNonce(address(0xa6)), 1);
         assertEq(vm.load(address(0xa6), 0), bytes32(uint256(1)));
         assertEq(address(0xa6).code.length, 0);
