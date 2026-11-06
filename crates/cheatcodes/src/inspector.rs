@@ -709,7 +709,7 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// when the asserting call reverts afterwards.
     pub assertion_failed: bool,
 
-    /// All recorded ETH `deal`s.
+    /// ETH `deal`s recorded in the current root transaction, rolled back if it fails.
     pub eth_deals: Vec<DealRecord>,
 
     /// Gas metering state.
@@ -1221,6 +1221,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 ecx.tx_mut().set_tx_type(TransactionType::Eip2930 as u8);
             }
         }
+    }
+
+    /// Called at the start of a root frame to clear the records of the previous transaction.
+    pub fn on_root_frame_start(&mut self) {
+        self.clear_storage_hook_mapping_slots();
+        // Deals belong to earlier root transactions and must not be rolled back if this one fails.
+        self.eth_deals.clear();
     }
 
     /// Called when there was a revert.

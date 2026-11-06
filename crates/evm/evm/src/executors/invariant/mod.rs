@@ -1218,6 +1218,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             } else {
                 0
             };
+            // Storage states this run reached, as the index of the call that produced each and a
+            // feature that call reached first. A resumed run starts from its snapshot's state.
+            let mut frontier_states = start
+                .state
+                .map(|state| (start.prefix.len() - 1, state))
+                .into_iter()
+                .collect::<Vec<_>>();
             let mut frontier_run = (frontier_limit > 0
                 || (collect_live
                     && LiveInvariantSolver::accepts_sequence(
@@ -1524,6 +1531,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             }
                             if !reverted {
                                 let novel = snapshots.observe(&state_changeset);
+                                if let Some(&state) = novel.first()
+                                    && let Some(history) = &frontier_run
+                                {
+                                    frontier_states.push((history.inputs.len() - 1, state));
+                                }
                                 // Targets created mid-run are dropped at its end, so states
                                 // holding them are not resumed.
                                 if current_run.created_contracts.is_empty() {
@@ -1633,7 +1645,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 frontier_recorder
                     .capture_sequence(&frontier_run.inputs, &frontier_run.cmp_seq[..len]);
                 if let Some(solver) = live_solver {
-                    solver.lock().unwrap().submit(frontier_run, config.depth as usize);
+                    solver.lock().unwrap().submit(
+                        frontier_run,
+                        config.depth as usize,
+                        &frontier_states,
+                    );
                 }
             }
             let optimization = current_run.optimization_value.map(|v| {

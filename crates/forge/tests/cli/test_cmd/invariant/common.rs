@@ -3845,3 +3845,57 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 }
+
+// Reverted handler calls are committed, so they must not roll back deals that earlier committed
+// transactions made. Isolation restores the pre-call state, which would mask this.
+#[forgetest_init]
+fn invariant_reverted_calls_keep_committed_deals(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.isolate = false;
+        config.invariant.runs = 4;
+        config.invariant.depth = 16;
+        config.invariant.fail_on_revert = false;
+    });
+
+    prj.add_test(
+        "InvariantDealRevertedCalls.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract DealHandler {
+    function succeed() external {}
+
+    function fail() external {
+        revert();
+    }
+}
+
+contract InvariantDealRevertedCallsTest is Test {
+    address constant SENDER = address(0xA11CE);
+
+    function setUp() public {
+        targetContract(address(new DealHandler()));
+        targetSender(SENDER);
+        vm.deal(SENDER, 100 ether);
+    }
+
+    function invariant_deal_survives_reverted_calls() public view {
+        assertEq(SENDER.balance, 100 ether);
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test", "--fuzz-seed", "1"])).success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantDealRevertedCalls.t.sol:InvariantDealRevertedCallsTest
+[PASS] invariant_deal_survives_reverted_calls() ([RUNS])
+
+[STATS]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+}

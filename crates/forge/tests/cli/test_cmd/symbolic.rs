@@ -7750,3 +7750,48 @@ fn symbolic_xor_specialist_limits_fall_back(prj: _, cmd: _) {
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
     }
 }
+
+// Each Babylonian square-root iteration nests the previous estimate inside a division-by-zero
+// `ite` condition. Normalizing those words must stay polynomial in the loop depth.
+#[forgetest_init]
+fn symbolic_normalizes_nested_division_loop(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_normalizes_nested_division_loop");
+    prj.add_test(
+        "SymbolicSqrt.t.sol",
+        r#"
+contract SymbolicSqrt {
+    function sqrt(uint256 y) internal pure returns (uint256 z) {
+        if (y > 3) {
+            z = y;
+            uint256 x = y / 2 + 1;
+            while (x < z) {
+                z = x;
+                x = (y / x + x) / 2;
+            }
+        } else if (y != 0) {
+            z = 1;
+        }
+    }
+
+    /// forge-config: default.symbolic.timeout = 1
+    function checkSqrtLower(uint256 x) public pure {
+        require(x < (1 << 26));
+        uint256 r = sqrt(x);
+        assert(r * r <= x);
+    }
+}
+"#,
+    );
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "checkSqrtLower"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkSqrtLower(uint256)");
+    assert_eq!(result["symbolic"]["status"], "incomplete", "{result}");
+    assert_eq!(
+        result["symbolic"]["incomplete"]["reason"], "symbolic execution timeout exceeded (1s)",
+        "{result}"
+    );
+}
