@@ -973,3 +973,32 @@ fn fractional_and_wide_number_literals() {
     let expected = "contract C {\n    function f() external {\n        1.25e-2;\n        1e100;\n        1.2e3;\n    }\n}\n";
     assert_eq!(format(source, Path::new("test.sol"), Arc::default()), expected);
 }
+
+#[test]
+fn own_line_comment_in_call_options_args_is_idempotent() {
+    let cases = [
+        (
+            "contract C { function f() external { target{value: v}({\n // first\n x: a, y: b }); } }\n",
+            "contract C {\n    function f() external {\n        target{value: v}({\n            // first\n            x: a, y: b\n        });\n    }\n}\n",
+        ),
+        (
+            "contract C { function f() external { target{value: v}(\n // first\n a, b); } }\n",
+            "contract C {\n    function f() external {\n        target{value: v}(\n            // first\n            a, b\n        );\n    }\n}\n",
+        ),
+        // Runs of comments keep their existing handling.
+        (
+            "contract C { function f() external { target{value: v}({\n // first\n /* second */ x: a, y: b }); } }\n",
+            "contract C {\n    function f() external {\n        target{value: v}({\n            // first\n        /* second */ x: a, y: b\n        });\n    }\n}\n",
+        ),
+        (
+            "contract C { function f() external { target{value: v}(\n // first\n /* second */ a, b); } }\n",
+            "contract C {\n    function f() external {\n        target{value: v}(\n            // first\n        /* second */ a, b\n        );\n    }\n}\n",
+        ),
+    ];
+    for (source, expected) in cases {
+        assert_eq!(
+            format(source, Path::new("test.sol"), Arc::new(FormatterConfig::default())),
+            expected
+        );
+    }
+}
