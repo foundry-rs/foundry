@@ -100,6 +100,32 @@ contract RevertedFrameHelper is Test {
         revert FrameEffectApplied();
     }
 
+    function dealThenRevertToOwnState(uint256 amount) external payable {
+        vm.deal(address(this), amount);
+        vm.revertToState(vm.snapshotState());
+        revert FrameEffectApplied();
+    }
+
+    function revertToStateBetweenWrites(uint256 amount, uint256 snapshot) external payable {
+        vm.deal(address(this), amount);
+        vm.revertToState(snapshot);
+        vm.setNonce(address(this), 50);
+        revert FrameEffectApplied();
+    }
+
+    function dealThenSelectForks(uint256 amount, uint256 otherFork, uint256 thisFork) external payable {
+        vm.deal(address(this), amount);
+        vm.selectFork(otherFork);
+        vm.selectFork(thisFork);
+        revert FrameEffectApplied();
+    }
+
+    function dealThenExecuteTransaction(uint256 amount, bytes calldata rawTx) external payable {
+        vm.deal(address(this), amount);
+        vm.executeTransaction(rawTx);
+        revert FrameEffectApplied();
+    }
+
     function setNonceAfterCreate() external {
         new RevertedFrameProbe();
         vm.setNonce(address(this), 50);
@@ -118,6 +144,13 @@ contract RevertedFrameOuter {
 
     function dealAfterReceive(RevertedFrameHelper helper, uint256 amount) external payable {
         helper.dealAfterReceive{value: msg.value}(amount);
+    }
+
+    function revertToStateBetweenWrites(RevertedFrameHelper helper, uint256 amount, uint256 snapshot)
+        external
+        payable
+    {
+        try helper.revertToStateBetweenWrites{value: msg.value}(amount, snapshot) {} catch {}
     }
 }
 
@@ -163,6 +196,51 @@ contract RevertedFrameEffectsTest is Test {
         assertHelperReverted(success, result);
         assertEq(address(helper).balance, 5 ether);
         assertEq(address(outer).balance, 0);
+        assertEq(address(this).balance, 1 ether);
+    }
+
+    function test_deal_after_receive_persists_across_state_revert() public {
+        vm.deal(address(this), 1 ether);
+        (bool success, bytes memory result) =
+            address(helper).call{value: 1 ether}(abi.encodeCall(helper.dealThenRevertToOwnState, (0)));
+        assertHelperReverted(success, result);
+        assertEq(address(helper).balance, 0);
+        assertEq(address(this).balance, 1 ether);
+    }
+
+    function test_writes_around_earlier_state_revert_persist_depth2() public {
+        vm.deal(address(this), 1 ether);
+        uint256 snapshot = vm.snapshotState();
+        outer.revertToStateBetweenWrites{value: 1 ether}(helper, 0, snapshot);
+        assertEq(address(helper).balance, 0);
+        assertEq(vm.getNonce(address(helper)), 50);
+        assertEq(address(outer).balance, 1 ether);
+    }
+
+    function test_deal_after_receive_persists_across_fork_round_trip() public {
+        uint256 forkA = vm.createSelectFork("mainnet", 14_608_400);
+        uint256 forkB = vm.createFork("mainnet", 14_608_401);
+        RevertedFrameHelper forkHelper = new RevertedFrameHelper();
+        vm.deal(address(this), 1 ether);
+        (bool success, bytes memory result) = address(forkHelper).call{value: 1 ether}(
+            abi.encodeCall(forkHelper.dealThenSelectForks, (0, forkB, forkA))
+        );
+        assertHelperReverted(success, result);
+        assertEq(address(forkHelper).balance, 0);
+        assertEq(address(this).balance, 1 ether);
+    }
+
+    function test_deal_after_receive_persists_across_unrelated_transaction() public {
+        vm.chainId(1);
+        vm.deal(0x5316812db67073C4d4af8BB3000C5B86c2877e94, 1 ether);
+        vm.deal(address(this), 1 ether);
+        // Legacy transfer of 17 wei from 0x5316812db67073C4d4af8BB3000C5B86c2877e94 at nonce 0.
+        bytes memory rawTx =
+            hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856";
+        (bool success, bytes memory result) =
+            address(helper).call{value: 1 ether}(abi.encodeCall(helper.dealThenExecuteTransaction, (0, rawTx)));
+        assertHelperReverted(success, result);
+        assertEq(address(helper).balance, 0);
         assertEq(address(this).balance, 1 ether);
     }
 

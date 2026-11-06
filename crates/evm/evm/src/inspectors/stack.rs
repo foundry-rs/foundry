@@ -429,6 +429,8 @@ struct PendingCallTrace {
 struct IsolatedFrameCheckpoint {
     checkpoint: JournalCheckpoint,
     restore_len: usize,
+    /// Cheatcode account write count when the frame started.
+    account_writes: usize,
     return_depth: usize,
     is_create: bool,
     failed: bool,
@@ -1547,13 +1549,20 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             && cheats.isolated_snapshot_restores.len() > frame.restore_len
         {
             cheats.isolated_snapshot_restores.truncate(frame.restore_len + 1);
-            let mut journal = cheats.isolated_snapshot_restores.pop().unwrap();
+            let (mut journal, account_writes) = cheats.isolated_snapshot_restores.pop().unwrap();
             journal.checkpoint_revert(frame.checkpoint);
             journal.depth = frame.return_depth;
             if cheats.isolated_snapshot_restores.is_empty() {
                 cheats.pending_isolated_snapshot_journal = None;
             }
             ecx.set_journal_inner(journal);
+            // The reinstated journal discards the account writes replayed by `call_end`, so restore
+            // the ones superseded by the restoration and replay them. The root frame starts before
+            // its writes are cleared.
+            if frame.return_depth > 0 {
+                cheats.account_writes[..account_writes.len()].copy_from_slice(&account_writes);
+                cheats.replay_account_writes(ecx, frame.account_writes);
+            }
         }
 
         // The caller only needs the first restoration made since it started, so drop the ones a
@@ -1695,6 +1704,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                     selfdestructed_i: journal.selfdestructed_addresses.len(),
                 },
                 restore_len,
+                account_writes: cheats.account_writes.len(),
                 return_depth: journal.depth,
                 is_create: matches!(frame_input, FrameInput::Create(_)),
                 failed: false,

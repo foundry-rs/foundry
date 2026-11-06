@@ -576,10 +576,14 @@ struct CreatedAccountsFrame {
 
 /// A balance or nonce written outside revm's journal, which survives reverts of the frame.
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum AccountWrite {
+pub enum AccountWrite {
     Balance(U256),
     Nonce(u64),
 }
+
+/// Balances and nonces written outside the journal on a fork, in write order. `None` once the
+/// state was replaced after the write.
+pub type AccountWrites = Vec<Option<(Option<LocalForkId>, Address, AccountWrite)>>;
 
 #[derive(Clone, Copy, Debug)]
 struct CreatedAccountChange {
@@ -594,6 +598,8 @@ struct CreatedAccountChange {
 struct CreatedAccountsSnapshot {
     fork_id: Option<LocalForkId>,
     bindings: AddressHashMap<usize>,
+    /// Account writes represented by the snapshot.
+    account_writes: AccountWrites,
 }
 
 /// An EVM inspector that handles calls to various cheatcodes, each with their own behavior.
@@ -690,8 +696,8 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     created_accounts_snapshots: HashMap<U256, CreatedAccountsSnapshot>,
 
     /// Balances and nonces written outside the journal in the root transaction, replayed when a
-    /// frame fails. `None` once the state was replaced after the write.
-    account_writes: Vec<Option<(Address, AccountWrite)>>,
+    /// frame fails.
+    pub account_writes: AccountWrites,
 
     /// The information of the debug step recording.
     pub record_debug_steps_info: Option<RecordDebugStepInfo>,
@@ -797,9 +803,9 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// top-level transaction when isolation is disabled) and must be unwound by failing frames.
     pub track_isolated_snapshots: bool,
 
-    /// Journals replaced by snapshot restorations that may need to be reinstated when an
-    /// enclosing frame of the tracked transaction fails.
-    pub isolated_snapshot_restores: Vec<JournaledState>,
+    /// Journals replaced by snapshot restorations, with their account writes, that may need to be
+    /// reinstated when an enclosing frame of the tracked transaction fails.
+    pub isolated_snapshot_restores: Vec<(JournaledState, AccountWrites)>,
 
     /// Whether the next snapshot restoration is the first one since its calling frame started,
     /// and so must be recorded in `isolated_snapshot_restores`.
@@ -1005,18 +1011,19 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             .extend(accounts.into_iter().map(|(address, creation)| ((fork_id, address), creation)));
     }
 
-    /// Captures creation ordering alongside a state snapshot.
+    /// Captures creation ordering and account writes alongside a state snapshot.
     pub(crate) fn snapshot_created_accounts(
         &mut self,
         snapshot_id: U256,
         fork_id: Option<LocalForkId>,
     ) {
         let bindings = self.created_account_bindings(fork_id);
+        let account_writes = self.account_writes.clone();
         self.created_accounts_snapshots
-            .insert(snapshot_id, CreatedAccountsSnapshot { fork_id, bindings });
+            .insert(snapshot_id, CreatedAccountsSnapshot { fork_id, bindings, account_writes });
     }
 
-    /// Restores creation ordering from a state snapshot.
+    /// Restores creation ordering and account writes from a state snapshot.
     pub(crate) fn revert_created_accounts(&mut self, snapshot_id: U256, remove: bool) {
         let snapshot = if remove {
             self.created_accounts_snapshots.remove(&snapshot_id)
@@ -1024,6 +1031,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             self.created_accounts_snapshots.get(&snapshot_id).cloned()
         };
         if let Some(snapshot) = snapshot {
+            // Writes made after the snapshot are superseded. Keep the length so that open frames
+            // keep their checkpoints.
+            let (restored, later) = self.account_writes.split_at_mut(snapshot.account_writes.len());
+            restored.copy_from_slice(&snapshot.account_writes);
+            later.fill(None);
             self.created_account_bindings.retain(|(fork_id, _), _| *fork_id != snapshot.fork_id);
             self.created_account_bindings.extend(
                 snapshot
@@ -1056,9 +1068,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             self.created_account_changes.clear();
             self.created_accounts_frames.clear();
             self.account_writes.clear();
-            // Earlier snapshots contain no creations from the new root transaction.
+            // Earlier snapshots contain no creations or account writes from the new root
+            // transaction.
             for snapshot in self.created_accounts_snapshots.values_mut() {
                 snapshot.bindings.clear();
+                snapshot.account_writes.clear();
             }
         }
         self.created_accounts_frames.push(CreatedAccountsFrame {
@@ -1072,14 +1086,51 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     }
 
     /// Records a balance or nonce written outside the journal, see [`Self::account_writes`].
-    pub(crate) fn record_account_write(&mut self, address: Address, write: AccountWrite) {
-        self.account_writes.push(Some((address, write)));
+    pub(crate) fn record_account_write(
+        &mut self,
+        fork_id: Option<LocalForkId>,
+        address: Address,
+        write: AccountWrite,
+    ) {
+        self.account_writes.push(Some((fork_id, address, write)));
     }
 
-    /// Stops replaying earlier account writes after the state was replaced or written outside the
-    /// journal.
-    pub(crate) fn reset_account_writes(&mut self) {
-        self.account_writes.fill(None);
+    /// Stops replaying the account writes of a fork whose state was replaced.
+    pub(crate) fn reset_account_writes(&mut self, fork_id: Option<LocalForkId>) {
+        for entry in &mut self.account_writes {
+            if entry.is_some_and(|(write_fork_id, ..)| write_fork_id == fork_id) {
+                *entry = None;
+            }
+        }
+    }
+
+    /// Re-applies the active fork's account writes recorded since `start` after a failed frame was
+    /// reverted.
+    ///
+    /// Balances and nonces written outside the journal survive the revert, but revm undoes the
+    /// frame's transfers and nonce bumps relative to them. This restores the values that were set.
+    pub fn replay_account_writes(&self, ecx: &mut FoundryContextFor<'_, FEN>, start: usize) {
+        let fork_id = ecx.db().active_fork_id();
+        let writes = || {
+            self.account_writes[start..]
+                .iter()
+                .flatten()
+                .filter(move |(write_fork_id, ..)| *write_fork_id == fork_id)
+                .map(|(_, address, write)| (address, write))
+        };
+        let state = ecx.journal_mut().evm_state_mut();
+        for (address, write) in writes() {
+            if let Some(account) = state.get_mut(address) {
+                match *write {
+                    AccountWrite::Balance(balance) => account.info.balance = balance,
+                    AccountWrite::Nonce(nonce) => account.info.nonce = nonce,
+                }
+            }
+        }
+        #[cfg(feature = "monad")]
+        if writes().any(|(_, write)| matches!(write, AccountWrite::Balance(_))) {
+            refresh_chain_journal(ecx);
+        }
     }
 
     fn finish_created_accounts_frame(
@@ -1099,27 +1150,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         };
         let checkpoint = frame.checkpoint;
         self.created_accounts_frames.pop();
-        // Balances and nonces written outside the journal survive the revert, but revm undoes the
-        // frame's transfers and nonce bumps relative to them. Restore the values that were set.
         // `on_revert` cleans up the root frame.
         if !success && depth > 0 {
-            let state = ecx.journal_mut().evm_state_mut();
-            for (address, write) in self.account_writes[frame.account_writes..].iter().flatten() {
-                if let Some(account) = state.get_mut(address) {
-                    match *write {
-                        AccountWrite::Balance(balance) => account.info.balance = balance,
-                        AccountWrite::Nonce(nonce) => account.info.nonce = nonce,
-                    }
-                }
-            }
-            #[cfg(feature = "monad")]
-            if self.account_writes[frame.account_writes..]
-                .iter()
-                .flatten()
-                .any(|(_, write)| matches!(write, AccountWrite::Balance(_)))
-            {
-                refresh_chain_journal(ecx);
-            }
+            self.replay_account_writes(ecx, frame.account_writes);
         }
         if !success {
             // Logs of a failed frame are reverted. If the buffer was replaced inside the frame,
@@ -1672,7 +1705,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         let prev = account.info.nonce;
                         account.info.nonce += 1;
                         let write = AccountWrite::Nonce(prev + 1);
-                        self.account_writes.push(Some((broadcast.new_origin, write)));
+                        let fork_id = ecx.db().active_fork_id();
+                        self.account_writes.push(Some((fork_id, broadcast.new_origin, write)));
                         debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
                     }
                 } else if broadcast.single_call {
@@ -3828,7 +3862,7 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
 /// authority nonce.
 fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
     ecx: &mut FoundryContextFor<'_, FEN>,
-    account_writes: &mut Vec<Option<(Address, AccountWrite)>>,
+    account_writes: &mut AccountWrites,
     authorizations: &[SignedAuthorization],
     sender: Address,
     chain_id: u64,
@@ -3846,7 +3880,8 @@ fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
         // The sender nonce has not been incremented for the transaction yet.
         if auth.nonce() == account.info.nonce + u64::from(authority == sender) {
             account.info.nonce += 1;
-            account_writes.push(Some((authority, AccountWrite::Nonce(account.info.nonce))));
+            let write = AccountWrite::Nonce(account.info.nonce);
+            account_writes.push(Some((ecx.db().active_fork_id(), authority, write)));
         }
     }
     Ok(())
