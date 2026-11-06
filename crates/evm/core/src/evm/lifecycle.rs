@@ -425,10 +425,10 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         let context = self.active();
         let db = context.db.clone_backing();
         let env = context.env;
-        let factory = self.factory.configure_for(&db, &env);
         match &context.cache {
-            None => factory.create_evm(db, env),
+            None => self.factory.create_evm(db, env),
             Some(cache) => {
+                let factory = self.factory.configure_for(&db, &env);
                 let view = AcceptedView { cache: Arc::clone(cache), backing: db };
                 factory.new_evm_with_ext(view, env, context.ext.get())
             }
@@ -998,11 +998,12 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
             eyre::bail!("fork {} does not exist", id.unwrap_or_default());
         };
         let db = context.db.clone_backing();
-        let mut source = self.factory.configure_for(&db, &context.env).new_evm(db, context.env);
+        db.set_eip161(context.env.version.feature(EvmFeatures::EIP161));
+        let mut source = State::new(db);
         if let Some(cache) = &context.cache {
-            source.state_mut().overlay_db_mut().cache = Cache::clone(cache);
+            source.overlay_db_mut().cache = Cache::clone(cache);
         }
-        rebase_loaded_accounts(evm.state_mut(), source.state_mut(), &self.forks.persistent)?;
+        rebase_loaded_accounts(evm.state_mut(), &mut source, &self.forks.persistent)?;
         Ok(())
     }
 
