@@ -151,6 +151,19 @@ contract RevertedFrameHelper is Test {
         vm.setNonce(address(this), 50);
         revert FrameEffectApplied();
     }
+
+    function broadcastAfterCreate(bool authorize) external {
+        new RevertedFrameProbe();
+        if (authorize) {
+            vm.broadcast(address(0xBEEF));
+            vm.signAndAttachDelegation(address(0xCAFE), 1);
+        } else {
+            vm.broadcast(address(this));
+        }
+        (bool success,) = address(0xCAFE).call("");
+        require(success);
+        revert FrameEffectApplied();
+    }
 }
 
 contract RevertedFrameOuter {
@@ -367,6 +380,22 @@ contract RevertedFrameEffectsTest is Test {
         (bool success, bytes memory result) = address(helper).call(abi.encodeCall(helper.setNonceAfterCreate, ()));
         assertHelperReverted(success, result);
         assertEq(vm.getNonce(address(helper)), 50);
+    }
+
+    function test_broadcast_after_create_keeps_only_broadcast_nonce() public {
+        uint64 nonce = vm.getNonce(address(helper));
+        (bool success, bytes memory result) = address(helper).call(abi.encodeCall(helper.broadcastAfterCreate, (false)));
+        assertHelperReverted(success, result);
+        assertEq(vm.getNonce(address(helper)), nonce + 1);
+    }
+
+    function test_authorization_after_create_keeps_only_authorization_nonce() public {
+        address authority = vm.addr(1);
+        vm.etch(authority, type(RevertedFrameHelper).runtimeCode);
+        uint64 nonce = vm.getNonce(authority);
+        (bool success, bytes memory result) = authority.call(abi.encodeCall(helper.broadcastAfterCreate, (true)));
+        assertHelperReverted(success, result);
+        assertEq(vm.getNonce(authority), nonce + 1);
     }
 
     function test_setNonceUnsafe_persists_depth1() public {

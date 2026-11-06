@@ -1762,7 +1762,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                             .unwrap();
                         let prev = account.info.nonce;
                         account.info.nonce += 1;
-                        let write = AccountWrite::Nonce(prev + 1);
+                        let write = AccountWrite::NonceDelta(1);
                         let fork_id = ecx.db().active_fork_id();
                         self.account_writes.push(Some((fork_id, broadcast.new_origin, write)));
                         debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
@@ -3938,7 +3938,7 @@ fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
         // The sender nonce has not been incremented for the transaction yet.
         if auth.nonce() == account.info.nonce + u64::from(authority == sender) {
             account.info.nonce += 1;
-            let write = AccountWrite::Nonce(account.info.nonce);
+            let write = AccountWrite::NonceDelta(1);
             account_writes.push(Some((ecx.db().active_fork_id(), authority, write)));
         }
     }
