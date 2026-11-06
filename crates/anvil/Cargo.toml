@@ -140,6 +140,7 @@ reqwest.workspace = true
 foundry-test-utils.workspace = true
 
 tempo-alloy.workspace = true
+tempo-contracts.workspace = true
 tempo-precompiles = { workspace = true, features = ["rpc"] }
 
 [features]

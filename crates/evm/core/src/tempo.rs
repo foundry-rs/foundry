@@ -145,12 +145,10 @@ fn initialize_tempo_genesis_inner_with_precompiles(
     // Initialize ValidatorConfig with admin as owner
     ctx.sstore(VALIDATOR_CONFIG_ADDRESS, validator_config::slots::OWNER, admin.into_word().into())?;
 
-    // Set bytecode for standard contracts
-    ctx.set_code(MULTICALL3_ADDRESS, Multicall3::DEPLOYED_BYTECODE.clone())?;
-    ctx.set_code(CREATEX_ADDRESS, CreateX::DEPLOYED_BYTECODE.clone())?;
-    ctx.set_code(SAFE_DEPLOYER_ADDRESS, SafeDeployer::DEPLOYED_BYTECODE.clone())?;
-    ctx.set_code(PERMIT2_ADDRESS, Permit2::DEPLOYED_BYTECODE.clone())?;
-    ctx.set_code(ARACHNID_CREATE2_FACTORY_ADDRESS, ARACHNID_CREATE2_FACTORY_BYTECODE)?;
+    // Set bytecode for standard contracts.
+    for (address, code) in tempo_genesis_contracts() {
+        ctx.set_code(address, code)?;
+    }
 
     Ok(())
 }
@@ -186,4 +184,16 @@ fn create_and_mint_token(
     }
 
     Ok(token_address)
+}
+
+/// Standard contracts and their runtime bytecode installed by Tempo genesis initialization.
+pub fn tempo_genesis_contracts() -> impl Iterator<Item = (Address, Bytes)> {
+    [
+        (MULTICALL3_ADDRESS, Multicall3::DEPLOYED_BYTECODE.clone()),
+        (CREATEX_ADDRESS, CreateX::DEPLOYED_BYTECODE.clone()),
+        (SAFE_DEPLOYER_ADDRESS, SafeDeployer::DEPLOYED_BYTECODE.clone()),
+        (PERMIT2_ADDRESS, Permit2::DEPLOYED_BYTECODE.clone()),
+        (ARACHNID_CREATE2_FACTORY_ADDRESS, ARACHNID_CREATE2_FACTORY_BYTECODE),
+    ]
+    .into_iter()
 }
