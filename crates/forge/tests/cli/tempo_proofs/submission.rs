@@ -9,7 +9,6 @@ use alloy_rpc_types::TransactionRequest;
 use anvil::{NodeConfig, eth::backend::tempo_consensus::TempoConsensus, spawn};
 use foundry_compilers::artifacts::ConfigurableContractArtifact;
 use serde_json::Value;
-use std::num::NonZeroU64;
 
 pub(super) async fn verify(
     config: NodeConfig,
@@ -18,13 +17,12 @@ pub(super) async fn verify(
     proof: &Value,
 ) {
     // Provision trust from the test's chosen seed, independently of the attached evidence.
-    let identity = TempoConsensus::new(fork_seed, NonZeroU64::new(4).unwrap()).identity();
+    let epoch_length = config.tempo_epoch_length.expect("Tempo epoch length configured");
+    let identity = TempoConsensus::new(fork_seed, epoch_length).identity();
     let key = evidence::key_coordinates(&identity.identity);
     let abi = receiver.abi.unwrap();
-    let constructor = abi.constructor.as_ref().unwrap();
-    let args = constructor.abi_decode_input(&key).unwrap();
     let mut initcode = receiver.bytecode.unwrap().into_bytes().unwrap().to_vec();
-    initcode.extend(constructor.abi_encode_input(&args).unwrap());
+    initcode.extend_from_slice(&key);
 
     let (_api, handle) =
         spawn(config.with_tempo_consensus_seed(Some(B256::repeat_byte(0x53)))).await;
@@ -37,8 +35,7 @@ pub(super) async fn verify(
         TransactionRequest::default().from(senders[0]).transaction_type(2).with_input(initcode);
     // Tempo's code-deposit costs also apply to the verifier created by the receiver constructor.
     let gas = provider.estimate_gas(deployment.clone().into()).await.unwrap();
-    let deployment = evidence::transact(&provider, senders[0], deployment.gas_limit(gas)).await;
-    assert!(deployment.status());
+    let deployment = evidence::send(&provider, senders[0], deployment.gas_limit(gas)).await;
     assert_eq!(deployment.block_number(), Some(1));
     let address = deployment.contract_address().unwrap();
 
@@ -55,15 +52,17 @@ pub(super) async fn verify(
         slot.clone(),
         value.clone(),
     ];
+    let submit_transaction = |args: &[DynSolValue]| {
+        TransactionRequest::default()
+            .from(senders[1])
+            .transaction_type(2)
+            .to(address)
+            .with_input(submit.abi_encode_input(args).unwrap())
+    };
     // A different account can relay the proof; trust is tied to the configured BLS key.
-    let transaction = TransactionRequest::default()
-        .from(senders[1])
-        .transaction_type(2)
-        .to(address)
-        .with_input(submit.abi_encode_input(&args).unwrap());
+    let transaction = submit_transaction(&args);
     let gas = provider.estimate_gas(transaction.clone().into()).await.unwrap();
-    let receipt = evidence::transact(&provider, senders[1], transaction.gas_limit(gas)).await;
-    assert!(receipt.status());
+    let receipt = evidence::send(&provider, senders[1], transaction.gas_limit(gas)).await;
     assert_eq!(receipt.block_number(), Some(2));
     // Tempo receipts also contain fee-token logs, including on application reverts.
     let logs = receipt.logs().iter().filter(|log| log.address() == address).collect::<Vec<_>>();
@@ -80,12 +79,7 @@ pub(super) async fn verify(
 
     // Invalid claims are mined as reverted transactions and cannot publish acceptance logs.
     args[4] = DynSolValue::Uint(U256::from(43), 256);
-    let transaction = TransactionRequest::default()
-        .from(senders[1])
-        .transaction_type(2)
-        .to(address)
-        .gas_limit(gas)
-        .with_input(submit.abi_encode_input(&args).unwrap());
+    let transaction = submit_transaction(&args).gas_limit(gas);
     let error = provider.call(transaction.clone().into()).await.unwrap_err();
     assert_eq!(
         error.as_error_resp().unwrap().as_revert_data().unwrap().as_ref(),

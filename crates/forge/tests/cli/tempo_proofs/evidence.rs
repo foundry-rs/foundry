@@ -107,7 +107,7 @@ async fn record(provider: &RetryProvider, height: u64, account: Option<Address>)
     Record { height, evidence }
 }
 
-async fn send(
+pub(super) async fn send(
     provider: &RetryProvider,
     sender: Address,
     transaction: TransactionRequest,
