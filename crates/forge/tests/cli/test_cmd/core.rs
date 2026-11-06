@@ -802,11 +802,12 @@ contract RerunNetworksTest {
 }
 
 #[cfg(feature = "monad")]
-#[forgetest]
+#[forgetest_init]
 fn dynamic_inspector_records_resumed_caller(prj: _, cmd: _) {
     prj.add_test(
-        "DynamicInspector.t.sol",
-        include_str!("../../../../../testdata/fixtures/DynamicInspector.t.sol"),
+        "Record.t.sol",
+        &include_str!("../../../../../testdata/default/cheats/Record.t.sol")
+            .replace("utils/Test.sol", "forge-std/Test.sol"),
     );
 
     // Default verbosity and no coverage/gas instrumentation: pre-enabled stepping hides the bug.
@@ -814,18 +815,14 @@ fn dynamic_inspector_records_resumed_caller(prj: _, cmd: _) {
         cmd.forge_fuse().args(["test", "--network", network]).assert_success().stdout_eq(str![[
             r#"
 ...
-Ran 8 tests for test/DynamicInspector.t.sol:DynamicInspectorTest
-[PASS] testAlreadyRecording() ([GAS])
-[PASS] testCall() ([GAS])
-[PASS] testCallcode() ([GAS])
-[PASS] testCreate() ([GAS])
-[PASS] testCreate2() ([GAS])
-[PASS] testDelegatecall() ([GAS])
-[PASS] testDirectCheatcode() ([GAS])
-[PASS] testStaticcall() ([GAS])
-Suite result: ok. 8 passed; 0 failed; 0 skipped; [ELAPSED]
+Ran 4 tests for test/Record.t.sol:RecordTest
+[PASS] testRecordAccess() ([GAS])
+[PASS] testRecordResumedCaller() ([GAS])
+[PASS] testRecordResumedCreator() ([GAS])
+[PASS] testStopRecordAccess() ([GAS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 8 tests passed, 0 failed, 0 skipped (8 total tests)
+Ran 1 test suite [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
 
 "#
         ]]);
