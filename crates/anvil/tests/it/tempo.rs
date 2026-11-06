@@ -9368,6 +9368,8 @@ async fn test_tempo_call_tracer_with_logs() {
 
 mod subscriptions;
 
+mod create_token;
+
 #[cfg(feature = "cli")]
 mod epoch_warning;
 

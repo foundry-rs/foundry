@@ -682,14 +682,19 @@ impl<ExtDB: DatabaseRef> DatabaseRef for CacheDB<ExtDB> {
 #[derive(Debug)]
 pub struct EvmDb<'a> {
     db: &'a dyn DatabaseRef,
-    spec: SpecId,
+    state_clear: bool,
     forked: Option<u64>,
 }
 
 impl<'a> EvmDb<'a> {
     /// Reads `db` for execution at `spec`, as a fork of `forked` if set.
     pub fn new(db: &'a dyn DatabaseRef, spec: SpecId, forked: Option<u64>) -> Self {
-        Self { db, spec, forked }
+        Self { db, state_clear: spec >= SpecId::SPURIOUS_DRAGON, forked }
+    }
+
+    /// Reads retained storage on empty accounts for development state operations.
+    pub(crate) fn for_storage(db: &'a dyn DatabaseRef) -> Self {
+        Self { db, state_clear: false, forked: None }
     }
 }
 
@@ -703,7 +708,7 @@ impl DynDatabase for EvmDb<'_> {
         let account = self.db.basic_ref(*address).map_err(evm_db_err)?;
         // Anvil's databases, like forked state, report an account they do not hold as an existing
         // empty account.
-        Ok(existing_account(self.spec >= SpecId::SPURIOUS_DRAGON, account))
+        Ok(existing_account(self.state_clear, account))
     }
 
     fn get_code_by_hash(&mut self, code_hash: &B256) -> DbResult<Bytecode> {

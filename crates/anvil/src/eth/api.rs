@@ -90,7 +90,7 @@ use anvil_core::{
         block::{Block, BlockInfo, canonical_block},
         transaction::{MaybeImpersonatedTransaction, PendingTransaction},
     },
-    types::{NodeBlobParams, ReorgOptions, TransactionData},
+    types::{NodeBlobParams, ReorgOptions, TempoCreateTokenRequest, TransactionData},
 };
 use anvil_rpc::{
     error::{ErrorCode, RpcError},
@@ -2749,6 +2749,9 @@ impl EthApi<FoundryNetwork> {
             }
             EthRequest::TempoRotateConsensusIdentity(()) => {
                 self.anvil_tempo_rotate_consensus_identity().await.to_rpc_result()
+            }
+            EthRequest::TempoCreateToken(request) => {
+                self.anvil_tempo_create_token(request).await.to_rpc_result()
             }
         }
     }
@@ -5761,6 +5764,19 @@ impl EthApi<FoundryNetwork> {
     pub async fn anvil_tempo_rotate_consensus_identity(&self) -> Result<TempoConsensusIdentity> {
         node_info!("anvil_tempoRotateConsensusIdentity");
         self.backend.tempo_rotate_consensus_identity().await
+    }
+
+    /// Creates a native TIP-20 token with optional initial mints at a chosen address.
+    ///
+    /// Handler for `anvil_tempoCreateToken`; unavailable on non-Tempo networks.
+    pub async fn anvil_tempo_create_token(
+        &self,
+        request: TempoCreateTokenRequest,
+    ) -> Result<Address> {
+        node_info!("anvil_tempoCreateToken");
+        self.ensure_tempo_mode()?;
+        let _mining = self.backend.lock_mining().await;
+        self.backend.create_tempo_token(request).await
     }
 }
 

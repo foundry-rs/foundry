@@ -120,14 +120,17 @@ use alloy_sol_types::SolCall;
 use alloy_trie::{
     AccountExtension, HashBuilder, Nibbles, proof::ProofRetainer, root::state_root_ref_unhashed,
 };
-use anvil_core::eth::{
-    block::{Block, BlockInfo, canonical_block, create_block},
-    transaction::{MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo},
+use anvil_core::{
+    eth::{
+        block::{Block, BlockInfo, canonical_block, create_block},
+        transaction::{MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo},
+    },
+    types::TempoCreateTokenRequest,
 };
 use anvil_rpc::error::{ErrorCode, RpcError};
 use chrono::Datelike;
 use evm2::{
-    AccountInfo, Version,
+    AccountInfo, PrecompileError, Version,
     ethereum::{
         access_list_counts, intrinsic_and_floor_gas, validate_floor_gas, validate_intrinsic_gas,
     },
@@ -9922,6 +9925,28 @@ impl Backend<FoundryNetwork> {
         .await
     }
 
+    /// Creates a native TIP-20 at the requested address with optional initial minting.
+    pub async fn create_tempo_token(
+        &self,
+        request: TempoCreateTokenRequest,
+    ) -> Result<Address, BlockchainError> {
+        // Read the context under the database guard so a reset cannot replace it in between.
+        let mut db = self.db.write().await;
+        let hardfork = self.hardfork();
+        let env = self.evm_env.read().clone();
+        crate::eth::backend::tempo::with_tempo_storage(&mut **db, &env, hardfork, || {
+            crate::eth::backend::tempo::create_token(&request).map_err(|error| {
+                match error.into_precompile_result() {
+                    Err(PrecompileError::Revert(data)) => {
+                        InvalidTransactionError::Revert(Some(data)).into()
+                    }
+                    Err(error) => BlockchainError::Internal(error.to_string()),
+                    Ok(output) => InvalidTransactionError::Revert(Some(output.into_bytes())).into(),
+                }
+            })
+        })
+    }
+
     /// Runs `f` inside a Tempo storage context initialized from the current state and writes
     /// its changes back (Tempo-only).
     async fn with_tempo_storage<R>(
@@ -9932,8 +9957,13 @@ impl Backend<FoundryNetwork> {
         let mut db = self.db.write().await;
         let hardfork = self.hardfork();
         let env = self.evm_env.read().clone();
-        crate::eth::backend::tempo::with_tempo_storage(&mut **db, &env, hardfork, f)
-            .map_err(tempo_db_err)?
+        crate::eth::backend::tempo::with_tempo_storage(&mut **db, &env, hardfork, || {
+            f().map_err(Into::into)
+        })
+        .map_err(|error| match error {
+            BlockchainError::DatabaseError(error) => error,
+            error => tempo_db_err(error),
+        })
     }
 }
 
@@ -11015,7 +11045,7 @@ mod tests {
     use crate::{
         NodeConfig,
         config::ForkTransactionReplay,
-        eth::backend::db::{BlockchainDb, BlockchainDbMeta},
+        eth::backend::db::{BlockchainDb, BlockchainDbMeta, DatabaseError},
         spawn,
     };
     use alloy_network::{AnyHeader, AnyRpcBlock, AnyRpcHeader, TransactionBuilder};
@@ -11823,5 +11853,20 @@ mod tests {
         assert_eq!(decoder.hardfork(), Some(BaseUpgrade::Beryl.into()));
         assert!(decoder.labels.values().any(|label| label == "B20Factory"));
         assert!(decoder.labels.values().any(|label| label == "ActivationRegistry"));
+    }
+
+    #[tokio::test]
+    async fn tempo_storage_preserves_database_errors() {
+        let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+        let source = Arc::new(eyre::eyre!("Tempo storage callback failed"));
+        let error = api
+            .backend
+            .with_tempo_storage(|| Err::<(), _>(DatabaseError::AnyRequest(Arc::clone(&source))))
+            .await
+            .unwrap_err();
+        let DatabaseError::AnyRequest(error) = error else {
+            panic!("expected the original AnyRequest error");
+        };
+        assert!(Arc::ptr_eq(&source, &error));
     }
 }
