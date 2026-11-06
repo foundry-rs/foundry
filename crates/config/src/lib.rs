@@ -1164,12 +1164,14 @@ impl Config {
             .merge(
                 Env::prefixed("DAPP_")
                     .ignore(&["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
+                    .ignore_empty(true)
                     .global()
                     .legacy_labels(),
             )
             .merge(
                 Env::prefixed("DAPP_TEST_")
                     .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
+                    .ignore_empty(true)
                     .global()
                     .legacy_labels(),
             )
@@ -1178,6 +1180,7 @@ impl Config {
             .merge(
                 Env::prefixed("FOUNDRY_")
                     .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
+                    .ignore_empty(true)
                     .map(|key| {
                         let key = key.as_str();
                         if Self::STANDALONE_SECTIONS.iter().any(|section| {
@@ -10257,5 +10260,38 @@ mod tests {
             err.to_string(),
             "failed to extract foundry config:\nfoundry config error: could not determine project root: permission denied\n"
         );
+    }
+
+    // Empty `FOUNDRY_*` values must not override `foundry.toml` (issue #18153).
+    #[test]
+    fn empty_foundry_env_does_not_override_toml() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                optimizer = true
+                optimizer_runs = 999
+                evm_version = "cancun"
+                src = "contracts"
+                "#,
+            )?;
+
+            // A set-but-empty numeric var used to fall back to the 200 default.
+            jail.set_env("FOUNDRY_OPTIMIZER_RUNS", "");
+            let config = Config::load().unwrap();
+            assert_eq!(config.optimizer, Some(true));
+            assert_eq!(config.optimizer_runs, Some(999));
+
+            // A set-but-empty string var used to extract as a unit and fail the load.
+            jail.set_env("FOUNDRY_EVM_VERSION", "");
+            jail.set_env("FOUNDRY_SRC", "");
+            let config = Config::load().unwrap();
+            assert_eq!(config.optimizer_runs, Some(999));
+            assert_eq!(config.evm_version, EvmVersion::Cancun);
+            assert_eq!(config.src, PathBuf::from("contracts"));
+
+            Ok(())
+        });
     }
 }
