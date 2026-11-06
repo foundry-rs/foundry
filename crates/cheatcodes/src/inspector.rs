@@ -1216,6 +1216,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
     }
 
+    /// Called at the start of a root frame to clear the records of the previous transaction.
+    pub fn on_root_frame_start(&mut self) {
+        self.clear_storage_hook_mapping_slots();
+        // Deals belong to earlier root transactions and must not be rolled back if this one fails.
+        self.eth_deals.clear();
+    }
+
     /// Called when there was a revert.
     ///
     /// Cleanup any previously applied cheatcodes that altered the state in such a way that revm's
