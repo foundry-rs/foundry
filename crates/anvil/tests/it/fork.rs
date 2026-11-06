@@ -3163,23 +3163,28 @@ async fn flaky_test_arbitrum_fork_block_number() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_base_fork_gas_limit() {
     // fork to get initial block for test
+    let endpoint = next_rpc_endpoint(NamedChain::Base);
     let (api, handle) = spawn(
-        fork_config()
-            .with_fork_block_number(None::<u64>)
-            .with_eth_rpc_url(Some(next_rpc_endpoint(NamedChain::Base))),
+        fork_config().with_fork_block_number(None::<u64>).with_eth_rpc_url(Some(endpoint.clone())),
     )
     .await;
 
     // The public Base RPC occasionally returns block zero when it is unhealthy.
-    if api.block_number().unwrap().is_zero() {
+    let fork_block = api.block_number().unwrap();
+    if fork_block.is_zero() {
         return;
     }
 
-    let provider = handle.http_provider();
-    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    // The fork must take the gas limit of the forked block, not the default one.
+    let upstream = get_http_provider(&endpoint)
+        .get_block(BlockId::number(fork_block.to::<u64>()))
+        .await
+        .unwrap()
+        .unwrap();
+    let block = handle.http_provider().get_block(BlockId::latest()).await.unwrap().unwrap();
 
-    assert!(api.gas_limit() >= uint!(96_000_000_U256));
-    assert!(block.header.gas_limit >= 96_000_000_u64);
+    assert_eq!(api.gas_limit(), U256::from(upstream.header.gas_limit));
+    assert_eq!(block.header.gas_limit, upstream.header.gas_limit);
 }
 
 // <https://github.com/foundry-rs/foundry/issues/7023>
