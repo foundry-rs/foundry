@@ -7950,6 +7950,42 @@ contract TempoScript is Script {
     cmd.assert_success();
 }
 
+// A Tempo transaction that fails validation in an isolated call after `vm.createSelectFork`
+// fails the script cleanly instead of crashing.
+#[forgetest_init]
+async fn tempo_isolated_fork_rejected_value_transfer_fails_script(prj: _, cmd: _) {
+    prj.update_config(|config| config.isolate = true);
+    let script = prj.add_script(
+        "TempoForkTransfer.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract TempoForkTransfer is Script {
+    function run(string memory rpc) external {
+        vm.createSelectFork(rpc);
+        vm.broadcast();
+        // Tempo rejects native value transfers.
+        payable(address(0xdEaD)).transfer(1);
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    cmd.arg("script").arg(script).args([
+        "--sig",
+        "run(string)",
+        &handle.http_endpoint(),
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--network",
+        "tempo",
+    ]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: script failed: EvmError: Revert
+
+"#]]);
+}
+
 #[forgetest_init]
 async fn tempo_aa_script_broadcast_deploys_with_fee_token(prj: _, cmd: _) {
     prj.add_source(
