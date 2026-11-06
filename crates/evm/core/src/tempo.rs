@@ -49,11 +49,12 @@ pub const TEMPO_TIP20_TOKENS: &[Address] = &[PATH_USD_ADDRESS];
 
 /// Inner genesis initialization logic. Must be called within a [`StorageCtx`] scope
 /// (either via [`StorageCtx::enter`] or [`StorageCtx::enter_evm`]).
+/// Returns whether genesis code was installed rather than already initialized.
 pub fn initialize_tempo_genesis_inner(
     admin: Address,
     recipient: Address,
     hardfork: TempoHardfork,
-) -> Result<(), TempoPrecompileError> {
+) -> Result<bool, TempoPrecompileError> {
     initialize_tempo_genesis_inner_with_precompiles(
         admin,
         recipient,
@@ -75,16 +76,17 @@ pub fn initialize_tempo_test_genesis_inner(
         recipient,
         TEMPO_PRECOMPILE_ADDRESSES.iter().copied(),
     )
+    .map(|_| ())
 }
 
 fn initialize_tempo_genesis_inner_with_precompiles(
     admin: Address,
     recipient: Address,
     precompiles: impl IntoIterator<Item = Address>,
-) -> Result<(), TempoPrecompileError> {
+) -> Result<bool, TempoPrecompileError> {
     // Idempotent: PATH_USD is the first token created during genesis; if it already exists, skip.
     if TIP20Factory::new().is_tip20(PATH_USD_ADDRESS)? {
-        return Ok(());
+        return Ok(false);
     }
 
     let mut ctx = StorageCtx;
@@ -150,7 +152,7 @@ fn initialize_tempo_genesis_inner_with_precompiles(
         ctx.set_code(address, code)?;
     }
 
-    Ok(())
+    Ok(true)
 }
 
 /// Helper function to create and mint a TIP20 token.

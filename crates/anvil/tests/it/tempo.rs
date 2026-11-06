@@ -8672,7 +8672,7 @@ async fn test_tempo_genesis_contract_nonces() {
             BETA_USD_ADDRESS,
             THETA_USD_ADDRESS,
         ]) {
-            assert_eq!(provider.get_transaction_count(address).await.unwrap(), 0, "{address}");
+            assert_eq!(provider.get_transaction_count(address).await.unwrap(), 1, "{address}");
         }
 
         // Independent of the shared table: CreateX derives CREATE addresses from its nonce.
