@@ -37,7 +37,8 @@ use foundry_evm_core::{
     },
     evm::{
         EvmEnvFor, EvmFactoryFor, ExecutionPhase, FoundryEvmFactory, FoundryEvmNetwork,
-        PersistentWrite, TxEnvelopeFor, TxPayload, evm_env,
+        FoundryExecutionHooks, FoundryTxConversion, PersistentWrite, TxEnvelopeFor, TxPayload,
+        TypesFor, evm_env,
     },
 };
 use foundry_evm_traces::TraceRequirements;
@@ -376,10 +377,10 @@ impl Cheatcode for loadAllocsCall {
         };
 
         // Then, load the allocs into the database.
-        EvmFactoryFor::<FEN>::default().sync_transaction(ccx.evm);
+        TypesFor::<FEN>::sync_transaction(ccx.evm);
         let (evm, db) = ccx.evm_db_mut();
         db.load_allocs(&allocs, evm).map_err(|e| fmt_err!("failed to load allocs: {e}"))?;
-        EvmFactoryFor::<FEN>::default().refresh_transaction(ccx.evm);
+        TypesFor::<FEN>::refresh_transaction(ccx.evm);
         Ok(Default::default())
     }
 }
@@ -391,10 +392,10 @@ impl Cheatcode for cloneAccountCall {
         ccx.evm.state_mut().account(source)?.warm();
         let slots = ccx.db().lifecycle().loaded_storage(ccx.evm.state(), source);
         let genesis = genesis_account(ccx.evm.state_mut(), source, slots)?;
-        EvmFactoryFor::<FEN>::default().sync_transaction(ccx.evm);
+        TypesFor::<FEN>::sync_transaction(ccx.evm);
         let (evm, db) = ccx.evm_db_mut();
         db.clone_account(&genesis, target, evm)?;
-        EvmFactoryFor::<FEN>::default().refresh_transaction(ccx.evm);
+        TypesFor::<FEN>::refresh_transaction(ccx.evm);
         // Cloned account should persist in forked envs.
         ccx.db_mut().add_persistent_account(*target);
         Ok(Default::default())
@@ -808,7 +809,7 @@ impl Cheatcode for getBlobBaseFeeCall {
 impl Cheatcode for dealCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account: address, newBalance: new_balance } = *self;
-        EvmFactoryFor::<FEN>::default().sync_transaction(ccx.evm);
+        TypesFor::<FEN>::sync_transaction(ccx.evm);
         let old_balance = {
             let mut account = ccx.evm.state_mut().account(&address)?;
             let old_balance = account.balance();
@@ -819,7 +820,7 @@ impl Cheatcode for dealCall {
         // The balance survives reverts of the enclosing calls.
         let write = PersistentWrite::Balance(address, new_balance.wrapping_sub(old_balance));
         ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
-        EvmFactoryFor::<FEN>::default().refresh_transaction(ccx.evm);
+        TypesFor::<FEN>::refresh_transaction(ccx.evm);
         Ok(Default::default())
     }
 }
@@ -1338,7 +1339,7 @@ impl Cheatcode for broadcastRawTransactionCall {
             None
         };
 
-        let evm_tx = FEN::evm_tx(tx.clone(), sender, TxPayload::Signed)?;
+        let evm_tx = TypesFor::<FEN>::evm_tx(tx.clone(), sender, TxPayload::Signed)?;
         let overrides = ccx.state.env_overrides.get(ccx.active_fork_id());
         let chain_id = overrides.and_then(|o| o.chain_id);
         let custom_env = chain_id.is_some()
@@ -1440,7 +1441,7 @@ impl Cheatcode for executeTransactionCall {
         let created_address = tx.kind().is_create().then(|| sender.create(tx.nonce()));
         let access_list = tx.access_list().cloned();
         let value = tx.value();
-        let tx = FEN::evm_tx(tx, sender, TxPayload::Signed)?;
+        let tx = TypesFor::<FEN>::evm_tx(tx, sender, TxPayload::Signed)?;
 
         // Execute in the running environment with realistic validation: no base fee or fee
         // payment, nonce checks, the spec's transaction gas limit cap, and an initcode limit

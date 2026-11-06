@@ -3,25 +3,98 @@
 //! Transactions stay in their network's Alloy form until execution: tools keep the selected
 //! [`TransactionRequest`](alloy_network::Network::TransactionRequest) or signed
 //! [`TxEnvelope`](alloy_network::Network::TxEnvelope), mutate common fields through Alloy's
-//! [`TransactionBuilder`](alloy_network::TransactionBuilder), and convert once, right before
+//! [`TransactionBuilder`], and convert once, right before
 //! execution, into the family's evm2 transaction with
-//! [`FoundryEvmNetwork`]. Signed, resumed and replayed transactions
+//! [`FoundryTxConversion`]. Signed, resumed and replayed transactions
 //! convert from exactly the payload that was signed; nothing is rebuilt from Ethereum-shaped
 //! fields.
 
-use super::{ChainFor, FoundryEvmExt, FoundryEvmNetwork, TxFor};
+use super::{ChainFor, FoundryEvmExt, FoundryEvmNetwork, TxFor, TypesFor};
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    BlockHeader, EthereumTxEnvelope, Signed, Transaction, TxEip1559, TxEip4844Variant, Typed2718,
-    transaction::Recovered,
+    BlockHeader, EthereumTxEnvelope, SignableTransaction, Signed, Transaction, TxEip1559,
+    TxEip4844Variant, Typed2718,
+    transaction::{Recovered, SignerRecoverable},
 };
-use alloy_network::{AnyNetwork, AnyRpcBlock, AnyRpcTransaction, AnyTxEnvelope};
-use alloy_primitives::Signature;
+use alloy_eips::Decodable2718;
+use alloy_network::{
+    AnyNetwork, AnyRpcBlock, AnyRpcTransaction, AnyTxEnvelope, Network, NetworkTransactionBuilder,
+    TransactionBuilder, TransactionResponse,
+};
+use alloy_primitives::{Address, Signature};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockTransactions;
-use evm2::ethereum::{LazyTxEip7702, TxEnvelope};
+use evm2::{
+    EvmTypesHost,
+    ethereum::{LazyTxEip7702, TxEnvelope},
+};
 use eyre::WrapErr;
 use foundry_evm_networks::celo::CELO_DYNAMIC_FEE_TX_TYPE;
+
+/// Converts an Alloy network's native transactions into an evm2 execution family's transactions.
+///
+/// The family, rather than the transaction type alone, owns conversion: families can share a
+/// transaction representation while retaining different conversion policies and diagnostics.
+pub trait FoundryTxConversion<N: Network>: EvmTypesHost {
+    /// Converts a network envelope sent by `sender`, once, right before execution.
+    fn evm_tx(
+        envelope: N::TxEnvelope,
+        sender: Address,
+        payload: TxPayload,
+    ) -> eyre::Result<Recovered<Self::Tx>>;
+
+    /// Converts a complete unsigned request into a simulated transaction.
+    ///
+    /// The request must name its sender and carry every field its transaction type needs; Foundry
+    /// fills defaults through [`TransactionBuilder`] before converting, never afterwards.
+    fn tx_from_request(request: N::TransactionRequest) -> eyre::Result<Recovered<Self::Tx>>
+    where
+        N::TransactionRequest: NetworkTransactionBuilder<N>,
+        N::UnsignedTx: SignableTransaction<Signature>,
+        N::TxEnvelope: From<Signed<N::UnsignedTx>>,
+    {
+        let sender =
+            request.from().ok_or_else(|| eyre::eyre!("transaction request has no sender"))?;
+        let unsigned =
+            request.build_unsigned().map_err(|err| eyre::eyre!(err.error.to_string()))?;
+        let envelope = N::TxEnvelope::from(unsigned.into_signed(placeholder_signature()));
+        Self::evm_tx(envelope, sender, TxPayload::Simulated)
+    }
+
+    /// Converts a signed envelope into a transaction sent by its recovered signer.
+    fn tx_from_signed(envelope: N::TxEnvelope) -> eyre::Result<Recovered<Self::Tx>>
+    where
+        N::TxEnvelope: SignerRecoverable,
+    {
+        let sender = envelope.recover_signer()?;
+        Self::evm_tx(envelope, sender, TxPayload::Signed)
+    }
+
+    /// Decodes exactly the EIP-2718 bytes that were signed and converts them for execution.
+    fn decode_tx(mut bytes: &[u8]) -> eyre::Result<Recovered<Self::Tx>>
+    where
+        N::TxEnvelope: SignerRecoverable,
+    {
+        let envelope = N::TxEnvelope::decode_2718(&mut bytes)?;
+        eyre::ensure!(bytes.is_empty(), "trailing bytes after the encoded transaction");
+        Self::tx_from_signed(envelope)
+    }
+
+    /// Converts a transaction fetched over RPC into this network's envelope.
+    ///
+    /// Envelopes this family cannot represent fail rather than being projected onto another type.
+    fn envelope_from_any_rpc(tx: &AnyRpcTransaction) -> eyre::Result<N::TxEnvelope>;
+
+    /// Converts a transaction fetched over RPC, using its RPC sender as it executed on chain.
+    fn tx_from_any_rpc(tx: &AnyRpcTransaction) -> eyre::Result<Recovered<Self::Tx>> {
+        Self::evm_tx(Self::envelope_from_any_rpc(tx)?, tx.from(), TxPayload::Signed)
+    }
+}
+
+/// Returns the error for an RPC transaction whose envelope `target` cannot represent.
+pub(crate) fn unknown_transaction_type(tx: &AnyRpcTransaction, target: &str) -> eyre::Report {
+    eyre::eyre!("cannot convert unknown transaction type {:#04x} to {target}", tx.inner.inner.ty())
+}
 
 /// What an execution-time transaction is priced and validated as.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -91,7 +164,7 @@ pub fn eth_envelope_from_any_rpc(
                 .wrap_err("invalid Celo CIP-64 transaction")?;
             Ok(signed.into())
         }
-        _ => Err(super::unknown_transaction_type(tx, target)),
+        _ => Err(unknown_transaction_type(tx, target)),
     }
 }
 
@@ -194,7 +267,7 @@ async fn fetch_parent<P: Provider<AnyNetwork>>(
 pub fn block_txs<FEN: FoundryEvmNetwork>(
     block: &AnyRpcBlock,
 ) -> eyre::Result<Vec<Recovered<TxFor<FEN>>>> {
-    full_transactions(block)?.iter().map(FEN::tx_from_any_rpc).collect()
+    full_transactions(block)?.iter().map(TypesFor::<FEN>::tx_from_any_rpc).collect()
 }
 
 /// Returns the transactions of `block`, which must contain full transactions.

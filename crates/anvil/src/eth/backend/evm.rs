@@ -32,7 +32,7 @@ use evm2::{
     precompiles::{MovePrecompileError, PrecompileId, PrecompileResult},
 };
 use foundry_evm_core::{
-    evm::celo_transfer,
+    evm::{FoundryTxConversion, celo_transfer},
     precompiles::{EC_RECOVER, P256_VERIFY},
 };
 use foundry_evm_hardforks::FoundryHardfork;
@@ -554,7 +554,7 @@ pub fn evm_tx<N: AnvilEvmNetwork>(
     cheats: Option<&CheatsManager>,
 ) -> Result<Recovered<TxFor<N>>, BlockchainError> {
     let envelope = decode_envelope::<N>(tx)?;
-    let mut evm_tx = N::evm_tx(envelope, sender, payload)
+    let mut evm_tx = TypesFor::<N>::evm_tx(envelope, sender, payload)
         .map_err(|err| BlockchainError::Message(err.to_string()))?;
     if let Some(cheats) = cheats {
         let overrides = authority_overrides(tx, cheats);

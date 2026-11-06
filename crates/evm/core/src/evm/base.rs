@@ -2,7 +2,8 @@
 
 use super::{
     EvmEnv, FoundryDatabase, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork,
-    FoundryTxResultExt, SendableExt, TxPayload, with_eip7702_delegations,
+    FoundryExecutionHooks, FoundryTxConversion, FoundryTxResultExt, SendableExt, TxPayload,
+    with_eip7702_delegations,
 };
 use crate::constants::SYSTEM_PRECOMPILE_STUB;
 use alloy_consensus::transaction::Recovered;
@@ -54,7 +55,11 @@ impl FoundryTxResultExt for BaseTxResultExt {
 impl FoundryEvmNetwork for BaseEvmNetwork {
     type Network = Base;
     type EvmFactory = BaseEvmFactory;
+}
 
+impl FoundryExecutionHooks for BaseEvmTypes {}
+
+impl FoundryTxConversion<Base> for BaseEvmTypes {
     fn evm_tx(
         envelope: base_common_consensus::BaseTxEnvelope,
         sender: Address,

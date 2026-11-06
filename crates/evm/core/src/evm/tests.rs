@@ -1,15 +1,20 @@
 use super::*;
 use crate::{backend::RevertStateSnapshotAction, fork::ForkId};
-use alloy_consensus::{Transaction as _, TxEip1559};
+use alloy_consensus::{Transaction as _, TxEip1559, transaction::Recovered};
 use alloy_eips::{BlockNumHash, Encodable2718};
 use alloy_network::{
-    AnyTxEnvelope, AnyTxType, TxSignerSync, UnknownTxEnvelope, UnknownTypedTransaction,
+    AnyRpcTransaction, AnyTxEnvelope, AnyTxType, NetworkTransactionBuilder, TransactionBuilder,
+    TransactionResponse, TxSignerSync, UnknownTxEnvelope, UnknownTypedTransaction,
 };
-use alloy_primitives::{B256, Bytes, TxKind, U256};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use alloy_rpc_types::Transaction as RpcTransaction;
 use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
-use evm2::{EvmFeatures, SpecId, bytecode::Bytecode, evm::InMemoryDB};
+use evm2::{
+    EvmFeatures, SpecId,
+    bytecode::Bytecode,
+    evm::{AccountInfo, InMemoryDB},
+};
 
 const GWEI: u128 = 1_000_000_000;
 pub(crate) const ETHER: u128 = 1_000_000_000_000_000_000;
@@ -86,7 +91,7 @@ where
     let mut evm = lifecycle.create_evm();
 
     // An unsigned request converts once and commits.
-    let tx = FEN::tx_from_request(request(STORE_ADDRESS, 0, 7, chain_id)).unwrap();
+    let tx = TypesFor::<FEN>::tx_from_request(request(STORE_ADDRESS, 0, 7, chain_id)).unwrap();
     assert_eq!(tx.signer(), caller);
     assert!(evm.transact(&tx).unwrap().commit().status);
     assert_eq!(slot(&mut evm), U256::from(7));
@@ -97,22 +102,22 @@ where
     let envelope = TxEnvelopeFor::<FEN>::from(unsigned.into_signed(signature));
     assert_eq!(envelope.recover_signer().unwrap(), caller);
     let bytes = alloy_eips::Encodable2718::encoded_2718(&envelope);
-    let tx = FEN::decode_tx(&bytes).unwrap();
+    let tx = TypesFor::<FEN>::decode_tx(&bytes).unwrap();
     assert_eq!(tx.signer(), caller);
     assert!(evm.transact(&tx).unwrap().commit().status);
     assert_eq!(slot(&mut evm), U256::from(8));
 
     // A reverted transaction keeps none of its writes; a discarded one neither.
-    let tx = FEN::tx_from_request(request(REVERT_ADDRESS, 2, 9, chain_id)).unwrap();
+    let tx = TypesFor::<FEN>::tx_from_request(request(REVERT_ADDRESS, 2, 9, chain_id)).unwrap();
     assert!(!evm.transact(&tx).unwrap().commit().status);
-    let tx = FEN::tx_from_request(request(STORE_ADDRESS, 3, 10, chain_id)).unwrap();
+    let tx = TypesFor::<FEN>::tx_from_request(request(STORE_ADDRESS, 3, 10, chain_id)).unwrap();
     assert!(evm.transact(&tx).unwrap().discard().status);
     assert_eq!(slot(&mut evm), U256::from(8));
     assert_eq!(nonce(&mut evm, caller), 3);
 
     // Snapshots restore state; removal keeps later snapshots.
     let first = lifecycle.snapshot(&mut evm);
-    let tx = FEN::tx_from_request(request(STORE_ADDRESS, 3, 11, chain_id)).unwrap();
+    let tx = TypesFor::<FEN>::tx_from_request(request(STORE_ADDRESS, 3, 11, chain_id)).unwrap();
     assert!(evm.transact(&tx).unwrap().commit().status);
     let second = lifecycle.snapshot(&mut evm);
     let keep = RevertStateSnapshotAction::RevertKeep;
@@ -129,13 +134,25 @@ where
     let checkpoint = evm.state().checkpoint();
     evm.state_mut().storage_slot(&STORE_ADDRESS, U256::ZERO).unwrap().set(U256::from(50));
     let other = Address::with_last_byte(0xC1);
-    let tx =
-        FEN::tx_from_request(store_request::<FEN>(other, REVERT_ADDRESS, 0, 51, chain_id)).unwrap();
+    let tx = TypesFor::<FEN>::tx_from_request(store_request::<FEN>(
+        other,
+        REVERT_ADDRESS,
+        0,
+        51,
+        chain_id,
+    ))
+    .unwrap();
     let nested = lifecycle.prepare_nested(&mut evm, tx, None, None).execute(&mut evm, None, false);
     assert!(!lifecycle.store_executed(nested.unwrap()).status);
     assert_eq!((slot(&mut evm), nonce(&mut evm, other)), (U256::from(50), 1));
-    let tx =
-        FEN::tx_from_request(store_request::<FEN>(other, STORE_ADDRESS, 1, 52, chain_id)).unwrap();
+    let tx = TypesFor::<FEN>::tx_from_request(store_request::<FEN>(
+        other,
+        STORE_ADDRESS,
+        1,
+        52,
+        chain_id,
+    ))
+    .unwrap();
     let nested = lifecycle.prepare_nested(&mut evm, tx, None, None).execute(&mut evm, None, false);
     assert!(lifecycle.store_executed(nested.unwrap()).status);
     assert_eq!((slot(&mut evm), nonce(&mut evm, other)), (U256::from(52), 2));
@@ -156,7 +173,7 @@ where
     assert_eq!(lifecycle.forks().active(), Some(fork));
     assert_eq!(slot(&mut evm), U256::from(100));
     assert_eq!(balance(&mut evm, persistent), U256::from(5));
-    let tx = FEN::tx_from_request(request(STORE_ADDRESS, 0, 101, chain_id)).unwrap();
+    let tx = TypesFor::<FEN>::tx_from_request(request(STORE_ADDRESS, 0, 101, chain_id)).unwrap();
     assert!(evm.transact(&tx).unwrap().commit().status);
     evm.state_mut().account(&persistent).unwrap().set_balance(U256::from(6));
     evm.state_mut().commit_transaction();
@@ -234,7 +251,7 @@ fn eth_signed_transactions_pay_effective_fees() {
         .unwrap();
     let signature = signer.sign_transaction_sync(&mut unsigned).unwrap();
     let envelope = alloy_consensus::TxEnvelope::from(unsigned.into_signed(signature));
-    let tx = EthEvmNetwork::tx_from_signed(envelope).unwrap();
+    let tx = TypesFor::<EthEvmNetwork>::tx_from_signed(envelope).unwrap();
     let result = evm.transact(&tx).unwrap().commit();
 
     assert!(result.status);
@@ -251,11 +268,11 @@ fn requests_without_sender_or_fields_fail() {
     let request = store_request::<EthEvmNetwork>(Address::ZERO, STORE_ADDRESS, 0, 1, 1);
     let mut no_sender = request.clone();
     no_sender.from = None;
-    assert!(EthEvmNetwork::tx_from_request(no_sender).is_err());
+    assert!(TypesFor::<EthEvmNetwork>::tx_from_request(no_sender).is_err());
     let mut no_gas = request;
     no_gas.gas = None;
-    assert!(EthEvmNetwork::tx_from_request(no_gas).is_err());
-    assert!(EthEvmNetwork::decode_tx(&[0x02, 0xc0]).is_err());
+    assert!(TypesFor::<EthEvmNetwork>::tx_from_request(no_gas).is_err());
+    assert!(TypesFor::<EthEvmNetwork>::decode_tx(&[0x02, 0xc0]).is_err());
 }
 
 #[test]
@@ -275,7 +292,10 @@ fn spec_changes_keep_foundry_policy() {
     // An existing delegation resolves before Prague and runs in the delegating account.
     let request = store_request::<EthEvmNetwork>(caller, delegated, 0, 42, 31337);
     assert!(
-        evm.transact(&EthEvmNetwork::tx_from_request(request).unwrap()).unwrap().commit().status
+        evm.transact(&TypesFor::<EthEvmNetwork>::tx_from_request(request).unwrap())
+            .unwrap()
+            .commit()
+            .status
     );
     let stored = evm.state_mut().storage_slot_untracked(&delegated, &U256::ZERO).unwrap();
     assert_eq!(stored, U256::from(42));
@@ -297,7 +317,10 @@ fn spec_changes_keep_foundry_policy() {
     assert_ne!(factory.version(SpecId::OSAKA, 31337).tx_gas_limit_cap, u64::MAX);
 
     let request = store_request::<EthEvmNetwork>(caller, STORE_ADDRESS, 9, 1, 31337);
-    let result = evm.transact(&EthEvmNetwork::tx_from_request(request).unwrap()).unwrap().commit();
+    let result = evm
+        .transact(&TypesFor::<EthEvmNetwork>::tx_from_request(request).unwrap())
+        .unwrap()
+        .commit();
     assert!(result.status, "a wrong nonce executes with the nonce check off");
 }
 
@@ -337,7 +360,7 @@ fn op_deposits_mint_without_fees() {
     let envelope =
         op_alloy_consensus::OpTxEnvelope::Deposit(alloy_primitives::Sealed::new(deposit));
     let bytes = alloy_eips::Encodable2718::encoded_2718(&envelope);
-    let tx = crate::evm::OpEvmNetwork::decode_tx(&bytes).unwrap();
+    let tx = TypesFor::<crate::evm::OpEvmNetwork>::decode_tx(&bytes).unwrap();
     let result = evm.transact(&tx).unwrap().commit();
 
     assert!(result.status);
@@ -366,7 +389,7 @@ fn monad_charges_the_full_gas_limit() {
         .with_gas_limit(50_000)
         .with_max_fee_per_gas(10 * GWEI)
         .with_max_priority_fee_per_gas(2 * GWEI);
-    let tx = crate::evm::MonadEvmNetwork::tx_from_request(request).unwrap();
+    let tx = TypesFor::<crate::evm::MonadEvmNetwork>::tx_from_request(request).unwrap();
     evm.ext_mut().for_transaction(&tx);
     assert_eq!(evm.ext().chain.current_block_senders, vec![caller]);
     assert!(evm.transact(&tx).unwrap().commit().status);
@@ -398,7 +421,7 @@ fn monad_block_cursor_excludes_synthetic_and_future_transactions() {
             .with_gas_limit(21_000)
             .with_max_fee_per_gas(GWEI)
             .with_max_priority_fee_per_gas(GWEI);
-        crate::evm::MonadEvmNetwork::tx_from_request(request).unwrap()
+        TypesFor::<crate::evm::MonadEvmNetwork>::tx_from_request(request).unwrap()
     };
     let [parent, replayed, future, synthetic, running] =
         [1, 2, 3, 4, 5].map(Address::with_last_byte);
@@ -507,7 +530,7 @@ fn rpc_transaction(envelope: AnyTxEnvelope, from: Address) -> AnyRpcTransaction 
 /// Every family converts Ethereum envelopes fetched over RPC and rejects unknown types.
 fn rpc_conversion_suite<FEN: FoundryEvmNetwork>() {
     let from = Address::with_last_byte(0xAA);
-    let tx = FEN::tx_from_any_rpc(&eth_rpc_transaction(from)).unwrap();
+    let tx = TypesFor::<FEN>::tx_from_any_rpc(&eth_rpc_transaction(from)).unwrap();
     assert_eq!((tx.signer(), tx.ty()), (from, 2));
 
     let unknown = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
@@ -518,13 +541,13 @@ fn rpc_conversion_suite<FEN: FoundryEvmNetwork>() {
             memo: Default::default(),
         },
     });
-    assert!(FEN::tx_from_any_rpc(&rpc_transaction(unknown, from)).is_err());
+    assert!(TypesFor::<FEN>::tx_from_any_rpc(&rpc_transaction(unknown, from)).is_err());
 }
 
 #[test]
 fn from_any_rpc_transaction_for_eth() {
     let from = Address::random();
-    let tx = EthEvmNetwork::tx_from_any_rpc(&eth_rpc_transaction(from)).unwrap();
+    let tx = TypesFor::<EthEvmNetwork>::tx_from_any_rpc(&eth_rpc_transaction(from)).unwrap();
 
     assert_eq!(tx.signer(), from);
     assert_eq!(tx.nonce(), 42);
@@ -572,11 +595,11 @@ fn celo_fee_currency_transactions_execute_as_eip1559() {
     });
     // Another network's type 0x7b envelope does not acquire CIP-64 semantics.
     let tx: AnyRpcTransaction = serde_json::from_value(json.clone()).unwrap();
-    assert!(EthEvmNetwork::tx_from_any_rpc(&tx).is_err());
+    assert!(TypesFor::<EthEvmNetwork>::tx_from_any_rpc(&tx).is_err());
 
     json["chainId"] = "0xa4ec".into();
     let tx: AnyRpcTransaction = serde_json::from_value(json).unwrap();
-    let tx = EthEvmNetwork::tx_from_any_rpc(&tx).unwrap();
+    let tx = TypesFor::<EthEvmNetwork>::tx_from_any_rpc(&tx).unwrap();
     assert_eq!((tx.signer(), tx.ty(), tx.nonce()), (Address::with_last_byte(0xAA), 2, 42));
     assert_eq!((tx.max_fee_per_gas(), tx.max_priority_fee_per_gas()), (3, Some(1)));
     assert_eq!((tx.value(), tx.input().as_ref()), (U256::from(0x65), &[0x12, 0x34][..]));
@@ -591,7 +614,7 @@ fn from_any_rpc_transaction_for_tempo_eth_envelope() {
     let signature = *signed.signature();
     let signed = Signed::new_unhashed(signed.strip_signature(), signature);
     let any_tx = rpc_transaction(AnyTxEnvelope::Ethereum(signed.into()), from);
-    let tx = crate::evm::TempoEvmNetwork::tx_from_any_rpc(&any_tx).unwrap();
+    let tx = TypesFor::<crate::evm::TempoEvmNetwork>::tx_from_any_rpc(&any_tx).unwrap();
 
     assert_eq!(tx.signer(), from);
     assert_eq!(tx.nonce(), 42);
@@ -600,7 +623,7 @@ fn from_any_rpc_transaction_for_tempo_eth_envelope() {
     assert_eq!(tx.evm_tx().fee_token(), None);
     let tx_hash = any_tx.tx_hash();
     assert_eq!(tx.execution_context(), tempo_evm::ExecutionContext::Transaction { tx_hash });
-    let envelope = crate::evm::TempoEvmNetwork::envelope_from_any_rpc(&any_tx).unwrap();
+    let envelope = TypesFor::<crate::evm::TempoEvmNetwork>::envelope_from_any_rpc(&any_tx).unwrap();
     assert_eq!(tx.unique_tx_identifier(), envelope.unique_tx_identifier(from));
     assert!(tx.as_aa().is_none());
 }
@@ -653,7 +676,7 @@ fn from_any_rpc_transaction_for_tempo_aa() {
         serde_json::from_value(serde_json::to_value(&rpc_tx).unwrap()).unwrap();
     assert!((*any_tx.inner.inner).is_unknown());
 
-    let tx = crate::evm::TempoEvmNetwork::tx_from_any_rpc(&any_tx).unwrap();
+    let tx = TypesFor::<crate::evm::TempoEvmNetwork>::tx_from_any_rpc(&any_tx).unwrap();
     assert_eq!(tx.ty(), 0x76);
     assert_eq!(tx.signer(), sender.address());
     assert_eq!(tx.nonce(), 42);
@@ -681,9 +704,9 @@ fn from_any_rpc_transaction_for_tempo_aa() {
 /// Decodes a captured Tempo `eth_getTransactionByHash` result.
 fn captured_tempo_aa(json: &str) -> Recovered<tempo_evm::TempoTxEnv> {
     let any_tx: AnyRpcTransaction = serde_json::from_str(json).unwrap();
-    let envelope = crate::evm::TempoEvmNetwork::envelope_from_any_rpc(&any_tx).unwrap();
+    let envelope = TypesFor::<crate::evm::TempoEvmNetwork>::envelope_from_any_rpc(&any_tx).unwrap();
     assert_eq!(alloy_primitives::keccak256(envelope.encoded_2718()), any_tx.tx_hash());
-    let tx = crate::evm::TempoEvmNetwork::tx_from_any_rpc(&any_tx).unwrap();
+    let tx = TypesFor::<crate::evm::TempoEvmNetwork>::tx_from_any_rpc(&any_tx).unwrap();
     let aa = tx.as_aa().unwrap();
     // Recovery over the recomputed signing hash only succeeds if every signed field decoded.
     assert_eq!(aa.signature().recover_signer(&aa.signature_hash()).unwrap(), tx.signer());
@@ -876,6 +899,6 @@ fn from_any_rpc_transaction_for_tempo_aa_without_signature_errors() {
     json.as_object_mut().unwrap().remove("signature");
     let any_tx: AnyRpcTransaction = serde_json::from_value(json).unwrap();
 
-    let err = crate::evm::TempoEvmNetwork::tx_from_any_rpc(&any_tx).unwrap_err();
+    let err = TypesFor::<crate::evm::TempoEvmNetwork>::tx_from_any_rpc(&any_tx).unwrap_err();
     assert_eq!(err.to_string(), "cannot decode Tempo AA transaction: missing field `signature`");
 }

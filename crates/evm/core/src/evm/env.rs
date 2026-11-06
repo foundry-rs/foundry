@@ -2,8 +2,8 @@
 
 use alloy_consensus::transaction::Recovered;
 use alloy_eips::eip4844::{BLOB_TX_MIN_BLOB_GASPRICE, fake_exponential};
-use alloy_primitives::U256;
-use evm2::{EvmFeatures, EvmTypesHost, Version, env::BlockEnv};
+use alloy_primitives::{U256, map::AddressMap};
+use evm2::{Evm, EvmFeatures, EvmTypes, EvmTypesHost, Version, env::BlockEnv, evm::AccountInfo};
 use std::fmt::Debug;
 
 /// The spec, runtime version and block an EVM is built with.
@@ -115,6 +115,32 @@ pub fn carry_execution_policy(
         next.tx_gas_limit_cap = u64::MAX;
     }
     next
+}
+
+/// Execution-family hooks for state Foundry changes outside ordinary EVM execution.
+///
+/// These operate on the running EVM, independently of factory configuration. evm2 still owns
+/// transaction and frame execution; the lifecycle and inspectors coordinate these hooks.
+pub trait FoundryExecutionHooks: EvmTypes {
+    /// Folds the running transaction's execution so far into network state derived from it, such
+    /// as Monad's reserve-balance tracker. Call it before Foundry changes that state outside
+    /// execution, then call [`Self::refresh_transaction`].
+    fn sync_transaction(_evm: &mut Evm<'_, Self>) {}
+
+    /// Rebases network state derived from the running transaction's state onto that state after
+    /// Foundry changed it outside execution, such as cheatcode writes and isolated calls. The
+    /// change itself is not execution: Monad's reserve-balance tracker recomputes the thresholds
+    /// of its tracked accounts without recording debits or credits.
+    fn refresh_transaction(_evm: &mut Evm<'_, Self>) {}
+
+    /// Like [`Self::refresh_transaction`], after a fork switch accepted the running transaction's
+    /// changes: `original` holds the transaction-start info of the persistent accounts it carried.
+    fn refresh_switched_transaction(
+        evm: &mut Evm<'_, Self>,
+        _original: &AddressMap<Option<AccountInfo>>,
+    ) {
+        Self::refresh_transaction(evm);
+    }
 }
 
 /// Per-EVM network state, such as OP L1 block info or Monad's reserve-balance context.

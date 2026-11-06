@@ -37,8 +37,8 @@ use foundry_evm_core::{
     },
     evm::{
         ChainFor, EthEvmNetwork, EvmEnv, EvmEnvFor, EvmFactoryFor, FoundryEvmExt,
-        FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, SpecFor, TransactionRequestFor, TxFor,
-        TxResultFor, evm_env, release_inspector,
+        FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, FoundryTxConversion, SpecFor,
+        TransactionRequestFor, TxFor, TxResultFor, TypesFor, evm_env, release_inspector,
     },
 };
 use foundry_evm_coverage::HitMaps;
@@ -646,7 +646,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         tx: TransactionRequestFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
         let init = tx.from().zip(tx.kind());
-        let tx_env = FEN::tx_from_request(tx.clone())?;
+        let tx_env = TypesFor::<FEN>::tx_from_request(tx.clone())?;
         let mut result =
             self.call_tx_with_init(evm_env, &tx_env, None, init, self.inspector().clone())?;
         result.set_stipend(&evm_env, tx);
@@ -680,7 +680,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     ) -> eyre::Result<RawCallResult<FEN>> {
         let (evm_env, tx) = self.prepare_call_env(from, TxKind::Call(to), calldata, value);
         let init = tx.from().zip(tx.kind());
-        let tx_env = FEN::tx_from_request(tx.clone())?;
+        let tx_env = TypesFor::<FEN>::tx_from_request(tx.clone())?;
         let mut stack = self.inspector().clone();
         stack.disable_fuzz_instrumentation();
         let mut result = self.call_tx_with_init(evm_env, &tx_env, None, init, stack)?;
@@ -723,7 +723,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         if let (Some(caller), Some(kind)) = (tx.from(), tx.kind()) {
             self.backend_mut().initialize(caller, kind);
         }
-        let mut result = self.transact_tx(evm_env, &FEN::tx_from_request(tx.clone())?, None)?;
+        let mut result =
+            self.transact_tx(evm_env, &TypesFor::<FEN>::tx_from_request(tx.clone())?, None)?;
         result.set_stipend(&evm_env, tx);
         Ok(result)
     }
@@ -2010,7 +2011,7 @@ mod tests {
             .gas_price(0)
             .input(Bytes::from_static(input).into());
         request.set_kind(kind);
-        EthEvmNetwork::tx_from_request(request).unwrap()
+        TypesFor::<EthEvmNetwork>::tx_from_request(request).unwrap()
     }
 
     fn dense_call(edge: EdgeKey) -> RawCallResult {

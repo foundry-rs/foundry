@@ -38,8 +38,8 @@ use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::evm::{
         BlockContext, ChainFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmExt,
-        FoundryEvmFactory, FoundryEvmNetwork, TempoEvmNetwork, TransactionRequestFor,
-        eth_envelope_from_any_rpc,
+        FoundryEvmFactory, FoundryEvmNetwork, FoundryTxConversion, TempoEvmNetwork,
+        TransactionRequestFor, TypesFor, eth_envelope_from_any_rpc,
     },
     executors::{Executor, ExecutorBuilder, TracingExecutor},
     opts::{EvmOpts, ForkEndpointIdentity},
@@ -901,7 +901,8 @@ impl<FEN: FoundryEvmNetwork> RuntimeVerification<FEN> {
             ..
         } = self;
         // Keep the network-native transaction and replace only its sender and input.
-        let mut tx: TransactionRequestFor<FEN> = FEN::envelope_from_any_rpc(&transaction)?.into();
+        let mut tx: TransactionRequestFor<FEN> =
+            TypesFor::<FEN>::envelope_from_any_rpc(&transaction)?.into();
         // The request conversion drops CREATE's kind. Restore it only for transactions with an
         // Ethereum envelope, including Celo CIP-64 transactions, preserving native batches.
         if let Ok(envelope) = eth_envelope_from_any_rpc(&transaction, "Ethereum") {
@@ -997,12 +998,12 @@ fn replay_block_transactions<FEN: FoundryEvmNetwork>(
         let replayed = if is_known_system_sender(tx.from()) {
             // Only canonical protocol transactions replay; other system envelopes have no native
             // representation.
-            match FEN::tx_from_any_rpc(tx) {
+            match TypesFor::<FEN>::tx_from_any_rpc(tx) {
                 Ok(replayed) if ChainFor::<FEN>::is_protocol_transaction(&replayed) => replayed,
                 _ => continue,
             }
         } else {
-            FEN::tx_from_any_rpc(tx)?
+            TypesFor::<FEN>::tx_from_any_rpc(tx)?
         };
         let ext = ext_at(index).map(|mut ext| {
             // The canonical block is trusted history, so its protocol transactions replay.

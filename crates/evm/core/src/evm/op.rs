@@ -1,8 +1,8 @@
 //! OP Stack on evm2, using `op-evm2`.
 
 use super::{
-    EvmEnv, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork, FoundryTxResultExt, SendableExt,
-    TxPayload, with_eip7702_delegations,
+    EvmEnv, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork, FoundryExecutionHooks,
+    FoundryTxConversion, FoundryTxResultExt, SendableExt, TxPayload, with_eip7702_delegations,
 };
 use alloy_consensus::transaction::Recovered;
 use alloy_eips::Encodable2718;
@@ -47,7 +47,11 @@ impl FoundryTxResultExt for OpTxResultExt {
 impl FoundryEvmNetwork for OpEvmNetwork {
     type Network = Optimism;
     type EvmFactory = OpEvmFactory;
+}
 
+impl FoundryExecutionHooks for OpEvmTypes {}
+
+impl FoundryTxConversion<Optimism> for OpEvmTypes {
     fn evm_tx(
         envelope: OpConsensusTxEnvelope,
         sender: Address,

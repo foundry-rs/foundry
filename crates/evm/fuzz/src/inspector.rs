@@ -205,8 +205,8 @@ mod tests {
     use foundry_evm_core::{
         constants::MONAD_CHEATCODE_ADDRESS,
         evm::{
-            EthEvmNetwork, EvmEnv, EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork, SpecFor,
-            TransactionRequestFor, TypesFor,
+            EthEvmNetwork, EvmEnv, EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork,
+            FoundryTxConversion, SpecFor, TransactionRequestFor, TypesFor,
         },
     };
     use parking_lot::RwLock;
@@ -267,7 +267,7 @@ mod tests {
             .with_gas_limit(1_000_000)
             .with_max_fee_per_gas(0)
             .with_max_priority_fee_per_gas(0);
-        let tx = FEN::tx_from_request(request).unwrap();
+        let tx = TypesFor::<FEN>::tx_from_request(request).unwrap();
         assert!(evm.transact(&tx).unwrap().commit().status);
         let fuzzer = *evm.clear_inspector_as::<Fuzzer>().unwrap();
         (evm, fuzzer)

@@ -15,8 +15,8 @@ use evm2::{
 use foundry_evm_core::{
     constants::TEST_CONTRACT_ADDRESS,
     evm::{
-        EvmEnv, ExecutionLifecycle, ExecutionPhase, ForkInfo, FoundryEvmFactory, FoundryEvmNetwork,
-        TempoEvmNetwork, TxEnvelopeFor, TxPayload,
+        EvmEnv, ExecutionLifecycle, ExecutionPhase, ForkInfo, FoundryEvmFactory,
+        FoundryTxConversion, TempoEvmNetwork, TxEnvelopeFor, TxPayload,
     },
     fork::ForkId,
 };
@@ -68,7 +68,7 @@ fn signed_tx(
     envelope: impl Into<TxEnvelopeFor<TempoEvmNetwork>>,
     sender: Address,
 ) -> Recovered<TempoTxEnv> {
-    TempoEvmNetwork::evm_tx(envelope.into(), sender, TxPayload::Signed).unwrap()
+    TempoEvmTypes::evm_tx(envelope.into(), sender, TxPayload::Signed).unwrap()
 }
 
 fn primitive_tx(account: &PrivateKeySigner, tx: TempoTransaction) -> Recovered<TempoTxEnv> {

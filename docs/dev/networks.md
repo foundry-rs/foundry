@@ -72,7 +72,10 @@ network's execution semantics.
 | Layer | Owns |
 | --- | --- |
 | Alloy `Network` | RPC transaction requests, envelopes, receipts, and response types |
+| `FoundryEvmNetwork` | Association of an Alloy network with a compatible execution factory; no behavior |
 | `FoundryEvmFactory` and its evm2 type family | Spec, block and transaction environments, transaction registry, results, precompiles, and network extension state |
+| `FoundryTxConversion` on the evm2 type family | Conversion from native Alloy requests, signed envelopes, and RPC transactions into execution transactions |
+| `FoundryExecutionHooks` on the evm2 type family | Synchronization of derived running-transaction state around Foundry's out-of-band state changes, independently of factory configuration |
 | evm2 `State` | Execution-time state mutation, journaling, warmth, checkpoints, commits, and reverts |
 | `ExecutionLifecycle` | Accepted state of inactive forks, persistent accounts, snapshots, and nested transactions |
 | `NetworkConfigs` and hardfork types | Pre-dispatch selection, chain and endpoint inference, feature configuration, and hardfork validation |
@@ -115,8 +118,9 @@ state. Then implement the integration in layers.
    known-chain inference, endpoint metadata, compatibility with fork sources, and legacy aliases if
    required.
 3. Add the concrete `FoundryEvmNetwork` and `FoundryEvmFactory` adapter under
-   `crates/evm/core/src/evm/`. Keep conversions between RPC types and execution types at this
-   boundary.
+   `crates/evm/core/src/evm/`. Implement `FoundryTxConversion` and `FoundryExecutionHooks` on the
+   evm2 type family. Keep conversions between RPC types and execution types at this boundary;
+   running-state hooks must use the supplied EVM, not a reconstructed factory.
 4. Thread the associated spec, block, transaction, halt, context, and journal types through typed
    execution code. Keep custom-family state and algorithms in concrete implementations instead of
    adding optional custom state to the generic backend. Avoid converting back to Ethereum types in

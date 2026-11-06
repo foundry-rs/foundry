@@ -18,8 +18,8 @@ use eyre::{Result, WrapErr};
 use foundry_common::{FoundryTransactionBuilder, TransactionMaybeSigned};
 use foundry_evm::{
     core::evm::{
-        BlockContext, ChainFor, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork,
-        MonadEvmNetwork, TxFor,
+        BlockContext, ChainFor, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryTxConversion,
+        MonadEvmNetwork, TxFor, TypesFor,
     },
     executors::{EvmError, RawCallResult},
 };
@@ -70,7 +70,7 @@ impl MonadSimulation {
         env: EvmEnvFor<MonadEvmNetwork>,
         tx: TransactionRequest,
     ) -> Result<RawCallResult<MonadEvmNetwork>> {
-        let tx = MonadEvmNetwork::tx_from_request(tx)?;
+        let tx = TypesFor::<MonadEvmNetwork>::tx_from_request(tx)?;
         self.runner.executor.call_tx(env, &tx, self.ext(&env, &tx))
     }
 
@@ -83,7 +83,7 @@ impl MonadSimulation {
         env: EvmEnvFor<MonadEvmNetwork>,
         tx: TransactionRequest,
     ) -> Result<RawCallResult<MonadEvmNetwork>> {
-        let tx = MonadEvmNetwork::tx_from_request(tx)?;
+        let tx = TypesFor::<MonadEvmNetwork>::tx_from_request(tx)?;
         let result = self.runner.executor.transact_tx(env, &tx, self.ext(&env, &tx))?;
         if let Some(cursor) = &mut self.cursor {
             cursor.record_transaction(tx);
