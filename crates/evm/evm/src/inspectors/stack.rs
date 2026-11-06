@@ -1275,7 +1275,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             &version,
             message.caller,
             kind,
-            &message.input,
+            &message.input.to_bytes(),
             al_accounts,
             al_keys,
             message.value,
@@ -1324,7 +1324,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let mut request = TransactionRequestFor::<FEN>::default()
             .with_from(message.caller)
             .with_kind(kind)
-            .with_input(message.input.clone())
+            .with_input(message.input.to_bytes())
             .with_value(message.value)
             .with_nonce(nonce)
             .with_chain_id(env.chain_id())
@@ -1860,7 +1860,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         message.call_target = create2_deployer;
         message.code_address = create2_deployer;
         message.code = code;
-        message.input = input.into();
+        message.input = Bytes::from(input).into();
         message.salt = B256::ZERO;
         self.inner.pending_create2_redirects.push(message.depth);
         true
@@ -2544,7 +2544,7 @@ fn apply_mocked_function<FEN: FoundryEvmNetwork>(
         // Check if any mock function set for call data or if catch-all mock function set
         // for selector.
         if let Some(target) = mocks
-            .get(&message.input)
+            .get(&*message.input)
             .or_else(|| message.input.get(..4).and_then(|selector| mocks.get(selector)))
         {
             let target = *target;

@@ -270,7 +270,7 @@ mod tests {
                 call_target: CELO_TRANSFER_ADDRESS,
                 code_address: CELO_TRANSFER_ADDRESS,
                 gas_limit: 9000,
-                input: (from, to, U256::from(value)).abi_encode().into(),
+                input: Bytes::from((from, to, U256::from(value)).abi_encode()).into(),
                 ..Default::default()
             };
 

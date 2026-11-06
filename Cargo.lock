@@ -2694,7 +2694,7 @@ dependencies = [
 [[package]]
 name = "base-evm2"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/evm2-networks?rev=da987d70663aafe4fa3cd2769269b459682c2cca#da987d70663aafe4fa3cd2769269b459682c2cca"
+source = "git+https://github.com/foundry-rs/evm2-networks?rev=c80d756b12e8ac08ad73ba2ebfba6fda894923ce#c80d756b12e8ac08ad73ba2ebfba6fda894923ce"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -5485,7 +5485,7 @@ dependencies = [
 [[package]]
 name = "evm2"
 version = "0.1.0"
-source = "git+https://github.com/DaniPopes/evm2?rev=41fd72242e88e4e9e02dd89434c560e8d79242f3#41fd72242e88e4e9e02dd89434c560e8d79242f3"
+source = "git+https://github.com/DaniPopes/evm2?rev=cf7a0e4631a820d38d0c23b2b2046f507b6c340b#cf7a0e4631a820d38d0c23b2b2046f507b6c340b"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
@@ -5524,7 +5524,7 @@ dependencies = [
 [[package]]
 name = "evm2-inspectors"
 version = "0.1.0"
-source = "git+https://github.com/DaniPopes/evm2?rev=41fd72242e88e4e9e02dd89434c560e8d79242f3#41fd72242e88e4e9e02dd89434c560e8d79242f3"
+source = "git+https://github.com/DaniPopes/evm2?rev=cf7a0e4631a820d38d0c23b2b2046f507b6c340b#cf7a0e4631a820d38d0c23b2b2046f507b6c340b"
 dependencies = [
  "alloy-consensus",
  "alloy-eip2930",
@@ -5547,7 +5547,7 @@ dependencies = [
 [[package]]
 name = "evm2-macros"
 version = "0.1.0"
-source = "git+https://github.com/DaniPopes/evm2?rev=41fd72242e88e4e9e02dd89434c560e8d79242f3#41fd72242e88e4e9e02dd89434c560e8d79242f3"
+source = "git+https://github.com/DaniPopes/evm2?rev=cf7a0e4631a820d38d0c23b2b2046f507b6c340b#cf7a0e4631a820d38d0c23b2b2046f507b6c340b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8715,7 +8715,7 @@ dependencies = [
 [[package]]
 name = "monad-evm2"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/evm2-networks?rev=da987d70663aafe4fa3cd2769269b459682c2cca#da987d70663aafe4fa3cd2769269b459682c2cca"
+source = "git+https://github.com/foundry-rs/evm2-networks?rev=c80d756b12e8ac08ad73ba2ebfba6fda894923ce#c80d756b12e8ac08ad73ba2ebfba6fda894923ce"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -9259,7 +9259,7 @@ dependencies = [
 [[package]]
 name = "op-evm2"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/evm2-networks?rev=da987d70663aafe4fa3cd2769269b459682c2cca#da987d70663aafe4fa3cd2769269b459682c2cca"
+source = "git+https://github.com/foundry-rs/evm2-networks?rev=c80d756b12e8ac08ad73ba2ebfba6fda894923ce#c80d756b12e8ac08ad73ba2ebfba6fda894923ce"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
