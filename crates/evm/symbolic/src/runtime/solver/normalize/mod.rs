@@ -1445,7 +1445,17 @@ fn const_side_bound<'a>(left: &'a SymExpr, right: &'a SymExpr) -> Option<(&'a Sy
 
 /// Normalizes one word expression into an equivalent, solver-friendlier form.
 pub(crate) fn normalize_expr_for_solver(cx: &mut SymCx, expr: SymExpr) -> SymExpr {
-    if expr.contains_ite() { expr.fold(cx, &mut normalize_expr_node_for_solver) } else { expr }
+    if !expr.contains_ite() {
+        return expr;
+    }
+    // Normalizing an `ite` condition re-normalizes the words inside it, so nested `ite`s would
+    // otherwise be re-traversed once per enclosing level.
+    if let Some(normalized) = cx.solver_normalized_word(&expr) {
+        return normalized;
+    }
+    let normalized = expr.fold(cx, &mut normalize_expr_node_for_solver);
+    cx.record_solver_normalized_word(expr, normalized.clone());
+    normalized
 }
 
 fn normalize_expr_node_for_solver(cx: &mut SymCx, expr: SymExpr) -> SymExpr {
