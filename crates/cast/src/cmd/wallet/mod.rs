@@ -1058,19 +1058,22 @@ fn password_or_prompt(password: Option<String>, prompt: &str) -> Result<String> 
 /// directory, matching `cast wallet import <name>`. Path-like values and resolution failures
 /// other than `NotFound` still error.
 fn resolve_new_dir(path: String, account_name: &mut Option<String>) -> Result<PathBuf> {
+    // Probe the relative path instead of canonicalizing it: canonicalization also resolves the
+    // current directory, which fails with `EPERM`/`EACCES` when one of its ancestors is not
+    // accessible (e.g. macOS privacy-protected folders).
+    if account_name.is_none()
+        && is_bare_account_name(&path)
+        && matches!(Path::new(&path).try_exists(), Ok(false))
+    {
+        *account_name = Some(path);
+        let dir = resolve_keystore_dir(None)?;
+        fs::create_dir_all(&dir)?;
+        return Ok(dir);
+    }
+
     match canonicalize_path(&path) {
         Ok(dir) if dir.is_dir() => Ok(dir),
         Ok(dir) => eyre::bail!("`{}` is not a directory", dir.display()),
-        Err(e)
-            if e.kind() == std::io::ErrorKind::NotFound
-                && account_name.is_none()
-                && is_bare_account_name(&path) =>
-        {
-            *account_name = Some(path);
-            let dir = resolve_keystore_dir(None)?;
-            fs::create_dir_all(&dir)?;
-            Ok(dir)
-        }
         Err(e) => eyre::bail!(
             "If you specified a directory, please make sure it exists, or create it before running `cast wallet new <DIR>`.\n{path} is not a directory.\nError: {e}"
         ),
