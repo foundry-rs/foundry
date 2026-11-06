@@ -1993,6 +1993,157 @@ Assertion Tests: 1 assertion bug(s) found
 }
 
 #[forgetest_init]
+fn invariant_fail_on_vm_assert_custom_message(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+    });
+
+    prj.add_test(
+        "InvariantFailOnVmAssertCustomMessage.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract VmAssertHandler {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function alwaysVmAssert() external {
+        vm.assertTrue(false, "custom message");
+    }
+}
+
+contract InvariantFailOnVmAssertCustomMessage is Test {
+    VmAssertHandler handler;
+
+    function setUp() public {
+        handler = new VmAssertHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_vm_assert_custom_message() public view {}
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantFailOnVmAssertCustomMessage.t.sol:InvariantFailOnVmAssertCustomMessage
+Assertion Tests: 1 assertion bug(s) found
+[FAIL: custom message][..]
+...
+ invariant_vm_assert_custom_message() ([RUNS])
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn invariant_fail_on_vm_assert_before_revert(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+        config.assertions_revert = false;
+    });
+
+    prj.add_test(
+        "InvariantFailOnVmAssertBeforeRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract VmAssertHandler {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function vmAssertThenRevert() external {
+        vm.assertEq(uint256(1), uint256(2), "custom message");
+        revert();
+    }
+}
+
+contract InvariantFailOnVmAssertBeforeRevert is Test {
+    VmAssertHandler handler;
+
+    function setUp() public {
+        handler = new VmAssertHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_vm_assert_before_revert() public view {}
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantFailOnVmAssertBeforeRevert.t.sol:InvariantFailOnVmAssertBeforeRevert
+Assertion Tests: 1 assertion bug(s) found
+[FAIL: EvmError: Revert] test/InvariantFailOnVmAssertBeforeRevert.t.sol:VmAssertHandler::vmAssertThenRevert
+...
+ invariant_vm_assert_before_revert() ([RUNS])
+...
+"#]]);
+}
+
+// A caught `vm.assert*` is a handler assertion failure whether or not the invariant is checked
+// after the call.
+#[forgetest_init]
+fn invariant_fail_on_caught_vm_assert(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+    });
+
+    prj.add_test(
+        "InvariantFailOnCaughtVmAssert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract VmAssertHandler {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function caughtVmAssert() external {
+        try vm.assertTrue(false, "custom message") {} catch {}
+    }
+}
+
+contract InvariantCaughtVmAssertInterval1 is Test {
+    function setUp() public {
+        targetContract(address(new VmAssertHandler()));
+    }
+
+    /// forge-config: default.invariant.check_interval = 1
+    function invariant_caught_vm_assert() public view {}
+}
+
+contract InvariantCaughtVmAssertInterval2 is Test {
+    function setUp() public {
+        targetContract(address(new VmAssertHandler()));
+    }
+
+    /// forge-config: default.invariant.check_interval = 2
+    function invariant_caught_vm_assert() public view {}
+}
+"#,
+    );
+
+    for interval in [1, 2] {
+        assert_invariant(cmd.forge_fuse().args([
+            "test",
+            "--mc",
+            &format!("InvariantCaughtVmAssertInterval{interval}"),
+        ]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Assertion Tests: 1 assertion bug(s) found
+[FAIL: assertion failed] test/InvariantFailOnCaughtVmAssert.t.sol:VmAssertHandler::caughtVmAssert
+...
+"#]]);
+    }
+}
+
+#[forgetest_init]
 fn invariant_shrink_with_assert(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(100u32));
