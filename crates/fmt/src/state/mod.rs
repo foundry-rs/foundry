@@ -139,6 +139,8 @@ pub(super) struct State<'sess, 'ast> {
     emit_or_revert: bool,
     // Whether inside a variable initialization expression, or not.
     var_init: bool,
+    // Whether assignments belong to a certified inline body or a normalized sizing probe.
+    inline_assignments: bool,
 }
 
 impl std::ops::Deref for State<'_, '_> {
@@ -234,6 +236,7 @@ impl<'sess> State<'sess, '_> {
             return_bin_expr: false,
             emit_or_revert: false,
             var_init: false,
+            inline_assignments: false,
             block_depth: 0,
             call_stack: CallStack::default(),
         }
