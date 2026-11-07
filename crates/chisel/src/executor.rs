@@ -1162,41 +1162,6 @@ mod tests {
     /// `could not retrieve data from memory`.
     #[tokio::test(flavor = "multi_thread")]
     async fn solar_inspects_local_value() {
-        let line = inspector_return_line("val");
-        let dir = tempfile::tempdir().unwrap();
-        let mut foundry_config = Config::with_root(dir.path());
-        foundry_config.solc = Some(foundry_config::SolcReq::Solar(semver::Version::new(0, 3, 0)));
-        let mut probe = TestSessionSource::new(SessionSourceConfig {
-            foundry_config,
-            no_vm: true,
-            ..Default::default()
-        })
-        .unwrap();
-        probe.add_run_code("uint256 val = 1;");
-        match probe.clone_with_new_line(line.clone()) {
-            Ok((mut src, flag)) => {
-                eprintln!("CLONE OK flag={flag}");
-                let output = src.build().unwrap();
-                let (creation, runtime) = output.enter(|out| {
-                    let contract = out.repl_contract().unwrap();
-                    let creation = contract.get_bytecode_bytes().map(|b| b.len()).unwrap_or(0);
-                    let runtime =
-                        contract.get_deployed_bytecode_bytes().map(|b| b.len()).unwrap_or(0);
-                    (creation, runtime)
-                });
-                eprintln!("bytecode creation={creation} runtime={runtime}");
-                match src.execute().await {
-                    Ok(res) => eprintln!(
-                        "exec success={} returned={} state={}",
-                        res.success,
-                        res.returned.len(),
-                        res.state.is_some()
-                    ),
-                    Err(err) => panic!("execute failed: {err:?}"),
-                }
-            }
-            Err(err) => panic!("clone failed: {err}\nline={line:?}"),
-        }
         let output = inspect_local_value(Some(foundry_config::SolcReq::Solar(
             semver::Version::new(0, 3, 0),
         )))
