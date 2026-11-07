@@ -405,58 +405,14 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
         || Ok([&config.test, &config.src]),
         watch_keyboard,
         move |events, command| {
-            if keyboard_action(events) == Some(KeyboardAction::Rerun) {
-                return;
-            }
-
-            // Check if we should prioritize rerunning failed tests
-            let has_failures = rerun_failed && test_failures_file.exists();
-
-            if has_failures {
-                // Smart mode: rerun failed tests first
-                trace!("Smart watch mode: will rerun failed tests first");
-                command.arg("--rerun");
-                // Don't add file-specific filters when rerunning failures
-                return;
-            }
-
-            let mut changed_sol_test_files: HashSet<_> = events
-                .iter()
-                .flat_map(|e| e.paths())
-                .filter(|(path, _)| path.is_sol_test())
-                .filter_map(|(path, _)| path.to_str())
-                .map(str::to_string)
-                .collect();
-
-            if changed_sol_test_files.len() > 1 {
-                // Run all tests if multiple files were changed at once, for example when running
-                // `forge fmt`.
-                return;
-            }
-
-            if changed_sol_test_files.is_empty() {
-                // Reuse the old test files if a non-test file was changed.
-                let last = last_test_files.lock();
-                if last.is_empty() {
-                    return;
-                }
-                changed_sol_test_files = last.clone();
-            }
-
-            // append `--match-path` glob
-            let mut file = changed_sol_test_files.iter().next().expect("test file present").clone();
-
-            // remove the project root dir from the detected file
-            if let Some(f) = file.strip_prefix(&project_root) {
-                file = f.trim_start_matches('/').to_string();
-            }
-
-            trace!(?file, "reconfigure test command");
-
-            // Before appending `--match-path`, check if it already exists
-            if !no_reconfigure {
-                command.arg("--match-path").arg(file);
-            }
+            let rerun = if keyboard_action(events) == Some(KeyboardAction::Rerun) {
+                TestRerun::Unchanged
+            } else if rerun_failed && test_failures_file.exists() {
+                TestRerun::Failures
+            } else {
+                changed_test_rerun(events, &last_test_files.lock(), &project_root, no_reconfigure)
+            };
+            rerun.apply(command);
         },
     )?;
 
@@ -465,6 +421,77 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
     }
 
     run_inner(config, keyboard_config).await
+}
+
+/// How `forge test --watch` narrows the test command for one batch of events.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum TestRerun {
+    /// Run the command as given.
+    Unchanged,
+    /// Rerun the failures that the last run recorded, ahead of anything else.
+    Failures,
+    /// Run only the tests of this project-relative file.
+    MatchPath(String),
+}
+
+impl TestRerun {
+    fn apply(self, command: &mut TokioCommand) {
+        match self {
+            Self::Unchanged => {}
+            Self::Failures => {
+                // Don't add file-specific filters when rerunning failures.
+                trace!("Smart watch mode: will rerun failed tests first");
+                command.arg("--rerun");
+            }
+            Self::MatchPath(file) => {
+                command.arg("--match-path").arg(file);
+            }
+        }
+    }
+}
+
+/// Picks the tests to run for changed files: the one changed test file, or the last test files
+/// when only non-test files changed.
+///
+/// `no_reconfigure` keeps the command as given, for runs that the user already filtered.
+fn changed_test_rerun(
+    events: &[Event],
+    last_test_files: &HashSet<String>,
+    project_root: &str,
+    no_reconfigure: bool,
+) -> TestRerun {
+    let mut changed_sol_test_files: HashSet<_> = events
+        .iter()
+        .flat_map(|e| e.paths())
+        .filter(|(path, _)| path.is_sol_test())
+        .filter_map(|(path, _)| path.to_str())
+        .map(str::to_string)
+        .collect();
+
+    if changed_sol_test_files.len() > 1 {
+        // Run all tests if multiple files were changed at once, for example when running
+        // `forge fmt`.
+        return TestRerun::Unchanged;
+    }
+
+    if changed_sol_test_files.is_empty() {
+        // Reuse the old test files if a non-test file was changed.
+        if last_test_files.is_empty() {
+            return TestRerun::Unchanged;
+        }
+        changed_sol_test_files = last_test_files.clone();
+    }
+
+    let mut file = changed_sol_test_files.iter().next().expect("test file present").clone();
+
+    // remove the project root dir from the detected file
+    if let Some(f) = file.strip_prefix(project_root) {
+        file = f.trim_start_matches('/').to_string();
+    }
+
+    trace!(?file, "reconfigure test command");
+
+    if no_reconfigure { TestRerun::Unchanged } else { TestRerun::MatchPath(file) }
 }
 
 pub async fn watch_coverage(args: CoverageArgs) -> Result<()> {
@@ -806,6 +833,41 @@ mod tests {
         } else {
             assert_eq!(opened, WatchAction::Run);
         }
+    }
+
+    fn path_event(path: &str) -> Event {
+        Event {
+            tags: vec![Tag::Path { path: PathBuf::from(path), file_type: None }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn narrows_test_reruns_to_changed_test_file() {
+        let none = HashSet::default();
+        let rerun = |events: &[Event], no_reconfigure| {
+            changed_test_rerun(events, &none, "/project", no_reconfigure)
+        };
+
+        assert_eq!(
+            rerun(&[path_event("/project/test/A.t.sol")], false),
+            TestRerun::MatchPath("test/A.t.sol".to_string())
+        );
+        assert_eq!(rerun(&[path_event("/project/test/A.t.sol")], true), TestRerun::Unchanged);
+        assert_eq!(
+            rerun(
+                &[path_event("/project/test/A.t.sol"), path_event("/project/test/B.t.sol")],
+                false
+            ),
+            TestRerun::Unchanged
+        );
+        assert_eq!(rerun(&[path_event("/project/src/A.sol")], false), TestRerun::Unchanged);
+
+        let last = HashSet::from_iter(["/project/test/B.t.sol".to_string()]);
+        assert_eq!(
+            changed_test_rerun(&[path_event("/project/src/A.sol")], &last, "/project", false),
+            TestRerun::MatchPath("test/B.t.sol".to_string())
+        );
     }
 
     #[test]
