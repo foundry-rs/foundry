@@ -1,6 +1,6 @@
 //! Debugger builder.
 
-use crate::soldb::{SoldbDebugger, write_bundle};
+use crate::soldb::{ContractIdentity, SoldbDebugger, write_bundle};
 use alloy_primitives::{
     Address, Bytes,
     map::{AddressHashMap, HashMap},
@@ -9,7 +9,7 @@ use eyre::Result;
 use foundry_common::{ContractsByArtifact, get_contract_name};
 use foundry_evm_core::Breakpoints;
 use foundry_evm_traces::{
-    CallTraceArena, CallTraceDecoder, CallTraceNode, Traces,
+    CallTrace, CallTraceArena, CallTraceDecoder, CallTraceNode, Traces,
     debug::{ContractSources, DebugRecording},
 };
 use std::path::Path;
@@ -129,14 +129,14 @@ impl DebuggerBuilder {
             Vec::new()
         };
         let mut identified_code = HashMap::default();
-        let contract_names = trace_arenas
+        let contract_identities = trace_arenas
             .iter()
             .map(|arena| {
                 arena
                     .nodes()
                     .iter()
                     .map(|node| {
-                        node_contract_name(
+                        node_contract_identity(
                             node,
                             &known_contracts,
                             &identified_contracts,
@@ -151,14 +151,14 @@ impl DebuggerBuilder {
                 dir,
                 trace_arenas,
                 recordings,
-                &contract_names,
+                &contract_identities,
                 &sources,
                 &known_contracts,
             ),
             None => SoldbDebugger::new(
                 trace_arenas,
                 recordings,
-                &contract_names,
+                &contract_identities,
                 &sources,
                 &known_contracts,
                 &breakpoints,
@@ -170,36 +170,65 @@ impl DebuggerBuilder {
 
 /// Identifies the contract executed by `node` from its recorded bytecode, since an address can
 /// execute different code over time (e.g. after `vm.etch`).
-fn node_contract_name(
+fn node_contract_identity<'a>(
     node: &CallTraceNode,
-    known_contracts: &ContractsByArtifact,
+    known_contracts: &'a ContractsByArtifact,
     identified_contracts: &AddressHashMap<String>,
-    identified_code: &mut HashMap<(Address, Bytes), Option<String>>,
-) -> Option<String> {
-    let address = node.trace.address;
-    let address_name = identified_contracts.get(&address);
-    match &node.trace.bytecode {
-        Some(code) if !code.is_empty() && !node.trace.kind.is_any_create() => identified_code
-            .entry((address, code.clone()))
+    identified_code: &mut HashMap<(Address, Bytes), Option<ContractIdentity<'a>>>,
+) -> Option<ContractIdentity<'a>> {
+    let trace = &node.trace;
+    let address_name = identified_contracts.get(&trace.address);
+    if trace.kind.is_any_create() {
+        return identify_creation(known_contracts, address_name, trace);
+    }
+    match &trace.bytecode {
+        Some(code) if !code.is_empty() => identified_code
+            .entry((trace.address, code.clone()))
             .or_insert_with(|| identify_code(known_contracts, address_name, code))
             .clone(),
-        _ => address_name.cloned(),
+        _ => None,
     }
 }
 
 /// Identifies `code` by an exact match against local artifacts. Identities that aren't local
 /// artifacts (e.g. from Etherscan) can't be checked, so they are kept when nothing matches.
-fn identify_code(
-    known_contracts: &ContractsByArtifact,
+fn identify_code<'a>(
+    known_contracts: &'a ContractsByArtifact,
     address_name: Option<&String>,
     code: &[u8],
-) -> Option<String> {
-    // Prefer the address identity only among equally strong runtime matches.
-    if let Some((id, _)) = known_contracts
-        .find_by_deployed_code_exact_preferred(code, |id| address_name == Some(&id.name))
-    {
-        return Some(id.name.clone());
+) -> Option<ContractIdentity<'a>> {
+    // If several artifacts match except for metadata, we can't tell which ran, so none is used.
+    if let Ok(Some((id, _))) = known_contracts.find_by_deployed_code_exact_unambiguous(code) {
+        return Some(ContractIdentity::Local(id));
     }
-    // External identities cannot be checked against local artifacts.
-    address_name.filter(|name| !known_contracts.iter().any(|(id, _)| id.name == **name)).cloned()
+    identify_external(known_contracts, address_name)
+}
+
+/// Identifies a creation by its init code, which exists even if the constructor reverts. A
+/// constructor can return another contract's runtime, so the returned code isn't used.
+fn identify_creation<'a>(
+    known_contracts: &'a ContractsByArtifact,
+    address_name: Option<&String>,
+    trace: &CallTrace,
+) -> Option<ContractIdentity<'a>> {
+    if let Some((id, _)) = known_contracts.find_by_creation_code_exact(&trace.data) {
+        return Some(ContractIdentity::Local(id));
+    }
+    // The address of a failed creation holds no code, so its identity can't be trusted.
+    if !trace.success {
+        return None;
+    }
+    identify_external(known_contracts, address_name)
+}
+
+/// Returns the address name, e.g. from Etherscan.
+/// Returns nothing if a local artifact has that name.
+fn identify_external<'a>(
+    known_contracts: &ContractsByArtifact,
+    address_name: Option<&String>,
+) -> Option<ContractIdentity<'a>> {
+    address_name
+        .filter(|name| !known_contracts.iter().any(|(id, _)| id.name == **name))
+        .cloned()
+        .map(ContractIdentity::External)
 }

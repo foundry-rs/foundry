@@ -597,6 +597,151 @@ contract VariantTest {
     );
 }
 
+// A contract named `Token`. Its state variable tells it apart from the others of that name.
+fn same_name_token(variable: &str) -> String {
+    format!(
+        r#"
+contract Token {{
+    uint256 public {variable};
+
+    constructor(uint256 value) {{
+        require(value != 0, "zero");
+        {variable} = value;
+    }}
+
+    function set(uint256 value) external {{
+        {variable} = value;
+    }}
+}}
+"#
+    )
+}
+
+// Contracts that share a name keep their own sources and storage layouts, in creation and runtime
+// frames, whichever of them is first among the artifacts of that name.
+#[forgetest]
+fn debugger_soldb_same_contract_name(prj: _, cmd: _) {
+    prj.add_source("a/Token.sol", &same_name_token("alpha"));
+    prj.add_source("b/Token.sol", &same_name_token("beta"));
+    // The path of this contract also ends with the path of the next one.
+    prj.add_lib("x/src/Token.sol", &same_name_token("longPath"));
+    prj.add_source("Token.sol", &same_name_token("shortPath"));
+    prj.add_test(
+        "SameName.t.sol",
+        r#"
+import {Token as TokenA} from "../src/a/Token.sol";
+import {Token as TokenB} from "../src/b/Token.sol";
+import {Token as TokenLong} from "../lib/x/src/Token.sol";
+import {Token as TokenShort} from "../src/Token.sol";
+
+contract SameNameTest {
+    function test_a() public {
+        new TokenA(1).set(2);
+    }
+
+    function test_b() public {
+        new TokenB(1).set(2);
+    }
+
+    function test_long() public {
+        new TokenLong(1).set(2);
+    }
+
+    function test_short() public {
+        new TokenShort(1).set(2);
+    }
+}
+"#,
+    );
+
+    for (test, file, variable) in [
+        ("test_a", "src/a/Token.sol", "alpha"),
+        ("test_b", "src/b/Token.sol", "beta"),
+        ("test_long", "lib/x/src/Token.sol", "longPath"),
+        ("test_short", "src/Token.sol", "shortPath"),
+    ] {
+        cmd.forge_fuse()
+            .args(["test", "--debug", "--mt", &format!("^{test}\\(")])
+            .stdin(format!(
+                "break {file}:9\nbreak {file}:13\ncontinue\ncontinue\nprint {variable}\nquit\n"
+            ))
+            .assert_success()
+            .stdout_eq(format!(
+                "...
+Breakpoint #1 set at {file}:9
+Breakpoint #2 set at {file}:13
+Breakpoint #1 hit at step [..], {file}:9
+{file}:9 in constructor  (step [..])
+    9 |         {variable} = value;
+Breakpoint #2 hit at step [..], {file}:13
+{file}:13 in set  (step [..])
+   13 |         {variable} = value;
+...
+uint256 {variable} = 1 [slot 0x0]
+Exiting debugger.
+"
+            ));
+    }
+
+    // The bundle pairs the contract's code with its own source map.
+    let dump_dir = prj.root().join("soldb");
+    cmd.forge_fuse()
+        .args(["test", "--debug", "--mt", "^test_b\\(", "--dump"])
+        .arg(&dump_dir)
+        .assert_success();
+    let mapping = serde_json::from_slice::<serde_json::Value>(
+        &std::fs::read(dump_dir.join("contracts.json")).unwrap(),
+    )
+    .unwrap();
+    let token = mapping["contracts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "Token")
+        .unwrap();
+    let combined = serde_json::from_slice::<serde_json::Value>(
+        &std::fs::read(dump_dir.join(token["debug_dir"].as_str().unwrap()).join("combined.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(combined["contracts"]["src/b/Token.sol:Token"].is_object());
+}
+
+// A creation that reverts has no deployed code to compare, so only its init code tells apart
+// contracts that share a name.
+#[forgetest]
+fn debugger_soldb_same_contract_name_failed_creation(prj: _, cmd: _) {
+    prj.add_source("a/Token.sol", &same_name_token("alpha"));
+    prj.add_source("b/Token.sol", &same_name_token("beta"));
+    prj.add_test(
+        "SameName.t.sol",
+        r#"
+import {Token as TokenB} from "../src/b/Token.sol";
+
+contract SameNameTest {
+    function test_failed_b() public {
+        try new TokenB(0) returns (TokenB) {
+            revert("unreachable");
+        } catch {}
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--debug", "--mt", "^test_failed_b\\("])
+        .stdin("break src/b/Token.sol:8\ncontinue\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Breakpoint #1 set at src/b/Token.sol:8
+Breakpoint #1 hit at step [..], src/b/Token.sol:8
+src/b/Token.sol:8 in constructor  (step [..])
+    8 |         require(value != 0, "zero");
+Exiting debugger.
+
+"#]]);
+}
+
 // With dynamic test linking, `new Child()` runs as a `vm.deployCode` call around the creation, and
 // the constructor's steps and storage writes still belong to the creation.
 #[forgetest]
