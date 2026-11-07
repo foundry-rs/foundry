@@ -276,7 +276,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                         &result,
                         self.args.gas_estimate_multiplier,
                         &self.build_data,
-                    )
+                    )?
                     .build();
 
                 eyre::Ok(SimulationOutcome {
