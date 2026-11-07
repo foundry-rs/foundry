@@ -20,7 +20,7 @@ use solar::{
     ast::{ElementaryType, LitKind, StmtKind as AstStmtKind, StrKind, UnOpKind, yul},
     interface::Session,
     sema::{
-        hir::{Event, Expr, ExprKind, StmtKind},
+        hir::{Block, Event, Expr, ExprKind, StmtKind},
         ty::{Gcx, Ty, TyKind},
     },
 };
@@ -87,13 +87,50 @@ fn yul_inspection(input: &str, session_source: &str) -> Option<YulInspection> {
         let mut assembly = input.to_string();
         assembly.replace_range(expr_range.clone(), &format!("{result_var} := {expression}"));
         let inspector_input = format!(
-            "uint256 {result_var}; {assembly}\nbytes memory inspectoor = abi.encode({result_var});"
+            "uint256 {result_var}; {assembly}\n{}",
+            inspector_return_line(&result_var)
         );
 
         let mut replay_input = input.to_string();
         replay_input.replace_range(expr_range, &format!("pop({expression})"));
         Some(YulInspection { inspector_input, replay_input })
     })
+}
+
+/// Snippet that ABI-encodes `expr` and returns that payload from `run()`.
+///
+/// Solc leaves the `bytes` pointer on the stack at the statement's source location. Solar does
+/// not, so reading `stack.last()` as a memory offset fails with `solc = "solar"`. The call's
+/// return data is the encoding either compiler produced.
+fn inspector_return_line(expr: &str) -> String {
+    format!(
+        "bytes memory inspectoor = abi.encode({expr}); assembly {{ return(add(inspectoor, 0x20), \
+         mload(inspectoor)) }}"
+    )
+}
+
+/// Type of the expression passed to the generated `abi.encode` in `inspectoor`.
+fn inspectoor_type<'gcx>(gcx: Gcx<'gcx>, block: Block<'gcx>) -> Option<(bool, DynSolType)> {
+    let var = block.iter().rev().find_map(|stmt| {
+        let StmtKind::DeclSingle(vid) = stmt.kind else { return None };
+        let var = gcx.hir.variable(vid);
+        let is_inspectoor = var.name.is_some_and(|name| name.as_str() == "inspectoor");
+        is_inspectoor.then_some(var)
+    })?;
+    let init = var.initializer?;
+    let ExprKind::Call(_callee, args) = &init.kind else { return None };
+    let inner_expr = args.exprs().next()?;
+    Some((should_continue(inner_expr), expr_to_dyn(gcx, inner_expr)?))
+}
+
+/// Reads the `bytes` payload whose pointer is the last stack item.
+fn bytes_from_stack_memory(stack: &[U256], memory: &[u8]) -> Option<Vec<u8>> {
+    let mut offset: usize = stack.last()?.try_into().ok()?;
+    debug!("inspect memory @ {offset}: {}", hex::encode(memory));
+    let mem_offset = memory.get(offset..offset + 32)?;
+    let len: usize = U256::try_from_be_slice(mem_offset)?.try_into().ok()?;
+    offset += 32;
+    Some(memory.get(offset..offset + len)?.to_vec())
 }
 
 /// Executor implementation for [SessionSource]
@@ -132,7 +169,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
     ///
     /// If the input is valid, returns its [`InspectResult`].
     pub async fn inspect(&self, input: &str) -> Result<InspectResult> {
-        let line = format!("bytes memory inspectoor = abi.encode({input});");
+        let line = inspector_return_line(input);
         let (mut source, replay_input) = match self.clone_with_new_line(line) {
             Ok((source, _)) => (source, None),
             Err(err) => {
@@ -223,7 +260,10 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
         }
         drop(source_without_inspector);
 
-        let Some((stack, memory)) = &res.state else {
+        // The inspector epilogue returns `abi.encode` payload. Fall back to the solc stack
+        // convention when a compiler leaves that return empty.
+        let returned = res.success.then(|| res.returned.clone()).filter(|data| !data.is_empty());
+        if returned.is_none() && res.state.is_none() {
             // Show traces and logs, if there are any, and return an error
             if let Ok(decoder) = ChiselDispatcher::decode_traces(&source.config, &mut res).await {
                 ChiselDispatcher::<FEN>::show_traces(&decoder, &mut res).await?;
@@ -237,7 +277,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             }
 
             return Err(eyre::eyre!("Failed to inspect expression"));
-        };
+        }
 
         // Either the expression referred to by `input`, or the last expression,
         // which was wrapped in `abi.encode`.
@@ -245,44 +285,32 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
 
         // Inside the compiler closure, infer the DynSolType of the inspected expression and
         // determine whether the REPL should continue.
-        let res_ty = generated_output.enter(|out| -> Option<(bool, DynSolType)> {
-            let gcx = out.gcx();
-
-            // Find the appended `bytes memory inspectoor = abi.encode(<input>);` and pull out the
-            // first call argument.
-            let block = out.run_func_body();
-            let last = block.last()?;
-            let StmtKind::DeclSingle(vid) = last.kind else { return None };
-            let var = gcx.hir.variable(vid);
-            let init = var.initializer?;
-            let ExprKind::Call(_callee, args) = &init.kind else { return None };
-            let inner_expr = args.exprs().next()?;
-
-            let ty = expr_to_dyn(gcx, inner_expr)?;
-            Some((should_continue(inner_expr), ty))
-        });
+        let res_ty = generated_output.enter(|out| inspectoor_type(out.gcx(), out.run_func_body()));
 
         let Some((cont, ty)) = res_ty else {
             return Ok(InspectResult::empty(ControlFlow::Continue(())));
         };
 
-        // the file compiled correctly, thus the last stack item must be the memory offset of
-        // the `bytes memory inspectoor` value
-        let data = (|| -> Option<_> {
-            let mut offset: usize = stack.last()?.try_into().ok()?;
-            debug!("inspect memory @ {offset}: {}", hex::encode(memory));
-            let mem_offset = memory.get(offset..offset + 32)?;
-            let len: usize = U256::try_from_be_slice(mem_offset)?.try_into().ok()?;
-            offset += 32;
-            memory.get(offset..offset + len)
-        })();
-        let Some(data) = data else {
-            eyre::bail!("Failed to inspect last expression: could not retrieve data from memory");
+        let data = if let Some(data) = returned {
+            data.to_vec()
+        } else {
+            let Some((stack, memory)) = &res.state else {
+                eyre::bail!(
+                    "Failed to inspect last expression: could not retrieve data from memory"
+                );
+            };
+            // Solc leaves the memory offset of `bytes memory inspectoor` on the stack.
+            let Some(data) = bytes_from_stack_memory(stack, memory) else {
+                eyre::bail!(
+                    "Failed to inspect last expression: could not retrieve data from memory"
+                );
+            };
+            data
         };
         let clear_last_result = dyn_ty_contains_function(&ty);
         let last_result = (!clear_last_result)
-            .then(|| format!("abi.decode(hex\"{}\", ({ty}))", hex::encode(data)));
-        let token = ty.abi_decode(data).wrap_err("Could not decode inspected values")?;
+            .then(|| format!("abi.decode(hex\"{}\", ({ty}))", hex::encode(&data)));
+        let token = ty.abi_decode(&data).wrap_err("Could not decode inspected values")?;
         let c = if cont || replay_input.is_some() {
             ControlFlow::Continue(())
         } else {
@@ -1126,5 +1154,114 @@ mod tests {
         let _ = tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
+    }
+
+    /// Regression for <https://github.com/foundry-rs/foundry/issues/18203>.
+    ///
+    /// `solc = "solar"` compiles `uint256 val = 1` but inspection used to fail with
+    /// `could not retrieve data from memory`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn solar_inspects_local_value() {
+        let line = inspector_return_line("val");
+        let dir = tempfile::tempdir().unwrap();
+        let mut foundry_config = Config::with_root(dir.path());
+        foundry_config.solc = Some(foundry_config::SolcReq::Solar(semver::Version::new(0, 3, 0)));
+        let mut probe = TestSessionSource::new(SessionSourceConfig {
+            foundry_config,
+            no_vm: true,
+            ..Default::default()
+        })
+        .unwrap();
+        probe.add_run_code("uint256 val = 1;");
+        match probe.clone_with_new_line(line.clone()) {
+            Ok((mut src, flag)) => {
+                eprintln!("CLONE OK flag={flag}");
+                let output = src.build().unwrap();
+                let (creation, runtime) = output.enter(|out| {
+                    let contract = out.repl_contract().unwrap();
+                    let creation = contract.get_bytecode_bytes().map(|b| b.len()).unwrap_or(0);
+                    let runtime =
+                        contract.get_deployed_bytecode_bytes().map(|b| b.len()).unwrap_or(0);
+                    (creation, runtime)
+                });
+                eprintln!("bytecode creation={creation} runtime={runtime}");
+                match src.execute().await {
+                    Ok(res) => eprintln!(
+                        "exec success={} returned={} state={}",
+                        res.success,
+                        res.returned.len(),
+                        res.state.is_some()
+                    ),
+                    Err(err) => panic!("execute failed: {err:?}"),
+                }
+            }
+            Err(err) => panic!("clone failed: {err}\nline={line:?}"),
+        }
+        let output = inspect_local_value(Some(foundry_config::SolcReq::Solar(
+            semver::Version::new(0, 3, 0),
+        )))
+        .await;
+        assert!(output.contains("Type: uint256"), "{output}");
+        assert!(output.contains("Decimal: 1"), "{output}");
+
+        let dynamic = inspect_input(
+            Some(foundry_config::SolcReq::Solar(semver::Version::new(0, 3, 0))),
+            "string memory s = \"hello\";",
+            "s",
+        )
+        .await;
+        assert!(dynamic.contains("UTF-8: hello"), "{dynamic}");
+    }
+
+    /// The same inspection must keep working when bytecode comes from solc.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn solc_inspects_local_value() {
+        let output = inspect_local_value(None).await;
+        assert!(output.contains("Type: uint256"), "{output}");
+        assert!(output.contains("Decimal: 1"), "{output}");
+    }
+
+    async fn inspect_local_value(solc: Option<foundry_config::SolcReq>) -> String {
+        inspect_input(solc, "uint256 val = 1;", "val").await
+    }
+
+    async fn inspect_input(
+        solc: Option<foundry_config::SolcReq>,
+        setup: &str,
+        input: &str,
+    ) -> String {
+        let dir = tempfile::tempdir().unwrap();
+        let mut foundry_config = Config::with_root(dir.path());
+        foundry_config.solc = solc;
+        let mut source = TestSessionSource::new(SessionSourceConfig {
+            foundry_config,
+            no_vm: true,
+            ..Default::default()
+        })
+        .unwrap();
+        source.add_run_code(setup);
+        let inspected = source.inspect(input).await.unwrap_or_else(|err| panic!("{err:?}"));
+        let Some(output) = inspected.formatted_output else {
+            panic!("no inspection output: {inspected:?}");
+        };
+        strip_ansi(&output)
+    }
+
+    fn strip_ansi(input: &str) -> String {
+        let mut out = String::with_capacity(input.len());
+        let mut chars = input.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+                chars.next();
+                for next in chars.by_ref() {
+                    if next.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            } else {
+                out.push(ch);
+            }
+        }
+        out
     }
 }
