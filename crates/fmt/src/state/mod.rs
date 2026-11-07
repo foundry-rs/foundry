@@ -759,10 +759,7 @@ impl<'sess> State<'sess, '_> {
                 self.print_comment(blank, config);
             }
 
-            if previous_mixed_at_bol
-                && cmnt.style.is_trailing()
-                && matches!(cmnt.kind, ast::CommentKind::Line)
-            {
+            if previous_mixed_at_bol && cmnt.style.is_trailing() {
                 self.hardbreak_if_not_bol();
             }
 
