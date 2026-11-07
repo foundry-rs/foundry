@@ -61,6 +61,66 @@ fn keyboard_action(events: &[Event]) -> Option<KeyboardAction> {
     rerun.then_some(KeyboardAction::Rerun)
 }
 
+/// What the watcher does with one batch of events.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WatchAction {
+    /// A termination signal or the end of keyboard input: stop watching.
+    Quit,
+    /// Nothing that warrants running the command again.
+    Ignore,
+    /// Run the command, restarting it if it is still running and restarts are allowed.
+    Run,
+}
+
+/// Decides what the watcher does with a batch of `events` that came with `signals`.
+///
+/// `has_paths` is whether any of the events names a filesystem path.
+fn watch_action(signals: &[Signal], events: &[Event], has_paths: bool) -> WatchAction {
+    let keyboard_action = keyboard_action(events);
+    if signals.contains(&Signal::Terminate)
+        || signals.contains(&Signal::Interrupt)
+        || keyboard_action == Some(KeyboardAction::Quit)
+    {
+        return WatchAction::Quit;
+    }
+
+    // A keyboard rerun runs the command whatever else the batch holds.
+    if keyboard_action == Some(KeyboardAction::Rerun) {
+        return WatchAction::Run;
+    }
+
+    // Only filesystem or empty synthetic events below here.
+    let has_synthetic_events = events.iter().any(Event::is_empty);
+    if !has_paths && !has_synthetic_events {
+        debug!("no filesystem, rerun, or synthetic events, skip without doing more");
+        return WatchAction::Ignore;
+    }
+
+    // Reading a file now triggers `Access(Open)` events on Linux due to:
+    // https://github.com/notify-rs/notify/pull/612
+    // This causes an infinite rebuild loop: the build reads a file,
+    // which triggers a notification, which restarts the build, and so on.
+    // To prevent this, we ignore `Access(Open)` events during event processing.
+    if cfg!(target_os = "linux") && !has_synthetic_events && !has_file_events(events) {
+        debug!(
+            "no filesystem events (other than Access(Open)) or synthetic events, skip without doing more"
+        );
+        return WatchAction::Ignore;
+    }
+
+    WatchAction::Run
+}
+
+/// Whether any of `events` is a filesystem event other than `Access(Open)`.
+fn has_file_events(events: &[Event]) -> bool {
+    events.iter().flat_map(|event| &event.tags).any(|tag| {
+        matches!(
+            tag,
+            Tag::FileEventKind(kind) if !matches!(kind, FileEventKind::Access(AccessKind::Open(_)))
+        )
+    })
+}
+
 fn set_keyboard_events(config: &Option<KeyboardConfig>, enable: bool) {
     if let Some(config) = config.as_ref().and_then(|config| config.get()).and_then(Weak::upgrade) {
         config.keyboard_events(enable);
@@ -221,49 +281,11 @@ impl WatchArgs {
             };
 
             let signals = action.signals().collect::<Vec<_>>();
-            let keyboard_action = keyboard_action(&action.events);
-
-            if signals.contains(&Signal::Terminate)
-                || signals.contains(&Signal::Interrupt)
-                || keyboard_action == Some(KeyboardAction::Quit)
-            {
-                return quit(action);
-            }
-
-            // Only filesystem, keyboard rerun, or empty synthetic events below here.
-            if action.paths().next().is_none()
-                && keyboard_action != Some(KeyboardAction::Rerun)
-                && !action.events.iter().any(|e| e.is_empty())
-            {
-                debug!("no filesystem, rerun, or synthetic events, skip without doing more");
-                return action;
-            }
-
-            if cfg!(target_os = "linux") && keyboard_action != Some(KeyboardAction::Rerun) {
-                // Reading a file now triggers `Access(Open)` events on Linux due to:
-                // https://github.com/notify-rs/notify/pull/612
-                // This causes an infinite rebuild loop: the build reads a file,
-                // which triggers a notification, which restarts the build, and so on.
-                // To prevent this, we ignore `Access(Open)` events during event processing.
-                let mut has_file_events = false;
-                let mut has_synthetic_events = false;
-                'outer: for e in action.events.iter() {
-                    if e.is_empty() {
-                        has_synthetic_events = true;
-                        break;
-                    }
-                    for tag in &e.tags {
-                        if let Tag::FileEventKind(kind) = tag
-                            && !matches!(kind, FileEventKind::Access(AccessKind::Open(_))) {
-                                has_file_events = true;
-                                break 'outer;
-                            }
-                    }
-                }
-                if !has_file_events && !has_synthetic_events {
-                    debug!("no filesystem events (other than Access(Open)) or synthetic events, skip without doing more");
-                    return action;
-                }
+            let has_paths = action.paths().next().is_some();
+            match watch_action(&signals, &action.events, has_paths) {
+                WatchAction::Quit => return quit(action),
+                WatchAction::Ignore => return action,
+                WatchAction::Run => {}
             }
 
             // Let the child own stdin while it runs. This keeps prompts and the debugger from
@@ -740,6 +762,50 @@ mod tests {
             keyboard_action(&[key_event('a', Modifiers::default()), eof]),
             Some(KeyboardAction::Quit)
         );
+    }
+
+    fn file_event(kind: FileEventKind) -> Event {
+        Event {
+            tags: vec![
+                Tag::Path { path: PathBuf::from("src/A.sol"), file_type: None },
+                Tag::FileEventKind(kind),
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn classifies_watch_actions() {
+        let modify = file_event(FileEventKind::Modify(watchexec_events::filekind::ModifyKind::Any));
+        let open = file_event(FileEventKind::Access(AccessKind::Open(
+            watchexec_events::filekind::AccessMode::Any,
+        )));
+        let rerun = key_event('a', Modifiers::default());
+        let eof = Event { tags: vec![Tag::Keyboard(Keyboard::Eof)], ..Default::default() };
+        let other_key = key_event('x', Modifiers::default());
+
+        // Signals and the end of input quit, whatever the events.
+        assert_eq!(
+            watch_action(&[Signal::Interrupt], std::slice::from_ref(&modify), true),
+            WatchAction::Quit
+        );
+        assert_eq!(watch_action(&[Signal::Terminate], &[], false), WatchAction::Quit);
+        assert_eq!(watch_action(&[], &[rerun.clone(), eof], false), WatchAction::Quit);
+
+        // A keyboard rerun, a synthetic event or a file change runs the command.
+        assert_eq!(watch_action(&[], &[rerun], false), WatchAction::Run);
+        assert_eq!(watch_action(&[], &[Event::default()], false), WatchAction::Run);
+        assert_eq!(watch_action(&[], std::slice::from_ref(&modify), true), WatchAction::Run);
+        assert_eq!(watch_action(&[], &[open.clone(), modify], true), WatchAction::Run);
+
+        // Anything else is ignored.
+        assert_eq!(watch_action(&[], &[other_key], false), WatchAction::Ignore);
+        let opened = watch_action(&[], &[open], true);
+        if cfg!(target_os = "linux") {
+            assert_eq!(opened, WatchAction::Ignore);
+        } else {
+            assert_eq!(opened, WatchAction::Run);
+        }
     }
 
     #[test]
