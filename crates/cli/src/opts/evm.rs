@@ -63,15 +63,17 @@ pub struct EvmArgs {
 
     /// Number of retries.
     ///
-    /// See --rpc-url.
-    #[arg(long, requires = "rpc_url", value_name = "RETRIES")]
+    /// Applies to the fork created by --rpc-url, and to forks created by cheatcodes unless their
+    /// `rpc_endpoints` entry sets `retries`.
+    #[arg(long, value_name = "RETRIES")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_retries: Option<u32>,
 
     /// Initial retry backoff on encountering errors.
     ///
-    /// See --rpc-url.
-    #[arg(long, requires = "rpc_url", value_name = "BACKOFF")]
+    /// Applies to the fork created by --rpc-url, and to forks created by cheatcodes unless their
+    /// `rpc_endpoints` entry sets `retry_backoff`.
+    #[arg(long, value_name = "BACKOFF")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_retry_backoff: Option<u64>,
 
@@ -92,6 +94,13 @@ pub struct EvmArgs {
     #[arg(long)]
     #[serde(skip)]
     pub no_fork_bal: bool,
+
+    /// Prefetch a new fork block's cache from the keys of an older cached block on the same chain.
+    ///
+    /// Helps forks of `latest`, which start with an empty cache on each new head.
+    #[arg(long)]
+    #[serde(skip)]
+    pub fork_prefetch: bool,
 
     /// The initial balance of deployed test contracts.
     #[arg(long, value_name = "BALANCE")]
@@ -225,6 +234,11 @@ impl Provider for EvmArgs {
             // Environment values use the global profile, which overrides the selected profile.
             data.entry(Profile::Global).or_default().insert("no_fork_bal".to_string(), true.into());
         }
+        if self.fork_prefetch {
+            data.entry(Profile::Global)
+                .or_default()
+                .insert("fork_prefetch".to_string(), true.into());
+        }
         Ok(data)
     }
 }
@@ -322,6 +336,7 @@ fn id<S: serde::Serializer>(chain: &Option<Chain>, s: S) -> Result<S::Ok, S::Err
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
     use foundry_config::{
         NamedChain,
         figment::{Figment, providers::Serialized},
@@ -388,6 +403,28 @@ mod tests {
     }
 
     #[test]
+    fn fork_prefetch_cli_preserves_config_unless_explicit() {
+        for profile in ["default", "ci"] {
+            for configured in [false, true] {
+                for flag in [false, true] {
+                    let config = Config { fork_prefetch: configured, ..Default::default() };
+                    let figment = Figment::from(Serialized::defaults(config).profile(profile))
+                        .select(profile);
+                    let args = EvmArgs::parse_from(
+                        ["foundry-cli"].into_iter().chain(flag.then_some("--fork-prefetch")),
+                    );
+                    let merged = Config::from_provider(figment.merge(args)).unwrap();
+                    assert_eq!(
+                        merged.fork_prefetch,
+                        flag || configured,
+                        "profile={profile}, configured={configured}, flag={flag}",
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn compute_units_per_second_skips_when_none() {
         let args = EvmArgs::default();
         let data = args.data().expect("provider data");
@@ -432,8 +469,6 @@ mod tests {
 
     #[test]
     fn rpc_url_arg_does_not_read_eth_rpc_url_env() {
-        use clap::CommandFactory;
-
         let command = EvmArgs::command();
         let rpc_url =
             command.get_arguments().find(|arg| arg.get_id() == "rpc_url").expect("rpc_url arg");

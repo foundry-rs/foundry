@@ -1,5 +1,6 @@
 //! CLI tests for shared Tempo transaction options.
 
+use alloy_eips::eip2718::Decodable2718;
 use alloy_network::{ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, U256, address, hex, keccak256};
 use alloy_provider::Provider;
@@ -10,12 +11,14 @@ use anvil::NodeConfig;
 use foundry_cli::utils::parse_json;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::util::OutputExt;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tempo_contracts::precompiles::{
     CURRENT_COMMITTEE_ADDRESS, ICurrentCommittee, IReceivePolicyGuard, IRolesAuth, ITIP20,
     ITIP20Factory, ITIP403Registry, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
     TIP403_REGISTRY_ADDRESS,
 };
 use tempo_hardfork::TempoHardfork;
+use tempo_primitives::TempoTxEnvelope;
 
 fn json_success_data(output: &str) -> serde_json::Value {
     let envelope: serde_json::Value = parse_json(output.trim()).expect("command emits JSON");
@@ -1348,6 +1351,130 @@ fn tempo_zone_rejects_callback_without_gas(cmd: _) {
     .stdout_eq("")
     .stderr_eq(str![[r#"
 Error: --callback-data requires a nonzero --callback-gas-limit
+
+"#]]);
+}
+
+// TIP-1106: from T12 the nonce of an expiring nonce transaction is an opaque discriminator.
+#[casttest]
+async fn tempo_expiring_nonce_keeps_explicit_discriminator(cmd: _) {
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T12.into()))).await;
+    let rpc = handle.http_endpoint();
+    let sender = handle.dev_accounts().next().unwrap().to_string();
+    let valid_before =
+        (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 25).to_string();
+
+    // Every field but the nonce is pinned, so the two transactions are otherwise identical.
+    let mut transactions = Vec::new();
+    for nonce in ["7", "8"] {
+        let raw = cmd
+            .cast_fuse()
+            .args([
+                "mktx",
+                "0x0000000000000000000000000000000000000001",
+                "--nonce",
+                nonce,
+                "--tempo.expiring-nonce",
+                "--tempo.valid-before",
+                &valid_before,
+                "--gas-limit",
+                "100000",
+                "--gas-price",
+                "20000000000",
+                "--priority-gas-price",
+                "1",
+                "--private-key",
+                "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+                "--rpc-url",
+                &rpc,
+            ])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let raw = raw.trim();
+        let TempoTxEnvelope::AA(signed) =
+            TempoTxEnvelope::decode_2718_exact(&hex::decode(raw).unwrap()).unwrap()
+        else {
+            panic!("expected a Tempo AA transaction");
+        };
+        transactions.push(signed.tx().clone());
+
+        let hash = cmd
+            .cast_fuse()
+            .args(["publish", "--async", raw, "--rpc-url", &rpc])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        cmd.cast_fuse()
+            .args(["receipt", hash.trim(), "status", "--rpc-url", &rpc])
+            .assert_success()
+            .stdout_eq(str![[r#"
+true
+
+"#]]);
+    }
+
+    let [mut first, second] = <[_; 2]>::try_from(transactions).unwrap();
+    assert_eq!((first.nonce, second.nonce), (7, 8));
+    assert_eq!(first.nonce_key, U256::MAX);
+    first.nonce = second.nonce;
+    assert_eq!(first, second);
+
+    // The discriminator never touches nonce state.
+    cmd.cast_fuse().args(["nonce", &sender, "--rpc-url", &rpc]).assert_success().stdout_eq(str![[
+        r#"
+0
+
+"#
+    ]]);
+}
+
+#[casttest]
+async fn tempo_expiring_nonce_discriminator_requires_t12(cmd: _) {
+    let (_, t11) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T11.into()))).await;
+    let (_, t12) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T12.into()))).await;
+    let mktx = [
+        "mktx",
+        "0x0000000000000000000000000000000000000001",
+        "--nonce",
+        "7",
+        "--tempo.expires",
+        "20",
+        "--gas-limit",
+        "100000",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+    ];
+
+    // Cast does not build a discriminator for a chain that is known to reject it.
+    cmd.cast_fuse()
+        .args(mktx)
+        .arg(t11.http_endpoint())
+        .assert_failure()
+        .stdout_eq("")
+        .stderr_eq(str![[r#"
+Error: expiring nonce transactions must use nonce 0 before the Tempo T12 hardfork, got nonce 7; non-zero expiring nonce discriminators (TIP-1106) are not active on this chain
+
+"#]]);
+
+    // The node enforces the same rule for a transaction that was built for T12.
+    let raw = cmd
+        .cast_fuse()
+        .args(mktx)
+        .arg(t12.http_endpoint())
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    cmd.cast_fuse()
+        .args(["publish", raw.trim(), "--rpc-url", &t11.http_endpoint()])
+        .assert_failure()
+        .stdout_eq("")
+        .stderr_eq(str![[r#"
+Error: server returned an error response: error code -32603: tempo transaction error: expiring nonce transaction must have nonce == 0 before T12
 
 "#]]);
 }

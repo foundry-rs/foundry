@@ -18,15 +18,15 @@ use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
     artifacts::{
-        BytecodeObject, Contract, Severity, Source, output_selection::OutputSelection,
-        remappings::Remapping,
+        BytecodeObject, Contract, Error as SolcError, Severity, Source,
+        output_selection::OutputSelection, remappings::Remapping,
     },
     compilers::{
         CompilationError, Compiler,
         solc::{Solc, SolcCompiler},
     },
     info::ContractInfo as CompilerContractInfo,
-    multi::{MultiCompiler, MultiCompilerSettings},
+    multi::{MultiCompiler, MultiCompilerError, MultiCompilerSettings},
     project::Preprocessor,
     report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
@@ -40,6 +40,7 @@ use solar::{
     parse::Parser,
 };
 use std::{
+    any::Any,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt::Display,
     io::IsTerminal,
@@ -94,6 +95,9 @@ pub struct ProjectCompiler {
     /// Whether to compile with dynamic linking tests and scripts.
     dynamic_test_linking: bool,
 
+    /// Whether compiled contracts may depend on externally linked Solidity libraries.
+    allow_linked_libraries: bool,
+
     /// Whether ABI acquisition may consult the compiler-owned ABI cache.
     abi_cache: bool,
 
@@ -129,6 +133,7 @@ impl ProjectCompiler {
             source_order_fallback: Vec::new(),
             selected_paths: Vec::new(),
             dynamic_test_linking: false,
+            allow_linked_libraries: true,
             abi_cache: false,
             external_compilers: None,
             external_writes: true,
@@ -244,6 +249,15 @@ impl ProjectCompiler {
         self
     }
 
+    /// Sets whether compiled contracts may depend on externally linked Solidity libraries.
+    ///
+    /// This does not disable dynamic test linking. With `bail(false)`, violations are reported as
+    /// compiler errors in the returned output.
+    pub const fn allow_linked_libraries(mut self, allow: bool) -> Self {
+        self.allow_linked_libraries = allow;
+        self
+    }
+
     /// Compiles the project.
     #[instrument(target = "forge::compile", skip_all)]
     pub fn compile<C: Compiler<CompilerContract = Contract>>(
@@ -295,21 +309,46 @@ impl ProjectCompiler {
                 project.paths.read_input_files()?
             };
 
-            let compile = |sources| {
-                let mut compiler =
-                    foundry_compilers::project::ProjectCompiler::with_sources(project, sources)?;
-                if preprocess {
-                    compiler = compiler.with_preprocessor(DynamicTestLinkingPreprocessor);
+            let preprocessor = DynamicTestLinkingPreprocessor::default();
+            let compile = |preprocess| -> Result<ProjectCompileOutput<C>> {
+                let compile_sources = |sources| {
+                    let mut compiler = foundry_compilers::project::ProjectCompiler::with_sources(
+                        project, sources,
+                    )?;
+                    if preprocess {
+                        compiler = compiler.with_preprocessor(preprocessor.clone());
+                    }
+                    if abi_cache { compiler.compile_abi_cached() } else { compiler.compile() }
+                };
+                let mut output = compile_sources(sources.clone())?;
+                // Solc error 2449 can be introduced by filtering compilation roots in an import
+                // cycle. Retry before reporting diagnostics or bailing on the filtered output.
+                if !fallback_files.is_empty()
+                    && output.output().errors.iter().any(|error| error.error_code() == Some(2449))
+                {
+                    output = compile_sources(Source::read_all(&fallback_files)?)?;
                 }
-                if abi_cache { compiler.compile_abi_cached() } else { compiler.compile() }
+                Ok(output)
             };
-            let mut output = compile(sources)?;
-            // Solc error 2449 can be introduced by filtering compilation roots in an import
-            // cycle. Retry before reporting diagnostics or bailing on the filtered output.
-            if !fallback_files.is_empty()
-                && output.output().errors.iter().any(|error| error.error_code() == Some(2449))
+            let mut output = compile(preprocess)?;
+            // A retry can only help if DTL changed the compiler input.
+            if preprocessor.rewrote_sources()
+                && let Some(reason) = dynamic_test_linking_failure(&output.output().errors)
             {
-                output = compile(Source::read_all(fallback_files)?)?;
+                sh_warn!(
+                    "dynamic test linking failed ({reason}); retrying with native test linking. \
+                     Use --no-dynamic-test-linking to skip the failed attempt."
+                )?;
+                // The preprocessor is part of the cache identity: native compilation cannot
+                // reuse DTL artifacts. Return only this attempt, including any compiler errors.
+                output = compile(false)?;
+            }
+            // Drop deferred DTL-disable warnings on failure; solc's error already explains it.
+            let disable_warnings = preprocessor.take_disable_warnings();
+            if !output.has_compiler_errors() {
+                for warning in disable_warnings {
+                    sh_warn!("{warning}")?;
+                }
             }
             if !output.has_compiler_errors()
                 && let Some(external) = external
@@ -331,7 +370,7 @@ impl ProjectCompiler {
         let quiet = self.quiet.unwrap_or(false);
         let bail = self.bail.unwrap_or(true);
 
-        let output = with_compilation_reporter_and_settings(
+        let mut output = with_compilation_reporter_and_settings(
             quiet,
             Some(self.project_root.clone()),
             self.print_compiler_settings,
@@ -351,6 +390,13 @@ impl ProjectCompiler {
             eyre::bail!("{output}");
         }
 
+        let mut linking_error = (!self.allow_linked_libraries && !output.has_compiler_errors())
+            .then(|| linked_libraries_error(&output, &self.project_root))
+            .flatten();
+        if !bail && let Some(message) = linking_error.take() {
+            push_linked_libraries_error(&mut output, message);
+        }
+
         if !quiet && !shell::is_json() {
             if output.is_unchanged() {
                 sh_println!("No files changed, compilation skipped")?;
@@ -358,6 +404,11 @@ impl ProjectCompiler {
                 // print the compiler output / warnings
                 sh_println!("{output}")?;
             }
+        }
+
+        // Report compiler warnings before the policy failure.
+        if let Some(message) = linking_error {
+            eyre::bail!("{message}");
         }
 
         // Quiet mode suppresses reports, but size limits still apply.
@@ -1041,6 +1092,88 @@ impl std::fmt::Debug for PathOrContractInfo {
             }
         }
     }
+}
+
+/// Describes the Solidity library dependencies in creation or runtime bytecode, if any.
+///
+/// Includes cached artifacts and permits internal libraries and dynamic test linking helpers.
+fn linked_libraries_error<C: Compiler<CompilerContract = Contract>>(
+    output: &ProjectCompileOutput<C>,
+    root: &Path,
+) -> Option<String> {
+    let violations = output
+        .artifact_ids()
+        .flat_map(|(id, artifact)| {
+            let contract = id.with_stripped_file_prefixes(root).identifier();
+            artifact.all_link_references().into_iter().flat_map(move |(file, libs)| {
+                let contract = contract.clone();
+                libs.into_keys().map(move |lib| format!("{contract} links {file}:{lib}"))
+            })
+        })
+        .collect::<BTreeSet<_>>();
+    (!violations.is_empty()).then(|| {
+        format!(
+            "Linked libraries are not allowed (`allow_linked_libraries = false`):\n  {}\n\
+             help: make the library functions `internal` to inline them, or set \
+             `allow_linked_libraries = true`",
+            violations.into_iter().collect::<Vec<_>>().join("\n  ")
+        )
+    })
+}
+
+/// Appends a linked-library policy error to solc or multi-compiler diagnostics.
+fn push_linked_libraries_error<C: Compiler<CompilerContract = Contract>>(
+    output: &mut ProjectCompileOutput<C>,
+    message: String,
+) {
+    let error = SolcError {
+        source_location: None,
+        secondary_source_locations: Vec::new(),
+        r#type: "LinkedLibraryError".to_string(),
+        component: "foundry".to_string(),
+        severity: Severity::Error,
+        error_code: None,
+        message,
+        formatted_message: None,
+    };
+    // CompilationError has no constructor; downcast to the concrete diagnostics instead.
+    let errors = &mut output.output_mut().errors as &mut dyn Any;
+    if let Some(errors) = errors.downcast_mut::<Vec<SolcError>>() {
+        errors.push(error);
+    } else if let Some(errors) = errors.downcast_mut::<Vec<MultiCompilerError>>() {
+        errors.push(MultiCompilerError::Solc(error));
+    }
+}
+
+/// Recognizes only solc code-generation failures that DTL's source rewrites can introduce.
+/// Unrelated errors (including other languages) must not trigger a retry.
+fn dynamic_test_linking_failure<E: CompilationError>(errors: &[E]) -> Option<&'static str> {
+    let mut reason = None;
+    for error in errors.iter().filter(|error| error.is_error()) {
+        // CompilationError has no structured message/type accessors. Inspect the concrete solc
+        // diagnostic rather than its Display output, which can include source snippets.
+        let error = error as &dyn Any;
+        let error = if let Some(error) = error.downcast_ref::<SolcError>() {
+            error
+        } else if let Some(MultiCompilerError::Solc(error)) =
+            error.downcast_ref::<MultiCompilerError>()
+        {
+            error
+        } else {
+            return None;
+        };
+        reason = Some(match error.r#type.as_str() {
+            "YulException" if error.message.contains("too deep in the stack") => "stack too deep",
+            "CompilerError" if error.message.contains("Stack too deep") => "stack too deep",
+            "InternalCompilerError"
+                if error.message.contains("Tag too large for reserved space") =>
+            {
+                "Tag too large for reserved space"
+            }
+            _ => return None,
+        });
+    }
+    reason
 }
 
 #[cfg(test)]

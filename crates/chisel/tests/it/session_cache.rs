@@ -108,3 +108,45 @@ contract REPL {
     }
     assert_eq!(fs::read_dir(home.path().join(".svm")).unwrap().count(), 0);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fetch_uses_startup_fork_chain() {
+    let (_api, handle) = anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(137u64))).await;
+    let home = tempfile::tempdir().unwrap();
+    command(home.path())
+        .args(["--use", "0.8.29", "--fork-url", &handle.http_endpoint()])
+        .args(["eval", "!fe 0x0000000000000000000000000000000000000004 Token"])
+        .assert()
+        .failure()
+        .stderr_eq(str![[r#"
+Error: Failed to fetch ABI from Etherscan
+
+Context:
+- No Etherscan API key configured for chain polygon
+
+"#]]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fork_alias_output_omits_url_credentials() {
+    let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+    let home = tempfile::tempdir().unwrap();
+    fs::write(
+        home.path().join("foundry.toml"),
+        format!(
+            "[rpc_endpoints]\nprivate = \"http://user:synthetic-password@{}/?apikey=synthetic-key\"\n",
+            handle.socket_address()
+        ),
+    )
+    .unwrap();
+
+    command(home.path())
+        .args(["--use", "0.8.29", "eval", "!fork private"])
+        .assert()
+        .success()
+        .stdout_eq(str![[r#"
+Set fork URL to http://127.0.0.1:[..]/
+
+"#]])
+        .stderr_eq(str![""]);
+}

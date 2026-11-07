@@ -162,6 +162,19 @@ impl Error {
         self.is_str
     }
 
+    /// Prefixes a string error with the name of the cheatcode that produced it.
+    pub(crate) fn with_cheatcode_name(self, cheat: &spec::Cheatcode<'static>) -> Self {
+        let name = cheat.func.signature.split('(').next().unwrap();
+        // Skip showing the cheatcode name for:
+        // - assertions: too verbose, and can already be inferred from the error message
+        // - `rpcUrl`: forge-std relies on it in `getChainWithUpdatedRpcUrl`
+        if self.is_str && !name.contains("assert") && name != "rpcUrl" {
+            fmt_err!("vm.{name}: {self}")
+        } else {
+            self
+        }
+    }
+
     fn new_str(data: &'static str) -> Self {
         Self::_new(true, false, data.as_bytes())
     }

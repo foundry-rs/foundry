@@ -22,7 +22,7 @@ pub struct Cheatcode<'a> {
     // Manually-specified fields.
     /// The group that the cheatcode belongs to.
     pub group: Group,
-    /// The current status of the cheatcode. E.g. whether it is stable or experimental, etc.
+    /// The current status of the cheatcode. E.g. whether it is stable or deprecated, etc.
     pub status: Status<'a>,
     /// Whether the cheatcode is safe to use inside of scripts. E.g. it does not change state in an
     /// unexpected way.
@@ -37,25 +37,17 @@ pub struct Cheatcode<'a> {
 pub enum Status<'a> {
     /// The cheatcode and its API is currently stable.
     Stable,
-    /// The cheatcode is unstable, meaning it may contain bugs and may break its API on any
-    /// release.
-    ///
-    /// Use of experimental cheatcodes will result in a warning.
-    Experimental,
     /// The cheatcode has been deprecated, meaning it will be removed in a future release.
     ///
     /// Contains the optional reason for deprecation.
     ///
-    /// Use of deprecated cheatcodes is discouraged and will result in a warning.
+    /// `forge test` warns once per test suite that uses a deprecated cheatcode.
     Deprecated(Option<&'a str>),
-    /// The cheatcode has been removed and is no longer available for use.
-    ///
-    /// Use of removed cheatcodes will result in a hard error.
-    Removed,
     /// The cheatcode is only used internally for foundry testing and may be changed or removed at
     /// any time.
     ///
-    /// Use of internal cheatcodes is discouraged and will result in a warning.
+    /// Internal cheatcodes are not included in forge-std's `Vm` interface. Foundry does not check
+    /// their use at runtime.
     Internal,
 }
 

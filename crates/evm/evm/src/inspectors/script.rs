@@ -10,7 +10,7 @@ use revm::{
 
 /// An inspector that enforces certain rules during script execution.
 ///
-/// Currently, it only warns if the `ADDRESS` opcode is used within the script's main contract.
+/// Currently, it reverts if the `ADDRESS` opcode is used within the script's main contract.
 #[derive(Clone, Debug, Default)]
 pub struct ScriptExecutionInspector {
     /// The address of the script contract being executed.

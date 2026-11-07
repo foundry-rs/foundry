@@ -44,7 +44,7 @@ impl AcceptableRevertParameters {
 }
 
 impl Cheatcode for assumeCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { condition } = self;
         if *condition { Ok(Default::default()) } else { Err(Error::from(MAGIC_ASSUME)) }
     }

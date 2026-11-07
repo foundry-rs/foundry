@@ -111,6 +111,29 @@ pub(crate) fn byte_word_dynamic(cx: &mut SymCx, index: SymExpr, word: SymExpr) -
     result
 }
 
+/// Returns the number of leading zero bits in `value`, or 256 when it is zero.
+pub(crate) fn clz_word(cx: &mut SymCx, value: SymExpr) -> SymExpr {
+    if let Some(value) = value.as_const() {
+        return SymExpr::constant(cx, U256::from(value.leading_zeros()));
+    }
+
+    // Binary search: shift out high zero halves and add their widths.
+    let mut count = SymExpr::zero(cx);
+    let mut word = value.clone();
+    for bits in [128, 64, 32, 16, 8, 4, 2, 1] {
+        let high_zero =
+            SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &word, U256::ONE << (256 - bits));
+        let added = SymExpr::constant(cx, U256::from(bits));
+        let added_count = SymExpr::binop(cx, SymBinOp::Add, count.clone(), added);
+        count = SymExpr::ite(cx, high_zero.clone(), added_count, count);
+        let shifted = shift_left(cx, word.clone(), bits);
+        word = SymExpr::ite(cx, high_zero, shifted, word);
+    }
+    let is_zero = SymBoolExpr::eq_word_const(cx, &value, U256::ZERO);
+    let full = SymExpr::constant(cx, U256::from(256));
+    SymExpr::ite(cx, is_zero, full, count)
+}
+
 /// Returns the byte extraction expression for a symbolic word.
 pub(crate) fn byte_expr(cx: &mut SymCx, index: usize, expr: &SymExpr) -> SymExpr {
     debug_assert!(index < 32);
@@ -132,6 +155,17 @@ pub(crate) fn shift_left(cx: &mut SymCx, value: SymExpr, bits: usize) -> SymExpr
 pub(crate) fn is_assertion_revert(data: &[u8]) -> bool {
     Panic::abi_decode(data).is_ok_and(|panic| panic.kind() == Some(PanicKind::Assert))
         || is_revert_assertion_failure(data)
+}
+
+pub(crate) fn cheatcode_error_revert_condition(
+    cx: &mut SymCx,
+    data: &SymReturnData,
+) -> Option<SymBoolExpr> {
+    let selector = SymBytes::concrete(cx, Vm::CheatcodeError::SELECTOR.to_vec());
+    let prefix = data.bytes.prefix_condition(cx, &selector)?;
+    let selector_len = SymExpr::constant(cx, U256::from(selector.len()));
+    let has_selector = SymBoolExpr::cmp_word_expr(cx, SymCmpOp::Uge, &data.len_word, selector_len);
+    Some(SymBoolExpr::and(cx, vec![has_selector, prefix]))
 }
 
 pub(crate) fn is_revert_assertion_failure(data: &[u8]) -> bool {

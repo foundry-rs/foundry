@@ -14,6 +14,22 @@ use std::mem::replace;
 /// The max length of arrays we fuzz for is 256.
 const MAX_ARRAY_LEN: usize = 256;
 
+/// Share of dictionary picks that take a typed sample of the parameter type when the type has
+/// any. The rest come from the untyped pool, which also holds account addresses, bytecode
+/// constants and storage words without a layout.
+const TYPED_SAMPLE_SHARE: f64 = 0.8;
+
+/// Length of a dynamic array: mostly short, sometimes medium, rarely long. Every level of a
+/// nested array draws its own length, so a uniform length up to `MAX_ARRAY_LEN` gave two levels
+/// an average of 16k elements and single calls of several MiB of calldata.
+fn array_len() -> impl Strategy<Value = usize> {
+    prop_oneof![
+        8 => 0..=4usize,
+        6 => 5..=32usize,
+        1 => 33..MAX_ARRAY_LEN,
+    ]
+}
+
 /// Given a parameter type, returns a strategy for generating values for that type.
 ///
 /// See [`fuzz_param_with_fixtures`] for more information.
@@ -114,7 +130,9 @@ fn fuzz_param_inner(
                 .boxed()
         }
         DynSolType::Array(ref param) => {
-            proptest::collection::vec(fuzz_param_inner(param, None), 0..MAX_ARRAY_LEN)
+            let element = fuzz_param_inner(param, None);
+            array_len()
+                .prop_flat_map(move |len| proptest::collection::vec(element.clone(), len))
                 .prop_map(DynSolValue::Array)
                 .boxed()
         }
@@ -130,21 +148,54 @@ pub(crate) fn fuzz_param_from_state(
     param: &DynSolType,
     state: &impl DictionaryRead,
 ) -> BoxedStrategy<DynSolValue> {
+    let generated = fuzz_param_from_state_inner(param, state);
+    if !param.is_dynamic() && !matches!(param, DynSolType::Tuple(_) | DynSolType::FixedArray(..)) {
+        return generated;
+    }
+
+    // Composite and dynamic values: half the time, reuse a whole value of exactly this type that
+    // the target returned or emitted, so related fields stay consistent (e.g. a struct read from a
+    // getter passed back as-is). Otherwise, or when none was observed, generate it piecewise.
+    let state = state.clone();
+    let param = param.clone();
+    (any::<(bool, prop::sample::Index)>(), generated)
+        .prop_map(move |((reuse, index), generated)| {
+            if !reuse {
+                return generated;
+            }
+            state
+                .with_dictionary(|dict| {
+                    dict.composite_samples(&param).and_then(|values| {
+                        values.get_index(index.index(values.len())).map(|(_, value)| value.clone())
+                    })
+                })
+                .unwrap_or(generated)
+        })
+        .boxed()
+}
+
+fn fuzz_param_from_state_inner(
+    param: &DynSolType,
+    state: &impl DictionaryRead,
+) -> BoxedStrategy<DynSolValue> {
     // Value strategy that uses the state.
     let value = || {
         let state = state.clone();
         let param = param.clone();
-        // Generate a bias and use it to pick samples or non-persistent values (50 / 50).
-        // Use `Index` instead of `Selector` when selecting a value to avoid iterating over the
-        // entire dictionary.
-        any::<(bool, prop::sample::Index)>().prop_map(move |(bias, index)| {
-            state.with_dictionary(|dict| {
-                let values = if bias { dict.samples(&param) } else { None }
-                    .unwrap_or_else(|| dict.values())
-                    .as_slice();
-                values[index.index(values.len())]
-            })
-        })
+        // Mostly pick a typed sample of the parameter type, otherwise a value from the untyped
+        // pool. Use `Index` instead of `Selector` when selecting a value to avoid iterating over
+        // the entire dictionary.
+        (proptest::bool::weighted(TYPED_SAMPLE_SHARE), any::<prop::sample::Index>()).prop_map(
+            move |(typed, index)| {
+                state.with_dictionary(|dict| {
+                    let values = if typed { dict.samples(&param) } else { None }
+                        .filter(|samples| !samples.is_empty())
+                        .unwrap_or_else(|| dict.values())
+                        .as_slice();
+                    values[index.index(values.len())]
+                })
+            },
+        )
     };
 
     // Convert the value based on the parameter type
@@ -292,7 +343,9 @@ pub(crate) fn fuzz_param_from_state(
                 .boxed()
         }
         DynSolType::Array(ref param) => {
-            proptest::collection::vec(fuzz_param_from_state(param, state), 0..MAX_ARRAY_LEN)
+            let element = fuzz_param_from_state(param, state);
+            array_len()
+                .prop_flat_map(move |len| proptest::collection::vec(element.clone(), len))
                 .prop_map(DynSolValue::Array)
                 .boxed()
         }
@@ -548,12 +601,14 @@ pub fn generate_msg_value(test_runner: &mut TestRunner) -> U256 {
 
 #[cfg(test)]
 mod tests {
+    use super::{fuzz_msg_value, fuzz_param_from_state, mutate_param_value, select_random_address};
     use crate::{
         FuzzFixtures,
-        strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state},
+        invariant::SenderFilters,
+        strategies::{EvmFuzzState, LiteralMaps, fuzz_calldata, fuzz_calldata_from_state},
     };
     use alloy_dyn_abi::{DynSolType, DynSolValue};
-    use alloy_primitives::{B256, U256};
+    use alloy_primitives::{Address, B256, U256, keccak256};
     use foundry_common::abi::get_func;
     use foundry_config::FuzzDictionaryConfig;
     use proptest::{
@@ -565,8 +620,6 @@ mod tests {
 
     #[test]
     fn payable_value_weight_controls_non_zero_msg_value() {
-        use super::fuzz_msg_value;
-
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
         let mut runner = proptest::test_runner::TestRunner::new(cfg);
 
@@ -609,6 +662,43 @@ mod tests {
     }
 
     #[test]
+    fn dynamic_array_lengths_are_mostly_short() {
+        let ty = DynSolType::Array(Box::new(DynSolType::Uint(256)));
+        let strategy = super::fuzz_param_with_fixtures(&ty, None, "values");
+        let mut runner = TestRunner::deterministic();
+        let lengths = (0..1000)
+            .map(|_| strategy.new_tree(&mut runner).unwrap().current().as_array().unwrap().len())
+            .collect::<Vec<_>>();
+
+        let short = lengths.iter().filter(|&&len| len <= 4).count();
+        let long = lengths.iter().filter(|&&len| len > 32).count();
+        assert!((450..=620).contains(&short), "short arrays {short} of 1000");
+        assert!((20..=120).contains(&long), "long arrays {long} of 1000");
+        assert!(lengths.iter().all(|&len| len < super::MAX_ARRAY_LEN));
+    }
+
+    #[test]
+    fn typed_samples_are_preferred_over_the_value_pool() {
+        let word = |value: u64| B256::from(U256::from(value));
+        let mut literals = LiteralMaps::default();
+        literals.words.entry(DynSolType::Uint(256)).or_default().extend([1, 2, 3].map(word));
+        let mut state = EvmFuzzState::test();
+        state.seed_literals(literals);
+        state.collect_values((100..200).map(word));
+
+        let strategy = super::fuzz_param_from_state(&DynSolType::Uint(256), &state);
+        let mut runner = TestRunner::deterministic();
+        let typed = (0..1000)
+            .filter(|_| {
+                let value = strategy.new_tree(&mut runner).unwrap().current();
+                matches!(value.as_uint(), Some((value, 256)) if value <= U256::from(3))
+            })
+            .count();
+        // About `TYPED_SAMPLE_SHARE` of the draws are typed samples, the rest pool values.
+        assert!((700..=900).contains(&typed), "typed samples drawn {typed} of 1000");
+    }
+
+    #[test]
     fn string_fixtures_are_emitted_verbatim() {
         let fixture = DynSolValue::String("  padded fixture  \0".to_string());
         let strategy = super::fuzz_param_with_fixtures(
@@ -626,12 +716,6 @@ mod tests {
 
     #[test]
     fn can_fuzz_string_and_bytes_with_ast_literals_and_hashes() {
-        use super::fuzz_param_from_state;
-        use crate::strategies::LiteralMaps;
-        use alloy_dyn_abi::DynSolType;
-        use alloy_primitives::keccak256;
-        use proptest::strategy::Strategy;
-
         // Seed dict with string values and their hashes --> mimic `CheatcodeAnalysis` behavior.
         let mut literals = LiteralMaps::default();
         literals.strings.insert("hello".to_string());
@@ -684,10 +768,6 @@ mod tests {
 
     #[test]
     fn mutate_address_can_select_from_dictionary() {
-        use super::mutate_param_value;
-        use alloy_dyn_abi::{DynSolType, DynSolValue};
-        use alloy_primitives::Address;
-
         let mut state = EvmFuzzState::test();
 
         // Add addresses to dictionary via state values.
@@ -737,10 +817,6 @@ mod tests {
 
     #[test]
     fn mutate_address_prefers_targeted_senders() {
-        use super::select_random_address;
-        use crate::invariant::SenderFilters;
-        use alloy_primitives::Address;
-
         let mut state = EvmFuzzState::test();
 
         // Add addresses to dictionary (these should NOT be selected when targeted is set).
@@ -789,10 +865,6 @@ mod tests {
 
     #[test]
     fn mutate_address_respects_excluded_senders() {
-        use super::select_random_address;
-        use crate::invariant::SenderFilters;
-        use alloy_primitives::Address;
-
         let mut state = EvmFuzzState::test();
 
         // Add addresses to dictionary.
@@ -827,5 +899,34 @@ mod tests {
 
         assert!(!got_excluded, "select_random_address should not select excluded addresses");
         assert!(got_valid, "select_random_address should select valid (non-excluded) addresses");
+    }
+
+    #[test]
+    fn reuses_whole_struct_from_dictionary() {
+        let value = DynSolValue::Tuple(vec![
+            DynSolValue::Address(Address::repeat_byte(0x44)),
+            DynSolValue::Uint(U256::from(123_456_789u64), 256),
+            DynSolValue::Uint(U256::from(77), 32),
+        ]);
+        let ty = value.as_type().unwrap();
+        let mut state = EvmFuzzState::test();
+        state.collect_sample_values([value.clone()], 8);
+        // Other typed samples, so a struct generated field by field rarely equals the recorded one.
+        state.collect_sample_values(
+            [
+                DynSolValue::Address(Address::repeat_byte(0x55)),
+                DynSolValue::Uint(U256::from(1), 256),
+                DynSolValue::Uint(U256::from(2), 32),
+            ],
+            8,
+        );
+
+        let strategy = super::fuzz_param_from_state(&ty, &state);
+        let mut runner = TestRunner::deterministic();
+        let reused =
+            (0..200).filter(|_| strategy.new_tree(&mut runner).unwrap().current() == value).count();
+        // About half the draws reuse the recorded struct whole; one in eight of the rest rebuilds
+        // it from the typed samples.
+        assert!((50..=150).contains(&reused), "reused {reused} of 200");
     }
 }

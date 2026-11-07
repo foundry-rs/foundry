@@ -7,11 +7,10 @@ use anvil::{EthereumHardfork, NodeConfig, spawn};
 use foundry_common::LIBRARY_DEPLOYER;
 use foundry_config::{CompilationRestrictions, SettingsOverrides, filter::GlobMatcher};
 use foundry_test_utils::{
-    TestCommand, assert_data_eq,
+    TestCommand,
     rpc::{self, next_etherscan_api_key, rpc_endpoints},
-    snapbox::IntoData,
     str,
-    util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION, get_vyper},
+    util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
 use similar_asserts::assert_eq;
 use std::{io::Write, path::PathBuf, str::FromStr};
@@ -44,6 +43,7 @@ mod symbolic_false_pass_prevention;
 mod symbolic_helpers;
 mod symbolic_invariant;
 mod symbolic_limits;
+mod symbolic_live;
 mod symbolic_memory;
 mod symbolic_opcodes;
 mod symbolic_parity;
@@ -67,63 +67,6 @@ fn setup_testdata_cmd(cmd: &mut TestCommand) {
         }
     }
     drop(dotenv);
-}
-
-fn collect_debug_dump_values<'a, T>(
-    value: &'a serde_json::Value,
-    collected: &mut Vec<T>,
-    collect_from_object: &mut impl FnMut(&'a serde_json::Map<String, serde_json::Value>, &mut Vec<T>),
-) {
-    match value {
-        serde_json::Value::Array(values) => {
-            for value in values {
-                collect_debug_dump_values(value, collected, collect_from_object);
-            }
-        }
-        serde_json::Value::Object(map) => {
-            collect_from_object(map, collected);
-            for value in map.values() {
-                collect_debug_dump_values(value, collected, collect_from_object);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn collect_debug_dump_internal_calls<'a>(
-    value: &'a serde_json::Value,
-    calls: &mut Vec<&'a serde_json::Value>,
-) {
-    collect_debug_dump_values(value, calls, &mut |map, calls| {
-        if let Some(call) = map
-            .get("InternalCall")
-            .and_then(|value| value.as_array())
-            .and_then(|values| values.first())
-        {
-            calls.push(call);
-        }
-    });
-}
-
-fn collect_debug_dump_decoded_lines<'a>(value: &'a serde_json::Value, lines: &mut Vec<&'a str>) {
-    collect_debug_dump_values(value, lines, &mut |map, lines| {
-        if let Some(line) = map.get("Line").and_then(|value| value.as_str()) {
-            lines.push(line);
-        }
-    });
-}
-
-fn collect_debug_dump_storage_changes<'a>(
-    value: &'a serde_json::Value,
-    changes: &mut Vec<&'a serde_json::Value>,
-) {
-    collect_debug_dump_values(value, changes, &mut |map, changes| {
-        if let Some(change) = map.get("storage_change")
-            && !change.is_null()
-        {
-            changes.push(change);
-        }
-    });
 }
 
 /// Contracts excluded from the main `testdata` run because they depend on flaky external RPCs.
@@ -1966,6 +1909,97 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
+// A cheatcode fork takes the `--fork-retries` and `--fork-retry-backoff` of the run, and the
+// retry settings of the `rpc_endpoints` entry it names by alias or by the URL `vm.rpcUrl` returns.
+// <https://github.com/foundry-rs/foundry/issues/18071>
+#[forgetest]
+async fn fork_cheatcode_retry_settings(prj: _, cmd: _) {
+    let chain_id_requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = chain_id_requests.clone();
+    let router =
+        axum::Router::new().fallback(move |axum::Json(body): axum::Json<serde_json::Value>| {
+            let requests =
+                if let serde_json::Value::Array(requests) = body { requests } else { vec![body] };
+            let chain_id = requests.iter().filter(|request| request["method"] == "eth_chainId");
+            counter.fetch_add(chain_id.count(), std::sync::atomic::Ordering::SeqCst);
+            async {
+                (
+                    axum::http::StatusCode::TOO_MANY_REQUESTS,
+                    axum::Json(serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "error": { "code": -32005, "message": "Too Many Requests" },
+                    })),
+                )
+            }
+        });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    std::fs::write(
+        prj.config(),
+        format!(
+            r#"[rpc_endpoints]
+stub = {{ endpoint = "{endpoint}/stub", retries = 2, retry_backoff = 1 }}
+late = {{ endpoint = "${{FORK_RETRY_SETTINGS_LATE_URL}}", retries = 2, retry_backoff = 1 }}
+plain = "{endpoint}/plain"
+"#
+        ),
+    )
+    .unwrap();
+
+    prj.add_test(
+        "ForkRetries.t.sol",
+        &format!(
+            r#"
+interface Vm {{
+    function createSelectFork(string calldata urlOrAlias) external returns (uint256 forkId);
+    function rpcUrl(string calldata rpcAlias) external view returns (string memory json);
+    function setEnv(string calldata name, string calldata value) external;
+}}
+
+Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+contract ByUrl {{
+    function testFork() public {{
+        vm.createSelectFork(vm.rpcUrl("stub"));
+    }}
+}}
+
+contract ByLateUrl {{
+    function testFork() public {{
+        vm.setEnv("FORK_RETRY_SETTINGS_LATE_URL", "{endpoint}/late");
+        vm.createSelectFork(vm.rpcUrl("late"));
+    }}
+}}
+
+contract ByAlias {{
+    function testFork() public {{
+        vm.createSelectFork("stub");
+    }}
+}}
+
+contract Plain {{
+    function testFork() public {{
+        vm.createSelectFork("plain");
+    }}
+}}
+"#
+        ),
+    );
+
+    // Each attempt sends one `eth_chainId`, so a fork with `n` retries sends `n + 1`.
+    let mut attempts = |args: &[&str]| {
+        cmd.forge_fuse().args(["test", "--no-storage-caching"]).args(args).assert_failure();
+        chain_id_requests.swap(0, std::sync::atomic::Ordering::SeqCst)
+    };
+    let cli = ["--fork-retries", "4", "--fork-retry-backoff", "1"];
+    assert_eq!(attempts(&["--mc", "ByUrl"]), 3);
+    assert_eq!(attempts(&[&["--mc", "ByLateUrl"][..], &cli].concat()), 3);
+    assert_eq!(attempts(&[&["--mc", "ByAlias"][..], &cli].concat()), 3);
+    assert_eq!(attempts(&[&["--mc", "Plain"][..], &cli].concat()), 5);
+}
+
 // <https://github.com/foundry-rs/foundry/issues/7574>
 #[forgetest]
 async fn failed_fork_test_reports_block_number(prj: _, cmd: _) {
@@ -3288,7 +3322,7 @@ contract FuzzLogsTest {
 Compiler run successful!
 
 Ran 1 test for test/FuzzLogs.t.sol:FuzzLogsTest
-[FAIL: target value; counterexample: calldata=[..] args=[154]] testFuzzLogs(uint256) (runs: 3, [AVG_GAS])
+[FAIL: target value; counterexample: calldata=[..] args=[154]] testFuzzLogs(uint256) (runs: 2, [AVG_GAS])
 Logs:
   FAILING CASE: 154
 
@@ -3298,7 +3332,7 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/FuzzLogs.t.sol:FuzzLogsTest
-[FAIL: target value; counterexample: calldata=[..] args=[154]] testFuzzLogs(uint256) (runs: 3, [AVG_GAS])
+[FAIL: target value; counterexample: calldata=[..] args=[154]] testFuzzLogs(uint256) (runs: 2, [AVG_GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -4365,6 +4399,75 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
 "#]]);
 }
 
+#[forgetest]
+async fn fork_setup_error_containing_skipped_fails(prj: _, cmd: _) {
+    let (_, handle) = spawn(NodeConfig::test()).await;
+    let upstream = handle.http_endpoint();
+    let client = reqwest::Client::new();
+    let router = axum::Router::new().route(
+        "/",
+        axum::routing::post(move |axum::Json(request): axum::Json<serde_json::Value>| {
+            let upstream = upstream.clone();
+            let client = client.clone();
+            async move {
+                let error = match request["method"].as_str() {
+                    // Force the separate account requests even when Anvil supports account info.
+                    Some("eth_getAccountInfo") => Some((-32601, "method not found")),
+                    Some("eth_getBalance") => Some((-32603, "account lookup skipped by provider")),
+                    _ => None,
+                };
+                if let Some((code, message)) = error {
+                    return axum::Json(serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": request["id"],
+                        "error": { "code": code, "message": message },
+                    }));
+                }
+                let response = client.post(upstream).json(&request).send().await.unwrap();
+                axum::Json(response.json::<serde_json::Value>().await.unwrap())
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+    prj.add_test(
+        "ForkSetup.t.sol",
+        r#"
+contract ForkSetup {
+    function test_shouldRun() public pure {}
+}
+"#,
+    );
+
+    cmd.env("RUST_LOG", "off");
+    cmd.args(["test", "--fork-url", &endpoint, "--no-storage-caching"])
+        .assert_failure()
+        .stderr_eq(str![""])
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/ForkSetup.t.sol:ForkSetup
+[FAIL: failed to get account for 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38: server returned an error response: error code -32603: account lookup skipped by provider] setUp() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/ForkSetup.t.sol:ForkSetup
+[FAIL: failed to get account for 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38: server returned an error response: error code -32603: account lookup skipped by provider] setUp() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+"#]]);
+}
+
 // <https://github.com/foundry-rs/foundry/issues/16197>
 #[forgetest_init]
 fn skip_setup_after_caught_revert(prj: _, cmd: _) {
@@ -4935,6 +5038,18 @@ contract Dummy {
     cmd.assert_success();
 
     assert!(dump_path.exists());
+
+    // A file, such as a dump in the single-file format of 1.8, is rejected before the run.
+    let file_path = prj.root().join("old_dump.json");
+    std::fs::write(&file_path, "{}").unwrap();
+    cmd.forge_fuse()
+        .args(["test", "--mt", "testDummy", "--debug", "--dump", file_path.to_str().unwrap()])
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Error: --dump now takes a directory, but [..]old_dump.json is not one; remove it or pass a directory path
+
+"#]]);
 }
 
 #[forgetest]
@@ -4965,16 +5080,19 @@ contract PrecompileDebugTest {
     cmd.assert_success();
 
     let dump: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
-    let mut lines = Vec::new();
-    collect_debug_dump_decoded_lines(&dump, &mut lines);
-
-    assert!(
-        lines.iter().any(|line| {
-            *line == "precompile: PRECOMPILES::sha256(0x68656c6c6f) -> 0x2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
-        }),
-        "missing decoded precompile line in debugger dump: {lines:?}"
+        serde_json::from_str(&std::fs::read_to_string(dump_path.join("trace.json")).unwrap())
+            .unwrap();
+    let calls = dump["artifacts"]["calls"].as_array().unwrap();
+    let call = calls
+        .iter()
+        .find(|call| call["to"] == "0x0000000000000000000000000000000000000002")
+        .unwrap();
+    assert_eq!(call["input"], "0x68656c6c6f");
+    assert_eq!(
+        call["output"],
+        "0x2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
     );
+    assert_eq!(call["success"], true);
 }
 
 #[forgetest]
@@ -5014,79 +5132,16 @@ contract TempoPrecompileDebugTest {
     cmd.assert_success();
 
     let dump: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
-    let mut lines = Vec::new();
-    collect_debug_dump_decoded_lines(&dump, &mut lines);
-
-    assert!(
-        lines.iter().any(|line| line.contains("precompile: FeeManager::userTokens(")),
-        "missing decoded Tempo precompile line in debugger dump: {lines:?}"
-    );
-}
-
-#[forgetest]
-fn debug_dump_disambiguates_overloaded_internal_functions(prj: _, cmd: _) {
-    prj.add_source(
-        "DebugVars",
-        r"
-contract DebugVarsTest {
-    function testOverloadedInternalDebugVars() public {
-        uint256 amount = foo(uint256(42));
-        address who = foo(address(0x000000000000000000000000000000000000bEEF));
-
-        require(amount == 43, 'bad amount');
-        require(who == address(0x000000000000000000000000000000000000bEEF), 'bad address');
-    }
-
-    function foo(uint256 amount) internal pure returns (uint256 out) {
-        uint256 next = amount + 1;
-        return next;
-    }
-
-    function foo(address who) internal pure returns (address out) {
-        address seen = who;
-        return seen;
-    }
-}
-",
-    );
-
-    let dump_path = prj.root().join("overloads_dump.json");
-
-    cmd.args([
-        "test",
-        "--mt",
-        "testOverloadedInternalDebugVars",
-        "--debug",
-        "--dump",
-        dump_path.to_str().unwrap(),
-    ]);
-    cmd.assert_success();
-
-    let dump: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
-    let mut calls = Vec::new();
-    collect_debug_dump_internal_calls(&dump, &mut calls);
-
-    let uint_call = calls
+        serde_json::from_str(&std::fs::read_to_string(dump_path.join("trace.json")).unwrap())
+            .unwrap();
+    let calls = dump["artifacts"]["calls"].as_array().unwrap();
+    let call = calls
         .iter()
-        .find(|call| call["func_name"] == "DebugVarsTest::foo(uint256)")
-        .expect("missing uint256 overload in debugger dump");
-    assert_eq!(uint_call["args"], serde_json::json!(["42"]));
-    assert_eq!(uint_call["return_data"], serde_json::json!(["43"]));
-
-    let address_call = calls
-        .iter()
-        .find(|call| call["func_name"] == "DebugVarsTest::foo(address)")
-        .expect("missing address overload in debugger dump");
-    assert_eq!(
-        address_call["args"],
-        serde_json::json!(["0x000000000000000000000000000000000000bEEF"])
-    );
-    assert_eq!(
-        address_call["return_data"],
-        serde_json::json!(["0x000000000000000000000000000000000000bEEF"])
-    );
+        .find(|call| call["to"] == "0xfeec000000000000000000000000000000000000")
+        .unwrap();
+    assert_eq!(call["call_type"], "STATICCALL");
+    assert_eq!(call["success"], true);
+    assert_eq!(call["output"].as_str().unwrap().len(), 66);
 }
 
 // Progresses <https://github.com/foundry-rs/foundry/issues/927>: debugger storage view.
@@ -5115,336 +5170,17 @@ contract DebugStorageTest {
     cmd.assert_success();
 
     let dump: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
-    let mut storage_changes = Vec::new();
-    collect_debug_dump_storage_changes(&dump, &mut storage_changes);
-
-    assert!(
-        storage_changes.iter().any(|change| change["reason"] == "SSTORE"),
-        "debugger dump should include an SSTORE storage change: {storage_changes:#?}"
-    );
-    assert!(
-        storage_changes.iter().any(|change| change["reason"] == "SLOAD"),
-        "debugger dump should include an SLOAD storage access: {storage_changes:#?}"
-    );
-}
-
-// Resolve the executed contract before decoding internal calls in tests and scripts.
-#[forgetest]
-fn debug_dump_identifies_etched_code_by_executed_bytecode(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.bytecode_hash = "none".parse().unwrap();
-        config.optimizer = Some(false);
-        config.tracing.decode_internal = true;
-    });
-    prj.add_test(
-        "EtchDebug.t.sol",
-        r#"
-interface Vm {
-    function etch(address target, bytes calldata newRuntimeBytecode) external;
-}
-
-contract Trusted {
-    function trustedOnly() external pure returns (uint256) { return trustedInternal(); }
-    function trustedInternal() internal pure returns (uint256) { return 1; }
-}
-
-contract Payload {
-    function attackerEntry() external pure returns (uint256) { return payloadInternal(); }
-    function payloadInternal() internal pure returns (uint256) { return 42; }
-}
-
-contract A {
-    uint256 private stored;
-    constructor() { stored = 1; }
-    function value() external pure returns (uint256) { return 7; }
-}
-
-contract B {
-    uint256 private stored;
-    constructor() { stored = 2; }
-    function value() external pure returns (uint256) { return 7; }
-}
-
-contract WithImmutable {
-    uint256 private immutable stored;
-    constructor(uint256 value_) { stored = value_; }
-    function value() external view returns (uint256) { return stored; }
-}
-
-contract WithConstant {
-    function value() external pure returns (uint256) { return 65534; }
-}
-
-contract EtchDebugTest {
-    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
-    address constant PREEXISTING = address(0xBEEF);
-    Trusted trusted;
-    B b;
-    WithImmutable initialized;
-
-    function setUp() public {
-        trusted = new Trusted();
-        b = new B();
-        initialized = new WithImmutable(65535);
-        vm.etch(PREEXISTING, type(Trusted).runtimeCode);
-    }
-
-    function testEtchDeployed() public {
-        require(trusted.trustedOnly() == 1);
-        vm.etch(address(trusted), type(Payload).runtimeCode);
-        require(Payload(address(trusted)).attackerEntry() == 42);
-    }
-
-    function testEtchPreexisting() public {
-        vm.etch(PREEXISTING, type(Payload).runtimeCode);
-        require(Payload(PREEXISTING).attackerEntry() == 42);
-    }
-
-    function testIdenticalRuntime() public view {
-        require(keccak256(type(A).runtimeCode) == keccak256(type(B).runtimeCode));
-        require(b.value() == 7);
-    }
-
-    function testEtchImmutable() public {
-        vm.etch(address(trusted), address(initialized).code);
-        require(WithImmutable(address(trusted)).value() == 65535);
-    }
-
-    function testEtchUnknown() public {
-        bytes memory code = type(Trusted).runtimeCode;
-        // Change the internal function's return value without changing its jump structure.
-        bool changed;
-        for (uint256 i; i + 1 < code.length; ++i) {
-            if (code[i] == 0x60 && code[i + 1] == 0x01) {
-                code[i + 1] = 0x02;
-                changed = true;
-                break;
-            }
-        }
-        require(changed);
-        vm.etch(address(trusted), code);
-        (bool ok, bytes memory output) = address(trusted).call(abi.encodeCall(Trusted.trustedOnly, ()));
-        require(ok && abi.decode(output, (uint256)) == 2);
-    }
-}
-"#,
-    );
-
-    let dump_path = prj.root().join("etch_dump.json");
-    for (test, expected, expected_decoded) in [
-        (
-            "testEtchDeployed",
-            str![[r#"
-[
-  ["Trusted", ["Trusted::trustedInternal()"]],
-  ["Payload", ["Payload::payloadInternal()"]]
-]
-"#]],
-            str![[r#"[["trustedOnly()", "Trusted"], ["attackerEntry()", "Payload"]]"#]],
-        ),
-        (
-            "testEtchPreexisting",
-            str![[r#"
-[["Payload", ["Payload::payloadInternal()"]]]
-"#]],
-            str![[r#"[["attackerEntry()", "Payload"]]"#]],
-        ),
-        ("testIdenticalRuntime", str![[r#"[["B", []]]"#]], str![[r#"[["value()", "B"]]"#]]),
-        (
-            "testEtchImmutable",
-            str![[r#"[["WithImmutable", []]]"#]],
-            str![[r#"[["value()", "WithImmutable"]]"#]],
-        ),
-        ("testEtchUnknown", str![[r#"[[null, []]]"#]], str![[r#"[["trustedOnly()", null]]"#]]),
-    ] {
-        for command in ["test", "script"] {
-            let args = if command == "test" {
-                vec!["test".to_string(), "--mt".to_string(), test.to_string()]
-            } else {
-                vec![
-                    "script".to_string(),
-                    "test/EtchDebug.t.sol:EtchDebugTest".to_string(),
-                    "--sig".to_string(),
-                    format!("{test}()"),
-                ]
-            };
-            cmd.forge_fuse()
-                .args(args)
-                .args(["--debug", "--dump", dump_path.to_str().unwrap()])
-                .assert_success();
-            let dump: serde_json::Value =
-                serde_json::from_str(&std::fs::read_to_string(&dump_path).unwrap()).unwrap();
-            let nodes = dump["debug_arena"]
-                .as_array()
-                .unwrap()
+        serde_json::from_str(&std::fs::read_to_string(dump_path.join("trace.json")).unwrap())
+            .unwrap();
+    let steps = dump["steps"].as_array().unwrap();
+    for op in ["SSTORE", "SLOAD"] {
+        assert!(
+            steps
                 .iter()
-                .filter(|node| node["contract_name"] != "EtchDebugTest")
-                .collect::<Vec<_>>();
-            let frames = nodes
-                .iter()
-                .map(|node| {
-                    let mut calls = Vec::new();
-                    collect_debug_dump_internal_calls(node, &mut calls);
-                    let functions = calls.iter().map(|call| &call["func_name"]).collect::<Vec<_>>();
-                    serde_json::json!([node["contract_name"], functions])
-                })
-                .collect::<Vec<_>>();
-            assert_data_eq!(
-                serde_json::to_string(&frames).unwrap().is_json(),
-                expected.clone().is_json()
-            );
-            if command == "test" {
-                let decoded = nodes
-                    .iter()
-                    .map(|node| {
-                        serde_json::json!([
-                            node["decoded"]["call_data"]["signature"],
-                            node["decoded"]["label"]
-                        ])
-                    })
-                    .collect::<Vec<_>>();
-                assert_data_eq!(
-                    serde_json::to_string(&decoded).unwrap().is_json(),
-                    expected_decoded.clone().is_json()
-                );
-            }
-        }
-    }
-}
-
-// Metadata-exact matches outrank the old address identity after an etch.
-#[forgetest]
-fn debug_dump_prefers_exact_metadata(prj: _, cmd: _) {
-    for name in ["Trusted", "Payload"] {
-        prj.add_source(
-            name,
-            &format!(
-                "contract {name} {{ function value() external pure returns (uint256) {{ return 7; }} }}"
-            ),
+                .any(|step| step["op"] == op && !step["storage"].as_object().unwrap().is_empty()),
+            "missing storage snapshot for {op}"
         );
     }
-    prj.add_test(
-        "MetadataDebug.t.sol",
-        r#"
-import "../src/Trusted.sol";
-import "../src/Payload.sol";
-
-interface Vm {
-    function etch(address target, bytes calldata code) external;
-}
-
-contract MetadataDebugTest {
-    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
-    Trusted target;
-
-    function setUp() public { target = new Trusted(); }
-
-    function testMetadata() public {
-        require(keccak256(type(Trusted).runtimeCode) != keccak256(type(Payload).runtimeCode));
-        require(target.value() == 7);
-        vm.etch(address(target), type(Payload).runtimeCode);
-        require(Payload(address(target)).value() == 7);
-    }
-}
-"#,
-    );
-    let dump_path = prj.root().join("metadata_dump.json");
-    cmd.args(["test", "--mt", "testMetadata", "--debug", "--dump", dump_path.to_str().unwrap()])
-        .assert_success();
-    let dump: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
-    let frames = dump["debug_arena"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|node| node["contract_name"] != "MetadataDebugTest")
-        .map(|node| serde_json::json!([node["contract_name"], node["decoded"]["label"]]))
-        .collect::<Vec<_>>();
-    assert_data_eq!(
-        serde_json::to_string(&frames).unwrap().is_json(),
-        str![[r#"[["Trusted", "Trusted"], ["Payload", "Payload"]]"#]].is_json()
-    );
-}
-
-// Vyper runtime artifacts omit immutable data, but changes to the runtime must still be rejected.
-#[forgetest]
-fn debug_dump_identifies_vyper_immutables(prj: _, cmd: _) {
-    prj.update_config(|config| config.vyper.path = Some(get_vyper().path));
-    for (name, value, result) in [("Immutable", 42, "value"), ("Replacement", 99, "value + 1")] {
-        prj.add_raw_source(
-            &format!("{name}.vy"),
-            &format!(
-                r#"
-value: immutable(uint256)
-
-@deploy
-def __init__():
-    value = {value}
-
-@external
-@view
-def read() -> uint256:
-    return {result}
-"#
-            ),
-        );
-    }
-    prj.add_test(
-        "VyperDebug.t.sol",
-        r#"
-interface Vm {
-    function getCode(string calldata artifact) external view returns (bytes memory);
-    function etch(address target, bytes calldata code) external;
-}
-interface IImmutable { function read() external view returns (uint256); }
-
-contract VyperDebugTest {
-    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
-    address target;
-    address replacement;
-
-    function setUp() public {
-        target = deploy("Immutable.vy");
-        replacement = deploy("Replacement.vy");
-    }
-
-    function deploy(string memory artifact) internal returns (address deployed) {
-        bytes memory code = vm.getCode(artifact);
-        assembly { deployed := create(0, add(code, 32), mload(code)) }
-        require(deployed != address(0));
-    }
-
-    function testImmutables() public {
-        require(IImmutable(target).read() == 42);
-        vm.etch(target, replacement.code);
-        require(IImmutable(target).read() == 100);
-        bytes memory unknown = replacement.code;
-        unknown[0] = 0x00;
-        vm.etch(target, unknown);
-        (bool ok,) = target.call(abi.encodeCall(IImmutable.read, ()));
-        require(ok);
-    }
-}
-"#,
-    );
-    let dump_path = prj.root().join("vyper_dump.json");
-    cmd.args(["test", "--mt", "testImmutables", "--debug", "--dump", dump_path.to_str().unwrap()])
-        .assert_success();
-    let dump: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
-    let frames = dump["debug_arena"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|node| node["contract_name"] != "VyperDebugTest")
-        .map(|node| serde_json::json!([node["contract_name"], node["decoded"]["label"]]))
-        .collect::<Vec<_>>();
-    assert_data_eq!(
-        serde_json::to_string(&frames).unwrap().is_json(),
-        str![[r#"[["Immutable", "Immutable"], ["Replacement", "Replacement"], [null, null]]"#]]
-            .is_json()
-    );
 }
 
 // <https://github.com/foundry-rs/foundry/issues/10322>
@@ -6077,8 +5813,8 @@ fn should_show_state_changes(prj: _, cmd: _) {
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
 Traces:
-  [218890] CounterTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [218902] CounterTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [23784] Counter::setNumber(0)
     │   └─ ← [Stop]
@@ -6119,8 +5855,8 @@ fn tracing_verbosity_shows_state_changes_independently(prj: _, cmd: _) {
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
 Traces:
-  [218890] CounterTest::setUp()
-    ├─ [156801] → new ConfiguredCounter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [218902] CounterTest::setUp()
+    ├─ [156813] → new ConfiguredCounter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [23784] ConfiguredCounter::setNumber(0)
     │   └─ ← [Stop]
@@ -6413,8 +6149,8 @@ Logs:
   test increment failure
 
 Traces:
-  [218890] SuppressTracesTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [218902] SuppressTracesTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [23784] Counter::setNumber(0)
     │   └─ ← [Stop]
@@ -6466,8 +6202,8 @@ Logs:
   test increment failure
 
 Traces:
-  [218890] SuppressTracesTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [218902] SuppressTracesTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [23784] Counter::setNumber(0)
     │   └─ ← [Stop]
@@ -7374,8 +7110,8 @@ Logs:
   test non contract call failure
 
 Traces:
-  [238803] NonContractCallRevertTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [238815] NonContractCallRevertTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [43696] Counter::setNumber(1)
     │   └─ ← [Stop]
@@ -7396,8 +7132,8 @@ Logs:
   test non contract (void) call failure
 
 Traces:
-  [238803] NonContractCallRevertTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [238815] NonContractCallRevertTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [43696] Counter::setNumber(1)
     │   └─ ← [Stop]
@@ -7416,8 +7152,8 @@ Logs:
   test non supported fn selector call failure
 
 Traces:
-  [238803] NonContractCallRevertTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [238815] NonContractCallRevertTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [43696] Counter::setNumber(1)
     │   └─ ← [Stop]
@@ -7499,8 +7235,8 @@ No files changed, compilation skipped
 Ran 1 test for test/NonContractCallRevertTest.t.sol:NonContractCallRevertTest
 [FAIL: call reverted as expected, but without data] test_revert_data_exact_diagnostic() ([GAS])
 Traces:
-  [238803] NonContractCallRevertTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [238815] NonContractCallRevertTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [43696] Counter::setNumber(1)
     │   └─ ← [Stop]
@@ -7620,10 +7356,10 @@ Logs:
   Test: Simulating call to unlinked library
 
 Traces:
-  [350661] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
+  [350673] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
     ├─ [0] console::log("Test: Simulating call to unlinked library") [staticcall]
     │   └─ ← [Stop]
-    ├─ [286918] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    ├─ [286930] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   ├─  storage changes:
     │   │   @ 0: 0 → 0x000000000000000000000000deadbeef00000000000000000000000000000000
     │   └─ ← [Return] 960 bytes of code

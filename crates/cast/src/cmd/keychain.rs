@@ -5,10 +5,7 @@ use crate::{
         send::{SendOptions, cast_send},
         tempo_policy_args::{parse_period, parse_scope, parse_selector_bytes},
     },
-    tempo::{
-        active_tempo_hardfork, apply_fee_payment, is_tempo_hardfork_active, print_expires,
-        require_hardfork, sponsor_hash, tempo_provider,
-    },
+    tempo::{apply_fee_payment, print_expires, require_hardfork, sponsor_hash, tempo_provider},
     tx::{CastTxBuilder, SendTxOpts, SenderKind, apply_poll_interval},
 };
 use alloy_consensus::BlockHeader;
@@ -31,7 +28,8 @@ use foundry_common::{
     provider::ProviderBuilder,
     sh_warn, shell,
     tempo::{
-        self, AccountsStoreView, KeyType, read_tempo_accounts_store, tempo_accounts_store_path,
+        self, AccountsStoreView, KeyType, active_tempo_hardfork, is_tempo_hardfork_active,
+        read_tempo_accounts_store, tempo_accounts_store_path,
     },
 };
 use foundry_evm::hardfork::TempoHardfork;
@@ -2577,11 +2575,14 @@ async fn run_key_auth_sign(
         let authorization = args.into_authorization(None)?;
         let key_type = authorization.key_type;
         let signature_hash = authorization.signature_hash();
-        let signed = browser.sign_key_authorization(authorization).await?;
+        let signed =
+            foundry_common::tempo::sign_key_authorization_with_browser(&browser, authorization)
+                .await?;
         return print_signed_key_authorization(&signed, signature_hash, signer_address, key_type);
     }
 
-    let (signer, tempo_access_key) = wallet.maybe_signer_for_chain(chain_id).await?;
+    let (signer, tempo_access_key) =
+        foundry_common::tempo::maybe_signer(&wallet, Some(chain_id)).await?;
     let signer_address = match (&signer, &tempo_access_key) {
         (Some(signer), None) => signer.address(),
         (None, Some(wallet)) => wallet.key_id()?,
@@ -2901,7 +2902,8 @@ pub(crate) async fn resolve_keychain_root_signer(
     print_sponsor_hash: bool,
 ) -> Result<KeychainRootSigner> {
     const WHAT: &str = "AccountKeychain transaction";
-    let (signer, tempo_access_key) = send_tx.eth.wallet.maybe_signer().await?;
+    let (signer, tempo_access_key) =
+        foundry_common::tempo::maybe_signer(&send_tx.eth.wallet, None).await?;
     if let Some(browser) = send_tx.browser.run::<TempoNetwork>().await? {
         ensure_root_sender(browser.address(), expected_from, WHAT)?;
         return Ok(KeychainRootSigner::Browser(browser));

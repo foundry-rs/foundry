@@ -2,11 +2,11 @@ use crate::{
     error::RpcError,
     request::{Id, Version},
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+use serde_json::value::RawValue;
 
 /// Response of a _single_ rpc call
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct RpcResponse {
     // JSON RPC version
     jsonrpc: Version,
@@ -32,11 +32,10 @@ impl RpcResponse {
 }
 
 /// Represents the result of a call either success or error
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Serialize)]
 pub enum ResponseResult {
     #[serde(rename = "result")]
-    Success(serde_json::Value),
+    Success(Box<RawValue>),
     #[serde(rename = "error")]
     Error(RpcError),
 }
@@ -46,7 +45,7 @@ impl ResponseResult {
     where
         S: Serialize + 'static,
     {
-        Self::Success(serde_json::to_value(&content).unwrap())
+        Self::Success(serde_json::value::to_raw_value(&content).unwrap())
     }
 
     pub const fn error(error: RpcError) -> Self {
@@ -54,14 +53,25 @@ impl ResponseResult {
     }
 }
 
+impl PartialEq for ResponseResult {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Success(a), Self::Success(b)) => a.get() == b.get(),
+            (Self::Error(a), Self::Error(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for ResponseResult {}
+
 impl From<RpcError> for ResponseResult {
     fn from(err: RpcError) -> Self {
         Self::error(err)
     }
 }
 /// Synchronous response
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum Response {
     /// single json rpc response

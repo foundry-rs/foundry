@@ -966,3 +966,10 @@ fn concatenated_string_trailing_comment_stays_after_last_literal() {
         expected
     );
 }
+
+#[test]
+fn fractional_and_wide_number_literals() {
+    let source = "contract C { function f() external { 1.25e-2; 1e100; 1.2e3; } }";
+    let expected = "contract C {\n    function f() external {\n        1.25e-2;\n        1e100;\n        1.2e3;\n    }\n}\n";
+    assert_eq!(format(source, Path::new("test.sol"), Arc::default()), expected);
+}

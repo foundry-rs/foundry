@@ -173,7 +173,9 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                                 let body = output.run_func_body();
                                 let Some(last) = body.last() else { return false };
                                 let StmtKind::Expr(expr) = last.kind else { return false };
-                                should_continue(expr)
+                                // A call that returns nothing cannot be inspected, but runs
+                                // like any statement: `revert("x")`, `require(...)`, `f()`.
+                                should_continue(expr) || matches!(expr.kind, ExprKind::Call(..))
                             })
                         })
                     })
@@ -551,8 +553,6 @@ const fn elementary_to_dyn(et: ElementaryType) -> Option<DynSolType> {
         ElementaryType::Int(size) => DynSolType::Int(size.bits() as usize),
         ElementaryType::UInt(size) => DynSolType::Uint(size.bits() as usize),
         ElementaryType::FixedBytes(size) => DynSolType::FixedBytes(size.bytes() as usize),
-        // Fixed-point numbers are not yet representable as DynSolType.
-        ElementaryType::Fixed(_, _) | ElementaryType::UFixed(_, _) => return None,
     })
 }
 
@@ -610,7 +610,7 @@ fn solar_ty_to_dyn<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> Option<DynSolType> {
         TyKind::Type(inner) => solar_ty_to_dyn(gcx, inner),
         TyKind::Meta(inner) => solar_ty_to_dyn(gcx, inner),
         TyKind::IntLiteral(neg, size, _) => {
-            let bits = (size.bits() as usize).max(8);
+            let bits = (size as usize).max(8);
             // Round up to the nearest multiple of 8 bits, capped at 256.
             let bits = bits.div_ceil(8) * 8;
             let bits = bits.min(256);

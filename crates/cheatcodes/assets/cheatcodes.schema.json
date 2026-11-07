@@ -65,7 +65,7 @@
           "$ref": "#/$defs/Safety"
         },
         "status": {
-          "description": "The current status of the cheatcode. E.g. whether it is stable or experimental, etc.",
+          "description": "The current status of the cheatcode. E.g. whether it is stable or deprecated, etc.",
           "$ref": "#/$defs/Status"
         }
       },
@@ -322,12 +322,7 @@
           "const": "stable"
         },
         {
-          "description": "The cheatcode is unstable, meaning it may contain bugs and may break its API on any\nrelease.\n\nUse of experimental cheatcodes will result in a warning.",
-          "type": "string",
-          "const": "experimental"
-        },
-        {
-          "description": "The cheatcode has been deprecated, meaning it will be removed in a future release.\n\nContains the optional reason for deprecation.\n\nUse of deprecated cheatcodes is discouraged and will result in a warning.",
+          "description": "The cheatcode has been deprecated, meaning it will be removed in a future release.\n\nContains the optional reason for deprecation.\n\n`forge test` warns once per test suite that uses a deprecated cheatcode.",
           "type": "object",
           "properties": {
             "deprecated": {
@@ -343,12 +338,7 @@
           ]
         },
         {
-          "description": "The cheatcode has been removed and is no longer available for use.\n\nUse of removed cheatcodes will result in a hard error.",
-          "type": "string",
-          "const": "removed"
-        },
-        {
-          "description": "The cheatcode is only used internally for foundry testing and may be changed or removed at\nany time.\n\nUse of internal cheatcodes is discouraged and will result in a warning.",
+          "description": "The cheatcode is only used internally for foundry testing and may be changed or removed at\nany time.\n\nInternal cheatcodes are not included in forge-std's `Vm` interface. Foundry does not check\ntheir use at runtime.",
           "type": "string",
           "const": "internal"
         }

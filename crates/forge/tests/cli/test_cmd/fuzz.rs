@@ -4562,7 +4562,7 @@ contract ForgeFuzzFrontierTest {
             "--fuzz-runs",
             "8",
             "--fuzz-seed",
-            "0x1234",
+            "0x1237",
             "--threads",
             "1",
             "--fuzz-frontier-dir",
@@ -4637,7 +4637,7 @@ contract ForgeFuzzFrontierTest {
             "--fuzz-runs",
             "8",
             "--fuzz-seed",
-            "0x1234",
+            "0x1237",
             "--threads",
             "1",
             "--fuzz-frontier-dir",
@@ -5564,11 +5564,18 @@ contract FuzzNumbersTest is Test {
             xy = x * y;
         }
 
-        if ((x != 0 && xy / x != y)) {
+        // Skip overflowing products without panicking on `type(int256).min / -1`.
+        if (x != 0 && (x == -1 ? y == type(int256).min : xy / x != y)) {
             return;
         }
 
-        assertEq(((xy - 1) / 1e18) + 1, (xy - 1) / (1e18 + 1));
+        int256 lhs;
+        int256 rhs;
+        unchecked {
+            lhs = ((xy - 1) / 1e18) + 1;
+            rhs = (xy - 1) / (1e18 + 1);
+        }
+        assertEq(lhs, rhs);
     }
 }
    "#,
@@ -5790,7 +5797,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
             .stdout_eq(expected_output);
     };
 
-    test_literal(100, "testFuzz_Addr", "address", "0x6B175474E89094C44Da98b954EedeAC495271d0F");
+    test_literal(101, "testFuzz_Addr", "address", "0x6B175474E89094C44Da98b954EedeAC495271d0F");
     test_literal(200, "testFuzz_Number", "uint64", "1122334455 [1.122e9]");
     test_literal(300, "testFuzz_Integer", "int32", "-777");
     test_literal(
@@ -5922,7 +5929,7 @@ contract FuzzReplayTest is Test {
         prj.root().join("cache/fuzz/failures/FuzzReplayTest/testFuzz_replayAfterReject");
     let persisted_failure: BaseCounterExample =
         serde_json::from_slice(&std::fs::read(&failure_file).unwrap()).unwrap();
-    assert_eq!(persisted_failure.fuzz.run, Some(4));
+    assert_eq!(persisted_failure.fuzz.run, Some(3));
 
     cmd.forge_fuse()
         .args([
@@ -5950,7 +5957,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
             "--fuzz-seed",
             "1",
             "--fuzz-run",
-            "4",
+            "3",
             "--mt",
             "testFuzz_replayAfterReject",
             "-j1",
@@ -6317,4 +6324,146 @@ fn random_failure_reason(stdout: &str) -> String {
         .captures(stdout)
         .unwrap_or_else(|| panic!("{stdout}"))[1]
         .to_string()
+}
+
+// `forge fuzz replay` warns when a persisted failure is replayed at a different fork block, and
+// keeps persisted handler failures it cannot judge on the changed state. Forks selected by
+// `beforeTestSetup` count as the recorded fork block.
+#[forgetest_init]
+async fn fuzz_replay_warns_on_fork_block_change(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let fork_url = handle.http_endpoint();
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 5;
+    });
+    prj.add_test(
+        "ForkBlockReplay.t.sol",
+        &r#"
+contract Touch {
+    bool public touched;
+    function touch() external { touched = true; }
+}
+
+contract BlockAssert {
+    function poke() external { assert(block.number != 0); }
+}
+
+contract ForkBlockFuzzTest {
+    function testFuzz_block(uint256) public view {
+        require(block.number != 0, "block 0");
+    }
+}
+
+contract ForkBlockInvariantTest {
+    Touch target;
+    function setUp() public { target = new Touch(); }
+    function invariant_block() public view {
+        require(block.number != 0 || !target.touched(), "block 0");
+    }
+}
+
+contract ForkBlockHandlerTest {
+    BlockAssert target;
+    function setUp() public { target = new BlockAssert(); }
+    function invariant_ok() public view {}
+}
+
+interface Vm {
+    function createSelectFork(string calldata url) external returns (uint256);
+}
+
+contract BeforeSetupForkTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function beforeTestSetup(bytes4) public view returns (bytes[] memory calls) {
+        calls = new bytes[](1);
+        calls[0] = abi.encodeCall(this.forkAnvil, ());
+    }
+
+    function forkAnvil() public {
+        vm.createSelectFork("FORK_URL");
+    }
+
+    function testFuzz_beforeSetupBlock(uint256) public view {
+        require(block.number != 0, "block 0");
+    }
+}
+   "#
+        .replace("FORK_URL", &fork_url),
+    );
+
+    cmd.args(["test", "--fork-url", &fork_url, "--mc", "^ForkBlock"]).assert_failure();
+    let handlers_dir = prj.root().join("cache/invariant/failures/ForkBlockHandlerTest/handlers");
+    assert_eq!(find_json_files(&handlers_dir).len(), 1);
+    cmd.forge_fuse().args(["test", "--mc", "BeforeSetupForkTest"]).assert_failure();
+
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+
+    cmd.forge_fuse()
+        .args(["fuzz", "replay", "--mc", "BeforeSetupForkTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[PASS] testFuzz_beforeSetupBlock(uint256) (runs: 1, [AVG_GAS])
+...
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Persisted failure for testFuzz_beforeSetupBlock was recorded at fork block 0 but is replayed at block 1; pin the fork block (e.g. `--fork-block-number 0` or a block in `vm.createSelectFork`) to replay it against the recorded state.
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["fuzz", "replay", "--fork-url", &fork_url, "--mt", "testFuzz_block"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[PASS] testFuzz_block(uint256) (runs: 1, [AVG_GAS])
+...
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Persisted failure for testFuzz_block was recorded at fork block 0 but is replayed at block 1; pin the fork block (e.g. `--fork-block-number 0` or a block in `vm.createSelectFork`) to replay it against the recorded state.
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["fuzz", "replay", "--fork-url", &fork_url, "--mt", "invariant_block"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[SKIP: no persisted invariant failure reproduced for selected invariants] invariant_block() ([GAS])
+...
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Persisted failure for invariant_block was recorded at fork block 0 but is replayed at block 1; pin the fork block (e.g. `--fork-block-number 0` or a block in `vm.createSelectFork`) to replay it against the recorded state.
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["fuzz", "replay", "--fork-url", &fork_url, "--mc", "ForkBlockHandlerTest"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: Persisted failure for [..] was recorded at fork block 0 but is replayed at block 1; pin the fork block (e.g. `--fork-block-number 0` or a block in `vm.createSelectFork`) to replay it against the recorded state.
+
+"#]]);
+    assert_eq!(find_json_files(&handlers_dir).len(), 1);
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--fork-url",
+            &fork_url,
+            "--fork-block-number",
+            "0",
+            "--mt",
+            "testFuzz_block",
+        ])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: block 0; counterexample: [..]] testFuzz_block(uint256) (block: 0) (runs: 0, [AVG_GAS])
+...
+"#]])
+        .stderr_eq(str![""]);
 }

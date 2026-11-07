@@ -12,7 +12,7 @@ use std::{
 /// Directories to skip when copying project directories.
 /// These are build artifacts and runtime-generated files that should not be copied to temp
 /// workspaces.
-const SKIP_DIRS: &[&str] = &["out", "cache", "broadcast"];
+const SKIP_DIRS: &[&str] = &["out", "cache", "broadcast", ".foundry-ext-venv"];
 
 pub use crate::{ext::*, prj::*};
 
@@ -30,7 +30,7 @@ static TEMPLATE_LOCK: LazyLock<PathBuf> =
     LazyLock::new(|| env::temp_dir().join("foundry-forge-test-template.lock"));
 
 /// The default Solc version used when compiling tests.
-pub const SOLC_VERSION: &str = "0.8.35";
+pub const SOLC_VERSION: &str = "0.8.38";
 
 /// Another Solc version used when compiling tests.
 ///
@@ -227,8 +227,8 @@ pub fn read_string(path: impl AsRef<Path>) -> String {
 /// Copies the directory at `src` to `dst`, skipping build artifact directories.
 ///
 /// This is similar to `foundry_compilers::project_util::copy_dir`, but skips directories
-/// like `out/`, `cache/`, and `broadcast/` which are build artifacts that should not be
-/// copied to temporary test workspaces.
+/// like `out/`, `cache/`, and `broadcast/`, as well as fixture-local Python environments,
+/// which should not be copied to temporary test workspaces.
 pub fn copy_dir_filtered(src: &Path, dst: &Path) -> std::io::Result<()> {
     fs::create_dir_all(dst)?;
     copy_dir_filtered_inner(src, dst, true)

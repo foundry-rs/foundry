@@ -479,8 +479,11 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             let initial_balance = self.get_balance(creator)?;
             self.set_balance(creator, U256::MAX)?;
 
-            let res =
-                self.deploy(creator, DEFAULT_CREATE2_DEPLOYER_CODE.into(), U256::ZERO, None)?;
+            // The deployer is test harness state, so the debugger does not step through it.
+            let recorder = self.inspector_mut().debug_recorder.take();
+            let res = self.deploy(creator, DEFAULT_CREATE2_DEPLOYER_CODE.into(), U256::ZERO, None);
+            self.inspector_mut().debug_recorder = recorder;
+            let res = res?;
             trace!(create2=?res.address, "deployed local create2 deployer");
 
             self.set_balance(creator, initial_balance)?;
@@ -846,14 +849,42 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     }
 
     /// Executes the transaction with explicit network-specific context without committing state.
-    #[instrument(name = "call", level = "debug", skip_all)]
     pub fn call_with_env_and_context(
+        &self,
+        evm_env: EvmEnvFor<FEN>,
+        tx_env: TxEnvFor<FEN>,
+        chain_context: ChainFor<FEN>,
+    ) -> eyre::Result<RawCallResult<FEN>> {
+        self.call_with_stack(evm_env, tx_env, chain_context, self.inspector().clone())
+    }
+
+    /// Performs a raw call like [`Self::call_raw`], but without the fuzz guidance inspectors.
+    ///
+    /// The call collects no edge coverage, comparison operands, or dictionary values, so use it
+    /// for calls whose instrumentation output is discarded, such as invariant predicate checks.
+    pub fn call_raw_without_fuzz_instrumentation(
+        &self,
+        from: Address,
+        to: Address,
+        calldata: Bytes,
+        value: U256,
+    ) -> eyre::Result<RawCallResult<FEN>> {
+        let (evm_env, tx_env) = self.prepare_call_env(from, TxKind::Call(to), calldata, value);
+        let chain_context = self.chain_context_for_synthetic_transaction(&tx_env)?;
+        let mut stack = self.inspector().clone();
+        stack.disable_fuzz_instrumentation();
+        self.call_with_stack(evm_env, tx_env, chain_context, stack)
+    }
+
+    /// Executes the transaction with the given inspector stack without committing state.
+    #[instrument(name = "call", level = "debug", skip_all)]
+    fn call_with_stack(
         &self,
         mut evm_env: EvmEnvFor<FEN>,
         mut tx_env: TxEnvFor<FEN>,
         chain_context: ChainFor<FEN>,
+        mut stack: InspectorStack<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let mut stack = self.inspector().clone();
         let sancov_edges = stack.inner.sancov_edges;
         let sancov_trace_cmp = stack.inner.sancov_trace_cmp;
         let sancov_active = sancov_edges || sancov_trace_cmp;
@@ -1264,6 +1295,14 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         tx_env.set_gas_priority_fee(None);
         tx_env.set_gas_limit(self.gas_limit);
         tx_env.set_chain_id(Some(self.evm_env.cfg_env.chain_id));
+        // The EIP-8037 create charge checks the address for the transaction nonce, and the nonce
+        // check is disabled, so a create uses the caller's current nonce.
+        if kind.is_create()
+            && cfg_env.is_amsterdam_eip2780_enabled()
+            && let Ok(nonce) = self.get_nonce(caller)
+        {
+            tx_env.set_nonce(nonce);
+        }
 
         (EvmEnv { cfg_env, block_env }, tx_env)
     }
@@ -1943,6 +1982,18 @@ pub fn should_ignore_revert(
         })
 }
 
+/// Derives the deterministic RNG seed for a fuzz or invariant worker.
+///
+/// Worker 0 keeps the configured seed, so a single worker replays the same sequence.
+pub(crate) fn worker_seed(seed: U256, worker_id: u32) -> U256 {
+    if worker_id == 0 {
+        seed
+    } else {
+        let seed_data = [&seed.to_be_bytes::<32>()[..], &worker_id.to_be_bytes()[..]].concat();
+        keccak256(seed_data).into()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2475,7 +2526,8 @@ mod tests {
                 Bytecode::new_raw(Bytes::from_static(&[0x5f, 0x5f, 0x5f, 0xf0, 0x50, 0x00])),
             )
             .unwrap();
-        executor.inspector_mut().cheatcodes.as_mut().unwrap().intercept_next_create_call = true;
+        executor.inspector_mut().cheatcodes.as_mut().unwrap().core.intercept_next_create_call =
+            true;
 
         let result = executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
 
@@ -2534,6 +2586,27 @@ mod tests {
                     .new_account_state_gas(),
             "reverted mocked CALL retained its conditional state-gas charge"
         );
+    }
+
+    #[test]
+    fn amsterdam_deploy_charges_create_state_gas_at_caller_nonce() {
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default()
+            .spec_id(SpecId::AMSTERDAM)
+            .gas_limit(1_000_000)
+            .build(EvmEnv::default(), TxEnv::default(), backend, NetworkConfigs::default());
+        // As in `EvmOpts`.
+        executor.evm_env_mut().cfg_env.disable_nonce_check = true;
+        let sender = Address::repeat_byte(0x33);
+        executor.set_account_nonce(sender, 5).unwrap();
+        // A non-empty address for nonce 0 must not hide the charge for the address for nonce 5.
+        executor.set_balance(sender.create(0), U256::ONE).unwrap();
+
+        let result = executor.deploy(sender, Bytes::new(), U256::ZERO, None).unwrap();
+
+        assert_eq!(result.address, sender.create(5));
+        // An empty creation pays 24000 regular gas plus 183600 EIP-8037 account-creation gas.
+        assert_eq!(result.raw.gas_used, 207_600);
     }
 
     #[test]
@@ -2817,5 +2890,15 @@ mod tests {
                 .is_none()
         );
         assert_eq!(executor.get_nonce(CALLER).unwrap(), nonce);
+    }
+
+    #[test]
+    fn worker_seed_preserves_master_seed_and_derives_workers() {
+        let seed = U256::from(0x1234);
+
+        assert_eq!(worker_seed(seed, 0), seed);
+        assert_ne!(worker_seed(seed, 1), seed);
+        assert_ne!(worker_seed(seed, 1), worker_seed(seed, 2));
+        assert_ne!(worker_seed(seed, 1), worker_seed(U256::from(0x5678), 1));
     }
 }

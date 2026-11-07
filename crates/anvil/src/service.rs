@@ -186,6 +186,7 @@ where
             if let Some(backend) = pin.idle_backend.take() {
                 let work = pin.queued.pop_front().expect("not empty; qed");
                 let generation = work.generation;
+                let pause_epoch = work.pause_epoch;
                 let selected = work.transactions.len();
                 let pool = pin.pool.clone();
                 let miner = pin.miner.clone();
@@ -196,20 +197,27 @@ where
                 let mining = tokio::task::spawn_blocking(move || {
                     handle.block_on(async move {
                         let mining_guard = backend.lock_mining_owned().await;
+                        // Mining was paused after this candidate was selected, so skip it even if
+                        // it has resumed since. Ready transactions are mined by auto mining on
+                        // resume, or by the next tick.
+                        if miner.is_stale(pause_epoch) {
+                            return (Ok(None), backend, generation);
+                        }
                         let transactions =
                             pool.ready_transactions().take(selected).collect::<Vec<_>>();
                         if selected > 0 && transactions.is_empty() {
                             return (Ok(None), backend, generation);
                         }
                         trace!(target: "miner", "creating new block");
-                        let result = backend.mine_block_locked(transactions).await.map(|outcome| {
-                            let block_number = outcome.block_number;
-                            if pool.on_mined_block(outcome) {
-                                miner.retry_ready_transactions();
-                            }
-                            trace!(target: "miner", "created new block: {block_number}");
-                            Some(block_number)
-                        });
+                        let result =
+                            backend.mine_block_locked(transactions, false).await.map(|outcome| {
+                                let block_number = outcome.block_number;
+                                if pool.on_mined_block(outcome) {
+                                    miner.retry_ready_transactions();
+                                }
+                                trace!(target: "miner", "created new block: {block_number}");
+                                Some(block_number)
+                            });
                         drop(mining_guard);
                         (result, backend, generation)
                     })

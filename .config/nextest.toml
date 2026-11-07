@@ -4,6 +4,8 @@
 deploy-verify = { max-threads = 1 }
 # The Tempo canaries fork public endpoints that rate limit concurrent replays.
 tempo-canary = { max-threads = 1 }
+# Generated binding crates share one Cargo target directory and serialize on its build lock.
+bindings = { max-threads = 1 }
 
 [profile.default]
 retries = { backoff = "exponential", count = 2, delay = "5s", jitter = true }
@@ -34,10 +36,27 @@ slow-timeout = { period = "5m", terminate-after = 4 }
 filter = "test(/tempo_canary::/)"
 test-group = "tempo-canary"
 
+# Cold runs fetch pinned Solidity sources and install the fixture's Solc version.
+[[profile.default.overrides]]
+filter = "package(=forge) & binary(=cli) & test(/(^|::)tempo_proofs_fork$/)"
+slow-timeout = { period = "5m", terminate-after = 2, grace-period = "0s" }
+
 # Do not re-run so that `cargo cheats` is ran locally.
 [[profile.default.overrides]]
 filter = "package(foundry-cheatcodes-spec)"
 retries = 0
+
+# The CI profile inherits the default filters, retries, timeouts, and groups.
+# Start the long tail before the short tests so it does not keep the runner idle at the end.
+[[profile.ci.overrides]]
+filter = "package(=forge) & binary(=cli) & (test(=test_cmd::testdata) | test(=test_cmd::symbolic_parity::halmos::minivat_linear_smoke_parity) | test(=test_cmd::symbolic_parity::openzeppelin::erc721_unique_ownership_passes) | test(=test_cmd::symbolic_invariant::symbolic_transient_storage_clears_between_sequence_steps))"
+priority = 100
+
+# Let nextest queue these instead of occupying several test slots waiting for the same Cargo lock.
+[[profile.ci.overrides]]
+filter = "package(=forge) & binary(=cli) & (test(=cmd::can_bind_e2e) | test(/^bind::bind_(generates_enum_variants|event_module_name_shadowing|event_module_prefix_does_not_shadow_aliases|regression_fixtures_compile|single_file_crate_and_module_match|dollar_sign_in_contract_name)$/))"
+test-group = "bindings"
+priority = 50
 
 # Profile for running flaky tests (used by nightly CI and for local debugging)
 # Run with: cargo nextest run --profile flaky
@@ -62,7 +81,9 @@ success-output = "final"
 # Requires <NETWORK>_RPC_URL plus TESTNET_DEPLOYER_PRIVATE_KEY to do anything.
 # Run with: cargo nextest run --profile deploy-verify
 [profile.deploy-verify]
-default-filter = "test(/deploy_verify_/)"
+# Blockscout tests are temporarily disabled because Blockscout's verifier does not support recent
+# Solidity versions yet: https://github.com/foundry-rs/foundry/issues/17733
+default-filter = "test(/deploy_verify_/) and not test(/_blockscout$/)"
 retries = 1
 # A deploy plus verifier round trip is minutes, not seconds.
 slow-timeout = { period = "120s", terminate-after = 5 }

@@ -219,6 +219,166 @@ fn decode_event_with_indexed_params(cmd: _) {
 }
 
 #[casttest]
+fn decode_event_with_topics(cmd: _) {
+    let args = [
+        "decode-event",
+        "--sig",
+        "Transfer(address indexed from, address indexed to, uint256 value)",
+        "--topics",
+        "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef,0x0000000000000000000000000000000000000000000000000000000000000001,0x0000000000000000000000000000000000000000000000000000000000000002",
+        "0x000000000000000000000000000000000000000000000000000000000000002a",
+    ];
+    cmd.args(args).assert_success().stdout_eq(str![[r#"
+0x0000000000000000000000000000000000000001
+0x0000000000000000000000000000000000000002
+42
+
+"#]]);
+
+    cmd.cast_fuse().args(args).arg("--json").assert_json_stdout(
+        json!({
+            "schema_version": 1,
+            "success": true,
+            "data": [
+                "0x0000000000000000000000000000000000000001",
+                "0x0000000000000000000000000000000000000002",
+                "42"
+            ],
+            "errors": [],
+            "warnings": []
+        })
+        .to_string(),
+    );
+}
+
+#[casttest]
+fn decode_event_topics_interleaved_dynamic_data(cmd: _) {
+    let topic0 = keccak256("Message(string,address,uint256,uint256)").to_string();
+    let data = hex::encode_prefixed(("hello", U256::from(42)).abi_encode_params());
+    cmd.args([
+        "decode-event",
+        "--sig",
+        "Message(string message,address indexed sender,uint256 value,uint256 indexed id)",
+        "-t",
+        &topic0,
+        "-t",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "-t",
+        "0x0000000000000000000000000000000000000000000000000000000000000007",
+        &data,
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+"hello"
+0x0000000000000000000000000000000000000001
+42
+7
+
+"#]]);
+}
+
+#[casttest]
+fn decode_event_topics_anonymous(cmd: _) {
+    let data = hex::encode_prefixed(("hello",).abi_encode_params());
+    cmd.args([
+        "decode-event",
+        "--sig",
+        "Log(uint256 indexed id,string message) anonymous",
+        "--topics",
+        "0x0000000000000000000000000000000000000000000000000000000000000007",
+        &data,
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+7
+"hello"
+
+"#]]);
+}
+
+#[casttest]
+fn decode_event_topics_indexed_hash(cmd: _) {
+    let topic0 = keccak256("Message(string)").to_string();
+    cmd.args([
+        "decode-event",
+        "--sig",
+        "Message(string indexed message)",
+        "-t",
+        &topic0,
+        "-t",
+        "0x1c8aff950685c2ed4bc3174f3472287b56d9517b9c948127319a09a7a36deac8",
+        "0x",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x1c8aff950685c2ed4bc3174f3472287b56d9517b9c948127319a09a7a36deac8
+
+"#]]);
+}
+
+#[casttest]
+fn decode_event_topics_invalid_count(cmd: _) {
+    let signature = "Transfer(address indexed from,address indexed to,uint256 value)";
+    let topic0 = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+    cmd.args(["decode-event", "--sig", signature, "-t", topic0, "0x"])
+        .assert_failure()
+        .stdout_eq("")
+        .stderr_eq(str![[r#"
+Error: invalid log topic list length: expected 3 topics, got 1
+
+"#]]);
+
+    let topics = format!("{topic0},{topic0},{topic0},{topic0}");
+    cmd.cast_fuse()
+        .args(["decode-event", "--sig", signature, "-t", &topics, "0x"])
+        .assert_failure()
+        .stdout_eq("")
+        .stderr_eq(str![[r#"
+Error: invalid log topic list length: expected 3 topics, got 4
+
+"#]]);
+}
+
+#[casttest]
+fn decode_event_topics_wrong_signature(cmd: _) {
+    cmd.args([
+        "decode-event",
+        "--sig",
+        "Transfer(address indexed from,address indexed to,uint256 value)",
+        "--topics",
+        "0x0000000000000000000000000000000000000000000000000000000000000000,0x0000000000000000000000000000000000000000000000000000000000000001,0x0000000000000000000000000000000000000000000000000000000000000002",
+        "0x000000000000000000000000000000000000000000000000000000000000002a",
+    ])
+    .assert_failure()
+    .stdout_eq("")
+    .stderr_eq(str![[r#"
+Error: invalid event signature: expected 0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef, got 0x0000000000000000000000000000000000000000000000000000000000000000
+
+"#]]);
+}
+
+#[casttest]
+fn decode_event_topics_requires_signature(cmd: _) {
+    cmd.args([
+        "decode-event",
+        "--topics",
+        "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+        "0x",
+    ])
+    .assert_failure()
+    .stdout_eq("")
+    .stderr_eq(str![[r#"
+error: the following required arguments were not provided:
+  --sig <SIG>
+
+Usage: cast[..] decode-event --sig <SIG> --topics <TOPICS> <DATA>
+
+For more information, try '--help'.
+
+"#]]);
+}
+
+#[casttest]
 fn abi_encode_event_argument_count_mismatch(cmd: _) {
     cmd.args(["abi-encode-event", "Pair(uint256,uint256)", "1"]).assert_failure().stderr_eq(str![
         [r#"
@@ -370,4 +530,110 @@ fn calldata_bool(cmd: _) {
         .args(["calldata", "bar(bool)", "false"])
         .assert_success()
         .stdout_eq("0x6fae94120000000000000000000000000000000000000000000000000000000000000000\n");
+}
+
+#[casttest]
+fn abi_encode_trailing_flag_hint(cmd: _) {
+    cmd.args(["abi-encode", "f(uint256)", "1", "--packed"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: Could not ABI encode the function and arguments: encode length mismatch: expected 1 types, got 2; `--packed` was read as an argument; put flags before the signature
+
+"#]]);
+}
+
+#[casttest]
+fn calldata_trailing_json_flag_hint(cmd: _) {
+    cmd.args(["calldata", "f(uint256)", "1", "--json"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: encode length mismatch: expected 1 types, got 2; `--json` was read as an argument; put flags before the signature
+
+"#]]);
+}
+
+#[casttest]
+fn abi_encode_event_trailing_json_flag_hint(cmd: _) {
+    cmd.args([
+        "abi-encode-event",
+        "Transfer(address indexed,uint256)",
+        "0x0000000000000000000000000000000000000001",
+        "5",
+        "--json",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: encode length mismatch: expected 2 types, got 3; `--json` was read as an argument; put flags before the signature
+
+"#]]);
+}
+
+// `dirs::home_dir()` ignores `HOME` on Windows, so the signature cache cannot be isolated there.
+#[cfg(not(windows))]
+#[casttest]
+fn decode_error_event_json_without_sig_is_only_json(prj: _, cmd: _) {
+    // Isolate and seed the signature cache so selector lookup is deterministic and offline.
+    let home = prj.root().join("home");
+    let cache_dir = home.join(".foundry/cache");
+    fs::create_dir_all(&cache_dir).unwrap();
+    fs::write(
+        cache_dir.join("signatures"),
+        serde_json::to_vec(&json!({
+            "functions": {},
+            "errors": { "0xe94fe3af": "TooSmall(uint256,uint256)" },
+            "events": {
+                "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef":
+                    "Transfer(address,address,uint256)"
+            },
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let error_data = "0xe94fe3af0000000000000000000000000000000000000000000000000000000000000005000000000000000000000000000000000000000000000000000000000000000a";
+    let event_data = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000005";
+
+    cmd.env("HOME", &home);
+    cmd.args(["decode-error", error_data]).assert_success().stdout_eq(str![[r#"
+TooSmall(uint256,uint256)
+5
+10
+
+"#]]);
+
+    cmd.cast_fuse();
+    cmd.env("HOME", &home);
+    cmd.args(["decode-error", error_data, "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{"schema_version":1,"success":true,"data":["5","10"],"errors":[],"warnings":[]}
+
+"#]])
+        .stderr_eq(str![[r#"
+TooSmall(uint256,uint256)
+
+"#]]);
+
+    cmd.cast_fuse();
+    cmd.env("HOME", &home);
+    cmd.args(["decode-event", event_data]).assert_success().stdout_eq(str![[r#"
+Transfer(address,address,uint256)
+0x0000000000000000000000000000000000000001
+0x0000000000000000000000000000000000000002
+5
+
+"#]]);
+
+    cmd.cast_fuse();
+    cmd.env("HOME", &home);
+    cmd.args(["decode-event", event_data, "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{"schema_version":1,"success":true,"data":["0x0000000000000000000000000000000000000001","0x0000000000000000000000000000000000000002","5"],"errors":[],"warnings":[]}
+
+"#]])
+        .stderr_eq(str![[r#"
+Transfer(address,address,uint256)
+
+"#]]);
 }

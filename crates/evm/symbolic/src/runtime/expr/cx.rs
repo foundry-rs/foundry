@@ -1,6 +1,7 @@
 use super::{hashcons::HashCons, *};
 use alloy_primitives::map::DefaultHashBuilder;
 use inturn::unsync::Interner;
+use std::collections::BTreeMap;
 
 pub(crate) struct SymCx {
     words: HashCons<SymExprKind>,
@@ -8,8 +9,13 @@ pub(crate) struct SymCx {
     bytes: HashCons<SymBytesKind>,
     symbols: Interner<Symbol, DefaultHashBuilder>,
     replayable_inputs: SymbolicVars,
-    concrete_keccak_preimages: HashMap<U256, Arc<[SymExpr]>>,
+    /// Ordered so that the closest hash below a constant is a range lookup.
+    concrete_keccak_preimages: BTreeMap<U256, Arc<[SymExpr]>>,
     cache: SymCxCache,
+    /// Solver normalization results for `ite`-containing words, keyed by the input word.
+    ///
+    /// Keys are strong hash-consed handles, so the map is bounded like the SAT cache.
+    solver_normalized_words: HashMap<SymExpr, SymExpr>,
 }
 
 struct SymCxCache {
@@ -39,8 +45,9 @@ impl SymCx {
             bytes,
             symbols: Interner::with_hasher(DefaultHashBuilder::default()),
             replayable_inputs: SymbolicVars::default(),
-            concrete_keccak_preimages: HashMap::default(),
+            concrete_keccak_preimages: BTreeMap::new(),
             cache: SymCxCache { zero, one, bool_true, bool_false, bytes_empty },
+            solver_normalized_words: HashMap::default(),
         }
     }
 
@@ -100,6 +107,37 @@ impl SymCx {
         hash: U256,
     ) -> Option<Arc<[SymExpr]>> {
         self.concrete_keccak_preimages.get(&hash).cloned()
+    }
+
+    /// Returns the closest recorded concrete hash below `value` that `value` is a storage layout
+    /// offset from, so a folded `keccak(..) + offset` constant keeps its hash base.
+    pub(in crate::runtime::expr) fn concrete_keccak_base(
+        &self,
+        value: U256,
+        offset_bits: usize,
+    ) -> Option<U256> {
+        let (&hash, _) = self.concrete_keccak_preimages.range(..=value).next_back()?;
+        (value - hash < U256::ONE << offset_bits).then_some(hash)
+    }
+
+    /// Returns the memoized solver normalization of `expr`.
+    pub(in crate::runtime) fn solver_normalized_word(&self, expr: &SymExpr) -> Option<SymExpr> {
+        self.solver_normalized_words.get(expr).cloned()
+    }
+
+    /// Memoizes the solver normalization of `expr`.
+    ///
+    /// A full map is cleared rather than frozen: a miss on a nested `ite` chain re-traverses it
+    /// once per nesting level, so later words must stay cacheable.
+    pub(in crate::runtime) fn record_solver_normalized_word(
+        &mut self,
+        expr: SymExpr,
+        normalized: SymExpr,
+    ) {
+        if self.solver_normalized_words.len() >= SYMBOLIC_SOLVER_SAT_CACHE_MAX_ENTRIES {
+            self.solver_normalized_words.clear();
+        }
+        self.solver_normalized_words.insert(expr, normalized);
     }
 }
 

@@ -921,14 +921,29 @@ local-account (Local)
     cmd.cast_fuse();
     cmd.env("HOME", prj.root());
     cmd.unset_env("TURNKEY_API_PRIVATE_KEY");
-    let assert = cmd.args(["wallet", "list", "--turnkey"]).assert_success().stdout_eq(str![""]);
+    cmd.args(["wallet", "list", "--turnkey"]);
     if cfg!(feature = "turnkey") {
-        assert.stderr_eq(str![[r#"
+        cmd.assert_failure().stdout_eq(str![""]).stderr_eq(str![[r#"
 Error: environment variable not found
 
 "#]]);
+        cmd.cast_fuse().unset_env("TURNKEY_API_PRIVATE_KEY");
+        cmd.args(["wallet", "list", "--turnkey", "--json"])
+            .assert_json_stdout_with_status(
+                false,
+                str![[r#"
+{
+  "schema_version": 1,
+  "success": false,
+  "data": null,
+  "errors": [{"level": "error", "code": "cast.error", "message": "environment variable not found"}],
+  "warnings": []
+}
+"#]],
+            )
+            .stderr_eq(str![""]);
     } else {
-        assert.stderr_eq(str![""]);
+        cmd.assert_success().stdout_eq(str![""]).stderr_eq(str![""]);
     }
 }
 
@@ -963,6 +978,57 @@ fn wallet_list_turnkey(cmd: _) {
 "#]]);
         }
     }
+}
+
+#[casttest]
+fn wallet_list_invalid_directory(prj: _, cmd: _) {
+    let file = prj.root().join("not-a-directory");
+    fs::write(&file, "").unwrap();
+    for path in [prj.root().join("missing-keystores"), file] {
+        for json in [false, true] {
+            cmd.cast_fuse().args(["wallet", "list", "--dir"]).arg(&path);
+            if json {
+                cmd.arg("--json")
+                    .assert_json_stdout_with_status(
+                        false,
+                        str![[r#"
+{
+  "schema_version": 1,
+  "success": false,
+  "data": null,
+  "errors": [{"level": "error", "code": "cast.error", "message": "[..]"}],
+  "warnings": []
+}
+"#]],
+                    )
+                    .stderr_eq(str![""]);
+            } else {
+                cmd.assert_failure().stdout_eq(str![""]).stderr_eq(str![[r#"
+Error: [..]
+...
+"#]]);
+            }
+        }
+    }
+}
+
+// HOME does not override the default keystore directory on Windows.
+#[cfg(not(windows))]
+#[casttest]
+fn wallet_list_creates_missing_default_directory(prj: _, cmd: _) {
+    let keystores = prj.root().join(".foundry/keystores");
+    assert!(!keystores.exists());
+    cmd.env("HOME", prj.root());
+    cmd.args(["wallet", "list", "--dir", "--json"]).assert_json_stdout(str![[r#"
+{
+  "schema_version": 1,
+  "success": true,
+  "data": [],
+  "errors": [],
+  "warnings": []
+}
+"#]]);
+    assert!(keystores.is_dir());
 }
 
 #[casttest]

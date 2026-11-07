@@ -28,11 +28,16 @@ impl SymStack {
             .ok_or(SymbolicError::StackUnderflow)
     }
 
-    pub(crate) fn swap(&mut self, index_from_top: usize) -> Result<(), SymbolicError> {
-        let len = self.0.len();
-        let other = len.checked_sub(index_from_top + 1).ok_or(SymbolicError::StackUnderflow)?;
-        self.0.swap(len - 1, other);
+    /// Swaps the `n`th and `m`th items from the top, where `n < m`.
+    pub(crate) fn exchange(&mut self, n: usize, m: usize) -> Result<(), SymbolicError> {
+        let top = self.0.len().checked_sub(1).ok_or(SymbolicError::StackUnderflow)?;
+        let other = top.checked_sub(m).ok_or(SymbolicError::StackUnderflow)?;
+        self.0.swap(top - n, other);
         Ok(())
+    }
+
+    pub(crate) const fn len(&self) -> usize {
+        self.0.len()
     }
 }
 
@@ -894,6 +899,8 @@ impl SymMemory {
 pub(crate) struct SymCode {
     bytes: SymBytes,
     jump_table: JumpTable,
+    /// Whether revm stores this code as legacy bytecode, which is never an EIP-7702 delegation.
+    legacy: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -905,7 +912,7 @@ pub(crate) enum GuardedOpcode {
 
 impl SymCode {
     pub(crate) fn empty(cx: &mut SymCx) -> Self {
-        Self { bytes: SymBytes::empty(cx), jump_table: JumpTable::default() }
+        Self { bytes: SymBytes::empty(cx), jump_table: JumpTable::default(), legacy: true }
     }
 
     pub(crate) fn from_byte_exprs(cx: &mut SymCx, bytes: Vec<SymExpr>) -> Self {
@@ -925,7 +932,7 @@ impl SymCode {
         };
         let analyzed = Bytecode::new_legacy(Bytes::from(analysis));
         let jump_table = analyzed.legacy_jump_table().cloned().unwrap_or_default();
-        Self { bytes, jump_table }
+        Self { bytes, jump_table, legacy: false }
     }
 
     pub(crate) fn concrete(cx: &mut SymCx, bytes: Vec<u8>) -> Self {
@@ -935,7 +942,7 @@ impl SymCode {
     pub(crate) fn from_bytecode(cx: &mut SymCx, bytecode: &Bytecode) -> Self {
         let bytes = SymBytes::concrete(cx, bytecode.original_byte_slice().to_vec());
         let jump_table = bytecode.legacy_jump_table().cloned().unwrap_or_default();
-        Self { bytes, jump_table }
+        Self { bytes, jump_table, legacy: !bytecode.is_eip7702() }
     }
 
     pub(crate) fn from_memory_offset(
@@ -969,6 +976,10 @@ impl SymCode {
 
     pub(crate) const fn jump_table(&self) -> &JumpTable {
         &self.jump_table
+    }
+
+    pub(crate) const fn is_legacy(&self) -> bool {
+        self.legacy
     }
 
     pub(crate) fn opcode(&self, cx: &mut SymCx, pc: usize) -> Result<Option<u8>, SymbolicError> {
@@ -1149,6 +1160,7 @@ impl SymReturnData {
                 "CREATE with symbolic runtime size not modeled",
             ));
         }
-        Ok(SymCode::from_bytes(cx, self.bytes.clone()))
+        // Like revm, CREATE stores runtime code as legacy bytecode.
+        Ok(SymCode { legacy: true, ..SymCode::from_bytes(cx, self.bytes.clone()) })
     }
 }

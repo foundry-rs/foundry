@@ -38,12 +38,10 @@ use foundry_config::{
     },
     merge_impl_figment_convert,
 };
-use foundry_wallets::{
-    BrowserWalletOpts, TempoAccountsWallet, WalletSigner, wallet_browser::signer::BrowserSigner,
-};
+use foundry_wallets::{BrowserWalletOpts, WalletSigner, wallet_browser::signer::BrowserSigner};
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc, time::Duration};
-use tempo_alloy::TempoNetwork;
+use tempo_alloy::{TempoNetwork, accounts::TempoAccountsWallet};
 
 merge_impl_figment_convert!(CreateArgs, build, eth);
 
@@ -160,7 +158,8 @@ impl CreateArgs {
             // deployment into a Tempo transaction.
             wallet.from = None;
         }
-        let (signer, tempo_access_key) = wallet.maybe_signer_for_chain(chain.id()).await?;
+        let (signer, tempo_access_key) =
+            foundry_common::tempo::maybe_signer(&wallet, Some(chain.id())).await?;
 
         // Never deploy from an account other than the one explicitly selected by the user. Unlocked
         // and browser deployments do not use the resolved signer.
@@ -214,6 +213,7 @@ impl CreateArgs {
         };
 
         let compiler = compile::ProjectCompiler::new()
+            .allow_linked_libraries(config.allow_linked_libraries)
             .external_compilers(&config)
             .quiet(shell::is_json())
             .target_files([target_path.clone()]);
@@ -471,7 +471,7 @@ impl CreateArgs {
 
         let provider = Arc::new(provider);
         let factory =
-            ContractFactory::<N, _>::new(abi.clone(), bin.clone(), provider.clone(), timeout);
+            DeploymentTxFactory::<N, _>::new(abi.clone(), bin.clone(), provider.clone(), timeout);
 
         let is_args_empty = args.is_empty();
         let mut deployer =
@@ -771,13 +771,6 @@ impl figment::Provider for CreateArgs {
     }
 }
 
-/// `ContractFactory` is a [`DeploymentTxFactory`] object with an
-/// [`Arc`] middleware. This type alias exists to preserve backwards
-/// compatibility with less-abstract Contracts.
-///
-/// For full usage docs, see [`DeploymentTxFactory`].
-pub type ContractFactory<N, P> = DeploymentTxFactory<N, P>;
-
 /// Helper which manages the deployment transaction of a smart contract. It
 /// wraps a deployment transaction, and retrieves the contract address output
 /// by it.
@@ -843,7 +836,7 @@ impl<N: Network, P: Provider<N>> Deployer<N, P> {
     }
 }
 
-/// To deploy a contract to the Ethereum network, a [`ContractFactory`] can be
+/// To deploy a contract to the Ethereum network, a [`DeploymentTxFactory`] can be
 /// created which manages the Contract bytecode and Application Binary Interface
 /// (ABI), usually generated from the Solidity compiler.
 #[derive(Clone, Debug)]

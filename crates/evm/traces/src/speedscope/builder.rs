@@ -34,11 +34,12 @@ impl<'a> SpeedscopeBuilder<'a> {
         self.file
     }
 
-    fn process_call_node(&mut self, nodes: &[CallTraceNode], idx: usize, isolate: bool) {
+    fn process_call_node(&mut self, nodes: &[CallTraceNode], idx: usize) {
         let node = &nodes[idx];
         let frame_idx = self.frame_idx(call_frame_name(node));
         let start_gas = self.cumulative_gas;
-        let gas_used = call_gas_used(node, isolate);
+        // Call gas is gross: refunds are only subtracted from the test's reported gas.
+        let gas_used = node.trace.gas_used;
 
         self.profile.open_frame(frame_idx, self.cumulative_gas);
 
@@ -53,7 +54,7 @@ impl<'a> SpeedscopeBuilder<'a> {
                 }
                 TraceMemberOrder::Call(child_idx) => {
                     let child_node_idx = node.children[*child_idx];
-                    self.process_call_node(nodes, child_node_idx, isolate);
+                    self.process_call_node(nodes, child_node_idx);
                 }
                 TraceMemberOrder::Log(_) => {}
             }
@@ -119,13 +120,12 @@ pub fn build<'a>(
     arena: &CallTraceArena,
     test_name: &str,
     contract_name: &str,
-    isolate: bool,
 ) -> SpeedscopeFile<'a> {
     let name = format!("{contract_name}::{test_name}");
     let mut builder = SpeedscopeBuilder::new(name);
 
     if !arena.nodes().is_empty() {
-        builder.process_call_node(arena.nodes(), 0, isolate);
+        builder.process_call_node(arena.nodes(), 0);
     }
 
     builder.build()
@@ -155,15 +155,6 @@ fn call_frame_name(node: &CallTraceNode) -> String {
     } else {
         signature.clone()
     }
-}
-
-const fn call_gas_used(node: &CallTraceNode, isolate: bool) -> u64 {
-    let mut gas_used = node.trace.gas_used;
-    let max_refund_adjust_depth = if isolate { 1 } else { 0 };
-    if node.trace.depth <= max_refund_adjust_depth {
-        gas_used = gas_used.saturating_add(node.trace.gas_refund_counter);
-    }
-    gas_used
 }
 
 #[cfg(test)]
@@ -206,7 +197,7 @@ mod tests {
     #[test]
     fn test_empty_profile() {
         let arena = CallTraceArena::default();
-        let profile = build(&arena, "testExample", "TestContract", false);
+        let profile = build(&arena, "testExample", "TestContract");
         let json = serde_json::to_string_pretty(&profile).unwrap();
 
         snapbox::assert_data_eq!(
@@ -305,7 +296,7 @@ mod tests {
             ..Default::default()
         });
 
-        let file = build(&arena, "test", "Test", false);
+        let file = build(&arena, "test", "Test");
         let json = serde_json::to_string_pretty(&file).unwrap();
 
         snapbox::assert_data_eq!(
@@ -405,7 +396,7 @@ mod tests {
             ..Default::default()
         });
 
-        let file = build(&arena, "test", "Test", false);
+        let file = build(&arena, "test", "Test");
 
         // Extract events
         if let Profile::Evented(profile) = &file.profiles[0] {

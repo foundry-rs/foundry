@@ -6,7 +6,7 @@ use super::{
 };
 use crate::eth::{
     backend::{
-        db::MonadBlockReplayProfile,
+        db::{ExecutionDb, MonadBlockReplayProfile},
         executor::{
             AnvilBlockExecutor, AnvilTxResult, ExecutedPoolTransactions, PoolTxGasConfig,
             build_tx_env_for_pending, execute_pool_transactions,
@@ -24,7 +24,7 @@ use alloy_consensus::{
 };
 use alloy_eips::eip1559::BaseFeeParams;
 use alloy_evm::{
-    Database, Evm, EvmEnv, EvmFactory, RecoveredTx,
+    Evm, EvmEnv, EvmFactory, RecoveredTx,
     block::{
         BalIndexedDatabase, BlockExecutionError, BlockExecutionResult, BlockExecutor, StateDB,
     },
@@ -60,7 +60,6 @@ use revm::{
         result::{HaltReason, InvalidTransaction, ResultAndState},
         transaction::AuthorizationTr,
     },
-    database_interface::WrapDatabaseRef,
     primitives::hardfork::SpecId,
     state::AccountInfo,
 };
@@ -118,9 +117,8 @@ pub(super) struct MonadRollbackProfile {
 
 impl MonadRollbackProfile {
     /// Rewinds cfg/spec, gas params, and the retained block's fee environment.
-    pub(super) fn apply_env(&self, env: &mut EvmEnv, common_block: &Block) {
+    pub(super) fn apply_env(&self, env: &mut EvmEnv) {
         env.cfg_env.set_spec_and_mainnet_gas_params(SpecId::from(self.hardfork));
-        env.block_env.basefee = common_block.header.base_fee_per_gas.unwrap_or_default();
         env.block_env.blob_excess_gas_and_price = self.block_blob_excess_gas_and_price;
     }
 }
@@ -371,6 +369,7 @@ impl<N: Network> Backend<N> {
         let timestamp = common_block.header.timestamp();
         let blob_params = get_blob_params(source_chain_id, timestamp);
         let block_base_fee = common_block.header.base_fee_per_gas.unwrap_or_default();
+        let is_fork_root = fork.block_number() == common_block.header.number();
 
         let fees = self.fees.detached();
         fees.set_execution_rules(spec_id, BaseFeeParams::ethereum(), None);
@@ -379,12 +378,26 @@ impl<N: Network> Backend<N> {
         // deriving those values so the zero-base-fee sentinel and Osaka blob target are applied to
         // the correct parent.
         fees.set_base_fee(block_base_fee);
-        let next_block_base_fee = fees.get_next_block_base_fee_from_header(&common_block.header);
-        let next_block_excess_blob_gas = blob_params.next_block_excess_blob_gas_osaka(
-            common_block.header.excess_blob_gas.unwrap_or_default(),
-            common_block.header.blob_gas_used.unwrap_or_default(),
-            block_base_fee,
-        );
+        let (next_block_base_fee, next_block_excess_blob_gas) = if is_fork_root {
+            if let Some(child) = self.get_block(common_block.header.number().saturating_add(1)) {
+                (
+                    child.header.base_fee_per_gas().unwrap_or_default(),
+                    child.header.excess_blob_gas().unwrap_or_default(),
+                )
+            } else {
+                let snapshot = self.fees.snapshot();
+                (snapshot.base_fee, snapshot.blob_excess_gas_and_price.excess_blob_gas)
+            }
+        } else {
+            (
+                fees.get_next_block_base_fee_from_header(&common_block.header),
+                blob_params.next_block_excess_blob_gas_osaka(
+                    common_block.header.excess_blob_gas.unwrap_or_default(),
+                    common_block.header.blob_gas_used.unwrap_or_default(),
+                    block_base_fee,
+                ),
+            )
+        };
         fees.set_base_fee(next_block_base_fee);
         fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
             next_block_excess_blob_gas,
@@ -431,9 +444,9 @@ impl<N: Network> Backend<N> {
         N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
     {
         let profile = self.prepare_monad_rollback_profile(&common_block).await;
-        self.rollback(common_block.clone(), mining_guard).await?;
+        self.rollback(common_block, mining_guard).await?;
         if let Some(profile) = profile {
-            profile.apply_env(&mut self.evm_env.write(), &common_block);
+            profile.apply_env(&mut self.evm_env.write());
             self.publish_monad_rollback_profile(profile);
         }
         Ok(())
@@ -888,22 +901,24 @@ impl<N: Network> Backend<N> {
     }
 
     /// Monad path of [`Backend::transact_call_with_inspector_ref`].
-    pub(super) fn transact_monad_with_inspector_ref<'db, I, DB>(
+    pub(super) fn transact_monad_with_inspector_ref<'db, I>(
         &self,
-        db: &'db DB,
+        db: &'db dyn DatabaseRef,
         evm_env: &EvmEnv,
         inspector: &mut I,
         tx_env: TxEnv,
         execution: PreparedExecution,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
-        DB: DatabaseRef + ?Sized,
-        I: Inspector<MonadContext<WrapDatabaseRef<&'db DB>>>,
-        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+        I: Inspector<MonadContext<ExecutionDb<&'db dyn DatabaseRef>>>,
     {
         let monad_env = Self::build_monad_evm_env(evm_env, execution.hardfork);
         let factory = MonadEvmFactory::default();
-        let mut evm = factory.create_evm_with_inspector(WrapDatabaseRef(db), monad_env, inspector);
+        let mut evm = factory.create_evm_with_inspector(
+            ExecutionDb(db, *evm_env.spec_id()),
+            monad_env,
+            inspector,
+        );
         evm.ctx_mut().chain = execution.context;
         self.inject_configured_precompiles(evm.precompiles_mut(), evm_env);
         match execution.kind {

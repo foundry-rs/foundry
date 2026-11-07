@@ -348,6 +348,17 @@ repl_test!(eval_subcommand, "eval type(uint8).max", |repl| {
     repl.expect("Decimal: 255");
 });
 
+// A call that returns nothing runs without a trailing semicolon, as it does with one, instead of
+// being dropped.
+repl_test!(eval_call_without_return_value, r#"eval require(false,"boom")"#, |repl| {
+    repl.expect("[Revert] boom");
+});
+
+repl_test!(call_without_return_value_runs, |repl| {
+    repl.sendln(r#"revert("boom")"#);
+    repl.expect("[Revert] boom");
+});
+
 // Issue #17125: external function references display their address and selector.
 repl_test!(external_function_references, |repl| {
     repl.sendln_raw(
@@ -633,3 +644,45 @@ repl_test!(run_overload_assembly_does_not_shadow_entrypoint, |repl| {
     repl.sendln("uint256(7)");
     repl.expect("Decimal: 7");
 });
+
+// Interactive block comments must keep their contents together until they are closed.
+repl_test!(multiline_block_comment_continues, |repl| {
+    repl.sendln("uint256 value = 1;");
+    repl.sendln_raw("/*\nvalue = 2;\n*/");
+    repl.expect_prompt();
+
+    repl.sendln("value");
+    repl.expect("Decimal: 1");
+
+    // Code preceding an open comment must also wait for the closing delimiter.
+    repl.sendln_raw("value = 3; /*\nvalue = 4;\n*/");
+    repl.expect_prompt();
+
+    repl.sendln("value");
+    repl.expect("Decimal: 3");
+});
+
+#[test]
+fn imported_repl_does_not_shadow_wrapper() {
+    // Cover both sides of artifact path ordering, with and without matching file names.
+    for (file_index, file) in
+        ["A.sol", "Z.sol", "A/ReplContract.sol", "Z/ReplContract.sol"].into_iter().enumerate()
+    {
+        // Missing run() exposes incorrect HIR selection; an existing run() exposes wrong execution.
+        for (body_index, body) in ["", "function run() public pure {}"].into_iter().enumerate() {
+            let name = format!("imported_repl_{file_index}_{body_index}");
+            let mut repl = ChiselSession::new(&name, "", false);
+            let source = repl.project().root().join(file);
+            fs::create_dir_all(source.parent().unwrap()).unwrap();
+            fs::write(source, format!("contract REPL {{ {body} }}")).unwrap();
+            repl.sendln(&format!("import {{REPL as ImportedREPL}} from \"./{file}\";"));
+
+            repl.sendln("uint256 value = 7;");
+            repl.sendln("value");
+            repl.expect("Decimal: 7");
+            repl.sendln("value += 1;");
+            repl.sendln("value");
+            repl.expect("Decimal: 8");
+        }
+    }
+}

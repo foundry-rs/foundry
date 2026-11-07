@@ -1,12 +1,68 @@
 //! Tests for commands using the preprocessed cache.
 
-use foundry_compilers::artifacts::{EvmVersion, remappings::Remapping};
+use alloy_primitives::keccak256;
+use foundry_common::fs::read_json_file;
+use foundry_compilers::artifacts::{
+    ConfigurableContractArtifact, EvmVersion, remappings::Remapping,
+};
 use foundry_config::{CompilationRestrictions, SettingsOverrides};
+use std::fs;
 
 #[cfg(unix)]
-use foundry_compilers::artifacts::{SolcInput, output_selection::OutputSelection};
+use foundry_compilers::{
+    artifacts::{SolcInput, output_selection::OutputSelection},
+    solc::Solc,
+};
 #[cfg(unix)]
-use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
+use std::{os::unix::fs::PermissionsExt, path::PathBuf};
+
+#[forgetest]
+fn preprocess_abi_coder_v2_solc_07(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.solc = None;
+        config.evm_version = EvmVersion::Istanbul;
+    });
+    prj.add_raw_source(
+        "Target.sol",
+        r#"
+pragma solidity 0.7.6;
+pragma experimental ABIEncoderV2;
+contract Target {
+    struct Value { uint256 n; }
+    uint256 public n;
+    constructor(Value memory value) { n = value.n; }
+    function echo(Value memory value) external pure returns (Value memory) { return value; }
+}
+"#,
+    );
+    prj.add_raw_test(
+        "Target.t.sol",
+        r#"
+pragma solidity 0.7.6;
+pragma experimental ABIEncoderV2;
+import {Target} from "../src/Target.sol";
+contract TargetTest {
+    function test_deploy() public {
+        Target target = new Target(Target.Value(42));
+        require(target.n() == 42, "constructor argument");
+        require(target.echo(Target.Value(7)).n == 7, "inherited ABI coder");
+    }
+}
+"#,
+    );
+    for dtl in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dtl);
+        cmd.forge_fuse().arg("test").assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Target.t.sol:TargetTest
+[PASS] test_deploy() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+    }
+}
 
 // <https://github.com/foundry-rs/foundry/issues/16852>
 #[forgetest]
@@ -91,19 +147,19 @@ Ran 1 test for test/Value.t.sol:ValueTest
 [PASS] test_arguments() ([GAS])
 Traces:
   [[..]] ValueTest::test_arguments()
-    ├─ [0] VM::deployCode("src/Target.sol:Target", 0x000000000000000000000000000000000000000000000000000000000000002a, 1000000000000000000 [1e18])
+    ├─ [[..]] VM::deployCode("src/Target.sol:Target", 0x000000000000000000000000000000000000000000000000000000000000002a, 1000000000000000000 [1e18])
     │   ├─ [[..]] → new Target@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   │   └─ ← [Return] 203 bytes of code
     │   └─ ← [Return] Target: [0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f]
-    ├─ [0] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000007, 2000000000000000000 [2e18])
+    ├─ [[..]] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000007, 2000000000000000000 [2e18])
     │   ├─ [[..]] → new Target@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   │   └─ ← [Return] 203 bytes of code
     │   └─ ← [Return] Target: [0x2e234DAe75C793f67A35089C9d99245E1C58470b]
-    ├─ [0] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000008)
+    ├─ [[..]] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000008)
     │   ├─ [[..]] → new Target@0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
     │   │   └─ ← [Return] 203 bytes of code
     │   └─ ← [Return] Target: [0xF62849F9A0B5Bf2913b396098F7c7019b51A820a]
-    ├─ [0] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000009, 3000000000000000000 [3e18])
+    ├─ [[..]] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000009, 3000000000000000000 [3e18])
     │   ├─ [[..]] → new Target@0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9
     │   │   └─ ← [Return] 203 bytes of code
     │   └─ ← [Return] Target: [0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9]
@@ -1209,7 +1265,7 @@ fn abi_commands_reuse_preprocessed_cache(prj: _, cmd: _) {
         r#"#!/bin/sh
 if [ "$1" = "--version" ]; then
     echo "solc, the solidity compiler commandline interface"
-    echo "Version: 0.8.35+commit.69074fbd"
+    echo "Version: 0.8.38+commit.1835d247"
     exit 0
 fi
 cat > "$0.invoked"
@@ -3110,7 +3166,7 @@ Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
 Traces:
   [..] CounterTest::test_Increment()
-    ├─ [0] VM::deployCode("src/Counter.sol:Counter")
+    ├─ [[..]] VM::deployCode("src/Counter.sol:Counter")
     │   ├─ [[..]] → new Counter@0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
     │   │   └─ ← [Return] 481 bytes of code
     │   └─ ← [Return] Counter: [0xF62849F9A0B5Bf2913b396098F7c7019b51A820a]
@@ -3704,7 +3760,6 @@ contract TargetTest is Test {
 fn preprocess_custom_layout_contract(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
-        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 35)));
     });
 
     prj.add_source(
@@ -4117,9 +4172,34 @@ Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
 Traces:
 ...
-    ├─ [0] VM::deployCode("src/Targets.sol:Literal", 0x[..])
+    ├─ [[..]] VM::deployCode("src/Targets.sol:Literal", 0x[..])
 ...
 "#]]);
+}
+
+#[forgetest]
+fn preprocess_bytecode_is_stable_across_build_scopes(prj: _, cmd: _) {
+    prj.add_source("Target.sol", "contract Target { constructor(uint256 value) {} }");
+    prj.add_test("A.t.sol", "contract ATest { function test_other() public {} }");
+    prj.add_test(
+        "Z.t.sol",
+        r#"
+import {Target} from "../src/Target.sol";
+contract Mock { function value() public pure returns (uint256) { return 42; } }
+contract ZTest { function test_deploy() public { new Target(42); } }
+"#,
+    );
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    cmd.args(["build", "test/Z.t.sol"]).assert_success();
+    let artifact_path = prj.artifacts().join("Z.t.sol/Mock.json");
+    let narrow = read_json_file::<ConfigurableContractArtifact>(&artifact_path).unwrap();
+    let bytecode = narrow.deployed_bytecode.unwrap().bytecode.unwrap().object;
+
+    for args in [vec!["test"], vec!["test", "--force"], vec!["build", "test/Z.t.sol", "--force"]] {
+        cmd.forge_fuse().args(args).assert_success();
+        let artifact = read_json_file::<ConfigurableContractArtifact>(&artifact_path).unwrap();
+        assert_eq!(bytecode, artifact.deployed_bytecode.unwrap().bytecode.unwrap().object);
+    }
 }
 
 #[forgetest]
@@ -4132,7 +4212,10 @@ contract Target {
     prj.add_source("Target.sol", target);
     prj.add_source(
         "ImportedNames.sol",
-        "interface VmContractHelper2 {} interface VmContractHelper2_ {}",
+        &"interface VmContractHelper2 {} interface VmContractHelper2_ {}".replace(
+            "VmContractHelper2",
+            &format!("VmContractHelper{:x}", keccak256("test/Collision.t.sol:CollisionTest")),
+        ),
     );
     prj.add_test(
         "Collision.t.sol",
@@ -4166,12 +4249,14 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 #[forgetest]
 fn preprocess_generated_constructor_helper_name_collision(prj: _, cmd: _) {
+    let identifier = format!("{:x}", keccak256("src/Target.sol:Target"));
     let base = r#"
 contract Base {
     struct FoundryPpConstructorArgs { uint256 unused; }
     function encodeArgs0() public pure returns (uint256) { return 0; }
 }
-"#;
+"#
+    .replace("encodeArgs0", &format!("encodeArgs{identifier}"));
     let target = r#"
 import {Base} from "./Base.sol";
 contract Target is Base {
@@ -4182,12 +4267,14 @@ contract Target is Base {
 }
 contract DeployHelper0 {}
 function encodeArgs0() pure returns (uint256) { return 0; }
-"#;
-    prj.add_source("Base.sol", base);
-    prj.add_source("Target.sol", target);
+"#
+    .replace("DeployHelper0", &format!("DeployHelper{identifier}"))
+    .replace("encodeArgs0", &format!("encodeArgs{identifier}"));
+    prj.add_source("Base.sol", &base);
+    prj.add_source("Target.sol", &target);
     prj.add_test(
         "Collision.t.sol",
-        r#"
+        &r#"
 import {Target} from "../src/Target.sol";
 
 contract DeployHelper0_ {}
@@ -4198,13 +4285,15 @@ contract CollisionTest {
         require(new Target(0, 1).value() == 111, "changed value");
     }
 }
-"#,
+"#
+        .replace("DeployHelper0", &format!("DeployHelper{identifier}"))
+        .replace("encodeArgs0", &format!("encodeArgs{identifier}")),
     );
 
     for dynamic_test_linking in [false, true] {
         prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
-        prj.add_source("Base.sol", base);
-        prj.add_source("Target.sol", target);
+        prj.add_source("Base.sol", &base);
+        prj.add_source("Target.sol", &target);
         cmd.forge_fuse().args(["test", "--force"]).assert_success();
         cmd.forge_fuse().arg("test").assert_success();
         prj.add_source("Target.sol", &target.replace("+ 110", "+ 220"));
@@ -4538,7 +4627,7 @@ Ran 1 test for test/Isolation.t.sol:IsolationTest
 [PASS] test_create() ([GAS])
 Traces:
   [[..]] IsolationTest::test_create()
-    ├─ [0] VM::deployCode("src/Target.sol:Target")
+    ├─ [[..]] VM::deployCode("src/Target.sol:Target")
     │   ├─ [[..]] → new Target@[..]
     │   │   ├─ [[..]] IsolationTest::read() [staticcall]
     │   │   │   └─ ← [Return] 0
@@ -4590,6 +4679,8 @@ fn preprocess_constructor_validation(prj: _, cmd: _) {
             .stderr
             .clone();
         prj.update_config(|config| config.dynamic_test_linking = true);
+        // DTL-disable warnings are deferred until a successful compile (#17913), so a
+        // failing build matches native stderr even when Solar disables DTL first.
         cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(native);
     }
 }
@@ -4944,9 +5035,8 @@ fn preprocess_inline_verbatim_diagnostics(prj: _, cmd: _) {
             .stderr
             .clone();
         prj.update_config(|config| config.dynamic_test_linking = true);
-        let mut expected = b"Warning: dynamic test linking disabled for 1 files: error: unsupported verbatim builtin\n".to_vec();
-        expected.extend(native);
-        cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(expected);
+        // Failing builds omit the deferred DTL-disable warning (#17913).
+        cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(native);
     }
 }
 
@@ -5169,5 +5259,543 @@ Compiler run successful!
         .stderr_eq(str![[r#"
 Warning: dynamic test linking disabled for 1 files: error: unresolved symbol `now`
 
+"#]]);
+}
+
+// Each compiler job that falls back to native linking reports its own deferred warning.
+#[forgetest]
+fn preprocess_analysis_fallback_warns_per_compiler_job(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+        config.solc = Some(foundry_config::SolcReq::Version("0.6.12".parse().unwrap()));
+        config.evm_version = EvmVersion::Istanbul;
+        config.lint.lint_on_build = false;
+        config.additional_compiler_profiles = vec![SettingsOverrides {
+            name: "optimized".to_owned(),
+            via_ir: None,
+            evm_version: None,
+            optimizer: Some(true),
+            optimizer_runs: Some(10_000),
+            bytecode_hash: None,
+        }];
+        config.compilation_restrictions = vec![CompilationRestrictions {
+            paths: "test/Optimized.t.sol".parse().unwrap(),
+            version: None,
+            via_ir: None,
+            bytecode_hash: None,
+            min_optimizer_runs: Some(10_000),
+            optimizer_runs: None,
+            max_optimizer_runs: None,
+            min_evm_version: None,
+            evm_version: None,
+            max_evm_version: None,
+        }];
+    });
+    prj.add_raw_source("Target.sol", "pragma solidity 0.6.12; contract Target {}");
+    for name in ["Default", "Optimized"] {
+        // `now` is valid in solc 0.6.12, but unavailable in Solar's analysis.
+        prj.add_raw_test(
+            &format!("{name}.t.sol"),
+            &format!(
+                "pragma solidity 0.6.12; import '../src/Target.sol'; contract {name}Test {{ uint256 timestamp = now; function test_deploy() public {{ new Target(); }} }}"
+            ),
+        );
+    }
+    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
+Warning: dynamic test linking disabled for 1 files: error: unresolved symbol `now`
+Warning: dynamic test linking disabled for 1 files: error: unresolved symbol `now`
+
+"#]]);
+}
+
+// Inject solc's codegen diagnostics only for rewritten inputs, then compile the native retry
+// with real solc. This keeps coverage independent of optimizer/version-specific codegen limits.
+#[cfg(unix)]
+#[forgetest]
+fn preprocess_codegen_fallback(prj: _, cmd: _) {
+    let real_solc =
+        Solc::find_or_install(&foundry_test_utils::util::SOLC_VERSION.parse().unwrap()).unwrap();
+    let solc = prj.root().join("solc-wrapper");
+    fs::write(
+        &solc,
+        format!(
+            r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+    exec '{real_solc}' "$@"
+fi
+cat > "$0.input"
+if grep -q 'deployCode' "$0.input"; then
+    cat "$0.error"
+else
+    exec '{real_solc}' "$@" < "$0.input"
+fi
+"#,
+            real_solc = real_solc.solc.display(),
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&solc, fs::Permissions::from_mode(0o755)).unwrap();
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
+        config.dynamic_test_linking = true;
+        config.via_ir = true;
+        config.optimizer = Some(true);
+        config.lint.lint_on_build = false;
+    });
+    let implementation =
+        "contract Impl { function value() external pure returns (uint256) { return 111; } }";
+    prj.add_source("Impl.sol", implementation);
+    prj.add_test(
+        "Fallback.t.sol",
+        r#"
+import "../src/Impl.sol";
+contract FallbackTest {
+    function test_fallback() public {
+        require(new Impl().value() == 111, "stale fallback bytecode");
+    }
+}
+"#,
+    );
+
+    for (kind, message, reason) in [
+        (
+            "YulException",
+            "Yul exception:Variable _8 is 1 too deep in the stack [ RET _8 ] memoryguard was present.",
+            "stack too deep",
+        ),
+        (
+            "CompilerError",
+            "Compiler error:Stack too deep. Try compiling with --via-ir.",
+            "stack too deep",
+        ),
+        (
+            "InternalCompilerError",
+            "Internal compiler error:Assembly exception for bytecode: Tag too large for reserved space.",
+            "Tag too large for reserved space",
+        ),
+    ] {
+        fs::write(
+            solc.with_extension("error"),
+            serde_json::to_vec(&serde_json::json!({"errors": [{
+                "type": kind, "component": "general", "severity": "error", "message": message
+            }]}))
+            .unwrap(),
+        )
+        .unwrap();
+        cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]).stderr_eq(format!(
+            "Warning: dynamic test linking failed ({reason}); retrying with native test linking. Use --no-dynamic-test-linking to skip the failed attempt.\n"
+        ));
+        // The retry publishes usable native artifacts, reusable when explicitly opting out.
+        cmd.forge_fuse()
+            .args(["test", "--no-dynamic-test-linking"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/Fallback.t.sol:FallbackTest
+[PASS] test_fallback() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+            .stderr_eq(str![""]);
+    }
+
+    // Native tests must recompile when an embedded dependency changes after the fallback.
+    prj.add_source("Impl.sol", &implementation.replace("return 111", "return 222"));
+    cmd.forge_fuse()
+        .args(["test", "--no-dynamic-test-linking"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+...
+[FAIL: stale fallback bytecode] test_fallback() ([..])
+...
+"#]])
+        .stderr_eq(str![""]);
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn preprocess_codegen_fallback_is_targeted(prj: _, cmd: _) {
+    let solc = prj.root().join("solc-wrapper");
+    fs::write(
+        &solc,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+    echo "solc, the solidity compiler commandline interface"
+    echo "Version: 0.8.38+commit.1835d247"
+    exit 0
+fi
+cat > /dev/null
+cat "$0.error"
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&solc, fs::Permissions::from_mode(0o755)).unwrap();
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
+        config.dynamic_test_linking = true;
+        config.lint.lint_on_build = false;
+    });
+    prj.add_test("Empty.t.sol", "contract EmptyTest { function test_empty() public {} }");
+    let error = |kind, message| {
+        serde_json::json!({
+            "type": kind, "component": "general", "severity": "error", "message": message
+        })
+    };
+    let stack = error("YulException", "Yul exception:Variable _8 is 1 too deep in the stack.");
+    let stack_error = || {
+        fs::write(
+            solc.with_extension("error"),
+            serde_json::to_vec(&serde_json::json!({"errors": [stack]})).unwrap(),
+        )
+        .unwrap()
+    };
+
+    stack_error();
+    // Without a deployment to rewrite, DTL leaves the input unchanged and a retry cannot help.
+    cmd.forge_fuse()
+        .args(["build", "--force"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+
+"#]])
+        .stderr_eq(str![[r#"
+Error: Compiler run failed:
+Error: Yul exception:Variable _8 is 1 too deep in the stack.
+
+"#]]);
+
+    prj.add_source("Impl.sol", "contract Impl {}");
+    prj.add_test(
+        "Deploy.t.sol",
+        r#"
+import "../src/Impl.sol";
+contract DeployTest {
+    function test_deploy() public {
+        new Impl();
+    }
+}
+"#,
+    );
+
+    // Neither unrelated errors nor matching text in a source snippet may cause a retry.
+    for errors in [
+        vec![error("InternalCompilerError", "Unrelated internal compiler error.")],
+        vec![error("YulException", "Unrelated Yul exception.")],
+        vec![error("TypeError", "Stack too deep")],
+        vec![stack.clone(), error("TypeError", "Unrelated type error.")],
+        vec![serde_json::json!({
+            "type": "TypeError", "component": "general", "severity": "error",
+            "message": "Unrelated type error.",
+            "formattedMessage": "TypeError: Unrelated type error.\n --> test/Empty.t.sol:1:1:\n1 | // Tag too large for reserved space\n"
+        })],
+    ] {
+        fs::write(
+            solc.with_extension("error"),
+            serde_json::to_vec(&serde_json::json!({"errors": errors})).unwrap(),
+        )
+        .unwrap();
+        cmd.forge_fuse()
+            .args(["build", "--force"])
+            .assert_failure()
+            .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+
+"#]])
+            .stderr_eq(str![[r#"
+Error: Compiler run failed:
+...
+"#]]);
+    }
+
+    stack_error();
+    // A native failure is returned after exactly one retry, not swallowed or retried again.
+    cmd.forge_fuse().args(["build", "--force"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+
+"#]]).stderr_eq(str![[r#"
+Warning: dynamic test linking failed (stack too deep); retrying with native test linking. Use --no-dynamic-test-linking to skip the failed attempt.
+Error: Compiler run failed:
+Error: Yul exception:Variable _8 is 1 too deep in the stack.
+
+"#]]);
+    // Explicit opt-out never retries, even for a recognized diagnostic.
+    cmd.forge_fuse()
+        .args(["build", "--force", "--no-dynamic-test-linking"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+
+"#]])
+        .stderr_eq(str![[r#"
+Error: Compiler run failed:
+Error: Yul exception:Variable _8 is 1 too deep in the stack.
+
+"#]]);
+}
+
+// This two-file reproducer fails with a real Yul stack error on Solc 0.8.24.
+// Its fork test is compile-only here; a separate smoke test deploys without a fork.
+#[forgetest]
+fn preprocess_via_ir_codegen(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 24)));
+        config.dynamic_test_linking = true;
+        config.via_ir = true;
+        config.evm_version = EvmVersion::Shanghai;
+        config.optimizer = Some(true);
+        config.optimizer_runs = Some(200);
+        config.bytecode_hash = foundry_compilers::artifacts::BytecodeHash::None;
+        config.cbor_metadata = false;
+    });
+    prj.add_raw_source(
+        "core/HedgerPool.sol",
+        include_str!("../../../../testdata/fixtures/PreprocessViaIr/repro/HedgerPool.sol"),
+    );
+    prj.add_raw_test(
+        "Repro.t.sol",
+        include_str!("../../../../testdata/fixtures/PreprocessViaIr/repro/Repro.t.sol"),
+    );
+    cmd.args(["test", "--match-contract", "^DeploymentSmokeTest$"])
+        .assert_success()
+        .stderr_eq("")
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Repro.t.sol:DeploymentSmokeTest
+[PASS] test_deployment() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+    // Empty stderr rules out fallback, but both owners must also have been preprocessed.
+    for owner in ["HedgerPoolDustDeadlockForkTest", "DeploymentSmokeTest"] {
+        let helper = format!(
+            "Repro.t.sol/VmContractHelper{:x}.json",
+            keccak256(format!("test/Repro.t.sol:{owner}"))
+        );
+        assert!(prj.artifacts().join(helper).exists(), "{owner} was not preprocessed");
+    }
+}
+
+// <https://github.com/foundry-rs/foundry/issues/17836>
+#[forgetest]
+fn preprocess_expanding_build_reuses_source_artifacts(prj: _, cmd: _) {
+    for i in 1..=5 {
+        prj.add_source(
+            &format!("C{i}.sol"),
+            &format!("contract C{i} {{ uint256 public x = {i}; }}"),
+        );
+    }
+    prj.add_script(
+        "Deploy.s.sol",
+        r#"
+import {C1} from "../src/C1.sol";
+contract Deploy {
+    function run() external { require(new C1().x() == 1, "wrong deployment"); }
+}
+"#,
+    );
+    cmd.args(["build", "--skip", "script"]).with_no_redact().assert_success().stdout_eq(str![[
+        r#"
+Compiling 5 files with [..]
+Solc [..] finished in [..]
+Compiler run successful!
+
+"#
+    ]]);
+    let path = prj.artifacts().join("C1.sol/C1.json");
+    let source = read_json_file::<ConfigurableContractArtifact>(&path).unwrap();
+    cmd.forge_fuse().arg("build").assert_success().stdout_eq(str![[r#"
+Compiling 1 files with [..]
+Solc [..] finished in [..]
+Compiler run successful!
+
+"#]]);
+    assert_eq!(source, read_json_file::<ConfigurableContractArtifact>(&path).unwrap());
+    cmd.forge_fuse().arg("build").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+"#]]);
+    cmd.forge_fuse().args(["script", "script/Deploy.s.sol:Deploy"]).assert_success();
+}
+
+#[forgetest]
+fn preprocess_context_growth_invalidates_source_importers(prj: _, cmd: _) {
+    let implementation =
+        "contract Impl { function value() external pure returns (uint256) { return 111; } }";
+    prj.add_source("Impl.sol", implementation);
+    prj.add_test(
+        "Factory.t.sol",
+        r#"
+import {Impl} from "../src/Impl.sol";
+contract Factory {
+    function create() public returns (Impl) { return new Impl(); }
+}
+"#,
+    );
+    prj.add_source(
+        "Consumer.sol",
+        r#"
+import {Factory} from "../test/Factory.t.sol";
+contract Consumer is Factory {}
+"#,
+    );
+    cmd.args(["build"]).assert_success();
+    let artifact_path = prj.artifacts().join("Consumer.sol/Consumer.json");
+    let before = read_json_file::<ConfigurableContractArtifact>(&artifact_path).unwrap();
+
+    // Introduce an ambiguous artifact path while the factory and its importer are out of scope.
+    prj.create_file("vendor/pkg/src/Impl.sol", implementation);
+    prj.add_script(
+        "Other.s.sol",
+        r#"
+import {Impl} from "../vendor/pkg/src/Impl.sol";
+contract Other { function run() public { new Impl(); } }
+"#,
+    );
+    cmd.forge_fuse().args(["build", "script/Other.s.sol"]).assert_success();
+    cmd.forge_fuse().args(["build", "src/Consumer.sol"]).assert_success();
+    let after = read_json_file::<ConfigurableContractArtifact>(&artifact_path).unwrap();
+    let bytecode = after.deployed_bytecode.unwrap().bytecode.unwrap().object;
+    assert_ne!(before.deployed_bytecode.unwrap().bytecode.unwrap().object, bytecode);
+    cmd.forge_fuse().args(["build", "--force"]).assert_success();
+    let clean = read_json_file::<ConfigurableContractArtifact>(&artifact_path).unwrap();
+    assert_eq!(bytecode, clean.deployed_bytecode.unwrap().bytecode.unwrap().object);
+
+    // The rebuilt factory must retain native dependencies after an implementation-only edit.
+    prj.add_test(
+        "Check.t.sol",
+        r#"
+import {Consumer} from "../src/Consumer.sol";
+contract CheckTest {
+    function test_value() public { require(new Consumer().create().value() == 111, "implementation changed"); }
+}
+"#,
+    );
+    cmd.forge_fuse().arg("test").assert_success();
+    prj.add_source("Impl.sol", &implementation.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: implementation changed] test_value() ([GAS])
+...
+"#]]);
+
+    // Removing the ambiguous artifact path must restore dynamic linking in the cached factory.
+    fs::remove_file(prj.root().join("vendor/pkg/src/Impl.sol")).unwrap();
+    fs::remove_file(prj.root().join("script/Other.s.sol")).unwrap();
+    cmd.forge_fuse().args(["build", "src/Consumer.sol"]).assert_success();
+    let restored = read_json_file::<ConfigurableContractArtifact>(&artifact_path).unwrap();
+    cmd.forge_fuse().args(["build", "--force"]).assert_success();
+    let clean = read_json_file::<ConfigurableContractArtifact>(&artifact_path).unwrap();
+    assert_eq!(
+        restored.deployed_bytecode.unwrap().bytecode.unwrap().object,
+        clean.deployed_bytecode.unwrap().bytecode.unwrap().object
+    );
+}
+
+#[forgetest]
+fn preprocess_context_growth_avoids_new_helper_path_collision(prj: _, cmd: _) {
+    prj.add_source(
+        "Target.sol",
+        "contract Target { uint256 public value; constructor(uint256 n) { value = n; } }",
+    );
+    prj.add_test(
+        "Target.t.sol",
+        r#"
+import {Target} from "../src/Target.sol";
+contract TargetTest {
+    function test_value() public { require(new Target(42).value() == 42, "wrong constructor"); }
+}
+"#,
+    );
+    cmd.args(["build", "test/Target.t.sol"]).assert_success();
+    let artifact_path = prj.artifacts().join("Target.t.sol/TargetTest.json");
+    let before = read_json_file::<ConfigurableContractArtifact>(&artifact_path).unwrap();
+    let original_bytecode = before.deployed_bytecode.unwrap().bytecode.unwrap().object;
+
+    let helper = format!("DeployHelper{:x}.sol", keccak256("src/Target.sol:Target"));
+    prj.create_file(
+        format!("foundry-pp/{helper}"),
+        "pragma solidity ^0.8.0; contract Collision {}",
+    );
+    prj.add_script(
+        "Discover.s.sol",
+        &format!(
+            "import '../foundry-pp/{helper}'; contract Discover {{ function run() public {{}} }}"
+        ),
+    );
+    cmd.forge_fuse().args(["build", "script/Discover.s.sol"]).assert_success();
+    cmd.forge_fuse().args(["build", "test/Target.t.sol"]).assert_success();
+    let after = read_json_file::<ConfigurableContractArtifact>(&artifact_path).unwrap();
+    let bytecode = after.deployed_bytecode.unwrap().bytecode.unwrap().object;
+    assert_ne!(original_bytecode, bytecode);
+    cmd.forge_fuse().arg("test").assert_success();
+    cmd.forge_fuse().args(["build", "--force"]).assert_success();
+    let clean = read_json_file::<ConfigurableContractArtifact>(&artifact_path).unwrap();
+    assert_eq!(bytecode, clean.deployed_bytecode.unwrap().bytecode.unwrap().object);
+
+    // Removing the collision must invalidate the cached helper imports as well.
+    fs::remove_file(prj.root().join(format!("foundry-pp/{helper}"))).unwrap();
+    fs::remove_file(prj.root().join("script/Discover.s.sol")).unwrap();
+    cmd.forge_fuse().args(["build", "test/Target.t.sol"]).assert_success();
+    let restored = read_json_file::<ConfigurableContractArtifact>(&artifact_path).unwrap();
+    assert_eq!(original_bytecode, restored.deployed_bytecode.unwrap().bytecode.unwrap().object);
+    cmd.forge_fuse().arg("test").assert_success();
+}
+
+// <https://github.com/foundry-rs/foundry/issues/18024>
+#[forgetest]
+fn preprocess_removed_test_keeps_script_cache(prj: _, cmd: _) {
+    for i in 1..=5 {
+        prj.add_source(
+            &format!("C{i}.sol"),
+            &format!("contract C{i} {{ uint256 public x = {i}; }}"),
+        );
+    }
+    prj.add_script(
+        "Deploy.s.sol",
+        r#"
+import {C1} from "../src/C1.sol";
+contract Deploy { function run() external { new C1(); } }
+"#,
+    );
+    prj.add_test(
+        "T.t.sol",
+        r#"
+import {C2} from "../src/C2.sol";
+contract T { function test_x() external { new C2(); } }
+"#,
+    );
+    cmd.arg("build").assert_success();
+
+    fs::remove_file(prj.root().join("test/T.t.sol")).unwrap();
+    cmd.forge_fuse().args(["script", "script/Deploy.s.sol"]);
+    cmd.assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+Script ran successfully.
+...
 "#]]);
 }

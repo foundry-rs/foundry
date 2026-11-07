@@ -21,11 +21,13 @@ use foundry_common::{
     get_pretty_receipt_w_reason_attr,
     provider::fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
     shell,
+    tempo::ensure_expiring_nonce_discriminator_active,
 };
 use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
-use foundry_wallets::{BrowserWalletOpts, TempoAccountsWallet, WalletOpts, WalletSigner};
+use foundry_wallets::{BrowserWalletOpts, WalletOpts, WalletSigner};
 use itertools::Itertools;
 use std::{fmt::Write, marker::PhantomData, str::FromStr, time::Duration};
+use tempo_alloy::accounts::TempoAccountsWallet;
 
 #[derive(Debug, Clone, Args)]
 pub struct SendTxOpts {
@@ -168,7 +170,7 @@ impl SenderKind<'_> {
         {
             return Ok(from.into());
         }
-        let (signer, tempo_wallet) = opts.maybe_signer().await?;
+        let (signer, tempo_wallet) = foundry_common::tempo::maybe_signer(&opts, None).await?;
         Ok(if let Some(signer) = signer {
             signer.into()
         } else if let Some(tempo_wallet) = tempo_wallet {
@@ -348,11 +350,22 @@ where
         if cast_async {
             sh_println!("{tx_hash:#x}")?;
         } else {
-            let receipt =
-                self.receipt(format!("{tx_hash:#x}"), None, confs, Some(timeout), false).await?;
+            let receipt = self.sent_tx_receipt(tx_hash, confs, timeout).await?;
             sh_println!("{receipt}")?;
         }
         Ok(())
+    }
+
+    /// Waits for the receipt of a transaction that was already sent, and formats it.
+    ///
+    /// On failure the error names the hash, so that the transaction can be looked up instead of
+    /// sent again.
+    pub async fn sent_tx_receipt(&self, tx_hash: B256, confs: u64, timeout: u64) -> Result<String> {
+        self.receipt(format!("{tx_hash:#x}"), None, confs, Some(timeout), false)
+            .await
+            .wrap_err_with(|| {
+                format!("transaction {tx_hash:#x} was sent, but waiting for its receipt failed")
+            })
     }
 
     /// Fetches the receipt of `tx_hash`, polling for it unless `cast_async` is set, and formats
@@ -508,6 +521,11 @@ where
         let legacy = tx_opts.legacy || (chain.is_legacy() && tx_opts.auth.is_empty());
 
         tx_opts.apply::<N>(&mut tx, legacy);
+        // The curl transport answers every request with a placeholder, so there is nothing to
+        // check against.
+        if !config.eth_rpc_curl {
+            ensure_expiring_nonce_discriminator_active(&provider, &tx).await?;
+        }
 
         Ok(Self {
             inner: TxBuilderInner {

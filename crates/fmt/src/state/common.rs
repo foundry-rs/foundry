@@ -48,7 +48,7 @@ impl<'ast> State<'_, 'ast> {
                 }
                 self.end();
             }
-            ast::LitKind::Number(_) | ast::LitKind::Rational(_) => {
+            ast::LitKind::Number(_) | ast::LitKind::BigNumber(_) | ast::LitKind::Rational(..) => {
                 self.print_num_literal(symbol.as_str(), is_yul);
             }
             ast::LitKind::Address(value) => self.word(value.to_string()),

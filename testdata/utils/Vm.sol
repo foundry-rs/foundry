@@ -364,6 +364,7 @@ interface Vm {
     function lastFrameGas() external view returns (Gas memory gas);
     function load(address target, bytes32 slot) external view returns (bytes32 data);
     function loadAllocs(string calldata pathToAllocsJson) external;
+    function loadTransient(address target, bytes32 slot) external view returns (bytes32 data);
     function makePersistent(address account) external;
     function makePersistent(address account0, address account1) external;
     function makePersistent(address account0, address account1, address account2) external;
@@ -610,6 +611,7 @@ interface Vm {
     function stopSnapshotGas(string calldata name) external returns (uint256 gasUsed);
     function stopSnapshotGas(string calldata group, string calldata name) external returns (uint256 gasUsed);
     function store(address target, bytes32 slot, bytes32 value) external;
+    function storeTransient(address target, bytes32 slot, bytes32 value) external;
     function toBase64URL(bytes calldata data) external pure returns (string memory);
     function toBase64URL(string calldata data) external pure returns (string memory);
     function toBase64(bytes calldata data) external pure returns (string memory);

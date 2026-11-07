@@ -11,7 +11,7 @@ use svm::Platform;
 /// 3. svm bumped in foundry-compilers
 /// 4. foundry-compilers update with any breaking changes
 /// 5. upgrade the `LATEST_SOLC`
-const LATEST_SOLC: Version = Version::new(0, 8, 37);
+const LATEST_SOLC: Version = Version::new(0, 8, 38);
 
 macro_rules! ensure_svm_releases {
     ($($test:ident => $platform:ident),* $(,)?) => {$(
@@ -255,6 +255,25 @@ contract StateGasTest is Test {
         (bool success,) = address(0xCA11).call{gas: 1_000}(data);
         assertTrue(success, "low gas call failed");
         assertEq(VM_GAS.snapshotGasLastCall("calldataFloorLowGas"), floorGas, "wrong calldata floor gas");
+    }
+
+    /// forge-config: default.isolate = false
+    function testDeployCodeChargesCreateStateGas() public {
+        // Deploy natively with CREATE, which dynamic test linking does not rewrite.
+        bytes memory initCode = type(StateGasTarget).creationCode;
+        VM_GAS.startSnapshotGas("nativeCreate");
+        assembly {
+            pop(create(0, add(initCode, 0x20), mload(initCode)))
+        }
+        uint256 native = VM_GAS.stopSnapshotGas();
+
+        VM_GAS.startSnapshotGas("deployCodeCreate");
+        vm.deployCode("test/StateGas.t.sol:StateGasTarget");
+        uint256 synthetic = VM_GAS.stopSnapshotGas();
+
+        // The cheatcode call overhead differs from native memory expansion, but the account
+        // creation state gas must be charged to both.
+        assertApproxEqAbs(synthetic, native, 2_000, "deployCode create gas differs");
     }
 
     function snapshotValueTransfer(address to, uint256 gasLimit) internal returns (uint256 section) {

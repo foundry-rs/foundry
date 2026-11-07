@@ -1,7 +1,7 @@
 use super::{
-    Cheatcodes, CheatsConfig, ChiselState, CmpOperands, CustomPrintTracer, EdgeCovConfig,
-    EdgeCovInspector, EdgeCoverage, Fuzzer, LineCoverageCollector, LogCollector, RevertDiagnostic,
-    ScriptExecutionInspector, TempoLabels, TracingInspector,
+    Cheatcodes, CheatsConfig, ChiselState, CmpOperands, CustomPrintTracer, DebugRecorder,
+    EdgeCovConfig, EdgeCovInspector, EdgeCoverage, Fuzzer, LineCoverageCollector, LogCollector,
+    RevertDiagnostic, ScriptExecutionInspector, TempoLabels, TracingInspector,
 };
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, keccak256,
@@ -38,7 +38,7 @@ use revm::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
         InstructionResult, Interpreter, InterpreterResult,
         bytecode::opcode as op,
-        interpreter_types::{InputsTr, Jumps},
+        interpreter_types::{InputsTr, Jumps, LoopControl},
         return_ok,
     },
     primitives::KECCAK_EMPTY,
@@ -279,11 +279,11 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
             // Set analysis capabilities if they are provided
             if let Some(analysis) = analysis {
                 stack.set_analysis(analysis.clone());
-                cheatcodes.set_analysis(CheatcodeAnalysis::new(analysis));
+                cheatcodes.core.set_analysis(CheatcodeAnalysis::new(analysis));
             }
             // Set wallets if they are provided
             if let Some(wallets) = wallets {
-                cheatcodes.set_wallets(wallets);
+                cheatcodes.core.set_wallets(wallets);
             }
             stack.set_cheatcodes(cheatcodes);
         }
@@ -446,6 +446,7 @@ pub struct InspectorStackInner {
     // These are boxed to reduce the size of the struct and slightly improve performance of the
     // `if let Some` checks.
     pub chisel_state: Option<Box<ChiselState>>,
+    pub debug_recorder: Option<Box<DebugRecorder>>,
     pub edge_coverage: Option<Box<EdgeCovInspector>>,
     pub fuzzer: Option<Box<Fuzzer>>,
     pub line_coverage: Option<Box<LineCoverageCollector>>,
@@ -767,6 +768,18 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         self.refresh_static_step_dispatch();
     }
 
+    /// Drops the inspectors that only feed fuzz guidance: edge coverage, the fuzzer value
+    /// collector, and sancov collection. Calls whose coverage and collected values are never
+    /// merged back, such as invariant predicate checks, run faster without them.
+    #[inline]
+    pub fn disable_fuzz_instrumentation(&mut self) {
+        self.edge_coverage = None;
+        self.fuzzer = None;
+        self.sancov_edges = false;
+        self.sancov_trace_cmp = false;
+        self.refresh_static_step_dispatch();
+    }
+
     /// Set whether to collect EVM comparison operands.
     #[inline]
     pub fn collect_evm_cmp_log(&mut self, yes: bool) {
@@ -855,6 +868,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         } else {
             self.tracer = None;
         }
+        if requirements.debug_recording() {
+            self.debug_recorder.get_or_insert_with(Default::default);
+        } else {
+            self.debug_recorder = None;
+        }
         self.refresh_static_opcode_dispatch();
     }
 
@@ -881,6 +899,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
             inner:
                 InspectorStackInner {
                     chisel_state,
+                    mut debug_recorder,
                     line_coverage,
                     edge_coverage,
                     log_collector,
@@ -910,7 +929,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
                 })
                 .unwrap_or_default();
 
-            SparsedTraceArena { arena, ignored, diagnostics: trace_diagnostics }
+            SparsedTraceArena {
+                arena,
+                ignored,
+                diagnostics: trace_diagnostics,
+                debug_steps: debug_recorder.as_deref_mut().map(DebugRecorder::finish),
+            }
         });
 
         let (edge_coverage, evm_cmp_values) = edge_coverage
@@ -923,7 +947,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         InspectorData {
             logs: log_collector.and_then(|logs| logs.into_captured_logs()).unwrap_or_default(),
             labels: {
-                let mut labels = cheatcodes.as_ref().map(|c| c.labels.clone()).unwrap_or_default();
+                let mut labels =
+                    cheatcodes.as_ref().map(|c| c.core.labels.clone()).unwrap_or_default();
                 if let Some(tempo_labels) = tempo_labels {
                     labels.extend(tempo_labels.labels);
                 }
@@ -1003,7 +1028,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let result = outcome.result.result;
         call_inspectors!(
             #[ret]
-            [&mut self.tracer, &mut self.cheatcodes, &mut self.printer, &mut self.revert_diag],
+            [
+                &mut self.tracer,
+                &mut self.debug_recorder,
+                &mut self.cheatcodes,
+                &mut self.printer,
+                &mut self.revert_diag
+            ],
             |inspector| {
                 let previous_output = outcome.output().clone();
                 inspector.call_end(ecx, inputs, outcome);
@@ -1032,7 +1063,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let result = outcome.result.result;
         call_inspectors!(
             #[ret]
-            [&mut self.line_coverage, &mut self.tracer, &mut self.cheatcodes, &mut self.printer],
+            [
+                &mut self.line_coverage,
+                &mut self.tracer,
+                &mut self.debug_recorder,
+                &mut self.cheatcodes,
+                &mut self.printer
+            ],
             |inspector| {
                 let previous_output = outcome.output().clone();
                 inspector.create_end(ecx, call, outcome);
@@ -1308,7 +1345,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let mut cheatcodes = self
             .cheatcodes
             .as_deref_mut()
-            .map(|cheats| core::mem::replace(cheats, Cheatcodes::new(cheats.config.clone())));
+            .map(|cheats| core::mem::replace(cheats, Cheatcodes::new(cheats.core.config.clone())));
         let mut inner = std::mem::take(self.inner);
 
         // Save pending CREATE2 redirects so frame_end in the nested EVM doesn't consume them.
@@ -1333,7 +1370,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         self.top_level_frame_failed_before_rewrite = false;
         warm_arbitrum_system_contract::<FEN>(ecx);
         if let Some(cheatcodes) = &mut self.cheatcodes {
-            cheatcodes.clear_storage_hook_mapping_slots();
+            cheatcodes.on_root_frame_start();
         }
 
         if self.enable_isolation {
@@ -1439,6 +1476,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                         &mut self.revert_diag,
                         &mut self.script_execution_inspector,
                         &mut self.tracer,
+                        &mut self.debug_recorder,
                     ],
                     |inspector| (**inspector).step(interpreter, ecx),
                 );
@@ -1456,6 +1494,15 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 cheats.step(interpreter, ecx);
             }
         }
+
+        // revm skips `step_end` if an inspector halted the frame in `step`. A recorder makes the
+        // dispatch general, so other dispatches skip the check.
+        if matches!(self.static_step_dispatch, OpcodeStepDispatch::General)
+            && let Some(recorder) = self.inner.debug_recorder.as_deref_mut()
+            && interpreter.bytecode.is_end()
+        {
+            recorder.end_step_not_run(interpreter);
+        }
     }
 
     #[inline(always)]
@@ -1472,6 +1519,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                     &mut self.printer,
                     &mut self.revert_diag,
                     &mut self.tracer,
+                    &mut self.debug_recorder,
                 ],
                 |inspector| (**inspector).step_end(interpreter, ecx),
             );
@@ -1816,6 +1864,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 return output;
             }
         }
+        if let Some(recorder) = self.debug_recorder.as_deref_mut() {
+            recorder.call(ecx, call);
+        }
 
         call_inspectors!(
             #[ret]
@@ -2019,6 +2070,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 return output;
             }
         }
+        if let Some(recorder) = self.debug_recorder.as_deref_mut() {
+            recorder.create(ecx, create);
+        }
 
         call_inspectors!(
             #[ret]
@@ -2172,10 +2226,8 @@ fn handle_arbitrum_system_call<FEN: FoundryEvmNetwork>(
 
     // Forks report their L2 block, which the block env lacks on Arbitrum because `NUMBER` returns
     // the L1 block there. Without a fork the block env is read here to follow `vm.roll`.
-    let block_number = match ecx.db().active_fork_block_number() {
-        Some(block_number) => block_number,
-        None => ecx.block().number().saturating_to(),
-    };
+    let block_number =
+        ecx.db().active_fork_block_number().unwrap_or_else(|| ecx.block().number().saturating_to());
     let Some((gas_cost, output)) = arbitrum::arb_block_number_call(call.gas_limit, block_number)
     else {
         return Some(arbitrum_call_outcome(
@@ -2386,6 +2438,7 @@ impl InspectorStackInner {
             && self.revert_diag.is_none()
             && self.script_execution_inspector.is_none()
             && self.tracer.is_none()
+            && self.debug_recorder.is_none()
         {
             if self.fuzzer.is_some() {
                 OpcodeStepDispatch::FuzzerOnly
@@ -2402,7 +2455,8 @@ impl InspectorStackInner {
         self.has_static_step_end_inspectors = self.chisel_state.is_some()
             || self.printer.is_some()
             || self.revert_diag.is_some()
-            || self.tracer.is_some();
+            || self.tracer.is_some()
+            || self.debug_recorder.is_some();
     }
 
     /// Derive the next `--batch` CREATE2 salt and advance the per-batch counter.
@@ -2463,7 +2517,7 @@ fn apply_mocked_function<FEN: FoundryEvmNetwork>(
     ecx: &mut FoundryContextFor<'_, FEN>,
     call: &mut CallInputs,
 ) {
-    if let Some(mocks) = cheatcodes.mocked_functions.get(&call.bytecode_address) {
+    if let Some(mocks) = cheatcodes.core.mocked_functions.get(&call.bytecode_address) {
         let input_bytes = call.input.bytes(ecx);
         // Check if any mock function set for call data or if catch-all mock function set
         // for selector.

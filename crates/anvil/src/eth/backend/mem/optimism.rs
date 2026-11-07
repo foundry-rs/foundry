@@ -1,19 +1,17 @@
 //! Optimism-specific transact helpers for the in-memory backend.
 
-use super::Backend;
-use crate::eth::error::BlockchainError;
-use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
+use super::{Backend, DatabaseRef};
+use crate::eth::{backend::db::ExecutionDb, error::BlockchainError};
+use alloy_evm::{Evm, EvmEnv, EvmFactory};
 use alloy_network::Network;
 use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
-use foundry_evm::backend::DatabaseError;
 use op_revm::{OpHaltReason, OpSpecId, OpTransaction};
 use revm::{
-    DatabaseRef, Inspector,
+    Inspector,
     context::{
         TxEnv,
         result::{HaltReason, ResultAndState},
     },
-    database_interface::WrapDatabaseRef,
 };
 
 impl<N: Network> Backend<N> {
@@ -21,25 +19,23 @@ impl<N: Network> Backend<N> {
     ///
     /// Creates an OP EVM, injects precompiles, transacts, and maps the
     /// OP-specific halt reason back to the shared [`HaltReason`].
-    pub(super) fn transact_op_with_inspector_ref<'db, I, DB>(
+    pub(super) fn transact_op_with_inspector_ref<'db, I>(
         &self,
-        db: &'db DB,
+        db: &'db dyn DatabaseRef,
         evm_env: &EvmEnv,
         inspector: &mut I,
         tx_env: OpTransaction<TxEnv>,
         spec: OpSpecId,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
-        DB: DatabaseRef + ?Sized,
-        I: Inspector<OpEvmContext<WrapDatabaseRef<&'db DB>>>,
-        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+        I: Inspector<OpEvmContext<ExecutionDb<&'db dyn DatabaseRef>>>,
     {
         let op_env = EvmEnv::new(
             evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(spec),
             evm_env.block_env.clone(),
         );
         let mut evm = OpEvmFactory::default().create_evm_with_inspector(
-            WrapDatabaseRef(db),
+            ExecutionDb(db, *evm_env.spec_id()),
             op_env,
             inspector,
         );

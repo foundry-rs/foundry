@@ -7,7 +7,7 @@ use clap::Parser;
 use eyre::{Context, Result};
 use foundry_cli::utils::{self, LoadConfig};
 use foundry_common::fs;
-use foundry_config::Config;
+use foundry_config::{Chain, Config};
 use foundry_evm::{
     core::evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
     executors::ExecutorBuilder,
@@ -74,6 +74,12 @@ pub async fn run_command(args: Chisel) -> Result<()> {
     config.networks = evm_opts.networks;
     let local_networks = evm_opts.networks;
     let local_chain_id = evm_opts.env.chain_id.or(config.chain.map(|chain| chain.id()));
+    // Like `!fork`, use the fork's source chain for explorer lookups unless `--chain` was given.
+    if config.chain.is_none()
+        && let Some(identity) = &evm_opts.fork_endpoint
+    {
+        config.chain = Some(Chain::from(identity.source_chain_id));
+    }
 
     match evm_opts.networks.execution_network() {
         NetworkVariant::Tempo => {

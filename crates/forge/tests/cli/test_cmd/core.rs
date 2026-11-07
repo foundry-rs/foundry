@@ -1,7 +1,7 @@
 //! Core test functionality tests
 
 use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
-use foundry_test_utils::str;
+use foundry_test_utils::{str, util::OutputExt};
 use serde_json::Value;
 
 #[forgetest_init]
@@ -205,6 +205,90 @@ Profile saved to cache/evm_profile_EvmProfileNoOpenTest_testProfile.json
         .expect("profile should be valid JSON");
     assert_eq!(profile["exporter"], "foundry");
     assert_eq!(profile["profiles"][0]["type"], "evented");
+}
+
+// Trace gas is gross: the refund is only subtracted from the test's reported gas. A profile must
+// use the trace's gas as is, with isolation from the config (the default) or from `--isolate`.
+#[forgetest_init]
+fn evm_profile_gas_matches_trace_gas_with_refund(prj: _, cmd: _) {
+    prj.add_test(
+        "RefundProfile.t.sol",
+        r#"
+contract Store {
+    uint256 public x = 1;
+
+    function clear() external {
+        x = 0;
+    }
+}
+
+contract RefundProfileTest {
+    Store store;
+
+    function setUp() public {
+        store = new Store();
+    }
+
+    function testClear() public {
+        store.clear();
+    }
+}
+"#,
+    );
+
+    for isolate_flag in [false, true] {
+        let mut args = vec!["test", "--match-test", "testClear"];
+        if isolate_flag {
+            args.push("--isolate");
+        }
+
+        let output = cmd
+            .forge_fuse()
+            .args(&args)
+            .args(["--json", "-vvvv"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let results: Value = serde_json::from_str(&output).unwrap();
+        let traces = &results["test/RefundProfile.t.sol:RefundProfileTest"]["test_results"]["testClear()"]
+            ["traces"];
+        let execution = traces
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|trace| trace[0] == "Execution")
+            .expect("execution trace");
+        let root = &execution[1]["arena"][0]["trace"];
+        let clear = &execution[1]["arena"][1]["trace"];
+        assert!(root["gas_refund_counter"].as_u64().unwrap() > 0, "the test should earn a refund");
+
+        cmd.forge_fuse().args(&args).args(["--evm-profile", "--no-open"]).assert_success();
+        let profile_path = prj.root().join("cache/evm_profile_RefundProfileTest_testClear.json");
+        let file: Value =
+            serde_json::from_str(&std::fs::read_to_string(profile_path).unwrap()).unwrap();
+        let clear_frame = file["shared"]["frames"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .position(|frame| frame["name"] == "Store.clear()")
+            .expect("frame of Store.clear()");
+        let profile = &file["profiles"][0];
+        let events = profile["events"].as_array().unwrap();
+        let clear_at = |kind: &str| {
+            events
+                .iter()
+                .find(|event| event["type"] == kind && event["frame"] == clear_frame)
+                .and_then(|event| event["at"].as_u64())
+                .unwrap()
+        };
+
+        assert_eq!(profile["endValue"], root["gas_used"], "test frame, --isolate: {isolate_flag}");
+        assert_eq!(
+            clear_at("C") - clear_at("O"),
+            clear["gas_used"].as_u64().unwrap(),
+            "Store.clear() frame, --isolate: {isolate_flag}"
+        );
+    }
 }
 
 #[forgetest_init]

@@ -2652,6 +2652,233 @@ contract InvariantOptimizeTest is Test {
 "#]]);
 }
 
+#[forgetest]
+fn invariant_optimization_reports_raised_shrink_value(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 2;
+        config.invariant.corpus.corpus_dir = Some("opt_corpus".into());
+    });
+    prj.add_test("Optimization.t.sol", r#"
+pragma solidity ^0.8.20;
+contract Handler {
+    bool penalty;
+    bool reward;
+    function penalize() external { penalty = true; }
+    function earn() external { reward = true; }
+    function score() external view returns (int256) { return reward ? (penalty ? int256(12) : int256(22)) : int256(0); }
+}
+contract OptimizationTest {
+    Handler handler;
+    function setUp() public { handler = new Handler(); }
+    function targetContracts() public view returns (address[] memory targets) { targets = new address[](1); targets[0] = address(handler); }
+    function invariant_optimize() public view returns (int256) { return handler.score(); }
+}
+"#);
+    // Seed 7 calls penalize then earn: the campaign reaches 12, but earn alone reaches 22.
+    cmd.args(["test", "--fuzz-seed", "7", "-vv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] (original: 2, shrunk: 1)
+[..]calldata=earn() args=[]
+ invariant_optimize() (best: 22, runs: 1, calls: 2)
+...
+"#]]);
+    // The rerun replays the persisted shrunk witness and its raised value.
+    prj.update_config(|config| config.invariant.runs = 0);
+    cmd.forge_fuse().args(["test", "--fuzz-seed", "7", "-vv"]).assert_success().stdout_eq(str![[
+        r#"
+...
+[PASS]
+	[Best sequence] (original: 1, shrunk: 1)
+[..]calldata=earn() args=[]
+ invariant_optimize() (best: 22, runs: 0, calls: 0)
+...
+"#
+    ]]);
+}
+
+#[forgetest]
+fn invariant_optimization_shrink_keeps_raising_calls(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 12;
+    });
+    prj.add_test("Optimization.t.sol", r#"
+pragma solidity ^0.8.20;
+contract Queue {
+    uint256 length;
+    int256 score;
+    function push() external { length++; }
+    function pop() external { if (length > 0) length--; }
+    function sum() external { score = int256(length); }
+    function value() external view returns (int256) { return score; }
+}
+contract OptimizationTest {
+    Queue queue;
+    function setUp() public { queue = new Queue(); }
+    function targetContracts() public view returns (address[] memory targets) { targets = new address[](1); targets[0] = address(queue); }
+    function invariant_optimize() public view returns (int256) { return queue.value(); }
+}
+"#);
+    // Seed 57 reaches 2 with two pops among four pushes. Dropping the pops reaches 4; dropping them
+    // in blocks with pushes would keep 2.
+    cmd.args(["test", "--fuzz-seed", "57", "-vv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] (original: 9, shrunk: 5)
+[..]calldata=push() args=[]
+[..]calldata=push() args=[]
+[..]calldata=push() args=[]
+[..]calldata=push() args=[]
+[..]calldata=sum() args=[]
+ invariant_optimize() (best: 4, runs: 1, calls: 12)
+...
+"#]]);
+}
+
+#[forgetest]
+fn invariant_optimization_shrunk_witness_reproduces_value(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.max_block_delay = Some(1000);
+        config.invariant.corpus.corpus_dir = Some("opt_corpus".into());
+    });
+    prj.add_test("Optimization.t.sol", r#"
+pragma solidity ^0.8.20;
+contract Handler {
+    bool started;
+    function start() external { started = true; }
+    function noop() external {}
+    function score() external view returns (int256) { return started ? int256(block.number) : int256(0); }
+}
+contract OptimizationTest {
+    Handler handler;
+    function setUp() public { handler = new Handler(); }
+    function targetContracts() public view returns (address[] memory targets) { targets = new address[](1); targets[0] = address(handler); }
+    function invariant_optimize() public view returns (int256) { return handler.score(); }
+}
+"#);
+    // Seed 1 ends with a noop after start: dropping that noop also drops its roll from the
+    // witness, so the shrunk witness must keep it to reproduce the value.
+    cmd.args(["test", "--fuzz-seed", "1", "-vv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] (original: 10, shrunk: 2)
+		sender=0x000000000000000000000000000000000000019e addr=[test/Optimization.t.sol:Handler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f roll=3448 calldata=start() args=[]
+		sender=0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f addr=[test/Optimization.t.sol:Handler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f roll=1226 calldata=noop() args=[]
+ invariant_optimize() (best: 4675, runs: 1, calls: 10)
+...
+"#]]);
+    // The rerun replays the persisted witness, which must still reach the reported value.
+    prj.update_config(|config| config.invariant.runs = 0);
+    cmd.forge_fuse().args(["test", "--fuzz-seed", "1", "-vv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] (original: 2, shrunk: 2)
+		sender=0x000000000000000000000000000000000000019e addr=[test/Optimization.t.sol:Handler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f roll=3448 calldata=start() args=[]
+		sender=0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f addr=[test/Optimization.t.sol:Handler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f roll=1226 calldata=noop() args=[]
+ invariant_optimize() (best: 4675, runs: 0, calls: 0)
+...
+"#]]);
+}
+
+#[forgetest]
+fn invariant_optimization_shrink_rejects_handler_assertions(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 3;
+        config.invariant.fail_on_revert = true;
+    });
+    prj.add_test("Optimization.t.sol", r#"
+pragma solidity ^0.8.20;
+interface Vm { function warp(uint256) external; }
+contract Handler {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    bool penalty;
+    bool reward;
+    bool done;
+    function penalize() external { penalty = true; }
+    function earn() external { vm.warp(1000); assert(penalty); reward = true; }
+    function finish() external { done = true; }
+    function score() external view returns (int256) { return done ? (reward ? int256(12) : int256(block.timestamp)) : int256(0); }
+}
+contract OptimizationTest {
+    Handler handler;
+    function setUp() public { handler = new Handler(); }
+    function targetContracts() public view returns (address[] memory targets) { targets = new address[](1); targets[0] = address(handler); }
+    function invariant_optimize() public view returns (int256) { return handler.score(); }
+}
+"#);
+    // Seed 2 calls penalize, earn, finish. Dropping penalize makes earn assert but keeps its warp,
+    // which scores 1000; the campaign would fail on that assertion, so the witness must keep it.
+    cmd.args(["test", "--fuzz-seed", "2", "-vv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] (original: 3, shrunk: 3)
+[..]calldata=penalize() args=[]
+[..]calldata=earn() args=[]
+[..]calldata=finish() args=[]
+ invariant_optimize() (best: 12, runs: 1, calls: 3)
+...
+"#]]);
+}
+
+#[forgetest]
+fn invariant_optimization_legacy_gate_checks_only_targets(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.legacy_assertions = true;
+        config.invariant.runs = 1;
+        config.invariant.depth = 2;
+        config.invariant.fail_on_revert = true;
+        config.invariant.corpus.corpus_dir = Some("opt_corpus".into());
+    });
+    prj.add_test("Optimization.t.sol", r#"
+pragma solidity ^0.8.20;
+contract Dependency {
+    uint256 touches;
+    function touch() external { touches++; }
+    function failed() external pure returns (bool) { return true; }
+}
+contract Handler {
+    Dependency dependency = new Dependency();
+    bool penalty;
+    bool reward;
+    function penalize() external { penalty = true; }
+    function earn() external { dependency.touch(); reward = true; }
+    function score() external view returns (int256) { return reward ? (penalty ? int256(12) : int256(22)) : int256(0); }
+}
+contract OptimizationTest {
+    Handler handler;
+    function setUp() public { handler = new Handler(); }
+    function targetContracts() public view returns (address[] memory targets) { targets = new address[](1); targets[0] = address(handler); }
+    function invariant_optimize() public view returns (int256) { return handler.score(); }
+}
+"#);
+    // The campaign checks `failed()` only on targets, so the dependency's flag must not block
+    // shrinking from 12 to 22 or the rerun of the persisted witness.
+    cmd.args(["test", "--fuzz-seed", "7", "-vv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] (original: 2, shrunk: 1)
+[..]calldata=earn() args=[]
+ invariant_optimize() (best: 22, runs: 1, calls: 2)
+...
+"#]]);
+    prj.update_config(|config| config.invariant.runs = 0);
+    cmd.forge_fuse().args(["test", "--fuzz-seed", "7", "-vv"]).assert_success().stdout_eq(str![[
+        r#"
+...
+[PASS]
+	[Best sequence] (original: 1, shrunk: 1)
+[..]calldata=earn() args=[]
+ invariant_optimize() (best: 22, runs: 0, calls: 0)
+...
+"#
+    ]]);
+}
+
 // Test that optimization mode works with negative values (finding max of negative range).
 #[forgetest]
 fn invariant_optimization_negative_values(prj: _, cmd: _) {
@@ -3390,8 +3617,7 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 "#]]);
 }
 
-// Handler calls are committed within a run, while invariant predicate writes are discarded and
-// each run starts again from the post-setup state.
+// Handler calls are committed within a run, while invariant predicate writes are discarded.
 #[forgetest]
 fn invariant_checks_do_not_commit_state(prj: _, cmd: _) {
     prj.update_config(|config| {
@@ -3414,7 +3640,6 @@ contract Handler {
 
     function step() external {
         require(!poisoned, "predicate write leaked");
-        require(count < 4, "run baseline leaked");
         count++;
     }
 
@@ -3442,7 +3667,8 @@ contract InvariantCheckStateTest {
     }
 
     function afterInvariant() public view {
-        require(handler.count() == 4, "handler state not retained");
+        // Runs may resume from snapshots of earlier runs, so the count is at least the depth.
+        require(handler.count() >= 4, "handler state not retained");
         require(!handler.poisoned(), "predicate write leaked at end");
     }
 }
@@ -3459,6 +3685,60 @@ Ran 1 test for test/InvariantCheckState.t.sol:InvariantCheckStateTest
 +==================================================+
 | Handler  | step     | 16    | 0       | 0        |
 ╰----------+----------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+}
+
+// Reverted handler calls are committed, so they must not roll back deals that earlier committed
+// transactions made. Isolation restores the pre-call state, which would mask this.
+#[forgetest_init]
+fn invariant_reverted_calls_keep_committed_deals(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.isolate = false;
+        config.invariant.runs = 4;
+        config.invariant.depth = 16;
+        config.invariant.fail_on_revert = false;
+    });
+
+    prj.add_test(
+        "InvariantDealRevertedCalls.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract DealHandler {
+    function succeed() external {}
+
+    function fail() external {
+        revert();
+    }
+}
+
+contract InvariantDealRevertedCallsTest is Test {
+    address constant SENDER = address(0xA11CE);
+
+    function setUp() public {
+        targetContract(address(new DealHandler()));
+        targetSender(SENDER);
+        vm.deal(SENDER, 100 ether);
+    }
+
+    function invariant_deal_survives_reverted_calls() public view {
+        assertEq(SENDER.balance, 100 ether);
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test", "--fuzz-seed", "1"])).success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantDealRevertedCalls.t.sol:InvariantDealRevertedCallsTest
+[PASS] invariant_deal_survives_reverted_calls() ([RUNS])
+
+[STATS]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 

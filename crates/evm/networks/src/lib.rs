@@ -28,7 +28,7 @@ use revm::precompile::{
     Precompile as RevmPrecompile,
     secp256r1::{P256VERIFY, P256VERIFY_OSAKA},
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, ser::SerializeStruct};
 use std::collections::BTreeMap;
 use tempo_contracts::precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, CURRENT_COMMITTEE_ADDRESS,
@@ -50,7 +50,7 @@ use foundry_evm_hardforks::BaseUpgrade;
 use foundry_evm_hardforks::OpHardfork;
 
 #[cfg(feature = "monad")]
-type MonadHardfork = foundry_evm_hardforks::MonadHardfork;
+use foundry_evm_hardforks::MonadHardfork;
 
 /// The Monad cheatcode handler address.
 pub const MONAD_CHEATCODE_ADDRESS: Address = address!("0xc0FFeeCD43A10e1C2b0De63c6CDCFe5B7d0e0CEA");
@@ -431,7 +431,6 @@ pub struct NetworkConfigs {
 // canonical and legacy selectors, and ensures old foundry.toml keys round-trip canonically.
 impl Serialize for NetworkConfigs {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeStruct;
         let mut s = serializer.serialize_struct("NetworkConfigs", 3)?;
         s.serialize_field("network", &self.resolved_network())?;
         s.serialize_field("celo", &self.celo)?;
@@ -634,7 +633,15 @@ impl NetworkConfigs {
     ///
     /// For OP Stack networks, returns Canyon parameters if the Canyon hardfork is active at the
     /// given timestamp, otherwise returns pre-Canyon parameters.
-    pub fn base_fee_params(&self, timestamp: u64) -> BaseFeeParams {
+    #[cfg_attr(
+        not(any(feature = "base", feature = "optimism")),
+        allow(clippy::missing_const_for_fn)
+    )]
+    pub fn base_fee_params(
+        &self,
+        #[cfg_attr(not(any(feature = "base", feature = "optimism")), allow(unused_variables))]
+        timestamp: u64,
+    ) -> BaseFeeParams {
         #[cfg(feature = "base")]
         if self.is_base() {
             let canyon_active =

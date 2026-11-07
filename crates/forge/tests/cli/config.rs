@@ -45,6 +45,7 @@ libraries = []
 cache = true
 cache_path = "cache"
 dynamic_test_linking = true
+allow_linked_libraries = true
 snapshots = "snapshots"
 gas_snapshot_check = false
 gas_snapshot_emit = true
@@ -107,6 +108,7 @@ experimental = false
 ast = false
 no_storage_caching = false
 no_fork_bal = false
+fork_prefetch = false
 no_rpc_rate_limit = false
 use_literal_content = false
 bytecode_hash = "ipfs"
@@ -198,6 +200,7 @@ max_test_rejects = 65536
 dictionary_weight = 40
 include_storage = true
 include_push_bytes = true
+include_view_values = false
 max_fuzz_dictionary_addresses = 15728640
 max_fuzz_dictionary_values = 9830400
 max_fuzz_dictionary_literals = 6553600
@@ -234,6 +237,7 @@ call_override = false
 dictionary_weight = 80
 include_storage = true
 include_push_bytes = true
+include_view_values = false
 max_fuzz_dictionary_addresses = 15728640
 max_fuzz_dictionary_values = 9830400
 max_fuzz_dictionary_literals = 6553600
@@ -270,6 +274,7 @@ use_fuzz_corpus = false
 corpus_seed_limit = 32
 use_fuzz_frontiers = false
 check_invariant_frontiers = false
+live = false
 frontier_limit = 256
 solver = "z3"
 timeout = 30
@@ -331,6 +336,7 @@ fn can_extract_config_values(prj: _, cmd: _) {
         libs: vec!["lib-test".into()],
         cache: true,
         dynamic_test_linking: true,
+        allow_linked_libraries: true,
         cache_path: "test-cache".into(),
         snapshots: "snapshots".into(),
         gas_snapshot_check: false,
@@ -393,6 +399,7 @@ fn can_extract_config_values(prj: _, cmd: _) {
             corpus_seed_limit: 17,
             use_fuzz_frontiers: true,
             check_invariant_frontiers: true,
+            live: true,
             frontier_limit: 11,
             frontier_ids: vec![4, 9],
             frontier_pcs: vec![123, 456],
@@ -475,6 +482,7 @@ fn can_extract_config_values(prj: _, cmd: _) {
         },
         no_storage_caching: true,
         no_fork_bal: true,
+        fork_prefetch: true,
         no_rpc_rate_limit: true,
         use_literal_content: false,
         bytecode_hash: Default::default(),
@@ -486,6 +494,7 @@ fn can_extract_config_values(prj: _, cmd: _) {
         rpc_endpoints: Default::default(),
         build_info: false,
         build_info_path: None,
+        build_info_without_ast: false,
         fmt: Default::default(),
         lint: Default::default(),
         doc: Default::default(),
@@ -513,6 +522,7 @@ fn can_extract_config_values(prj: _, cmd: _) {
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
         script_execution_protection: true,
+        restrict_inline_config: false,
         _non_exhaustive: (),
     };
     prj.write_config(input.clone());
@@ -2216,6 +2226,7 @@ fn test_default_config(prj: _, cmd: _) {
   "cache": true,
   "cache_path": "cache",
   "dynamic_test_linking": true,
+  "allow_linked_libraries": true,
   "snapshots": "snapshots",
   "gas_snapshot_check": false,
   "gas_snapshot_emit": true,
@@ -2279,6 +2290,7 @@ fn test_default_config(prj: _, cmd: _) {
     "dictionary_weight": 40,
     "include_storage": true,
     "include_push_bytes": true,
+    "include_view_values": false,
     "max_fuzz_dictionary_addresses": 15728640,
     "max_fuzz_dictionary_values": 9830400,
     "max_fuzz_dictionary_literals": 6553600,
@@ -2318,6 +2330,7 @@ fn test_default_config(prj: _, cmd: _) {
     "dictionary_weight": 80,
     "include_storage": true,
     "include_push_bytes": true,
+    "include_view_values": false,
     "max_fuzz_dictionary_addresses": 15728640,
     "max_fuzz_dictionary_values": 9830400,
     "max_fuzz_dictionary_literals": 6553600,
@@ -2359,6 +2372,7 @@ fn test_default_config(prj: _, cmd: _) {
     "corpus_seed_limit": 32,
     "use_fuzz_frontiers": false,
     "check_invariant_frontiers": false,
+    "live": false,
     "frontier_limit": 256,
     "solver": "z3",
     "timeout": 30,
@@ -2437,6 +2451,7 @@ fn test_default_config(prj: _, cmd: _) {
   },
   "no_storage_caching": false,
   "no_fork_bal": false,
+  "fork_prefetch": false,
   "no_rpc_rate_limit": false,
   "use_literal_content": false,
   "bytecode_hash": "ipfs",
@@ -3443,4 +3458,222 @@ fn config_path_conflicts_with_root(prj: _, cmd: _) {
 error: the argument '--root <PATH>' cannot be used with '--config-path <FILE>'
 ...
 "#]]);
+}
+
+#[forgetest]
+fn contextual_remapping_bytecode_is_independent_of_project_root(prj: _, cmd: _) {
+    let mut artifacts = Vec::new();
+    for name in ["first", "second"] {
+        let project = prj.root().join(name);
+        fs::create_dir_all(project.join("src")).unwrap();
+        fs::create_dir_all(project.join("lib/dependency")).unwrap();
+        fs::write(
+            project.join(Config::FILE_NAME),
+            r#"
+[profile.default]
+auto_detect_remappings = false
+remappings = ["lib/dependency:unused/=lib/dependency/"]
+"#,
+        )
+        .unwrap();
+        fs::write(
+            project.join("src/Counter.sol"),
+            "// SPDX-License-Identifier: MIT\npragma solidity >=0.8.0;\ncontract Counter { uint256 public number; }\n",
+        )
+        .unwrap();
+        cmd.forge_fuse()
+            .current_dir(&project)
+            .args(["build", "--no-lint", "--use", SOLC_VERSION])
+            .assert_success();
+        let artifact: Value = serde_json::from_slice(
+            &fs::read(project.join("out/Counter.sol/Counter.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            artifact["metadata"]["settings"]["remappings"],
+            serde_json::json!(["lib/dependency:unused/=lib/dependency/"])
+        );
+        artifacts.push(artifact);
+    }
+    for field in ["bytecode", "deployedBytecode"] {
+        let bytecodes = artifacts
+            .iter()
+            .map(|artifact| {
+                let bytecode = artifact[field]["object"].as_str().expect("missing bytecode object");
+                assert!(!bytecode.is_empty() && bytecode != "0x", "empty {field} object");
+                bytecode
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(bytecodes[0], bytecodes[1], "{field} differs between project roots");
+    }
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn config_fix_respects_project_selection(prj: _, cmd: _) {
+    let test_home = tempfile::tempdir().unwrap();
+    let selected = prj.root().join("selected");
+    fs::create_dir_all(selected.join("src")).unwrap();
+    // Migration must not require valid configuration values.
+    let legacy = "[default]\noptimizer_runs = \"invalid\"\n";
+
+    for (cwd, args) in [
+        (".", ["--root", "selected"].as_slice()),
+        (".", ["--config-path", "selected/foundry.toml"].as_slice()),
+        ("selected/src", [].as_slice()),
+    ] {
+        fs::write(prj.root().join(Config::FILE_NAME), legacy).unwrap();
+        fs::write(selected.join(Config::FILE_NAME), legacy).unwrap();
+
+        cmd.forge_fuse();
+        cmd.env("HOME", test_home.path());
+        cmd.unset_env("FOUNDRY_CONFIG");
+        cmd.current_dir(prj.root().join(cwd))
+            .args(["config", "--fix"])
+            .args(args)
+            .assert_success()
+            .stdout_eq(str![""])
+            .stderr_eq(str![""]);
+
+        assert_data_eq!(
+            fs::read_to_string(selected.join(Config::FILE_NAME)).unwrap(),
+            str![[r#"
+[profile.default]
+optimizer_runs = "invalid"
+
+"#]]
+        );
+        assert_eq!(fs::read_to_string(prj.root().join(Config::FILE_NAME)).unwrap(), legacy);
+    }
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn config_fix_preserves_environment_precedence(prj: _, cmd: _) {
+    let test_home = tempfile::tempdir().unwrap();
+    let selected = prj.root().join("selected/foundry.toml");
+    fs::create_dir_all(selected.parent().unwrap()).unwrap();
+    let cwd_config = prj.root().join(Config::FILE_NAME);
+    let custom = prj.root().join("custom.toml");
+    let legacy = "[default]\noptimizer_runs = 123\n";
+    for path in [&cwd_config, &selected, &custom] {
+        fs::write(path, legacy).unwrap();
+    }
+
+    fs::write(prj.root().join(".env"), "FOUNDRY_CONFIG=custom.toml\n").unwrap();
+    cmd.env("HOME", test_home.path());
+    cmd.unset_env("FOUNDRY_CONFIG");
+    cmd.args(["config", "--fix", "--config-path", "selected/foundry.toml"])
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![""]);
+
+    assert_data_eq!(
+        fs::read_to_string(&custom).unwrap(),
+        str![[r#"
+[profile.default]
+optimizer_runs = 123
+
+"#]]
+    );
+    assert_eq!(fs::read_to_string(&cwd_config).unwrap(), legacy);
+    assert_eq!(fs::read_to_string(&selected).unwrap(), legacy);
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn config_fix_rejects_invalid_config_path_before_writing(prj: _, cmd: _) {
+    let test_home = tempfile::tempdir().unwrap();
+    let global = test_home.path().join(".foundry/foundry.toml");
+    fs::create_dir_all(global.parent().unwrap()).unwrap();
+    fs::create_dir_all(prj.root().join("directory/foundry.toml")).unwrap();
+    let cwd_config = prj.root().join(Config::FILE_NAME);
+    let other = prj.root().join("other.toml");
+    let legacy = "[default]\noptimizer_runs = 123\n";
+    for path in [&global, &cwd_config, &other] {
+        fs::write(path, legacy).unwrap();
+    }
+
+    for (path, expected) in [
+        (
+            "missing/foundry.toml",
+            str![[r#"
+Error: config-path `missing/foundry.toml` does not exist
+
+"#]],
+        ),
+        (
+            "other.toml",
+            str![[r#"
+Error: the config-path must be a path to a foundry.toml file
+
+"#]],
+        ),
+        (
+            "directory/foundry.toml",
+            str![[r#"
+Error: config-path `directory/foundry.toml` is not a file
+
+"#]],
+        ),
+    ] {
+        cmd.forge_fuse();
+        cmd.env("HOME", test_home.path());
+        cmd.unset_env("FOUNDRY_CONFIG");
+        cmd.args(["config", "--fix", "--config-path", path])
+            .assert_failure()
+            .stdout_eq(str![""])
+            .stderr_eq(expected);
+
+        for path in [&global, &cwd_config, &other] {
+            assert_eq!(fs::read_to_string(path).unwrap(), legacy);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn config_fix_matches_loading_for_config_file_symlink(prj: _, cmd: _) {
+    let test_home = tempfile::tempdir().unwrap();
+    let selected = prj.root().join("selected");
+    let shared = prj.root().join("shared");
+    fs::create_dir_all(&selected).unwrap();
+    fs::create_dir_all(&shared).unwrap();
+    let config_path = selected.join(Config::FILE_NAME);
+    let target = shared.join("custom.toml");
+    let sibling = shared.join(Config::FILE_NAME);
+    let legacy = "[default]\noptimizer_runs = 123\n";
+    fs::write(&target, legacy).unwrap();
+    fs::write(&sibling, "[default]\noptimizer_runs = 456\n").unwrap();
+    std::os::unix::fs::symlink("../shared/custom.toml", &config_path).unwrap();
+
+    cmd.env("HOME", test_home.path());
+    cmd.unset_env("FOUNDRY_CONFIG");
+    cmd.current_dir(&selected)
+        .args(["config", "--fix", "--config-path", Config::FILE_NAME])
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![""]);
+
+    assert_eq!(fs::read_to_string(&target).unwrap(), legacy);
+    assert_eq!(fs::read_link(&config_path).unwrap(), Path::new("../shared/custom.toml"));
+    assert_data_eq!(
+        fs::read_to_string(&sibling).unwrap(),
+        str![[r#"
+[profile.default]
+optimizer_runs = 456
+
+"#]]
+    );
+
+    cmd.forge_fuse();
+    cmd.env("HOME", test_home.path());
+    cmd.unset_env("FOUNDRY_CONFIG");
+    cmd.current_dir(&selected)
+        .args(["config", "--json", "--config-path", Config::FILE_NAME])
+        .assert_json_stdout_with_status(
+            true,
+            str![[r#"{ "optimizer_runs": 456, "...": "{...}" }"#]],
+        )
+        .stderr_eq(str![""]);
 }

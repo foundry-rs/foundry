@@ -344,8 +344,10 @@ mod tests {
     use super::*;
     use crate::tempo::{TEMPO_HOME_ENV, read_tempo_accounts_store, test_env_mutex};
     use alloy_primitives::address;
+    use alloy_rlp::Encodable;
     use axum::{Json, Router, extract::State, routing::post};
     use std::sync::{Arc, Mutex};
+    use tempo_primitives::transaction::{KeyAuthorization, PrimitiveSignature};
 
     #[test]
     fn pkce_challenge_matches_sdk_format() {
@@ -418,8 +420,6 @@ mod tests {
         expiry: u64,
         shape: MockAuthShape,
     ) -> String {
-        use alloy_rlp::Encodable;
-        use tempo_primitives::transaction::{KeyAuthorization, PrimitiveSignature};
         let mut auth = KeyAuthorization::unrestricted(chain_id, SignatureType::Secp256k1, key_id);
         if shape.admin {
             // An admin authorization carries no expiry; bind it to its account (or zero, which the

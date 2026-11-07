@@ -10,10 +10,17 @@ pub struct AdditionalContract {
     #[serde(rename = "transactionType")]
     pub call_kind: CallKind,
     pub contract_name: Option<String>,
+    /// Whether `init_code` starts with the creation bytecode of the `contract_name` artifact.
+    /// Never set for Vyper artifacts, which script verification skips.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub exact_artifact_match: bool,
     pub address: Address,
     pub init_code: Bytes,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub creator_code_addresses: Vec<Address>,
+    /// The final `vm.label` of the created contract, if the script set one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -30,8 +37,15 @@ pub struct TransactionWithMetadata<N: Network> {
     pub call_kind: CallKind,
     #[serde(default = "default_string")]
     pub contract_name: Option<String>,
+    /// Whether the creation code starts with the creation bytecode of the `contract_name`
+    /// artifact. Never set for Vyper artifacts, which script verification skips.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub exact_artifact_match: bool,
     #[serde(default = "default_address")]
     pub contract_address: Option<Address>,
+    /// The `vm.label` of the contract this transaction creates, if the script set one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     #[serde(default = "default_string")]
     pub function: Option<String>,
     pub function_abi: Option<String>,
@@ -67,7 +81,9 @@ impl<N: Network> TransactionWithMetadata<N> {
             hash: Default::default(),
             call_kind: Default::default(),
             contract_name: Default::default(),
+            exact_artifact_match: Default::default(),
             contract_address: Default::default(),
+            label: Default::default(),
             function: Default::default(),
             function_abi: Default::default(),
             display_function: Default::default(),
@@ -111,9 +127,11 @@ mod tests {
         let contract = AdditionalContract {
             call_kind: CallKind::Create2,
             contract_name: None,
+            exact_artifact_match: false,
             address: Address::repeat_byte(0x33),
             init_code: Bytes::new(),
             creator_code_addresses: vec![creator],
+            label: None,
         };
         assert_eq!(
             serde_json::to_value(contract).unwrap()["creatorCodeAddresses"],

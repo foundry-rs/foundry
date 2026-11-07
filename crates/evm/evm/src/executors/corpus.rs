@@ -427,22 +427,6 @@ impl WorkerCorpusSeed {
         }
     }
 
-    pub(crate) fn retain_replayable(&mut self, targeted_contracts: &TargetedContracts) {
-        let is_replayable =
-            |tx_seq: &[BasicTxDetails]| tx_seq.iter().all(|tx| targeted_contracts.can_replay(tx));
-        self.in_memory_corpus.retain(|entry| is_replayable(&entry.tx_seq));
-        self.metrics.corpus_count = self.in_memory_corpus.len();
-        self.metrics.favored_items =
-            self.in_memory_corpus.iter().filter(|entry| entry.is_favored).count();
-
-        if !self.optimization_best_sequence.is_empty()
-            && !is_replayable(&self.optimization_best_sequence)
-        {
-            self.optimization_best_value = None;
-            self.optimization_best_sequence.clear();
-        }
-    }
-
     pub(crate) fn load_from_disk<FEN: FoundryEvmNetwork>(
         config: &FuzzCorpusConfig,
         replay_root: Option<&Path>,
@@ -462,6 +446,34 @@ impl WorkerCorpusSeed {
         {
             seed.optimization_best_value = None;
             seed.optimization_best_sequence.clear();
+        }
+
+        // Validate optimization seeds with the same ordered replay as ordinary corpus entries.
+        // A static target check would reject calls to contracts created earlier in the sequence.
+        if !seed.optimization_best_sequence.is_empty()
+            && let Some(executor) = executor
+        {
+            let coverage = ReplayCoverage {
+                history_map: &mut seed.history_map,
+                edge_indices: &mut seed.edge_indices,
+                sancov_history_map: &mut seed.sancov_history_map,
+                metrics: Some(&mut seed.metrics),
+            };
+            let ReplayOutcome { keep_entry, new_edge, failed_replays, .. } =
+                replay_corpus_sequence(
+                    &seed.optimization_best_sequence,
+                    executor,
+                    target,
+                    coverage,
+                )?;
+            seed.failed_replays += failed_replays;
+            if new_edge {
+                seed.last_new_edge_at = Some(Instant::now());
+            }
+            if !keep_entry {
+                seed.optimization_best_value = None;
+                seed.optimization_best_sequence.clear();
+            }
         }
 
         // Seed in-memory corpus with the persisted optimization best sequence so the mutation
@@ -886,6 +898,27 @@ impl WorkerCorpus {
         )?;
         self.current_mutated_index = plan.source();
         Ok(plan)
+    }
+
+    /// Produces a sequence of freshly generated calls, without replaying or crediting a corpus
+    /// entry: for runs resumed from a state whose prefix corpus entries would replay again.
+    pub fn fresh_sequence(&self, test_runner: &mut TestRunner) -> Result<SequencePlan> {
+        self.sequence_generator.start(
+            test_runner,
+            0,
+            |_| Err(eyre::eyre!("fresh sequences do not read the corpus")),
+            self.config.is_coverage_guided(),
+        )
+    }
+
+    /// Executes an assistant candidate without mutating or crediting an existing corpus entry.
+    pub fn replay_sequence(
+        &mut self,
+        inputs: Vec<BasicTxDetails>,
+        runner: &mut TestRunner,
+    ) -> Result<SequencePlan> {
+        self.current_mutated_index = None;
+        self.fresh_sequence(runner)?.replay(inputs)
     }
 
     pub fn new<FEN: FoundryEvmNetwork>(
@@ -1931,10 +1964,14 @@ mod tests {
     };
     use alloy_dyn_abi::DynSolValue;
     use alloy_evm::EvmEnv;
+    use alloy_json_abi::JsonAbi;
     use foundry_cheatcodes::{Cheatcodes, CheatsConfig};
     use foundry_config::FuzzDictionaryConfig;
     use foundry_evm_core::{backend::Backend, constants::MAGIC_ASSUME, evm::EthEvmNetwork};
-    use foundry_evm_fuzz::strategies::{EvmFuzzState, TxGenerator};
+    use foundry_evm_fuzz::{
+        invariant::TargetedContract,
+        strategies::{EvmFuzzState, TxGenerator},
+    };
     use proptest::prelude::{Just, Strategy};
     use rayon::prelude::*;
     use revm::{DatabaseRef, bytecode::Bytecode, context::TxEnv, database::InMemoryDB};
@@ -2102,9 +2139,6 @@ mod tests {
         functions: Vec<Function>,
         targeted_selectors: impl IntoIterator<Item = alloy_primitives::Selector>,
     ) -> FuzzRunIdentifiedContracts {
-        use alloy_json_abi::JsonAbi;
-        use foundry_evm_fuzz::invariant::TargetedContract;
-
         let mut abi = JsonAbi::new();
         for function in functions {
             abi.functions.entry(function.name.clone()).or_default().push(function);
@@ -2920,47 +2954,6 @@ mod tests {
     }
 
     #[test]
-    fn retain_replayable_removes_off_target_corpus_entries() {
-        let target = Address::repeat_byte(0x11);
-        let foo = Function::parse("foo()").unwrap();
-        let bar = Function::parse("bar()").unwrap();
-        let foo_selector = foo.selector();
-        let foo_tx = tx_for_function(target, &foo, &[]);
-        let bar_tx = tx_for_function(target, &bar, &[]);
-        let mut foo_entry = CorpusEntry::new(vec![foo_tx.clone()]);
-        foo_entry.is_favored = true;
-        let mut bar_entry = CorpusEntry::new(vec![bar_tx.clone()]);
-        bar_entry.is_favored = true;
-        let mut seed = WorkerCorpusSeed {
-            in_memory_corpus: vec![foo_entry, bar_entry],
-            metrics: CorpusMetrics { corpus_count: 2, favored_items: 2, ..Default::default() },
-            optimization_best_value: Some(I256::try_from(17).unwrap()),
-            optimization_best_sequence: vec![bar_tx],
-            ..Default::default()
-        };
-        let targeted_contracts =
-            targeted_contracts_with_selective_functions(target, vec![foo, bar], [foo_selector]);
-        let targets = targeted_contracts.targets();
-
-        seed.retain_replayable(&targets);
-
-        assert_eq!(seed.in_memory_corpus.len(), 1);
-        assert_eq!(seed.in_memory_corpus[0].tx_seq.len(), 1);
-        assert_eq!(
-            seed.in_memory_corpus[0].tx_seq[0].call_details.target,
-            foo_tx.call_details.target
-        );
-        assert_eq!(
-            seed.in_memory_corpus[0].tx_seq[0].call_details.calldata,
-            foo_tx.call_details.calldata
-        );
-        assert_eq!(seed.metrics.corpus_count, 1);
-        assert_eq!(seed.metrics.favored_items, 1);
-        assert!(seed.optimization_best_value.is_none());
-        assert!(seed.optimization_best_sequence.is_empty());
-    }
-
-    #[test]
     fn hoist_observed_calls_bundles_replayable_subcalls_into_one_corpus_entry() {
         let target = Address::repeat_byte(0x42);
         let other = Address::repeat_byte(0x43);
@@ -3136,7 +3129,7 @@ mod tests {
     fn sequence_from_test_trace_preserves_forward_environment_and_rejects_restores() {
         let target = Address::repeat_byte(0x42);
         let sender = Address::repeat_byte(0xaa);
-        let foo = Function::parse("foo()").unwrap();
+        let foo = Function::parse("foo() payable").unwrap();
         let foo_selector = foo.selector();
         let targeted_contracts =
             targeted_contracts_with_selective_functions(target, vec![foo], [foo_selector]);
@@ -3505,6 +3498,61 @@ mod tests {
                 .unwrap(),
             ] {
                 assert_eq!(sequence.iter().map(|tx| tx.sender).collect::<Vec<_>>(), [allowed]);
+            }
+        }
+    }
+
+    #[test]
+    fn optimization_seed_load_rejects_ungeneratable_calls() {
+        let corpus_root = temp_corpus_dir();
+        let target = Address::repeat_byte(0x11);
+        let function = Function::parse("set(uint8)").unwrap();
+        let selector = function.selector();
+        let valid = tx_for_function(target, &function, &[DynSolValue::Uint(U256::ONE, 8)]);
+        let mut short = valid.clone();
+        short.call_details.calldata = selector.to_vec().into();
+        let mut dirty = valid.clone();
+        dirty.call_details.calldata =
+            [selector.as_slice(), &U256::from(256).to_be_bytes::<32>()].concat().into();
+        let mut nonpayable = valid.clone();
+        nonpayable.call_details.value = Some(U256::ONE);
+        let targeted_contracts =
+            targeted_contracts_with_selective_functions(target, vec![function], [selector]);
+        let mut executor = sync_test_executor(corpus_root.clone(), target);
+        executor.evm_env_mut().cfg_env.disable_nonce_check = true;
+        let config = corpus_config(corpus_root.clone());
+
+        for (transaction, replayable) in
+            [(valid.clone(), true), (short, false), (dirty, false), (nonpayable, false)]
+        {
+            let sequence = vec![valid.clone(), transaction];
+            let best_value = I256::try_from(100).unwrap();
+            foundry_common::fs::write_json_file(
+                &corpus_root.join(OPTIMIZATION_BEST_FILE),
+                &OptimizationState { best_value, best_sequence: sequence.clone() },
+            )
+            .unwrap();
+            let seed = WorkerCorpusSeed::load_from_disk(
+                &config,
+                None,
+                Some(&executor),
+                ReplayTarget {
+                    stateless: None,
+                    fuzzed_contracts: Some(&targeted_contracts),
+                    dynamic: None,
+                    senders: None,
+                },
+            )
+            .unwrap();
+
+            assert_eq!(seed.in_memory_corpus.len(), usize::from(replayable));
+            assert_eq!(seed.metrics.corpus_count, usize::from(replayable));
+            assert_eq!(seed.optimization_best_value, replayable.then_some(best_value));
+            if replayable {
+                assert!(same_tx_sequence(&seed.in_memory_corpus[0].tx_seq, &sequence));
+                assert!(same_tx_sequence(&seed.optimization_best_sequence, &sequence));
+            } else {
+                assert!(seed.optimization_best_sequence.is_empty());
             }
         }
     }

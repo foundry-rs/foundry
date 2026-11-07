@@ -10,6 +10,7 @@ use std::{
 
 mod common;
 mod handler;
+mod snapshot;
 mod storage;
 mod target;
 
@@ -475,9 +476,9 @@ contract InvariantSelectorsWeightTest is Test {
     function afterInvariant() public {
         assertEq(handlerOne.hit1(), 2);
         assertEq(handlerTwo.hit2(), 2);
-        assertEq(handlerTwo.hit3(), 3);
+        assertEq(handlerTwo.hit3(), 2);
         assertEq(handlerTwo.hit4(), 2);
-        assertEq(handlerTwo.hit5(), 1);
+        assertEq(handlerTwo.hit5(), 2);
     }
 
     function invariant_selectors_weight() public view {}
@@ -499,11 +500,11 @@ Ran 1 test for test/InvariantSelectorsWeightTest.t.sol:InvariantSelectorsWeightT
 |------------+-----------+-------+---------+----------|
 | HandlerTwo | selector2 | 2     | 0       | 0        |
 |------------+-----------+-------+---------+----------|
-| HandlerTwo | selector3 | 3     | 0       | 0        |
+| HandlerTwo | selector3 | 2     | 0       | 0        |
 |------------+-----------+-------+---------+----------|
 | HandlerTwo | selector4 | 2     | 0       | 0        |
 |------------+-----------+-------+---------+----------|
-| HandlerTwo | selector5 | 1     | 0       | 0        |
+| HandlerTwo | selector5 | 2     | 0       | 0        |
 ╰------------+-----------+-------+---------+----------╯
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
@@ -1191,123 +1192,6 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-}
-
-#[forgetest_init]
-fn invariant_selector_focus_worker_exercises_targeted_selector(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.invariant.runs = 2;
-        config.invariant.depth = 1;
-        config.invariant.workers =
-            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap());
-        config.fuzz.seed = Some(U256::ZERO);
-    });
-    prj.add_test(
-        "InvariantSelectorFocusTest.t.sol",
-        r#"
-import {Test} from "forge-std/Test.sol";
-
-contract FocusTarget {
-    bool public broken;
-
-    function aaaBreak() public {
-        broken = true;
-    }
-
-    function zzzSafe() public {}
-}
-
-contract InvariantSelectorFocusTest is Test {
-    FocusTarget target;
-
-    function setUp() public {
-        target = new FocusTarget();
-        bytes4[] memory selectors = new bytes4[](2);
-        selectors[0] = target.aaaBreak.selector;
-        selectors[1] = target.zzzSafe.selector;
-        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
-    }
-
-    function invariant_focus() public view {
-        require(!target.broken(), "focused");
-    }
-}
-   "#,
-    );
-
-    let output = cmd.args(["test", "--mt", "invariant_focus"]).assert_failure();
-    let stdout = output.get_output().stdout_lossy();
-    assert!(stdout.contains("[FAIL: focused]"), "{stdout}");
-    assert!(stdout.contains("invariant_focus()"), "{stdout}");
-    assert!(stdout.contains("aaaBreak"), "{stdout}");
-}
-
-#[forgetest_init]
-fn invariant_selector_focus_workers_respect_user_filters(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.invariant.runs = 2;
-        config.invariant.depth = 4;
-        config.invariant.workers =
-            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap());
-        config.fuzz.seed = Some(U256::ONE);
-    });
-    prj.add_test(
-        "InvariantSelectorFocusFiltersTest.t.sol",
-        r#"
-import {Test} from "forge-std/Test.sol";
-
-contract FocusFilterTarget {
-    bool public broken;
-
-    function aaaBreak() public {
-        broken = true;
-    }
-
-    function yyySafe() public {}
-
-    function zzzSafe() public {}
-}
-
-contract InvariantSelectorFocusAllowlistTest is Test {
-    FocusFilterTarget target;
-
-    function setUp() public {
-        target = new FocusFilterTarget();
-        bytes4[] memory selectors = new bytes4[](1);
-        selectors[0] = target.zzzSafe.selector;
-        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
-    }
-
-    function invariant_allowlist_focus() public view {
-        require(!target.broken(), "focused");
-    }
-}
-
-contract InvariantSelectorFocusBlocklistTest is Test {
-    FocusFilterTarget target;
-
-    function setUp() public {
-        target = new FocusFilterTarget();
-        bytes4[] memory selectors = new bytes4[](1);
-        selectors[0] = target.aaaBreak.selector;
-        excludeSelector(FuzzSelector({addr: address(target), selectors: selectors}));
-    }
-
-    function invariant_blocklist_focus() public view {
-        require(!target.broken(), "focused");
-    }
-}
-   "#,
-    );
-
-    let output = cmd.args(["test", "--mt", "invariant_allowlist_focus"]).assert_success();
-    let stdout = output.get_output().stdout_lossy();
-    assert!(!stdout.contains("aaaBreak"), "{stdout}");
-
-    let output =
-        cmd.forge_fuse().args(["test", "--mt", "invariant_blocklist_focus"]).assert_success();
-    let stdout = output.get_output().stdout_lossy();
-    assert!(!stdout.contains("aaaBreak"), "{stdout}");
 }
 
 // <https://github.com/foundry-rs/foundry/issues/11453>
@@ -2132,7 +2016,9 @@ contract JunitInvariantCounterexampleTest is Test {
 #[forgetest_init]
 fn check_interval_zero_only_checks_last_call(prj: _, cmd: _) {
     prj.update_config(|config| {
-        config.invariant.runs = 5;
+        // One run: later runs may resume from snapshots of earlier runs, so counter would not
+        // restart at 0.
+        config.invariant.runs = 1;
         config.invariant.depth = 10;
         config.invariant.check_interval = 0;
     });
@@ -2170,7 +2056,7 @@ contract CheckIntervalTest is Test {
 
     cmd.args(["test", "--mt", "invariant_counter"]).assert_success().stdout_eq(str![[r#"
 ...
-[PASS] invariant_counter_multiple_of_depth() (runs: 5, calls: 50, reverts: 0)
+[PASS] invariant_counter_multiple_of_depth() (runs: 1, calls: 10, reverts: 0)
 ...
 "#]]);
 }
@@ -3495,6 +3381,44 @@ contract FailureEventTest is Test {
     cmd.args(["test", "--mt", "invariant_"]).assert_failure().stderr_eq(str![[r#"
 ...
 {"timestamp":[..],"event":"failure","invariant":"invariant_a","target":"test/FailureEventTest.t.sol:FailureEventTest","reason":"a broken"}
+...
+"#]]);
+}
+
+// An invariant that already fails in the initial state must emit its failure event when the
+// campaign starts, even if no other invariant breaks later.
+#[forgetest_init]
+fn failure_event_reports_initial_state_failure(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 5;
+    });
+    prj.add_test(
+        "InitialFailureTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Handler {
+    function noop() public {}
+}
+
+contract InitialFailureTest is Test {
+    function setUp() public {
+        targetContract(address(new Handler()));
+    }
+
+    function invariant_initial() public pure {
+        require(false, "initial broken");
+    }
+
+    function invariant_holds() public pure {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_"]).assert_failure().stderr_eq(str![[r#"
+...
+{"timestamp":[..],"event":"failure","invariant":"invariant_initial","target":"test/InitialFailureTest.t.sol:InitialFailureTest","reason":"initial broken"}
 ...
 "#]]);
 }

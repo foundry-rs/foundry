@@ -10,7 +10,7 @@ use std::{fmt, path::PathBuf};
 use yansi::Paint;
 
 mod source_map;
-use source_map::load_build_sources;
+use source_map::{BuildSource, load_build_sources};
 pub use source_map::{PcSourceMapper, SourceData};
 
 /// Linked library information for backtrace resolution.
@@ -43,9 +43,9 @@ pub struct BacktraceBuilder<'a> {
     /// Sources grouped by [`ArtifactId::build_id`] to avoid re-reading files for artifacts from
     /// the same build
     ///
-    /// The source [`Vec`] is indexed by the compiler source ID, and contains the source path and
-    /// source content.
-    build_sources_cache: HashMap<String, Vec<(PathBuf, String)>>,
+    /// The source [`Vec`] is indexed by the compiler source ID, and contains the source path,
+    /// source content, and preprocessor edits.
+    build_sources_cache: HashMap<String, Vec<BuildSource>>,
 }
 
 impl<'a> BacktraceBuilder<'a> {
@@ -200,7 +200,7 @@ impl<'a> Backtrace<'a> {
     /// Creates a backtrace from collected artifacts and sources.
     fn new(
         artifacts_by_address: HashMap<Address, (ArtifactId, SourceData)>,
-        build_sources: &'a HashMap<String, Vec<(PathBuf, String)>>,
+        build_sources: &'a HashMap<String, Vec<BuildSource>>,
         linked_libraries: Vec<LinkedLib>,
         disable_source_locs: bool,
         arena: &SparsedTraceArena,

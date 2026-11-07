@@ -1,6 +1,6 @@
 use crate::{
-    Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, DatabaseExt, Result, Vm::*,
-    json::json_value_to_token,
+    Cheatcode, Cheatcodes, CheatcodesCore, CheatcodesExecutor, CheatsCtxt, DatabaseExt, Result,
+    Vm::*, json::json_value_to_token,
 };
 use alloy_dyn_abi::DynSolValue;
 use alloy_evm::EvmEnv;
@@ -238,7 +238,7 @@ impl Cheatcode for rpc_0Call {
 }
 
 impl Cheatcode for rpc_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { urlOrAlias, method, params } = self;
         let url = state.config.rpc_endpoint(urlOrAlias)?.url()?;
         rpc_call(&url, method, params)
@@ -256,7 +256,7 @@ impl Cheatcode for rpcJson_0Call {
 }
 
 impl Cheatcode for rpcJson_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { urlOrAlias, method, params } = self;
         let url = state.config.rpc_endpoint(urlOrAlias)?.url()?;
         rpc_json_call(&url, method, params)
@@ -423,13 +423,18 @@ fn create_fork_request<FEN: FoundryEvmNetwork>(
 ) -> Result<CreateFork> {
     persist_caller(ccx);
 
-    let rpc_endpoint = ccx.state.config.rpc_endpoint(url_or_alias)?;
+    let rpc_endpoint = ccx.state.core.config.rpc_endpoint(url_or_alias)?;
     let url = rpc_endpoint.url()?;
-    let mut evm_opts = ccx.state.config.evm_opts.clone();
+    let mut evm_opts = ccx.state.core.config.evm_opts.clone();
     evm_opts.fork_block_number = block;
     evm_opts.fork_block_number_is_inferred = false;
-    evm_opts.fork_retries = rpc_endpoint.config.retries;
-    evm_opts.fork_retry_backoff = rpc_endpoint.config.retry_backoff;
+    // The endpoint's retry settings override the run's only where the endpoint sets them. Its
+    // compute units apply only where the run sets none, as `--no-rpc-rate-limit` also wins.
+    let config = &rpc_endpoint.config;
+    evm_opts.fork_retries = config.retries.or(evm_opts.fork_retries);
+    evm_opts.fork_retry_backoff = config.retry_backoff.or(evm_opts.fork_retry_backoff);
+    evm_opts.compute_units_per_second =
+        evm_opts.compute_units_per_second.or(config.compute_units_per_second);
     if let Some(Ok(auth)) = rpc_endpoint.auth {
         let fork_headers = Some(vec![format!("Authorization: {auth}")]);
         // The cached identity was discovered with other credentials, which may reach another
@@ -440,8 +445,8 @@ fn create_fork_request<FEN: FoundryEvmNetwork>(
         evm_opts.fork_headers = fork_headers;
     }
     let fork = CreateFork {
-        enable_caching: !ccx.state.config.no_storage_caching
-            && ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
+        enable_caching: !ccx.state.core.config.no_storage_caching
+            && ccx.state.core.config.rpc_storage_caching.enable_for_endpoint(&url),
         url,
         evm_opts,
     };

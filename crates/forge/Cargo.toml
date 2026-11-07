@@ -50,7 +50,7 @@ forge-lint.workspace = true
 forge-verify.workspace = true
 forge-script.workspace = true
 forge-sol-macro-gen.workspace = true
-foundry-cli.workspace = true
+foundry-cli = { workspace = true, features = ["soldeer"] }
 foundry-debugger.workspace = true
 foundry-tui.workspace = true
 foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
@@ -69,20 +69,22 @@ tempo-alloy.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete.workspace = true
-ctrlc = "3"
+ctrlc = { version = "3", features = ["termination"] }
 dialoguer.workspace = true
 dunce.workspace = true
 flate2.workspace = true
 globset = "0.4"
+heck.workspace = true
 indicatif.workspace = true
 inferno = { version = "0.12", default-features = false }
 itertools.workspace = true
+mpp.workspace = true
 parking_lot.workspace = true
 regex = { workspace = true, default-features = false }
-revm = { workspace = true, features = ["parse"] }
+revm.workspace = true
 semver.workspace = true
 serde_json.workspace = true
-similar = { version = "3", features = ["inline"] }
+similar = { version = "3", features = ["inline", "unicode"] }
 solar = { workspace = true, features = ["clap"] }
 solar-lsp.workspace = true
 thiserror.workspace = true
@@ -93,7 +95,6 @@ watchexec-events = "6.0"
 watchexec-signals = "5.0"
 which.workspace = true
 clearscreen = "4.0"
-evm-disassembler.workspace = true
 path-slash.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 url.workspace = true
@@ -108,16 +109,12 @@ soldeer-core.workspace = true
 quick-junit = "0.7.0"
 tempfile.workspace = true
 
-# base
-base-common-consensus = { workspace = true, optional = true, features = ["serde", "std"] }
-
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["process"] }
 
 [dev-dependencies]
 alloy-rpc-types.workspace = true
 async-lsp.workspace = true
-tokio-util.workspace = true
 futures = { workspace = true, features = ["executor"] }
 alloy-hardforks.workspace = true
 anvil.workspace = true
@@ -131,9 +128,13 @@ svm.workspace = true
 tempfile.workspace = true
 
 alloy-signer-local.workspace = true
+base-common-consensus = { workspace = true, features = ["serde", "std"] }
 
 [target.'cfg(unix)'.dev-dependencies]
 rexpect.workspace = true
+alloy-provider = { workspace = true, features = ["anvil-api"] }
+blst.workspace = true
+commonware-codec.workspace = true
 
 [features]
 default = ["jemalloc", "asm-keccak", "optimism"]
@@ -156,7 +157,6 @@ monad = [
     "forge-verify/monad",
 ]
 base = [
-    "dep:base-common-consensus",
     "anvil/base",
     "foundry-evm/base",
     "foundry-evm-networks/base",

@@ -426,7 +426,10 @@ impl<'ast> ast::Visit<'ast> for LiteralsCollector {
                     }
                     self.insert_string(s);
                 }
-                ast::LitKind::Bool(..) | ast::LitKind::Rational(..) | ast::LitKind::Err(..) => {
+                ast::LitKind::Bool(..)
+                | ast::LitKind::BigNumber(..)
+                | ast::LitKind::Rational(..)
+                | ast::LitKind::Err(..) => {
                     // ignore
                 }
             },
@@ -1137,6 +1140,14 @@ mod tests {
             + map.strings.len()
             + map.bytes.len();
         assert!(total <= 2, "max_values not respected: collected {total} values");
+    }
+
+    #[test]
+    fn test_fractional_and_wide_literals_are_not_truncated() {
+        let map = process_source_literals("contract C { function f() external { 0.5; 1e100; } }");
+        assert!(map.words.is_empty());
+        assert!(map.strings.is_empty());
+        assert!(map.bytes.is_empty());
     }
 
     // -- TEST HELPERS ---------------------------------------------------------

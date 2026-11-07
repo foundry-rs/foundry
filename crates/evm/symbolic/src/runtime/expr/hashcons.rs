@@ -88,7 +88,6 @@ impl<T: fmt::Debug> fmt::Debug for HashConsed<T> {
     }
 }
 
-type HashConsHasher = FixedState;
 const MIN_GC_THRESHOLD: usize = 1024;
 
 /// Hash-consing table for sharing structurally equal immutable values.
@@ -99,7 +98,7 @@ const MIN_GC_THRESHOLD: usize = 1024;
 /// grow the table without bound.
 pub(in crate::runtime) struct HashCons<T> {
     table: HashTable<HashConsEntry<T>>,
-    hash_builder: HashConsHasher,
+    hash_builder: FixedState,
     gc_threshold: usize,
 }
 
@@ -118,7 +117,7 @@ impl<T> HashCons<T> {
     pub(in crate::runtime) fn new() -> Self {
         Self {
             table: HashTable::new(),
-            hash_builder: HashConsHasher::default(),
+            hash_builder: FixedState::default(),
             gc_threshold: MIN_GC_THRESHOLD,
         }
     }

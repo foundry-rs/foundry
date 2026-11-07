@@ -4,7 +4,7 @@ use alloy_primitives::{
     B256, U256,
     map::{AddressHashMap, U256Map},
 };
-use revm::state::AccountInfo;
+use revm::{database::AccountState, state::AccountInfo};
 use serde::{Deserialize, Serialize, Serializer, ser::SerializeStruct};
 use std::collections::BTreeMap;
 
@@ -14,6 +14,13 @@ pub struct StateSnapshot {
     pub accounts: AddressHashMap<AccountInfo>,
     pub storage: AddressHashMap<U256Map<U256>>,
     pub block_hashes: U256Map<B256>,
+    /// Accounts that are [`AccountState::NotExisting`] or [`AccountState::StorageCleared`], whose
+    /// storage missing from `storage` is zero rather than read from the underlying database.
+    ///
+    /// `None` if the snapshot does not track account states, such as one saved by an older
+    /// version.
+    #[serde(default)]
+    pub account_states: Option<AddressHashMap<AccountState>>,
 }
 
 impl Serialize for StateSnapshot {
@@ -28,11 +35,19 @@ impl Serialize for StateSnapshot {
             .map(|(address, storage)| (address, storage.iter().collect::<BTreeMap<_, _>>()))
             .collect::<BTreeMap<_, _>>();
         let block_hashes = self.block_hashes.iter().collect::<BTreeMap<_, _>>();
+        let account_states = self
+            .account_states
+            .as_ref()
+            .map(|account_states| account_states.iter().collect::<BTreeMap<_, _>>());
 
-        let mut state = serializer.serialize_struct("StateSnapshot", 3)?;
+        let len = if account_states.is_some() { 4 } else { 3 };
+        let mut state = serializer.serialize_struct("StateSnapshot", len)?;
         state.serialize_field("accounts", &accounts)?;
         state.serialize_field("storage", &storage)?;
         state.serialize_field("block_hashes", &block_hashes)?;
+        if let Some(account_states) = account_states {
+            state.serialize_field("account_states", &account_states)?;
+        }
         state.end()
     }
 }

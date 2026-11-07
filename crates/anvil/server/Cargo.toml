@@ -36,11 +36,13 @@ tokio-util = { version = "0.7", features = ["codec"], optional = true }
 serde_json.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+url = "2"
 
 clap = { version = "4", features = ["derive", "env"], optional = true }
 pin-project = "1"
 
 [dev-dependencies]
+futures = { workspace = true, features = ["std"] }
 tower.workspace = true
 
 [features]

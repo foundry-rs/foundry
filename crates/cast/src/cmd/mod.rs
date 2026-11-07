@@ -5,7 +5,7 @@
 //! implement `figment::Provider` which allows the subcommand to override the config's defaults, see
 //! [`foundry_config::Config`].
 
-use alloy_network::{AnyNetwork, Network};
+use alloy_network::Network;
 use alloy_primitives::{Address, Bytes, map::AddressHashMap};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
@@ -15,10 +15,7 @@ use foundry_cli::{
     opts::RpcOpts,
     utils::{LoadConfig, get_provider, load_config_from_provider},
 };
-use foundry_common::{
-    provider::{ProviderBuilder, RetryProvider},
-    shell,
-};
+use foundry_common::{provider::RetryProvider, shell};
 use foundry_config::{Config, figment::Figment};
 use foundry_evm::{core::bytecode::InstIter, opts::EvmOpts};
 use foundry_evm_networks::NetworkVariant;
@@ -181,7 +178,7 @@ pub(crate) async fn resolve_transaction_network(
         return Ok(NetworkVariant::Ethereum);
     }
 
-    let provider = ProviderBuilder::<AnyNetwork>::from_config(config)?.build()?;
+    let provider = get_provider(config)?;
     Ok(provider.get_chain_id().await?.into())
 }
 

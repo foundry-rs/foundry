@@ -427,6 +427,17 @@ pub trait ExecutionSpec: FromEvmVersion {
             .or_else(|| Self::historical_hardfork(chain_id, timestamp))
     }
 
+    /// Resolves the hardfork of a script fork, whose transactions are sent to the source chain.
+    /// Ethereum overrides this to follow the source chain when it is ahead of `configured`.
+    fn script_fork_hardfork(
+        chain_id: u64,
+        timestamp: u64,
+        endpoint_hardfork: Option<FoundryHardfork>,
+        _configured: Self,
+    ) -> Option<FoundryHardfork> {
+        Self::fork_hardfork(chain_id, timestamp, endpoint_hardfork)
+    }
+
     /// Returns exact metadata for a directly selected spec, when the family requires it.
     /// Ethereum and Optimism retain their existing absence of metadata for direct spec overrides.
     fn reported_hardfork(self) -> Option<FoundryHardfork> {
@@ -481,6 +492,21 @@ impl ExecutionSpec for SpecId {
         _endpoint_hardfork: Option<FoundryHardfork>,
     ) -> Option<FoundryHardfork> {
         None
+    }
+
+    // Gas limits come from the script simulation, so it must not price below the source chain.
+    fn script_fork_hardfork(
+        chain_id: u64,
+        timestamp: u64,
+        endpoint_hardfork: Option<FoundryHardfork>,
+        configured: Self,
+    ) -> Option<FoundryHardfork> {
+        endpoint_hardfork
+            .filter(|&hardfork| Self::from_foundry_hardfork(hardfork).is_some())
+            .or_else(|| Self::historical_hardfork(chain_id, timestamp))
+            .filter(|&hardfork| {
+                Self::from_foundry_hardfork(hardfork).is_some_and(|spec| spec > configured)
+            })
     }
 }
 
@@ -844,11 +870,30 @@ mod tests {
     fn test_tempo_hardfork_from_chain_and_timestamp() {
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(4217, u64::MAX),
-            Some(FoundryHardfork::Tempo(TempoHardfork::T12))
+            Some(FoundryHardfork::Tempo(TempoHardfork::T13))
         );
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(42431, u64::MAX),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T13))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MAINNET_CHAIN_ID, MAINNET_T13_TIMESTAMP - 1),
             Some(FoundryHardfork::Tempo(TempoHardfork::T12))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MAINNET_CHAIN_ID, MAINNET_T13_TIMESTAMP),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T13))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(
+                MODERATO_CHAIN_ID,
+                MODERATO_T13_TIMESTAMP - 1
+            ),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T12))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MODERATO_CHAIN_ID, MODERATO_T13_TIMESTAMP),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T13))
         );
 
         assert_eq!(

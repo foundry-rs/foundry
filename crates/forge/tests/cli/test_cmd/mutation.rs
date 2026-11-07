@@ -6,8 +6,64 @@ use foundry_compilers::artifacts::Remapping;
 use foundry_test_utils::{rpc::spawn_rpc_proxy_recording_method, str, util::OutputExt};
 use std::{fs, str::FromStr};
 
+#[cfg(unix)]
+use std::path::Path;
+
 fn mutation_summary(stdout: &str) -> serde_json::Value {
     serde_json::from_str::<serde_json::Value>(stdout.trim()).unwrap()["summary"].clone()
+}
+
+#[forgetest_init]
+fn mutation_testing_body_survivors_do_not_skip_other_mutants(prj: _, cmd: _) {
+    prj.add_source(
+        "Body.sol",
+        r#"pragma solidity ^0.8.13;
+contract Body {
+    uint public number;
+    function check(bool value) public returns (bool) { number = 7; return value; }
+}"#,
+    );
+    prj.add_test(
+        "Body.t.sol",
+        r#"pragma solidity ^0.8.13;
+import "../src/Body.sol";
+contract BodyTest {
+    function testCheck() public { assert(new Body().check(true)); }
+}"#,
+    );
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"[mutation]
+exclude_operators = ["assembly", "binary-op", "delete-expression", "elim-delegate", "require", "unary-op"]
+"#,
+    )
+    .unwrap();
+    // A fixed seed keeps the execution cache key, and so the persisted spans, stable across runs.
+    let args = [
+        "test",
+        "--mutate",
+        "src/Body.sol",
+        "--mutate-contract",
+        "^Body$",
+        "--mutation-jobs",
+        "1",
+        "--fuzz-seed",
+        "1",
+        "--json",
+    ];
+    let expected = str![[r#"
+{"summary":{"total":3,"killed":1,"survived":2,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":33.33333333333333,"duration_secs":"{...}"},"survived_mutants":{"src/Body.sol":[{"line":5,"column":54,"original":"{ number = 7; return value; }","mutant":"{ return true; }"},{"line":5,"column":56,"original":"number = 7","mutant":"0"}]}}
+"#]];
+    cmd.args(args).assert_json_stdout(expected.clone());
+
+    // Resume from the persisted survived spans without a complete results cache.
+    for entry in fs::read_dir(prj.root().join("cache/mutation")).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|ext| ext == "results") {
+            fs::remove_file(path).unwrap();
+        }
+    }
+    cmd.forge_fuse().args(args).assert_json_stdout(expected);
 }
 
 #[forgetest_init]
@@ -60,7 +116,7 @@ contract CounterTest {
 ...
 Running mutation tests with 4 parallel workers...
 ...
-3 mutants killed
+4 mutants killed
 ...
 "#]]);
     assert_eq!(
@@ -133,9 +189,9 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 1         ┆ 20.0%      │
+│ Survived ┆ 1         ┆ 14.3%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 4         ┆ 80.0%      │
+│ Killed   ┆ 6         ┆ 85.7%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Invalid  ┆ 0         ┆ 0.0%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
@@ -149,7 +205,7 @@ Legend:
   Skipped - redundant mutation on the same expression
   Timed out - compile/test exceeded the configured timeout
 
-Mutation Score: 80.0% (4/5 mutants killed); [ELAPSED]
+Mutation Score: 85.7% (6/7 mutants killed); [ELAPSED]
 
 ────────────────────────────────────────────────────────────
 Survived mutants
@@ -162,7 +218,7 @@ Survived mutants
        + ++number
 ...
 ────────────────────────────────────────────────────────────
-4 mutants killed
+6 mutants killed
 
 ════════════════════════════════════════════════════════════
 
@@ -170,7 +226,7 @@ Survived mutants
 
     // Run mutation testing with --json - verify the output contains valid mutation JSON
     cmd.forge_fuse().args(["test", "--mutate", "src/Counter.sol", "--mutation-jobs", "1", "--json"]).assert_success().stdout_eq(str![[r#"
-{"summary":{"total":5,"killed":4,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":80.0,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":13,"column":9,"original":"number++","mutant":"++number"}]}}
+{"summary":{"total":7,"killed":6,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":85.71428571428571,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":13,"column":9,"original":"number++","mutant":"++number"}]}}
 
 "#]]);
 }
@@ -220,6 +276,7 @@ exclude_operators = [
     "assignment",
     "delete-expression",
     "elim-delegate",
+    "function-body",
     "require",
     "unary-op",
 ]
@@ -283,6 +340,7 @@ exclude_operators = [
     "binary-op",
     "delete-expression",
     "elim-delegate",
+    "function-body",
     "require",
 ]
 "#,
@@ -371,6 +429,7 @@ exclude_operators = [
     "binary-op",
     "delete-expression",
     "elim-delegate",
+    "function-body",
     "require",
     "unary-op",
 ]
@@ -440,6 +499,7 @@ exclude_operators = [
     "binary-op",
     "delete-expression",
     "elim-delegate",
+    "function-body",
     "require",
 ]
 "#,
@@ -523,6 +583,7 @@ exclude_operators = [
     "assignment",
     "delete-expression",
     "elim-delegate",
+    "function-body",
     "require",
     "unary-op",
 ]
@@ -693,7 +754,19 @@ contract StackTooDeepTest {
 
 #[forgetest_init]
 fn mutation_testing_uses_mutation_profile_for_initial_compile(prj: _, cmd: _) {
-    fs::write(prj.root().join("foundry.toml"), "[profile.default]\nvia_ir = false\n").unwrap();
+    // Only the assertion needs mutating to exercise the compiler profile. Mutating every
+    // arithmetic expression or the whole body of the stack-depth fixture needlessly repeats the
+    // expensive IR build.
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"[profile.default]
+via_ir = false
+
+[mutation]
+exclude_operators = ["binary-op", "function-body"]
+"#,
+    )
+    .unwrap();
 
     prj.add_source(
         "StackTooDeep.sol",
@@ -703,6 +776,7 @@ pragma solidity ^0.8.20;
 
 contract StackTooDeep {
     function manyLocals(uint256 x) public pure returns (uint256) {
+        assert(x != 0);
         uint256 a00 = x + 0;
         uint256 a01 = x + 1;
         uint256 a02 = x + 2;
@@ -747,7 +821,11 @@ contract StackTooDeepTest {
 "#,
     );
 
+    // The ordinary profile must still fail, or the mutation profile override is not being tested.
+    cmd.arg("build").assert_failure();
+
     let output = cmd
+        .forge_fuse()
         .args([
             "test",
             "--mutate",
@@ -761,7 +839,9 @@ contract StackTooDeepTest {
         .assert_success();
     let summary = mutation_summary(&output.get_output().stdout_lossy());
 
-    assert!(summary["total"].as_u64().unwrap() > 0, "unexpected summary:\n{summary}");
+    assert_eq!(summary["total"], 3, "unexpected summary:\n{summary}");
+    assert_eq!(summary["killed"], 2, "unexpected summary:\n{summary}");
+    assert_eq!(summary["survived"], 1, "unexpected summary:\n{summary}");
 }
 
 #[forgetest_init]
@@ -993,16 +1073,16 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 2         ┆ 20.0%      │
+│ Survived ┆ 2         ┆ 16.7%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 8         ┆ 80.0%      │
+│ Killed   ┆ 10        ┆ 83.3%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Invalid  ┆ 0         ┆ 0.0%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Skipped  ┆ 0         ┆ 0.0%       │
 ╰──────────┴───────────┴────────────╯
 ...
-Mutation Score: 80.0% (8/10 mutants killed); [ELAPSED]
+Mutation Score: 83.3% (10/12 mutants killed); [ELAPSED]
 ...
 "#]]);
 }
@@ -1056,9 +1136,9 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 2         ┆ 20.0%      │
+│ Survived ┆ 2         ┆ 16.7%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 8         ┆ 80.0%      │
+│ Killed   ┆ 10        ┆ 83.3%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Invalid  ┆ 0         ┆ 0.0%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
@@ -1072,7 +1152,7 @@ Legend:
   Skipped - redundant mutation on the same expression
   Timed out - compile/test exceeded the configured timeout
 
-Mutation Score: 80.0% (8/10 mutants killed); [ELAPSED]
+Mutation Score: 83.3% (10/12 mutants killed); [ELAPSED]
 
 ────────────────────────────────────────────────────────────
 Survived mutants
@@ -1088,7 +1168,7 @@ Survived mutants
        - a + b
 ...
 ────────────────────────────────────────────────────────────
-8 mutants killed
+10 mutants killed
 
 ════════════════════════════════════════════════════════════
 
@@ -1817,6 +1897,11 @@ contract UsesSharedTest {
 // Test require/assert mutation for security-critical patterns
 #[forgetest_init]
 fn mutation_testing_require_mutator(prj: _, cmd: _) {
+    fs::write(
+        prj.root().join("foundry.toml"),
+        "[mutation]\nexclude_operators = [\"function-body\"]\n",
+    )
+    .unwrap();
     // A contract with security-critical require checks (access control, input validation)
     prj.add_source(
         "Vault.sol",
@@ -2163,9 +2248,193 @@ contract CounterTest {
         .args(["test", "--mutate", "src/Counter.sol", "--mutation-jobs", "1", "--json"])
         .assert_success()
         .stdout_eq(str![[r#"
-{"summary":{"total":4,"killed":3,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":75.0,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":9,"column":9,"original":"number++","mutant":"++number"}]}}
+{"summary":{"total":5,"killed":4,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":80.0,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":9,"column":9,"original":"number++","mutant":"++number"}]}}
 
 "#]]);
+}
+
+// `copy_project` links `lib` into each mutant workspace. A mutant of a dependency source must be
+// written into the workspace, not through the link into the real dependency.
+#[forgetest_init]
+fn mutation_keeps_linked_dependency_sources_unchanged(prj: _, cmd: _) {
+    let source = r#"pragma solidity ^0.8.13;
+
+contract Arithmetic {
+    function bucket(uint256 value) external pure returns (uint256) {
+        if (value < 10) return 1;
+        if (value < 100) return 2;
+        return 3;
+    }
+}
+"#;
+    let dependency = prj.root().join("lib/bucket/Arithmetic.sol");
+    fs::create_dir_all(dependency.parent().unwrap()).unwrap();
+    fs::write(&dependency, source).unwrap();
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("bucket/=lib/bucket/").unwrap().into()];
+    });
+    prj.add_test(
+        "Arithmetic.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+import {Arithmetic} from "bucket/Arithmetic.sol";
+
+contract ArithmeticTest {
+    Arithmetic private arithmetic = new Arithmetic();
+
+    function testSmallValue() public view {
+        assert(arithmetic.bucket(1) == 1);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--mutate", "lib/bucket/Arithmetic.sol", "--mutation-jobs", "4", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let summary = mutation_summary(&output);
+    assert_eq!(summary["invalid"], 0, "{summary}");
+    assert!(summary["survived"].as_u64().unwrap() > 0, "{summary}");
+    assert_eq!(fs::read_to_string(&dependency).unwrap(), source);
+}
+
+// Direct imports and aliases at any depth must see the same mutant. Unused dangling links must
+// not make mutants invalid.
+#[cfg(unix)]
+#[forgetest_init]
+fn mutation_keeps_links_in_dependency_sources(prj: _, cmd: _) {
+    let dependency = prj.root().join("lib/bucket");
+    fs::create_dir_all(&dependency).unwrap();
+    fs::write(
+        dependency.join("Arithmetic.sol"),
+        r#"pragma solidity ^0.8.13;
+
+contract Arithmetic {
+    function bucket(uint256 value) external pure returns (bool) {
+        return value < 10;
+    }
+}
+"#,
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("Arithmetic.sol", dependency.join("Alias.sol")).unwrap();
+    fs::create_dir(dependency.join("nested")).unwrap();
+    std::os::unix::fs::symlink("../Arithmetic.sol", dependency.join("nested/Alias.sol")).unwrap();
+    std::os::unix::fs::symlink("nonexistent", dependency.join("unused")).unwrap();
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("bucket/=lib/bucket/").unwrap().into()];
+    });
+    for import in ["Arithmetic.sol", "Alias.sol", "nested/Alias.sol"] {
+        prj.add_test(
+            "Arithmetic.t.sol",
+            &r#"
+pragma solidity ^0.8.13;
+
+import {Arithmetic} from "bucket/IMPORT";
+
+contract ArithmeticTest {
+    Arithmetic private arithmetic = new Arithmetic();
+
+    function testBoundary() public view {
+        assert(arithmetic.bucket(9));
+        assert(!arithmetic.bucket(10));
+        assert(!arithmetic.bucket(11));
+    }
+}
+"#
+            .replace("IMPORT", import),
+        );
+
+        cmd.forge_fuse()
+            .args(["test", "--mutate", "lib/bucket/Arithmetic.sol", "--json"])
+            .assert_json_stdout(str![[r#"
+{
+  "summary": {
+    "total": 7,
+    "killed": 7,
+    "survived": 0,
+    "invalid": 0,
+    "skipped": 0,
+    "timed_out": 0,
+    "mutation_score": 100.0,
+    "duration_secs": "{...}"
+  },
+  "survived_mutants": {}
+}
+"#]]);
+    }
+}
+
+// Relative links outside the project must still resolve after isolating a dependency.
+#[cfg(unix)]
+#[forgetest_init]
+fn mutation_keeps_external_relative_dependency_links(prj: _, cmd: _) {
+    let shared = tempfile::tempdir_in(prj.root().parent().unwrap()).unwrap();
+    let mutation_tmp = shared.path().join("mutants");
+    fs::create_dir(&mutation_tmp).unwrap();
+    cmd.env("TMPDIR", &mutation_tmp);
+    fs::write(
+        shared.path().join("Helper.sol"),
+        "pragma solidity ^0.8.13; uint256 constant LIMIT = 10;",
+    )
+    .unwrap();
+    let dependency = prj.root().join("lib/bucket");
+    fs::create_dir_all(&dependency).unwrap();
+    let source = r#"pragma solidity ^0.8.13;
+import {LIMIT} from "./Helper.sol";
+
+contract Arithmetic {
+    function bucket(uint256 value) external pure returns (bool) {
+        return value < LIMIT;
+    }
+}
+"#;
+    fs::write(dependency.join("Arithmetic.sol"), source).unwrap();
+    let helper = Path::new("../../../").join(shared.path().file_name().unwrap()).join("Helper.sol");
+    std::os::unix::fs::symlink(&helper, dependency.join("Helper.sol")).unwrap();
+    prj.update_config(|config| {
+        config.allow_paths = vec![shared.path().to_path_buf()];
+    });
+    prj.add_test(
+        "Arithmetic.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+import {Arithmetic} from "../lib/bucket/Arithmetic.sol";
+
+contract ArithmeticTest {
+    Arithmetic private arithmetic = new Arithmetic();
+
+    function testBoundary() public view {
+        assert(arithmetic.bucket(9));
+        assert(!arithmetic.bucket(10));
+        assert(!arithmetic.bucket(11));
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--mutate", "lib/bucket/Arithmetic.sol", "--json"]).assert_json_stdout(str![
+        [r#"
+{
+  "summary": {
+    "total": 7,
+    "killed": 7,
+    "survived": 0,
+    "invalid": 0,
+    "skipped": 0,
+    "timed_out": 0,
+    "mutation_score": 100.0,
+    "duration_secs": "{...}"
+  },
+  "survived_mutants": {}
+}
+"#]
+    ]);
+    assert_eq!(fs::read_link(dependency.join("Helper.sol")).unwrap(), helper);
+    assert_eq!(fs::read_to_string(dependency.join("Arithmetic.sol")).unwrap(), source);
 }
 
 // A per-mutant timeout must not turn a run-limited invariant campaign into a time-based one.
@@ -2247,13 +2516,13 @@ contract CounterInvariantTest {
     assert_eq!(
         unbounded,
         serde_json::json!({
-            "total": 10,
-            "killed": 9,
+            "total": 11,
+            "killed": 10,
             "survived": 1,
             "invalid": 0,
             "skipped": 0,
             "timed_out": 0,
-            "mutation_score": 90.0,
+            "mutation_score": 90.9090909090909,
         })
     );
     assert_eq!(run(&["--mutation-timeout", "5"]), unbounded);

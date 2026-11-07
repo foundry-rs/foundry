@@ -34,12 +34,6 @@ pub fn block_env_from_header<BLOCK: FoundryBlock + Default>(header: &impl BlockH
     block
 }
 
-/// Applies chain-specific changes required to replay transactions accepted on-chain.
-pub fn apply_chain_specific_tx_replay_env_changes<SPEC, BLOCK>(evm_env: &mut EvmEnv<SPEC, BLOCK>) {
-    let chain_id = evm_env.cfg_env.chain_id;
-    apply_chain_specific_tx_replay_env_changes_for_chain(evm_env, chain_id);
-}
-
 /// Applies replay normalization for the provided source chain.
 ///
 /// This keeps fork-specific transaction validation independent from an execution `CHAINID`
@@ -54,29 +48,10 @@ pub fn apply_chain_specific_tx_replay_env_changes_for_chain<SPEC, BLOCK>(
     }
 }
 
-/// Depending on the configured chain id and block number this should apply any specific changes
+/// Applies block normalization for the provided source chain.
 ///
 /// - checks for prevrandao mixhash after merge
 /// - applies chain specifics: on Arbitrum `block.number` is the L1 block
-///
-/// Should be called with proper chain id (retrieved from provider if not provided), works with any
-/// [`FoundryBlock`] type.
-pub fn apply_chain_and_block_specific_env_changes<
-    N: Network,
-    SPEC: Into<SpecId> + Copy,
-    BLOCK: FoundryBlock,
->(
-    evm_env: &mut EvmEnv<SPEC, BLOCK>,
-    block: &N::BlockResponse,
-    configs: NetworkConfigs,
-) {
-    let chain_id = evm_env.cfg_env.chain_id;
-    apply_chain_and_block_specific_env_changes_for_chain::<N, _, _>(
-        evm_env, block, chain_id, configs,
-    );
-}
-
-/// Applies block normalization for the provided source chain.
 ///
 /// This keeps fork-specific header handling independent from an execution `CHAINID` override.
 pub fn apply_chain_and_block_specific_env_changes_for_chain<
@@ -481,15 +456,18 @@ mod tests {
             revm::context::CfgEnv::<SpecId>::default(),
             revm::context::BlockEnv::default(),
         );
-        evm_env.cfg_env.chain_id = NamedChain::Arbitrum as u64;
-
-        apply_chain_specific_tx_replay_env_changes(&mut evm_env);
+        apply_chain_specific_tx_replay_env_changes_for_chain(
+            &mut evm_env,
+            NamedChain::Arbitrum as u64,
+        );
         assert!(evm_env.cfg_env.disable_priority_fee_check);
 
-        evm_env.cfg_env.chain_id = NamedChain::Mainnet as u64;
         evm_env.cfg_env.disable_priority_fee_check = false;
 
-        apply_chain_specific_tx_replay_env_changes(&mut evm_env);
+        apply_chain_specific_tx_replay_env_changes_for_chain(
+            &mut evm_env,
+            NamedChain::Mainnet as u64,
+        );
         assert!(!evm_env.cfg_env.disable_priority_fee_check);
     }
 

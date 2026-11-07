@@ -16,10 +16,13 @@ mod smt;
 
 use fallback::{checked_mul_guard_branch_model, constraints_prefer_hard_arith_fallback_first};
 use normalize::{
-    constraints_are_directly_unsat, normalize_constraints_for_solver_cached,
+    NormalizationCache, constraints_are_directly_unsat, normalize_constraints_for_solver_cached,
     sorted_bool_exprs_are_subset,
 };
-use reasoning::{product_monotonic_unsat_normalized, remove_implied_monotonic_constraints};
+use reasoning::{
+    CheckedXorResult, checked_xor_result, product_monotonic_unsat_normalized,
+    remove_implied_monotonic_constraints,
+};
 use smt::write_smt_assertions;
 
 pub(crate) use fallback::{
@@ -123,7 +126,7 @@ pub(crate) struct SmtLibSubprocessSolver {
     portfolio_scheduler: PortfolioScheduler,
     heuristic_witnesses: usize,
     replayable_storage: SymbolicVars,
-    normalization_cache: HashMap<SymBoolExpr, SymBoolExpr>,
+    normalization_cache: NormalizationCache,
     sat_cache: HashMap<Vec<SymBoolExpr>, bool>,
     model_cache: HashMap<Vec<SymBoolExpr>, SymbolicModel>,
     sat_queries: usize,
@@ -151,7 +154,7 @@ impl SmtLibSubprocessSolver {
             portfolio_scheduler: PortfolioScheduler::default(),
             heuristic_witnesses: 0,
             replayable_storage: SymbolicVars::default(),
-            normalization_cache: HashMap::default(),
+            normalization_cache: NormalizationCache::default(),
             sat_cache: HashMap::default(),
             model_cache: HashMap::default(),
             sat_queries: 0,
@@ -202,18 +205,32 @@ impl SmtLibSubprocessSolver {
     pub(crate) fn check_available(&self) -> Result<(), SymbolicError> {
         let commands = self.commands()?;
         let mut errors = Vec::new();
+        // Availability must not strand a joined live worker before exploration can check its
+        // deadline. Share one budget across the portfolio and discard unneeded version output.
+        let seconds = self.timeout.filter(|seconds| *seconds > 0).unwrap_or(30);
+        let deadline = Instant::now() + Duration::from_secs(seconds.into());
         for command in commands {
-            let output = match Command::new(&command.program).arg("--version").output() {
-                Ok(output) => output,
+            let mut child = match Command::new(&command.program)
+                .arg("--version")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                Ok(child) => SolverChild::new(child),
                 Err(err) => {
                     errors.push(format!("failed to execute `{}`: {err}", command.program));
                     continue;
                 }
             };
-            if output.status.success() {
-                return Ok(());
+            match child.child_mut().wait_timeout(deadline.saturating_duration_since(Instant::now()))
+            {
+                Ok(Some(status)) if status.success() => return Ok(()),
+                Ok(Some(_)) => errors
+                    .push(format!("`{}` is not a usable SMT solver executable", command.program)),
+                Ok(None) => return Err(SymbolicError::Timeout(seconds)),
+                Err(err) => errors.push(format!("failed to wait for `{}`: {err}", command.program)),
             }
-            errors.push(format!("`{}` is not a usable SMT solver executable", command.program));
         }
         Err(SymbolicError::Solver(errors.join("; ")))
     }
@@ -315,6 +332,21 @@ impl SmtLibSubprocessSolver {
         )
         .entered();
         trace!(query_id = self.queries, constraint_count = constraints.len(), "solver model");
+        if let Some(result) = checked_xor_result(constraints) {
+            match result {
+                CheckedXorResult::Unsat => {
+                    self.cache_sat_result(cache_key, false);
+                    return Err(SymbolicError::Solver(
+                        "counterexample path became unsat".to_string(),
+                    ));
+                }
+                CheckedXorResult::Model(model) => {
+                    self.cache_sat_result(cache_key.clone(), true);
+                    self.cache_model_result(cache_key, model.clone());
+                    return Ok(model);
+                }
+            }
+        }
         if let Some(model) = fallback_single_var_model(&smt_constraints)
             && eval_model_constraints(constraints, &model)
         {
@@ -456,6 +488,15 @@ impl SmtLibSubprocessSolver {
             trace!("is_sat: monotonic product contradiction");
             self.cache_sat_result(cache_key, false);
             return Ok(BranchFeasibility::Unsat);
+        }
+        if let Some(result) = checked_xor_result(constraints) {
+            let sat = matches!(result, CheckedXorResult::Model(_));
+            trace!(sat, "is_sat: checked XOR specialist");
+            self.cache_sat_result(cache_key.clone(), sat);
+            if let CheckedXorResult::Model(model) = result {
+                self.cache_model_result(cache_key, model);
+            }
+            return Ok(if sat { BranchFeasibility::Sat } else { BranchFeasibility::Unsat });
         }
         if !constraints.is_empty()
             && eval_model_constraints(constraints, &SymbolicModel::default())
@@ -685,7 +726,7 @@ where
 fn normalize_sat_constraints(
     cx: &mut SymCx,
     constraints: &[SymBoolExpr],
-    normalization_cache: &mut HashMap<SymBoolExpr, SymBoolExpr>,
+    normalization_cache: &mut NormalizationCache,
 ) -> Vec<SymBoolExpr> {
     let constraints = remove_implied_monotonic_constraints(
         normalize_constraints_for_solver_cached(cx, constraints, normalization_cache),

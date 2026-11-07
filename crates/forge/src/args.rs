@@ -58,7 +58,7 @@ pub fn run_command(args: Forge) -> Result<()> {
     match args.cmd {
         ForgeSubcommand::Test(cmd) => {
             if cmd.is_watch() {
-                global.block_on(watch::watch_test(cmd))
+                block_on_watch(global, watch::watch_test(cmd))
             } else {
                 let silent = cmd.junit || shell::is_json();
                 let outcome = global.block_on(cmd.run())?;
@@ -70,10 +70,11 @@ pub fn run_command(args: Forge) -> Result<()> {
             let outcome = global.block_on(cmd.run())?;
             outcome.ensure_ok(silent)
         }
+        ForgeSubcommand::Properties(cmd) => cmd.run(),
         ForgeSubcommand::Script(cmd) => block_on_command(global, || cmd.run_script()),
         ForgeSubcommand::Coverage(cmd) => {
             if cmd.is_watch() {
-                global.block_on(watch::watch_coverage(cmd))
+                block_on_watch(global, watch::watch_coverage(cmd))
             } else {
                 global.block_on(cmd.run())
             }
@@ -81,7 +82,7 @@ pub fn run_command(args: Forge) -> Result<()> {
         ForgeSubcommand::Bind(cmd) => cmd.run(),
         ForgeSubcommand::Build { args, locked } => {
             if args.is_watch() {
-                global.block_on(watch::watch_build(args))
+                block_on_watch(global, watch::watch_build(args))
             } else {
                 global.block_on(args.run(locked)).map(drop)
             }
@@ -118,14 +119,14 @@ pub fn run_command(args: Forge) -> Result<()> {
         }
         ForgeSubcommand::Snapshot(cmd) => {
             if cmd.is_watch() {
-                global.block_on(watch::watch_gas_snapshot(cmd))
+                block_on_watch(global, watch::watch_gas_snapshot(cmd))
             } else {
                 global.block_on(cmd.run())
             }
         }
         ForgeSubcommand::Fmt(cmd) => {
             if cmd.is_watch() {
-                global.block_on(watch::watch_fmt(cmd))
+                block_on_watch(global, watch::watch_fmt(cmd))
             } else {
                 cmd.run()
             }
@@ -135,9 +136,10 @@ pub fn run_command(args: Forge) -> Result<()> {
         ForgeSubcommand::Inspect(cmd) => cmd.run(),
         ForgeSubcommand::Tree(cmd) => cmd.run(),
         ForgeSubcommand::Geiger(cmd) => global.block_on(cmd.run()),
+        ForgeSubcommand::Exploit(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Doc(cmd) => {
             if cmd.is_watch() {
-                global.block_on(watch::watch_doc(cmd))
+                block_on_watch(global, watch::watch_doc(cmd))
             } else {
                 global.block_on(cmd.run())
             }
@@ -160,4 +162,49 @@ where
     Fut: std::future::Future,
 {
     global.block_on(make_future())
+}
+
+/// Run watch commands without waiting indefinitely for detached stdin readers to stop.
+fn block_on_watch<F: std::future::Future>(
+    global: &foundry_cli::opts::GlobalArgs,
+    future: F,
+) -> F::Output {
+    let runtime = global.tokio_runtime();
+    let result = runtime.block_on(future);
+    // Watchexec has already stopped its child processes before returning. Its blocking stdin
+    // reader can outlive the watcher, so dropping the runtime would otherwise wait indefinitely.
+    runtime.shutdown_timeout(std::time::Duration::from_secs(1));
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        sync::mpsc::{self, TryRecvError},
+        time::Duration,
+    };
+
+    #[test]
+    fn watch_shutdown_does_not_wait_for_blocking_reader() {
+        let (release_tx, release_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+
+        let result = block_on_watch(&Default::default(), async move {
+            tokio::task::spawn_blocking(move || {
+                started_tx.send(()).unwrap();
+                // Bound the simulated read even if runtime shutdown regresses.
+                let _ = release_rx.recv_timeout(Duration::from_secs(10));
+                finished_tx.send(()).unwrap();
+            });
+            started_rx.await.unwrap();
+            Err::<(), _>("watch failed")
+        });
+
+        assert_eq!(result, Err("watch failed"));
+        assert_eq!(finished_rx.try_recv(), Err(TryRecvError::Empty));
+        release_tx.send(()).unwrap();
+        finished_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    }
 }

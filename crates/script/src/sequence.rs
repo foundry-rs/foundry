@@ -5,8 +5,8 @@ use crate::{
 use alloy_consensus::transaction::SignerRecoverable;
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_network::{Network, ReceiptResponse};
-use alloy_primitives::{B256, Bytes};
-use eyre::{ContextCompat, Result, bail};
+use alloy_primitives::{Address, B256, Bytes};
+use eyre::{ContextCompat, Report, Result, bail, eyre};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cli::utils::Git;
 use foundry_common::{FoundryTransactionBuilder, fmt::UIfmt};
@@ -66,7 +66,7 @@ pub(crate) fn completed_transaction_prefix<N: Network>(
     )
 )]
 pub(crate) enum SequenceData<N: Network> {
-    Single(ScriptSequence<N>),
+    Single(Box<ScriptSequence<N>>),
     Multi(MultiChainSequence<N>),
 }
 
@@ -83,14 +83,14 @@ where
 
     pub fn sequences(&self) -> &[ScriptSequence<N>] {
         match self {
-            Self::Single(sequence) => std::slice::from_ref(sequence),
+            Self::Single(sequence) => std::slice::from_ref(&**sequence),
             Self::Multi(sequence) => &sequence.deployments,
         }
     }
 
     pub fn sequences_mut(&mut self) -> &mut [ScriptSequence<N>] {
         match self {
-            Self::Single(sequence) => std::slice::from_mut(sequence),
+            Self::Single(sequence) => std::slice::from_mut(&mut **sequence),
             Self::Multi(sequence) => &mut sequence.deployments,
         }
     }
@@ -159,18 +159,21 @@ where
     N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
 {
     recovery: RecoveryStore<N>,
+    /// Endpoint that replaces the saved one for this run, never persisted.
+    rpc_override: Option<String>,
 }
 
 impl<N: Network> ScriptSequenceKind<N>
 where
     N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
 {
-    pub fn new_single(sequence: ScriptSequence<N>, batch: bool) -> Result<Self> {
-        Self::create(SequenceData::Single(sequence), batch)
-    }
-
-    pub fn new_multi(sequence: MultiChainSequence<N>, batch: bool) -> Result<Self> {
-        Self::create(SequenceData::Multi(sequence), batch)
+    #[cfg(test)]
+    pub fn new_single(
+        sequence: ScriptSequence<N>,
+        batch: bool,
+        sponsor: Option<Address>,
+    ) -> Result<Self> {
+        Self::create(SequenceData::Single(Box::new(sequence)), batch, sponsor)
     }
 
     pub fn load_single(
@@ -186,21 +189,10 @@ where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
         let paths = ScriptSequence::<N>::get_paths(config, sig, target, chain, dry_run)?;
-        let lock = RecoveryLock::acquire(&paths)?;
-        let recovery = if let Some(recovery) = RecoveryStore::load(&paths, batch, lock)? {
-            recovery
-        } else {
-            let lock = RecoveryLock::acquire(&paths)?;
-            let data =
-                SequenceData::Single(ScriptSequence::load(config, sig, target, chain, dry_run)?);
-            if data.has_recovery_generation() {
-                bail!("recovery exports reference a missing authoritative snapshot");
-            }
-            RecoveryStore::import(data, batch, lock)?
-        };
-        let sequence = Self { recovery };
-        sequence.recovery.data().publish(&paths)?;
-        Ok(sequence)
+        Self::load(paths, batch, || {
+            ScriptSequence::load(config, sig, target, chain, dry_run)
+                .map(|sequence| SequenceData::Single(Box::new(sequence)))
+        })
     }
 
     pub fn load_multi(
@@ -215,26 +207,44 @@ where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
         let paths = MultiChainSequence::<N>::get_paths(config, sig, target, dry_run)?;
+        Self::load(paths, batch, || {
+            MultiChainSequence::load(config, sig, target, dry_run).map(SequenceData::Multi)
+        })
+    }
+
+    fn load(
+        paths: (PathBuf, PathBuf),
+        batch: bool,
+        load_legacy: impl FnOnce() -> Result<SequenceData<N>>,
+    ) -> Result<Self>
+    where
+        N::TxEnvelope: SignerRecoverable,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
         let lock = RecoveryLock::acquire(&paths)?;
         let recovery = if let Some(recovery) = RecoveryStore::load(&paths, batch, lock)? {
             recovery
         } else {
             let lock = RecoveryLock::acquire(&paths)?;
-            let data = SequenceData::Multi(MultiChainSequence::load(config, sig, target, dry_run)?);
+            let data = load_legacy()?;
             if data.has_recovery_generation() {
                 bail!("recovery exports reference a missing authoritative snapshot");
             }
             RecoveryStore::import(data, batch, lock)?
         };
-        let sequence = Self { recovery };
+        let sequence = Self { recovery, rpc_override: None };
         sequence.recovery.data().publish(&paths)?;
         Ok(sequence)
     }
 
-    fn create(data: SequenceData<N>, batch: bool) -> Result<Self> {
+    pub(crate) fn create(
+        data: SequenceData<N>,
+        batch: bool,
+        sponsor: Option<Address>,
+    ) -> Result<Self> {
         let paths = data.paths();
-        let recovery = RecoveryStore::create(data, batch)?;
-        let sequence = Self { recovery };
+        let recovery = RecoveryStore::create(data, batch, sponsor)?;
+        let sequence = Self { recovery, rpc_override: None };
         sequence.recovery.data().publish(&paths)?;
         Ok(sequence)
     }
@@ -272,6 +282,16 @@ where
         self.recovery.data_mut().sequences_mut()
     }
 
+    /// Uses `rpc` instead of the saved endpoint for the rest of this run.
+    pub(crate) fn set_rpc_override(&mut self, rpc: String) {
+        self.rpc_override = Some(rpc);
+    }
+
+    /// Returns the endpoint used to reach the sequence at `index`.
+    pub(crate) fn rpc_url(&self, index: usize) -> &str {
+        self.rpc_override.as_deref().unwrap_or_else(|| self.sequences()[index].rpc_url())
+    }
+
     pub(crate) fn signed_payload(&self, sequence: usize, index: usize) -> Option<&SignedPayload> {
         self.recovery.signed_payload(sequence, index)
     }
@@ -285,12 +305,13 @@ where
         sequence: usize,
         index: usize,
         payload: Bytes,
+        sender_scoped_replay: bool,
     ) -> Result<B256>
     where
         N::TxEnvelope: SignerRecoverable,
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        self.recovery.persist_signed_payload(sequence, index, payload)
+        self.recovery.persist_signed_payload(sequence, index, payload, sender_scoped_replay)
     }
 
     pub(crate) fn delegated_status(
@@ -425,7 +446,11 @@ where
                 }
                 DelegatedStatus::Pending { hash } if !batch => {
                     let deployment = &mut self.sequences_mut()[sequence];
-                    if !deployment.receipts.iter().any(|receipt| receipt.transaction_hash() == hash)
+                    if !deployment.reverted.contains(&hash)
+                        && !deployment
+                            .receipts
+                            .iter()
+                            .any(|receipt| receipt.transaction_hash() == hash)
                     {
                         deployment.add_pending(index, hash);
                     }
@@ -445,6 +470,7 @@ where
             };
             let deployment = &self.sequences()[sequence];
             if deployment.pending.contains(&hash)
+                || deployment.reverted.contains(&hash)
                 || deployment.receipts.iter().any(|receipt| receipt.transaction_hash() == hash)
             {
                 continue;
@@ -459,6 +485,11 @@ where
 
     pub const fn is_multi(&self) -> bool {
         self.recovery.data().is_multi()
+    }
+
+    /// Returns the Tempo sponsor recorded when the deployment was created.
+    pub(crate) const fn sponsor(&self) -> Option<Address> {
+        self.recovery.sponsor()
     }
 
     /// Atomically promotes a dry-run sequence to the broadcast paths.
@@ -501,6 +532,20 @@ where
         }
 
         Ok(())
+    }
+
+    /// Prefixes a multichain error with the chain of the sequence at `index`, adding the sequence
+    /// number when another sequence is on the same chain.
+    pub(crate) fn label_error(&self, index: usize, err: Report) -> Report {
+        if !self.is_multi() {
+            return err;
+        }
+        let chain = self.sequences()[index].chain;
+        if self.sequences().iter().filter(|sequence| sequence.chain == chain).count() > 1 {
+            eyre!("chain {chain} (sequence #{}): {err}", index + 1)
+        } else {
+            eyre!("chain {chain}: {err}")
+        }
     }
 }
 
@@ -557,11 +602,113 @@ pub fn get_commit_hash(root: &Path) -> Option<String> {
     Git::new(root).commit_hash(true, "HEAD").ok()
 }
 
+/// Returns a stable transaction ordinal across the complete script plan, including completed
+/// transactions so that resuming does not change expiring nonce discriminators.
+pub(crate) fn operation_ordinal<N: Network>(
+    sequences: &[ScriptSequence<N>],
+    sequence: usize,
+    index: usize,
+) -> usize {
+    sequences[..sequence].iter().map(|sequence| sequence.transactions.len()).sum::<usize>() + index
+}
+
+/// Returns the pending hashes of `sequence` that cannot be mined yet, because an earlier
+/// transaction on the same chain from the same sender has no receipt, recorded revert, or pending
+/// hash.
+pub(crate) fn blocked_pending<N: Network>(
+    sequences: &[ScriptSequence<N>],
+    sequence: usize,
+) -> Vec<B256> {
+    let chain = sequences[sequence].chain;
+    let mut gap_senders = Vec::new();
+    let mut blocked = Vec::new();
+    for (index, deployment) in sequences[..=sequence].iter().enumerate() {
+        if deployment.chain != chain {
+            continue;
+        }
+        for tx in &deployment.transactions {
+            let sender = tx.tx().from();
+            match tx.hash {
+                Some(hash) if deployment.pending.contains(&hash) => {
+                    if index == sequence && gap_senders.contains(&sender) {
+                        blocked.push(hash);
+                    }
+                }
+                Some(hash)
+                    if deployment.reverted.contains(&hash)
+                        || deployment.receipts.iter().any(|r| r.transaction_hash() == hash) => {}
+                _ => gap_senders.push(sender),
+            }
+        }
+    }
+    blocked
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_network::Ethereum;
+    use alloy_rpc_types::TransactionRequest;
     use foundry_common::TransactionMaybeSigned;
+
+    #[test]
+    fn operation_ordinals_include_earlier_sequences_and_completed_transactions() {
+        let transaction =
+            TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::<Ethereum>::Unsigned(
+                Default::default(),
+            ));
+        let mut sequences = [
+            ScriptSequence {
+                chain: 4217,
+                transactions: [transaction.clone()].into(),
+                ..Default::default()
+            },
+            ScriptSequence {
+                chain: 4218,
+                transactions: [transaction.clone(), transaction.clone()].into(),
+                ..Default::default()
+            },
+            ScriptSequence {
+                chain: 4217,
+                transactions: [transaction].into(),
+                ..Default::default()
+            },
+        ];
+        assert_eq!(operation_ordinal(&sequences, 0, 0), 0);
+        assert_eq!(operation_ordinal(&sequences, 1, 1), 2);
+        assert_eq!(operation_ordinal(&sequences, 2, 0), 3);
+        sequences[0].transactions[0].hash = Some(B256::repeat_byte(1));
+        assert_eq!(operation_ordinal(&sequences, 2, 0), 3);
+    }
+
+    #[test]
+    fn pending_behind_a_missing_transaction_is_blocked_only_on_its_chain_and_sender() {
+        let (sender, other) = (Address::repeat_byte(1), Address::repeat_byte(2));
+        let tx = |from, hash| {
+            let mut tx = TransactionWithMetadata::from_tx_request(
+                TransactionMaybeSigned::<Ethereum>::Unsigned(
+                    TransactionRequest::default().from(from),
+                ),
+            );
+            tx.hash = Some(B256::repeat_byte(hash));
+            tx
+        };
+        let sequence = |chain, transactions: Vec<_>, pending: &[u8]| ScriptSequence {
+            chain,
+            transactions: transactions.into(),
+            pending: pending.iter().copied().map(B256::repeat_byte).collect(),
+            ..Default::default()
+        };
+        // The first transaction is neither pending nor confirmed.
+        let sequences = [
+            sequence(1, vec![tx(sender, 1), tx(sender, 2)], &[2]),
+            sequence(2, vec![tx(sender, 3)], &[3]),
+            sequence(1, vec![tx(other, 4), tx(sender, 5)], &[4, 5]),
+        ];
+        assert_eq!(blocked_pending(&sequences, 0), [B256::repeat_byte(2)]);
+        assert!(blocked_pending(&sequences, 1).is_empty());
+        assert_eq!(blocked_pending(&sequences, 2), [B256::repeat_byte(5)]);
+    }
 
     fn unknown_delegated_sequence() -> (tempfile::TempDir, ScriptSequenceKind<Ethereum>, B256) {
         let dir = tempfile::tempdir().unwrap();
@@ -573,7 +720,7 @@ mod tests {
         deployment.transactions.push_back(TransactionWithMetadata::from_tx_request(
             TransactionMaybeSigned::Unsigned(Default::default()),
         ));
-        let mut sequence = ScriptSequenceKind::new_single(deployment, false).unwrap();
+        let mut sequence = ScriptSequenceKind::new_single(deployment, false, None).unwrap();
         sequence.persist_delegated_request(0, 0, Default::default()).unwrap();
         sequence.persist_delegated_status(0, 0, DelegatedStatus::OutcomeUnknown).unwrap();
         let attempt = sequence.recovery.delegated_attempts()[0].2;
@@ -589,7 +736,7 @@ mod tests {
         sequence.transactions.push_back(TransactionWithMetadata::from_tx_request(
             TransactionMaybeSigned::Unsigned(Default::default()),
         ));
-        let data = SequenceData::Single(sequence);
+        let data = SequenceData::Single(Box::new(sequence));
 
         let public = dir.path().join("broadcast.json");
         let sensitive = dir.path().join("broadcast-cache.json");
@@ -632,5 +779,22 @@ mod tests {
         sequence.restore_delegated_pending(Some(attempt), None, true).unwrap();
 
         assert!(sequence.delegated_status(0, 0).is_none());
+    }
+
+    #[test]
+    fn authoritative_load_does_not_read_legacy_exports() {
+        let (_dir, sequence, attempt) = unknown_delegated_sequence();
+        let paths = sequence.recovery.data().paths();
+        drop(sequence);
+        std::fs::remove_file(&paths.0).unwrap();
+        std::fs::remove_file(&paths.1).unwrap();
+
+        let loaded = ScriptSequenceKind::<Ethereum>::load(paths.clone(), false, || {
+            panic!("authoritative recovery must not load compatibility exports");
+        })
+        .unwrap();
+        assert_eq!(loaded.recovery.delegated_attempts()[0].2, attempt);
+        assert!(paths.0.exists());
+        assert!(paths.1.exists());
     }
 }

@@ -1,7 +1,7 @@
 //! ABI related helper functions.
 
 use alloy_chains::Chain;
-use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt, Specifier};
+use alloy_dyn_abi::{DecodedEvent, DynSolType, DynSolValue, FunctionExt, JsonAbiExt, Specifier};
 use alloy_json_abi::{Error, Event, Function, Param};
 use alloy_primitives::{Address, LogData, hex};
 use eyre::{Context, ContextCompat, Result};
@@ -154,16 +154,37 @@ pub fn get_indexed_event(mut event: Event, raw_log: &LogData) -> Event {
     event
 }
 
-/// Given a function name, address, and args, tries to parse it as a `Function` by fetching the
-/// abi from etherscan. If the address is a proxy, fetches the ABI of the implementation contract.
-pub async fn get_func_etherscan(
+/// Restore the order of the params of a decoded event,
+/// as Alloy returns the indexed and unindexed params separately.
+pub fn reconstruct_event_params(event: &Event, decoded: &DecodedEvent) -> Vec<DynSolValue> {
+    let mut indexed = 0;
+    let mut unindexed = 0;
+    let mut inputs = vec![];
+    for input in &event.inputs {
+        // Prevent panic of event `Transfer(from, to)` decoded with a signature
+        // `Transfer(address indexed from, address indexed to, uint256 indexed tokenId)` by making
+        // sure the event inputs is not higher than decoded indexed / un-indexed values.
+        if input.indexed && indexed < decoded.indexed.len() {
+            inputs.push(decoded.indexed[indexed].clone());
+            indexed += 1;
+        } else if unindexed < decoded.body.len() {
+            inputs.push(decoded.body[unindexed].clone());
+            unindexed += 1;
+        }
+    }
+
+    inputs
+}
+
+/// Fetches the overloads of `function_name` from the contract's Etherscan ABI. If the address is a
+/// proxy, fetches the ABI of the implementation contract.
+pub async fn get_funcs_etherscan(
     function_name: &str,
     contract: Address,
-    args: &[String],
     chain: Chain,
     etherscan_api_key: &str,
     etherscan_api_url: Option<&str>,
-) -> Result<Function> {
+) -> Result<Vec<Function>> {
     let client = if let Some(api_url) = etherscan_api_url {
         Client::builder()
             .with_api_key(etherscan_api_key)
@@ -177,16 +198,7 @@ pub async fn get_func_etherscan(
     let metadata = source.items.first().wrap_err("etherscan returned empty metadata")?;
 
     let mut abi = metadata.abi()?;
-    let funcs = abi.functions.remove(function_name).unwrap_or_default();
-
-    for func in funcs {
-        let res = encode_function_args(&func, args);
-        if res.is_ok() {
-            return Ok(func);
-        }
-    }
-
-    Err(eyre::eyre!("Function not found in abi"))
+    Ok(abi.functions.remove(function_name).unwrap_or_default())
 }
 
 /// If the code at `address` is a proxy, recurse until we find the implementation.
@@ -237,14 +249,13 @@ pub fn coerce_value(ty: &str, arg: &str) -> Result<DynSolValue> {
 mod tests {
     use super::*;
     use alloy_dyn_abi::EventExt;
-    use alloy_primitives::{B256, U256};
+    use alloy_primitives::{B256, U256, address};
+    use foundry_block_explorers::contract::Metadata;
 
     /// `Proxy: 1` with an empty `Implementation` used to panic on `.unwrap()`
     /// (real-world shape, see `foundry_block_explorers`' own `can_deserialize_address_opt` test).
     #[test]
     fn test_proxy_without_implementation_does_not_panic() {
-        use foundry_block_explorers::contract::Metadata;
-
         let json = serde_json::json!({
             "SourceCode": "// dummy",
             "ABI": "[]",
@@ -278,9 +289,6 @@ mod tests {
 
     #[test]
     fn proxy_implementation_decision_follows_real_implementation() {
-        use alloy_primitives::address;
-        use foundry_block_explorers::contract::Metadata;
-
         let json = serde_json::json!({
             "SourceCode": "// dummy",
             "ABI": "[]",
@@ -400,8 +408,6 @@ mod tests {
 
     #[test]
     fn test_encode_args_length_validation() {
-        use alloy_json_abi::Param;
-
         let params = vec![
             Param {
                 name: "a".to_string(),

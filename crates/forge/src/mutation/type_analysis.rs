@@ -272,10 +272,8 @@ impl AssignmentDestinationKind {
 
 fn assignment_destination_kind(ty: solar::sema::ty::Ty<'_>) -> Option<AssignmentDestinationKind> {
     match ty.peel_refs().kind {
-        TyKind::Elementary(ElementaryType::Int(_) | ElementaryType::Fixed(..)) => {
-            Some(AssignmentDestinationKind::SignedNumber)
-        }
-        TyKind::Elementary(ElementaryType::UInt(_) | ElementaryType::UFixed(..)) => {
+        TyKind::Elementary(ElementaryType::Int(_)) => Some(AssignmentDestinationKind::SignedNumber),
+        TyKind::Elementary(ElementaryType::UInt(_)) => {
             Some(AssignmentDestinationKind::UnsignedNumber)
         }
         TyKind::Elementary(ElementaryType::FixedBytes(_)) => {
@@ -294,10 +292,8 @@ fn assignment_value_accepts_negation(gcx: Gcx<'_>, value: &hir::Expr<'_>) -> Opt
 
     let ty = gcx.type_of_expr(value.peel_parens().id)?;
     match ty.peel_refs().kind {
-        TyKind::Elementary(ElementaryType::Int(_) | ElementaryType::Fixed(..)) => Some(true),
-        TyKind::Elementary(
-            ElementaryType::UInt(_) | ElementaryType::UFixed(..) | ElementaryType::FixedBytes(_),
-        ) => Some(false),
+        TyKind::Elementary(ElementaryType::Int(_)) => Some(true),
+        TyKind::Elementary(ElementaryType::UInt(_) | ElementaryType::FixedBytes(_)) => Some(false),
         TyKind::Udvt(..) | TyKind::Err(_) => None,
         _ => Some(false),
     }

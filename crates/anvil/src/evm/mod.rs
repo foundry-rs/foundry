@@ -24,7 +24,7 @@ mod tests {
     use alloy_evm::{
         EthEvm, Evm,
         eth::EthEvmContext,
-        precompiles::{DynPrecompile, PrecompilesMap},
+        precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap},
     };
     use alloy_primitives::{Address, Bytes, TxKind, address};
     use itertools::Itertools;
@@ -52,7 +52,6 @@ mod tests {
     pub(super) const PAYLOAD: &[u8] = &[0xde, 0xad, 0xbe, 0xef];
 
     fn echo_precompile() -> DynPrecompile {
-        use alloy_evm::precompiles::PrecompileInput;
         DynPrecompile::from(|input: PrecompileInput<'_>| {
             Ok(PrecompileOutput {
                 status: PrecompileStatus::Success,

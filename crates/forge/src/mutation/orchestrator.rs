@@ -35,7 +35,7 @@ use crate::{
     cmd::test::{FilterArgs, RerunFailure},
     mutation::{
         MutationHandler, MutationProgress, MutationReporter, MutationsSummary,
-        mutant::{Mutant, MutationResult},
+        mutant::{Mutant, MutationResult, MutationType},
         runner::{MutationEvmConfig, run_mutations_parallel_with_progress},
         type_analysis::{collect_mutation_exclusions, normalize_path},
     },
@@ -167,6 +167,7 @@ pub async fn run_mutation_testing<FEN: FoundryEvmNetwork>(
     // Determine which paths to mutate
     let mutate_paths = resolve_mutate_paths(&config, output, &mutation_config)?;
     let execution_cache_output = ProjectCompiler::new()
+        .allow_linked_libraries(config.allow_linked_libraries)
         .dynamic_test_linking(config.dynamic_test_linking)
         .quiet(json_output)
         .files(
@@ -225,10 +226,13 @@ pub async fn run_mutation_testing<FEN: FoundryEvmNetwork>(
         }
         handler.read_source_contract()?;
 
-        // Get build ID for caching
+        // Match ordinary and verbatim Windows paths when looking up the cache build ID.
+        let normalized_path = normalize_path(&path);
         let build_id = output
             .artifact_ids()
-            .find_map(|(id, _)| (id.source == path).then_some(id.build_id))
+            .find_map(|(id, _)| {
+                (normalize_path(&id.source) == normalized_path).then_some(id.build_id)
+            })
             .unwrap_or_default();
 
         // Load persisted survived spans before generating/loading mutants so
@@ -333,7 +337,9 @@ pub async fn run_mutation_testing<FEN: FoundryEvmNetwork>(
             match result.result {
                 MutationResult::Dead => handler.add_dead_mutant(result.mutant),
                 MutationResult::Alive => {
-                    handler.mark_span_survived(result.mutant.span);
+                    if !matches!(result.mutant.mutation, MutationType::FunctionBody(_)) {
+                        handler.mark_span_survived(result.mutant.span);
+                    }
                     handler.add_survived_mutant(result.mutant);
                 }
                 MutationResult::Invalid => handler.add_invalid_mutant(result.mutant),
@@ -612,10 +618,14 @@ fn resolve_mutate_paths(
     let paths = if let Some(contract_pattern) = &mutation_config.mutate_contract_pattern {
         let matching_sources: HashSet<PathBuf> = output
             .artifact_ids()
-            .filter_map(|(id, _)| contract_pattern.is_match(&id.name).then_some(id.source.clone()))
+            .filter_map(|(id, _)| {
+                contract_pattern.is_match(&id.name).then(|| normalize_path(&id.source))
+            })
             .collect();
-        let paths: Vec<_> =
-            base.into_iter().filter(|entry| matching_sources.contains(entry)).collect();
+        let paths: Vec<_> = base
+            .into_iter()
+            .filter(|entry| matching_sources.contains(&normalize_path(entry)))
+            .collect();
         if paths.is_empty() {
             if mutation_config.mutate_paths.is_empty()
                 && mutation_config.mutate_path_pattern.is_none()
@@ -637,7 +647,6 @@ mod tests {
     use super::*;
     use std::str::FromStr;
 
-    use crate::mutation::mutant::MutationType;
     use solar::{ast::Span, interface::BytePos};
 
     fn artifact(build_id: &str) -> ArtifactCacheFingerprint {

@@ -4,21 +4,22 @@ use super::{
 };
 use crate::coverage::{
     BytecodeReporter, ContractId, CoverageAttributionReporter, CoverageReport, CoverageReporter,
-    CoverageSummaryReporter, DebugReporter, ItemAnchors, LcovReporter, ResolvedHitMap,
-    ResolvedHitMaps,
+    CoverageSummaryReporter, DebugReporter, GapsReporter, ItemAnchors, LcovReporter,
+    ResolvedHitMap, ResolvedHitMaps,
     analysis::{SourceAnalysis, SourceFiles},
     anchors::{find_anchors, find_execution_anchors},
 };
 use alloy_json_abi::StateMutability;
 use alloy_primitives::{
-    Address, Bytes, U256, keccak256,
+    Address, B256, Bytes, U256, keccak256,
     map::{HashMap, HashSet},
 };
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::utils::{FoundryPathExt, LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{
-    TestFilter, compile::ProjectCompiler, errors::convert_solar_errors, version::SHORT_VERSION,
+    ContractsByArtifactBuilder, TestFilter, compile::ProjectCompiler, errors::convert_solar_errors,
+    version::SHORT_VERSION,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
@@ -64,8 +65,9 @@ Compatibility:
   `forge coverage` supports test filters and `--watch`, but not test-only output or
   execution modes such as `--json`, `--junit`, `--list`, `--debug`, flame profiles,
   symbolic artifact replay, showmap replay, brutalization, or mutation testing. Use
-  `--report lcov` for interoperable coverage data or `--report attribution` for
-  Foundry's per-test JSON attribution report."#)]
+  `--report lcov` for interoperable coverage data, `--report attribution` for
+  Foundry's per-test JSON attribution report, or `--report gaps` for a JSON list of
+  uncovered source items."#)]
 pub struct CoverageArgs {
     /// The report type to use for coverage.
     ///
@@ -144,7 +146,8 @@ impl CoverageArgs {
         let has_lcov = self.report.iter().any(|kind| matches!(kind, CoverageReportKind::Lcov));
         let has_attribution =
             self.report.iter().any(|kind| matches!(kind, CoverageReportKind::Attribution));
-        usize::from(has_lcov) + usize::from(has_attribution)
+        let has_gaps = self.report.iter().any(|kind| matches!(kind, CoverageReportKind::Gaps));
+        usize::from(has_lcov) + usize::from(has_attribution) + usize::from(has_gaps)
     }
 
     pub(crate) fn ensure_mode_compatible(&self) -> Result<()> {
@@ -240,6 +243,10 @@ impl CoverageArgs {
                 ))),
                 CoverageReportKind::Debug => Some(Box::new(DebugReporter)),
                 CoverageReportKind::Attribution => None,
+                CoverageReportKind::Gaps => {
+                    let path = self.report_path(root, "coverage-gaps.json");
+                    Some(Box::new(GapsReporter::new(root.to_path_buf(), path)))
+                }
             })
             .collect::<Vec<_>>();
     }
@@ -320,6 +327,7 @@ impl CoverageArgs {
         });
         let compile = |project: &Project| {
             let mut compiler = ProjectCompiler::new()
+                .allow_linked_libraries(config.allow_linked_libraries)
                 .external_compilers(config)
                 .external_artifacts(false)
                 .dynamic_test_linking(config.dynamic_test_linking);
@@ -556,7 +564,14 @@ impl CoverageArgs {
             .await?;
 
         let known_contracts = outcome.known_contracts.as_ref().unwrap();
+        // Linking removes library references. Match runtime against the compiler artifacts to
+        // retain those offsets, while keeping linked bytecode for creation matching.
+        let runtime_contracts = ContractsByArtifactBuilder::new(
+            output.artifact_ids().map(|(id, artifact)| (id, artifact.into())),
+        )
+        .build();
         let mut resolved_hit_maps = ResolvedHitMaps::default();
+        let mut unresolved_hit_maps = HashSet::<B256>::default();
 
         // Add hit data to the coverage report
         for suite in outcome.results.values() {
@@ -572,16 +587,42 @@ impl CoverageArgs {
                         )?;
                         continue;
                     }
+                    if unresolved_hit_maps.contains(code_hash) {
+                        continue;
+                    }
 
-                    let Some((artifact_id, is_deployed_code)) = known_contracts
-                        .find_by_deployed_code(map.bytecode())
+                    // Only exact matches are credited: source maps of a merely similar artifact
+                    // would attribute hits to code that never ran. Creation code may be followed
+                    // by any constructor data, which leaves the artifact's instructions unchanged.
+                    let Some((artifact_id, is_deployed_code)) = runtime_contracts
+                        .find_by_deployed_code_exact(map.bytecode())
                         .map(|(id, _)| (id, true))
                         .or_else(|| {
                             known_contracts
-                                .find_by_creation_code(map.bytecode())
+                                .iter()
+                                .find(|(_, contract)| {
+                                    contract
+                                        .bytecode()
+                                        .is_some_and(|code| map.bytecode().starts_with(code))
+                                })
                                 .map(|(id, _)| (id, false))
                         })
                     else {
+                        if let Some((similar, kind)) = known_contracts
+                            .find_by_deployed_code(map.bytecode())
+                            .map(|(id, _)| (id, "runtime"))
+                            .or_else(|| {
+                                known_contracts
+                                    .find_by_creation_code(map.bytecode())
+                                    .map(|(id, _)| (id, "creation"))
+                            })
+                        {
+                            sh_warn!(
+                                "excluding executed {kind} code from coverage: it resembles `{}` but does not match it exactly",
+                                similar.identifier()
+                            )?;
+                        }
+                        unresolved_hit_maps.insert(*code_hash);
                         continue;
                     };
 

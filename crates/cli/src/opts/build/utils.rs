@@ -167,11 +167,7 @@ pub fn get_solar_sources_from_compile_output(
     };
 
     let is_ignored = |path: &Path| -> bool {
-        if let Some(ignored) = ignored_paths {
-            ignored.iter().any(|ignored_path| path == ignored_path)
-        } else {
-            false
-        }
+        ignored_paths.is_some_and(|ignored| ignored.iter().any(|ignored_path| path == ignored_path))
     };
 
     // Collect source path targets
@@ -299,6 +295,8 @@ fn configure_pcx_from_solc_cli(
     project_paths: &ProjectPathsConfig,
     cli_settings: &foundry_compilers::solc::CliSettings,
 ) {
+    // Solc selects and validates the project version; Solar is used only for analysis.
+    pcx.dcx().set_allowed_diagnostic_codes(["5333".into()]);
     let base_path = cli_settings.base_path.as_ref().unwrap_or(&project_paths.root);
     pcx.file_resolver.set_base_path(base_path);
     pcx.file_resolver.set_current_dir(base_path);

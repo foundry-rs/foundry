@@ -1,6 +1,6 @@
 use crate::{errors::convert_solar_errors, fs::normalize_path};
 use foundry_compilers::{
-    ProjectPathsConfig, SourceParser, apply_updates,
+    ProjectPathsConfig, SourceParser, Updates, apply_updates,
     artifacts::{EvmVersion, SolcLanguage},
     error::Result,
     multi::{MultiCompiler, MultiCompilerInput, MultiCompilerLanguage},
@@ -18,7 +18,11 @@ use solar::parse::{ast::Span, interface::SourceMap};
 use std::{
     collections::{BTreeSet, HashSet},
     ops::{ControlFlow, Range},
-    path::PathBuf,
+    path::{Path, PathBuf},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 mod data;
@@ -35,12 +39,34 @@ use deps::{ConstructorContext, PreprocessorDependencies, remove_bytecode_depende
 /// This allows for more efficient caching when iterating on tests.
 ///
 /// See <https://github.com/foundry-rs/foundry/pull/10010>.
-#[derive(Debug)]
-pub struct DynamicTestLinkingPreprocessor;
+#[derive(Clone, Debug, Default)]
+pub struct DynamicTestLinkingPreprocessor {
+    /// Set when preprocessing changes any compiler input. Shared by clones.
+    rewrote_sources: Arc<AtomicBool>,
+    /// One warning per compiler job that disabled DTL; printed after a successful compile.
+    /// Skipping the print when solc fails avoids duplicating solc's own diagnostics
+    /// (see <https://github.com/foundry-rs/foundry/issues/17913>).
+    pending_disable_warnings: Arc<Mutex<Vec<String>>>,
+}
+
+impl DynamicTestLinkingPreprocessor {
+    /// Returns whether preprocessing changed any compiler input.
+    pub fn rewrote_sources(&self) -> bool {
+        self.rewrote_sources.load(Ordering::Relaxed)
+    }
+
+    /// Takes the pending "dynamic test linking disabled" warnings.
+    pub fn take_disable_warnings(&self) -> Vec<String> {
+        self.pending_disable_warnings
+            .lock()
+            .map(|mut g| std::mem::take(&mut *g))
+            .unwrap_or_default()
+    }
+}
 
 impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        8
+        14
     }
 
     fn preprocess(
@@ -64,7 +90,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
     #[instrument(name = "DynamicTestLinkingPreprocessor::preprocess", skip_all)]
     fn preprocess_with_dependencies(
         &self,
-        _solc: &SolcCompiler,
+        solc: &SolcCompiler,
         input: &mut SolcVersionedInput,
         paths: &ProjectPathsConfig<SolcLanguage>,
         mocks: &mut HashSet<PathBuf>,
@@ -87,12 +113,25 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
                 .evm_version
                 .is_some_and(|version| version >= EvmVersion::Constantinople),
         };
+        // Avoid the via-IR address-return stack error with uint160, retaining canonical ABI checks.
+        // Keep this compatibility workaround scoped to the verified compiler releases.
+        // Specific compiler selection normalizes away prerelease metadata in the input version.
+        let use_uint160_return = input.input.settings.via_ir == Some(true)
+            && input.version.pre.is_empty()
+            && !matches!(solc, SolcCompiler::Specific(solc) if !solc.version.pre.is_empty())
+            && matches!(
+                (input.version.major, input.version.minor, input.version.patch),
+                (0, 8, 15..=25)
+            );
         let original_sources = input.input.sources.clone();
+        let mut updates = Updates::default();
         let mut parser_paths = paths.clone();
         parser_paths.include_paths.extend(input.cli_settings.include_paths.iter().cloned());
         let mut compiler =
             foundry_compilers::resolver::parse::SolParser::new(parser_paths.with_language_ref())
                 .into_compiler();
+        // Solc validates the input version; Solar only analyzes deployment dependencies.
+        compiler.dcx().set_allowed_diagnostic_codes(["5333".into()]);
         let result = compiler.enter_mut(|compiler| -> solar::interface::Result {
             let mut pcx = compiler.parse();
 
@@ -145,10 +184,12 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
             );
 
             // Extend existing sources with preprocessor deploy helper sources.
-            sources.extend(create_deploy_helpers(&data));
+            sources.extend(create_deploy_helpers(gcx, constructor_context, &data));
 
             // Generate and apply preprocessor source updates.
-            apply_updates(sources, remove_bytecode_dependencies(gcx, &deps, &data));
+            updates =
+                remove_bytecode_dependencies(gcx, &deps, &data, &paths.root, use_uint160_return);
+            apply_updates(sources, updates.clone());
 
             Ok(())
         });
@@ -174,17 +215,57 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
                     .as_deref()
                     .and_then(solar_error_summary)
                     .unwrap_or_else(|| "Solar analysis failed".to_string());
-                let _ = sh_warn!("dynamic test linking disabled for {affected} files: {reason}");
+                // Defer printing until after solc succeeds so a source error is not
+                // reported twice (Solar wording here, then solc with a location).
+                if let Ok(mut warnings) = self.pending_disable_warnings.lock() {
+                    warnings.push(format!(
+                        "dynamic test linking disabled for {affected} files: {reason}"
+                    ));
+                }
+            }
+        } else {
+            // Lets source locations reported by the compiler be mapped back to the files on disk.
+            preprocessor_state.record_source_updates(&updates);
+            if input.input.sources != original_sources {
+                self.rewrote_sources.store(true, Ordering::Relaxed);
             }
         }
 
         Ok(())
     }
+
+    fn is_source_context_sensitive(
+        &self,
+        source: &Path,
+        paths: &ProjectPathsConfig<SolcLanguage>,
+    ) -> bool {
+        // Context changes can alter rewriting eligibility even for previously native deployments.
+        paths.is_test_or_script(source)
+    }
+
+    fn is_source_context_change_relevant(
+        &self,
+        previous: &BTreeSet<PathBuf>,
+        current: &BTreeSet<PathBuf>,
+    ) -> bool {
+        if !current.is_subset(previous) {
+            return true;
+        }
+        // Rewriting reads source units only to require a unique artifact path suffix and to avoid
+        // deploy helper path collisions. A removal affects neither unless the removed unit is a
+        // helper path or ends with another unit's path.
+        previous.difference(current).any(|removed| {
+            let mut suffix = removed.components();
+            is_deploy_helper_path(removed)
+                || std::iter::from_fn(|| suffix.next().map(|_| suffix.as_path()))
+                    .any(|suffix| !suffix.as_os_str().is_empty() && previous.contains(suffix))
+        })
+    }
 }
 
 impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        8
+        <Self as Preprocessor<SolcCompiler>>::cache_version(self)
     }
 
     fn preprocess(
@@ -233,6 +314,28 @@ impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
             mocks,
             preprocessor_state,
             source_units,
+        )
+    }
+
+    fn is_source_context_sensitive(
+        &self,
+        source: &Path,
+        paths: &ProjectPathsConfig<MultiCompilerLanguage>,
+    ) -> bool {
+        <Self as Preprocessor<SolcCompiler>>::is_source_context_sensitive(
+            self,
+            source,
+            paths.with_language_ref(),
+        )
+    }
+
+    fn is_source_context_change_relevant(
+        &self,
+        previous: &BTreeSet<PathBuf>,
+        current: &BTreeSet<PathBuf>,
+    ) -> bool {
+        <Self as Preprocessor<SolcCompiler>>::is_source_context_change_relevant(
+            self, previous, current,
         )
     }
 }
@@ -306,7 +409,12 @@ fn span_to_range(source_map: &SourceMap, span: Span) -> Range<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_compilers::{CompilerInput, artifacts::Source, solc::SolcSettings};
+    use alloy_primitives::keccak256;
+    use foundry_compilers::{
+        Compiler, CompilerInput,
+        artifacts::Source,
+        solc::{Solc, SolcSettings},
+    };
     use semver::Version;
 
     fn input() -> (tempfile::TempDir, ProjectPathsConfig<SolcLanguage>, SolcVersionedInput) {
@@ -360,11 +468,40 @@ mod tests {
     }
 
     #[test]
+    fn helper_sources_are_stable_across_compiler_jobs() {
+        let (_root, paths, mut input) = input();
+        input.input.sources = [
+            ("src/Dep.sol", "contract Dep { constructor(uint256 value) {} }".to_string()),
+            ("test/Deploy.sol", "import '../src/Dep.sol'; contract Deploy { function deploy() public { new Dep(7); } }".to_string()),
+        ].into_iter().map(|(path, source)| (PathBuf::from(path), Source::new(source))).collect();
+        let mut wider = input.clone();
+        // These declarations would also affect collision avoidance if it inspected unrelated files.
+        let dep_id = format!("{:x}", keccak256("src/Dep.sol:Dep"));
+        let test_id = format!("{:x}", keccak256("test/Deploy.sol:Deploy"));
+        wider.input.sources.insert(PathBuf::from("test/AAA.sol"), Source::new(format!(
+            "contract Extra {{}} interface VmContractHelper{test_id} {{}} contract DeployHelper{dep_id} {{}} function encodeArgs{dep_id}() pure {{}}"
+        )));
+        for input in [&mut input, &mut wider] {
+            <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
+                &DynamicTestLinkingPreprocessor::default(),
+                &SolcCompiler::default(),
+                input,
+                &paths,
+                &mut HashSet::new(),
+            )
+            .unwrap();
+        }
+        for (path, source) in &input.input.sources {
+            assert_eq!(source.content, wider.input.sources[path].content, "{path:?}");
+        }
+    }
+
+    #[test]
     fn direct_solc_preprocess_tracks_mocks_without_cache_context() {
         let (_root, paths, mut input) = input();
         let mut mocks = HashSet::new();
         <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-            &DynamicTestLinkingPreprocessor,
+            &DynamicTestLinkingPreprocessor::default(),
             &SolcCompiler::default(),
             &mut input,
             &paths,
@@ -380,7 +517,7 @@ mod tests {
         let mut input = MultiCompilerInput::Solc(Box::new(input));
         let mut mocks = HashSet::new();
         <DynamicTestLinkingPreprocessor as Preprocessor<MultiCompiler>>::preprocess(
-            &DynamicTestLinkingPreprocessor,
+            &DynamicTestLinkingPreprocessor::default(),
             &MultiCompiler { solc: Some(SolcCompiler::default()), vyper: None },
             &mut input,
             paths.with_language_ref(),
@@ -409,7 +546,7 @@ mod tests {
                 ("test/Other.sol", "pragma abicoder v2; import '../src/Dep.sol'; contract Other { function deploy() public { new Dep(7); } }".to_string()),
             ].into_iter().map(|(path, source)| (PathBuf::from(path), Source::new(source))).collect();
             <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-                &DynamicTestLinkingPreprocessor,
+                &DynamicTestLinkingPreprocessor::default(),
                 &SolcCompiler::default(),
                 &mut input,
                 &paths,
@@ -438,7 +575,7 @@ mod tests {
                 Source::new("pragma abicoder v1; import '../src/Dep.sol'; contract Deploy { function deploy() public { new Dep{salt: bytes32(0)}(); } function plain() public { new Dep(); } }"),
             );
             <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-                &DynamicTestLinkingPreprocessor,
+                &DynamicTestLinkingPreprocessor::default(),
                 &SolcCompiler::default(),
                 &mut input,
                 &paths,
@@ -466,7 +603,7 @@ mod tests {
             Source::new("import '../src/Dep.sol'; contract Deploy { function deploy() public { new Dep{value: 1, salt: bytes32(7)}(); } }"),
         );
         <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-            &DynamicTestLinkingPreprocessor,
+            &DynamicTestLinkingPreprocessor::default(),
             &SolcCompiler::default(),
             &mut input,
             &paths,
@@ -532,7 +669,7 @@ mod tests {
             input.input.sources.insert(PathBuf::from("test/Observer.sol"), Source::new(&observer));
             input.input.sources.insert(PathBuf::from("test/Safe.sol"), Source::new(safe));
             <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-                &DynamicTestLinkingPreprocessor,
+                &DynamicTestLinkingPreprocessor::default(),
                 &SolcCompiler::default(),
                 &mut input,
                 &paths,
@@ -569,7 +706,7 @@ mod tests {
         input.input.sources.insert(PathBuf::from("test/Observer.sol"), Source::new(&observer));
         input.input.sources.insert(PathBuf::from("test/Safe.sol"), Source::new(safe));
         <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-            &DynamicTestLinkingPreprocessor,
+            &DynamicTestLinkingPreprocessor::default(),
             &SolcCompiler::default(),
             &mut input,
             &paths,
@@ -616,7 +753,7 @@ mod tests {
             );
             input.input.sources.insert(PathBuf::from("test/Case.sol"), Source::new(&source));
             <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-                &DynamicTestLinkingPreprocessor,
+                &DynamicTestLinkingPreprocessor::default(),
                 &SolcCompiler::default(),
                 &mut input,
                 &paths,
@@ -651,7 +788,7 @@ mod tests {
         let original = input.input.sources.clone();
         let mut mocks = HashSet::from([paths.root.join("test/Fallback.sol")]);
         <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-            &DynamicTestLinkingPreprocessor,
+            &DynamicTestLinkingPreprocessor::default(),
             &SolcCompiler::default(),
             &mut input,
             &paths,
@@ -771,5 +908,153 @@ mod tests {
             Some("error: boom".to_string())
         );
         assert_eq!(solar_error_summary("solar reported 1 error"), None);
+    }
+
+    #[test]
+    fn deploy_helper_preserves_target_abi_coder() {
+        for (minor, patch, pragma, needs_v2) in [
+            (7, 6, "", false),
+            (7, 6, "pragma abicoder v2;", true),
+            (7, 6, "pragma experimental ABIEncoderV2;", true),
+            (8, 0, "", false),
+            (8, 37, "", false),
+            (8, 37, "pragma abicoder v2;", false),
+            (8, 37, "pragma experimental ABIEncoderV2;", false),
+            (8, 37, "pragma abicoder v1;", false),
+        ] {
+            let (_root, paths, mut input) = input();
+            input.version = Version::new(0, minor, patch);
+            input.input.sources = [
+                ("src/Dep.sol", format!("{pragma} contract Dep {{ constructor(uint256 n) {{}} }}")),
+                ("test/Deploy.sol", "pragma experimental ABIEncoderV2; import '../src/Dep.sol'; contract Deploy { function deploy() public { new Dep(7); } }".to_string()),
+            ].into_iter().map(|(path, source)| (PathBuf::from(path), Source::new(source))).collect();
+            <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
+                &DynamicTestLinkingPreprocessor::default(),
+                &SolcCompiler::default(),
+                &mut input,
+                &paths,
+                &mut HashSet::new(),
+            )
+            .unwrap();
+            let helpers = input
+                .input
+                .sources
+                .iter()
+                .filter(|(path, _)| is_deploy_helper_path(path))
+                .collect::<Vec<_>>();
+            assert_eq!(helpers.len(), 1);
+            assert_eq!(
+                helpers[0].1.content.matches("pragma experimental ABIEncoderV2;").count(),
+                usize::from(needs_v2),
+                "0.{minor}.{patch} {pragma}"
+            );
+            let source = &input.input.sources[&PathBuf::from("test/Deploy.sol")].content;
+            assert_eq!(source.matches("new Dep(7)").count(), 0);
+            assert_eq!(source.matches(".deployCode({").count(), 1);
+        }
+    }
+
+    #[test]
+    fn preprocessor_cache_versions_match() {
+        assert_eq!(
+            <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::cache_version(
+                &DynamicTestLinkingPreprocessor::default()
+            ),
+            <DynamicTestLinkingPreprocessor as Preprocessor<MultiCompiler>>::cache_version(
+                &DynamicTestLinkingPreprocessor::default()
+            )
+        );
+    }
+
+    #[test]
+    fn uint160_deployment_returns_follow_compiler_settings() {
+        for (version, via_ir, specific, workaround) in [
+            ("0.8.14", Some(true), false, false),
+            ("0.8.15", Some(true), false, true),
+            ("0.8.24+commit.e11b9ed9", Some(true), false, true),
+            ("0.8.25", Some(true), false, true),
+            ("0.8.26", Some(true), false, false),
+            ("0.8.24", Some(false), false, false),
+            ("0.8.24", None, false, false),
+            ("0.8.24-dev", Some(true), false, false),
+            ("0.8.24-dev", Some(true), true, false),
+            ("0.8.24+commit.e11b9ed9", Some(true), true, true),
+        ] {
+            let (_root, paths, mut input) = input();
+            input.version = version.parse().unwrap();
+            input.input.settings.via_ir = via_ir;
+            let compiler = if specific {
+                let compiler = SolcCompiler::Specific(Solc::new_with_version(
+                    paths.root.join("absent-solc"),
+                    input.version.clone(),
+                ));
+                // Compiler selection strips metadata before constructing the versioned input.
+                let selected = compiler.available_versions(&SolcLanguage::Solidity).pop().unwrap();
+                assert!(selected.as_ref().pre.is_empty());
+                let mut settings = SolcSettings::default();
+                settings.settings.via_ir = via_ir;
+                input = SolcVersionedInput::build(
+                    input.input.sources,
+                    settings,
+                    SolcLanguage::Solidity,
+                    selected.as_ref().clone(),
+                );
+                compiler
+            } else {
+                SolcCompiler::default()
+            };
+            <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
+                &DynamicTestLinkingPreprocessor::default(),
+                &compiler,
+                &mut input,
+                &paths,
+                &mut HashSet::new(),
+            )
+            .unwrap();
+            let source = &input.input.sources[&PathBuf::from("test/Deploy.sol")].content;
+            assert_eq!(
+                source.matches("external returns (uint160);").count(),
+                if workaround { 8 } else { 0 },
+                "{version}, via_ir={via_ir:?}, specific={specific}"
+            );
+            assert_eq!(
+                source.matches("external returns (address);").count(),
+                if workaround { 0 } else { 8 }
+            );
+            assert_eq!(source.matches("payable(address(").count(), usize::from(workaround));
+        }
+    }
+
+    #[test]
+    fn source_context_sensitivity_uses_configured_directories() {
+        let root = tempfile::tempdir().unwrap();
+        let mut paths = ProjectPathsConfig::builder().root(root.path()).build().unwrap();
+        paths.tests = paths.root.join("src/spec");
+        paths.scripts = paths.root.join("ops");
+        let multi_paths = paths.clone().with_language::<MultiCompilerLanguage>();
+        let preprocessor = DynamicTestLinkingPreprocessor::default();
+        for (source, expected) in [
+            ("src/spec/Helper.sol", true),
+            ("ops/Utility.sol", true),
+            ("test/Default.t.sol", false),
+            ("src/LooksLikeTest.t.sol", false),
+            ("lib/Spec.t.sol", false),
+        ] {
+            let source = paths.root.join(source);
+            assert_eq!(
+                <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::is_source_context_sensitive(
+                    &preprocessor, &source, &paths,
+                ),
+                expected,
+                "{}", source.display(),
+            );
+            assert_eq!(
+                <DynamicTestLinkingPreprocessor as Preprocessor<MultiCompiler>>::is_source_context_sensitive(
+                    &preprocessor, &source, &multi_paths,
+                ),
+                expected,
+                "{}", source.display(),
+            );
+        }
     }
 }
