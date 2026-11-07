@@ -806,7 +806,7 @@ where
                 transactions.push(pending.transaction.clone());
             }
             Err(err) => {
-                executor.evm_mut().inspector_mut().discard_transaction(inspector_config);
+                executor.evm_mut().inspector_mut().discard_transaction();
                 if err.as_validation().is_some() {
                     warn!(target: "backend", "Skipping invalid tx [{:?}]: {}", pool_tx.hash(), err);
                     invalid.push(pool_tx.clone());
