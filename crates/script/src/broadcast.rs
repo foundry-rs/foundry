@@ -7,7 +7,8 @@ use crate::{
     receipts::is_mined_receipt_for,
     recovery::{AttemptKind, DelegatedStatus},
     sequence::{
-        ScriptSequenceKind, blocked_pending, completed_transaction_prefix, operation_ordinal,
+        DelegatedResolution, ScriptSequenceKind, blocked_pending, completed_transaction_prefix,
+        operation_ordinal,
     },
     session::{
         SignerScope, insert_session_access_key_for_remaining_transactions,
@@ -1357,13 +1358,13 @@ impl BundledState<TempoEvmNetwork> {
             );
         }
 
-        let batch_resolution = if self.args.resume_tx_hash.is_some() {
+        let batch_resolution = if let Some(hash) = self.args.resume_tx_hash {
             self.sequence
-                .restore_delegated_pending(
+                .restore_delegated_pending(DelegatedResolution::new(
                     self.args.resume_attempt,
-                    self.args.resume_tx_hash,
+                    Some(hash),
                     false,
-                )?
+                )?)?
                 .map(|(_, _, attempt, hash)| (attempt, hash))
         } else {
             None
@@ -2109,6 +2110,7 @@ impl<FEN: FoundryEvmNetwork> BroadcastedState<FEN> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sequence::DelegatedAction;
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEnvelope};
     use alloy_network::Ethereum;
     use alloy_primitives::{B256, Bloom, address, hex};
@@ -2271,7 +2273,12 @@ mod tests {
         sequence.persist_batch_delegated_request(0, 0, Default::default()).unwrap();
         let (_, attempt, _) = sequence.batch_attempt(0).unwrap();
 
-        sequence.restore_delegated_pending(Some(attempt), None, true).unwrap();
+        sequence
+            .restore_delegated_pending(DelegatedResolution::Attempt {
+                attempt,
+                action: Some(DelegatedAction::Retry),
+            })
+            .unwrap();
 
         assert!(sequence.batch_attempt(0).is_none());
         drop(sequence);
