@@ -15,6 +15,7 @@ use foundry_evm_core::{
     FoundryBlock, FoundryTransaction, InspectorExt,
     backend::{ContextUpdateFor, DatabaseError, DatabaseExt, JournaledState},
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
+    edgecov,
     env::FoundryContextExt,
     evm::{
         BlockEnvFor, ChainFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryContextFor,
@@ -462,6 +463,10 @@ pub struct InspectorStackInner {
     pub sancov_edges: bool,
     /// Whether to capture sancov trace-cmp operands for dictionary injection.
     pub sancov_trace_cmp: bool,
+    /// Whether EVMs built with this stack execute the compiler-instrumented `EDGECOV` opcode.
+    pub edgecov_opcode: bool,
+    /// Whether to collect `EDGECOV` hits as the call's edge coverage.
+    pub instrumented_edges: bool,
     pub enable_isolation: bool,
     pub networks: NetworkConfigs,
     /// Additional addresses installed and recognized as cheatcode contracts.
@@ -765,7 +770,30 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         self.edge_coverage = corpus
             .collect_evm_edge_coverage()
             .then(|| EdgeCovInspector::with_config(corpus.into()).into());
+        self.collect_instrumented_edges(corpus.collect_instrumented_edges());
         self.refresh_static_step_dispatch();
+    }
+
+    /// Set whether to collect edge coverage from the compiler-instrumented `EDGECOV` opcode.
+    ///
+    /// Collecting also makes the EVM execute the opcode; turning collection off keeps it
+    /// executable so instrumented code still runs.
+    #[inline]
+    pub const fn collect_instrumented_edges(&mut self, yes: bool) {
+        self.inner.instrumented_edges = yes;
+        if yes {
+            self.inner.edgecov_opcode = true;
+        }
+    }
+
+    /// Set whether the EVM executes the compiler-instrumented `EDGECOV` opcode, which
+    /// coverage-instrumented builds emit and which is undefined otherwise.
+    #[inline]
+    pub const fn enable_edgecov_opcode(&mut self, yes: bool) {
+        self.inner.edgecov_opcode = yes;
+        if !yes {
+            self.inner.instrumented_edges = false;
+        }
     }
 
     /// Drops the inspectors that only feed fuzz guidance: edge coverage, the fuzzer value
@@ -777,6 +805,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         self.fuzzer = None;
         self.sancov_edges = false;
         self.sancov_trace_cmp = false;
+        self.instrumented_edges = false;
         self.refresh_static_step_dispatch();
     }
 
@@ -907,6 +936,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
                     tracer,
                     revert_diag,
                     reverter,
+                    instrumented_edges,
                     ..
                 },
         } = self;
@@ -937,12 +967,17 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
             }
         });
 
-        let (edge_coverage, evm_cmp_values) = edge_coverage
+        let (mut edge_coverage, evm_cmp_values) = edge_coverage
             .map(|edge_coverage| {
                 let (hitcount, cmp_values) = edge_coverage.into_parts();
                 (Some(hitcount), (!cmp_values.is_empty()).then_some(cmp_values))
             })
             .unwrap_or_default();
+        // Instrumented edges replace inspector edges, which are then off (a comparison-only
+        // inspector may remain for cmp-log).
+        if instrumented_edges {
+            edge_coverage = Some(EdgeCoverage::Instrumented(edgecov::take_edges()));
+        }
 
         InspectorData {
             logs: log_collector.and_then(|logs| logs.into_captured_logs()).unwrap_or_default(),
@@ -2284,6 +2319,10 @@ impl<FEN: FoundryEvmNetwork> InspectorExt for InspectorStackRefMut<'_, FEN> {
         self.inner.networks
     }
 
+    fn edgecov_opcode(&self) -> bool {
+        self.inner.edgecov_opcode
+    }
+
     fn create2_deployer(&self) -> Address {
         self.inner.create2_deployer
     }
@@ -2388,6 +2427,10 @@ impl<FEN: FoundryEvmNetwork> InspectorExt for InspectorStack<FEN> {
 
     fn get_networks(&self) -> NetworkConfigs {
         self.networks
+    }
+
+    fn edgecov_opcode(&self) -> bool {
+        self.edgecov_opcode
     }
 
     fn create2_deployer(&self) -> Address {
@@ -2585,6 +2628,36 @@ mod tests {
         stack.set_chisel(0);
         assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
         assert!(stack.inner.has_static_step_end_inspectors);
+    }
+
+    #[test]
+    fn instrumented_edges_replace_edge_inspector() {
+        let mut corpus = FuzzCorpusConfig {
+            corpus_dir: Some("corpus".into()),
+            instrumented_edges: true,
+            ..Default::default()
+        };
+        let mut stack = InspectorStack::<EthEvmNetwork>::new();
+
+        stack.collect_edge_coverage_with_config(&corpus);
+        assert!(stack.edge_coverage.is_none());
+        assert!(stack.instrumented_edges && stack.edgecov_opcode());
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
+
+        // Cmp-log keeps its comparison-only inspector.
+        stack.collect_evm_cmp_log(corpus.collect_evm_cmp_log());
+        assert!(stack.edge_coverage.is_some());
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::General);
+
+        // Predicate checks stop collecting but still execute instrumented code.
+        stack.disable_fuzz_instrumentation();
+        assert!(!stack.instrumented_edges && stack.edgecov_opcode());
+
+        corpus.instrumented_edges = false;
+        let mut stack = InspectorStack::<EthEvmNetwork>::new();
+        stack.collect_edge_coverage_with_config(&corpus);
+        assert!(stack.edge_coverage.is_some());
+        assert!(!stack.instrumented_edges && !stack.edgecov_opcode());
     }
 
     #[test]

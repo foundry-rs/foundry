@@ -3,6 +3,7 @@ use alloy_primitives::{
     map::{Entry, HashMap},
 };
 use core::fmt;
+use foundry_evm_core::edgecov::InstrumentedEdgeHit;
 use revm::{
     Inspector,
     bytecode::opcode,
@@ -141,6 +142,8 @@ pub struct EdgeCovHit {
 pub enum EdgeCoverage {
     Hash(Vec<u8>),
     CollisionFree(Vec<EdgeCovHit>),
+    /// Hits of compiler-instrumented edges, keyed by their dense compiler-assigned IDs.
+    Instrumented(Vec<InstrumentedEdgeHit>),
 }
 
 impl EdgeCoverage {
@@ -148,6 +151,7 @@ impl EdgeCoverage {
         match self {
             Self::Hash(hitcount) => hitcount.iter().all(|&count| count == 0),
             Self::CollisionFree(hits) => hits.is_empty(),
+            Self::Instrumented(hits) => hits.is_empty(),
         }
     }
 }

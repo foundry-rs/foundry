@@ -39,6 +39,7 @@ pub mod buffer;
 pub mod bytecode;
 pub mod constants;
 pub mod decode;
+pub mod edgecov;
 pub mod eip2935;
 pub mod evm;
 pub mod fork;
@@ -78,6 +79,12 @@ pub trait InspectorExt {
     /// Returns the CREATE2 deployer address.
     fn create2_deployer(&self) -> Address {
         DEFAULT_CREATE2_DEPLOYER
+    }
+
+    /// Whether EVMs built with this inspector execute the compiler-instrumented
+    /// [`EDGECOV`](edgecov::EDGECOV) opcode instead of treating it as undefined.
+    fn edgecov_opcode(&self) -> bool {
+        false
     }
 }
 
