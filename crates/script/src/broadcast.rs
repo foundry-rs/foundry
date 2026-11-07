@@ -38,7 +38,9 @@ use alloy_signer::Signature;
 use eyre::{Context, ContextCompat, Result, bail};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
-use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
+use foundry_cli::utils::{
+    apply_gas_estimate_multiplier, has_batch_support, has_different_gas_calc,
+};
 use foundry_common::{
     FoundryTransactionBuilder, TransactionMaybeSigned,
     provider::{
@@ -1976,11 +1978,9 @@ where
     tx.reset_gas_limit();
 
     let request = if browser { tx.browser_wallet_gas_estimation_request() } else { tx.clone() };
-    tx.set_gas_limit(
-        provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?
-            * estimate_multiplier
-            / 100,
-    );
+    let estimate =
+        provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?;
+    tx.set_gas_limit(apply_gas_estimate_multiplier(estimate, Some(estimate_multiplier))?);
     Ok(())
 }
 
@@ -2798,6 +2798,24 @@ mod tests {
             };
             assert_eq!(payload.as_ref(), SIGNED_TX);
             assert_eq!(prepared_hash, hash);
+        }
+    }
+
+    #[tokio::test]
+    async fn estimate_gas_multiplies_large_estimates_without_overflow() {
+        for (estimate, multiplier, expected) in
+            [(u64::MAX / 2, 130, Some(11_990_383_647_911_208_549)), (u64::MAX, 200, None)]
+        {
+            let asserter = Asserter::new();
+            let provider: RootProvider<Ethereum> =
+                alloy_provider::ProviderBuilder::default().connect_mocked_client(asserter.clone());
+            asserter.push_success(&alloy_primitives::U64::from(estimate));
+            let mut tx = alloy_rpc_types::TransactionRequest::default();
+
+            let result = estimate_gas(&mut tx, &provider, multiplier, false).await;
+
+            assert_eq!(result.is_ok(), expected.is_some());
+            assert_eq!(tx.gas, expected);
         }
     }
 }
