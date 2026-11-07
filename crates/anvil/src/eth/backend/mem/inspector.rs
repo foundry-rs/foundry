@@ -143,7 +143,9 @@ impl AnvilInspector {
         if config.print_traces {
             self.print_traces(config.call_trace_decoder.clone());
         }
-        self.print_logs();
+        if config.print_logs {
+            self.print_logs();
+        }
 
         let mut traces =
             self.tracer.take().map(|t| t.into_traces().into_nodes()).unwrap_or_default();
@@ -156,23 +158,26 @@ impl AnvilInspector {
             }
         }
 
-        self.reset_transaction(config);
+        self.reset_transaction();
 
         traces
     }
 
     /// Discards a transaction's traces/logs and resets the inspector without printing them.
-    pub fn discard_transaction(&mut self, config: &InspectorTxConfig) {
-        self.reset_transaction(config);
+    pub fn discard_transaction(&mut self) {
+        self.reset_transaction();
     }
 
     /// Resets per-transaction collectors for the next transaction.
-    fn reset_transaction(&mut self, config: &InspectorTxConfig) {
+    fn reset_transaction(&mut self) {
         // Reinstall tracer for next tx.
         self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().set_steps(false)));
 
-        // Reset log collector for next tx.
-        self.log_collector = config.print_logs.then(|| LogCollector::Capture { logs: Vec::new() });
+        // Preserve the installed collector: handling console calls can affect execution even
+        // when their output is suppressed. Only the captured logs belong to the finished tx.
+        if let Some(LogCollector::Capture { logs }) = &mut self.log_collector {
+            logs.clear();
+        }
     }
 
     /// Called after the inspecting the evm
