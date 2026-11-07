@@ -467,8 +467,8 @@ pub struct InspectorStackInner {
     /// Additional addresses installed and recognized as cheatcode contracts.
     pub extra_cheatcode_addresses: &'static [Address],
     pub create2_deployer: Address,
-    /// Flag marking if we are in the inner EVM context.
-    pub in_inner_context: bool,
+    /// The outer context of the isolated transaction being executed, if any. `Some` exactly while
+    /// executing in the inner EVM context; see [`Self::in_inner_context`].
     pub inner_context_data: Option<InnerContextData>,
     /// Accounts that should retain the per-transaction creation marker in the current context.
     pub locally_created_accounts: AddressHashSet,
@@ -560,14 +560,12 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
     ) -> Result<EvmEnvFor<FEN>, EVMError<DatabaseError>> {
         self.with_snapshot_tracking(cheats, |inner, cheats| {
             let depth = ecx.journal().depth();
-            let previous_inner_context = inner.in_inner_context;
             let previous_inner_context_data = inner.inner_context_data.replace(InnerContextData {
                 original_origin: ecx.tx().caller(),
                 locally_created_accounts: AddressHashSet::default(),
                 root_depth: depth,
             });
             let previous_precompile = inner.isolated_call_was_precompile.take();
-            inner.in_inner_context = true;
             let mut evm_env = ecx.evm_clone();
             let (db, _) = ecx.db_journal_inner_mut();
             let inherited_disable_fee_charge = evm_env.cfg_env.disable_fee_charge;
@@ -590,7 +588,6 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
                 evm_env
             });
             drop(evm);
-            inner.in_inner_context = previous_inner_context;
             inner.inner_context_data = previous_inner_context_data;
             inner.isolated_call_was_precompile = previous_precompile;
             result
@@ -1005,7 +1002,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
     /// Adjusts the EVM data for the inner EVM context.
     /// Should be called on the top-level call of inner context (depth == 0 &&
-    /// self.in_inner_context) Decreases sender nonce for CALLs to keep backwards compatibility
+    /// self.in_inner_context()) Decreases sender nonce for CALLs to keep backwards compatibility
     /// Updates tx.origin to the value before entering inner context
     fn adjust_evm_data_for_inner_context<CTX: FoundryContextExt>(&mut self, ecx: &mut CTX) {
         let inner_context_data =
@@ -1161,7 +1158,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             root_depth,
         });
         self.outer_disable_fee_charge = Some(cached_evm_env.cfg_env.disable_fee_charge);
-        self.in_inner_context = true;
 
         // Tell cheatcodes we're entering the synthetic inner transaction so
         // env-mutating cheatcodes route through `env_overrides` instead of
@@ -1232,7 +1228,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         });
         *ecx.chain_mut() = nested_chain_context.expect("nested EVM chain context was captured");
 
-        self.in_inner_context = false;
         self.inner_context_data = None;
         self.outer_disable_fee_charge = None;
 
@@ -1666,7 +1661,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
     ) -> Option<FrameResult> {
         // A non-isolated top-level transaction needs the same restore tracking as an isolated call.
         if !self.enable_isolation
-            && !self.in_inner_context
+            && !self.in_inner_context()
             && ecx.journal().depth() == 0
             && let Some(cheats) = self.cheatcodes.as_deref_mut()
         {
@@ -1791,7 +1786,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         }
 
         let result = frame_result.instruction_result();
-        if !self.in_inner_context && depth == 0 {
+        if !self.in_inner_context() && depth == 0 {
             let failed = std::mem::take(&mut self.inner.top_level_frame_failed_before_rewrite)
                 || !result.is_ok();
             self.top_level_frame_end(ecx, failed);
@@ -1895,7 +1890,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         // Also isolate a synthetic `deployCode` create that was rewritten to a CREATE2 factory
         // call.
         let isolate = self.enable_isolation
-            && !self.in_inner_context
+            && !self.in_inner_context()
             && (ecx.journal().depth() == 1
                 || self.inner.synthetic_create_depth == Some(ecx.journal().depth()));
         let mut cheatcode_outcome = None;
@@ -2106,7 +2101,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
 
         if !matches!(create.scheme(), CreateScheme::Create2 { .. })
             && self.enable_isolation
-            && !self.in_inner_context
+            && !self.in_inner_context()
             && (ecx.journal().depth() == 1
                 || self.synthetic_create_depth == Some(ecx.journal().depth()))
         {
@@ -2163,9 +2158,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         {
             self.locally_created_accounts.insert(address);
 
-            if self.in_inner_context
-                && let Some(inner_context) = &mut self.inner_context_data
-            {
+            if let Some(inner_context) = &mut self.inner_context_data {
                 inner_context.locally_created_accounts.insert(address);
             }
         }
@@ -2424,6 +2417,12 @@ impl<FEN: FoundryEvmNetwork> DerefMut for InspectorStack<FEN> {
 }
 
 impl InspectorStackInner {
+    /// Whether execution is inside the inner EVM context of an isolated transaction.
+    #[inline]
+    pub const fn in_inner_context(&self) -> bool {
+        self.inner_context_data.is_some()
+    }
+
     #[inline]
     const fn refresh_static_opcode_dispatch(&mut self) {
         self.refresh_static_step_dispatch();
@@ -2470,8 +2469,7 @@ impl InspectorStackInner {
 
     /// Whether this frame duplicates the outer frame that entered an isolated transaction.
     fn is_inner_context_root(&self, depth: usize) -> bool {
-        self.in_inner_context
-            && self.inner_context_data.as_ref().is_some_and(|inner| depth == inner.root_depth)
+        self.inner_context_data.as_ref().is_some_and(|inner| depth == inner.root_depth)
     }
 
     /// Gives a fresh transaction its own restore tracking, independent of the suspended parent.
