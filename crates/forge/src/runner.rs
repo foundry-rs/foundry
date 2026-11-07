@@ -11,7 +11,7 @@ use crate::{
     },
     progress::TestsProgress,
     result::{
-        InvariantFailure, InvariantOutcome, InvariantPredicateResult, SuiteResult,
+        InvariantFailure, InvariantOutcome, InvariantPredicateResult, SetupOutcome, SuiteResult,
         SymbolicArtifactRef, SymbolicCallTrace, SymbolicCorpusSeedMetadata, SymbolicCorpusSeedRef,
         SymbolicCounterexample, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind,
         SymbolicCounterexampleCall, SymbolicCounterexampleMinimization,
@@ -577,9 +577,9 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                     let (raw, reason) =
                         RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
                     result.extend(raw, TraceKind::Deployment);
-                    if reason.is_some() {
-                        debug!(?reason, "deployment of library failed");
-                        result.reason = reason;
+                    if let Some(reason) = reason {
+                        debug!(%reason, "deployment of library failed");
+                        result.outcome = SetupOutcome::Failed(reason);
                         return Ok(result);
                     }
                 }
@@ -613,13 +613,13 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                             (raw, None)
                         };
                         result.extend(raw, TraceKind::Deployment);
-                        if reason.is_some() {
-                            debug!(?reason, "CREATE2 deployment of library failed");
-                            result.reason = reason;
+                        if let Some(reason) = reason {
+                            debug!(%reason, "CREATE2 deployment of library failed");
+                            result.outcome = SetupOutcome::Failed(reason);
                             return Ok(result);
                         }
                         if self.executor.is_empty_code(address)? {
-                            result.reason = Some(format!(
+                            result.outcome = SetupOutcome::Failed(format!(
                                 "CREATE2 library deployment succeeded but no code was found at {address}"
                             ));
                             return Ok(result);
@@ -664,16 +664,14 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         let deploy_result =
             self.executor.deploy(self.sender, self.contract.bytecode.clone(), U256::ZERO, Some(rd));
 
-        result.deployment_failure = deploy_result.is_err();
-
         if let Ok(dr) = &deploy_result {
             debug_assert_eq!(dr.address, address);
         }
         let (raw, reason) = RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
         result.extend(raw, TraceKind::Deployment);
-        if reason.is_some() {
-            debug!(?reason, "deployment of test contract failed");
-            result.reason = reason;
+        if let Some(reason) = reason {
+            debug!(%reason, "deployment of test contract failed");
+            result.outcome = SetupOutcome::DeploymentFailed(reason);
             return Ok(result);
         }
 
@@ -694,7 +692,9 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             let res = self.executor.setup(None, address, Some(rd));
             let (raw, reason) = RawCallResult::from_evm_result(res)?;
             result.extend(raw, TraceKind::Setup);
-            result.reason = reason;
+            if let Some(reason) = reason {
+                result.outcome = SetupOutcome::Failed(reason);
+            }
         }
 
         Ok(result)
@@ -957,9 +957,9 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             self.executor.inspector_mut().tracer = prev_tracer;
         }
 
-        if setup.reason.is_some() {
+        if !setup.outcome.is_success() {
             // The setup failed, so we return a single test result for `setUp`
-            let name = if setup.deployment_failure { "constructor()" } else { "setUp()" };
+            let name = setup.outcome.function_name();
             return self.failed_suite(
                 start,
                 warnings,
