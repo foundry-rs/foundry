@@ -6467,3 +6467,24 @@ Warning: Persisted failure for [..] was recorded at fork block 0 but is replayed
 "#]])
         .stderr_eq(str![""]);
 }
+
+// Concurrent corpus-enabled fuzz tests must finish when their workers outnumber rayon threads.
+#[forgetest_init]
+fn concurrent_corpus_fuzz_tests_finish(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.fuzz.corpus.corpus_dir = Some(prj.root().join("fuzz_corpus"));
+    });
+    prj.add_test(
+        "ConcurrentCorpus.t.sol",
+        r#"
+contract ConcurrentCorpusTest {
+    function testFuzz_a(uint256) public pure {}
+    function testFuzz_b(uint256) public pure {}
+    function testFuzz_c(uint256) public pure {}
+    function testFuzz_d(uint256) public pure {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "ConcurrentCorpusTest", "--threads", "2"]).assert_success();
+}
