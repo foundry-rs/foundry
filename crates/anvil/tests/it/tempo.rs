@@ -56,7 +56,7 @@ use foundry_common::{
 use foundry_evm_core::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, ITIP20ChannelReserve, PATH_USD_ADDRESS,
     TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, THETA_USD_ADDRESS,
-    active_tempo_precompile_addresses,
+    active_tempo_precompile_addresses, tempo_genesis_contracts,
 };
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::{
@@ -74,6 +74,7 @@ use std::{
     time::Duration,
 };
 use tempo_alloy::{TempoNetwork, primitives::TempoTxEnvelope, rpc::TempoHeaderResponse};
+use tempo_contracts::CREATEX_ADDRESS;
 use tempo_dkg_onchain_artifacts::OnchainDkgOutcome;
 use tempo_hardfork::{
     TempoHardfork,
@@ -8646,6 +8647,36 @@ async fn tempo_consensus_fork_infers_epoch_length_from_chain_config() {
             }
             Err(expected) => assert_eq!(result.err().unwrap().to_string(), expected),
         }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_genesis_contract_nonces() {
+    let (api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+    let provider = handle.http_provider();
+
+    for reset in [false, true] {
+        if reset {
+            api.anvil_set_nonce(CREATEX_ADDRESS, U256::from(7)).await.unwrap();
+            api.anvil_set_nonce(PATH_USD, U256::from(7)).await.unwrap();
+            api.anvil_reset(None).await.unwrap();
+        }
+
+        for (address, code) in tempo_genesis_contracts() {
+            assert_eq!(provider.get_transaction_count(address).await.unwrap(), 1, "{address}");
+            assert_eq!(provider.get_code_at(address).await.unwrap(), code, "{address}");
+        }
+        for address in active_tempo_precompile_addresses(TempoHardfork::T14).chain([
+            PATH_USD,
+            ALPHA_USD_ADDRESS,
+            BETA_USD_ADDRESS,
+            THETA_USD_ADDRESS,
+        ]) {
+            assert_eq!(provider.get_transaction_count(address).await.unwrap(), 1, "{address}");
+        }
+
+        // Independent of the shared table: CreateX derives CREATE addresses from its nonce.
+        assert_eq!(provider.get_transaction_count(CREATEX_ADDRESS).await.unwrap(), 1);
     }
 }
 
