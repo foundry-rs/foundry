@@ -10,6 +10,26 @@ use revm::{
 
 const IGNORE: [Address; 2] = [HARDHAT_CONSOLE_ADDRESS, CHEATCODE_ADDRESS];
 
+/// An `EXTCODESIZE` probe of an address without executable code.
+///
+/// The probe is cached optimistically when the opcode starts, and validated against the opcode's
+/// output when it ends.
+#[derive(Clone, Copy, Debug)]
+enum SizeCheck {
+    /// `EXTCODESIZE` is executing; its output is validated in `step_end`.
+    Pending { addr: Address, depth: usize },
+    /// `EXTCODESIZE` did not report any code for the address.
+    NonContract { addr: Address, depth: usize },
+}
+
+impl SizeCheck {
+    const fn target(self) -> (Address, usize) {
+        match self {
+            Self::Pending { addr, depth } | Self::NonContract { addr, depth } => (addr, depth),
+        }
+    }
+}
+
 /// An inspector that tracks call context to enhances revert diagnostics.
 /// Useful for understanding reverts that are not linked to custom errors or revert strings.
 ///
@@ -31,9 +51,7 @@ pub struct RevertDiagnostic {
     /// Tracks calls with calldata that target an address without executable code.
     non_contract_call: Option<(Address, CallScheme, usize)>,
     /// Tracks EXTCODESIZE checks that target an address without executable code.
-    non_contract_size_check: Option<(Address, usize)>,
-    /// Whether the step opcode is EXTCODESIZE or not.
-    is_extcodesize_step: bool,
+    non_contract_size_check: Option<SizeCheck>,
     /// Diagnostic detected for the currently executing frame.
     pending: Option<DetailedRevertReason>,
     /// Trace nodes for active frames. `None` means the tracer did not create a node.
@@ -55,7 +73,8 @@ impl RevertDiagnostic {
             return Some(reason);
         }
 
-        if let Some((addr, _)) = self.non_contract_size_check {
+        if let Some(check) = self.non_contract_size_check {
+            let (addr, _) = check.target();
             // unknown schema as the call never took place --> output most generic reason
             return Some(DetailedRevertReason::CallToNonContract(addr));
         }
@@ -115,7 +134,8 @@ impl RevertDiagnostic {
             }
 
             // Check empty revert with same depth as a non-contract size check
-            if let Some((_, depth)) = self.non_contract_size_check {
+            if let Some(check) = self.non_contract_size_check {
+                let (_, depth) = check.target();
                 if depth == ctx.journal_ref().depth() {
                     self.pending = self.reason();
                 } else {
@@ -139,21 +159,19 @@ impl RevertDiagnostic {
 
             // Optimistically cache --> validated and cleared (if necessary) at `fn
             // step_end()`
-            self.non_contract_size_check = Some((addr, ctx.journal_ref().depth()));
-            self.is_extcodesize_step = true;
+            self.non_contract_size_check =
+                Some(SizeCheck::Pending { addr, depth: ctx.journal_ref().depth() });
         }
     }
 
-    /// Tracks `EXTCODESIZE` output. If the bytecode size is NOT 0, clears the cache.
+    /// Validates a pending `EXTCODESIZE` probe against its output: a non-zero size clears it,
+    /// otherwise the address is confirmed to have no code.
     #[cold]
-    fn handle_extcodesize_output(&mut self, interp: &mut Interpreter) {
-        if let Ok(size) = interp.stack.peek(0)
-            && !size.is_zero()
-        {
-            self.non_contract_size_check = None;
-        }
-
-        self.is_extcodesize_step = false;
+    fn handle_extcodesize_output(&mut self, interp: &mut Interpreter, addr: Address, depth: usize) {
+        self.non_contract_size_check = match interp.stack.peek(0) {
+            Ok(size) if !size.is_zero() => None,
+            _ => Some(SizeCheck::NonContract { addr, depth }),
+        };
     }
 }
 
@@ -194,8 +212,8 @@ impl<CTX: ContextTr> Inspector<CTX> for RevertDiagnostic {
     }
 
     fn step_end(&mut self, interp: &mut Interpreter, _ctx: &mut CTX) {
-        if self.is_extcodesize_step {
-            self.handle_extcodesize_output(interp);
+        if let Some(SizeCheck::Pending { addr, depth }) = self.non_contract_size_check {
+            self.handle_extcodesize_output(interp, addr, depth);
         }
     }
 }
