@@ -4,7 +4,7 @@
 
 use crate::inspectors::{
     Cheatcodes, CmpOperands, EdgeCoverage, EdgeIndexMap, InspectorData, InspectorStack,
-    cheatcodes::BroadcastableTransactions,
+    cheatcodes::{BroadcastableTransactions, Vm},
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_eips::eip4788::{BEACON_ROOTS_ADDRESS, SYSTEM_ADDRESS};
@@ -14,7 +14,7 @@ use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, keccak256,
     map::{AddressHashMap, HashMap},
 };
-use alloy_sol_types::{SolCall, sol};
+use alloy_sol_types::{SolCall, SolError, sol};
 use eyre::WrapErr;
 use foundry_evm_core::{
     EvmEnv, FoundryBlock, FoundryChain, FoundryTransaction,
@@ -1472,6 +1472,11 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Moved out of the cheatcode state on conversion since `commit` moves that state back into
     /// the executor before results are classified.
     pub skip_payloads: Vec<Bytes>,
+    /// First halt during this call, such as running out of gas in a nested call.
+    pub halt: Option<InstructionResult>,
+    /// Identities and messages of the assertions that failed during this call, latest last.
+    /// Moved out of the cheatcode state like [`Self::skip_payloads`].
+    pub assertion_failures: Vec<(B256, String)>,
 }
 
 impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
@@ -1505,6 +1510,8 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
             chisel_state: None,
             reverter: None,
             skip_payloads: Vec::new(),
+            halt: None,
+            assertion_failures: Vec::new(),
         }
     }
 }
@@ -1528,6 +1535,34 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
             return None;
         }
         SkipReason::decode(&self.result)
+    }
+
+    /// Returns what identifies how this call failed regardless of the values it reports: its exit
+    /// reason and first halt, plus the assertion whose failure reverted the call, the assertions
+    /// that failed when nothing else explains the failure, or else the revert data.
+    pub fn failure_kind(&self) -> Bytes {
+        let status = |result: Option<InstructionResult>| result.map_or(u8::MAX, |r| r as u8);
+        let mut kind = vec![status(self.exit_reason), status(self.halt)];
+        let reverted_with = Vm::CheatcodeError::abi_decode(&self.result).ok().and_then(|err| {
+            self.assertion_failures.iter().rev().find(|(_, message)| *message == err.message)
+        });
+        if let Some((identity, _)) = reverted_with {
+            kind.push(0);
+            kind.extend_from_slice(identity.as_slice());
+        } else if !self.assertion_failures.is_empty() && (!self.reverted || self.result.is_empty())
+        {
+            kind.push(1);
+            let mut identities =
+                self.assertion_failures.iter().map(|(identity, _)| *identity).collect::<Vec<_>>();
+            identities.sort();
+            for identity in identities {
+                kind.extend_from_slice(identity.as_slice());
+            }
+        } else {
+            kind.push(2);
+            kind.extend_from_slice(&self.result);
+        }
+        kind.into()
     }
 
     /// Converts the result of the call into an `EvmError`.
@@ -1778,6 +1813,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork, H: IntoInstructionResult>(
         mut cheatcodes,
         chisel_state,
         reverter,
+        halt,
     } = inspector.collect();
     let fork_block_number = cheatcodes
         .as_ref()
@@ -1795,6 +1831,8 @@ fn convert_executed_result<FEN: FoundryEvmNetwork, H: IntoInstructionResult>(
         .filter(|txs| !txs.is_empty());
     let skip_payloads =
         cheatcodes.as_mut().map(|c| std::mem::take(&mut c.skip_payloads)).unwrap_or_default();
+    let assertion_failures =
+        cheatcodes.as_mut().map(|c| std::mem::take(&mut c.assertion_failures)).unwrap_or_default();
 
     Ok(RawCallResult {
         exit_reason: Some(exit_reason),
@@ -1825,6 +1863,8 @@ fn convert_executed_result<FEN: FoundryEvmNetwork, H: IntoInstructionResult>(
         chisel_state,
         reverter,
         skip_payloads,
+        halt,
+        assertion_failures,
     })
 }
 
@@ -2900,5 +2940,67 @@ mod tests {
         assert_ne!(worker_seed(seed, 1), seed);
         assert_ne!(worker_seed(seed, 1), worker_seed(seed, 2));
         assert_ne!(worker_seed(seed, 1), worker_seed(U256::from(0x5678), 1));
+    }
+
+    #[test]
+    fn failure_kind_ignores_only_assertion_values() {
+        let site = |n: u8| B256::repeat_byte(n);
+        let kind = |exit_reason, halt, result: Vec<u8>, failures: &[(B256, &str)]| {
+            RawCallResult::<EthEvmNetwork> {
+                exit_reason: Some(exit_reason),
+                reverted: exit_reason == InstructionResult::Revert,
+                halt,
+                result: result.into(),
+                assertion_failures: failures.iter().map(|(id, m)| (*id, m.to_string())).collect(),
+                ..Default::default()
+            }
+            .failure_kind()
+        };
+        let revert =
+            |message: &str| Vm::CheatcodeError { message: message.to_string() }.abi_encode();
+        let assertion = |message: &str, identity| {
+            kind(InstructionResult::Revert, None, revert(message), &[(identity, message)])
+        };
+
+        // Values reported by the same assertion are ignored, but not its site.
+        assert_eq!(
+            assertion("assertion failed: 101 > 100", site(1)),
+            assertion("assertion failed: 5 > 1", site(1))
+        );
+        assert_ne!(
+            assertion("assertion failed: 1 != 0", site(1)),
+            assertion("assertion failed: 1 != 7", site(2))
+        );
+        // A revert message that no failed assertion generated is compared in full.
+        assert_ne!(
+            kind(InstructionResult::Revert, None, revert("assertion failed: assets >= debt"), &[]),
+            kind(
+                InstructionResult::Revert,
+                None,
+                revert("assertion failed: shares >= supply"),
+                &[]
+            )
+        );
+        // So are custom errors and their arguments.
+        assert_ne!(
+            kind(InstructionResult::Revert, None, vec![1, 2, 3, 4, 1], &[]),
+            kind(InstructionResult::Revert, None, vec![1, 2, 3, 4, 2], &[])
+        );
+        // Halts in nested calls keep their reason.
+        assert_ne!(
+            kind(InstructionResult::Revert, Some(InstructionResult::OutOfGas), vec![], &[]),
+            kind(InstructionResult::Revert, Some(InstructionResult::InvalidFEOpcode), vec![], &[])
+        );
+        // A caught assertion followed by a bare revert differs from the assertion reverting.
+        let message = "assertion failed: 1 != 0";
+        assert_ne!(
+            kind(InstructionResult::Revert, None, vec![], &[(site(1), message)]),
+            assertion(message, site(1))
+        );
+        // Assertions that do not revert are identified by the assertions that failed.
+        assert_ne!(
+            kind(InstructionResult::Stop, None, vec![], &[(site(1), "a")]),
+            kind(InstructionResult::Stop, None, vec![], &[(site(2), "a")])
+        );
     }
 }

@@ -142,7 +142,8 @@ pub struct InvariantConfig {
     /// The fuzz dictionary configuration
     #[serde(flatten)]
     pub dictionary: FuzzDictionaryConfig,
-    /// The maximum number of attempts to shrink the sequence
+    /// The maximum number of attempts to shrink the sequence, also used to minimize the argument
+    /// values of stateless fuzz counterexamples.
     pub shrink_run_limit: u32,
     /// The maximum number of rejects via `vm.assume` which can be encountered during a single
     /// invariant run.

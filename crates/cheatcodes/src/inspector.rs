@@ -13,6 +13,7 @@ use crate::{
     inspector::utils::CommonCreateInput,
     script::Broadcast,
     test::{
+        assert::AssertionSites,
         assume::AssumeNoRevert,
         expect::{self, ExpectedCallTracker, ExpectedCreate, ExpectedRevert, ExpectedRevertKind},
         revert_handlers,
@@ -703,6 +704,12 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// payloads, so user-crafted `FOUNDRY::SKIP` revert data never skips a test on its own.
     pub skip_payloads: Vec<Bytes>,
 
+    /// Identities and messages of the assertions that failed during the current call, latest
+    /// last.
+    pub assertion_failures: Vec<(B256, String)>,
+    /// Tracks assertion call sites while set, to tell failures of different assertions apart.
+    pub assertion_sites: Option<AssertionSites>,
+
     /// ETH `deal`s recorded in the current root transaction, rolled back if it fails.
     pub eth_deals: Vec<DealRecord>,
 
@@ -834,6 +841,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             broadcast: Default::default(),
             broadcastable_transactions: Default::default(),
             skip_payloads: Default::default(),
+            assertion_failures: Default::default(),
+            assertion_sites: Default::default(),
             eth_deals: Default::default(),
             gas_metering: Default::default(),
             gas_snapshots: Default::default(),
@@ -1908,6 +1917,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             || self.gas_metering.recording
             || self.has_active_env_overrides()
             || self.has_storage_hooks()
+            || self.assertion_sites.is_some()
     }
 
     #[inline(always)]
@@ -1937,6 +1947,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             && !self.has_storage_hooks()
             && !self.gas_metering.recording
             && !self.has_active_env_overrides()
+            && self.assertion_sites.is_none()
     }
 
     #[inline(always)]
@@ -1987,6 +1998,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         if let Some(expected) = &mut self.expected_revert {
             expected.max_depth = max(ecx.journal().depth(), expected.max_depth);
         }
+
+        if let Some(sites) = &mut self.assertion_sites {
+            sites.enter_frame(ecx.journal().depth());
+        }
     }
 
     fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryContextFor<'_, FEN>) {
@@ -1994,6 +2009,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
         if !self.has_step_hooks() {
             return;
+        }
+
+        if let Some(sites) = &mut self.assertion_sites {
+            sites.step(interpreter, ecx.journal().depth());
         }
 
         if self.finish_storage_hook_callback(interpreter, ecx) {
