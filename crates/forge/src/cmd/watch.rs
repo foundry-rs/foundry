@@ -325,6 +325,9 @@ fn setup_process(job: Job, _command: &Command, keyboard_config: Option<KeyboardC
 }
 
 fn end_of_process(state: &CommandState, keyboard_config: Option<KeyboardConfig>) {
+    // Hand stdin back to the watcher however the command ended: a command that failed to spawn
+    // leaves the job pending, and keyboard reruns would otherwise stay disabled for good.
+    set_keyboard_events(&keyboard_config, true);
     let CommandState::Finished { status, started, finished } = state else {
         return;
     };
@@ -346,7 +349,6 @@ fn end_of_process(state: &CommandState, keyboard_config: Option<KeyboardConfig>)
     };
 
     let quiet = false;
-    set_keyboard_events(&keyboard_config, true);
     if !quiet {
         let _ = sh_eprintln!("{}", format!("[{msg}]").paint(fg.foreground()));
     }
@@ -410,7 +412,12 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
             } else if rerun_failed && test_failures_file.exists() {
                 TestRerun::Failures
             } else {
-                changed_test_rerun(events, &last_test_files.lock(), &project_root, no_reconfigure)
+                changed_test_rerun(
+                    events,
+                    &mut last_test_files.lock(),
+                    &project_root,
+                    no_reconfigure,
+                )
             };
             rerun.apply(command);
         },
@@ -453,10 +460,13 @@ impl TestRerun {
 /// Picks the tests to run for changed files: the one changed test file, or the last test files
 /// when only non-test files changed.
 ///
+/// A single changed test file becomes the last test files, so later changes to non-test files
+/// keep running its tests.
+///
 /// `no_reconfigure` keeps the command as given, for runs that the user already filtered.
 fn changed_test_rerun(
     events: &[Event],
-    last_test_files: &HashSet<String>,
+    last_test_files: &mut HashSet<String>,
     project_root: &str,
     no_reconfigure: bool,
 ) -> TestRerun {
@@ -480,6 +490,8 @@ fn changed_test_rerun(
             return TestRerun::Unchanged;
         }
         changed_sol_test_files = last_test_files.clone();
+    } else {
+        last_test_files.clone_from(&changed_sol_test_files);
     }
 
     let mut file = changed_sol_test_files.iter().next().expect("test file present").clone();
@@ -844,9 +856,8 @@ mod tests {
 
     #[test]
     fn narrows_test_reruns_to_changed_test_file() {
-        let none = HashSet::default();
         let rerun = |events: &[Event], no_reconfigure| {
-            changed_test_rerun(events, &none, "/project", no_reconfigure)
+            changed_test_rerun(events, &mut HashSet::default(), "/project", no_reconfigure)
         };
 
         assert_eq!(
@@ -863,11 +874,43 @@ mod tests {
         );
         assert_eq!(rerun(&[path_event("/project/src/A.sol")], false), TestRerun::Unchanged);
 
-        let last = HashSet::from_iter(["/project/test/B.t.sol".to_string()]);
+        let mut last = HashSet::from_iter(["/project/test/B.t.sol".to_string()]);
         assert_eq!(
-            changed_test_rerun(&[path_event("/project/src/A.sol")], &last, "/project", false),
+            changed_test_rerun(&[path_event("/project/src/A.sol")], &mut last, "/project", false),
             TestRerun::MatchPath("test/B.t.sol".to_string())
         );
+    }
+
+    #[test]
+    fn reruns_last_changed_test_file_after_source_change() {
+        let mut last = HashSet::default();
+        assert_eq!(
+            changed_test_rerun(
+                &[path_event("/project/test/A.t.sol")],
+                &mut last,
+                "/project",
+                false
+            ),
+            TestRerun::MatchPath("test/A.t.sol".to_string())
+        );
+        // A later change to a non-test file reruns the tests of the last changed test file.
+        assert_eq!(
+            changed_test_rerun(&[path_event("/project/src/A.sol")], &mut last, "/project", false),
+            TestRerun::MatchPath("test/A.t.sol".to_string())
+        );
+    }
+
+    #[test]
+    fn reenables_keyboard_events_when_command_did_not_start() {
+        let config = Arc::new(watchexec::Config::default());
+        let keyboard_config = KeyboardConfig::default();
+        keyboard_config.set(Arc::downgrade(&config)).unwrap();
+        set_keyboard_events(&Some(keyboard_config.clone()), false);
+        assert!(!config.keyboard_events.get());
+
+        // A command that failed to spawn leaves the job pending rather than finished.
+        end_of_process(&CommandState::Pending, Some(keyboard_config));
+        assert!(config.keyboard_events.get());
     }
 
     #[test]
