@@ -1274,6 +1274,19 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         slots
     }
 
+    /// Returns storage keys retained from earlier context visits, attributed to their forks.
+    /// These can be absent from the final pending state when an unchanged slot was read before
+    /// a fork switch. Collect them before parking clears the active context's loaded keys.
+    pub fn suspended_storage(&self) -> impl Iterator<Item = (Option<U256>, Address, U256)> + '_ {
+        iter::once((None, &self.forks.local))
+            .chain(self.forks.iter().map(|(id, entry)| (Some(id), &entry.context)))
+            .flat_map(|(fork, context)| {
+                context.loaded.iter().flat_map(move |(address, slots)| {
+                    slots.iter().map(move |slot| (fork, *address, *slot))
+                })
+            })
+    }
+
     /// Rebinds the running state's backing handle to its EVM's empty-account policy without
     /// copying accepted state or changing another execution's policy.
     pub fn sync_database_policy(&self, evm: &mut Evm<'_, F::Types>) {

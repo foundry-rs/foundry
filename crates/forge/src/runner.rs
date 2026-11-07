@@ -11,7 +11,7 @@ use crate::{
     },
     progress::TestsProgress,
     result::{
-        InvariantFailure, InvariantOutcome, InvariantPredicateResult, SuiteResult,
+        InvariantFailure, InvariantOutcome, InvariantPredicateResult, SetupStorage, SuiteResult,
         SymbolicArtifactRef, SymbolicCallTrace, SymbolicCorpusSeedMetadata, SymbolicCorpusSeedRef,
         SymbolicCounterexample, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind,
         SymbolicCounterexampleCall, SymbolicCounterexampleMinimization,
@@ -530,7 +530,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
     pub fn setup(&mut self, call_setup: bool) -> TestSetup {
-        self._setup(call_setup).unwrap_or_else(|err| {
+        self.executor.set_collect_setup_storage(true);
+        let result = self._setup(call_setup);
+        self.executor.set_collect_setup_storage(false);
+        result.unwrap_or_else(|err| {
             if matches!(err.downcast_ref::<EvmError<FEN>>(), Some(EvmError::Skip(_))) {
                 TestSetup::skipped(err.to_string())
             } else {
@@ -580,7 +583,11 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
                     let (raw, reason) =
                         RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
-                    result.extend(raw, TraceKind::Deployment);
+                    result.extend(
+                        raw,
+                        TraceKind::Deployment,
+                        self.executor.backend().active_fork_id(),
+                    );
                     if reason.is_some() {
                         debug!(?reason, "deployment of library failed");
                         result.reason = reason;
@@ -616,7 +623,11 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                         } else {
                             (raw, None)
                         };
-                        result.extend(raw, TraceKind::Deployment);
+                        result.extend(
+                            raw,
+                            TraceKind::Deployment,
+                            self.executor.backend().active_fork_id(),
+                        );
                         if reason.is_some() {
                             debug!(?reason, "CREATE2 deployment of library failed");
                             result.reason = reason;
@@ -674,7 +685,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             debug_assert_eq!(dr.address, address);
         }
         let (raw, reason) = RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
-        result.extend(raw, TraceKind::Deployment);
+        result.extend(raw, TraceKind::Deployment, self.executor.backend().active_fork_id());
         if reason.is_some() {
             debug!(?reason, "deployment of test contract failed");
             result.reason = reason;
@@ -697,7 +708,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             trace!("calling setUp");
             let res = self.executor.setup(None, address, Some(rd));
             let (raw, reason) = RawCallResult::from_evm_result(res)?;
-            result.extend(raw, TraceKind::Setup);
+            result.extend(raw, TraceKind::Setup, self.executor.backend().active_fork_id());
             result.reason = reason;
         }
 
@@ -1191,6 +1202,8 @@ struct FunctionRunner<'a, FEN: FoundryEvmNetwork> {
     address: Address,
     /// The test setup result.
     setup: &'a TestSetup,
+    /// Setup storage observations, extended by function-specific setup without changing siblings.
+    fuzz_storage: Cow<'a, SetupStorage>,
     /// The test result. Returned after running the test.
     result: TestResult,
 }
@@ -1252,6 +1265,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             cr,
             address: setup.address,
             setup,
+            fuzz_storage: Cow::Borrowed(&setup.fuzz_storage),
             result: TestResult::new(setup),
         }
     }
@@ -5282,16 +5296,19 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             ) {
                 debug!(?calldata, spec=?self.executor.spec_id(), "applying before_test_setup");
                 // Apply before test configured calldata.
-                let Ok(call_result) = self.executor.to_mut().transact_raw(
-                    self.tcfg.sender,
-                    address,
-                    calldata,
-                    U256::ZERO,
-                ) else {
+                let executor = self.executor.to_mut();
+                executor.set_collect_setup_storage(true);
+                let call_result =
+                    executor.transact_raw(self.tcfg.sender, address, calldata, U256::ZERO);
+                executor.set_collect_setup_storage(false);
+                let Ok(call_result) = call_result else {
                     self.result.single_fail(None);
                     return Err(());
                 };
                 let reverted = call_result.reverted;
+                self.fuzz_storage
+                    .to_mut()
+                    .extend(self.executor.backend().active_fork_id(), &call_result);
                 // Merge tx result traces in unit test result.
                 self.result.extend_setup(call_result);
                 // To continue unit test execution the call should not revert.
@@ -5445,10 +5462,35 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     ) -> EvmFuzzState {
         let literals =
             if invariant { &self.cr.mcr.invariant_literals } else { &self.cr.mcr.fuzz_literals };
-        // Seed from the state `setUp` accepted.
+        // Seed from the state setup accepted, including function-specific setup.
+        let backend = self.executor.backend();
         let mut db = InMemoryDB::default();
-        if let Some(cache) = &self.executor.backend().lifecycle().active().cache {
+        if let Some(cache) = &backend.lifecycle().active().cache {
             db.cache = Cache::clone(cache);
+        }
+        // evm2 can leave loaded-but-unchanged slots implicit in the execution cache. Retain their
+        // keys for guidance in this seed-only copy, resolving values from the accepted state,
+        // not from an earlier setup call. Like other dictionary hints, unavailable reads are
+        // skipped.
+        if config.include_storage {
+            for ((fork, address), slots) in &self.fuzz_storage.slots {
+                if !slots.is_empty()
+                    && (*fork == backend.active_fork_id() || backend.is_persistent(address))
+                    && let Ok(Some(_)) = backend.basic(*address)
+                {
+                    for &slot in slots {
+                        if !db
+                            .cache
+                            .storage
+                            .get(address)
+                            .is_some_and(|s| s.slots.contains_key(&slot))
+                            && let Ok(value) = backend.storage(*address, slot)
+                        {
+                            db.insert_account_storage(address, &slot, &value);
+                        }
+                    }
+                }
+            }
         }
         EvmFuzzState::new(&self.setup.deployed_libs, &db, config, Some(literals))
     }
