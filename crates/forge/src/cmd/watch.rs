@@ -481,6 +481,7 @@ fn changed_test_rerun(
     if changed_sol_test_files.len() > 1 {
         // Run all tests if multiple files were changed at once, for example when running
         // `forge fmt`.
+        last_test_files.clear();
         return TestRerun::Unchanged;
     }
 
@@ -897,6 +898,20 @@ mod tests {
         assert_eq!(
             changed_test_rerun(&[path_event("/project/src/A.sol")], &mut last, "/project", false),
             TestRerun::MatchPath("test/A.t.sol".to_string())
+        );
+        // Multiple changed test files reset the selection for subsequent source changes.
+        assert_eq!(
+            changed_test_rerun(
+                &[path_event("/project/test/B.t.sol"), path_event("/project/test/C.t.sol")],
+                &mut last,
+                "/project",
+                false
+            ),
+            TestRerun::Unchanged
+        );
+        assert_eq!(
+            changed_test_rerun(&[path_event("/project/src/C.sol")], &mut last, "/project", false),
+            TestRerun::Unchanged
         );
     }
 
