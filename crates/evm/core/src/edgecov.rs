@@ -14,15 +14,21 @@
 //! In the same mode, the other per-opcode signals of a fuzz campaign come from wrapped
 //! instructions instead of `Inspector::step`, so the inspector needs no opcode dispatch:
 //!
-//! - comparison operands (cmp-log) from `EQ`, `LT`, `GT`, `SLT`, `SGT` and `ISZERO`, with the same
-//!   per-site caps as the cmp-log inspector ([`CmpLog`]);
+//! - comparison operands (cmp-log) from the compiler-instrumented [`CMPLOG`] opcode, which coverage
+//!   builds emit as `PUSHn <site << 8 | cmp opcode>; CMPLOG` right before each `EQ`, `LT`, `GT`,
+//!   `SLT` and `SGT`, with the same per-site caps as the cmp-log inspector, kept in a dense table
+//!   indexed by site instead of a hash map;
 //! - the caller's stack at each `CALL`/`CREATE`-family instruction that opens a frame, which the
-//!   fuzzer's dictionary collector reads once the frame returns ([`take_pending_frame_stack`]).
+//!   fuzzer's dictionary collector reads once the frame returns ([`take_pending_frame_stack`]);
+//! - 64-byte `KECCAK256` preimages and `SSTORE` slots, from which the fuzzer recovers mapping slots
+//!   ([`take_mapping_events`]).
 //!
 //! Every wrapper records and then runs revm's default instruction for its opcode, which all
 //! networks that install these hooks (Ethereum, Optimism, Base, Tempo) use for these opcodes.
+//! With no inspector left that needs `step`, frames then run on the interpreter's plain loop
+//! (see [`InspectorExt::run_frame_plain`](crate::InspectorExt::run_frame_plain)).
 
-use alloy_primitives::{Address, U256, map::HashMap};
+use alloy_primitives::{Address, B256, U256, map::HashMap};
 use revm::{
     bytecode::opcode,
     handler::instructions::EthInstructions,
@@ -30,7 +36,7 @@ use revm::{
         Host, Instruction, InstructionContext, InstructionExecResult, InstructionResult,
         InterpreterAction, instruction_table,
         interpreter::EthInterpreter,
-        interpreter_types::{InputsTr, InterpreterTypes, Jumps, StackTr},
+        interpreter_types::{InputsTr, InterpreterTypes, StackTr},
     },
 };
 use std::cell::{RefCell, UnsafeCell};
@@ -38,7 +44,11 @@ use std::cell::{RefCell, UnsafeCell};
 /// The `EDGECOV` opcode byte.
 pub const EDGECOV: u8 = 0xC0;
 
-/// Gas of the `PUSHn` that precedes every `EDGECOV`, refunded by the instruction.
+/// The `CMPLOG` opcode byte: pops `site << 8 | cmp opcode` and records the two words below it,
+/// the operands of the comparison that follows, leaving them on the stack.
+pub const CMPLOG: u8 = 0xC1;
+
+/// Gas of the `PUSHn` that precedes every `EDGECOV` or `CMPLOG`, refunded by the instruction.
 const PUSH_GAS: u64 = 3;
 
 /// Largest edge ID that is recorded. IDs are dense from 1, so anything above this is malformed
@@ -57,17 +67,20 @@ pub const MAX_CMP_OBSERVATIONS_PER_SITE: u8 = 8;
 pub struct EvmHooks {
     /// Execute the compiler-instrumented [`EDGECOV`] opcode instead of treating it as undefined.
     pub edgecov: bool,
-    /// Record comparison operands into this thread's cmp-log ([`take_cmp_log`]).
+    /// Execute the compiler-instrumented [`CMPLOG`] opcode, recording comparison operands into
+    /// this thread's cmp-log ([`take_cmp_log`]), instead of treating it as undefined.
     pub cmp_log: bool,
     /// Record the caller's stack when a `CALL`/`CREATE`-family instruction opens a frame
     /// ([`take_pending_frame_stack`]).
     pub frame_stacks: bool,
+    /// Record 64-byte `KECCAK256` preimages and `SSTORE` slots ([`take_mapping_events`]).
+    pub mapping_slots: bool,
 }
 
 impl EvmHooks {
     /// Whether any hook is on.
     pub const fn any(self) -> bool {
-        self.edgecov || self.cmp_log || self.frame_stacks
+        self.edgecov || self.cmp_log || self.frame_stacks || self.mapping_slots
     }
 }
 
@@ -214,12 +227,86 @@ impl EdgeHits {
     }
 }
 
+/// Comparison operand log of one call for compiler-instrumented sites, capped as [`CmpLog`] caps
+/// it, but counted in a table indexed by the dense site ID.
+///
+/// Sites are those of the bytecode, so copies of one contract at several addresses share their
+/// caps; each observation still records the address it ran at.
+#[derive(Debug, Default)]
+struct SiteCmpLog {
+    log: Vec<CmpOperands>,
+    /// Observations per site, indexed by site ID, grown on demand.
+    counts: Vec<u8>,
+    /// Sites observed since the last reset.
+    touched: Vec<u32>,
+}
+
+impl SiteCmpLog {
+    const fn new() -> Self {
+        Self { log: Vec::new(), counts: Vec::new(), touched: Vec::new() }
+    }
+
+    #[inline(always)]
+    fn record(&mut self, site: u32, cmp: impl FnOnce() -> CmpOperands) {
+        let index = site as usize;
+        if index >= self.counts.len() {
+            self.grow(index);
+        }
+        // SAFETY: `grow` made `index` in bounds.
+        let count = unsafe { self.counts.get_unchecked_mut(index) };
+        if *count >= MAX_CMP_OBSERVATIONS_PER_SITE {
+            return;
+        }
+        if *count == 0 {
+            if self.touched.len() >= MAX_CMP_LOG_SITES {
+                return;
+            }
+            self.touched.push(site);
+        }
+        *count += 1;
+        self.log.push(cmp());
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow(&mut self, index: usize) {
+        self.counts.resize((index + 1).next_power_of_two(), 0);
+    }
+
+    fn reset_counts(&mut self) {
+        for site in self.touched.drain(..) {
+            self.counts[site as usize] = 0;
+        }
+    }
+
+    fn clear(&mut self) {
+        self.reset_counts();
+        self.log.clear();
+    }
+
+    fn take(&mut self) -> Vec<CmpOperands> {
+        self.reset_counts();
+        std::mem::take(&mut self.log)
+    }
+}
+
+/// A mapping slot observation, in execution order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MappingEvent {
+    /// A 64-byte `KECCAK256` in the storage of `address`: `result = keccak256(key ++ parent)`.
+    Hash { address: Address, result: B256, key: B256, parent: B256 },
+    /// An `SSTORE` to `slot` in the storage of `address`.
+    Store { address: Address, slot: B256 },
+}
+
 thread_local! {
-    // An `UnsafeCell` rather than a `RefCell` keeps the `EDGECOV` hot path free of borrow-flag
-    // updates. Every access goes through `with_edge_hits`, whose closures never re-enter it.
+    // `UnsafeCell`s rather than `RefCell`s keep the `EDGECOV` and `CMPLOG` hot paths free of
+    // borrow-flag updates. Every access goes through `with_edge_hits` or `with_cmp_log`, whose
+    // closures never re-enter them.
     static EDGE_HITS: UnsafeCell<EdgeHits> = const { UnsafeCell::new(EdgeHits::new()) };
-    static CMP_LOG: RefCell<CmpLog> = RefCell::new(CmpLog::with_capacity());
+    static CMP_LOG: UnsafeCell<SiteCmpLog> = const { UnsafeCell::new(SiteCmpLog::new()) };
     static FRAME_STACK: RefCell<Option<Vec<U256>>> = const { RefCell::new(None) };
+    static MAPPING_EVENTS: RefCell<Vec<MappingEvent>> = const { RefCell::new(Vec::new()) };
 }
 
 #[inline(always)]
@@ -227,6 +314,12 @@ fn with_edge_hits<R>(f: impl FnOnce(&mut EdgeHits) -> R) -> R {
     // SAFETY: the reference does not escape `f`, and no caller re-enters this function from
     // inside `f`, so it is the only live reference to this thread's map.
     EDGE_HITS.with(|hits| f(unsafe { &mut *hits.get() }))
+}
+
+#[inline(always)]
+fn with_cmp_log<R>(f: impl FnOnce(&mut SiteCmpLog) -> R) -> R {
+    // SAFETY: as in `with_edge_hits`.
+    CMP_LOG.with(|log| f(unsafe { &mut *log.get() }))
 }
 
 /// Records one hit of edge `id` on this thread. IDs 0 and above [`MAX_EDGE_ID`] are ignored.
@@ -239,12 +332,13 @@ pub fn record_edge(id: U256) {
     with_edge_hits(|hits| hits.record(id));
 }
 
-/// Clears this thread's hits, cmp-log and pending frame stack before a call, in time
-/// proportional to what the previous call recorded.
+/// Clears this thread's hits, cmp-log, pending frame stack and mapping events before a call, in
+/// time proportional to what the previous call recorded.
 pub fn reset_edges() {
     with_edge_hits(EdgeHits::reset);
-    CMP_LOG.with_borrow_mut(CmpLog::clear);
+    with_cmp_log(SiteCmpLog::clear);
     FRAME_STACK.with_borrow_mut(Option::take);
+    MAPPING_EVENTS.with_borrow_mut(Vec::clear);
 }
 
 /// Takes this thread's hits in first-hit order and clears them.
@@ -254,7 +348,16 @@ pub fn take_edges() -> Vec<InstrumentedEdgeHit> {
 
 /// Takes this thread's comparison operands recorded since the last reset.
 pub fn take_cmp_log() -> Vec<CmpOperands> {
-    CMP_LOG.with_borrow_mut(CmpLog::take)
+    with_cmp_log(SiteCmpLog::take)
+}
+
+/// Passes this thread's mapping events recorded since they were last taken to `f`, in execution
+/// order, and clears them.
+pub fn take_mapping_events(mut f: impl FnMut(MappingEvent)) {
+    let events = MAPPING_EVENTS.with_borrow_mut(std::mem::take);
+    if !events.is_empty() {
+        events.into_iter().for_each(&mut f);
+    }
 }
 
 /// Takes the caller's stack recorded by the `CALL`/`CREATE`-family instruction that opened the
@@ -287,29 +390,92 @@ fn run_default<const OP: u8, H: Host>(
     instruction_table::<EthInterpreter, H>()[OP as usize].execute(context)
 }
 
-/// A comparison instruction that records its operands, as the cmp-log inspector reads them
-/// before the instruction runs, then executes it.
-fn cmp_hook<const OP: u8, H: Host>(
+/// The `CMPLOG` instruction: pops `site << 8 | cmp opcode`, records the two words below it as
+/// the operands of that comparison, as the comparison will read them, and refunds the `PUSH` gas.
+///
+/// The site ID stands for the comparison's program counter in [`CmpOperands::pc`]: it is unique
+/// per comparison of the compilation, and stable across builds compiled the same way.
+#[inline]
+pub fn cmplog<H: ?Sized>(
     context: InstructionContext<'_, H, EthInterpreter>,
 ) -> InstructionExecResult {
-    let interpreter = &*context.interpreter;
-    let operands = if OP == opcode::ISZERO {
-        interpreter.stack.peek(0).ok().map(|op1| (op1, U256::ZERO))
-    } else {
-        interpreter.stack.peek(0).ok().zip(interpreter.stack.peek(1).ok())
+    let interpreter = context.interpreter;
+    let tag = interpreter.stack.pop()?;
+    let (Ok(op1), Ok(op2)) = (interpreter.stack.peek(0), interpreter.stack.peek(1)) else {
+        return Err(InstructionResult::StackUnderflow);
     };
-    if let Some((op1, op2)) = operands {
-        let cmp = CmpOperands {
-            op1,
-            op2,
-            // The interpreter steps past the opcode before running it.
-            pc: interpreter.bytecode.pc() - 1,
-            address: interpreter.input.target_address(),
-            opcode: OP,
-        };
-        CMP_LOG.with_borrow_mut(|log| log.record(cmp));
+    interpreter.gas.erase_cost(PUSH_GAS);
+    let Ok(tag) = u64::try_from(tag) else { return Ok(()) };
+    let kind = tag as u8;
+    let site = match u32::try_from(tag >> 8) {
+        Ok(site @ 1..=MAX_EDGE_ID) => site,
+        _ => return Ok(()),
+    };
+    if !matches!(kind, opcode::EQ | opcode::LT | opcode::GT | opcode::SLT | opcode::SGT) {
+        return Ok(());
     }
-    run_default::<OP, H>(context)
+    let address = interpreter.input.target_address();
+    with_cmp_log(|log| {
+        log.record(site, || CmpOperands { op1, op2, pc: site as usize, address, opcode: kind })
+    });
+    Ok(())
+}
+
+/// The `CMPLOG` instruction of an EVM that records no comparisons: pops the site and refunds the
+/// `PUSH` gas.
+fn skip_cmplog<H: ?Sized>(
+    context: InstructionContext<'_, H, EthInterpreter>,
+) -> InstructionExecResult {
+    if context.interpreter.stack.pop().is_err() || context.interpreter.stack.len() < 2 {
+        return Err(InstructionResult::StackUnderflow);
+    }
+    context.interpreter.gas.erase_cost(PUSH_GAS);
+    Ok(())
+}
+
+/// A `KECCAK256` instruction that records a 64-byte preimage as a [`MappingEvent::Hash`] once it
+/// succeeds, as the fuzzer's mapping slot tracking reads it around the instruction.
+fn keccak_hook<H: Host>(
+    context: InstructionContext<'_, H, EthInterpreter>,
+) -> InstructionExecResult {
+    let InstructionContext { interpreter, host } = context;
+    let offset = (interpreter.stack.peek(1).ok() == Some(U256::from(0x40)))
+        .then(|| interpreter.stack.peek(0).ok().and_then(|offset| usize::try_from(offset).ok()))
+        .flatten();
+    let result = run_default::<{ opcode::KECCAK256 }, H>(InstructionContext {
+        interpreter: &mut *interpreter,
+        host,
+    });
+    if let Some(offset) = offset
+        && result.is_ok()
+        && interpreter.bytecode.action.is_none()
+        && let Ok(hash) = interpreter.stack.peek(0)
+    {
+        let data = interpreter.memory.slice_len(offset, 0x40);
+        let event = MappingEvent::Hash {
+            address: interpreter.input.target_address(),
+            result: hash.into(),
+            key: B256::from_slice(&data[..0x20]),
+            parent: B256::from_slice(&data[0x20..]),
+        };
+        drop(data);
+        MAPPING_EVENTS.with_borrow_mut(|events| events.push(event));
+    }
+    result
+}
+
+/// An `SSTORE` instruction that records its slot as a [`MappingEvent::Store`], then executes it.
+fn sstore_hook<H: Host>(
+    context: InstructionContext<'_, H, EthInterpreter>,
+) -> InstructionExecResult {
+    if let Ok(slot) = context.interpreter.stack.peek(0) {
+        let event = MappingEvent::Store {
+            address: context.interpreter.input.target_address(),
+            slot: slot.into(),
+        };
+        MAPPING_EVENTS.with_borrow_mut(|events| events.push(event));
+    }
+    run_default::<{ opcode::SSTORE }, H>(context)
 }
 
 /// A `CALL`/`CREATE`-family instruction that, when it opens a frame, records the caller's
@@ -340,13 +506,16 @@ pub fn install_hooks<CTX: Host>(
         let gas = instructions.gas_table()[op as usize];
         instructions.insert_instruction(op, instruction, gas);
     };
+    // Instrumented bytecode carries both probes, so an EVM that runs it executes `CMPLOG` even
+    // when it records no comparisons.
     if hooks.cmp_log {
-        wrap(opcode::EQ, Instruction::new(cmp_hook::<{ opcode::EQ }, CTX>));
-        wrap(opcode::LT, Instruction::new(cmp_hook::<{ opcode::LT }, CTX>));
-        wrap(opcode::GT, Instruction::new(cmp_hook::<{ opcode::GT }, CTX>));
-        wrap(opcode::SLT, Instruction::new(cmp_hook::<{ opcode::SLT }, CTX>));
-        wrap(opcode::SGT, Instruction::new(cmp_hook::<{ opcode::SGT }, CTX>));
-        wrap(opcode::ISZERO, Instruction::new(cmp_hook::<{ opcode::ISZERO }, CTX>));
+        wrap(CMPLOG, Instruction::new(cmplog));
+    } else if hooks.edgecov {
+        wrap(CMPLOG, Instruction::new(skip_cmplog));
+    }
+    if hooks.mapping_slots {
+        wrap(opcode::KECCAK256, Instruction::new(keccak_hook::<CTX>));
+        wrap(opcode::SSTORE, Instruction::new(sstore_hook::<CTX>));
     }
     if hooks.frame_stacks {
         wrap(opcode::CALL, Instruction::new(frame_hook::<{ opcode::CALL }, CTX>));

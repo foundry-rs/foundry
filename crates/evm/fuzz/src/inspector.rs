@@ -127,6 +127,23 @@ impl Fuzzer {
         }
     }
 
+    /// Records a mapping slot observation from the instruction hooks, as `step` and `step_end`
+    /// record it around `KECCAK256` and `SSTORE`.
+    pub fn record_mapping_event(&mut self, event: foundry_evm_core::edgecov::MappingEvent) {
+        use foundry_evm_core::edgecov::MappingEvent;
+        let Some(mapping_slots) = &mut self.mapping_slots else { return };
+        match event {
+            MappingEvent::Hash { address, result, key, parent } => {
+                mapping_slots.entry(address).or_default().record_hash(result, key, parent);
+            }
+            MappingEvent::Store { address, slot } => {
+                if let Some(slots) = mapping_slots.get_mut(&address) {
+                    slots.insert(slot);
+                }
+            }
+        }
+    }
+
     /// Constructs a new `Fuzzer` inspector.
     pub const fn new(
         max_collected_values: usize,

@@ -14,7 +14,11 @@ use crate::constants::DEFAULT_CREATE2_DEPLOYER;
 use alloy_primitives::{Address, map::HashMap};
 use auto_impl::auto_impl;
 use foundry_evm_networks::NetworkConfigs;
-use revm::{Inspector, inspector::NoOpInspector, interpreter::CreateInputs};
+use revm::{
+    Inspector,
+    inspector::NoOpInspector,
+    interpreter::{CreateInputs, Interpreter},
+};
 use revm_inspectors::access_list::AccessListInspector;
 
 #[cfg(feature = "optimism")]
@@ -86,6 +90,32 @@ pub trait InspectorExt {
     /// undefined.
     fn evm_hooks(&self) -> edgecov::EvmHooks {
         edgecov::EvmHooks::default()
+    }
+
+    /// Whether the frame of `interpreter`, about to run or resume, may run on the interpreter's
+    /// plain loop, without [`Inspector::step`], [`Inspector::step_end`] or
+    /// [`Inspector::log_full`] for each instruction. Frame, call and log hooks still run, logs
+    /// once the frame suspends or returns.
+    ///
+    /// Asked again every time the frame resumes after a call, so a cheatcode that turns on
+    /// per-opcode hooks takes effect from the instruction after it. An implementation may halt
+    /// `interpreter`, such as to cancel execution, which then runs no instruction.
+    fn run_frame_plain(&mut self, interpreter: &mut Interpreter) -> bool {
+        let _ = interpreter;
+        false
+    }
+
+    /// Called every [`PLAIN_POLL_INTERVAL`](evm::plain::PLAIN_POLL_INTERVAL) instructions of a
+    /// frame on the plain loop, which stops once it halts `interpreter`, such as to cancel
+    /// execution.
+    fn poll_plain_frame(&mut self, interpreter: &mut Interpreter) {
+        let _ = interpreter;
+    }
+
+    /// Called when a frame that ran on the plain loop suspends for a call or returns, with the
+    /// program counter past the instruction that suspended it.
+    fn plain_frame_suspended(&mut self, interpreter: &Interpreter) {
+        let _ = interpreter;
     }
 }
 

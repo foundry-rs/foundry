@@ -2368,6 +2368,24 @@ mod tests {
         0x5b, 0x50, 0x00, // 50: JUMPDEST; POP; STOP
     ];
 
+    /// [`CMP_CODE`] as a coverage build instruments it: `PUSH2 <site << 8 | opcode>; CMPLOG` before
+    /// each comparison but `ISZERO`, with sites 1 to 6.
+    const CMP_PROBED_CODE: &[u8] = &[
+        0x60, 0x02, 0x60, 0x01, 0x61, 0x01, 0x14, 0xc1, 0x14, 0x50, // EQ(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x61, 0x02, 0x10, 0xc1, 0x10, 0x50, // LT(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x61, 0x03, 0x11, 0xc1, 0x11, 0x50, // GT(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x61, 0x04, 0x12, 0xc1, 0x12, 0x50, // SLT(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x61, 0x05, 0x13, 0xc1, 0x13, 0x50, // SGT(1, 2)
+        0x60, 0x00, 0x15, 0x50, // ISZERO(0)
+        0x60, 0x00, // i = 0
+        0x5b, // 56: JUMPDEST
+        0x80, 0x60, 0x0a, 0x61, 0x06, 0x14, 0xc1, 0x14, // EQ(10, i)
+        0x60, 0x4a, 0x57, // JUMPI to 74 when i == 10
+        0x60, 0x01, 0x01, // i += 1
+        0x60, 0x38, 0x56, // JUMP to 56
+        0x5b, 0x50, 0x00, // 74: JUMPDEST; POP; STOP
+    ];
+
     fn cmp_values(executor: &Executor<EthEvmNetwork>, target: Address) -> Vec<CmpOperands> {
         let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
         assert_eq!(result.exit_reason, Some(InstructionResult::Stop));
@@ -2393,22 +2411,37 @@ mod tests {
         assert_eq!((expected[0].op1, expected[0].op2), (U256::from(1), U256::from(2)));
         assert_eq!(expected[0].address, target);
 
+        // Instrumented code reports the same operands from its `CMPLOG` probes, with each site ID
+        // in place of the comparison's program counter. `ISZERO` is not probed.
         let mut instrumented = edgecov_executor(true, true);
         instrumented.inspector_mut().collect_evm_cmp_log(true);
         assert!(instrumented.inspector().edge_coverage.is_none());
-        instrumented.set_code(target, Bytecode::new_raw(Bytes::from_static(CMP_CODE))).unwrap();
-        assert_eq!(cmp_values(&instrumented, target), expected);
+        instrumented
+            .set_code(target, Bytecode::new_raw(Bytes::from_static(CMP_PROBED_CODE)))
+            .unwrap();
+        let sites = (1..=5).chain(std::iter::repeat_n(
+            6,
+            usize::from(foundry_evm_core::edgecov::MAX_CMP_OBSERVATIONS_PER_SITE),
+        ));
+        let probed = expected
+            .iter()
+            .filter(|cmp| cmp.opcode != 0x15)
+            .zip(sites)
+            .map(|(cmp, site)| CmpOperands { pc: site, ..*cmp })
+            .collect::<Vec<_>>();
+        assert_eq!(cmp_values(&instrumented, target), probed);
         // The log is reset for every call.
-        assert_eq!(cmp_values(&instrumented, target), expected);
+        assert_eq!(cmp_values(&instrumented, target), probed);
 
-        // Turning cmp-log off removes the hooks.
+        // Without cmp-log, the probes still run and record nothing.
         instrumented.inspector_mut().collect_evm_cmp_log(false);
         assert!(cmp_values(&instrumented, target).is_empty());
-        // Leaving instrumented mode brings back the inspector.
+        // Leaving instrumented mode brings back the inspector, for uninstrumented code.
         instrumented.inspector_mut().collect_evm_cmp_log(true);
         instrumented.inspector_mut().collect_instrumented_edges(false);
         instrumented.inspector_mut().enable_edgecov_opcode(false);
         assert!(instrumented.inspector().edge_coverage.is_some());
+        instrumented.set_code(target, Bytecode::new_raw(Bytes::from_static(CMP_CODE))).unwrap();
         assert_eq!(cmp_values(&instrumented, target), expected);
     }
 
@@ -2443,6 +2476,50 @@ mod tests {
             backend.inspect_with_context(&mut evm_env, &mut tx_env, (), &mut stack).unwrap();
         assert!(result.result.is_success(), "{result:?}");
         stack.fuzzer.take().unwrap().collected_values
+    }
+
+    /// Runs one call with a fresh fuzzer that records mapping slots and returns them.
+    fn fuzzer_mapping_slots(
+        executor: &Executor<EthEvmNetwork>,
+        target: Address,
+        instrumented: bool,
+    ) -> foundry_common::mapping_slots::MappingSlots {
+        let mut stack = executor.inspector().clone();
+        stack.set_fuzzer(foundry_evm_fuzz::Fuzzer::new(1024, Some(Default::default())));
+        stack.collect_instrumented_edges(instrumented);
+        let (mut evm_env, mut tx_env) =
+            executor.prepare_call_env(CALLER, TxKind::Call(target), Bytes::new(), U256::ZERO);
+        executor.chain_context_for_synthetic_transaction(&tx_env).unwrap();
+        edgecov::reset_edges();
+        let mut backend = CowBackend::new_borrowed(executor.backend());
+        let result =
+            backend.inspect_with_context(&mut evm_env, &mut tx_env, (), &mut stack).unwrap();
+        assert!(result.result.is_success(), "{result:?}");
+        stack.fuzzer.take().unwrap().mapping_slots.unwrap().remove(&target).unwrap()
+    }
+
+    #[test]
+    fn fuzzer_mapping_hooks_match_step_recording() {
+        let target = Address::repeat_byte(0x51);
+        // mstore(0, 7); mstore(0x20, 3); sstore(keccak256(0, 0x40), 1); stop
+        let code = [
+            0x60, 0x07, 0x5f, 0x52, 0x60, 0x03, 0x60, 0x20, 0x52, 0x60, 0x40, 0x5f, 0x20, 0x60,
+            0x01, 0x90, 0x55, 0x00,
+        ];
+        let slot = alloy_primitives::keccak256(
+            [B256::with_last_byte(7).as_slice(), B256::with_last_byte(3).as_slice()].concat(),
+        );
+        for instrumented in [false, true] {
+            let mut executor = edgecov_executor(instrumented, false);
+            executor.set_code(target, Bytecode::new_raw(Bytes::copy_from_slice(&code))).unwrap();
+            let slots = fuzzer_mapping_slots(&executor, target, instrumented);
+            assert_eq!(
+                slots.seen_sha3.get(&slot),
+                Some(&(B256::with_last_byte(7), B256::with_last_byte(3)))
+            );
+            assert_eq!(slots.keys.get(&slot), Some(&B256::with_last_byte(7)));
+            assert_eq!(slots.parent_slots.get(&slot), Some(&B256::with_last_byte(3)));
+        }
     }
 
     #[test]
