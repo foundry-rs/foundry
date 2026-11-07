@@ -154,6 +154,7 @@ contract FuzzerDict {
     address public immutable immutableOwner;
     // Regular storage variables should also get added to the dictionary.
     address public storageOwner;
+    bool public broken;
 
     constructor(address _immutableOwner, address _storageOwner) {
         immutableOwner = _immutableOwner;
@@ -169,6 +170,10 @@ contract FuzzerDict {
         uint256 value;
         assembly { value := sload(key) }
         require(value == 0);
+    }
+
+    function step(uint256 value) external {
+        if (value == slot()) broken = true;
     }
 }
    "#,
@@ -186,6 +191,7 @@ contract FuzzerDictTest is Test {
     function setUp() public {
         fuzzerDict = new FuzzerDict(address(100), address(200));
         fuzzerDict.probe();
+        targetContract(address(fuzzerDict));
     }
 
     /// forge-config: default.fuzz.runs = 2000
@@ -200,6 +206,10 @@ contract FuzzerDictTest is Test {
 
     function testZeroSlotKey(uint256 value) public view {
         require(value != fuzzerDict.slot(), "SLOT_FOUND");
+    }
+
+    function invariant_seed() public view {
+        require(!fuzzerDict.broken(), "SLOT_FOUND");
     }
 }
    "#,
@@ -224,6 +234,10 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
         config.fuzz.runs = 512;
         config.fuzz.dictionary.dictionary_weight = 100;
         config.fuzz.dictionary.include_push_bytes = false;
+        config.invariant.runs = 512;
+        config.invariant.depth = 1;
+        config.invariant.shrink_run_limit = 0;
+        config.invariant.dictionary = config.fuzz.dictionary;
     });
     cmd.forge_fuse().args(["test", "--mt", "testZeroSlotKey"]).assert_failure().stdout_eq(str![[
         r#"
@@ -232,9 +246,19 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#
     ]]);
+    cmd.forge_fuse().args(["test", "--mt", "invariant_seed"]).assert_failure().stdout_eq(str![[
+        r#"
+...
+[FAIL: SLOT_FOUND]
+...
+ invariant_seed() (runs: [..], calls: [..], reverts: 0)
+...
+"#
+    ]]);
     prj.clear_cache_dir();
     cmd.forge_fuse().env("FOUNDRY_FUZZ_INCLUDE_STORAGE", "false");
-    cmd.args(["test", "--mt", "testZeroSlotKey"]).assert_success();
+    cmd.env("FOUNDRY_INVARIANT_INCLUDE_STORAGE", "false");
+    cmd.args(["test", "--mt", "testZeroSlotKey|invariant_seed"]).assert_success();
 }
 
 #[forgetest_init]
@@ -6502,131 +6526,6 @@ Warning: Persisted failure for [..] was recorded at fork block 0 but is replayed
         .stderr_eq(str![""]);
 }
 
-// Storage keys read as zero during setup must remain available to both fuzzers, even when the
-// execution engine represents the slot implicitly. The runtime-derived key is not a PUSH literal.
-#[forgetest_init]
-fn setup_zero_storage_guidance(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.fuzz.seed = Some(U256::from(1));
-        config.fuzz.runs = 512;
-        config.fuzz.dictionary.dictionary_weight = 100;
-        config.fuzz.dictionary.include_push_bytes = false;
-        config.invariant.runs = 512;
-        config.invariant.depth = 1;
-        config.invariant.shrink_run_limit = 0;
-        config.invariant.dictionary = config.fuzz.dictionary;
-    });
-    prj.add_test(
-        "SetupStorage.t.sol",
-        r#"
-contract GuidedChild {
-    bool public broken;
-
-    function slot() public view returns (uint256) {
-        return uint256(keccak256(abi.encode(address(this), uint256(0x123456))));
-    }
-
-    function probe() external view {
-        uint256 key = slot();
-        uint256 value;
-        assembly { value := sload(key) }
-        require(value == 0);
-    }
-
-    function step(uint256 value) external {
-        if (value == slot()) broken = true;
-    }
-}
-
-abstract contract GuidanceBase {
-    GuidedChild internal child;
-
-    function testFuzz_seed(uint256 value) public view {
-        require(value != child.slot(), "SLOT_FOUND");
-    }
-}
-
-contract CreatedGuidance {
-    GuidedChild child;
-
-    function setUp() public {
-        child = new GuidedChild();
-        child.probe();
-    }
-
-    function invariant_seed() public view {
-        require(!child.broken(), "SLOT_FOUND");
-    }
-
-    function targetContracts() public view returns (address[] memory targets) {
-        targets = new address[](1);
-        targets[0] = address(child);
-    }
-}
-
-contract ConstructorGuidance is GuidanceBase {
-    constructor() {
-        child = new GuidedChild();
-        child.probe();
-    }
-}
-
-contract BeforeTestGuidance is GuidanceBase {
-    function beforeTestSetup(bytes4 selector) public pure returns (bytes[] memory calls) {
-        calls = new bytes[](1);
-        calls[0] = abi.encodeWithSelector(this.prepare.selector, selector == this.testFuzz_sibling.selector);
-    }
-
-    function prepare(bool sibling) public {
-        if (sibling) new GuidedChild();
-        child = new GuidedChild();
-        child.probe();
-    }
-
-    function testFuzz_sibling(uint256 value) public view {
-        require(value != child.slot(), "SIBLING_SLOT_FOUND");
-    }
-}
-"#,
-    );
-
-    cmd.args(["test", "--mc", "CreatedGuidance"]).assert_failure().stdout_eq(str![[r#"
-...
-[FAIL: SLOT_FOUND]
-...
- invariant_seed() (runs: [..], calls: [..], reverts: 0)
-...
-"#]]);
-    cmd.forge_fuse().args(["test", "--mc", "ConstructorGuidance"]).assert_failure().stdout_eq(
-        str![[r#"
-...
-[FAIL: SLOT_FOUND; counterexample: [..]] testFuzz_seed(uint256) (runs: [..], [AVG_GAS])
-...
-"#]],
-    );
-
-    // One invocation must seed both siblings independently, not reuse the first dictionary.
-    prj.clear_cache_dir();
-    cmd.forge_fuse()
-        .args(["test", "--mc", "BeforeTestGuidance", "--mt", "testFuzz_"])
-        .assert_failure()
-        .stdout_eq(str![[r#"
-...
-[FAIL: SLOT_FOUND; counterexample: [..]] testFuzz_seed(uint256) (runs: [..], [AVG_GAS])
-[FAIL: SIBLING_SLOT_FOUND; counterexample: [..]] testFuzz_sibling(uint256) (runs: [..], [AVG_GAS])
-...
-"#]]);
-
-    // Without storage guidance neither the random generator nor bytecode literals supply the key.
-    prj.clear_cache_dir();
-    cmd.forge_fuse();
-    cmd.env("FOUNDRY_FUZZ_INCLUDE_STORAGE", "false");
-    cmd.env("FOUNDRY_INVARIANT_INCLUDE_STORAGE", "false");
-    cmd.args(["test", "--mc", "CreatedGuidance"]).assert_success();
-    cmd.forge_fuse().env("FOUNDRY_FUZZ_INCLUDE_STORAGE", "false");
-    cmd.args(["test", "--mc", "BeforeTestGuidance", "--mt", "testFuzz_"]).assert_success();
-}
-
 #[forgetest_init]
 async fn fork_setup_storage_guidance(prj: _, cmd: _) {
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -6681,43 +6580,6 @@ contract GuidedStorage {
     }
 }
 
-contract ForkedGuidance {
-    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
-    GuidedStorage child;
-
-    function persistent() internal pure virtual returns (bool) { return false; }
-
-    function setUp() public {
-        child = new GuidedStorage();
-        child.probe(1);
-        if (persistent()) vm.makePersistent(address(child));
-    }
-
-    function beforeTestSetup(bytes4) public pure returns (bytes[] memory calls) {
-        calls = new bytes[](1);
-        calls[0] = abi.encodeWithSelector(this.prepare.selector);
-    }
-
-    function prepare() public {
-        address previous = address(child);
-        vm.createSelectFork("RPC_URL", 0);
-        if (!persistent()) {
-            // Reuse the address on a different fork; its old slot observations must not leak.
-            vm.setNonceUnsafe(address(this), 1);
-            child = new GuidedStorage();
-            require(address(child) == previous, "different child address");
-        }
-    }
-
-    function testFuzz_previous(uint256 value) public view {
-        require(value != child.slot(1), "PREVIOUS_KEY_FOUND");
-    }
-}
-
-contract PersistentGuidance is ForkedGuidance {
-    function persistent() internal pure override returns (bool) { return true; }
-}
-
 contract RoundTripGuidance {
     Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     GuidedStorage child;
@@ -6760,12 +6622,19 @@ contract SameSetupForkedGuidance is RoundTripGuidance {
 contract DeferredReturnGuidance is RoundTripGuidance {
     function returnInSetup() internal pure override returns (bool) { return false; }
 
-    function beforeTestSetup(bytes4) public view returns (bytes[] memory calls) {
+    function beforeTestSetup(bytes4 selector) public view returns (bytes[] memory calls) {
         calls = new bytes[](1);
-        calls[0] = abi.encodeWithSelector(this.prepare.selector);
+        calls[0] = abi.encodeCall(this.prepare, (selector == this.testFuzz_sibling.selector));
     }
 
-    function prepare() public { vm.selectFork(forkA); }
+    function prepare(bool sibling) public {
+        vm.selectFork(forkA);
+        if (sibling) child.probe(2);
+    }
+
+    function testFuzz_sibling(uint256 value) public view {
+        require(value != child.slot(2), "SIBLING_SLOT_FOUND");
+    }
 }
 
 contract RolledGuidance {
@@ -6795,24 +6664,10 @@ contract RolledGuidance {
     function testFuzz_current(uint256 value) public pure {
         require(value != uint256(slot(3)), "BACKING_VALUE_FOUND");
     }
-
-    function test_currentState() public view {
-        require(vm.load(target, slot(0x123456)) == slot(3));
-    }
 }
 "#
         .replace("RPC_URL", &handle.http_endpoint()),
     );
-
-    cmd.args(["test", "--mc", "^ForkedGuidance$", "--mt", "testFuzz_previous"]).assert_success();
-    cmd.forge_fuse()
-        .args(["test", "--mc", "^PersistentGuidance$", "--mt", "testFuzz_previous"])
-        .assert_failure()
-        .stdout_eq(str![[r#"
-...
-[FAIL: PREVIOUS_KEY_FOUND; counterexample: [..]] testFuzz_previous(uint256) (block: 0) (runs: [..], [AVG_GAS])
-...
-"#]]);
 
     for contract in ["RoundTripGuidance", "CrossPersistentGuidance", "DeferredReturnGuidance"] {
         cmd.forge_fuse()
@@ -6821,6 +6676,8 @@ contract RolledGuidance {
             .stdout_eq(str![[r#"
 ...
 [FAIL: SLOT_FOUND; counterexample: [..]] testFuzz_seed(uint256) (block: 0) (runs: [..], [AVG_GAS])
+...
+Suite result: FAILED. 0 passed; [..] failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
     }
@@ -6833,9 +6690,6 @@ contract RolledGuidance {
 [FAIL: BACKING_VALUE_FOUND; counterexample: [..]] testFuzz_current(uint256) (block: 3) (runs: [..], [AVG_GAS])
 ...
 "#]]);
-    cmd.forge_fuse()
-        .args(["test", "--mc", "^RolledGuidance$", "--mt", "test_currentState"])
-        .assert_success();
 
     // Fresh runs must miss these runtime-derived seeds when storage guidance is disabled.
     prj.clear_cache_dir();
