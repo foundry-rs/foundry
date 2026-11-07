@@ -54,6 +54,7 @@ use foundry_evm::{
             LiveInvariantSolver, ReplayErrorResult, apply_invariant_call_delay, check_sequence,
             did_fail_on_assert, execute_and_commit_tx, execute_tx, execute_tx_and_register_created,
             handler_edge_fingerprint, replay_error, replay_handler_failure_sequence, replay_run,
+            reset_shrink_progress,
         },
         persist_corpus_seed, read_corpus_dir, replay_corpus_to_showmap,
         replay_sequence_for_minimization, should_ignore_revert,
@@ -1194,6 +1195,8 @@ struct ReplayedInvariantSequence {
     artifact: Option<SymbolicArtifactRef>,
     minimization: Option<SymbolicCounterexampleMinimization>,
     fork_block_number: Option<u64>,
+    /// Failure reasons of replaying the original and the minimized sequence.
+    reasons: Option<SequenceReasons>,
 }
 
 /// An invariant failure confirmed while solving a captured fuzz frontier.
@@ -1220,10 +1223,25 @@ struct SequenceArtifactSpec<'a> {
     failure: Option<SymbolicInvariantArtifactFailure>,
 }
 
+/// Failure reasons of replaying an original sequence and its minimized form.
+type SequenceReasons = (Option<String>, Option<String>);
+
+/// Returns the reason to show for a minimized sequence, whose values can differ from the
+/// campaign's: the minimized replay's reason when replaying the original sequence reproduced the
+/// campaign reason, otherwise the campaign reason.
+fn minimized_reason(campaign: Option<String>, reasons: Option<SequenceReasons>) -> Option<String> {
+    match reasons {
+        Some((original, minimized)) if original == campaign => minimized,
+        _ => campaign,
+    }
+}
+
 /// Returns `true` if two sequence replays failed in the same way at the same site.
+///
+/// Reasons are not compared because assertion messages embed the values being minimized.
 fn same_sequence_failure(actual: &CheckSequenceOutcome, expected: &CheckSequenceOutcome) -> bool {
     actual.replayed_entirely == expected.replayed_entirely
-        && actual.reason == expected.reason
+        && actual.failure_kind == expected.failure_kind
         && actual.failure_site == expected.failure_site
         && actual.sequence_assertion_failure == expected.sequence_assertion_failure
 }
@@ -1421,12 +1439,20 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         progress: Option<&indicatif::ProgressBar>,
         position: Option<(usize, usize)>,
     ) -> Result<ReplayedInvariantSequence> {
-        let minimization = self.minimize_symbolic_invariant_sequence(
+        reset_shrink_progress(
+            replay.invariant_config,
+            progress,
+            &replay.target_invariant.name,
+            position,
+        );
+        let minimized = self.minimize_invariant_sequence(
             replay,
             original_calls,
             identified_contracts,
             current_settings,
+            progress,
         );
+        let (minimization, reasons) = minimized.unzip();
 
         let mut replay_config = replay.invariant_config.clone();
         let minimized_txes;
@@ -1516,6 +1542,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             artifact: artifact_ref,
             minimization,
             fork_block_number,
+            reasons,
         })
     }
 
@@ -1562,14 +1589,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         )
     }
 
-    fn minimize_symbolic_invariant_sequence(
+    /// Minimizes the calls, arguments, senders and values of a failing sequence, returning it
+    /// with the failure reasons of the original and the minimized sequence.
+    fn minimize_invariant_sequence(
         &self,
         replay: SequenceReplay<'_>,
         calls: &[BasicTxDetails],
         identified_contracts: &ContractsByAddress,
         current_settings: &InvariantSettings,
-    ) -> Option<MinimizedSequence> {
-        if !self.config.symbolic.enabled || calls.is_empty() {
+        progress: Option<&indicatif::ProgressBar>,
+    ) -> Option<(MinimizedSequence, SequenceReasons)> {
+        if calls.is_empty() {
             return None;
         }
 
@@ -1579,9 +1609,18 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             replay.invariant_config.show_solidity,
         ));
         let expected = self.symbolic_sequence_failure(replay, &original_calls)?;
-        let preserves = |candidate: &[SymbolicCounterexampleCall]| {
+        let replay_candidate = |candidate: &[SymbolicCounterexampleCall]| {
             self.symbolic_sequence_failure(replay, candidate)
-                .is_some_and(|actual| same_sequence_failure(&actual, &expected))
+                .filter(|actual| same_sequence_failure(actual, &expected))
+        };
+        let preserves = |candidate: &[SymbolicCounterexampleCall]| {
+            if self.tcfg.early_exit.should_stop() {
+                return false;
+            }
+            if let Some(progress) = progress {
+                progress.inc(1);
+            }
+            replay_candidate(candidate).is_some()
         };
 
         let minimization = minimize_sequence_counterexample(
@@ -1590,7 +1629,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             replay.invariant_config.shrink_run_limit as usize,
             preserves,
         )?;
-        preserves(&minimization.minimized_calls).then_some(minimization)
+        let outcome = replay_candidate(&minimization.minimized_calls)?;
+        Some((minimization, (expected.reason, outcome.reason)))
     }
 
     fn symbolic_sequence_sender_candidates(
@@ -1622,8 +1662,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let txes =
             calls.iter().map(SymbolicCounterexampleCall::to_basic_tx_details).collect::<Vec<_>>();
         let sequence = (0..txes.len()).collect::<Vec<_>>();
+        let mut executor = self.clone_executor_with_symbolic_storage(replay.storage).ok()?;
+        // Candidate replays must not add steps to the debugger's recording.
+        executor.inspector_mut().debug_recorder = None;
+        if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut() {
+            cheats.assertion_sites = Some(Default::default());
+        }
         let outcome = check_sequence(
-            self.clone_executor_with_symbolic_storage(replay.storage).ok()?,
+            executor,
             &txes,
             &sequence,
             replay.invariant_contract.address,
@@ -4484,6 +4530,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         artifact,
                         minimization,
                         fork_block_number,
+                        reasons,
                     } = replayed;
                     let mut symbolic_result = SymbolicResult::fail_counterexample_sequence(
                         &symbolic_config,
@@ -4496,7 +4543,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     if let Some(minimization) = minimization.clone() {
                         symbolic_result = symbolic_result.with_minimization(minimization);
                     }
-                    let reason = failure.reason.unwrap_or_else(|| {
+                    let reason = minimized_reason(failure.reason, reasons).unwrap_or_else(|| {
                         if is_handler {
                             "symbolic handler counterexample".to_string()
                         } else {
@@ -4882,17 +4929,18 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         }
                     }
                 };
-                let (counterexample, artifact, minimization) = match replayed {
+                let (counterexample, artifact, minimization, reasons) = match replayed {
                     Some(replayed) => (
                         Some(CounterExample::Sequence(calls.len(), replayed.call_sequence)),
                         replayed.artifact,
                         replayed.minimization,
+                        replayed.reasons,
                     ),
-                    None => (None, None, None),
+                    None => (None, None, None, None),
                 };
                 invariant_failures.push(InvariantFailure::Predicate {
                     name: invariant.name.clone(),
-                    reason: error.revert_reason().unwrap_or_default(),
+                    reason: minimized_reason(error.revert_reason(), reasons).unwrap_or_default(),
                     counterexample,
                     artifact,
                     minimization,
@@ -6276,26 +6324,30 @@ mod tests {
 
     #[test]
     fn symbolic_sequence_failure_identity_includes_failure_site() {
-        let outcome = |site: CheckSequenceFailureSite| CheckSequenceOutcome {
-            success: false,
-            replayed_entirely: false,
-            reason: Some("same reason".to_string()),
-            calls_count: 1,
-            reverts: 0,
-            failure_site: Some(site),
-            sequence_assertion_failure: true,
-            sequence_reverter: None,
-        };
+        let outcome =
+            |site: CheckSequenceFailureSite, reason: &str, kind: u8| CheckSequenceOutcome {
+                success: false,
+                replayed_entirely: false,
+                reason: Some(reason.to_string()),
+                calls_count: 1,
+                reverts: 0,
+                failure_site: Some(site),
+                sequence_assertion_failure: true,
+                sequence_reverter: None,
+                failure_kind: Bytes::from(vec![kind; 4]),
+            };
         let site = |target: u8, fingerprint: u8| CheckSequenceFailureSite::SequenceCall {
             target: Address::with_last_byte(target),
             selector: Selector::from([0, 0, 0, 1]),
             fingerprint: B256::repeat_byte(fingerprint),
         };
-        let expected = outcome(site(1, 1));
+        let expected = outcome(site(1, 1), "1001 != 0", 1);
 
-        assert!(same_sequence_failure(&outcome(site(1, 1)), &expected));
-        assert!(!same_sequence_failure(&outcome(site(2, 1)), &expected));
-        assert!(!same_sequence_failure(&outcome(site(1, 2)), &expected));
+        assert!(same_sequence_failure(&outcome(site(1, 1), "1001 != 0", 1), &expected));
+        assert!(same_sequence_failure(&outcome(site(1, 1), "5 != 0", 1), &expected));
+        assert!(!same_sequence_failure(&outcome(site(1, 1), "1001 != 0", 2), &expected));
+        assert!(!same_sequence_failure(&outcome(site(2, 1), "1001 != 0", 1), &expected));
+        assert!(!same_sequence_failure(&outcome(site(1, 2), "1001 != 0", 1), &expected));
     }
 
     #[test]

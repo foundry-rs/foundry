@@ -352,6 +352,7 @@ pub struct InspectorData<FEN: FoundryEvmNetwork> {
     pub cheatcodes: Option<Box<Cheatcodes<FEN>>>,
     pub chisel_state: Option<(Vec<U256>, Vec<u8>)>,
     pub reverter: Option<Address>,
+    pub halt: Option<InstructionResult>,
 }
 
 /// Contains data about the state of outer/main EVM which created and invoked the inner EVM context.
@@ -483,6 +484,8 @@ pub struct InspectorStackInner {
     synthetic_create_depth: Option<usize>,
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
+    /// Latest halt of the call, such as running out of gas, if any.
+    pub halt: Option<InstructionResult>,
     /// LIFO stack tracking CREATE2 frames that were redirected to the CREATE2 factory.
     pending_create2_redirects: Vec<PendingCreate2Redirect>,
     /// LIFO stack tracking the effective address of traced calls delegated to the EVM provider.
@@ -907,6 +910,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
                     tracer,
                     revert_diag,
                     reverter,
+                    halt,
                     ..
                 },
         } = self;
@@ -961,6 +965,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
             cheatcodes,
             chisel_state: chisel_state.and_then(|state| state.state),
             reverter,
+            halt,
         }
     }
 }
@@ -1052,6 +1057,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         if result.is_revert() && self.reverter.is_none() {
             self.reverter = Some(inputs.transfer_to());
         }
+        if result.is_halt() {
+            self.halt = Some(result);
+        }
     }
 
     fn do_create_end(
@@ -1082,6 +1090,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 different.then_some(())
             },
         );
+
+        if result.is_halt() {
+            self.halt = Some(result);
+        }
     }
 
     fn transact_inner(
