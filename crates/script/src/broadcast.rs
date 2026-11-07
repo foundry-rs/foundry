@@ -7,7 +7,8 @@ use crate::{
     receipts::is_mined_receipt_for,
     recovery::{AttemptKind, DelegatedStatus},
     sequence::{
-        ScriptSequenceKind, blocked_pending, completed_transaction_prefix, operation_ordinal,
+        DelegatedResolution, ScriptSequenceKind, blocked_pending, completed_transaction_prefix,
+        operation_ordinal,
     },
     session::{
         SignerScope, insert_session_access_key_for_remaining_transactions,
@@ -601,6 +602,35 @@ const fn should_broadcast_sequentially(
     estimate_via_rpc || slow || required_signers == 0 || ordering_senders != 1 || !batch_supported
 }
 
+/// Fees chosen once per sequence for its remaining unsigned operations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FeePlan {
+    /// Every remaining operation already has a signed payload, so no fees are set.
+    PreSigned,
+    /// Legacy transactions pay this gas price.
+    Legacy(u128),
+    /// EIP-1559 transactions pay these fees.
+    Eip1559(Eip1559Estimation),
+}
+
+impl FeePlan {
+    /// Sets the planned fees on an unsigned operation.
+    ///
+    /// # Panics
+    ///
+    /// Panics for `FeePlan::PreSigned`, which has no unsigned operation to price.
+    fn apply<N: Network>(self, tx: &mut N::TransactionRequest) {
+        match self {
+            Self::Legacy(gas_price) => tx.set_gas_price(gas_price),
+            Self::Eip1559(fees) => {
+                tx.set_max_priority_fee_per_gas(fees.max_priority_fee_per_gas);
+                tx.set_max_fee_per_gas(fees.max_fee_per_gas);
+            }
+            Self::PreSigned => unreachable!("pre-signed operations are not priced"),
+        }
+    }
+}
+
 /// Represents how to send _all_ transactions
 pub enum SendTransactionsKind<N: Network> {
     /// Send via `eth_sendTransaction` and rely on the  `from` address being unlocked.
@@ -888,15 +918,15 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     // Make a one-time gas price estimation
                     let all_signed =
                         remaining_indices.iter().all(|index| signed_payloads[*index].is_some());
-                    let (gas_price, eip1559_fees) = match (
+                    let fee_plan = match (
                         all_signed,
                         is_legacy,
                         self.args.with_gas_price,
                         self.args.priority_gas_price,
                     ) {
-                        (true, _, _, _) => (None, None),
-                        (false, true, Some(gas_price), _) => (Some(gas_price.to()), None),
-                        (false, true, None, _) => (Some(provider.get_gas_price().await?), None),
+                        (true, _, _, _) => FeePlan::PreSigned,
+                        (false, true, Some(gas_price), _) => FeePlan::Legacy(gas_price.to()),
+                        (false, true, None, _) => FeePlan::Legacy(provider.get_gas_price().await?),
                         (false, false, Some(max_fee_per_gas), Some(max_priority_fee_per_gas)) => {
                             let max_fee: u128 = max_fee_per_gas.to();
                             let max_priority: u128 = max_priority_fee_per_gas.to();
@@ -905,13 +935,10 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     "--priority-gas-price ({max_priority}) cannot be higher than --with-gas-price ({max_fee})"
                                 );
                             }
-                            (
-                                None,
-                                Some(Eip1559Estimation {
-                                    max_fee_per_gas: max_fee,
-                                    max_priority_fee_per_gas: max_priority,
-                                }),
-                            )
+                            FeePlan::Eip1559(Eip1559Estimation {
+                                max_fee_per_gas: max_fee,
+                                max_priority_fee_per_gas: max_priority,
+                            })
                         }
                         (false, false, _, _) => {
                             let fees = estimate_eip1559_fees(
@@ -938,7 +965,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                 browser_suggested_tip,
                             )?;
 
-                            (None, Some(fees.estimation()))
+                            FeePlan::Eip1559(fees.estimation())
                         }
                     };
 
@@ -987,15 +1014,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     tx.set_create();
                                 }
 
-                                if let Some(gas_price) = gas_price {
-                                    tx.set_gas_price(gas_price);
-                                } else {
-                                    let eip1559_fees = eip1559_fees.expect("was set above");
-                                    tx.set_max_priority_fee_per_gas(
-                                        eip1559_fees.max_priority_fee_per_gas,
-                                    );
-                                    tx.set_max_fee_per_gas(eip1559_fees.max_fee_per_gas);
-                                }
+                                fee_plan.apply::<FEN::Network>(&mut tx);
 
                                 // `vm.attachBlob` transactions also need a blob fee.
                                 if tx.blob_sidecar().is_some()
@@ -1357,13 +1376,13 @@ impl BundledState<TempoEvmNetwork> {
             );
         }
 
-        let batch_resolution = if self.args.resume_tx_hash.is_some() {
+        let batch_resolution = if let Some(hash) = self.args.resume_tx_hash {
             self.sequence
-                .restore_delegated_pending(
+                .restore_delegated_pending(DelegatedResolution::new(
                     self.args.resume_attempt,
-                    self.args.resume_tx_hash,
+                    Some(hash),
                     false,
-                )?
+                )?)?
                 .map(|(_, _, attempt, hash)| (attempt, hash))
         } else {
             None
@@ -2109,6 +2128,7 @@ impl<FEN: FoundryEvmNetwork> BroadcastedState<FEN> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sequence::DelegatedAction;
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEnvelope};
     use alloy_network::Ethereum;
     use alloy_primitives::{B256, Bloom, address, hex};
@@ -2271,7 +2291,12 @@ mod tests {
         sequence.persist_batch_delegated_request(0, 0, Default::default()).unwrap();
         let (_, attempt, _) = sequence.batch_attempt(0).unwrap();
 
-        sequence.restore_delegated_pending(Some(attempt), None, true).unwrap();
+        sequence
+            .restore_delegated_pending(DelegatedResolution::Attempt {
+                attempt,
+                action: Some(DelegatedAction::Retry),
+            })
+            .unwrap();
 
         assert!(sequence.batch_attempt(0).is_none());
         drop(sequence);
