@@ -120,6 +120,17 @@ where
 
 struct JsonRpcCodec;
 
+/// Where the [`JsonRpcCodec`] is within the JSON text it scans.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum JsonLexer {
+    /// Outside a string, where brackets change the nesting depth.
+    Outside,
+    /// Inside a string, which a `"` ends.
+    InString,
+    /// Inside a string, right after a `\` that escapes the next byte.
+    Escaped,
+}
+
 // Adapted from <https://github.com/paritytech/jsonrpc/blob/38af3c9439aa75481805edf6c05c6622a5ab1e70/server-utils/src/stream_codec.rs#L47-L105>
 impl tokio_util::codec::Decoder for JsonRpcCodec {
     type Item = String;
@@ -131,8 +142,7 @@ impl tokio_util::codec::Decoder for JsonRpcCodec {
         }
 
         let mut depth = 0;
-        let mut in_str = false;
-        let mut is_escaped = false;
+        let mut lexer = JsonLexer::Outside;
         let mut start_idx = 0;
         let mut whitespaces = 0;
 
@@ -140,23 +150,36 @@ impl tokio_util::codec::Decoder for JsonRpcCodec {
             let byte = buf.as_ref()[idx];
             let mut malformed = false;
 
-            if (byte == b'{' || byte == b'[') && !in_str {
-                if depth == 0 {
-                    start_idx = idx;
-                }
-                depth += 1;
-            } else if (byte == b'}' || byte == b']') && !in_str {
-                if depth == 0 {
-                    malformed = true;
-                } else {
-                    depth -= 1;
-                }
-            } else if byte == b'"' && !is_escaped {
-                in_str = !in_str;
-            } else if is_whitespace(byte) {
+            lexer = match lexer {
+                JsonLexer::Outside => match byte {
+                    b'{' | b'[' => {
+                        if depth == 0 {
+                            start_idx = idx;
+                        }
+                        depth += 1;
+                        JsonLexer::Outside
+                    }
+                    b'}' | b']' => {
+                        if depth == 0 {
+                            malformed = true;
+                        } else {
+                            depth -= 1;
+                        }
+                        JsonLexer::Outside
+                    }
+                    b'"' => JsonLexer::InString,
+                    _ => JsonLexer::Outside,
+                },
+                JsonLexer::InString => match byte {
+                    b'"' => JsonLexer::Outside,
+                    b'\\' => JsonLexer::Escaped,
+                    _ => JsonLexer::InString,
+                },
+                JsonLexer::Escaped => JsonLexer::InString,
+            };
+            if is_whitespace(byte) {
                 whitespaces += 1;
             }
-            is_escaped = byte == b'\\' && !is_escaped && in_str;
 
             if malformed || (depth == 0 && idx != start_idx && idx - start_idx + 1 > whitespaces) {
                 let bts = buf.split_to(idx + 1);
@@ -186,5 +209,32 @@ fn to_name(path: &std::ffi::OsStr) -> io::Result<ls::Name<'_>> {
         ls::ToNsName::to_ns_name::<ls::GenericNamespaced>(path)
     } else {
         ls::ToFsName::to_fs_name::<ls::GenericFilePath>(path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio_util::codec::Decoder;
+
+    fn decode_all(input: &str) -> Vec<String> {
+        let mut buf = BytesMut::from(input);
+        let mut out = Vec::new();
+        while let Some(msg) = JsonRpcCodec.decode(&mut buf).unwrap() {
+            out.push(msg);
+        }
+        out
+    }
+
+    #[test]
+    fn splits_messages_ignoring_brackets_and_quotes_in_strings() {
+        let first = r#"{"a":"}]{[","b":"\"}","c":"\\"}"#;
+        let second = r#" [1, {"d": "x\\\"]"}]"#;
+        assert_eq!(decode_all(&format!("{first}{second}\n {{")), [first, second]);
+    }
+
+    #[test]
+    fn closing_bracket_without_opening_is_returned() {
+        assert_eq!(decode_all(" ]{}"), [" ]", "{}"]);
     }
 }
