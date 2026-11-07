@@ -2351,6 +2351,147 @@ mod tests {
         );
     }
 
+    /// Runtime code with each comparison opcode once, then a loop whose `EQ` site runs 11 times.
+    const CMP_CODE: &[u8] = &[
+        0x60, 0x02, 0x60, 0x01, 0x14, 0x50, // EQ(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x10, 0x50, // LT(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x11, 0x50, // GT(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x12, 0x50, // SLT(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x13, 0x50, // SGT(1, 2)
+        0x60, 0x00, 0x15, 0x50, // ISZERO(0)
+        0x60, 0x00, // i = 0
+        0x5b, // 36: JUMPDEST
+        0x80, 0x60, 0x0a, 0x14, // EQ(10, i)
+        0x60, 0x32, 0x57, // JUMPI to 50 when i == 10
+        0x60, 0x01, 0x01, // i += 1
+        0x60, 0x24, 0x56, // JUMP to 36
+        0x5b, 0x50, 0x00, // 50: JUMPDEST; POP; STOP
+    ];
+
+    fn cmp_values(executor: &Executor<EthEvmNetwork>, target: Address) -> Vec<CmpOperands> {
+        let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.exit_reason, Some(InstructionResult::Stop));
+        result.evm_cmp_values.unwrap_or_default()
+    }
+
+    #[test]
+    fn instrumented_cmp_log_matches_inspector() {
+        let target = Address::repeat_byte(0x31);
+        let mut inspected = edgecov_executor(false, false);
+        inspected.inspector_mut().collect_evm_cmp_log(true);
+        inspected.set_code(target, Bytecode::new_raw(Bytes::from_static(CMP_CODE))).unwrap();
+        let expected = cmp_values(&inspected, target);
+        // Each opcode once, and the loop site capped at its observation limit.
+        assert_eq!(
+            expected.len(),
+            6 + usize::from(foundry_evm_core::edgecov::MAX_CMP_OBSERVATIONS_PER_SITE)
+        );
+        assert_eq!(
+            expected[..6].iter().map(|cmp| cmp.opcode).collect::<Vec<_>>(),
+            [0x14, 0x10, 0x11, 0x12, 0x13, 0x15]
+        );
+        assert_eq!((expected[0].op1, expected[0].op2), (U256::from(1), U256::from(2)));
+        assert_eq!(expected[0].address, target);
+
+        let mut instrumented = edgecov_executor(true, true);
+        instrumented.inspector_mut().collect_evm_cmp_log(true);
+        assert!(instrumented.inspector().edge_coverage.is_none());
+        instrumented.set_code(target, Bytecode::new_raw(Bytes::from_static(CMP_CODE))).unwrap();
+        assert_eq!(cmp_values(&instrumented, target), expected);
+        // The log is reset for every call.
+        assert_eq!(cmp_values(&instrumented, target), expected);
+
+        // Turning cmp-log off removes the hooks.
+        instrumented.inspector_mut().collect_evm_cmp_log(false);
+        assert!(cmp_values(&instrumented, target).is_empty());
+        // Leaving instrumented mode brings back the inspector.
+        instrumented.inspector_mut().collect_evm_cmp_log(true);
+        instrumented.inspector_mut().collect_instrumented_edges(false);
+        instrumented.inspector_mut().enable_edgecov_opcode(false);
+        assert!(instrumented.inspector().edge_coverage.is_some());
+        assert_eq!(cmp_values(&instrumented, target), expected);
+    }
+
+    fn call_code(op: u8, target: Address) -> Vec<u8> {
+        // retLen retOff argsLen argsOff [value] target gas CALL*
+        let mut code = vec![0x5f, 0x5f, 0x5f, 0x5f];
+        if matches!(op, 0xf1 | 0xf2) {
+            code.push(0x5f);
+        }
+        code.push(0x73);
+        code.extend_from_slice(target.as_slice());
+        code.extend_from_slice(&[0x5a, op]);
+        code
+    }
+
+    /// Runs one call with a fresh fuzzer and returns the stack values it collected.
+    fn fuzzer_values(
+        executor: &Executor<EthEvmNetwork>,
+        target: Address,
+        instrumented: bool,
+    ) -> Vec<B256> {
+        let mut stack = executor.inspector().clone();
+        stack.set_fuzzer(foundry_evm_fuzz::Fuzzer::new(1024, None));
+        stack.collect_instrumented_edges(instrumented);
+        let (mut evm_env, mut tx_env) =
+            executor.prepare_call_env(CALLER, TxKind::Call(target), Bytes::new(), U256::ZERO);
+        // Ethereum has no chain context.
+        executor.chain_context_for_synthetic_transaction(&tx_env).unwrap();
+        edgecov::reset_edges();
+        let mut backend = CowBackend::new_borrowed(executor.backend());
+        let result =
+            backend.inspect_with_context(&mut evm_env, &mut tx_env, (), &mut stack).unwrap();
+        assert!(result.result.is_success(), "{result:?}");
+        stack.fuzzer.take().unwrap().collected_values
+    }
+
+    #[test]
+    fn fuzzer_frame_collection_matches_step_collection() {
+        let mut executor = edgecov_executor(true, false);
+        let ok = Address::repeat_byte(0x41);
+        let reverts = Address::repeat_byte(0x42);
+        let nested = Address::repeat_byte(0x43);
+        let eoa = Address::repeat_byte(0x44);
+        let root = Address::repeat_byte(0x45);
+        // PUSH1 7; STOP
+        executor.set_code(ok, Bytecode::new_raw(Bytes::from_static(&[0x60, 0x07, 0x00]))).unwrap();
+        // PUSH1 8; REVERT(0, 0)
+        executor
+            .set_code(
+                reverts,
+                Bytecode::new_raw(Bytes::from_static(&[0x60, 0x08, 0x5f, 0x5f, 0xfd])),
+            )
+            .unwrap();
+        // PUSH1 9; CALL ok; CALL reverts; STOP
+        let mut code = vec![0x60, 0x09];
+        code.extend(call_code(0xf1, ok));
+        code.extend(call_code(0xf1, reverts));
+        code.push(0x00);
+        executor.set_code(nested, Bytecode::new_raw(code.into())).unwrap();
+
+        // PUSH1 0xaa; PUSH1 0xbb; then calls of every kind, a precompile, an EOA, nested
+        // frames and a CREATE, each leaving its result on the stack.
+        let mut code = vec![0x60, 0xaa, 0x60, 0xbb];
+        code.extend(call_code(0xf1, ok));
+        code.extend(call_code(0xf1, reverts));
+        code.extend(call_code(0xf1, eoa));
+        code.extend(call_code(0xfa, Address::with_last_byte(4)));
+        code.extend(call_code(0xf4, ok));
+        code.extend(call_code(0xf2, reverts));
+        code.extend(call_code(0xf1, nested));
+        code.extend([0x5f, 0x5f, 0x5f, 0xf0]); // CREATE(0, 0, 0)
+        code.extend([0x5f, 0x5f, 0x5f, 0x5f, 0xf5]); // CREATE2(0, 0, 0, 0)
+        code.push(0x00);
+        executor.set_code(root, Bytecode::new_raw(code.into())).unwrap();
+
+        let expected = fuzzer_values(&executor, root, false);
+        assert!(expected.contains(&B256::with_last_byte(0xaa)));
+        assert!(expected.contains(&B256::with_last_byte(0x09)));
+        // One collection per call that returned to an interpreter: 7 from the root, 2 nested.
+        assert_eq!(expected.len(), (3..=9).sum::<usize>() + 2 + 3);
+        assert_eq!(fuzzer_values(&executor, root, true), expected);
+    }
+
     #[test]
     fn cheatcode_skip_payload_is_classified_as_skip() {
         let raw = RawCallResult::<EthEvmNetwork> {

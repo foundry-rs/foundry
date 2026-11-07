@@ -21,7 +21,7 @@ use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::{Function, StateMutability};
 use alloy_primitives::{
     Address, Bytes, FixedBytes, I256, Selector, U256,
-    map::{AddressMap, AddressSet, HashMap, hash_map::Entry as AddressMapEntry},
+    map::{AddressMap, AddressSet, HashMap},
 };
 use alloy_sol_types::{SolCall, sol};
 use campaign::{
@@ -1305,7 +1305,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             if result.reverted {
                                 run_reverts += 1;
                             }
-                            let mut state_changeset = std::mem::take(&mut result.state_changeset);
+                            let state_changeset = std::mem::take(&mut result.state_changeset);
                             let reverted = result.reverted;
                             if !result.reverted {
                                 let mapping_slots = current_run
@@ -1316,7 +1316,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                     .and_then(|fuzzer| fuzzer.mapping_slots.as_ref());
                                 collect_data(
                                     &invariant_test,
-                                    &mut state_changeset,
+                                    &state_changeset,
                                     current_run.inputs.last().expect("checked above"),
                                     &result,
                                     run_depth,
@@ -2310,23 +2310,18 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 /// randomly generated addresses.
 fn collect_data<FEN: FoundryEvmNetwork>(
     invariant_test: &InvariantTest,
-    state_changeset: &mut AddressMap<Account>,
+    state_changeset: &AddressMap<Account>,
     tx: &BasicTxDetails,
     call_result: &RawCallResult<FEN>,
     run_depth: u32,
     mapping_slots: Option<&AddressMap<foundry_common::mapping_slots::MappingSlots>>,
 ) {
-    // We keep the nonce changes to apply later.
-    let sender_changeset = match state_changeset.entry(tx.sender) {
-        AddressMapEntry::Occupied(entry) => entry
-            .get()
-            .info
-            .code
-            .as_ref()
-            .is_none_or(|code| code.is_empty())
-            .then(|| entry.remove()),
-        AddressMapEntry::Vacant(_) => None,
-    };
+    // Leave an EOA sender out of the dictionary. It stays in the changeset (its nonce change is
+    // still needed), so skip it rather than removing and re-inserting it, which can rehash the map.
+    let skip_sender = state_changeset
+        .get(&tx.sender)
+        .is_some_and(|account| account.info.code.as_ref().is_none_or(|code| code.is_empty()))
+        .then_some(tx.sender);
 
     // Collect values from fuzzed call result and add them to fuzz dictionary.
     invariant_test.fuzz_state.collect_values_from_call(
@@ -2334,7 +2329,8 @@ fn collect_data<FEN: FoundryEvmNetwork>(
         tx,
         &call_result.result,
         &call_result.logs,
-        &*state_changeset,
+        state_changeset,
+        skip_sender,
         run_depth,
         mapping_slots,
     );
@@ -2344,10 +2340,6 @@ fn collect_data<FEN: FoundryEvmNetwork>(
         invariant_test.fuzz_state.collect_typed_cmp_values(
             cmp_values.iter().map(|s| (s.width, alloy_primitives::B256::from(s.value))),
         );
-    }
-    // Re-add changes
-    if let Some(changed) = sender_changeset {
-        state_changeset.insert(tx.sender, changed);
     }
 }
 

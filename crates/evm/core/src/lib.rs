@@ -81,10 +81,11 @@ pub trait InspectorExt {
         DEFAULT_CREATE2_DEPLOYER
     }
 
-    /// Whether EVMs built with this inspector execute the compiler-instrumented
-    /// [`EDGECOV`](edgecov::EDGECOV) opcode instead of treating it as undefined.
-    fn edgecov_opcode(&self) -> bool {
-        false
+    /// The instruction hooks EVMs built with this inspector get, such as executing the
+    /// compiler-instrumented [`EDGECOV`](edgecov::EDGECOV) opcode instead of treating it as
+    /// undefined.
+    fn evm_hooks(&self) -> edgecov::EvmHooks {
+        edgecov::EvmHooks::default()
     }
 }
 

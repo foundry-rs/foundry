@@ -1,4 +1,5 @@
-//! Compiler-instrumented edge coverage through the `EDGECOV` opcode.
+//! Compiler-instrumented edge coverage through the `EDGECOV` opcode, and the instruction hooks
+//! that replace per-opcode inspector work while it is on.
 //!
 //! Coverage builds of a compiler can emit `PUSHn <id>; EDGECOV` on every control-flow edge,
 //! where `EDGECOV` is the otherwise undefined opcode `0xC0`. When the fuzzer runs with
@@ -9,17 +10,30 @@
 //! The instruction charges no gas and refunds the 3 gas of the preceding `PUSH`, so instrumentation
 //! only changes code size. Hits are recorded per thread: the executor resets the map before a
 //! call and drains it once the call finishes.
+//!
+//! In the same mode, the other per-opcode signals of a fuzz campaign come from wrapped
+//! instructions instead of `Inspector::step`, so the inspector needs no opcode dispatch:
+//!
+//! - comparison operands (cmp-log) from `EQ`, `LT`, `GT`, `SLT`, `SGT` and `ISZERO`, with the same
+//!   per-site caps as the cmp-log inspector ([`CmpLog`]);
+//! - the caller's stack at each `CALL`/`CREATE`-family instruction that opens a frame, which the
+//!   fuzzer's dictionary collector reads once the frame returns ([`take_pending_frame_stack`]).
+//!
+//! Every wrapper records and then runs revm's default instruction for its opcode, which all
+//! networks that install these hooks (Ethereum, Optimism, Base, Tempo) use for these opcodes.
 
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256, map::HashMap};
 use revm::{
+    bytecode::opcode,
     handler::instructions::EthInstructions,
     interpreter::{
         Host, Instruction, InstructionContext, InstructionExecResult, InstructionResult,
+        InterpreterAction, instruction_table,
         interpreter::EthInterpreter,
-        interpreter_types::{InterpreterTypes, StackTr},
+        interpreter_types::{InputsTr, InterpreterTypes, Jumps, StackTr},
     },
 };
-use std::cell::RefCell;
+use std::cell::{RefCell, UnsafeCell};
 
 /// The `EDGECOV` opcode byte.
 pub const EDGECOV: u8 = 0xC0;
@@ -31,6 +45,32 @@ const PUSH_GAS: u64 = 3;
 /// instrumentation and is ignored instead of growing the map without bound.
 pub const MAX_EDGE_ID: u32 = 1 << 24;
 
+/// Maximum number of unique comparison sites tracked per call for CmpLog-style feedback.
+pub const MAX_CMP_LOG_SITES: usize = 1024;
+
+/// Maximum number of comparison operand pairs tracked per site. This matches the downstream loop
+/// detection threshold so a hot loop can be classified without filling the whole log.
+pub const MAX_CMP_OBSERVATIONS_PER_SITE: u8 = 8;
+
+/// Which instruction hooks an EVM gets, as its inspector reports them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EvmHooks {
+    /// Execute the compiler-instrumented [`EDGECOV`] opcode instead of treating it as undefined.
+    pub edgecov: bool,
+    /// Record comparison operands into this thread's cmp-log ([`take_cmp_log`]).
+    pub cmp_log: bool,
+    /// Record the caller's stack when a `CALL`/`CREATE`-family instruction opens a frame
+    /// ([`take_pending_frame_stack`]).
+    pub frame_stacks: bool,
+}
+
+impl EvmHooks {
+    /// Whether any hook is on.
+    pub const fn any(self) -> bool {
+        self.edgecov || self.cmp_log || self.frame_stacks
+    }
+}
+
 /// One instrumented edge hit during a call: its ID and AFL-style hit counter.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InstrumentedEdgeHit {
@@ -38,6 +78,87 @@ pub struct InstrumentedEdgeHit {
     pub id: u32,
     /// Hit counter; never zero once the edge was hit (it saturates back to 1 on overflow).
     pub count: u8,
+}
+
+/// A comparison operand pair captured during execution.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CmpOperands {
+    /// First operand of the comparison.
+    pub op1: U256,
+    /// Second operand of the comparison.
+    pub op2: U256,
+    /// Program counter where the comparison occurred.
+    pub pc: usize,
+    /// Contract address where the comparison occurred.
+    pub address: Address,
+    /// EVM opcode that performed the comparison.
+    pub opcode: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct CmpSiteKey {
+    address: Address,
+    pc: usize,
+    opcode: u8,
+}
+
+impl CmpSiteKey {
+    const fn new(cmp: &CmpOperands) -> Self {
+        Self { address: cmp.address, pc: cmp.pc, opcode: cmp.opcode }
+    }
+}
+
+/// Comparison operand log of one call, capped per site and in sites.
+#[derive(Clone, Debug, Default)]
+pub struct CmpLog {
+    log: Vec<CmpOperands>,
+    site_counts: HashMap<CmpSiteKey, u8>,
+}
+
+impl CmpLog {
+    /// An empty log with room for one observation per site.
+    pub fn with_capacity() -> Self {
+        Self { log: Vec::with_capacity(MAX_CMP_LOG_SITES), site_counts: HashMap::default() }
+    }
+
+    /// Records `cmp` unless its site already has [`MAX_CMP_OBSERVATIONS_PER_SITE`]
+    /// observations, or it is a new site once [`MAX_CMP_LOG_SITES`] sites are tracked.
+    #[inline]
+    pub fn record(&mut self, cmp: CmpOperands) {
+        let site = CmpSiteKey::new(&cmp);
+        if let Some(count) = self.site_counts.get_mut(&site) {
+            if *count >= MAX_CMP_OBSERVATIONS_PER_SITE {
+                return;
+            }
+            *count += 1;
+            self.log.push(cmp);
+        } else if self.site_counts.len() < MAX_CMP_LOG_SITES {
+            self.site_counts.insert(site, 1);
+            self.log.push(cmp);
+        }
+    }
+
+    /// The recorded observations, in execution order.
+    pub fn as_slice(&self) -> &[CmpOperands] {
+        &self.log
+    }
+
+    /// Clears the log and its site counts.
+    pub fn clear(&mut self) {
+        self.log.clear();
+        self.site_counts.clear();
+    }
+
+    /// Takes the recorded observations and clears the log.
+    pub fn take(&mut self) -> Vec<CmpOperands> {
+        self.site_counts.clear();
+        std::mem::take(&mut self.log)
+    }
+
+    /// Consumes the log, returning its observations.
+    pub fn into_vec(self) -> Vec<CmpOperands> {
+        self.log
+    }
 }
 
 /// Per-thread hit map for the current call.
@@ -54,13 +175,14 @@ impl EdgeHits {
         Self { counts: Vec::new(), touched: Vec::new() }
     }
 
-    #[inline]
+    #[inline(always)]
     fn record(&mut self, id: u32) {
         let index = id as usize;
         if index >= self.counts.len() {
             self.grow(index);
         }
-        let count = &mut self.counts[index];
+        // SAFETY: `grow` made `index` in bounds.
+        let count = unsafe { self.counts.get_unchecked_mut(index) };
         if *count == 0 {
             self.touched.push(id);
         }
@@ -69,6 +191,7 @@ impl EdgeHits {
     }
 
     #[cold]
+    #[inline(never)]
     fn grow(&mut self, index: usize) {
         self.counts.resize((index + 1).next_power_of_two(), 0);
     }
@@ -92,30 +215,59 @@ impl EdgeHits {
 }
 
 thread_local! {
-    static EDGE_HITS: RefCell<EdgeHits> = const { RefCell::new(EdgeHits::new()) };
+    // An `UnsafeCell` rather than a `RefCell` keeps the `EDGECOV` hot path free of borrow-flag
+    // updates. Every access goes through `with_edge_hits`, whose closures never re-enter it.
+    static EDGE_HITS: UnsafeCell<EdgeHits> = const { UnsafeCell::new(EdgeHits::new()) };
+    static CMP_LOG: RefCell<CmpLog> = RefCell::new(CmpLog::with_capacity());
+    static FRAME_STACK: RefCell<Option<Vec<U256>>> = const { RefCell::new(None) };
+}
+
+#[inline(always)]
+fn with_edge_hits<R>(f: impl FnOnce(&mut EdgeHits) -> R) -> R {
+    // SAFETY: the reference does not escape `f`, and no caller re-enters this function from
+    // inside `f`, so it is the only live reference to this thread's map.
+    EDGE_HITS.with(|hits| f(unsafe { &mut *hits.get() }))
 }
 
 /// Records one hit of edge `id` on this thread. IDs 0 and above [`MAX_EDGE_ID`] are ignored.
-#[inline]
+#[inline(always)]
 pub fn record_edge(id: U256) {
     let id = match u32::try_from(id) {
         Ok(id @ 1..=MAX_EDGE_ID) => id,
         _ => return,
     };
-    EDGE_HITS.with_borrow_mut(|hits| hits.record(id));
+    with_edge_hits(|hits| hits.record(id));
 }
 
-/// Clears this thread's hits, in time proportional to the edges hit since the last reset.
+/// Clears this thread's hits, cmp-log and pending frame stack before a call, in time
+/// proportional to what the previous call recorded.
 pub fn reset_edges() {
-    EDGE_HITS.with_borrow_mut(EdgeHits::reset);
+    with_edge_hits(EdgeHits::reset);
+    CMP_LOG.with_borrow_mut(CmpLog::clear);
+    FRAME_STACK.with_borrow_mut(Option::take);
 }
 
 /// Takes this thread's hits in first-hit order and clears them.
 pub fn take_edges() -> Vec<InstrumentedEdgeHit> {
-    EDGE_HITS.with_borrow_mut(EdgeHits::take)
+    with_edge_hits(EdgeHits::take)
+}
+
+/// Takes this thread's comparison operands recorded since the last reset.
+pub fn take_cmp_log() -> Vec<CmpOperands> {
+    CMP_LOG.with_borrow_mut(CmpLog::take)
+}
+
+/// Takes the caller's stack recorded by the `CALL`/`CREATE`-family instruction that opened the
+/// frame now starting, if one did (a transaction's root frame has none).
+///
+/// The stack is as the instruction left it, with its operands popped: once the frame returns,
+/// the caller resumes with this stack plus the frame's result word.
+pub fn take_pending_frame_stack() -> Option<Vec<U256>> {
+    FRAME_STACK.with_borrow_mut(Option::take)
 }
 
 /// The `EDGECOV` instruction: pops the edge ID, records the hit and refunds the `PUSH` gas.
+#[inline]
 pub fn edgecov<WIRE: InterpreterTypes, H: ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
 ) -> InstructionExecResult {
@@ -127,9 +279,83 @@ pub fn edgecov<WIRE: InterpreterTypes, H: ?Sized>(
     Ok(())
 }
 
-/// Installs the `EDGECOV` instruction, with no static gas, into an instruction table.
-pub fn install_edgecov<CTX: Host>(instructions: &mut EthInstructions<EthInterpreter, CTX>) {
-    instructions.insert_instruction(EDGECOV, Instruction::new(edgecov), 0);
+/// Runs revm's default instruction for `OP`.
+#[inline(always)]
+fn run_default<const OP: u8, H: Host>(
+    context: InstructionContext<'_, H, EthInterpreter>,
+) -> InstructionExecResult {
+    instruction_table::<EthInterpreter, H>()[OP as usize].execute(context)
+}
+
+/// A comparison instruction that records its operands, as the cmp-log inspector reads them
+/// before the instruction runs, then executes it.
+fn cmp_hook<const OP: u8, H: Host>(
+    context: InstructionContext<'_, H, EthInterpreter>,
+) -> InstructionExecResult {
+    let interpreter = &*context.interpreter;
+    let operands = if OP == opcode::ISZERO {
+        interpreter.stack.peek(0).ok().map(|op1| (op1, U256::ZERO))
+    } else {
+        interpreter.stack.peek(0).ok().zip(interpreter.stack.peek(1).ok())
+    };
+    if let Some((op1, op2)) = operands {
+        let cmp = CmpOperands {
+            op1,
+            op2,
+            // The interpreter steps past the opcode before running it.
+            pc: interpreter.bytecode.pc() - 1,
+            address: interpreter.input.target_address(),
+            opcode: OP,
+        };
+        CMP_LOG.with_borrow_mut(|log| log.record(cmp));
+    }
+    run_default::<OP, H>(context)
+}
+
+/// A `CALL`/`CREATE`-family instruction that, when it opens a frame, records the caller's
+/// stack for [`take_pending_frame_stack`].
+fn frame_hook<const OP: u8, H: Host>(
+    context: InstructionContext<'_, H, EthInterpreter>,
+) -> InstructionExecResult {
+    let InstructionContext { interpreter, host } = context;
+    let result = run_default::<OP, H>(InstructionContext { interpreter: &mut *interpreter, host });
+    // An instruction that opens a frame suspends the interpreter with the frame as its action.
+    if matches!(interpreter.bytecode.action, Some(InterpreterAction::NewFrame(_))) {
+        let stack = interpreter.stack.data().clone();
+        FRAME_STACK.with_borrow_mut(|pending| *pending = Some(stack));
+    }
+    result
+}
+
+/// Installs the hooks `hooks` asks for into an instruction table, keeping each wrapped opcode's
+/// static gas.
+pub fn install_hooks<CTX: Host>(
+    instructions: &mut EthInstructions<EthInterpreter, CTX>,
+    hooks: EvmHooks,
+) {
+    if hooks.edgecov {
+        instructions.insert_instruction(EDGECOV, Instruction::new(edgecov), 0);
+    }
+    let mut wrap = |op: u8, instruction: Instruction<EthInterpreter, CTX>| {
+        let gas = instructions.gas_table()[op as usize];
+        instructions.insert_instruction(op, instruction, gas);
+    };
+    if hooks.cmp_log {
+        wrap(opcode::EQ, Instruction::new(cmp_hook::<{ opcode::EQ }, CTX>));
+        wrap(opcode::LT, Instruction::new(cmp_hook::<{ opcode::LT }, CTX>));
+        wrap(opcode::GT, Instruction::new(cmp_hook::<{ opcode::GT }, CTX>));
+        wrap(opcode::SLT, Instruction::new(cmp_hook::<{ opcode::SLT }, CTX>));
+        wrap(opcode::SGT, Instruction::new(cmp_hook::<{ opcode::SGT }, CTX>));
+        wrap(opcode::ISZERO, Instruction::new(cmp_hook::<{ opcode::ISZERO }, CTX>));
+    }
+    if hooks.frame_stacks {
+        wrap(opcode::CALL, Instruction::new(frame_hook::<{ opcode::CALL }, CTX>));
+        wrap(opcode::CALLCODE, Instruction::new(frame_hook::<{ opcode::CALLCODE }, CTX>));
+        wrap(opcode::DELEGATECALL, Instruction::new(frame_hook::<{ opcode::DELEGATECALL }, CTX>));
+        wrap(opcode::STATICCALL, Instruction::new(frame_hook::<{ opcode::STATICCALL }, CTX>));
+        wrap(opcode::CREATE, Instruction::new(frame_hook::<{ opcode::CREATE }, CTX>));
+        wrap(opcode::CREATE2, Instruction::new(frame_hook::<{ opcode::CREATE2 }, CTX>));
+    }
 }
 
 #[cfg(test)]

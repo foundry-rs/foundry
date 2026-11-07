@@ -2,7 +2,7 @@ use crate::{
     FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryTransaction,
     backend::{DatabaseExt, JournaledState},
     constants::SYSTEM_PRECOMPILE_STUB,
-    edgecov::install_edgecov,
+    edgecov::install_hooks,
     evm::{
         FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm, NestedEvmFor,
         run_inspected_frame,
@@ -98,10 +98,10 @@ impl FoundryEvmFactory for BaseEvmFactory {
             )
         });
         let factory = self.with_activation_admin_address(activation_admin);
-        let edgecov = inspector.edgecov_opcode();
+        let hooks = inspector.evm_hooks();
         let mut base_evm = factory.create_evm_with_inspector(db, evm_env, inspector);
-        if edgecov {
-            install_edgecov(base_evm.ctx_instructions().1);
+        if hooks.any() {
+            install_hooks(base_evm.ctx_instructions().1, hooks);
         }
         base_evm.ctx_mut().cfg.tx_chain_id_check = true;
         // Preserve existing code, including sentinels already present on forks.
