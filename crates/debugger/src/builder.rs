@@ -197,52 +197,38 @@ fn identify_code<'a>(
     address_name: Option<&String>,
     code: &[u8],
 ) -> Option<ContractIdentity<'a>> {
-    // Prefer the address identity only among equally strong runtime matches.
-    if let Some((id, _)) = known_contracts
-        .find_by_deployed_code_exact_preferred(code, |id| address_name == Some(&id.name))
-    {
+    // If several artifacts match except for metadata, we can't tell which ran, so none is used.
+    if let Ok(Some((id, _))) = known_contracts.find_by_deployed_code_exact_unambiguous(code) {
         return Some(ContractIdentity::Local(id));
     }
-    // External identities cannot be checked against local artifacts.
-    address_name
-        .filter(|name| !known_contracts.iter().any(|(id, _)| id.name == **name))
-        .cloned()
-        .map(ContractIdentity::External)
+    identify_external(known_contracts, address_name)
 }
 
-/// Identifies a creation by its init code, which it has even when the constructor reverts.
+/// Identifies a creation by its init code, which exists even if the constructor reverts. A
+/// constructor can return another contract's runtime, so the returned code isn't used.
 fn identify_creation<'a>(
     known_contracts: &'a ContractsByArtifact,
     address_name: Option<&String>,
     trace: &CallTrace,
 ) -> Option<ContractIdentity<'a>> {
-    if let Some((id, _)) = known_contracts.find_by_creation_code_prefix(&trace.data) {
+    if let Some((id, _)) = known_contracts.find_by_creation_code_exact(&trace.data) {
         return Some(ContractIdentity::Local(id));
     }
     // The address of a failed creation holds no code, so its identity can't be trusted.
     if !trace.success {
         return None;
     }
-    // The init code check above fails for unlinked artifacts or a different metadata hash.
-    // The deployed code check ignores both.
-    if let Some((id, _)) = known_contracts
-        .find_by_deployed_code_exact_preferred(&trace.output, |id| address_name == Some(&id.name))
-    {
-        return Some(ContractIdentity::Local(id));
-    }
-    identify_name(known_contracts, address_name)
+    identify_external(known_contracts, address_name)
 }
 
-/// Identifies a contract by name alone, unless two local artifacts share the name.
-fn identify_name<'a>(
-    known_contracts: &'a ContractsByArtifact,
+/// Returns the address name, e.g. from Etherscan.
+/// Returns nothing if a local artifact has that name.
+fn identify_external<'a>(
+    known_contracts: &ContractsByArtifact,
     address_name: Option<&String>,
 ) -> Option<ContractIdentity<'a>> {
-    let name = address_name?;
-    let mut local = known_contracts.iter().filter(|(id, _)| id.name == *name);
-    match (local.next(), local.next()) {
-        (None, _) => Some(ContractIdentity::External(name.clone())),
-        (Some((id, _)), None) => Some(ContractIdentity::Local(id)),
-        _ => None,
-    }
+    address_name
+        .filter(|name| !known_contracts.iter().any(|(id, _)| id.name == **name))
+        .cloned()
+        .map(ContractIdentity::External)
 }
