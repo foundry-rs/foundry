@@ -48,6 +48,11 @@ pub struct Fuzzer {
     call_depth: u32,
     /// Additional network-specific cheatcode addresses that must not be overridden.
     extra_cheatcode_addresses: &'static [Address],
+    /// Whether stack values are collected from frame hooks instead of `step`.
+    frame_collection: bool,
+    /// For each open frame, the stack its caller resumes with once it returns (without the
+    /// frame's result word), when the caller is an interpreter of this EVM.
+    caller_stacks: Vec<Option<Vec<U256>>>,
 }
 
 impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
@@ -55,7 +60,7 @@ impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
     fn step(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
         self.capture_mapping_hash(interp);
         // We only collect `stack` and `memory` data before and after calls.
-        if self.collect {
+        if self.collect && !self.frame_collection {
             self.collect_data(interp);
         }
     }
@@ -122,6 +127,23 @@ impl Fuzzer {
         }
     }
 
+    /// Records a mapping slot observation from the instruction hooks, as `step` and `step_end`
+    /// record it around `KECCAK256` and `SSTORE`.
+    pub fn record_mapping_event(&mut self, event: foundry_evm_core::edgecov::MappingEvent) {
+        use foundry_evm_core::edgecov::MappingEvent;
+        let Some(mapping_slots) = &mut self.mapping_slots else { return };
+        match event {
+            MappingEvent::Hash { address, result, key, parent } => {
+                mapping_slots.entry(address).or_default().record_hash(result, key, parent);
+            }
+            MappingEvent::Store { address, slot } => {
+                if let Some(slots) = mapping_slots.get_mut(&address) {
+                    slots.insert(slot);
+                }
+            }
+        }
+    }
+
     /// Constructs a new `Fuzzer` inspector.
     pub const fn new(
         max_collected_values: usize,
@@ -138,6 +160,44 @@ impl Fuzzer {
             observed_calls: Vec::new(),
             call_depth: 0,
             extra_cheatcode_addresses: &[],
+            frame_collection: false,
+            caller_stacks: Vec::new(),
+        }
+    }
+
+    /// Sets whether stack values are collected at frame boundaries instead of in `step`.
+    ///
+    /// `step` collects the whole stack at the first step after a call starts or ends. A new
+    /// frame's stack is empty, so the only values come from the first step after a call ends:
+    /// the caller resuming with the stack its `CALL` left plus the call's result word. With
+    /// frame collection, [`Self::frame_start`] receives that stack from the instruction hook
+    /// and [`Self::frame_end`] collects it with the result word, so no step is needed.
+    pub fn collect_at_frame_end(&mut self, yes: bool) {
+        self.frame_collection = yes;
+        self.caller_stacks.clear();
+    }
+
+    /// Starts a frame in frame-collection mode, with the stack its caller resumes with, if the
+    /// caller is an interpreter that opened it with a `CALL`/`CREATE`-family instruction.
+    ///
+    /// Stands for the frame's first step, which finds an empty stack.
+    pub fn frame_start(&mut self, caller_stack: Option<Vec<U256>>) {
+        self.collect = false;
+        self.caller_stacks.push(caller_stack);
+    }
+
+    /// Ends a frame in frame-collection mode: when a call ended (so `step` would collect at the
+    /// caller's next step) and the caller resumes in this EVM, collects the caller's stack with
+    /// `result`, the word the frame pushes onto it. `collect` is false where that step would
+    /// not reach the fuzzer, leaving the collection to a later frame end as `step` would.
+    pub fn frame_end(&mut self, result: U256, collect: bool) {
+        let Some(caller_stack) = self.caller_stacks.pop() else { return };
+        if let Some(mut stack) = caller_stack
+            && self.collect
+            && collect
+        {
+            stack.push(result);
+            self.collect_words(&stack);
         }
     }
 
@@ -176,9 +236,13 @@ impl Fuzzer {
     /// Collects `stack` and `memory` values into the fuzz dictionary.
     #[cold]
     fn collect_data(&mut self, interpreter: &Interpreter) {
+        self.collect_words(interpreter.stack.data());
+    }
+
+    /// Collects stack words into the fuzz dictionary, up to `max_collected_values`.
+    fn collect_words(&mut self, stack: &[U256]) {
         let remaining = self.max_collected_values.saturating_sub(self.collected_values.len());
-        self.collected_values
-            .extend(interpreter.stack.data().iter().take(remaining).copied().map(B256::from));
+        self.collected_values.extend(stack.iter().take(remaining).copied().map(B256::from));
 
         // TODO: disabled for now since it's flooding the dictionary
         // for index in 0..interpreter.shared_memory.len() / 32 {

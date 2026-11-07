@@ -3,6 +3,8 @@ use alloy_primitives::{
     map::{Entry, HashMap},
 };
 use core::fmt;
+pub use foundry_evm_core::edgecov::CmpOperands;
+use foundry_evm_core::edgecov::{CmpLog, InstrumentedEdgeHit};
 use revm::{
     Inspector,
     bytecode::opcode,
@@ -15,13 +17,6 @@ use revm::{
 
 // Default capacity for the hitcount buffer.
 pub(crate) const MAX_EDGE_COUNT: usize = 65536;
-
-// Maximum number of unique comparison sites to track for CmpLog-style feedback.
-const MAX_CMP_LOG_SITES: usize = 1024;
-
-// Maximum number of comparison operand pairs to track per site. This matches the downstream loop
-// detection threshold so a hot loop can be classified without filling the whole log.
-const MAX_CMP_OBSERVATIONS_PER_SITE: u8 = 8;
 
 /// Edge coverage collection kind.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -69,21 +64,6 @@ impl From<&foundry_config::FuzzCorpusConfig> for EdgeCovConfig {
         };
         Self::new(kind, corpus.evm_edge_coverage_include_call_depth())
     }
-}
-
-/// A comparison operand pair captured during execution.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CmpOperands {
-    /// First operand of the comparison.
-    pub op1: U256,
-    /// Second operand of the comparison.
-    pub op2: U256,
-    /// Program counter where the comparison occurred.
-    pub pc: usize,
-    /// Contract address where the comparison occurred.
-    pub address: Address,
-    /// EVM opcode that performed the comparison.
-    pub opcode: u8,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -141,6 +121,8 @@ pub struct EdgeCovHit {
 pub enum EdgeCoverage {
     Hash(Vec<u8>),
     CollisionFree(Vec<EdgeCovHit>),
+    /// Hits of compiler-instrumented edges, keyed by their dense compiler-assigned IDs.
+    Instrumented(Vec<InstrumentedEdgeHit>),
 }
 
 impl EdgeCoverage {
@@ -148,6 +130,7 @@ impl EdgeCoverage {
         match self {
             Self::Hash(hitcount) => hitcount.iter().all(|&count| count == 0),
             Self::CollisionFree(hits) => hits.is_empty(),
+            Self::Instrumented(hits) => hits.is_empty(),
         }
     }
 }
@@ -169,8 +152,7 @@ pub struct EdgeCovInspector {
     /// Per-execution dense edge hitcounts. Stable IDs are assigned by the corpus history owner.
     dense_hitcount: HashMap<EdgeKey, u8>,
     /// Comparison operand log for CmpLog-style guided fuzzing.
-    cmp_log: Option<Vec<CmpOperands>>,
-    cmp_site_counts: HashMap<CmpSiteKey, u8>,
+    cmp_log: Option<CmpLog>,
 }
 
 impl fmt::Debug for EdgeCovInspector {
@@ -220,18 +202,21 @@ impl EdgeCovInspector {
             collect_edges: true,
             dense_hitcount: HashMap::default(),
             cmp_log: None,
-            cmp_site_counts: HashMap::default(),
         }
     }
 
     /// Set whether to collect comparison operand logs.
     pub fn enable_cmp_log(&mut self, yes: bool) {
         if yes {
-            self.cmp_log.get_or_insert_with(|| Vec::with_capacity(MAX_CMP_LOG_SITES));
+            self.cmp_log.get_or_insert_with(CmpLog::with_capacity);
         } else {
             self.cmp_log = None;
-            self.cmp_site_counts.clear();
         }
+    }
+
+    /// Whether this inspector collects edge hits, rather than only comparison operands.
+    pub const fn collects_edges(&self) -> bool {
+        self.collect_edges
     }
 
     /// Reset the hitcount to zero and clear the comparison log.
@@ -243,11 +228,10 @@ impl EdgeCovInspector {
         if let Some(cmp_log) = &mut self.cmp_log {
             cmp_log.clear();
         }
-        self.cmp_site_counts.clear();
     }
 
     /// Get an immutable reference to the comparison operand log.
-    pub const fn get_cmp_log(&self) -> &[CmpOperands] {
+    pub fn get_cmp_log(&self) -> &[CmpOperands] {
         match &self.cmp_log {
             Some(cmp_log) => cmp_log.as_slice(),
             None => &[],
@@ -256,7 +240,7 @@ impl EdgeCovInspector {
 
     /// Consume the inspector and take ownership of both the hitcount and comparison log.
     pub fn into_parts(mut self) -> (EdgeCoverage, Vec<CmpOperands>) {
-        let cmp_log = self.cmp_log.take().unwrap_or_default();
+        let cmp_log = self.cmp_log.take().map(CmpLog::into_vec).unwrap_or_default();
         (self.into(), cmp_log)
     }
 
@@ -319,20 +303,8 @@ impl EdgeCovInspector {
 
     /// Store comparison operands for CmpLog-style guided fuzzing.
     fn store_cmp(&mut self, cmp: CmpOperands) {
-        let Some(cmp_log) = &mut self.cmp_log else {
-            return;
-        };
-
-        let site = CmpSiteKey::new(&cmp);
-        if let Some(count) = self.cmp_site_counts.get_mut(&site) {
-            if *count >= MAX_CMP_OBSERVATIONS_PER_SITE {
-                return;
-            }
-            *count += 1;
-            cmp_log.push(cmp);
-        } else if self.cmp_site_counts.len() < MAX_CMP_LOG_SITES {
-            self.cmp_site_counts.insert(site, 1);
-            cmp_log.push(cmp);
+        if let Some(cmp_log) = &mut self.cmp_log {
+            cmp_log.record(cmp);
         }
     }
 
@@ -450,19 +422,6 @@ where
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct CmpSiteKey {
-    address: Address,
-    pc: usize,
-    opcode: u8,
-}
-
-impl CmpSiteKey {
-    const fn new(cmp: &CmpOperands) -> Self {
-        Self { address: cmp.address, pc: cmp.pc, opcode: cmp.opcode }
-    }
-}
-
 const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x100000001b3;
 
@@ -476,6 +435,7 @@ fn hash_bytes(hash: &mut u64, bytes: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_evm_core::edgecov::MAX_CMP_OBSERVATIONS_PER_SITE;
 
     fn dense_counts(inspector: &EdgeCovInspector) -> Vec<u8> {
         inspector.dense_hits().into_iter().map(|hit| hit.count).collect()

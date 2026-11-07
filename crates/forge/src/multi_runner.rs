@@ -530,6 +530,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         inspector.tracing_requirements(self.trace_requirements());
         inspector.collect_line_coverage(self.line_coverage);
         inspector.enable_isolation(self.isolation);
+        inspector.enable_edgecov_opcode(self.edgecov_opcode());
         executor.set_spec_id(self.spec_id);
         executor.set_legacy_assertions(self.config.legacy_assertions);
     }
@@ -551,7 +552,8 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         );
         cheats_config.isolate = self.isolation;
         let cheats_config = Arc::new(cheats_config);
-        self.executor_builder
+        let mut executor = self
+            .executor_builder
             .clone()
             .inspectors(|stack| {
                 stack
@@ -566,7 +568,16 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             .spec_id(self.spec_id)
             .gas_limit(self.evm_opts.gas_limit())
             .legacy_assertions(self.config.legacy_assertions)
-            .build(self.evm_env.clone(), self.tx_env.clone(), db, self.evm_opts.networks)
+            .build(self.evm_env.clone(), self.tx_env.clone(), db, self.evm_opts.networks);
+        executor.inspector_mut().enable_edgecov_opcode(self.edgecov_opcode());
+        executor
+    }
+
+    /// Whether test executors run the compiler-instrumented `EDGECOV` opcode, so that
+    /// instrumented artifacts also deploy and run outside fuzz and invariant campaigns.
+    fn edgecov_opcode(&self) -> bool {
+        self.config.fuzz.corpus.collect_instrumented_edges()
+            || self.config.invariant.corpus.collect_instrumented_edges()
     }
 
     fn trace_requirements(&self) -> TraceRequirements {

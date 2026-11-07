@@ -737,10 +737,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         if self.inline_config.contains_contract(self.name) {
             let new_config = Arc::new(self.inline_config(None)?);
             self.tcfg.to_mut().reconfigure_with(new_config);
-            let prev_tracer = self.executor.inspector_mut().tracer.take();
+            let prev_tracing = self.executor.inspector_mut().take_tracing();
             self.tcfg.configure_executor(&mut self.executor);
             // Don't set tracer here.
-            self.executor.inspector_mut().tracer = prev_tracer;
+            self.executor.inspector_mut().restore_tracing(prev_tracing);
         }
         Ok(())
     }
@@ -943,18 +943,20 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         let should_override_setup_tracing =
             !self.tcfg.debug && (self.executor.inspector().tracer.is_some() || has_invariants);
 
-        let prev_tracer = should_override_setup_tracing.then(|| {
-            let prev_tracer = self.executor.inspector_mut().tracer.take();
+        // The tracer and its revert diagnostics are put back together, so that a test run without
+        // tracing does not keep inspecting every opcode for diagnostics nobody reads.
+        let prev_tracing = should_override_setup_tracing.then(|| {
+            let prev_tracing = self.executor.inspector_mut().take_tracing();
             self.executor.set_trace_requirements(TraceRequirements::none().with_calls(true));
-            prev_tracer
+            prev_tracing
         });
 
         let setup_time = Instant::now();
         let mut setup = self.setup(call_setup);
         debug!("finished setting up in {:?}", setup_time.elapsed());
 
-        if let Some(prev_tracer) = prev_tracer {
-            self.executor.inspector_mut().tracer = prev_tracer;
+        if let Some(prev_tracing) = prev_tracing {
+            self.executor.inspector_mut().restore_tracing(prev_tracing);
         }
 
         if setup.reason.is_some() {

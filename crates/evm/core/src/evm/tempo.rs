@@ -27,6 +27,7 @@ use crate::{
     FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
     constants::{CALLER, SYSTEM_PRECOMPILE_STUB, TEST_CONTRACT_ADDRESS},
+    edgecov::install_hooks,
     evm::{FoundryEvmFactory, FoundryEvmNetwork, NestedEvm, NestedEvmFor, run_inspected_frame},
     tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, initialize_tempo_test_genesis_inner},
 };
@@ -56,7 +57,11 @@ impl FoundryEvmFactory for TempoEvmFactory {
     ) -> Self::FoundryEvm<'db, I> {
         let is_forked = db.is_forked_mode();
         let spec = *evm_env.spec_id();
+        let hooks = inspector.evm_hooks();
         let mut tempo_evm = Self::default().create_evm_with_inspector(db, evm_env, inspector);
+        if hooks.any() {
+            install_hooks(&mut tempo_evm.inner_mut().inner.instruction, hooks);
+        }
         Self::set_execution_spec(tempo_evm.ctx_mut(), spec);
         tempo_evm.cfg.tx_chain_id_check = true;
         if tempo_evm.cfg.tx_gas_limit_cap.is_none() {

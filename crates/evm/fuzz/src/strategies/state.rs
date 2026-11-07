@@ -174,6 +174,10 @@ impl FuzzState {
 
     /// Collects state changes from a [StateChangeset] and logs into a worker state
     /// according to the given [FuzzDictionaryConfig].
+    ///
+    /// The account at `skip_account`, if any, is left out as if it were absent from
+    /// `state_changeset`, so callers can exclude an account without removing and re-inserting it,
+    /// which can force the changeset map to rehash.
     #[allow(clippy::too_many_arguments)]
     pub fn collect_values_from_call(
         &self,
@@ -182,10 +186,12 @@ impl FuzzState {
         result: &Bytes,
         logs: &[Log],
         state_changeset: &StateChangeset,
+        skip_account: Option<Address>,
         run_depth: u32,
         mapping_slots: Option<&AddressMap<MappingSlots>>,
     ) {
-        if logs.is_empty() && result.is_empty() && state_changeset.is_empty() {
+        let has_state = state_changeset.keys().any(|address| Some(*address) != skip_account);
+        if logs.is_empty() && result.is_empty() && !has_state {
             return;
         }
 
@@ -203,7 +209,9 @@ impl FuzzState {
         if !result.is_empty() {
             dict.insert_result_values(target_function, result, run_depth);
         }
-        dict.insert_new_state_values(state_changeset, &targets, mapping_slots);
+        if has_state {
+            dict.insert_new_state_values(state_changeset, skip_account, &targets, mapping_slots);
+        }
     }
 
     /// Collects the decoded result of a view call into the fuzz dictionary.
@@ -541,17 +549,19 @@ impl FuzzDictionary {
     fn insert_new_state_values(
         &mut self,
         state_changeset: &StateChangeset,
+        skip_account: Option<Address>,
         targets: &TargetedContracts,
         mapping_slots: Option<&AddressMap<MappingSlots>>,
     ) {
         // Sort accounts before inserting to ensure deterministic dictionary.
-        let mut accounts = state_changeset.iter().collect::<Vec<_>>();
+        let mut accounts = state_changeset
+            .iter()
+            .filter(|(address, _)| {
+                Some(**address) != skip_account && !is_history_storage_address(address)
+            })
+            .collect::<Vec<_>>();
         accounts.sort_unstable_by_key(|(address, _)| **address);
         for (address, account) in accounts {
-            if is_history_storage_address(address) {
-                continue;
-            }
-
             // Insert basic account information.
             self.insert_value(address.into_word());
             self.insert_address_sample(*address);
@@ -1228,7 +1238,7 @@ mod tests {
         }
 
         let mut dictionary = FuzzDictionary::default();
-        dictionary.insert_new_state_values(&state_changeset, &TargetedContracts::new(), None);
+        dictionary.insert_new_state_values(&state_changeset, None, &TargetedContracts::new(), None);
 
         let mut expected = vec![B256::ZERO];
         for i in 1..=4 {
@@ -1243,6 +1253,42 @@ mod tests {
     }
 
     #[test]
+    fn skipped_account_matches_removed_account() {
+        let sender = Address::repeat_byte(0x22);
+        let mut state_changeset = StateChangeset::default();
+        for i in 1..=3u8 {
+            let storage = [(
+                U256::from(i),
+                EvmStorageSlot::new(U256::from(0x100 + u64::from(i)), TransactionId::ZERO),
+            )];
+            state_changeset.insert(
+                Address::repeat_byte(i * 0x11),
+                Account::default().with_storage(storage.into_iter()),
+            );
+        }
+        let mut without_sender = state_changeset.clone();
+        without_sender.remove(&sender);
+
+        let mut removed = FuzzDictionary::default();
+        removed.insert_new_state_values(&without_sender, None, &TargetedContracts::new(), None);
+        let mut skipped = FuzzDictionary::default();
+        skipped.insert_new_state_values(
+            &state_changeset,
+            Some(sender),
+            &TargetedContracts::new(),
+            None,
+        );
+
+        assert!(state_changeset.contains_key(&sender));
+        assert_eq!(skipped.state_values.as_slice(), removed.state_values.as_slice());
+        assert_eq!(
+            skipped.samples(&DynSolType::Address).map(|s| s.iter().copied().collect::<Vec<_>>()),
+            removed.samples(&DynSolType::Address).map(|s| s.iter().copied().collect::<Vec<_>>()),
+        );
+        assert!(!skipped.state_values.contains(&sender.into_word()));
+    }
+
+    #[test]
     fn touched_account_addresses_become_typed_address_samples() {
         let mut state_changeset = StateChangeset::default();
         for i in 1..=3u8 {
@@ -1250,7 +1296,7 @@ mod tests {
         }
 
         let mut dictionary = FuzzDictionary::default();
-        dictionary.insert_new_state_values(&state_changeset, &TargetedContracts::new(), None);
+        dictionary.insert_new_state_values(&state_changeset, None, &TargetedContracts::new(), None);
 
         let samples = dictionary.samples(&DynSolType::Address).unwrap();
         for i in 1..=3u8 {

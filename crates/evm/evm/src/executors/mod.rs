@@ -27,6 +27,7 @@ use foundry_evm_core::{
         DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
     decode::{RevertDecoder, SkipReason},
+    edgecov,
     eip2935::{
         HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE, history_storage_slot, history_storage_value,
         history_window_start,
@@ -201,6 +202,7 @@ impl Executor<MonadEvmNetwork> {
         let sancov_edges = stack.inner.sancov_edges;
         let sancov_trace_cmp = stack.inner.sancov_trace_cmp;
         let sancov_active = sancov_edges || sancov_trace_cmp;
+        let instrumented_edges = stack.inner.instrumented_edges;
         let backend = self.backend_mut();
 
         let (result, evm_env, tx_env, used_system_replay) = {
@@ -255,6 +257,9 @@ impl Executor<MonadEvmNetwork> {
             evm.ctx_mut().chain = target_chain_context;
             refresh_chain_journal(evm.ctx_mut());
             let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
+            if instrumented_edges {
+                edgecov::reset_edges();
+            }
             let target_is_system = is_known_system_sender(target_tx_env.caller())
                 || target_tx_env.tx_type() == SYSTEM_TRANSACTION_TYPE;
             let system_result = if target_is_system {
@@ -888,9 +893,13 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         let sancov_edges = stack.inner.sancov_edges;
         let sancov_trace_cmp = stack.inner.sancov_trace_cmp;
         let sancov_active = sancov_edges || sancov_trace_cmp;
+        let instrumented_edges = stack.inner.instrumented_edges;
         let mut backend = CowBackend::new_borrowed(self.backend());
         let result = {
             let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
+            if instrumented_edges {
+                edgecov::reset_edges();
+            }
             backend.inspect_with_context(&mut evm_env, &mut tx_env, chain_context, &mut stack)?
         };
         let has_state_snapshot_failure = backend.has_state_snapshot_failure();
@@ -936,9 +945,13 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         let sancov_edges = stack.inner.sancov_edges;
         let sancov_trace_cmp = stack.inner.sancov_trace_cmp;
         let sancov_active = sancov_edges || sancov_trace_cmp;
+        let instrumented_edges = stack.inner.instrumented_edges;
         let backend = self.backend_mut();
         let result = {
             let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
+            if instrumented_edges {
+                edgecov::reset_edges();
+            }
             backend.inspect_with_context(&mut evm_env, &mut tx_env, chain_context, &mut stack)?
         };
         let has_state_snapshot_failure = backend.has_state_snapshot_failure();
@@ -987,6 +1000,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         let sancov_edges = stack.inner.sancov_edges;
         let sancov_trace_cmp = stack.inner.sancov_trace_cmp;
         let sancov_active = sancov_edges || sancov_trace_cmp;
+        let instrumented_edges = stack.inner.instrumented_edges;
         let backend = self.backend_mut();
 
         let (result, evm_env, tx_env) = {
@@ -1025,6 +1039,9 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
 
             evm.enable_inspector();
             let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
+            if instrumented_edges {
+                edgecov::reset_edges();
+            }
             let result = evm.transact(target_tx_env).wrap_err("EVM error")?;
             let tx_env = evm.tx().clone();
             let evm_env = evm.finish().1;
@@ -1596,6 +1613,21 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
                         *curr = 0;
                     }
                 }
+                EdgeCoverage::Instrumented(hits) => {
+                    // Compiler-assigned IDs are dense, so they index the history directly.
+                    for hit in hits.drain(..) {
+                        let edge_index = hit.id as usize;
+                        if history_map.len() <= edge_index {
+                            history_map.resize(edge_index + 1, 0);
+                        }
+                        Self::merge_edge_count(
+                            hit.count,
+                            &mut history_map[edge_index],
+                            &mut new_coverage,
+                            &mut is_edge,
+                        );
+                    }
+                }
                 EdgeCoverage::CollisionFree(hits) => {
                     for hit in hits.drain(..) {
                         let edge_index = edge_indices.edge_index(hit.edge);
@@ -2003,7 +2035,9 @@ mod tests {
         Vm::{blobhashesCall, mockCallRevert_1Call, revertToStateCall, snapshotStateCall},
     };
     use foundry_config::Config;
-    use foundry_evm_core::{constants::MAGIC_SKIP, evm::TempoEvmNetwork, opts::EvmOpts};
+    use foundry_evm_core::{
+        constants::MAGIC_SKIP, edgecov::InstrumentedEdgeHit, evm::TempoEvmNetwork, opts::EvmOpts,
+    };
     use foundry_evm_hardforks::TempoHardfork;
     use foundry_evm_traces::InternalTraceMode;
     use revm::context::CfgEnv;
@@ -2140,6 +2174,399 @@ mod tests {
             (true, true)
         );
         assert_eq!(history, [0, 1]);
+    }
+
+    fn instrumented_call(hits: &[(u32, u8)]) -> RawCallResult {
+        let hits =
+            hits.iter().map(|&(id, count)| InstrumentedEdgeHit { id, count }).collect::<Vec<_>>();
+        RawCallResult {
+            edge_coverage: Some(EdgeCoverage::Instrumented(hits)),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn instrumented_edge_merge_indexes_history_by_id() {
+        let mut history = Vec::new();
+        let mut edge_indices = EdgeIndexMap::default();
+        let mut merge = |hits: &[(u32, u8)]| {
+            instrumented_call(hits).merge_edge_coverage(&mut history, &mut edge_indices)
+        };
+
+        // First hit of an ID is a new edge.
+        assert_eq!(merge(&[(3, 1)]), (true, true));
+        // Same bucket again is nothing new.
+        assert_eq!(merge(&[(3, 1)]), (false, false));
+        // A higher hit-count bucket is a new feature, not an edge.
+        assert_eq!(merge(&[(3, 2)]), (true, false));
+        // 5 and 7 share the 4..=7 bucket.
+        assert_eq!(merge(&[(3, 5)]), (true, false));
+        assert_eq!(merge(&[(3, 7)]), (false, false));
+        assert_eq!(merge(&[(1, 1), (3, 1)]), (true, true));
+        assert_eq!(history, [0, 1, 0, 8]);
+        // The ID space is independent of the inspector's edge indices.
+        assert_eq!(edge_indices.edge_count(), 0);
+    }
+
+    /// Runtime code that hits edge 5 twice and edge 7 once, then stops.
+    const EDGECOV_CODE: &[u8] = &[
+        0x61, 0x00, 0x05, 0xc0, // PUSH2 5; EDGECOV
+        0x61, 0x00, 0x07, 0xc0, // PUSH2 7; EDGECOV
+        0x61, 0x00, 0x05, 0xc0, // PUSH2 5; EDGECOV
+        0x00, // STOP
+    ];
+
+    fn edgecov_executor(opcode: bool, collect: bool) -> Executor<EthEvmNetwork> {
+        let mut executor = ExecutorBuilder::default().gas_limit(1 << 20).build(
+            EvmEnv::default(),
+            TxEnv::default(),
+            Backend::spawn(None).unwrap(),
+            NetworkConfigs::default(),
+        );
+        executor.set_balance(CALLER, U256::MAX).unwrap();
+        executor.inspector_mut().enable_edgecov_opcode(opcode);
+        executor.inspector_mut().collect_instrumented_edges(collect);
+        executor
+    }
+
+    fn instrumented_hits(result: &RawCallResult) -> Vec<(u32, u8)> {
+        match &result.edge_coverage {
+            Some(EdgeCoverage::Instrumented(hits)) => {
+                hits.iter().map(|hit| (hit.id, hit.count)).collect()
+            }
+            other => panic!("expected instrumented edges, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn edgecov_opcode_collects_instrumented_edges() {
+        let mut executor = edgecov_executor(true, true);
+        let target = Address::repeat_byte(0x11);
+        executor.set_code(target, Bytecode::new_raw(Bytes::from_static(EDGECOV_CODE))).unwrap();
+        let stop = Address::repeat_byte(0x12);
+        executor.set_code(stop, Bytecode::new_raw(Bytes::from_static(&[0x00]))).unwrap();
+
+        let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.exit_reason, Some(InstructionResult::Stop));
+        assert_eq!(instrumented_hits(&result), [(5, 2), (7, 1)]);
+
+        // Instrumentation is gas-neutral: the same as a bare STOP.
+        let bare = executor.call_raw(CALLER, stop, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.gas_used, bare.gas_used);
+        // Hits are reset between calls.
+        assert!(instrumented_hits(&bare).is_empty());
+        let again = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(instrumented_hits(&again), [(5, 2), (7, 1)]);
+    }
+
+    #[test]
+    fn edgecov_opcode_counts_reverted_nested_calls() {
+        let mut executor = edgecov_executor(true, true);
+        let callee = Address::repeat_byte(0x22);
+        // PUSH2 9; EDGECOV; REVERT(0, 0)
+        executor
+            .set_code(
+                callee,
+                Bytecode::new_raw(Bytes::from_static(&[0x61, 0x00, 0x09, 0xc0, 0x5f, 0x5f, 0xfd])),
+            )
+            .unwrap();
+        // PUSH2 8; EDGECOV; CALL(gas, callee, 0, 0, 0, 0, 0); POP; STOP
+        let mut code = vec![0x61, 0x00, 0x08, 0xc0, 0x5f, 0x5f, 0x5f, 0x5f, 0x5f, 0x73];
+        code.extend_from_slice(callee.as_slice());
+        code.extend_from_slice(&[0x5a, 0xf1, 0x50, 0x00]);
+        let caller = Address::repeat_byte(0x21);
+        executor.set_code(caller, Bytecode::new_raw(code.into())).unwrap();
+
+        let result = executor.call_raw(CALLER, caller, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.exit_reason, Some(InstructionResult::Stop));
+        assert_eq!(instrumented_hits(&result), [(8, 1), (9, 1)]);
+    }
+
+    #[test]
+    fn edgecov_opcode_is_undefined_unless_enabled() {
+        let target = Address::repeat_byte(0x11);
+
+        let mut executor = edgecov_executor(false, false);
+        executor.set_code(target, Bytecode::new_raw(Bytes::from_static(EDGECOV_CODE))).unwrap();
+        let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert!(result.reverted);
+        assert_eq!(result.exit_reason, Some(InstructionResult::OpcodeNotFound));
+        assert!(result.edge_coverage.is_none());
+
+        // Executing without collecting runs the code and reports no coverage.
+        let mut executor = edgecov_executor(true, false);
+        executor.set_code(target, Bytecode::new_raw(Bytes::from_static(EDGECOV_CODE))).unwrap();
+        let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.exit_reason, Some(InstructionResult::Stop));
+        assert!(result.edge_coverage.is_none());
+    }
+
+    fn assert_edgecov_runs_on<FEN: FoundryEvmNetwork>(
+        builder: ExecutorBuilder<FEN>,
+        networks: NetworkConfigs,
+    ) where
+        EvmEnvFor<FEN>: Default,
+        TxEnvFor<FEN>: Default,
+    {
+        let mut executor = builder.gas_limit(1 << 20).build(
+            EvmEnvFor::<FEN>::default(),
+            TxEnvFor::<FEN>::default(),
+            Backend::spawn(None).unwrap(),
+            networks,
+        );
+        executor.inspector_mut().collect_instrumented_edges(true);
+        let target = Address::repeat_byte(0x11);
+        executor.set_code(target, Bytecode::new_raw(Bytes::from_static(EDGECOV_CODE))).unwrap();
+        let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.exit_reason, Some(InstructionResult::Stop));
+        match result.edge_coverage {
+            Some(EdgeCoverage::Instrumented(hits)) => assert_eq!(hits.len(), 2),
+            other => panic!("expected instrumented edges, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn edgecov_opcode_runs_on_tempo() {
+        assert_edgecov_runs_on(
+            ExecutorBuilder::<TempoEvmNetwork>::new(),
+            NetworkConfigs::with_tempo(),
+        );
+    }
+
+    #[cfg(feature = "optimism")]
+    #[test]
+    fn edgecov_opcode_runs_on_optimism() {
+        assert_edgecov_runs_on(
+            ExecutorBuilder::<foundry_evm_core::evm::OpEvmNetwork>::new(),
+            NetworkConfigs::with_optimism(),
+        );
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn edgecov_opcode_runs_on_base() {
+        assert_edgecov_runs_on(
+            ExecutorBuilder::<BaseEvmNetwork>::new(),
+            NetworkConfigs::with_base(),
+        );
+    }
+
+    /// Runtime code with each comparison opcode once, then a loop whose `EQ` site runs 11 times.
+    const CMP_CODE: &[u8] = &[
+        0x60, 0x02, 0x60, 0x01, 0x14, 0x50, // EQ(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x10, 0x50, // LT(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x11, 0x50, // GT(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x12, 0x50, // SLT(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x13, 0x50, // SGT(1, 2)
+        0x60, 0x00, 0x15, 0x50, // ISZERO(0)
+        0x60, 0x00, // i = 0
+        0x5b, // 36: JUMPDEST
+        0x80, 0x60, 0x0a, 0x14, // EQ(10, i)
+        0x60, 0x32, 0x57, // JUMPI to 50 when i == 10
+        0x60, 0x01, 0x01, // i += 1
+        0x60, 0x24, 0x56, // JUMP to 36
+        0x5b, 0x50, 0x00, // 50: JUMPDEST; POP; STOP
+    ];
+
+    /// [`CMP_CODE`] as a coverage build instruments it: `PUSH2 <site << 8 | opcode>; CMPLOG` before
+    /// each comparison but `ISZERO`, with sites 1 to 6.
+    const CMP_PROBED_CODE: &[u8] = &[
+        0x60, 0x02, 0x60, 0x01, 0x61, 0x01, 0x14, 0xc1, 0x14, 0x50, // EQ(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x61, 0x02, 0x10, 0xc1, 0x10, 0x50, // LT(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x61, 0x03, 0x11, 0xc1, 0x11, 0x50, // GT(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x61, 0x04, 0x12, 0xc1, 0x12, 0x50, // SLT(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x61, 0x05, 0x13, 0xc1, 0x13, 0x50, // SGT(1, 2)
+        0x60, 0x00, 0x15, 0x50, // ISZERO(0)
+        0x60, 0x00, // i = 0
+        0x5b, // 56: JUMPDEST
+        0x80, 0x60, 0x0a, 0x61, 0x06, 0x14, 0xc1, 0x14, // EQ(10, i)
+        0x60, 0x4a, 0x57, // JUMPI to 74 when i == 10
+        0x60, 0x01, 0x01, // i += 1
+        0x60, 0x38, 0x56, // JUMP to 56
+        0x5b, 0x50, 0x00, // 74: JUMPDEST; POP; STOP
+    ];
+
+    fn cmp_values(executor: &Executor<EthEvmNetwork>, target: Address) -> Vec<CmpOperands> {
+        let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.exit_reason, Some(InstructionResult::Stop));
+        result.evm_cmp_values.unwrap_or_default()
+    }
+
+    #[test]
+    fn instrumented_cmp_log_matches_inspector() {
+        let target = Address::repeat_byte(0x31);
+        let mut inspected = edgecov_executor(false, false);
+        inspected.inspector_mut().collect_evm_cmp_log(true);
+        inspected.set_code(target, Bytecode::new_raw(Bytes::from_static(CMP_CODE))).unwrap();
+        let expected = cmp_values(&inspected, target);
+        // Each opcode once, and the loop site capped at its observation limit.
+        assert_eq!(
+            expected.len(),
+            6 + usize::from(foundry_evm_core::edgecov::MAX_CMP_OBSERVATIONS_PER_SITE)
+        );
+        assert_eq!(
+            expected[..6].iter().map(|cmp| cmp.opcode).collect::<Vec<_>>(),
+            [0x14, 0x10, 0x11, 0x12, 0x13, 0x15]
+        );
+        assert_eq!((expected[0].op1, expected[0].op2), (U256::from(1), U256::from(2)));
+        assert_eq!(expected[0].address, target);
+
+        // Instrumented code reports the same operands from its `CMPLOG` probes, with each site ID
+        // in place of the comparison's program counter. `ISZERO` is not probed.
+        let mut instrumented = edgecov_executor(true, true);
+        instrumented.inspector_mut().collect_evm_cmp_log(true);
+        assert!(instrumented.inspector().edge_coverage.is_none());
+        instrumented
+            .set_code(target, Bytecode::new_raw(Bytes::from_static(CMP_PROBED_CODE)))
+            .unwrap();
+        let sites = (1..=5).chain(std::iter::repeat_n(
+            6,
+            usize::from(foundry_evm_core::edgecov::MAX_CMP_OBSERVATIONS_PER_SITE),
+        ));
+        let probed = expected
+            .iter()
+            .filter(|cmp| cmp.opcode != 0x15)
+            .zip(sites)
+            .map(|(cmp, site)| CmpOperands { pc: site, ..*cmp })
+            .collect::<Vec<_>>();
+        assert_eq!(cmp_values(&instrumented, target), probed);
+        // The log is reset for every call.
+        assert_eq!(cmp_values(&instrumented, target), probed);
+
+        // Without cmp-log, the probes still run and record nothing.
+        instrumented.inspector_mut().collect_evm_cmp_log(false);
+        assert!(cmp_values(&instrumented, target).is_empty());
+        // Leaving instrumented mode brings back the inspector, for uninstrumented code.
+        instrumented.inspector_mut().collect_evm_cmp_log(true);
+        instrumented.inspector_mut().collect_instrumented_edges(false);
+        instrumented.inspector_mut().enable_edgecov_opcode(false);
+        assert!(instrumented.inspector().edge_coverage.is_some());
+        instrumented.set_code(target, Bytecode::new_raw(Bytes::from_static(CMP_CODE))).unwrap();
+        assert_eq!(cmp_values(&instrumented, target), expected);
+    }
+
+    fn call_code(op: u8, target: Address) -> Vec<u8> {
+        // retLen retOff argsLen argsOff [value] target gas CALL*
+        let mut code = vec![0x5f, 0x5f, 0x5f, 0x5f];
+        if matches!(op, 0xf1 | 0xf2) {
+            code.push(0x5f);
+        }
+        code.push(0x73);
+        code.extend_from_slice(target.as_slice());
+        code.extend_from_slice(&[0x5a, op]);
+        code
+    }
+
+    /// Runs one call with a fresh fuzzer and returns the stack values it collected.
+    fn fuzzer_values(
+        executor: &Executor<EthEvmNetwork>,
+        target: Address,
+        instrumented: bool,
+    ) -> Vec<B256> {
+        let mut stack = executor.inspector().clone();
+        stack.set_fuzzer(foundry_evm_fuzz::Fuzzer::new(1024, None));
+        stack.collect_instrumented_edges(instrumented);
+        let (mut evm_env, mut tx_env) =
+            executor.prepare_call_env(CALLER, TxKind::Call(target), Bytes::new(), U256::ZERO);
+        // Ethereum has no chain context.
+        executor.chain_context_for_synthetic_transaction(&tx_env).unwrap();
+        edgecov::reset_edges();
+        let mut backend = CowBackend::new_borrowed(executor.backend());
+        let result =
+            backend.inspect_with_context(&mut evm_env, &mut tx_env, (), &mut stack).unwrap();
+        assert!(result.result.is_success(), "{result:?}");
+        stack.fuzzer.take().unwrap().collected_values
+    }
+
+    /// Runs one call with a fresh fuzzer that records mapping slots and returns them.
+    fn fuzzer_mapping_slots(
+        executor: &Executor<EthEvmNetwork>,
+        target: Address,
+        instrumented: bool,
+    ) -> foundry_common::mapping_slots::MappingSlots {
+        let mut stack = executor.inspector().clone();
+        stack.set_fuzzer(foundry_evm_fuzz::Fuzzer::new(1024, Some(Default::default())));
+        stack.collect_instrumented_edges(instrumented);
+        let (mut evm_env, mut tx_env) =
+            executor.prepare_call_env(CALLER, TxKind::Call(target), Bytes::new(), U256::ZERO);
+        executor.chain_context_for_synthetic_transaction(&tx_env).unwrap();
+        edgecov::reset_edges();
+        let mut backend = CowBackend::new_borrowed(executor.backend());
+        let result =
+            backend.inspect_with_context(&mut evm_env, &mut tx_env, (), &mut stack).unwrap();
+        assert!(result.result.is_success(), "{result:?}");
+        stack.fuzzer.take().unwrap().mapping_slots.unwrap().remove(&target).unwrap()
+    }
+
+    #[test]
+    fn fuzzer_mapping_hooks_match_step_recording() {
+        let target = Address::repeat_byte(0x51);
+        // mstore(0, 7); mstore(0x20, 3); sstore(keccak256(0, 0x40), 1); stop
+        let code = [
+            0x60, 0x07, 0x5f, 0x52, 0x60, 0x03, 0x60, 0x20, 0x52, 0x60, 0x40, 0x5f, 0x20, 0x60,
+            0x01, 0x90, 0x55, 0x00,
+        ];
+        let slot = alloy_primitives::keccak256(
+            [B256::with_last_byte(7).as_slice(), B256::with_last_byte(3).as_slice()].concat(),
+        );
+        for instrumented in [false, true] {
+            let mut executor = edgecov_executor(instrumented, false);
+            executor.set_code(target, Bytecode::new_raw(Bytes::copy_from_slice(&code))).unwrap();
+            let slots = fuzzer_mapping_slots(&executor, target, instrumented);
+            assert_eq!(
+                slots.seen_sha3.get(&slot),
+                Some(&(B256::with_last_byte(7), B256::with_last_byte(3)))
+            );
+            assert_eq!(slots.keys.get(&slot), Some(&B256::with_last_byte(7)));
+            assert_eq!(slots.parent_slots.get(&slot), Some(&B256::with_last_byte(3)));
+        }
+    }
+
+    #[test]
+    fn fuzzer_frame_collection_matches_step_collection() {
+        let mut executor = edgecov_executor(true, false);
+        let ok = Address::repeat_byte(0x41);
+        let reverts = Address::repeat_byte(0x42);
+        let nested = Address::repeat_byte(0x43);
+        let eoa = Address::repeat_byte(0x44);
+        let root = Address::repeat_byte(0x45);
+        // PUSH1 7; STOP
+        executor.set_code(ok, Bytecode::new_raw(Bytes::from_static(&[0x60, 0x07, 0x00]))).unwrap();
+        // PUSH1 8; REVERT(0, 0)
+        executor
+            .set_code(
+                reverts,
+                Bytecode::new_raw(Bytes::from_static(&[0x60, 0x08, 0x5f, 0x5f, 0xfd])),
+            )
+            .unwrap();
+        // PUSH1 9; CALL ok; CALL reverts; STOP
+        let mut code = vec![0x60, 0x09];
+        code.extend(call_code(0xf1, ok));
+        code.extend(call_code(0xf1, reverts));
+        code.push(0x00);
+        executor.set_code(nested, Bytecode::new_raw(code.into())).unwrap();
+
+        // PUSH1 0xaa; PUSH1 0xbb; then calls of every kind, a precompile, an EOA, nested
+        // frames and a CREATE, each leaving its result on the stack.
+        let mut code = vec![0x60, 0xaa, 0x60, 0xbb];
+        code.extend(call_code(0xf1, ok));
+        code.extend(call_code(0xf1, reverts));
+        code.extend(call_code(0xf1, eoa));
+        code.extend(call_code(0xfa, Address::with_last_byte(4)));
+        code.extend(call_code(0xf4, ok));
+        code.extend(call_code(0xf2, reverts));
+        code.extend(call_code(0xf1, nested));
+        code.extend([0x5f, 0x5f, 0x5f, 0xf0]); // CREATE(0, 0, 0)
+        code.extend([0x5f, 0x5f, 0x5f, 0x5f, 0xf5]); // CREATE2(0, 0, 0, 0)
+        code.push(0x00);
+        executor.set_code(root, Bytecode::new_raw(code.into())).unwrap();
+
+        let expected = fuzzer_values(&executor, root, false);
+        assert!(expected.contains(&B256::with_last_byte(0xaa)));
+        assert!(expected.contains(&B256::with_last_byte(0x09)));
+        // One collection per call that returned to an interpreter: 7 from the root, 2 nested.
+        assert_eq!(expected.len(), (3..=9).sum::<usize>() + 2 + 3);
+        assert_eq!(fuzzer_values(&executor, root, true), expected);
     }
 
     #[test]

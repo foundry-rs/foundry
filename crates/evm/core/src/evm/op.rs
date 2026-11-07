@@ -18,6 +18,7 @@ use revm::{
 use crate::{
     FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryTransaction,
     backend::{DatabaseExt, JournaledState},
+    edgecov::install_hooks,
     evm::{
         FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm, NestedEvmFor,
         run_inspected_frame,
@@ -69,7 +70,13 @@ impl FoundryEvmFactory for OpEvmFactory {
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
+        let hooks = inspector.evm_hooks();
         let mut op_evm = Self::default().create_evm_with_inspector(db, evm_env, inspector);
+        if hooks.any() {
+            let mut inner = op_evm.into_inner();
+            install_hooks(&mut inner.0.instruction, hooks);
+            op_evm = OpEvm::new(inner, true);
+        }
         op_evm.cfg.tx_chain_id_check = true;
         op_evm
     }
