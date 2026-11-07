@@ -90,7 +90,7 @@ use anvil_core::{
         block::{Block, BlockInfo, canonical_block},
         transaction::{MaybeImpersonatedTransaction, PendingTransaction},
     },
-    types::{NodeBlobParams, ReorgOptions, TransactionData},
+    types::{NodeBlobParams, ReorgOptions, TempoCreateTokenRequest, TransactionData},
 };
 use anvil_rpc::{
     error::{ErrorCode, RpcError},
@@ -2216,10 +2216,10 @@ impl EthApi<FoundryNetwork> {
         trace!(target: "rpc::api", "executing eth request");
         // Fork reset and RPC URL replacement take the write lock internally after their fallible
         // remote staging work. Memory reset takes it before staging because it snapshots live
-        // state. Identity, snapshot, chain-rewind, and SetCode methods also lock internally to keep
-        // direct API callers safe. Nested reads of this fair RwLock can deadlock behind a queued
-        // writer. Consensus queries snapshot their source under the backend DB lock before any
-        // upstream I/O.
+        // state. Token creation, identity, snapshot, chain-rewind, and SetCode methods also lock
+        // internally to keep direct API callers safe. Nested reads of this fair RwLock can deadlock
+        // behind a queued writer. Consensus queries snapshot their source under the backend DB lock
+        // before any upstream I/O.
         let _lifecycle = if matches!(
             &request,
             EthRequest::Reset(_)
@@ -2233,6 +2233,7 @@ impl EthApi<FoundryNetwork> {
                 | EthRequest::Rollback(_)
                 | EthRequest::ConsensusGetFinalization(_)
                 | EthRequest::ConsensusGetLatest(_)
+                | EthRequest::TempoCreateToken(_)
         ) {
             None
         } else {
@@ -2732,6 +2733,9 @@ impl EthApi<FoundryNetwork> {
             }
             EthRequest::TempoRotateConsensusIdentity(()) => {
                 self.anvil_tempo_rotate_consensus_identity().await.to_rpc_result()
+            }
+            EthRequest::TempoCreateToken(request) => {
+                self.anvil_tempo_create_token(request).await.to_rpc_result()
             }
         }
     }
@@ -5721,6 +5725,20 @@ impl EthApi<FoundryNetwork> {
     pub async fn anvil_tempo_rotate_consensus_identity(&self) -> Result<TempoConsensusIdentity> {
         node_info!("anvil_tempoRotateConsensusIdentity");
         self.backend.tempo_rotate_consensus_identity().await
+    }
+
+    /// Creates a native TIP-20 token with optional initial mints at a chosen address.
+    ///
+    /// Handler for `anvil_tempoCreateToken`; unavailable on non-Tempo networks.
+    pub async fn anvil_tempo_create_token(
+        &self,
+        request: TempoCreateTokenRequest,
+    ) -> Result<Address> {
+        node_info!("anvil_tempoCreateToken");
+        let _lifecycle = self.lifecycle_lock.read().await;
+        self.ensure_tempo_mode()?;
+        let _mining = self.backend.lock_mining().await;
+        self.backend.create_tempo_token(request).await
     }
 }
 

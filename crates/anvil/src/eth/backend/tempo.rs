@@ -8,12 +8,14 @@
 //! initialization logic from `foundry-evm-core`; the changed state is written back to the `Db`.
 
 use super::{
-    db::{AccountInfo, DatabaseRef, Db},
+    db::{DatabaseRef, Db, EvmDb},
     env::EvmEnv,
     evm::{EvmOptions, TempoEvmNetwork, build_evm},
 };
 use crate::eth::error::BlockchainError;
-use alloy_primitives::{Address, B256, U256, address};
+use alloy_primitives::{Address, U256, address};
+use anvil_core::types::TempoCreateTokenRequest;
+use evm2::evm::{AccountChangeRef, BlockStateAccumulator, StateChangeSink, StorageChange};
 use foundry_evm_core::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
     initialize_tempo_genesis_inner,
@@ -34,22 +36,16 @@ use tempo_precompiles::{
     error::TempoPrecompileError,
     storage::StorageCtx,
     tip_fee_manager::{IFeeManager, TipFeeManager},
-    tip20::{ITIP20, TIP20Token},
+    tip20::{IRolesAuth, ITIP20, TIP20Error, TIP20Token, USD_CURRENCY, roles::UNGRANTABLE_ROLE},
+    tip20_factory::{TIP20Factory, TIP20FactoryError},
 };
 use tempo_primitives::TempoAddressExt;
 
 const SENDER: Address = address!("0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38");
 const ADMIN: Address = address!("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f");
 
-/// State changed by a Tempo storage context.
-#[derive(Debug, Default)]
-struct TempoChanges {
-    accounts: Vec<(Address, AccountInfo)>,
-    storage: Vec<(Address, U256, U256)>,
-}
-
 /// Runs `f` in a Tempo precompile storage context over `db` at `env`, then writes the state it
-/// changed back to `db`.
+/// changed back to `db` only if every operation succeeds.
 ///
 /// The context executes on a Tempo evm2 EVM, so precompile storage follows the same rules as
 /// transactions.
@@ -57,23 +53,19 @@ pub fn with_tempo_storage<R>(
     db: &mut dyn Db,
     env: &EvmEnv,
     hardfork: FoundryHardfork,
-    f: impl FnOnce() -> R,
+    f: impl FnOnce() -> Result<R, BlockchainError>,
 ) -> Result<R, BlockchainError> {
     let opts = EvmOptions { hardfork, ..Default::default() };
     let (result, changes) = {
         let state: &dyn DatabaseRef = &*db;
         let mut evm = build_evm::<TempoEvmNetwork>(state, env, &opts)?;
-        let result = StorageCtx::enter_evm(&mut evm, f);
+        evm.set_database(EvmDb::for_storage(state));
+        let result = StorageCtx::enter_evm_without_tip1060_accounting(&mut evm, f)?;
         evm.state_mut().commit_transaction();
         let changes = overlay_changes(state, &evm.overlay_db().cache)?;
         (result, changes)
     };
-    for (address, info) in changes.accounts {
-        db.insert_account(address, info);
-    }
-    for (address, slot, value) in changes.storage {
-        db.set_storage_at(address, B256::from(slot), B256::from(value))?;
-    }
+    db.commit(&changes);
     Ok(result)
 }
 
@@ -81,28 +73,34 @@ pub fn with_tempo_storage<R>(
 fn overlay_changes(
     db: &dyn DatabaseRef,
     cache: &evm2::evm::Cache,
-) -> Result<TempoChanges, BlockchainError> {
-    let mut changes = TempoChanges::default();
+) -> Result<BlockStateAccumulator, BlockchainError> {
+    let mut changes = BlockStateAccumulator::new();
     for (address, info) in &cache.accounts {
         let Some(info) = info else { continue };
-        let current = db.basic_ref(*address)?;
-        if current.as_ref().is_some_and(|current| {
-            current.balance == info.balance
-                && current.nonce == info.nonce
-                && current.code_hash == info.code_hash
-        }) {
+        let original = db.basic_ref(*address)?;
+        if original.as_ref() == Some(info) {
             continue;
         }
-        let mut info = info.clone();
-        if info.code.is_none() && !info.is_empty_code_hash() {
-            info.code = cache.contracts.get(&info.code_hash).cloned();
+        if let Some(code) = info.code.as_ref().or_else(|| cache.contracts.get(&info.code_hash)) {
+            let Ok(()) = changes.bytecode(info.code_hash, code);
         }
-        changes.accounts.push((*address, info));
+        // Keep Anvil's original account, including empty accounts with unrelated storage.
+        let Ok(()) = changes.account(AccountChangeRef {
+            address: *address,
+            original: original.as_ref(),
+            current: Some(info),
+            created: false,
+            selfdestructed: false,
+        });
     }
     for (address, slots) in &cache.storage {
         for (slot, value) in &slots.slots {
-            if db.storage_ref(*address, *slot)? != *value {
-                changes.storage.push((*address, *slot, *value));
+            let original = db.storage_ref(*address, *slot)?;
+            if original != *value {
+                let Ok(()) = StateChangeSink::storage(
+                    &mut changes,
+                    StorageChange { address: *address, key: *slot, original, current: *value },
+                );
             }
         }
     }
@@ -122,8 +120,10 @@ pub fn initialize_tempo_precompiles(
     test_accounts: &[Address],
     hardfork: FoundryHardfork,
 ) -> Result<(), BlockchainError> {
-    with_tempo_storage(db, env, hardfork, || initialize_tempo_genesis(test_accounts, hardfork))?
-        .map_err(|err| BlockchainError::Message(format!("failed to initialize Tempo: {err}")))
+    with_tempo_storage(db, env, hardfork, || {
+        initialize_tempo_genesis(test_accounts, hardfork)
+            .map_err(|err| BlockchainError::Message(format!("failed to initialize Tempo: {err}")))
+    })
 }
 
 fn initialize_tempo_genesis(
@@ -251,4 +251,43 @@ pub(crate) fn native_precompile_name(address: Address, hardfork: TempoHardfork) 
         _ => return None,
     };
     Some(name.to_string())
+}
+
+/// Creates a native TIP-20 at the requested address inside the current storage context.
+///
+/// Unlike genesis's reserved-address factory entry point, this development operation accepts any
+/// TIP-20 address. All other quote-token checks follow the ordinary factory creation path.
+/// Previously initialized tokens remain occupied even if their code has been cleared.
+pub(super) fn create_token(
+    request: &TempoCreateTokenRequest,
+) -> Result<Address, TempoPrecompileError> {
+    let mut token = TIP20Token::from_address(request.address)?;
+    let factory = TIP20Factory::new();
+    // Role initialization leaves this self-admin record even at zero supply and after code removal.
+    if factory.is_tip20(request.address)?
+        || token.get_role_admin(IRolesAuth::getRoleAdminCall { role: UNGRANTABLE_ROLE })?
+            == UNGRANTABLE_ROLE
+    {
+        return Err(TIP20FactoryError::token_already_exists(request.address).into());
+    }
+    if !factory.is_tip20(request.quote_token)?
+        || (request.currency == USD_CURRENCY
+            && TIP20Token::from_address(request.quote_token)?.currency()? != USD_CURRENCY)
+    {
+        return Err(TIP20Error::invalid_quote_token().into());
+    }
+
+    token.initialize(
+        request.admin,
+        &request.name,
+        &request.symbol,
+        &request.currency,
+        request.quote_token,
+        request.admin,
+    )?;
+    token.grant_role_internal(request.admin, TIP20Token::issuer_role())?;
+    for mint in &request.mint {
+        token.mint(request.admin, ITIP20::mintCall { to: mint.to, amount: mint.amount })?;
+    }
+    Ok(request.address)
 }
