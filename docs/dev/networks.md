@@ -319,13 +319,13 @@ The existing Solidity verifier binds the signatures to the header digest and sta
 the account, slot and expected value; a wrong value must fail. Real Tempo provides the fork anchor,
 while Anvil's development committee certifies the local sealed partial trie.
 
-The test locates the current epoch boundary in native headers, derives the epoch length from
-that boundary, checks it against the pinned Moderato chain specification and configures Anvil
-explicitly. It checks the RPC chain ID and genesis hash, then checks native headers on both sides
-of the observed boundary. The genesis hash alone does not authenticate the epoch length. The public
-RPC rejects `debug_chainConfig`, so this test does not exercise Anvil's automatic epoch metadata
-probe. It leaves the hardfork unset and checks Anvil's selection against `tempo_forkSchedule` at
-the anchor timestamp.
+The test uses the epoch length from the pinned Moderato chain specification and configures Anvil
+explicitly. It checks the RPC chain ID and genesis hash, verifies the anchor's native epoch, then
+checks native headers on both sides of the expected epoch boundary, including their parent hash
+linkage. These source-header checks validate the epoch length independently of Anvil; the genesis
+hash alone does not authenticate it. The public RPC rejects `debug_chainConfig`, so this test does
+not exercise Anvil's automatic epoch metadata probe. It leaves the hardfork unset and checks Anvil's
+selection against `tempo_forkSchedule` at the anchor timestamp.
 It only reads the upstream chain and runs on nightly CI or manual testnet dispatches, using the
 public Moderato RPC when no private endpoint is configured. Run it explicitly with a Moderato
 endpoint:

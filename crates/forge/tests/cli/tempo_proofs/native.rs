@@ -11,7 +11,7 @@ use foundry_compilers::artifacts::ConfigurableContractArtifact;
 use foundry_evm::hardfork::TempoHardfork;
 use foundry_test_utils::str;
 use serde_json::json;
-use std::{num::NonZeroU64, time::Duration};
+use std::time::Duration;
 use tempo_alloy::{TempoNetwork, chainspec::TempoChainSpec, rpc::ForkSchedule};
 use tokio::time::timeout;
 
@@ -44,25 +44,16 @@ async fn tempo_proofs_native_fork(prj: _, cmd: _) {
             .max()
             .expect("source schedule must identify the anchor hardfork");
         let epoch = anchor_header.consensus_context.expect("native anchor consensus context").epoch;
-        // Discover the current epoch boundary from native headers, rather than accepting Anvil's
-        // fallback epoch length when the public source rejects its metadata RPC.
-        let boundary_height = discover_epoch_boundary(anchor_height, epoch, async |height| {
-            let block = upstream.get_block_by_number(height.into()).await.unwrap().unwrap();
-            assert_eq!(block.header.as_ref().inner.number, height);
-            block.header.as_ref().consensus_context.expect("native epoch context").epoch
-        })
-        .await;
-        assert!(boundary_height > 0, "source epoch boundary must follow genesis");
-        assert_eq!(boundary_height % epoch, 0, "source epochs must have a fixed length");
-        let epoch_length = NonZeroU64::new(boundary_height / epoch).unwrap();
+        let epoch_length = spec.info.epoch_length().expect("Moderato genesis defines epoch length");
+        assert!(epoch > 0, "source must have crossed an epoch boundary");
         assert_eq!(
-            epoch_length,
-            spec.info.epoch_length().expect("Moderato genesis defines epoch length"),
-            "native epoch length must match the pinned chain specification",
+            epoch,
+            anchor_height / epoch_length,
+            "source epoch must match the pinned chain specification",
         );
-        assert_eq!(epoch, anchor_height / epoch_length);
+        let boundary_height = epoch * epoch_length.get();
         // Genesis hashes identify the chain but do not commit its epoch configuration. Check the
-        // actual native transition on both sides of the observed boundary.
+        // actual native transition on both sides of the pinned specification's boundary.
         let mut previous_hash = None;
         for (height, expected_epoch) in [(boundary_height - 1, epoch - 1), (boundary_height, epoch)]
         {
@@ -98,7 +89,7 @@ async fn tempo_proofs_native_fork(prj: _, cmd: _) {
         let bytecode = store.bytecode.unwrap().into_bytes().unwrap();
         let seed = B256::repeat_byte(0x54);
         let identity = TempoConsensus::new(seed, epoch_length).identity();
-        // Configure only the strictly sourced epoch length; hardfork inference stays automatic.
+        // Configure only the verified epoch length; hardfork inference stays automatic.
         let config = NodeConfig::test_tempo()
             .with_eth_rpc_url(Some(url.clone()))
             .with_fork_block_number(Some(anchor_height))
@@ -157,132 +148,4 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
     })
     .await
     .expect("verify native Tempo fork proofs within 180 seconds");
-}
-
-/// Finds the epoch boundary by searching fixed lengths compatible with the source anchor.
-async fn discover_epoch_boundary(
-    anchor_height: u64,
-    epoch: u64,
-    mut epoch_at: impl AsyncFnMut(u64) -> u64,
-) -> u64 {
-    assert!(epoch > 0, "source must have crossed an epoch boundary");
-    assert!(epoch <= anchor_height, "source epoch exceeds its anchor height");
-    // For fixed epochs, epoch = floor(anchor_height / length), so search only lengths in
-    // (anchor_height / (epoch + 1), anchor_height / epoch] rather than every source height.
-    let next_epoch = epoch.checked_add(1).expect("source epoch must have a successor");
-    let mut low = anchor_height / next_epoch + 1;
-    let mut high = anchor_height / epoch;
-    assert!(low <= high, "source anchor has no fixed epoch-length candidate");
-    while low < high {
-        let candidate = low + (high - low) / 2;
-        let height =
-            epoch.checked_mul(candidate).expect("epoch boundary must fit in source height");
-        let observed = epoch_at(height).await;
-        if observed < epoch {
-            low = candidate + 1;
-        } else {
-            assert_eq!(observed, epoch, "source epoch at height {height}");
-            high = candidate;
-        }
-    }
-    epoch.checked_mul(low).expect("epoch boundary must fit in source height")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn epoch_search_limits_rpc_queries() {
-        // At this native benchmark anchor, the original height search needed 25 queries.
-        let anchor_height = 42_863_316;
-        let epoch_length = 21_600;
-        let epoch = anchor_height / epoch_length;
-        let mut queries = 0;
-        let boundary = discover_epoch_boundary(anchor_height, epoch, async |height| {
-            queries += 1;
-            assert!(height <= anchor_height);
-            height / epoch_length
-        })
-        .await;
-        assert_eq!(boundary, 42_854_400);
-        assert!(queries <= 4, "expected at most four epoch queries, got {queries}");
-    }
-
-    #[tokio::test]
-    async fn epoch_search_handles_epoch_edges() {
-        for length in [2, 3, 4, 7, 21_600] {
-            for epoch in [1, 2, 17, 1984] {
-                let boundary = epoch * length;
-                for anchor in [boundary, boundary + length - 1] {
-                    let actual = discover_epoch_boundary(anchor, epoch, async |height| {
-                        assert!(height <= anchor);
-                        height / length
-                    })
-                    .await;
-                    assert_eq!(actual, boundary, "length {length}, epoch {epoch}, anchor {anchor}");
-                }
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn epoch_search_skips_queries_for_single_candidate() {
-        let boundary = discover_epoch_boundary(101, 50, async |_| {
-            unreachable!("the anchor determines the only candidate length")
-        })
-        .await;
-        assert_eq!(boundary, 100);
-    }
-
-    #[tokio::test]
-    async fn epoch_search_handles_large_heights() {
-        for (length, anchor) in [
-            (2, u64::MAX),
-            (3, u64::MAX - 1),
-            (u64::MAX / 3, u64::MAX),
-            (u64::MAX / 2 + 1, u64::MAX),
-        ] {
-            let epoch = anchor / length;
-            let mut queries = 0;
-            let boundary = discover_epoch_boundary(anchor, epoch, async |height| {
-                queries += 1;
-                assert!(height <= anchor);
-                height / length
-            })
-            .await;
-            assert_eq!(boundary, epoch * length);
-            assert!(queries <= u64::BITS);
-        }
-    }
-
-    #[tokio::test]
-    #[should_panic(expected = "source must have crossed an epoch boundary")]
-    async fn epoch_search_rejects_epoch_zero() {
-        discover_epoch_boundary(100, 0, async |_| unreachable!()).await;
-    }
-
-    #[tokio::test]
-    #[should_panic(expected = "source epoch exceeds its anchor height")]
-    async fn epoch_search_rejects_epoch_above_height() {
-        discover_epoch_boundary(5, 6, async |_| unreachable!()).await;
-    }
-
-    #[tokio::test]
-    #[should_panic(expected = "source anchor has no fixed epoch-length candidate")]
-    async fn epoch_search_rejects_inconsistent_anchor() {
-        discover_epoch_boundary(7, 5, async |_| unreachable!()).await;
-    }
-
-    #[tokio::test]
-    #[should_panic(expected = "source epoch must have a successor")]
-    async fn epoch_search_rejects_epoch_overflow() {
-        discover_epoch_boundary(u64::MAX, u64::MAX, async |_| unreachable!()).await;
-    }
-
-    #[tokio::test]
-    #[should_panic(expected = "source epoch at height")]
-    async fn epoch_search_rejects_epoch_after_anchor() {
-        discover_epoch_boundary(42_863_316, 1984, async |_| 1985).await;
-    }
 }
