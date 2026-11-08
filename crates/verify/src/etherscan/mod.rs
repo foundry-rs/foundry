@@ -108,37 +108,69 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     sanitize_remote_message(&resp.result)
                 );
 
-                if resp.result == "Pending in queue"
-                    || resp.result.starts_with("Error: contract does not exist")
-                {
-                    return Err(RetryError::Retry(eyre!("Verification is still pending...")));
-                }
-
-                if resp.result == "Unable to verify" {
-                    return Err(RetryError::Retry(eyre!("Unable to verify.")));
-                }
-
-                if resp.result == "Already Verified" {
-                    let _ = sh_status!("Contract source code already verified");
-                    return Ok(());
-                }
-
-                if resp.status == "0" {
-                    return Err(RetryError::Break(eyre!(
+                match VerificationCheckStatus::classify(&resp.status, &resp.result) {
+                    VerificationCheckStatus::Pending => {
+                        Err(RetryError::Retry(eyre!("Verification is still pending...")))
+                    }
+                    VerificationCheckStatus::UnableToVerify => {
+                        Err(RetryError::Retry(eyre!("Unable to verify.")))
+                    }
+                    VerificationCheckStatus::AlreadyVerified => {
+                        let _ = sh_status!("Contract source code already verified");
+                        Ok(())
+                    }
+                    VerificationCheckStatus::Failed => Err(RetryError::Break(eyre!(
                         "Contract verification failed:\nStatus: `{}`\nResult: `{}`",
                         resp.status,
                         sanitize_remote_message(&resp.result)
-                    )));
+                    ))),
+                    VerificationCheckStatus::Verified => {
+                        let _ = sh_status!("Contract successfully verified");
+                        Ok(())
+                    }
+                    VerificationCheckStatus::Finished => Ok(()),
                 }
-
-                if resp.result == "Pass - Verified" {
-                    let _ = sh_status!("Contract successfully verified");
-                }
-
-                Ok(())
             })
             .await
             .wrap_err("Checking verification result failed")
+    }
+}
+
+/// The state of an Etherscan verification job, as reported by its status check.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VerificationCheckStatus {
+    /// The job is queued, or the explorer has not indexed the contract yet; check again.
+    Pending,
+    /// The explorer could not verify the contract yet; check again.
+    UnableToVerify,
+    /// The contract was verified before this job.
+    AlreadyVerified,
+    /// The job failed (status `0`).
+    Failed,
+    /// The job verified the contract.
+    Verified,
+    /// The job finished with a result this client does not recognize.
+    Finished,
+}
+
+impl VerificationCheckStatus {
+    /// Classifies a verification status response from its `status` and `result` fields.
+    ///
+    /// The order matters: explorers report pending and retryable jobs with status `0`.
+    fn classify(status: &str, result: &str) -> Self {
+        if result == "Pending in queue" || result.starts_with("Error: contract does not exist") {
+            Self::Pending
+        } else if result == "Unable to verify" {
+            Self::UnableToVerify
+        } else if result == "Already Verified" {
+            Self::AlreadyVerified
+        } else if status == "0" {
+            Self::Failed
+        } else if result == "Pass - Verified" {
+            Self::Verified
+        } else {
+            Self::Finished
+        }
     }
 }
 
@@ -525,6 +557,23 @@ mod tests {
     use foundry_common::fs;
     use foundry_test_utils::{forgetest, str, util::SOLC_VERSION};
     use tempfile::tempdir;
+
+    #[test]
+    fn classifies_verification_check_status() {
+        use VerificationCheckStatus::*;
+        let cases = [
+            ("0", "Pending in queue", Pending),
+            ("0", "Error: contract does not exist", Pending),
+            ("0", "Unable to verify", UnableToVerify),
+            ("1", "Already Verified", AlreadyVerified),
+            ("0", "Fail - Unable to verify", Failed),
+            ("1", "Pass - Verified", Verified),
+            ("1", "Something else", Finished),
+        ];
+        for (status, result, expected) in cases {
+            assert_eq!(VerificationCheckStatus::classify(status, result), expected, "{result}");
+        }
+    }
 
     #[test]
     fn external_request_preserves_raw_input_and_target() {
