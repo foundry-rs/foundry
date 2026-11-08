@@ -53,7 +53,7 @@ use crate::{
         preserve_simulation_request_fields,
     },
     mem::{
-        inspector::{AnvilInspector, InspectorTxConfig},
+        inspector::{AnvilInspector, FrameGuard, InspectorTxConfig},
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
     },
 };
@@ -4254,7 +4254,7 @@ impl<N: Network> Backend<N> {
             let executed = self.replay_envelope_with_inspector_ref_and_context(
                 &cache_db,
                 &evm_env,
-                &mut inspector,
+                &mut FrameGuard::new(&mut inspector),
                 &target_tx,
                 EnvelopeExecution::replay(transaction_context, hardfork),
             )?;
@@ -7991,7 +7991,7 @@ where
                 let executed = self.replay_envelope_with_inspector_ref_and_context(
                     &cache_db,
                     &evm_env,
-                    &mut inspector,
+                    &mut FrameGuard::new(&mut inspector),
                     &pending,
                     EnvelopeExecution::replay(transaction_context, hardfork),
                 )?;
