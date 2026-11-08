@@ -10210,4 +10210,143 @@ mod tests {
             Ok(())
         });
     }
+
+    // Empty `FOUNDRY_SOLC_VERSION` is read directly and must not replace toml `solc`.
+    #[test]
+    fn empty_foundry_solc_version_keeps_toml_solc() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                solc = "0.8.20"
+                "#,
+            )?;
+
+            jail.set_env("FOUNDRY_SOLC_VERSION", "");
+            let config = Config::load().unwrap();
+            assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, 20))));
+
+            Ok(())
+        });
+    }
+
+    // Empty `DAPP_SOLC_VERSION` is read directly and must not replace toml `solc`.
+    #[test]
+    fn empty_dapp_solc_version_keeps_toml_solc() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                solc = "0.8.20"
+                "#,
+            )?;
+
+            jail.set_env("DAPP_SOLC_VERSION", "");
+            let config = Config::load().unwrap();
+            assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, 20))));
+
+            Ok(())
+        });
+    }
+
+    // Empty values parsed from direct `DAPP_*` reads must not fail the load or override toml.
+    #[test]
+    fn empty_dapp_parsed_env_does_not_fail_load() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                optimizer = true
+                optimizer_runs = 999
+                block_number = 1
+                block_timestamp = 2
+                fork_block_number = 100
+                sender = "0x0000000000000000000000000000000000000001"
+                libraries = ["src/Lib.sol:Lib:0x0000000000000000000000000000000000000002"]
+
+                [fuzz]
+                runs = 64
+
+                [invariant]
+                depth = 15
+                "#,
+            )?;
+
+            let sender = address!("0x0000000000000000000000000000000000000001");
+            let libraries =
+                vec!["src/Lib.sol:Lib:0x0000000000000000000000000000000000000002".to_string()];
+
+            let baseline = Config::load().unwrap();
+            assert_eq!(baseline.optimizer, Some(true));
+            assert_eq!(baseline.optimizer_runs, Some(999));
+            assert_eq!(baseline.block_number, U256::from(1));
+            assert_eq!(baseline.block_timestamp, U256::from(2));
+            assert_eq!(baseline.fork_block_number, Some(100));
+            assert_eq!(baseline.sender, sender);
+            assert_eq!(baseline.fuzz.runs, 64);
+            assert_eq!(baseline.invariant.depth, 15);
+            assert_eq!(baseline.libraries, libraries);
+
+            // Report every empty var in one run so a parse failure does not hide the rest.
+            let mut failures = Vec::new();
+            for env in [
+                "DAPP_BUILD_OPTIMIZE_RUNS",
+                "DAPP_BUILD_OPTIMIZE",
+                "DAPP_TEST_NUMBER",
+                "DAPP_TEST_ADDRESS",
+                "DAPP_FORK_BLOCK",
+                "DAPP_TEST_TIMESTAMP",
+                "DAPP_TEST_FUZZ_RUNS",
+                "DAPP_TEST_DEPTH",
+                "DAPP_LIBRARIES",
+                "FOUNDRY_LIBRARIES",
+            ] {
+                jail.clear_env();
+                jail.set_env(env, "");
+                match Config::load() {
+                    Err(err) => failures.push(format!("{env}: {err}")),
+                    Ok(config) => {
+                        let mut mismatched = Vec::new();
+                        if config.optimizer != Some(true) {
+                            mismatched.push(format!("optimizer={:?}", config.optimizer));
+                        }
+                        if config.optimizer_runs != Some(999) {
+                            mismatched.push(format!("optimizer_runs={:?}", config.optimizer_runs));
+                        }
+                        if config.block_number != U256::from(1) {
+                            mismatched.push(format!("block_number={}", config.block_number));
+                        }
+                        if config.block_timestamp != U256::from(2) {
+                            mismatched.push(format!("block_timestamp={}", config.block_timestamp));
+                        }
+                        if config.fork_block_number != Some(100) {
+                            mismatched
+                                .push(format!("fork_block_number={:?}", config.fork_block_number));
+                        }
+                        if config.sender != sender {
+                            mismatched.push(format!("sender={:?}", config.sender));
+                        }
+                        if config.fuzz.runs != 64 {
+                            mismatched.push(format!("fuzz.runs={}", config.fuzz.runs));
+                        }
+                        if config.invariant.depth != 15 {
+                            mismatched.push(format!("invariant.depth={}", config.invariant.depth));
+                        }
+                        if config.libraries != libraries {
+                            mismatched.push(format!("libraries={:?}", config.libraries));
+                        }
+                        if !mismatched.is_empty() {
+                            failures.push(format!("{env}: {}", mismatched.join(", ")));
+                        }
+                    }
+                }
+            }
+            assert!(failures.is_empty(), "empty env overrode config:\n{}", failures.join("\n"));
+
+            Ok(())
+        });
+    }
 }
