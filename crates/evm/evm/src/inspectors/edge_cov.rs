@@ -106,7 +106,7 @@ impl Hash for EdgeKey {
     /// on the hot path of every coverage-guided run. Equal keys still hash equal because the
     /// digest is a function of the key; the fields it leaves out only take part in equality.
     /// The low eight bytes of the address separate distinct contracts, the jump source and
-    /// destination separate edges within a contract, and the depth bit keeps same-edge keys at
+    /// destination separate edges within a contract, and the rotated depth keeps same-edge keys at
     /// different depths apart when depth is part of the identity.
     #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
