@@ -33,7 +33,7 @@ use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
 use anvil::{
     EthereumHardfork, NodeConfig, NodeHandle, PrecompileFactory,
-    eth::{EthApi, fees::INITIAL_BASE_FEE},
+    eth::{EthApi, error::BlockchainError, fees::INITIAL_BASE_FEE},
     spawn, try_spawn,
 };
 use anvil_core::types::{ReorgOptions, TransactionData};
@@ -43,7 +43,10 @@ use axum::{
     response::{IntoResponse, Redirect},
     routing::post,
 };
-use foundry_common::provider::get_http_provider;
+use foundry_common::{
+    provider::get_http_provider,
+    retry::{Retry, RetryError},
+};
 use foundry_config::Config;
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
 use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
@@ -1809,7 +1812,7 @@ async fn test_fork_reset() {
     assert_eq!(nonce, initial_nonce + 1);
     let to_balance = provider.get_balance(to).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
-    api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(block_number) }))
+    reset_fork_when_idle(&api, Forking { json_rpc_url: None, block_number: Some(block_number) })
         .await
         .unwrap();
 
@@ -1824,7 +1827,7 @@ async fn test_fork_reset() {
     assert_eq!(balance, handle.genesis_balance());
 
     // reset to latest
-    api.anvil_reset(Some(Forking::default())).await.unwrap();
+    reset_fork_when_idle(&api, Forking::default()).await.unwrap();
 
     let new_block_num = provider.get_block_number().await.unwrap();
     assert!(new_block_num > block_number);
@@ -5288,10 +5291,10 @@ async fn test_fork_reset_follows_amsterdam_tx_gas_limit_cap() {
             }
 
             if let Some(json_rpc_url) = next_url {
-                api.anvil_reset(Some(Forking {
-                    json_rpc_url: Some(json_rpc_url),
-                    block_number: None,
-                }))
+                reset_fork_when_idle(
+                    &api,
+                    Forking { json_rpc_url: Some(json_rpc_url), block_number: None },
+                )
                 .await
                 .unwrap();
             }
@@ -5647,4 +5650,18 @@ async fn test_fork_headers_are_not_sent_to_redirect_origins() {
     let (api, _handle) =
         spawn(NodeConfig::test().with_eth_rpc_url(Some(configured_url.clone()))).await;
     api.anvil_set_rpc_url(format!("{configured_url}/redirect")).await.unwrap();
+}
+
+/// Allows background receipt polling to finish without retrying other reset failures.
+async fn reset_fork_when_idle(api: &EthApi<FoundryNetwork>, forking: Forking) -> eyre::Result<()> {
+    tokio::time::timeout(
+        Duration::from_secs(30),
+        Retry::new(50, Duration::from_millis(100)).run_async_until_break(|| async {
+            api.anvil_reset(Some(forking.clone())).await.map_err(|error| match error {
+                error @ BlockchainError::NodeBusy => RetryError::Retry(error.into()),
+                error => RetryError::Break(error.into()),
+            })
+        }),
+    )
+    .await?
 }
