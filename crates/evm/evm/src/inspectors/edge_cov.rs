@@ -2,7 +2,10 @@ use alloy_primitives::{
     Address, U256,
     map::{Entry, HashMap},
 };
-use core::fmt;
+use core::{
+    fmt,
+    hash::{Hash, Hasher},
+};
 use revm::{
     Inspector,
     bytecode::opcode,
@@ -86,12 +89,33 @@ pub struct CmpOperands {
     pub opcode: u8,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+/// Identity of a control-flow edge: the jump at `pc` in the code running at `address` to
+/// `jump_dest`, optionally split by call depth.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct EdgeKey {
     pub address: Address,
     pub depth: Option<usize>,
     pub pc: usize,
     pub jump_dest: U256,
+}
+
+impl Hash for EdgeKey {
+    /// Hashes a 24-byte digest of the key instead of all 80 bytes.
+    ///
+    /// The map that counts hits is probed once per executed `JUMP` and `JUMPI`, so the hash is
+    /// on the hot path of every coverage-guided run. Equal keys still hash equal because the
+    /// digest is a function of the key; the fields it leaves out only take part in equality.
+    /// The low eight bytes of the address separate distinct contracts, the jump source and
+    /// destination separate edges within a contract, and the depth bit keeps same-edge keys at
+    /// different depths apart when depth is part of the identity.
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let address = u64::from_be_bytes(self.address.0[12..].try_into().unwrap());
+        let depth = self.depth.map_or(0, |depth| (depth as u64).rotate_left(48));
+        state.write_u64(address);
+        state.write_u64(self.pc as u64 ^ depth);
+        state.write_u64(self.jump_dest.as_limbs()[0]);
+    }
 }
 
 impl EdgeKey {
@@ -450,11 +474,21 @@ where
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct CmpSiteKey {
     address: Address,
     pc: usize,
     opcode: u8,
+}
+
+impl Hash for CmpSiteKey {
+    /// Hashes a 16-byte digest of the site, for the same reason as [`EdgeKey`].
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let address = u64::from_be_bytes(self.address.0[12..].try_into().unwrap());
+        state.write_u64(address);
+        state.write_u64(self.pc as u64 ^ u64::from(self.opcode).rotate_left(56));
+    }
 }
 
 impl CmpSiteKey {
