@@ -72,9 +72,10 @@ impl TxGenerator {
         let senders = Rc::new(senders);
         let dictionary_weight = config.dictionary.dictionary_weight;
         let payable_value_weight = config.corpus.payable_value_weight;
+        let revert_weighting = config.revert_weighting;
         let planned = Rc::new(RefCell::new(PlannedCalls::default()));
-        let strategy = any::<prop::sample::Selector>()
-            .prop_flat_map(move |selector| {
+        let strategy = any::<prop::sample::Index>()
+            .prop_flat_map(move |index| {
                 let sender = select_sender(&state, senders.clone(), dictionary_weight);
                 let call = {
                     let generation = contracts.fuzzed_functions_generation();
@@ -96,7 +97,12 @@ impl TxGenerator {
                             .collect();
                         planned.generation = generation;
                     }
-                    selector.select(planned.calls.iter()).clone()
+                    let pick = if revert_weighting {
+                        weighted_pick(&contracts.call_weights(), index)
+                    } else {
+                        index.index(planned.calls.len())
+                    };
+                    planned.calls[pick].clone()
                 };
                 let warp = optional_delay(&state, config.max_time_delay, dictionary_weight);
                 let roll = optional_delay(&state, config.max_block_delay, dictionary_weight);
@@ -138,6 +144,22 @@ impl TxGenerator {
             .prop_map(move |(calldata, value)| CallDetails { target, calldata, value })
             .boxed()
     }
+}
+
+/// Picks a position by `weights`, which must have the length of the planned calls.
+fn weighted_pick(weights: &[u32], index: prop::sample::Index) -> usize {
+    let total = weights.iter().map(|&weight| u64::from(weight)).sum::<u64>();
+    if total == 0 {
+        return index.index(weights.len());
+    }
+    let mut pick = index.index(total as usize) as u64;
+    for (position, &weight) in weights.iter().enumerate() {
+        if pick < u64::from(weight) {
+            return position;
+        }
+        pick -= u64::from(weight);
+    }
+    weights.len() - 1
 }
 
 /// Generates a delay of at most `max` like a fuzzed `uint256` argument, so dictionary constants
@@ -192,6 +214,22 @@ mod tests {
     use alloy_json_abi::JsonAbi;
     use evm2::evm::InMemoryDB;
     use foundry_config::FuzzDictionaryConfig;
+    use proptest::strategy::ValueTree;
+
+    #[test]
+    fn weighted_pick_follows_the_weights() {
+        let weights = [1000, 50, 0];
+        let mut counts = [0usize; 3];
+        let mut runner = TestRunner::deterministic();
+        for _ in 0..2000 {
+            let index = any::<prop::sample::Index>().new_tree(&mut runner).unwrap().current();
+            counts[weighted_pick(&weights, index)] += 1;
+        }
+        assert_eq!(counts[2], 0, "a zero weight is never picked");
+        assert!(counts[1] > 40 && counts[1] < 160, "{counts:?}");
+        let index = any::<prop::sample::Index>().new_tree(&mut runner).unwrap().current();
+        assert!(weighted_pick(&[0, 0], index) < 2, "zero weights fall back to a uniform pick");
+    }
 
     #[test]
     fn delays_are_bounded_and_draw_dictionary_constants() {

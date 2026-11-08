@@ -997,6 +997,7 @@ impl Config {
         allowed.invariant.max_time_delay = self.invariant.max_time_delay;
         allowed.invariant.max_block_delay = self.invariant.max_block_delay;
         allowed.invariant.check_interval = self.invariant.check_interval;
+        allowed.invariant.revert_weighting = self.invariant.revert_weighting;
         allowed.invariant.show_metrics = self.invariant.show_metrics;
         allowed.invariant.show_solidity = self.invariant.show_solidity;
         allowed.allow_internal_expect_revert = self.allow_internal_expect_revert;

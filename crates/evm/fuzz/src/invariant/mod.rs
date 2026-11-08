@@ -24,6 +24,35 @@ use foundry_common::{ContractsByAddress, ContractsByArtifact};
 type DynamicTargetArtifactMatchCache =
     Rc<RefCell<HashMap<(Address, B256), Option<CachedTargetContract>>>>;
 type FuzzedFunction = (Address, Function);
+
+/// Outcomes of the fuzzed calls to one target function in this worker.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CallOutcomes {
+    /// Calls made to the function.
+    pub calls: u32,
+    /// Calls that reverted.
+    pub reverts: u32,
+}
+
+impl CallOutcomes {
+    /// Calls to observe before the revert rate changes the weight.
+    pub const MIN_CALLS: u32 = 16;
+    /// Lowest weight out of [`Self::SCALE`], so a function that always reverted so far is still
+    /// tried: its preconditions may be met later in the run.
+    pub const FLOOR: u32 = 50;
+    /// Weight of a function with no observed reverts.
+    pub const SCALE: u32 = 1000;
+
+    /// Weight for picking this function again, out of [`Self::SCALE`].
+    pub fn weight(self) -> u32 {
+        if self.calls < Self::MIN_CALLS {
+            return Self::SCALE;
+        }
+        let reverted =
+            (u64::from(self.reverts) * u64::from(Self::SCALE) / u64::from(self.calls)) as u32;
+        (Self::SCALE - reverted).max(Self::FLOOR)
+    }
+}
 type FunctionLookup = HashMap<Selector, Function>;
 
 /// Contracts identified as targets during a fuzz run.
@@ -41,6 +70,8 @@ pub struct FuzzRunIdentifiedContracts {
     /// Whether target contracts are updatable or not.
     pub is_updatable: bool,
     artifact_matches: DynamicTargetArtifactMatchCache,
+    /// Call outcomes per target function, used to weight the next pick.
+    call_outcomes: Rc<RefCell<HashMap<(Address, Selector), CallOutcomes>>>,
 }
 
 impl FuzzRunIdentifiedContracts {
@@ -53,7 +84,29 @@ impl FuzzRunIdentifiedContracts {
             fuzzed_functions_generation: Rc::new(Cell::new(0)),
             is_updatable,
             artifact_matches: Rc::new(RefCell::new(HashMap::default())),
+            call_outcomes: Rc::new(RefCell::new(HashMap::default())),
         }
+    }
+
+    /// Records whether a fuzzed call to `selector` on `target` reverted.
+    pub fn record_call_outcome(&self, target: Address, selector: Selector, reverted: bool) {
+        let mut outcomes = self.call_outcomes.borrow_mut();
+        let entry = outcomes.entry((target, selector)).or_default();
+        entry.calls += 1;
+        if reverted {
+            entry.reverts += 1;
+        }
+    }
+
+    /// Weights of the current fuzzed functions, in the order of [`Self::fuzzed_functions`].
+    pub fn call_weights(&self) -> Vec<u32> {
+        let outcomes = self.call_outcomes.borrow();
+        self.fuzzed_functions()
+            .iter()
+            .map(|(target, function)| {
+                outcomes.get(&(*target, function.selector())).copied().unwrap_or_default().weight()
+            })
+            .collect()
     }
 
     /// Borrows the current targeted contracts.
@@ -895,6 +948,39 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn call_outcomes_weight_success_rate_with_a_floor() {
+        let fresh = CallOutcomes { calls: CallOutcomes::MIN_CALLS - 1, reverts: 15 };
+        assert_eq!(fresh.weight(), CallOutcomes::SCALE, "too few calls to judge");
+        let half = CallOutcomes { calls: 20, reverts: 10 };
+        assert_eq!(half.weight(), CallOutcomes::SCALE / 2);
+        let always = CallOutcomes { calls: 20, reverts: 20 };
+        assert_eq!(always.weight(), CallOutcomes::FLOOR);
+        let never = CallOutcomes { calls: 20, reverts: 0 };
+        assert_eq!(never.weight(), CallOutcomes::SCALE);
+    }
+
+    #[test]
+    fn call_weights_follow_recorded_outcomes() {
+        let target = Address::repeat_byte(0x42);
+        let abi = JsonAbi::parse(["function good()", "function bad()"]).unwrap();
+        let mut targets = TargetedContracts::new();
+        targets.inner.insert(target, TargetedContract::new("Target".to_string(), abi.clone()));
+        let identified = FuzzRunIdentifiedContracts::new(targets, false);
+        let bad = abi.function("bad").unwrap()[0].selector();
+        for _ in 0..CallOutcomes::MIN_CALLS {
+            identified.record_call_outcome(target, bad, true);
+        }
+        let weights = identified.call_weights();
+        let functions = identified.fuzzed_functions();
+        assert_eq!(weights.len(), functions.len());
+        for ((_, function), weight) in functions.iter().zip(&weights) {
+            let expected =
+                if function.selector() == bad { CallOutcomes::FLOOR } else { CallOutcomes::SCALE };
+            assert_eq!(*weight, expected, "{}", function.name);
+        }
     }
 
     #[test]

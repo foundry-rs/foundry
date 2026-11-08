@@ -180,6 +180,10 @@ pub struct InvariantConfig {
     ///
     /// Example: `check_interval = 10` means assert after calls 10, 20, 30, ... and the last call.
     pub check_interval: u32,
+    /// Pick the next handler function in proportion to its observed success rate instead of
+    /// uniformly. A function keeps at least a 5 % share of its uniform weight once it has been
+    /// called 16 times, so one whose preconditions are met later in a run is still tried.
+    pub revert_weighting: bool,
 }
 
 impl Default for InvariantConfig {
@@ -206,6 +210,7 @@ impl Default for InvariantConfig {
             max_time_delay: None,
             max_block_delay: None,
             check_interval: 1,
+            revert_weighting: false,
         }
     }
 }

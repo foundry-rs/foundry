@@ -2227,6 +2227,58 @@ contract CheckIntervalTest is Test {
     ]]);
 }
 
+// Tests that revert weighting shifts calls away from a handler that always reverts while a handler
+// that never reverts keeps its share.
+#[forgetest_init]
+fn revert_weighting_prefers_handlers_that_succeed(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 100;
+        config.invariant.revert_weighting = true;
+        config.invariant.show_metrics = true;
+    });
+    prj.add_test(
+        "RevertWeightingTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Handlers {
+    uint256 public counter;
+
+    function fine() public {
+        counter++;
+    }
+
+    function alwaysReverts() public {
+        counter += 0;
+        revert("nope");
+    }
+}
+
+contract RevertWeightingTest is Test {
+    Handlers handlers;
+
+    function setUp() public {
+        handlers = new Handlers();
+        targetContract(address(handlers));
+    }
+
+    function invariant_noop() public pure {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "RevertWeightingTest", "--fuzz-seed", "7"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+| Handlers | alwaysReverts | 41    | 41      | 0        |
+...
+| Handlers | fine          | 459   | 0       | 0        |
+...
+"#]]);
+}
+
 // Tests that check_interval=N checks every N calls AND always on the last call.
 #[forgetest_init]
 fn check_interval_n_checks_every_n_calls(prj: _, cmd: _) {

@@ -1297,6 +1297,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             }
                             let (handler_target, handler_selector) =
                                 handler.take().expect("feedback precedes campaign checks");
+                            if config.revert_weighting {
+                                invariant_test.targeted_contracts.record_call_outcome(
+                                    handler_target,
+                                    handler_selector,
+                                    result.reverted,
+                                );
+                            }
                             if result.reverted {
                                 run_reverts += 1;
                             }
