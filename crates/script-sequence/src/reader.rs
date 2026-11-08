@@ -461,7 +461,7 @@ mod tests {
         other_chain.timestamp = 3;
         other_chain.chain = 2;
         let reader =
-            deployment_lookup("deployment-latest-label", "Pool", &[older, newer, other_chain]);
+            deployment_lookup("deployment-recent-label", "Pool", &[older, newer, other_chain]);
 
         assert_eq!(reader.read_latest_deployment::<Ethereum>().unwrap(), address);
 
