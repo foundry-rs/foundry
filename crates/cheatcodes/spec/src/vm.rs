@@ -2310,11 +2310,13 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function getBroadcasts(string calldata contractName, uint64 chainId) external view returns (BroadcastTxSummary[] memory);
 
-    /// Returns the most recent deployment for the current `chainId`.
+    /// Returns the most recent deployment matching a contract name or exact label for the current `chainId`.
+    /// Reverts if a label matches multiple deployments or conflicts with another deployment's contract name in the latest matching broadcast.
     #[cheatcode(group = Filesystem)]
     function getDeployment(string calldata contractName) external view returns (address deployedAddress);
 
-    /// Returns the most recent deployment for the given contract on `chainId`
+    /// Returns the most recent deployment matching a contract name or exact label on `chainId`.
+    /// Reverts if a label matches multiple deployments or conflicts with another deployment's contract name in the latest matching broadcast.
     #[cheatcode(group = Filesystem)]
     function getDeployment(string calldata contractName, uint64 chainId) external view returns (address deployedAddress);
 

@@ -22,6 +22,7 @@ use std::fs;
 mod base;
 mod brutalize;
 mod core;
+mod deployment_lookup;
 mod exact_fork;
 mod fork_bal;
 mod fork_state_by_number;
