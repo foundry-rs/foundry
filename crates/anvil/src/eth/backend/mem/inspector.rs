@@ -312,6 +312,15 @@ impl<T: EvmTypes> Inspector<T> for AnvilInspector {
         }
     }
 
+    fn inspector_config(&self) -> InspectorConfig {
+        // The simulation log collector syncs journal logs on every step.
+        if self.simulation_logs.is_some() {
+            return InspectorConfig::new();
+        }
+        // Only the tracer uses the step hooks.
+        Inspector::<T>::inspector_config(&self.tracer)
+    }
+
     fn step(&mut self, interp: &mut Interpreter<'_, '_, T>) {
         if let Some(collector) = &mut self.simulation_logs {
             collector.sync_journal_logs(interp.host().logs());
