@@ -24,6 +24,24 @@ contract Test {
 }
 "#;
 
+const MALFORMED: &str = r#"// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+library L {
+    function a(uint256 x) internal pure returns (uint256) {
+        if (x > 0) {
+            x = x + 1;
+        }
+        }
+        return x;
+    }
+
+    function b(uint256 x) internal pure returns (uint256) {
+        return x + 2;
+    }
+}
+"#;
+
 #[forgetest]
 fn fmt_exclude_libs_in_recursion(prj: _, cmd: _) {
     prj.update_config(|config| config.fmt.ignore = vec!["src/ignore/".to_string()]);
@@ -67,6 +85,23 @@ fn fmt_stdin(cmd: _) {
     // stdin with `--check` and without `--raw`returns diff
     cmd.forge_fuse().args(["fmt", "-", "--check"]);
     cmd.assert_success().stdout_eq("");
+}
+
+#[forgetest]
+fn fmt_parse_error_does_not_modify_file(prj: _, cmd: _) {
+    let path = prj.add_raw_source("Invalid.sol", MALFORMED);
+
+    cmd.args(["fmt", "src/Invalid.sol"]);
+    cmd.assert_failure().stdout_eq("");
+
+    assert_data_eq!(std::fs::read_to_string(path).unwrap(), MALFORMED);
+}
+
+#[forgetest]
+fn fmt_parse_error_raw_stdin_has_no_output(cmd: _) {
+    cmd.args(["fmt", "-", "--raw"]);
+    cmd.stdin(MALFORMED.as_bytes());
+    cmd.assert_failure().stdout_eq("");
 }
 
 #[forgetest]
