@@ -3705,7 +3705,8 @@ impl<N: Network> Backend<N> {
         let PreparedCall { mut evm_env, mut tx, .. } =
             self.prepare_call_env(state, request, fee_details, block_env)?;
         Self::use_block_fees(&mut evm_env, &mut tx, block_fees);
-        let mut inspector = AccessListInspector::new(initial);
+        let mut inspector = AccessListInspector::new(initial)
+            .with_excluded_from_tx(&tx.tx, evm_env.cfg_env.chain_id);
         let executed = self.transact_call_with_inspector_ref(
             state,
             &evm_env,

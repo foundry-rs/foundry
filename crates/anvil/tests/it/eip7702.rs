@@ -325,3 +325,30 @@ async fn eip7702_charges_state_gas_for_fresh_authorities() {
     assert!(state_diff.contains_key(&wallets[0].address()));
     assert!(!state_diff.contains_key(&authority.address()));
 }
+
+// `eth_createAccessList` omits EIP-7702 authorities the transaction warms anyway, like geth.
+#[tokio::test(flavor = "multi_thread")]
+async fn eip7702_access_list_excludes_authorities() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(node_config).await;
+    let provider = http_provider(&handle.http_endpoint());
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let authority = PrivateKeySigner::random();
+    // Reads the `BALANCE` of the address in its calldata.
+    let balance_of = address!("0x0000000000000000000000000000000000001234");
+    api.anvil_set_code(balance_of, bytes!("6000353150")).await.unwrap();
+
+    let authorization =
+        Authorization { chain_id: U256::from(31337u64), address: balance_of, nonce: 0 };
+    let signature = authority.sign_hash_sync(&authorization.signature_hash()).unwrap();
+    let tx = TransactionRequest {
+        authorization_list: Some(vec![authorization.into_signed(signature)]),
+        ..Default::default()
+    }
+    .with_from(wallets[0].address())
+    .with_to(balance_of)
+    .with_input(authority.address().into_word().to_vec());
+    let access_list =
+        provider.create_access_list(&WithOtherFields::new(tx)).await.unwrap().access_list;
+    assert!(access_list.0.is_empty(), "{access_list:?}");
+}
