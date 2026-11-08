@@ -447,3 +447,33 @@ Formatted [..]/Script.sol
     }
     cmd.forge_fuse().args(["fmt", "--check"]).assert_success().stdout_eq("").stderr_eq("");
 }
+
+#[forgetest]
+fn fmt_parse_error(prj: _, cmd: _) {
+    const BROKEN: &str = r#"// SPDX-License-Identifier: MIT
+pragma solidity =0.8.33;
+
+library L {
+    function a(uint256 x) internal pure returns (uint256) {
+        if (x > 0) {
+            x = x + 1;
+        }
+        }
+        return x;
+    }
+
+    function b(uint256 x) internal pure returns (uint256) {
+        return x + 2;
+    }
+}
+"#;
+    prj.add_raw_source("Broken.sol", BROKEN);
+    cmd.args(["fmt", "src/Broken.sol"]).assert_failure().stdout_eq("").stderr_eq(str![[r#"
+Error: solar reported errors:
+...
+"#]]);
+    assert_data_eq!(std::fs::read_to_string(prj.root().join("src/Broken.sol")).unwrap(), BROKEN);
+
+    cmd.forge_fuse().args(["fmt", "-", "--raw"]).stdin(BROKEN.as_bytes());
+    cmd.assert_failure().stdout_eq("");
+}
