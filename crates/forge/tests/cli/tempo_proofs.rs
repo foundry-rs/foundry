@@ -11,7 +11,7 @@ use foundry_config::{
     fs_permissions::{FsPermissions, PathPermission},
 };
 use foundry_evm::hardfork::TempoHardfork;
-use foundry_test_utils::str;
+use foundry_test_utils::{TestProject, str};
 use std::{num::NonZeroU64, time::Duration};
 use tokio::time::timeout;
 
@@ -32,17 +32,7 @@ async fn tempo_proofs_fork(prj: _, cmd: _) {
         "TempoProof.t.sol",
         include_str!("../../../../testdata/fixtures/TempoProof.t.sol"),
     );
-    prj.update_config(|config| {
-        config.solc = Some(SolcReq::Version("0.8.30".parse().unwrap()));
-        config.evm_version = EvmVersion::Prague;
-        config.optimizer = Some(true);
-        config.via_ir = true;
-        config.fs_permissions = FsPermissions::new([PathPermission::read("fixtures")]);
-        config.remappings =
-            ["commonware/=lib/commonware/src/", "src/libraries/=lib/optimism/src/libraries/"]
-                .map(|remapping| remapping.parse::<Remapping>().unwrap().into())
-                .into();
-    });
+    configure_project(&prj);
     cmd.args(["build"]).assert_success();
     let store = read_json_file::<ConfigurableContractArtifact>(
         &prj.artifacts().join("TempoProofVerifier.sol/ProofStore.json"),
@@ -121,4 +111,18 @@ Suite result: ok. 33 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 33 tests passed, 0 failed, 0 skipped (33 total tests)
 
 "#]]);
+}
+
+fn configure_project(prj: &TestProject) {
+    prj.update_config(|config| {
+        config.solc = Some(SolcReq::Version("0.8.30".parse().unwrap()));
+        config.evm_version = EvmVersion::Prague;
+        config.optimizer = Some(true);
+        config.via_ir = true;
+        config.fs_permissions = FsPermissions::new([PathPermission::read("fixtures")]);
+        config.remappings =
+            ["commonware/=lib/commonware/src/", "src/libraries/=lib/optimism/src/libraries/"]
+                .map(|remapping| remapping.parse::<Remapping>().unwrap().into())
+                .into();
+    });
 }

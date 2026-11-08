@@ -1,19 +1,13 @@
 //! Verify local development proofs after forking a native Tempo testnet anchor.
 
-use super::{evidence, sources};
+use super::{configure_project, evidence, sources};
 use alloy_network::{ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{B256, Bytes, keccak256};
+use alloy_primitives::B256;
 use alloy_provider::{Provider, ext::AnvilApi};
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use anvil::{NodeConfig, eth::backend::tempo_consensus::TempoConsensus, spawn};
 use foundry_common::{fs::read_json_file, provider::ProviderBuilder};
-use foundry_compilers::artifacts::{
-    ConfigurableContractArtifact, EvmVersion, remappings::Remapping,
-};
-use foundry_config::{
-    SolcReq,
-    fs_permissions::{FsPermissions, PathPermission},
-};
+use foundry_compilers::artifacts::ConfigurableContractArtifact;
 use foundry_evm::hardfork::TempoHardfork;
 use foundry_test_utils::str;
 use serde_json::json;
@@ -95,17 +89,7 @@ async fn tempo_proofs_native_fork(prj: _, cmd: _) {
             "TempoNativeProof.t.sol",
             include_str!("../../../../../testdata/fixtures/TempoNativeProof.t.sol"),
         );
-        prj.update_config(|config| {
-            config.solc = Some(SolcReq::Version("0.8.30".parse().unwrap()));
-            config.evm_version = EvmVersion::Prague;
-            config.optimizer = Some(true);
-            config.via_ir = true;
-            config.fs_permissions = FsPermissions::new([PathPermission::read("fixtures")]);
-            config.remappings =
-                ["commonware/=lib/commonware/src/", "src/libraries/=lib/optimism/src/libraries/"]
-                    .map(|remapping| remapping.parse::<Remapping>().unwrap().into())
-                    .into();
-        });
+        configure_project(&prj);
         cmd.args(["build"]).assert_success();
         let store = read_json_file::<ConfigurableContractArtifact>(
             &prj.artifacts().join("TempoProofVerifier.sol/ProofStore.json"),
@@ -149,9 +133,6 @@ async fn tempo_proofs_native_fork(prj: _, cmd: _) {
         let local_height = receipt.block_number().unwrap();
         assert_eq!(local_height, anchor_height + 2);
         let local = evidence::record(&provider, local_height, Some(account)).await;
-        let raw_header =
-            serde_json::from_value::<Bytes>(local.evidence["rawHeader"].clone()).unwrap();
-        assert_eq!(json!(keccak256(raw_header)), local.evidence["subject"]["payload"]);
         let proof = json!({
             "anchor": { "height": anchor_height, "hash": anchor_hash },
             "local": local,

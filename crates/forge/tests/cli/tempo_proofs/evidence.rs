@@ -3,7 +3,7 @@
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_network::{AnyTransactionReceipt, ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_provider::{
     Provider,
     ext::{AnvilApi, DebugApi},
@@ -84,6 +84,7 @@ pub(super) async fn record(
         .await
         .unwrap();
     let raw_header = provider.debug_get_raw_header(BlockId::number(height)).await.unwrap();
+    assert_eq!(keccak256(&raw_header), finalization.digest);
     let block = provider.get_block_by_number(height.into()).await.unwrap().unwrap();
     assert_eq!(block.header.hash, finalization.digest);
     let mut cursor = finalization.certificate.as_ref();
