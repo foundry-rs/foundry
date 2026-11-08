@@ -2,7 +2,9 @@
 
 #![allow(rustdoc::private_doc_tests)]
 
-use crate::{EthApi, shutdown::Shutdown, tasks::block_listener::BlockListener};
+use crate::{
+    EthApi, eth::error::BlockchainError, shutdown::Shutdown, tasks::block_listener::BlockListener,
+};
 use alloy_consensus::BlockHeader;
 use alloy_network::{BlockResponse, Network};
 use alloy_primitives::B256;
@@ -10,7 +12,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::anvil::Forking;
 use foundry_primitives::FoundryNetwork;
 use futures::StreamExt;
-use std::fmt;
+use std::{fmt, time::Duration};
 use tokio::{runtime::Handle, task::JoinHandle};
 
 pub mod block_listener;
@@ -80,12 +82,7 @@ impl TaskManager {
             let api = api.clone();
             async move {
                 if let Ok(Some(block)) = provider.get_block(hash.into()).await {
-                    let _ = api
-                        .anvil_reset(Some(Forking {
-                            json_rpc_url: None,
-                            block_number: Some(block.header().number()),
-                        }))
-                        .await;
+                    reset_on_new_block(&api, block.header().number()).await;
                 }
             }
         })
@@ -138,12 +135,7 @@ impl TaskManager {
         self.spawn_block_subscription(provider, move |header: N::HeaderResponse| {
             let api = api.clone();
             async move {
-                let _ = api
-                    .anvil_reset(Some(Forking {
-                        json_rpc_url: None,
-                        block_number: Some(header.number()),
-                    }))
-                    .await;
+                reset_on_new_block(&api, header.number()).await;
             }
         })
     }
@@ -169,5 +161,39 @@ impl TaskManager {
 impl fmt::Debug for TaskManager {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TaskManager").finish_non_exhaustive()
+    }
+}
+
+/// Resets to an observed block once active RPCs allow the lifecycle transition.
+pub(crate) async fn reset_on_new_block(api: &EthApi<FoundryNetwork>, block_number: u64) {
+    // Delay busy retries to avoid a tight loop while preserving the last observed block.
+    // BlockListener retains this future until completion and cancels it on shutdown.
+    const BUSY_RETRY_DELAY: Duration = Duration::from_millis(100);
+
+    while matches!(
+        api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(block_number) }))
+            .await,
+        Err(BlockchainError::NodeBusy)
+    ) {
+        tokio::time::sleep(BUSY_RETRY_DELAY).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{NodeConfig, spawn};
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn reset_on_new_block_stops_on_non_busy_errors() {
+        let (api, _handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+        let instance = api.instance_id();
+
+        // A node without a fork source cannot follow a block; this error must not be retried.
+        tokio::time::timeout(Duration::from_secs(5), reset_on_new_block(&api, 1)).await.unwrap();
+
+        assert_eq!(api.instance_id(), instance);
+        assert!(!api.is_fork());
+        assert_eq!(api.backend.best_number(), 0);
     }
 }

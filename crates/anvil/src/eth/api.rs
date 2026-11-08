@@ -179,7 +179,7 @@ pub struct EthApi<N: Network> {
     net_listening: bool,
     /// The instance ID. Changes on every reset.
     instance_id: Arc<RwLock<B256>>,
-    /// Serializes endpoint identity reads with reset transitions.
+    /// Serializes RPC execution with lifecycle transitions.
     lifecycle_lock: Arc<tokio::sync::RwLock<()>>,
     /// Serializes reset preparation without blocking identity RPCs made by the target endpoint.
     reset_lock: Arc<tokio::sync::Mutex<()>>,
@@ -710,6 +710,8 @@ impl<N: Network> EthApi<N> {
 
     /// Sets the backend rpc url
     ///
+    /// Returns a resource-unavailable error if another RPC is active. Retry once it completes.
+    ///
     /// Handler for ETH RPC call: `anvil_setRpcUrl`
     pub async fn anvil_set_rpc_url(&self, url: String) -> Result<()> {
         node_info!("anvil_setRpcUrl");
@@ -748,7 +750,7 @@ impl<N: Network> EthApi<N> {
             None
         };
 
-        let _lifecycle = self.lifecycle_lock.write().await;
+        let _lifecycle = self.try_lock_lifecycle()?;
         let _mining = self.backend.lock_mining().await;
         let mut node_config = self.backend.node_config.write().await;
         if let Some((fork, provider, endpoint_identity)) = staged_fork {
@@ -909,13 +911,24 @@ impl<N: Network> EthApi<N> {
     ///
     /// If `forking` is `None` then this will disable forking entirely.
     ///
+    /// Returns a resource-unavailable error if another RPC is active. Retry once it completes.
+    ///
     /// Handler for RPC call: `anvil_reset`
     pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
         node_info!("anvil_reset");
         let _reset = self.reset_lock.lock().await;
         let warning = if let Some(forking) = forking {
+            // Avoid remote staging when the node is already busy. RPCs may start during staging,
+            // so exclusive access must still be checked again before publishing the replacement.
+            drop(self.try_lock_lifecycle()?);
             let staged = self.backend.prepare_fork_reset(forking, self.instance_id()).await?;
-            let _lifecycle = self.lifecycle_lock.write().await;
+            let _lifecycle = match self.try_lock_lifecycle() {
+                Ok(lifecycle) => lifecycle,
+                Err(err) => {
+                    self.backend.discard_fork_reset(staged).await?;
+                    return Err(err);
+                }
+            };
             // Stop an old-context block before publishing the replacement DB and environment.
             let _mining = self.backend.lock_mining().await;
             let warning = self.backend.commit_fork_reset(staged).await?;
@@ -925,7 +938,7 @@ impl<N: Network> EthApi<N> {
             self.fee_history_cache.lock().clear();
             warning
         } else {
-            let _lifecycle = self.lifecycle_lock.write().await;
+            let _lifecycle = self.try_lock_lifecycle()?;
             // Unlike fork preparation, memory preparation snapshots live local fee state and does
             // no remote I/O. Keep that snapshot and its publication in one lifecycle transition.
             let _mining = self.backend.lock_mining().await;
@@ -1731,6 +1744,13 @@ impl<N: Network> EthApi<N> {
         }
         Ok(BlockRequest::Number(self.backend.ensure_trace_block_number(block_id).await?))
     }
+
+    /// Acquires exclusive lifecycle access without blocking subsequent RPCs behind a writer.
+    fn try_lock_lifecycle(&self) -> Result<tokio::sync::RwLockWriteGuard<'_, ()>> {
+        // A queued writer in this fair RwLock would prevent new readers, including RPCs that
+        // could complete an active request, such as mining a synchronously submitted transaction.
+        self.lifecycle_lock.try_write().map_err(|_| BlockchainError::NodeBusy)
+    }
 }
 
 impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> EthApi<N> {
@@ -1941,10 +1961,12 @@ impl EthApi<FoundryNetwork> {
     /// Depth specifies the height to rollback the chain back to. Depth must not exceed the current
     /// chain height, i.e. can't rollback past the genesis block.
     ///
+    /// Returns a resource-unavailable error if another RPC is active. Retry once it completes.
+    ///
     /// Handler for RPC call: `anvil_rollback`
     pub async fn anvil_rollback(&self, depth: Option<u64>) -> Result<()> {
         node_info!("anvil_rollback");
-        let _lifecycle = self.lifecycle_lock.write().await;
+        let _lifecycle = self.try_lock_lifecycle()?;
         let mining_guard = self.backend.lock_mining().await;
         let depth = depth.unwrap_or(1);
 
@@ -2222,9 +2244,9 @@ impl EthApi<FoundryNetwork> {
         // Fork reset and RPC URL replacement take the write lock internally after their fallible
         // remote staging work. Memory reset takes it before staging because it snapshots live
         // state. Identity, snapshot, chain-rewind, and SetCode methods also lock internally to keep
-        // direct API callers safe. Nested reads of this fair RwLock can deadlock behind a queued
-        // writer. Consensus queries snapshot their source under the backend DB lock before any
-        // upstream I/O.
+        // direct API callers safe without recursively acquiring the lock. Lifecycle writers reject
+        // busy transitions instead of queueing behind active requests and blocking later readers.
+        // Consensus queries snapshot their source under the backend DB lock before upstream I/O.
         let _lifecycle = if matches!(
             &request,
             EthRequest::Reset(_)
@@ -4591,10 +4613,12 @@ impl EthApi<FoundryNetwork> {
     /// Optionally supply a list of transaction and block pairs that will populate the reorged
     /// blocks. The maximum block number of the pairs must not exceed the specified depth.
     ///
+    /// Returns a resource-unavailable error if another RPC is active. Retry once it completes.
+    ///
     /// Handler for RPC call: `anvil_reorg`
     pub async fn anvil_reorg(&self, options: ReorgOptions) -> Result<()> {
         node_info!("anvil_reorg");
-        let _lifecycle = self.lifecycle_lock.write().await;
+        let _lifecycle = self.try_lock_lifecycle()?;
         let mining_guard = self.backend.lock_mining().await;
         let depth = options.depth;
         let mut tx_block_pairs = options.tx_block_pairs;
@@ -5981,6 +6005,7 @@ mod tests {
     use super::*;
     use crate::{NodeConfig, spawn};
     use foundry_evm::constants::HARDHAT_CONSOLE_ADDRESS;
+    use std::task::Poll;
 
     #[cfg(feature = "base")]
     #[tokio::test(flavor = "multi_thread")]
@@ -6192,5 +6217,152 @@ mod tests {
         drop(lifecycle);
         let error = tokio::time::timeout(Duration::from_secs(5), write).await.unwrap().unwrap_err();
         assert!(matches!(error, BlockchainError::RpcError(_)));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn lifecycle_transitions_reject_active_rpc_without_blocking_requests() {
+        let (api, _handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+        api.mine_one().await.unwrap();
+        let instance = api.instance_id();
+
+        // Model a long-running RPC without depending on EVM execution time or upstream I/O.
+        let active_rpc = api.lifecycle_lock.read().await;
+        for request in [
+            EthRequest::Reset(None),
+            EthRequest::SetRpcUrl("http://localhost:8545".to_string()),
+            EthRequest::Rollback(Some(1)),
+            EthRequest::Reorg(ReorgOptions { depth: 1, tx_block_pairs: Vec::new() }),
+        ] {
+            let mut transition = Box::pin(api.execute(request));
+            let Poll::Ready(result) = futures::poll!(transition.as_mut()) else {
+                panic!(
+                    "lifecycle transitions must reject active RPCs instead of queueing a writer"
+                );
+            };
+            assert_eq!(
+                result,
+                ResponseResult::error(RpcError {
+                    code: ErrorCode::ServerError(-32002),
+                    message: "node is busy with active RPC requests; retry the operation".into(),
+                    data: None,
+                })
+            );
+        }
+        assert_eq!(api.instance_id(), instance);
+        assert_eq!(api.backend.best_number(), 1);
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            assert_eq!(
+                api.execute(EthRequest::Web3ClientVersion(())).await,
+                ResponseResult::success(api.client_version().unwrap())
+            );
+            assert_eq!(
+                api.execute(EthRequest::NetListening(())).await,
+                ResponseResult::success(true)
+            );
+            assert_eq!(
+                api.execute(EthRequest::EthBlockNumber(())).await,
+                ResponseResult::success(U256::from(1))
+            );
+            assert_eq!(
+                api.execute(EthRequest::EvmMine(None)).await,
+                ResponseResult::success("0x0")
+            );
+        })
+        .await
+        .unwrap();
+
+        drop(active_rpc);
+        api.anvil_reset(None).await.unwrap();
+        assert_ne!(api.instance_id(), instance);
+        assert_eq!(api.backend.best_number(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_reset_rejects_active_rpc_without_changing_live_state() {
+        let (origin_api, origin_handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+        origin_api.mine_one().await.unwrap();
+        let (api, _handle) = spawn(
+            NodeConfig::test()
+                .with_no_mining(true)
+                .with_no_storage_caching(true)
+                .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+                .with_fork_block_number(Some(0u64)),
+        )
+        .await;
+        let instance = api.instance_id();
+        let head = api.backend.best_hash();
+        let account = Address::repeat_byte(0x77);
+        api.anvil_set_balance(account, U256::from(123)).await.unwrap();
+
+        let origin_lifecycle = origin_api.lifecycle_lock.write().await;
+        let mut reset =
+            Box::pin(api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(1) })));
+        // Gate the origin so a new RPC starts after preflight but before fork staging completes.
+        assert!(futures::poll!(reset.as_mut()).is_pending());
+        let active_rpc = api.lifecycle_lock.read().await;
+        drop(origin_lifecycle);
+        let error = tokio::time::timeout(Duration::from_secs(5), reset)
+            .await
+            .expect("fork reset must reject active RPCs instead of queueing a writer")
+            .unwrap_err();
+        assert!(matches!(error, BlockchainError::NodeBusy));
+        assert_eq!(api.instance_id(), instance);
+        assert_eq!(api.backend.best_hash(), head);
+        assert_eq!(api.get_fork().unwrap().block_number(), 0);
+        assert_eq!(api.balance(account, None).await.unwrap(), U256::from(123));
+
+        drop(active_rpc);
+        api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(1) })).await.unwrap();
+        assert_ne!(api.instance_id(), instance);
+        assert_eq!(api.get_fork().unwrap().block_number(), 1);
+        assert_eq!(api.balance(account, None).await.unwrap(), U256::ZERO);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn automatic_fork_reset_retries_busy_without_blocking_requests() {
+        let (origin_api, origin_handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+        origin_api.mine_one().await.unwrap();
+        let (api, _handle) = spawn(
+            NodeConfig::test()
+                .with_no_mining(true)
+                .with_no_storage_caching(true)
+                .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+                .with_fork_block_number(Some(0u64)),
+        )
+        .await;
+        let active_rpc = api.lifecycle_lock.read().await;
+        let mut reset = Box::pin(crate::tasks::reset_on_new_block(&api, 1));
+        assert!(futures::poll!(reset.as_mut()).is_pending());
+        assert_eq!(api.get_fork().unwrap().block_number(), 0);
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), api.execute(EthRequest::NetListening(())))
+                .await
+                .unwrap(),
+            ResponseResult::success(true)
+        );
+
+        drop(active_rpc);
+        tokio::time::timeout(Duration::from_secs(5), reset).await.unwrap();
+        assert_eq!(api.get_fork().unwrap().block_number(), 1);
+
+        // Shutdown must still cancel a block listener while its reset is waiting to retry.
+        let active_rpc = api.lifecycle_lock.read().await;
+        let (signal, shutdown) = crate::shutdown::signal();
+        let listener_api = api.clone();
+        let mut listener = Box::pin(crate::tasks::block_listener::BlockListener::new(
+            shutdown,
+            futures::stream::iter([0]),
+            move |block| {
+                let api = listener_api.clone();
+                async move { crate::tasks::reset_on_new_block(&api, block).await }
+            },
+        ));
+        assert!(futures::poll!(listener.as_mut()).is_pending());
+        signal.fire().unwrap();
+        assert!(futures::poll!(listener.as_mut()).is_ready());
+        drop(listener);
+        drop(active_rpc);
+        assert_eq!(api.get_fork().unwrap().block_number(), 1);
     }
 }

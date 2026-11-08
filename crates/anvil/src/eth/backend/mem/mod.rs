@@ -5454,6 +5454,17 @@ impl<N: Network> Backend<N> {
         }
     }
 
+    /// Discards a prepared fork replacement and restores the live fork's persisted cache.
+    pub(crate) async fn discard_fork_reset(
+        &self,
+        staged: StagedForkReset,
+    ) -> Result<(), BlockchainError> {
+        let StagedForkReset { db, cache_lease, flush_old_cache, .. } = staged;
+        // Release the staged database before its lease removes any cache written on drop.
+        drop(db);
+        self.rollback_staged_fork_cache(cache_lease, flush_old_cache).await
+    }
+
     /// Atomically publishes a fully prepared fork replacement and captures its fallback warning.
     /// The caller emits the warning after releasing its lifecycle locks.
     pub(crate) async fn commit_fork_reset(
@@ -12086,5 +12097,47 @@ mod tests {
             decoder.labels.get(&ActivationRegistryStorage::ADDRESS).map(String::as_str),
             Some("ActivationRegistry")
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn discard_fork_reset_restores_live_cache() {
+        let chain_id = u64::from_be_bytes(B256::random()[..8].try_into().unwrap());
+        let cache_dir = foundry_config::Config::foundry_chain_cache_dir(chain_id).unwrap();
+        let (origin_api, origin_handle) =
+            spawn(NodeConfig::test().with_chain_id(Some(chain_id)).with_no_mining(true)).await;
+        let (api, handle) = spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+                .with_no_mining(true),
+        )
+        .await;
+        let staged =
+            api.backend.prepare_fork_reset(Default::default(), api.instance_id()).await.unwrap();
+        let live_db = api.backend.db.read().await.maybe_inner().unwrap().clone();
+        let staged_db = staged.db.maybe_inner().unwrap().clone();
+        let cache_path = live_db.cache().cache_path().unwrap().to_path_buf();
+        assert_eq!(staged_db.cache().cache_path(), Some(cache_path.as_path()));
+
+        // Remote cache entries learned by the live fork after staging must survive rejection.
+        live_db.block_hashes().write().insert(U256::from(123), B256::repeat_byte(0x33));
+        live_db.cache().flush();
+        let expected = std::fs::read(&cache_path).unwrap();
+        staged_db.block_hashes().write().insert(U256::from(124), B256::repeat_byte(0x44));
+        staged_db.cache().flush();
+        assert_ne!(std::fs::read(&cache_path).unwrap(), expected);
+
+        api.backend.discard_fork_reset(staged).await.unwrap();
+
+        assert!(staged_db.block_hashes().read().is_empty());
+        assert_eq!(std::fs::read(&cache_path).unwrap(), expected);
+        assert_eq!(
+            live_db.block_hashes().read().get(&U256::from(123)),
+            Some(&B256::repeat_byte(0x33))
+        );
+
+        // Release the disk-backed fork before cleanup so shutdown cannot recreate its cache.
+        api.anvil_reset(None).await.unwrap();
+        drop((live_db, staged_db, api, handle, origin_api, origin_handle));
+        std::fs::remove_dir_all(cache_dir).unwrap();
     }
 }

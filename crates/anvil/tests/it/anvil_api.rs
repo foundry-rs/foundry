@@ -39,7 +39,7 @@ use foundry_common::{
 };
 use foundry_evm::hardfork::EthereumHardfork;
 use foundry_evm_networks::NetworkConfigs;
-use foundry_primitives::FoundryTxEnvelope;
+use foundry_primitives::{FoundryTxEnvelope, FoundryTxReceipt};
 use futures::{FutureExt, StreamExt};
 use tempo_hardfork::TempoHardfork;
 
@@ -2404,4 +2404,85 @@ async fn test_rollback_and_reorg_respect_genesis_block_number() {
     assert_eq!(api.backend.best_number(), 102);
     api.anvil_rollback(Some(2)).await.unwrap();
     assert_eq!(api.backend.best_number(), 100);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reset_during_sync_transaction_keeps_rpc_responsive() {
+    let (api, handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let recipient = Address::repeat_byte(0x77);
+    let instance_id = api.instance_id();
+    let request = TransactionRequest::default()
+        .with_from(sender)
+        .with_to(recipient)
+        .with_value(U256::ONE)
+        .with_gas_limit(21_000)
+        .with_gas_price(2_000_000_000);
+    let mut send = std::pin::pin!(provider.client().request::<_, FoundryTxReceipt>(
+        "eth_sendTransactionSync",
+        (WithOtherFields::new(request),),
+    ));
+
+    // Drive the HTTP submission until the transaction is pooled and its RPC waits for a receipt.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            assert!(futures::poll!(send.as_mut()).is_pending());
+            if api.txpool_status().await.unwrap().pending == 1 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("synchronous transaction did not enter the pool");
+
+    let error = tokio::time::timeout(
+        Duration::from_secs(5),
+        provider.client().request::<_, ()>("anvil_reset", ()),
+    )
+    .await
+    .expect("reset blocked behind the synchronous transaction")
+    .unwrap_err();
+    assert_eq!(
+        serde_json::to_value(error.as_error_resp().unwrap()).unwrap(),
+        serde_json::json!({
+            "code": -32002,
+            "message": "node is busy with active RPC requests; retry the operation",
+            "data": null
+        })
+    );
+    assert_eq!(api.instance_id(), instance_id);
+    assert_eq!(api.backend.best_number(), 0);
+    assert_eq!(api.txpool_status().await.unwrap().pending, 1);
+
+    // A failed reset must not block unrelated queries or the mining RPC that resolves the wait.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let version =
+            provider.client().request::<_, String>("web3_clientVersion", ()).await.unwrap();
+        assert_eq!(version, CLIENT_VERSION);
+        let listening = provider.client().request::<_, bool>("net_listening", ()).await.unwrap();
+        assert!(listening);
+        let result = provider.client().request::<_, String>("evm_mine", ()).await.unwrap();
+        assert_eq!(result, "0x0");
+    })
+    .await
+    .expect("RPC requests were blocked after the rejected reset");
+
+    let receipt = tokio::time::timeout(Duration::from_secs(5), send)
+        .await
+        .expect("synchronous transaction did not return its mined receipt")
+        .unwrap();
+    assert!(receipt.status());
+    assert_eq!(receipt.block_number(), Some(1));
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        assert_eq!(provider.get_balance(recipient).await.unwrap(), U256::ONE);
+        provider.client().request::<_, ()>("anvil_reset", ()).await.unwrap();
+        assert_ne!(api.instance_id(), instance_id);
+        assert_eq!(provider.get_block_number().await.unwrap(), 0);
+        assert_eq!(provider.get_balance(recipient).await.unwrap(), U256::ZERO);
+    })
+    .await
+    .expect("reset retry did not restore the genesis state");
 }
