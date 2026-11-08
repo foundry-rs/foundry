@@ -32,7 +32,8 @@ use foundry_evm_core::{
         FoundryTxConversion, InterpreterFor, MessageFor, MessageResultFor, PersistentWrite,
         PreparedTx, SnapshotRestores, TransactionRequestFor, TxFor, TxResultFor, TypesFor,
         cool_loaded, destructed_accounts, evm_env, merge_pending_changes,
-        merge_untracked_pending_changes_with_warmth, release_inspector, warm_accounts, warm_set,
+        merge_untracked_pending_changes_with_warmth, put_transient, release_inspector,
+        take_transient, warm_accounts, warm_set,
     },
     precompiles::P256_VERIFY,
     utils::tx_warm_addresses,
@@ -1504,9 +1505,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             } else {
                 Some(warm_set(evm.state_mut()))
             };
+            // Isolated calls never change the running transaction's transient storage.
+            let transient = take_transient(evm.state_mut());
             child.commit_source(&executed.pending_state);
             // SAFETY: The nested EVM runs over the lifecycle's owned databases.
             unsafe { backend.backend().lifecycle().end_frame_evm(evm, child) };
+            put_transient(evm.state_mut(), transient);
             if let Some(warmth) = warmth {
                 *evm.state_mut().prewarm_set_mut() = warmth;
             } else if fork_changed && !restored {

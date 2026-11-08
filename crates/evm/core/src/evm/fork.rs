@@ -127,6 +127,9 @@ pub struct Parked<T: EvmTypesHost> {
     /// keeps as its accepted state. Cleared when the context is suspended and between
     /// transactions.
     pub(super) switched: AddressMap<HashMap<U256, U256>>,
+    /// Transient storage of the running transaction in this context when it last suspended it, as
+    /// address, key and value. Cleared between transactions, like `warm`.
+    pub(super) transient: Vec<(Address, U256, U256)>,
 }
 
 impl<T: EvmTypesHost<EvmExt: SendableExt>> Parked<T> {
@@ -143,6 +146,7 @@ impl<T: EvmTypesHost<EvmExt: SendableExt>> Parked<T> {
             warm: AddressMap::default(),
             originals: AddressMap::default(),
             switched: AddressMap::default(),
+            transient: Vec::new(),
         }
     }
 
@@ -183,9 +187,10 @@ impl<T: EvmTypesHost<EvmExt: SendableExt>> Parked<T> {
     }
 
     /// Starts this fork from what the running transaction loaded and created in the `local`
-    /// context before it first selected a fork. Loaded storage values are kept even when a
-    /// non-created account's info comes from the fork.
+    /// context before it first selected a fork, and from its transient storage there. Loaded
+    /// storage values are kept even when a non-created account's info comes from the fork.
     pub(super) fn inherit_local(&mut self, local: &Self) {
+        self.transient.clone_from(&local.transient);
         for (address, slots) in &local.warm {
             self.warm.entry(*address).or_default().extend(slots);
         }
@@ -233,6 +238,7 @@ impl<T: EvmTypesHost<EvmExt: SendableExt>> Clone for Parked<T> {
             warm: self.warm.clone(),
             originals: self.originals.clone(),
             switched: self.switched.clone(),
+            transient: self.transient.clone(),
         }
     }
 }
