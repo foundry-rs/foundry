@@ -6233,7 +6233,7 @@ mod tests {
             EthRequest::Rollback(Some(1)),
             EthRequest::Reorg(ReorgOptions { depth: 1, tx_block_pairs: Vec::new() }),
         ] {
-            let mut transition = Box::pin(api.execute(request));
+            let mut transition = std::pin::pin!(api.execute(request));
             let Poll::Ready(result) = futures::poll!(transition.as_mut()) else {
                 panic!(
                     "lifecycle transitions must reject active RPCs instead of queueing a writer"
