@@ -54,7 +54,7 @@ foundry_config::impl_figment_convert!(CoverageArgs, test);
 ///
 /// Most flags here have a corresponding `[profile.<name>.coverage]` config
 /// option in `foundry.toml`. CLI flags take precedence over config; the helper
-/// `resolve_with` merges them after the config is loaded.
+/// `resolve` merges them after the config is loaded.
 #[derive(Parser)]
 #[command(after_long_help = r#"Source attribution:
   Coverage follows compiler source maps. Inherited modifier code is reported under the
@@ -91,10 +91,6 @@ pub struct CoverageArgs {
     #[arg(long = "lcov-version", value_parser = parse_lcov_version)]
     lcov_version_cli: Option<Version>,
 
-    /// The resolved LCOV version to use after merging CLI and config values.
-    #[arg(skip = Version::new(1, 0, 0))]
-    lcov_version: Version,
-
     /// Enable viaIR with minimum optimization
     ///
     /// This can fix most of the "stack too deep" errors while resulting a
@@ -121,21 +117,31 @@ pub struct CoverageArgs {
     #[arg(long)]
     exclude_tests: bool,
 
-    /// The coverage reporters to use. Constructed from the other fields.
-    #[arg(skip)]
-    reporters: Vec<Box<dyn CoverageReporter>>,
-
-    /// Glob patterns of source files to exclude from the coverage report.
-    /// Populated from `[profile.<name>.coverage] skip_files` after config is
-    /// loaded; not exposed directly on the CLI.
-    #[arg(skip)]
-    skip_files: Vec<String>,
-
     #[command(flatten)]
     test: TestArgs,
 }
 
-impl CoverageArgs {
+/// The coverage settings of a run: the CLI flags merged with the
+/// `[profile.<name>.coverage]` config values by [`CoverageArgs::resolve`].
+#[derive(Debug)]
+struct CoverageSettings {
+    /// The report types to generate. Never empty.
+    report: Vec<CoverageReportKind>,
+    /// The version of the LCOV "tracefile" format to use.
+    lcov_version: Version,
+    /// Whether to enable viaIR with minimum optimization.
+    ir_minimum: bool,
+    /// The path to output a single file report to.
+    report_file: Option<PathBuf>,
+    /// Whether to include dependency sources in the coverage report.
+    include_libs: bool,
+    /// Whether to exclude tests from the coverage report.
+    exclude_tests: bool,
+    /// Glob patterns of source files to exclude from the coverage report.
+    skip_files: Vec<String>,
+}
+
+impl CoverageSettings {
     fn report_path(&self, root: &Path, default_file_name: &str) -> PathBuf {
         let report_file =
             (self.file_report_count() == 1).then_some(self.report_file.as_deref()).flatten();
@@ -150,84 +156,10 @@ impl CoverageArgs {
         usize::from(has_lcov) + usize::from(has_attribution) + usize::from(has_gaps)
     }
 
-    pub(crate) fn ensure_mode_compatible(&self) -> Result<()> {
-        self.test.ensure_coverage_mode_compatible()
-    }
-
-    pub async fn run(mut self) -> Result<()> {
-        self.ensure_mode_compatible()?;
-
-        let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
-
-        // install missing dependencies
-        self.install_missing_dependencies(&mut config)?;
-
-        // Default to a static fuzz seed so coverage reports are deterministic,
-        // but allow the user to override it via `--fuzz-seed` or `[fuzz] seed` in config.
-        if config.fuzz.seed.is_none() {
-            config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
-        }
-
-        // Merge CLI args with `[profile.<name>.coverage]` config values. CLI
-        // flags take precedence; unset CLI flags fall back to the config.
-        self.resolve_with(&config.coverage);
-        let filter = self.test.filter(&config)?;
-
-        let (paths, mut output) = {
-            let (project, output) = self.build(&config, &filter)?;
-            (project.paths, output)
-        };
-
-        if self.report_file.is_some() && self.file_report_count() > 1 {
-            sh_warn!(
-                "`--report-file` is ignored when multiple file reports are requested; \
-                 each report will use its default output path"
-            )?;
-        }
-
-        self.populate_reporters(&paths.root);
-
-        sh_println!("Analysing contracts...")?;
-        let report = self.prepare(&paths, &mut output)?;
-
-        sh_println!("Running tests...")?;
-        self.collect(&paths.root, &output, report, config, evm_opts, filter).await
-    }
-
-    /// Merge `[profile.<name>.coverage]` config values into this struct. CLI
-    /// flags already set on `self` win; unset/false flags inherit from
-    /// `config`.
-    ///
-    /// After this returns:
-    /// - `self.report` is non-empty.
-    /// - boolean flags reflect `cli || config` (CLI cannot disable a flag set to `true` in config;
-    ///   this matches the pre-existing flag-only semantics where booleans defaulted to `false`).
-    fn resolve_with(&mut self, config: &CoverageConfig) {
-        if self.report.is_empty() {
-            self.report.clone_from(&config.report);
-        }
-        self.lcov_version =
-            self.lcov_version_cli.clone().unwrap_or_else(|| config.lcov_version.clone());
-        if !self.ir_minimum {
-            self.ir_minimum = config.ir_minimum;
-        }
-        if self.report_file.is_none() {
-            self.report_file.clone_from(&config.report_file);
-        }
-        if !self.include_libs {
-            self.include_libs = config.include_libs;
-        }
-        if !self.exclude_tests {
-            self.exclude_tests = config.exclude_tests;
-        }
-        // Glob filters are additive — there's no CLI flag for these, so always
-        // take from config.
-        self.skip_files.clone_from(&config.skip_files);
-    }
-
-    fn populate_reporters(&mut self, root: &Path) {
-        self.reporters = self
-            .report
+    /// The reporters that write the requested reports, except the attribution report, which
+    /// needs the test outcome.
+    fn reporters(&self, root: &Path) -> Vec<Box<dyn CoverageReporter>> {
+        self.report
             .iter()
             .filter_map(|report_kind| match report_kind {
                 CoverageReportKind::Summary => {
@@ -248,14 +180,98 @@ impl CoverageArgs {
                     Some(Box::new(GapsReporter::new(root.to_path_buf(), path)))
                 }
             })
-            .collect::<Vec<_>>();
+            .collect()
+    }
+}
+
+impl CoverageArgs {
+    pub(crate) fn ensure_mode_compatible(&self) -> Result<()> {
+        self.test.ensure_coverage_mode_compatible()
+    }
+
+    pub async fn run(self) -> Result<()> {
+        self.ensure_mode_compatible()?;
+
+        let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
+
+        // install missing dependencies
+        self.install_missing_dependencies(&mut config)?;
+
+        // Default to a static fuzz seed so coverage reports are deterministic,
+        // but allow the user to override it via `--fuzz-seed` or `[fuzz] seed` in config.
+        if config.fuzz.seed.is_none() {
+            config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
+        }
+
+        // Merge CLI args with `[profile.<name>.coverage]` config values. CLI
+        // flags take precedence; unset CLI flags fall back to the config.
+        let settings = self.resolve(&config.coverage);
+        let filter = self.test.filter(&config)?;
+
+        let (paths, mut output) = {
+            let (project, output) = Self::build(&config, &filter, settings.ir_minimum)?;
+            (project.paths, output)
+        };
+
+        if settings.report_file.is_some() && settings.file_report_count() > 1 {
+            sh_warn!(
+                "`--report-file` is ignored when multiple file reports are requested; \
+                 each report will use its default output path"
+            )?;
+        }
+
+        let mut reporters = settings.reporters(&paths.root);
+
+        sh_println!("Analysing contracts...")?;
+        let report = Self::prepare(&settings, &reporters, &paths, &mut output)?;
+
+        sh_println!("Running tests...")?;
+        self.collect(
+            &settings,
+            &mut reporters,
+            &paths.root,
+            &output,
+            report,
+            config,
+            evm_opts,
+            filter,
+        )
+        .await
+    }
+
+    /// Merges `[profile.<name>.coverage]` config values with the CLI flags. CLI
+    /// flags that are set win; unset/false flags inherit from `config`.
+    ///
+    /// In the result:
+    /// - `report` is non-empty.
+    /// - boolean flags reflect `cli || config` (CLI cannot disable a flag set to `true` in config;
+    ///   this matches the pre-existing flag-only semantics where booleans defaulted to `false`).
+    fn resolve(&self, config: &CoverageConfig) -> CoverageSettings {
+        CoverageSettings {
+            report: if self.report.is_empty() {
+                config.report.clone()
+            } else {
+                self.report.clone()
+            },
+            lcov_version: self
+                .lcov_version_cli
+                .clone()
+                .unwrap_or_else(|| config.lcov_version.clone()),
+            ir_minimum: self.ir_minimum || config.ir_minimum,
+            report_file: self.report_file.clone().or_else(|| config.report_file.clone()),
+            include_libs: self.include_libs || config.include_libs,
+            exclude_tests: self.exclude_tests || config.exclude_tests,
+            // Glob filters are additive — there's no CLI flag for these, so always
+            // take from config.
+            skip_files: config.skip_files.clone(),
+        }
     }
 
     /// Builds the project.
     fn build(
-        &self,
         config: &Config,
         filter: &ProjectPathsAwareFilter,
+        ir_minimum: bool,
     ) -> Result<(Project, ProjectCompileOutput)> {
         let mut project = config.ephemeral_project()?;
         // A contended or unavailable cache retains ephemeral compilation. Keep the lock until
@@ -292,7 +308,7 @@ impl CoverageArgs {
             project.paths.slash_paths();
         }
 
-        if self.ir_minimum {
+        if ir_minimum {
             sh_warn!(
                 "`--ir-minimum` enables `viaIR` with minimum optimization, \
                  which can result in inaccurate source mappings.\n\
@@ -309,7 +325,7 @@ impl CoverageArgs {
             )?;
         }
 
-        config.disable_optimizations(&mut project, self.ir_minimum);
+        config.disable_optimizations(&mut project, ir_minimum);
 
         let files = (filter.args().path_pattern.is_some()
             || filter.args().path_pattern_inverse.is_some())
@@ -445,7 +461,8 @@ impl CoverageArgs {
     /// Builds the coverage report.
     #[instrument(name = "Coverage::prepare", skip_all)]
     fn prepare(
-        &self,
+        settings: &CoverageSettings,
+        reporters: &[Box<dyn CoverageReporter>],
         project_paths: &ProjectPathsConfig,
         output: &mut ProjectCompileOutput,
     ) -> Result<CoverageReport> {
@@ -474,8 +491,8 @@ impl CoverageArgs {
                 let path = path.strip_prefix(&project_paths.root).unwrap_or(path);
                 report.add_source(build_id.clone(), *source_id as usize, path.to_path_buf());
 
-                if (!self.include_libs && project_paths.has_library_ancestor(path))
-                    || (self.exclude_tests && project_paths.is_test(path))
+                if (!settings.include_libs && project_paths.has_library_ancestor(path))
+                    || (settings.exclude_tests && project_paths.is_test(path))
                 {
                     continue;
                 }
@@ -530,7 +547,7 @@ impl CoverageArgs {
             report.add_analysis(build_id.clone(), source_analysis);
         }
 
-        if self.reporters.iter().any(|reporter| reporter.needs_source_maps()) {
+        if reporters.iter().any(|reporter| reporter.needs_source_maps()) {
             report.add_source_maps(artifacts.into_iter().map(|artifact| {
                 (artifact.contract_id, (artifact.creation.source_map, artifact.deployed.source_map))
             }));
@@ -541,8 +558,11 @@ impl CoverageArgs {
 
     /// Runs tests, collects coverage data and generates the final report.
     #[instrument(name = "Coverage::collect", skip_all)]
+    #[allow(clippy::too_many_arguments)]
     async fn collect(
         mut self,
+        settings: &CoverageSettings,
+        reporters: &mut [Box<dyn CoverageReporter>],
         project_root: &Path,
         output: &ProjectCompileOutput,
         mut report: CoverageReport,
@@ -655,9 +675,9 @@ impl CoverageArgs {
                 !not_re.is_match(&path.to_string_lossy())
             });
         }
-        if !self.skip_files.is_empty() {
+        if !settings.skip_files.is_empty() {
             let mut builder = GlobSetBuilder::new();
-            for pattern in &self.skip_files {
+            for pattern in &settings.skip_files {
                 let glob = Glob::new(pattern).map_err(|e| {
                     eyre::eyre!("invalid glob in coverage.skip_files: '{pattern}': {e}")
                 })?;
@@ -673,11 +693,11 @@ impl CoverageArgs {
         }
 
         // Output final reports.
-        self.report(&report)?;
+        Self::report(reporters, &report)?;
 
-        if self.report.iter().any(|kind| matches!(kind, CoverageReportKind::Attribution)) {
+        if settings.report.iter().any(|kind| matches!(kind, CoverageReportKind::Attribution)) {
             let reporter = CoverageAttributionReporter::new(
-                self.report_path(project_root, "coverage-attribution.json"),
+                settings.report_path(project_root, "coverage-attribution.json"),
             );
             reporter.report(&report, &outcome, &resolved_hit_maps)?;
         }
@@ -690,8 +710,8 @@ impl CoverageArgs {
     }
 
     #[instrument(name = "Coverage::report", skip_all)]
-    fn report(&mut self, report: &CoverageReport) -> Result<()> {
-        for reporter in &mut self.reporters {
+    fn report(reporters: &mut [Box<dyn CoverageReporter>], report: &CoverageReport) -> Result<()> {
+        for reporter in reporters {
             let _guard = debug_span!("reporter.report", kind=%reporter.name()).entered();
             reporter.report(report)?;
         }
@@ -815,31 +835,31 @@ mod tests {
 
     #[test]
     fn resolve_lcov_version_uses_config_when_cli_absent() {
-        let mut args = CoverageArgs::parse_from(["coverage"]);
+        let args = CoverageArgs::parse_from(["coverage"]);
         let config = CoverageConfig { lcov_version: Version::new(2, 2, 0), ..Default::default() };
 
-        args.resolve_with(&config);
+        let settings = args.resolve(&config);
 
-        assert_eq!(args.lcov_version, Version::new(2, 2, 0));
+        assert_eq!(settings.lcov_version, Version::new(2, 2, 0));
     }
 
     #[test]
     fn resolve_lcov_version_keeps_explicit_cli_default() {
-        let mut args = CoverageArgs::parse_from(["coverage", "--lcov-version", "1"]);
+        let args = CoverageArgs::parse_from(["coverage", "--lcov-version", "1"]);
         let config = CoverageConfig { lcov_version: Version::new(2, 2, 0), ..Default::default() };
 
-        args.resolve_with(&config);
+        let settings = args.resolve(&config);
 
-        assert_eq!(args.lcov_version, Version::new(1, 0, 0));
+        assert_eq!(settings.lcov_version, Version::new(1, 0, 0));
     }
 
     #[test]
     fn resolve_lcov_version_keeps_explicit_cli_value() {
-        let mut args = CoverageArgs::parse_from(["coverage", "--lcov-version", "2"]);
+        let args = CoverageArgs::parse_from(["coverage", "--lcov-version", "2"]);
         let config = CoverageConfig { lcov_version: Version::new(2, 2, 0), ..Default::default() };
 
-        args.resolve_with(&config);
+        let settings = args.resolve(&config);
 
-        assert_eq!(args.lcov_version, Version::new(2, 0, 0));
+        assert_eq!(settings.lcov_version, Version::new(2, 0, 0));
     }
 }

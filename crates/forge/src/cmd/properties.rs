@@ -450,9 +450,8 @@ struct TestRun {
 /// What one agent session left.
 struct Session {
     id: usize,
-    /// Why the agent command failed, if it did.
-    error: Option<String>,
-    timed_out: bool,
+    /// How the agent command ended.
+    exit: AgentExit,
     usage: Option<Usage>,
     possible_bugs: Vec<AgentFailure>,
     rejected: Vec<Rejected>,
@@ -463,6 +462,16 @@ struct Session {
     /// The files of `files` that each of them imports, directly or not, as the compiler resolves
     /// the imports.
     imports: BTreeMap<PathBuf, BTreeSet<PathBuf>>,
+}
+
+/// How an agent command ended.
+enum AgentExit {
+    /// The command exited successfully.
+    Succeeded,
+    /// The command failed, for this reason.
+    Failed(String),
+    /// The command reached the timeout, so Forge ended it.
+    TimedOut,
 }
 
 /// The output directories that a run reserved. The ones it left empty are removed on drop.
@@ -667,8 +676,9 @@ impl Campaign<'_> {
         for (id, result) in (1..).zip(results) {
             match result {
                 Ok(session) => {
-                    errors
-                        .extend(session.error.as_ref().map(|error| format!("agent {id}: {error}")));
+                    if let AgentExit::Failed(error) = &session.exit {
+                        errors.push(format!("agent {id}: {error}"));
+                    }
                     sessions.push(session);
                 }
                 Err(error) => errors.push(format!("agent {id}: {error:#}")),
@@ -825,7 +835,7 @@ impl Campaign<'_> {
         }
         let timed_out = sessions
             .iter()
-            .filter(|session| session.timed_out)
+            .filter(|session| matches!(session.exit, AgentExit::TimedOut))
             .map(|session| session.id)
             .collect::<Vec<_>>();
         if !timed_out.is_empty() {
@@ -969,14 +979,18 @@ impl Campaign<'_> {
             .stderr(log);
         let status = run_session(&mut command, args.timeout, "agent")?;
         let log_display = log_path.strip_prefix(&self.config.root).unwrap_or(&log_path);
-        let error = status.filter(|status| !status.success()).map(|status| {
-            format!("agent command failed ({status}): see {}", log_display.display())
-        });
+        let exit = match status {
+            None => AgentExit::TimedOut,
+            Some(status) if status.success() => AgentExit::Succeeded,
+            Some(status) => AgentExit::Failed(format!(
+                "agent command failed ({status}): see {}",
+                log_display.display()
+            )),
+        };
         let usage = read_usage(&usage_path, &format!("agent {id}"))?;
         let mut session = Session {
             id,
-            error,
-            timed_out: status.is_none(),
+            exit,
             usage,
             possible_bugs: vec![],
             rejected: vec![],
