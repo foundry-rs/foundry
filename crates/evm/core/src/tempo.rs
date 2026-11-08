@@ -49,11 +49,12 @@ pub const TEMPO_TIP20_TOKENS: &[Address] = &[PATH_USD_ADDRESS];
 
 /// Inner genesis initialization logic. Must be called within a [`StorageCtx`] scope
 /// (either via [`StorageCtx::enter`] or [`StorageCtx::enter_evm`]).
+/// Returns whether genesis code was installed rather than already initialized.
 pub fn initialize_tempo_genesis_inner(
     admin: Address,
     recipient: Address,
     hardfork: TempoHardfork,
-) -> Result<(), TempoPrecompileError> {
+) -> Result<bool, TempoPrecompileError> {
     initialize_tempo_genesis_inner_with_precompiles(
         admin,
         recipient,
@@ -75,16 +76,17 @@ pub fn initialize_tempo_test_genesis_inner(
         recipient,
         TEMPO_PRECOMPILE_ADDRESSES.iter().copied(),
     )
+    .map(|_| ())
 }
 
 fn initialize_tempo_genesis_inner_with_precompiles(
     admin: Address,
     recipient: Address,
     precompiles: impl IntoIterator<Item = Address>,
-) -> Result<(), TempoPrecompileError> {
+) -> Result<bool, TempoPrecompileError> {
     // Idempotent: PATH_USD is the first token created during genesis; if it already exists, skip.
     if TIP20Factory::new().is_tip20(PATH_USD_ADDRESS)? {
-        return Ok(());
+        return Ok(false);
     }
 
     let mut ctx = StorageCtx;
@@ -145,14 +147,12 @@ fn initialize_tempo_genesis_inner_with_precompiles(
     // Initialize ValidatorConfig with admin as owner
     ctx.sstore(VALIDATOR_CONFIG_ADDRESS, validator_config::slots::OWNER, admin.into_word().into())?;
 
-    // Set bytecode for standard contracts
-    ctx.set_code(MULTICALL3_ADDRESS, Multicall3::DEPLOYED_BYTECODE.clone())?;
-    ctx.set_code(CREATEX_ADDRESS, CreateX::DEPLOYED_BYTECODE.clone())?;
-    ctx.set_code(SAFE_DEPLOYER_ADDRESS, SafeDeployer::DEPLOYED_BYTECODE.clone())?;
-    ctx.set_code(PERMIT2_ADDRESS, Permit2::DEPLOYED_BYTECODE.clone())?;
-    ctx.set_code(ARACHNID_CREATE2_FACTORY_ADDRESS, ARACHNID_CREATE2_FACTORY_BYTECODE)?;
+    // Set bytecode for standard contracts.
+    for (address, code) in tempo_genesis_contracts() {
+        ctx.set_code(address, code)?;
+    }
 
-    Ok(())
+    Ok(true)
 }
 
 /// Helper function to create and mint a TIP20 token.
@@ -186,4 +186,16 @@ fn create_and_mint_token(
     }
 
     Ok(token_address)
+}
+
+/// Standard contracts and their runtime bytecode installed by Tempo genesis initialization.
+pub fn tempo_genesis_contracts() -> impl Iterator<Item = (Address, Bytes)> {
+    [
+        (MULTICALL3_ADDRESS, Multicall3::DEPLOYED_BYTECODE.clone()),
+        (CREATEX_ADDRESS, CreateX::DEPLOYED_BYTECODE.clone()),
+        (SAFE_DEPLOYER_ADDRESS, SafeDeployer::DEPLOYED_BYTECODE.clone()),
+        (PERMIT2_ADDRESS, Permit2::DEPLOYED_BYTECODE.clone()),
+        (ARACHNID_CREATE2_FACTORY_ADDRESS, ARACHNID_CREATE2_FACTORY_BYTECODE),
+    ]
+    .into_iter()
 }

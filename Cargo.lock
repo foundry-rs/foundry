@@ -1348,6 +1348,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tempo-alloy 1.16.0",
+ "tempo-contracts 1.16.0",
  "tempo-dkg-onchain-artifacts",
  "tempo-evm",
  "tempo-hardfork 1.16.0",
