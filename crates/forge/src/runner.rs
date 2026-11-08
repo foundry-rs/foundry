@@ -943,18 +943,23 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         let should_override_setup_tracing =
             !self.tcfg.debug && (self.executor.inspector().tracer.is_some() || has_invariants);
 
-        let prev_tracer = should_override_setup_tracing.then(|| {
-            let prev_tracer = self.executor.inspector_mut().tracer.take();
+        // The call-level requirements also install a revert diagnostic, so both are saved and
+        // restored; otherwise every test of a contract with invariants runs the diagnostic.
+        let prev_inspectors = should_override_setup_tracing.then(|| {
+            let inspector = self.executor.inspector_mut();
+            let prev = (inspector.tracer.take(), inspector.revert_diag.take());
             self.executor.set_trace_requirements(TraceRequirements::none().with_calls(true));
-            prev_tracer
+            prev
         });
 
         let setup_time = Instant::now();
         let mut setup = self.setup(call_setup);
         debug!("finished setting up in {:?}", setup_time.elapsed());
 
-        if let Some(prev_tracer) = prev_tracer {
-            self.executor.inspector_mut().tracer = prev_tracer;
+        if let Some((prev_tracer, prev_revert_diag)) = prev_inspectors {
+            let inspector = self.executor.inspector_mut();
+            inspector.tracer = prev_tracer;
+            inspector.revert_diag = prev_revert_diag;
         }
 
         if !setup.outcome.is_success() {
