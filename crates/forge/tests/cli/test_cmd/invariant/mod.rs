@@ -1,4 +1,4 @@
-use alloy_primitives::{U256, keccak256};
+use alloy_primitives::{Address, U256, address, keccak256};
 use foundry_test_utils::{
     TestCommand, forgetest_init, snapbox::cmd::OutputAssert, str, util::OutputExt,
 };
@@ -3613,6 +3613,84 @@ Ran 1 test for test/CorpusPolicyTest.t.sol:CorpusPolicyTest
 ╰--------------------+----------+-------+---------+----------╯
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#
+    ]]);
+}
+
+// Corpus entries that share a prefix which creates a dynamic target must all replay: the shared
+// prefix is executed once and its created target stays registered for every entry under it.
+#[forgetest_init]
+fn invariant_corpus_replays_shared_dynamic_target_prefix(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 8;
+        config.invariant.depth = 5;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    prj.add_test(
+        "DynamicCorpusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Child {
+    uint256 public calls;
+
+    function f() external {
+        calls++;
+    }
+
+    function g() external {
+        calls++;
+    }
+}
+
+contract Factory {
+    Child public child;
+
+    function create() external {
+        child = new Child();
+    }
+}
+
+contract DynamicCorpusTest is Test {
+    Factory factory;
+
+    function setUp() public {
+        factory = new Factory();
+    }
+
+    function invariant_dynamic_targets() public view {}
+}
+   "#,
+    );
+
+    // `setUp` deploys the factory from the test contract, and `create()` deploys the child from
+    // the factory; both use the first nonce.
+    let factory = address!("0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496").create(1);
+    let child = factory.create(1);
+    let tx = |target: Address, selector: &str| {
+        format!(
+            r#"{{"sender":"0x0000000000000000000000000000000000010000","target":"{target}","calldata":"{selector}","value":"0x0"}}"#
+        )
+    };
+    let create = tx(factory, "0xefc81a8c");
+    let corpus = prj.root().join("invariant_corpus").join("DynamicCorpusTest");
+    std::fs::create_dir_all(&corpus).unwrap();
+    for (name, call) in [("f", "0x26121ff0"), ("g", "0xe2179b8e")] {
+        std::fs::write(
+            corpus.join(format!("00000000-0000-0000-0000-00000000000{}-1.json", name.len())),
+            format!("[{create},{}]", tx(child, call)),
+        )
+        .unwrap();
+    }
+
+    assert_invariant(cmd.args(["test", "--mc", "DynamicCorpusTest"])).success().stdout_eq(str![[
+        r#"
+...
+[PASS] invariant_dynamic_targets() ([RUNS])
 ...
 "#
     ]]);

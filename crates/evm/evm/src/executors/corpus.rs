@@ -743,14 +743,22 @@ pub(crate) fn register_replay_created(
     let (Some(dynamic), Some(fuzzed_contracts)) = (dynamic, fuzzed_contracts) else {
         return;
     };
+    // A created contract is collected again by every later call that touches it. Record each
+    // address once, so clearing a suffix of `created` never drops a target an earlier call made.
+    let mut collected = Vec::new();
     if let Err(error) = fuzzed_contracts.collect_created_contracts(
         state_changeset,
         dynamic.project_contracts,
         dynamic.setup_contracts,
         dynamic.artifact_filters,
-        created,
+        &mut collected,
     ) {
         warn!(target: "corpus", "{error}");
+    }
+    for address in collected {
+        if !created.contains(&address) {
+            created.push(address);
+        }
     }
 }
 
@@ -960,6 +968,7 @@ fn replay_corpus_sequences<FEN: FoundryEvmNetwork>(
             target.fuzzed_contracts,
             target.senders,
         ) {
+            debug!(target: "corpus", ?tx, "persisted call is outside the current targets");
             continue;
         }
 
