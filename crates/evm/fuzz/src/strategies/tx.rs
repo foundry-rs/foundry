@@ -74,8 +74,15 @@ impl TxGenerator {
         let payable_value_weight = config.corpus.payable_value_weight;
         let revert_weighting = config.revert_weighting;
         let planned = Rc::new(RefCell::new(PlannedCalls::default()));
-        let strategy = any::<prop::sample::Index>()
-            .prop_flat_map(move |index| {
+        // The uniform pick keeps drawing a `Selector`, so sequences for a seed do not change
+        // while the setting is off; the weighted pick needs an `Index` over the total weight.
+        let pick = if revert_weighting {
+            any::<prop::sample::Index>().prop_map(CallPick::Weighted).boxed()
+        } else {
+            any::<prop::sample::Selector>().prop_map(CallPick::Uniform).boxed()
+        };
+        let strategy = pick
+            .prop_flat_map(move |pick| {
                 let sender = select_sender(&state, senders.clone(), dictionary_weight);
                 let call = {
                     let generation = contracts.fuzzed_functions_generation();
@@ -97,12 +104,14 @@ impl TxGenerator {
                             .collect();
                         planned.generation = generation;
                     }
-                    let pick = if revert_weighting {
-                        weighted_pick(&contracts.call_weights(), index)
-                    } else {
-                        index.index(planned.calls.len())
-                    };
-                    planned.calls[pick].clone()
+                    match pick {
+                        CallPick::Uniform(selector) => {
+                            selector.select(planned.calls.iter()).clone()
+                        }
+                        CallPick::Weighted(index) => {
+                            planned.calls[weighted_pick(&contracts.call_weights(), index)].clone()
+                        }
+                    }
                 };
                 let warp = optional_delay(&state, config.max_time_delay, dictionary_weight);
                 let roll = optional_delay(&state, config.max_block_delay, dictionary_weight);
@@ -144,6 +153,15 @@ impl TxGenerator {
             .prop_map(move |(calldata, value)| CallDetails { target, calldata, value })
             .boxed()
     }
+}
+
+/// How the next call is picked from the planned calls.
+#[derive(Clone, Debug)]
+enum CallPick {
+    /// Uniform over the planned calls.
+    Uniform(prop::sample::Selector),
+    /// By the current call weights.
+    Weighted(prop::sample::Index),
 }
 
 /// Picks a position by `weights`, which must have the length of the planned calls.
