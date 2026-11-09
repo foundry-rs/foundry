@@ -306,23 +306,14 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             debug!("finished in {:?}", timer.elapsed());
             r
         };
-        let workers = if final_sync.is_some() {
+        let workers = if let Some(final_sync) = &final_sync {
             // Corpus-syncing workers block until every peer reaches the barrier, so each needs its
             // own thread: on the rayon pool a waiting job can hold the thread a peer needs.
-            std::thread::scope(|scope| {
-                let handles = worker_ids
+            final_sync.run_workers(
+                worker_ids
                     .into_iter()
-                    .map(|worker_id| scope.spawn(move || run_worker(worker_id)))
-                    .collect::<Vec<_>>();
-                handles
-                    .into_iter()
-                    .map(|handle| {
-                        handle.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .into_iter()
-            .collect::<Result<Vec<_>>>()
+                    .map(|worker_id| (std::thread::Builder::new(), move || run_worker(worker_id))),
+            )
         } else {
             worker_ids.into_par_iter().map(run_worker).collect::<Result<Vec<_>>>()
         };

@@ -601,6 +601,32 @@ impl CorpusSyncCoordinator {
         self.condvar.wait_while(&mut state, |state| state.phase == phase && !state.aborted);
         !state.aborted
     }
+
+    /// Runs the workers, releasing waiting peers if a thread cannot be started.
+    pub(crate) fn run_workers<T: Send>(
+        &self,
+        workers: impl IntoIterator<Item = (std::thread::Builder, impl FnOnce() -> Result<T> + Send)>,
+    ) -> Result<Vec<T>> {
+        std::thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for (builder, worker) in workers {
+                match builder.spawn_scoped(scope, worker) {
+                    Ok(handle) => handles.push(handle),
+                    Err(err) => {
+                        // The scope joins started workers before returning, so wake them first.
+                        self.abort();
+                        return Err(err.into());
+                    }
+                }
+            }
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+                })
+                .collect()
+        })
+    }
 }
 
 impl fmt::Display for GlobalCorpusMetrics {
@@ -3572,5 +3598,30 @@ mod tests {
             coordinator.abort();
             assert!(!waiter.join().unwrap());
         });
+    }
+
+    #[test]
+    fn final_sync_spawn_failure_releases_started_workers() {
+        let coordinator = CorpusSyncCoordinator::new(2);
+        let completed = AtomicUsize::new(0);
+        let workers =
+            [std::thread::Builder::new(), std::thread::Builder::new().stack_size(usize::MAX)]
+                .into_iter()
+                .enumerate()
+                .map(|(worker_id, builder)| {
+                    if worker_id == 1 {
+                        while coordinator.state.lock().arrived == 0 {
+                            std::thread::yield_now();
+                        }
+                    }
+                    (builder, || {
+                        assert!(!coordinator.wait());
+                        completed.fetch_add(1, Ordering::Relaxed);
+                        Ok(())
+                    })
+                });
+
+        assert!(coordinator.run_workers(workers).is_err());
+        assert_eq!(completed.load(Ordering::Relaxed), 1);
     }
 }
