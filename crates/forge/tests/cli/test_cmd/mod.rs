@@ -7429,6 +7429,74 @@ Traces:
 "#]]);
 }
 
+// After `vm.chainId`, calls run on a frame EVM, and the debugger records the calling step with the
+// caller's stack and gas.
+#[forgetest]
+fn debug_dump_records_call_step_after_chain_id(prj: _, cmd: _) {
+    prj.add_test(
+        "DebugCallAfterChainId.t.sol",
+        r#"
+interface Vm {
+    function chainId(uint256 newChainId) external;
+}
+
+contract Counter {
+    function number() external pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract DebugCallAfterChainIdTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testCallAfterChainId() public {
+        Counter counter = new Counter();
+        vm.chainId(5);
+        counter.number();
+    }
+}
+"#,
+    );
+
+    let dump_path = prj.root().join("chain_id_dump");
+    cmd.args([
+        "test",
+        "--mt",
+        "testCallAfterChainId",
+        "--debug",
+        "--dump",
+        dump_path.to_str().unwrap(),
+    ])
+    .assert_success();
+
+    let dump: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dump_path.join("trace.json")).unwrap())
+            .unwrap();
+    let steps = dump["steps"].as_array().unwrap();
+    let call = steps.iter().find(|step| step["op"] == "STATICCALL").unwrap();
+    // The call costs the gas it forwards and the account access, and the stack holds the caller's
+    // words and the call inputs.
+    assert_eq!(call["gas_cost"], 1056819103, "{call:#}");
+    assert_eq!(
+        call["stack"],
+        serde_json::json!([
+            "0x9f09e3a1",
+            "0x35",
+            "0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f",
+            "0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f",
+            "0x8381f58a",
+            "0x84",
+            "0x20",
+            "0x80",
+            "0x4",
+            "0x80",
+            "0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f",
+            "0x3ffdbe97"
+        ]),
+        "{call:#}"
+    );
+}
+
 #[forgetest_init]
 fn detailed_revert_when_delegatecalling_unlinked_library(prj: _, cmd: _) {
     prj.add_test(
