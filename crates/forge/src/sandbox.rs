@@ -263,8 +263,13 @@ impl<'a> Sandbox<'a> {
     /// Configured filters cannot hide the tests, inline config can only lower runs, and the tests
     /// use the network only if the sandbox allows it.
     pub(crate) fn test_command(&self, workspace: &Path, files: &[TestFile]) -> Command {
-        let paths =
-            files.iter().map(|file| file.path.display().to_string()).collect::<Vec<_>>().join(",");
+        // A path can hold glob characters, such as a comma in the test directory, which would
+        // split the alternatives.
+        let paths = files
+            .iter()
+            .map(|file| globset::escape(&file.path.display().to_string()).replace(',', "[,]"))
+            .collect::<Vec<_>>()
+            .join(",");
         let mut command = self.command(workspace);
         command
             .args(["test", "--json", "--restrict-inline-config", "--match-path"])
