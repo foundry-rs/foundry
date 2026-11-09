@@ -912,10 +912,10 @@ impl<FEN: FoundryEvmNetwork> RuntimeVerification<FEN> {
 
         // Replace the `input` with local creation code in the creation tx, which is the first call
         // of a Tempo AA transaction.
-        let (kind, salt) = crate::utils::creation_call::<FEN>(&tx);
+        let (kind, input) = crate::utils::creation_call::<FEN>(&tx);
         if let TxKind::Call(to) = kind {
             if to == DEFAULT_CREATE2_DEPLOYER {
-                let mut input = salt.get(..32).unwrap_or_default().to_vec();
+                let mut input = input[..32].to_vec(); // Salt
                 input.extend_from_slice(&local_bytecode_vec);
                 tx.set_first_call_input(Bytes::from(input));
 
