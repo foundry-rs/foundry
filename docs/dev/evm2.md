@@ -34,6 +34,9 @@ revm 43 and alloy-evm 0.39 through `base-evm2` and the Base crates it depends on
   differs from `gas_remaining - gas_cost`.
 - **`SLOAD` values**: with `-vvvvv --opcodes SLOAD`, every `SLOAD` shows its slot and loaded value,
   including repeated reads of a slot that revm printed as a bare `SLOAD`.
+- **`prestateTracer` diff mode**: Anvil leaves every account that was empty before the transaction
+  out of `pre`, also when the transaction funds it, such as the coinbase at its first fee credit.
+  This matches geth. revm-inspectors reported such an account with `"balance":"0x0"`.
 
 ## Known divergences from revm
 
@@ -74,9 +77,13 @@ These compatibility differences affect execution, gas reports and Anvil library 
   limitation of evm2's `PrecompileProvider`.
 - **Tempo blob transactions**: Anvil on Tempo rejects EIP-4844 transactions with "EIP-4844 blob
   transactions are not supported on Tempo", because Tempo's EVM has no blob transaction type.
+- **Anvil empty accounts**: Anvil removes an account that a transaction touches and leaves empty, as
+  EIP-161 requires. revm-based Anvil kept it in state, for example an OP Stack fee vault after a
+  zero fee credit or the target of a call to an address without code. For the same transactions,
+  state roots and block hashes differ from revm-based Anvil.
 - **Anvil state dumps**: dumps written by this version do not load on revm-based Anvil. They store
   historical-state code as raw bytes and trace steps without `gas_used`, which older versions cannot
-  deserialize.
+  deserialize. They also leave out zero-valued storage slots.
 - **Fork caches**: RPC fork caches written by revm-based Foundry are reused when their block
   environment metadata matches. Tempo caches, whose metadata revm wrote as Tempo's block
   environment, and caches of blocks without a `mixHash` that revm recorded with no `prevrandao` no
