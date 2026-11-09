@@ -408,6 +408,22 @@ pub(crate) fn complete_cheatcode_call(
     Ok(())
 }
 
+/// Completes a cheatcode call that reverts with `return_data`, which can be the reverter of a
+/// pending `vm.expectRevert`.
+pub(crate) fn revert_cheatcode_call(
+    cx: &mut SymCx,
+    state: &mut PathState,
+    out_offset: SymExpr,
+    out_size: &BoundedCopySize,
+    return_data: SymReturnData,
+) -> Result<(), SymbolicError> {
+    state.first_failed_callee.get_or_insert(CHEATCODE_ADDRESS);
+    state.return_data = return_data;
+    state.copy_call_output_offset(cx, out_offset, out_size)?;
+    state.stack.push(SymExpr::zero(cx))?;
+    Ok(())
+}
+
 pub(crate) fn storage_slots_abi_array(cx: &mut SymCx, slots: Vec<SymExpr>) -> SymbolicAbiValue {
     SymbolicAbiValue::Array {
         elements: slots

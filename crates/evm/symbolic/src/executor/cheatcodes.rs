@@ -590,6 +590,56 @@ impl SymbolicExecutor {
         Ok(accesses_return_data(&mut self.cx, Some(&record), Address::ZERO))
     }
 
+    /// Reverts a cheatcode call whose arguments Forge rejects. A check on symbolic arguments
+    /// forks the path: the reverting branch completes here and the valid branch continues into
+    /// the cheatcode.
+    pub(super) fn branch_cheatcode_argument_check_if_needed(
+        &mut self,
+        state: &mut PathState,
+        worklist: &mut VecDeque<PathState>,
+        selector: [u8; 4],
+        in_offset: usize,
+        out_offset: &SymExpr,
+        out_size: &BoundedCopySize,
+    ) -> Result<Option<StepOutcome>, SymbolicError> {
+        let args_offset = in_offset + 4;
+        let (invalid, message) = match selector {
+            randomUint_1Call::SELECTOR => {
+                let min = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                let max = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                (
+                    SymBoolExpr::cmp_word_expr(&mut self.cx, SymCmpOp::Ugt, &min, max),
+                    "vm.randomUint: min must be less than or equal to max",
+                )
+            }
+            _ => return Ok(None),
+        };
+
+        let (invalid_constraints, invalid_sat) =
+            self.constraints_with_condition(state, invalid.clone())?;
+        if !invalid_sat {
+            return Ok(None);
+        }
+        let return_data = error_string_return_data(&mut self.cx, message);
+        let valid = invalid.not(&mut self.cx);
+        if let Some(valid_constraints) = self.constraints_for_condition(state, valid)? {
+            let mut revert_state = state.clone();
+            revert_state.constraints = invalid_constraints;
+            revert_cheatcode_call(
+                &mut self.cx,
+                &mut revert_state,
+                out_offset.clone(),
+                out_size,
+                return_data,
+            )?;
+            worklist.push_back(revert_state);
+            state.constraints = valid_constraints;
+            return Ok(None);
+        }
+        revert_cheatcode_call(&mut self.cx, state, out_offset.clone(), out_size, return_data)?;
+        Ok(Some(StepOutcome::Continue))
+    }
+
     pub(super) fn add_call_mock(
         &mut self,
         state: &mut PathState,

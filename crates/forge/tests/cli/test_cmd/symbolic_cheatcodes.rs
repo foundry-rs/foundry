@@ -2017,7 +2017,8 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
-// `vm.randomBytes` with concrete and bounded symbolic lengths.
+// `vm.randomBytes` with concrete and bounded symbolic lengths, and the `vm.randomUint` edge
+// cases Forge rejects or fixes.
 #[forgetest_init]
 fn symbolic_vm_random_bytes_cheatcodes(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_vm_random_bytes_cheatcodes");
@@ -2039,6 +2040,14 @@ contract SymbolicRandomBytes is Test {
         assertTrue(data[0] == bytes1(0x11));
         assertTrue(data[1] == bytes1(0x22));
         assertTrue(data[2] == bytes1(0x33));
+    }
+
+    function checkRandomUintRangeRejectsMinAboveMax(uint256 min, uint256 max) public {
+        vm.randomUint(min, max);
+    }
+
+    function checkRandomUintZeroBitsIsZero(uint256 x) public {
+        if (x == 7) assertEq(vm.randomUint(0), 0);
     }
 }
 "#,
@@ -2062,19 +2071,21 @@ contract SymbolicRandomBytesLength is Test {
 "#,
     );
 
-    let stdout = assert_symbolic(cmd.args([
+    let stdout = assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
         "--match-test",
-        "^(checkRandomBytes|checkRandomBytesSymbolicLength)\\(",
+        "^(checkRandomBytes|checkRandomBytesSymbolicLength|checkRandomUint[A-Za-z]*)\\(",
     ]))
-    .success()
+    .failure()
     .stdout_eq(
         str![[r#"
 ...
-Ran 1 test for test/SymbolicRandomBytes.t.sol:SymbolicRandomBytes
+Ran 3 tests for test/SymbolicRandomBytes.t.sol:SymbolicRandomBytes
 [PASS] checkRandomBytes(uint256) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+[FAIL: vm.randomUint: min must be less than or equal to max; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkRandomUintRangeRejectsMinAboveMax(uint256,uint256) ([METRICS])
+[PASS] checkRandomUintZeroBitsIsZero(uint256) ([METRICS])
+Suite result: FAILED. 2 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test for test/SymbolicRandomBytesLength.t.sol:SymbolicRandomBytesLength
 [PASS] checkRandomBytesSymbolicLength(uint8) ([METRICS])
