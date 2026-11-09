@@ -1007,7 +1007,7 @@ mod tests {
 
         let keychain = parsed.as_keychain().unwrap();
         let expected_key = parse_wallet(&private_key).unwrap().address();
-        assert_eq!(keychain.user_address, account);
+        assert_eq!(keychain.user_address(), account);
         assert_eq!(keychain.key_id(&digest).unwrap(), expected_key);
     }
 

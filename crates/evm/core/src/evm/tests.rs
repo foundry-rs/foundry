@@ -820,7 +820,7 @@ fn from_any_rpc_transaction_for_captured_keychain_tempo_aa() {
     let TempoSignature::Keychain(keychain) = signed.signature() else {
         panic!("expected keychain")
     };
-    assert_eq!(keychain.user_address, sender);
+    assert_eq!(keychain.user_address(), sender);
     assert_eq!(keychain.key_id(&signed.signature_hash()).unwrap(), key_id);
     let key_authorization = aa.key_authorization.as_ref().unwrap();
     assert_eq!(key_authorization.key_id, key_id);

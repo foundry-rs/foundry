@@ -783,8 +783,8 @@ async fn mktx_tempo_access_key_uses_alloy_wallet(cmd: _) {
     let TempoSignature::Keychain(signature) = signed.signature() else {
         panic!("expected an account access-key signature");
     };
-    assert_eq!(signature.user_address, address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
-    assert_eq!(signature.version, KeychainVersion::V2);
+    assert_eq!(signature.user_address(), address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
+    assert!(!signature.is_legacy());
     assert_eq!(
         signature.key_id(&signed.tx().signature_hash()).unwrap(),
         address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
