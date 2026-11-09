@@ -333,6 +333,52 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     assert!(!stdout.contains("symbolic EXP exponent"), "{stdout}");
 }
 
+// A base pinned by the path constraints must resolve like a literal base, so constant exponents
+// above 32 and wide symbolic exponents stay supported.
+#[forgetest_init]
+fn symbolic_exp_resolves_base_pinned_by_require(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_exp_resolves_base_pinned_by_require");
+
+    prj.add_test(
+        "SymbolicExpPinnedBase.t.sol",
+        r#"
+contract SymbolicExpPinnedBase {
+    function checkPinnedBaseConstantExponent(uint256 b) public pure {
+        require(b == 3);
+        uint256 r;
+        assembly {
+            r := exp(b, 33)
+        }
+        assert(r == 5559060566555523);
+    }
+
+    function checkPinnedBaseSymbolicExponent(uint256 b, uint8 raw) public pure {
+        require(b == 2);
+        uint256 e = uint256(raw) & 63;
+        uint256 r;
+        assembly {
+            r := exp(b, e)
+        }
+        if (e == 40) {
+            assert(r == 1099511627776);
+        }
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkPinnedBase"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicExpPinnedBase.t.sol:SymbolicExpPinnedBase
+[PASS] checkPinnedBaseConstantExponent(uint256) ([METRICS])
+[PASS] checkPinnedBaseSymbolicExponent(uint256,uint8) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
 // The engine does not model gas consumption, so `GAS` / `gasleft()` must fail
 // closed instead of returning a concrete max value or a symbolic approximation
 // that can produce non-replaying counterexamples.

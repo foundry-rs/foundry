@@ -734,6 +734,12 @@ impl PathState {
     pub(crate) fn exp_word(&mut self, cx: &mut SymCx) -> Result<(), SymbolicError> {
         let base = self.stack.pop()?;
         let exponent = self.stack.pop()?;
+        // A base the path pins to one value, such as by `require(b == 3)`, is a constant here.
+        let base = if let Some(value) = self.constrained_word(cx, &base) {
+            SymExpr::constant(cx, value)
+        } else {
+            base
+        };
         let result = if let Some(exponent) = self.constrained_word(cx, &exponent) {
             if let Some(base_value) = base.as_const() {
                 SymExpr::constant(cx, base_value.wrapping_pow(exponent))
