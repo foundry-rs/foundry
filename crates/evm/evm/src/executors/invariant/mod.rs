@@ -2247,7 +2247,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         {
             // If test contract is marked as a target and no target selector explicitly set, then
             // include only state-changing functions that are not reserved and selectors that are
-            // not explicitly excluded.
+            // not explicitly excluded. `invariants_as_handlers` keeps invariant functions.
             let selectors: Vec<_> = target
                 .abi
                 .functions()
@@ -2256,7 +2256,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         func.state_mutability,
                         alloy_json_abi::StateMutability::Pure
                             | alloy_json_abi::StateMutability::View
-                    ) || func.is_reserved()
+                    ) || (func.is_reserved()
+                        && !(self.config.invariants_as_handlers && func.is_invariant_test()))
                         || excluded_test_selectors.contains(&func.selector())
                     {
                         None

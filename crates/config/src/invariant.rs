@@ -180,6 +180,13 @@ pub struct InvariantConfig {
     ///
     /// Example: `check_interval = 10` means assert after calls 10, 20, 30, ... and the last call.
     pub check_interval: u32,
+    /// Also fuzz the test contract's invariant functions as handlers, so state they write persists
+    /// like any other call. Invariants are still checked after calls as usual.
+    ///
+    /// Applies when the test contract is a fuzz target (e.g. `targetContract(address(this))`)
+    /// without explicit `targetSelector`s. An invariant that fails while called as a handler can
+    /// also be reported as a handler assertion.
+    pub invariants_as_handlers: bool,
 }
 
 impl Default for InvariantConfig {
@@ -206,6 +213,7 @@ impl Default for InvariantConfig {
             max_time_delay: None,
             max_block_delay: None,
             check_interval: 1,
+            invariants_as_handlers: false,
         }
     }
 }

@@ -3965,3 +3965,83 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 }
+
+// With `invariants_as_handlers`, invariant functions are also fuzzed as handlers, so ghost state
+// they write persists. Without it, `invariant_monotonic` can never fail. Other reserved functions,
+// such as tests, are still not fuzzed.
+#[forgetest_init]
+fn invariant_invariants_as_handlers(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 10;
+        config.invariant.depth = 10;
+    });
+
+    prj.add_test(
+        "InvariantsAsHandlers.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract InvariantsAsHandlers is Test {
+    uint256 public value;
+    uint256 public maxSeen;
+    bool public calledTest;
+
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function testMarkFuzzed() public {
+        calledTest = true;
+    }
+
+    function increase() public {
+        value++;
+    }
+
+    function decrease() public {
+        if (value > 0) value--;
+    }
+
+    function invariant_monotonic() public {
+        assertGe(value, maxSeen, "value decreased");
+        maxSeen = value;
+    }
+
+    function invariant_test_not_fuzzed() public view {
+        assertFalse(calledTest, "test fuzzed");
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test", "--fuzz-seed", "1"])).success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/InvariantsAsHandlers.t.sol:InvariantsAsHandlers
+[PASS]
+InvariantsAsHandlers invariants:
+[PASS] invariant_monotonic
+[PASS] invariant_test_not_fuzzed
+ InvariantsAsHandlers invariants ([RUNS])
+
+[STATS]
+
+[PASS] testMarkFuzzed() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+
+    prj.update_config(|config| config.invariant.invariants_as_handlers = true);
+    let cmd = cmd.forge_fuse().args(["test", "--fuzz-seed", "1"]);
+    assert_invariant(cmd).failure().stdout_eq(str![[r#"
+...
+InvariantsAsHandlers invariants: 1/2 invariants broken
+[FAIL: value decreased: [..]] invariant_monotonic
+[PASS] invariant_test_not_fuzzed
+...
+"#]]);
+}

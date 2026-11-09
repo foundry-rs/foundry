@@ -6161,6 +6161,7 @@ mod tests {
                 corpus_random_sequence_weight = 30
                 payable_value_weight = 12
                 mutation_weight_cmp = 7
+                invariants_as_handlers = true
             "#,
             )?;
 
@@ -6185,6 +6186,7 @@ mod tests {
                     corpus_random_sequence_weight_configured: true,
                     workers_configured: true,
                     failure_persist_dir: Some(PathBuf::from("cache/invariant")),
+                    invariants_as_handlers: true,
                     ..Default::default()
                 }
             );
@@ -6284,6 +6286,7 @@ mod tests {
             jail.set_env("FOUNDRY_INVARIANT_CORPUS_RANDOM_SEQUENCE_WEIGHT", "30");
             jail.set_env("FOUNDRY_INVARIANT_PAYABLE_VALUE_WEIGHT", "12");
             jail.set_env("FOUNDRY_INVARIANT_MUTATION_WEIGHT_CMP", "7");
+            jail.set_env("FOUNDRY_INVARIANT_INVARIANTS_AS_HANDLERS", "true");
             jail.set_env("FOUNDRY_SYMBOLIC_MAX_PATHS", "64");
             jail.set_env("FOUNDRY_SYMBOLIC_DUMP_SMT", "true");
 
@@ -6302,6 +6305,7 @@ mod tests {
             assert!(config.invariant.corpus_random_sequence_weight_configured);
             assert_eq!(config.invariant.corpus.payable_value_weight, 12);
             assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_cmp, 7);
+            assert!(config.invariant.invariants_as_handlers);
             assert_eq!(config.symbolic.max_paths, 64);
             assert!(config.symbolic.dump_smt);
 
