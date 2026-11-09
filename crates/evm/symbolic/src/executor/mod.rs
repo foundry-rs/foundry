@@ -399,15 +399,7 @@ impl SymbolicExecutor {
 
                 let _step_span = matches!(kind, CallPathKind::Sequence)
                     .then(|| trace_span!("symbolic_step", pc = state.pc, op).entered());
-                match self.step(
-                    executor,
-                    code,
-                    code.jump_table(),
-                    &mut state,
-                    &mut *worklist,
-                    completed_paths,
-                    op,
-                )? {
+                match self.step(executor, code, &mut state, &mut *worklist, completed_paths, op)? {
                     StepOutcome::Continue => {}
                     StepOutcome::Halt => {
                         if *completed_paths >= path_limit {

@@ -1189,6 +1189,16 @@ contract SymbolicEtch is Test {
         assertEq(copied[1], bytes1(value));
         assertEq(copied[2], bytes1(0x00));
     }
+
+    // PUSH1 4; JUMP; op; JUMPDEST; STOP. A PUSH1 `op` turns the JUMPDEST into push data, so the
+    // jump table depends on the symbolic byte.
+    function checkEtchSymbolicJumpTable(bytes1 op) public {
+        address target = address(0xC0DE);
+        vm.etch(target, abi.encodePacked(hex"600456", op, hex"5b00"));
+
+        (bool ok,) = target.call("");
+        assert(ok);
+    }
 }
 "#,
     );
@@ -1199,13 +1209,14 @@ contract SymbolicEtch is Test {
         "--match-contract",
         "SymbolicEtch",
     ]))
-    .success()
+    .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicEtch.t.sol:SymbolicEtch
+Ran 3 tests for test/SymbolicEtch.t.sol:SymbolicEtch
 [PASS] checkEtch(uint256) ([METRICS])
 [PASS] checkEtchSymbolicBytes(uint8) ([METRICS])
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic bytecode jump table] checkEtchSymbolicJumpTable(bytes1) ([METRICS])
+Suite result: FAILED. 2 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()

@@ -449,12 +449,10 @@ impl SymbolicExecutor {
         Ok(outcome)
     }
 
-    #[expect(clippy::too_many_arguments)]
     pub(super) fn step(
         &mut self,
         executor: &ExecutorView<'_>,
         code: &SymCode,
-        jumpdests: &JumpTable,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         completed_paths: &mut usize,
@@ -1084,12 +1082,8 @@ impl SymbolicExecutor {
             }
             opcode::JUMP => {
                 let dest = state.stack.pop()?;
-                let Some(dest) = self.resolve_jump_destination(
-                    state,
-                    jumpdests,
-                    dest,
-                    "symbolic JUMP destination",
-                )?
+                let Some(dest) =
+                    self.resolve_jump_destination(state, code, dest, "symbolic JUMP destination")?
                 else {
                     state.return_data = SymReturnData::empty(&mut self.cx);
                     return Ok(StepOutcome::ExceptionalHalt);
@@ -1106,7 +1100,7 @@ impl SymbolicExecutor {
                     Some(true) => {
                         let Some(dest) = self.resolve_jump_destination(
                             state,
-                            jumpdests,
+                            code,
                             dest,
                             "symbolic JUMPI destination",
                         )?
@@ -1124,7 +1118,7 @@ impl SymbolicExecutor {
                         let true_cond = cond.nonzero_bool(&mut self.cx);
                         let dest = match self.resolve_jump_destination(
                             state,
-                            jumpdests,
+                            code,
                             dest,
                             "symbolic JUMPI destination",
                         ) {
@@ -1445,13 +1439,13 @@ impl SymbolicExecutor {
     fn resolve_jump_destination(
         &mut self,
         state: &PathState,
-        jumpdests: &JumpTable,
+        code: &SymCode,
         dest: SymExpr,
         unsupported: &'static str,
     ) -> Result<Option<usize>, SymbolicError> {
         let dest = state.expect_constrained_word(&mut self.cx, dest, unsupported)?;
         let Ok(dest) = usize::try_from(dest) else { return Ok(None) };
-        Ok(jumpdests.is_valid(dest).then_some(dest))
+        Ok(code.is_valid_jumpdest(dest)?.then_some(dest))
     }
 
     fn branch_invalid_jumpi(

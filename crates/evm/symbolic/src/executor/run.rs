@@ -455,7 +455,6 @@ impl SymbolicExecutor {
                         self.step(
                             &input.executor,
                             &code,
-                            code.jump_table(),
                             &mut state,
                             &mut worklist,
                             completed_paths,
