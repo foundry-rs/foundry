@@ -2187,7 +2187,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if self.persistent_writes.is_empty() {
             return;
         }
-        let root = usize::from(interp.version().initial_call_depth);
+        let root = usize::from(interp.host().initial_call_depth());
         let state = interp.host().state_mut();
         let mut failed = None;
         if !success && depth > root {
