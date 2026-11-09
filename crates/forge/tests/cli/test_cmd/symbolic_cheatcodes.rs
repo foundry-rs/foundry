@@ -742,6 +742,12 @@ contract SymbolicVmAssert is Test {
     function checkVmAssert(uint256 x) public {
         vm.assertNotEq(x, uint256(42));
     }
+
+    // The allocation makes the free memory pointer, and so the cheatcode input offset, symbolic.
+    function checkVmAssertAfterSymbolicAlloc(uint8 n) public pure {
+        new bytes(n);
+        vm.assertTrue(n != 37);
+    }
 }
 "#,
     );
@@ -750,9 +756,10 @@ contract SymbolicVmAssert is Test {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicVmAssert.t.sol:SymbolicVmAssert
+Ran 2 tests for test/SymbolicVmAssert.t.sol:SymbolicVmAssert
 [FAIL: assertion failed: 42 == 42; counterexample: 		[SENDER] [SENDER] calldata=0xdaaeb166000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkVmAssert(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] calldata=0x8dbe55f80000000000000000000000000000000000000000000000000000000000000025 args=[37]] checkVmAssertAfterSymbolicAlloc(uint8) ([METRICS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
         .get_output()

@@ -839,19 +839,21 @@ impl SymbolicExecutor {
             } else {
                 Some(in_offset.as_usize_or("symbolic cheatcode CALL input offset")?)
             };
-            let selector = if has_symbolic_input_offset {
+            // After an allocation of symbolic size the input offset is symbolic, but the input
+            // is still the `in_size` bytes there: read them with the offset bounds.
+            let symbolic_offset_input = has_symbolic_input_offset.then(|| {
                 let minimum_offset = state.lower_bound_usize(&in_offset);
                 let maximum_offset = state.upper_bound_usize(&mut self.cx, &in_offset);
-                let selector = state
-                    .memory
-                    .read_bytes_offset_with_bounds(
-                        &mut self.cx,
-                        in_offset.clone(),
-                        4,
-                        minimum_offset,
-                        maximum_offset,
-                    )
-                    .right_aligned_word(&mut self.cx, 0, 4);
+                state.memory.read_bytes_offset_with_bounds(
+                    &mut self.cx,
+                    in_offset.clone(),
+                    in_size,
+                    minimum_offset,
+                    maximum_offset,
+                )
+            });
+            let selector = if let Some(input) = &symbolic_offset_input {
+                let selector = input.right_aligned_word(&mut self.cx, 0, 4);
                 self.constrained_word_with_solver(state, &selector)?
                     .map(|selector| selector.to_be_bytes::<32>()[28..].try_into().unwrap())
                     .ok_or(SymbolicError::Unsupported("symbolic cheatcode selector"))?
@@ -868,9 +870,6 @@ impl SymbolicExecutor {
             };
             let full_word_array_assertion =
                 to == CHEATCODE_ADDRESS && is_full_word_array_assertion(selector);
-            if has_symbolic_input_offset && !full_word_array_assertion {
-                return Err(SymbolicError::Unsupported("symbolic cheatcode CALL input offset"));
-            }
             if has_symbolic_in_size {
                 let min_size = if to == CHEATCODE_ADDRESS {
                     foundry_cheatcode_min_input_size(selector)
@@ -921,36 +920,54 @@ impl SymbolicExecutor {
                 return Ok(outcome);
             }
 
-            let return_data = if to == CHEATCODE_ADDRESS {
-                let outcome = self.handle_foundry_cheatcode(
+            // The handlers decode the input from memory at a concrete offset. The callee cannot
+            // see the caller's memory, so an input read at a symbolic offset is decoded from a
+            // scratch memory that holds it at offset 0; the array assertions read the offset.
+            let caller_memory =
+                symbolic_offset_input.filter(|_| !full_word_array_assertion).map(|input| {
+                    let mut scratch = SymMemory::default();
+                    scratch.store_bytes(&mut self.cx, 0, input);
+                    std::mem::replace(&mut state.memory, scratch)
+                });
+            let (in_offset, concrete_in_offset) = if caller_memory.is_some() {
+                (SymExpr::zero(&mut self.cx), Some(0))
+            } else {
+                (in_offset, concrete_in_offset)
+            };
+            let outcome = if to == CHEATCODE_ADDRESS {
+                self.handle_foundry_cheatcode(
                     executor,
                     state,
                     selector,
                     &in_offset,
                     &in_size_word,
                     in_size,
-                )?;
-                match outcome {
-                    CheatcodeOutcome::Continue(ret) => SymReturnData::from_words(&mut self.cx, ret),
-                    CheatcodeOutcome::ContinueData(ret) => ret,
-                    CheatcodeOutcome::Revert(ret) => {
-                        state.first_failed_callee.get_or_insert(CHEATCODE_ADDRESS);
-                        state.return_data = ret;
-                        state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
-                        state.stack.push(SymExpr::zero(&mut self.cx))?;
-                        return Ok(StepOutcome::Continue);
-                    }
-                    CheatcodeOutcome::AssumeRejected => return Ok(StepOutcome::AssumeRejected),
-                    CheatcodeOutcome::Failure => return Ok(StepOutcome::Failure),
-                }
+                )
             } else if to == SYMBOLIC_VM_COMPAT_ADDRESS {
                 self.handle_symbolic_vm_cheatcode(
                     state,
                     selector,
                     concrete_in_offset.expect("symbolic vm input offset is concrete"),
-                )?
+                )
+                .map(CheatcodeOutcome::ContinueData)
             } else {
-                return Err(SymbolicError::Unsupported("symbolic cheatcode address"));
+                Err(SymbolicError::Unsupported("symbolic cheatcode address"))
+            };
+            if let Some(memory) = caller_memory {
+                state.memory = memory;
+            }
+            let return_data = match outcome? {
+                CheatcodeOutcome::Continue(ret) => SymReturnData::from_words(&mut self.cx, ret),
+                CheatcodeOutcome::ContinueData(ret) => ret,
+                CheatcodeOutcome::Revert(ret) => {
+                    state.first_failed_callee.get_or_insert(CHEATCODE_ADDRESS);
+                    state.return_data = ret;
+                    state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
+                    state.stack.push(SymExpr::zero(&mut self.cx))?;
+                    return Ok(StepOutcome::Continue);
+                }
+                CheatcodeOutcome::AssumeRejected => return Ok(StepOutcome::AssumeRejected),
+                CheatcodeOutcome::Failure => return Ok(StepOutcome::Failure),
             };
 
             state.return_data = return_data;
