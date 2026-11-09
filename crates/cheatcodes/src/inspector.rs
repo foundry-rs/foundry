@@ -2722,9 +2722,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             // This intentionally differs from `call_end` for `count > 1`, where
             // legacy nested CALL handling reports the outermost call per iteration.
             //
-            // Use `is_revert` rather than `is_frame_revert`: a create rejected before its frame
-            // starts (depth/balance/nonce) never runs at the would-be address, so the
-            // surrounding `call_end` records the caller as the reverter instead.
+            // Only creates whose frame ran and reverted count. A create rejected before its
+            // frame starts (depth, balance, nonce) leaves the reverter to the surrounding
+            // `call_end`, which records the caller.
             if outcome.stop.is_revert()
                 && expected_revert.reverter.is_some()
                 && expected_revert.reverted_by.is_none()

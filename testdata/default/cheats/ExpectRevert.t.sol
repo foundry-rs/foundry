@@ -407,8 +407,8 @@ contract ExpectRevertWithReverterTest is Test {
         new NestedDContractCreator2{salt: outerSalt}();
     }
 
-    // A nested CREATE that fails before its frame starts (here, out of funds) never
-    // runs at the would-be address, so the reverter is the calling contract.
+    // A nested CREATE that fails before its frame starts (here, out of funds) is
+    // reverted by the calling contract, not the would-be deployed address.
     function testExpectRevertsWithReverterUnfundedCreate() public {
         UnfundedCreator creator = new UnfundedCreator();
         vm.expectRevert(address(creator));
