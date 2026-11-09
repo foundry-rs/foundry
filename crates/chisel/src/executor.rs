@@ -86,25 +86,15 @@ fn yul_inspection(input: &str, session_source: &str) -> Option<YulInspection> {
 
         let mut assembly = input.to_string();
         assembly.replace_range(expr_range.clone(), &format!("{result_var} := {expression}"));
-        let inspector_input =
-            format!("uint256 {result_var}; {assembly}\n{}", inspector_return_line(&result_var));
+        let inspector_input = format!(
+            "uint256 {result_var}; {assembly}\nbytes memory inspectoor = abi.encode({result_var}); \
+             assembly {{ return(add(inspectoor, 0x20), mload(inspectoor)) }}"
+        );
 
         let mut replay_input = input.to_string();
         replay_input.replace_range(expr_range, &format!("pop({expression})"));
         Some(YulInspection { inspector_input, replay_input })
     })
-}
-
-/// Snippet that ABI-encodes `expr` and returns that payload from `run()`.
-///
-/// Solc leaves the `bytes` pointer on the stack at the statement's source location. Solar does
-/// not, so reading `stack.last()` as a memory offset fails with `solc = "solar"`. The call's
-/// return data is the encoding either compiler produced.
-fn inspector_return_line(expr: &str) -> String {
-    format!(
-        "bytes memory inspectoor = abi.encode({expr}); assembly {{ return(add(inspectoor, 0x20), \
-         mload(inspectoor)) }}"
-    )
 }
 
 /// Type of the expression passed to the generated `abi.encode` in `inspectoor`.
@@ -157,7 +147,12 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
     ///
     /// If the input is valid, returns its [`InspectResult`].
     pub async fn inspect(&self, input: &str) -> Result<InspectResult> {
-        let line = inspector_return_line(input);
+        // Return the encoding from `run()`: solar does not leave the `inspectoor` pointer on the
+        // stack, so reading it from the final stack and memory only works with solc.
+        let line = format!(
+            "bytes memory inspectoor = abi.encode({input}); \
+             assembly {{ return(add(inspectoor, 0x20), mload(inspectoor)) }}"
+        );
         let (mut source, replay_input) = match self.clone_with_new_line(line) {
             Ok((source, _)) => (source, None),
             Err(err) => {
