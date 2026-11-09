@@ -1473,7 +1473,13 @@ import "forge-std/Test.sol";
 /// forge-config: default.evm_version = "shanghai"
 
 contract Killable {
+    uint256 public value = 3;
+
     receive() external payable {}
+
+    function set(uint256 newValue) external {
+        value = newValue;
+    }
 
     function die(address payable beneficiary) external {
         selfdestruct(beneficiary);
@@ -1499,6 +1505,14 @@ contract SymbolicSelfdestruct is Test {
         assert(address(killable).codehash == bytes32(0));
         assert(vm.getNonce(address(killable)) == 1);
     }
+
+    // The storage is deleted, so the slot must not read the stale value from `setUp`.
+    function checkSelfdestructKeepsStorage(uint8 value) public {
+        vm.assume(value != 3);
+        killable.set(value);
+        killable.die(beneficiary);
+        assert(uint256(vm.load(address(killable), 0)) == 3);
+    }
 }
 "#,
     );
@@ -1511,12 +1525,13 @@ contract SymbolicSelfdestruct is Test {
         "--match-test",
         "checkSelfdestruct",
     ]))
-    .success()
+    .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicSelfdestruct.t.sol:SymbolicSelfdestruct
+Ran 2 tests for test/SymbolicSelfdestruct.t.sol:SymbolicSelfdestruct
 [PASS] checkSelfdestruct(uint256) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSelfdestructKeepsStorage(uint8) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -1754,74 +1769,6 @@ contract SymbolicSelfdestructCancunWrongDelete is Test {
     assert!(!stdout.contains("[PASS] checkCancunSelfdestructDoesNotDeleteExisting"), "{stdout}");
     assert!(!stdout.contains("incomplete symbolic execution"), "{stdout}");
     assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
-}
-
-// A legacy SELFDESTRUCT drops the account's storage, so its slots must not read pre-run values.
-#[forgetest_init]
-fn symbolic_selfdestruct_legacy_does_not_read_stale_storage(prj: _, cmd: _) {
-    skip_unless_z3!("symbolic_selfdestruct_legacy_does_not_read_stale_storage");
-
-    prj.add_test(
-        "SymbolicSelfdestructStaleStorage.t.sol",
-        r#"
-import "forge-std/Test.sol";
-
-/// forge-config: default.evm_version = "shanghai"
-
-contract KillableStorage {
-    uint256 public value;
-
-    function set(uint256 newValue) external {
-        value = newValue;
-    }
-
-    function die(address payable beneficiary) external {
-        selfdestruct(beneficiary);
-    }
-}
-
-contract SymbolicSelfdestructStaleStorage is Test {
-    KillableStorage killable;
-
-    function setUp() public {
-        killable = new KillableStorage();
-        killable.set(3);
-    }
-
-    function checkSelfdestructedSlotIsNotStale(uint8 value) public {
-        vm.assume(value != 3);
-        killable.set(value);
-        killable.die(payable(address(0xB0B)));
-        assert(uint256(vm.load(address(killable), 0)) != 3);
-    }
-
-    function checkSelfdestructedSlotKeepsSetUpValue(uint8 value) public {
-        vm.assume(value != 3);
-        killable.set(value);
-        killable.die(payable(address(0xB0B)));
-        assert(uint256(vm.load(address(killable), 0)) == 3);
-    }
-}
-"#,
-    );
-
-    assert_symbolic_witness(cmd.args([
-        "test",
-        "--symbolic",
-        "--evm-version",
-        "shanghai",
-        "--match-contract",
-        "SymbolicSelfdestructStaleStorage",
-    ]))
-    .failure()
-    .stdout_eq(str![[r#"
-...
-Ran 2 tests for test/SymbolicSelfdestructStaleStorage.t.sol:SymbolicSelfdestructStaleStorage
-[PASS] checkSelfdestructedSlotIsNotStale(uint8) ([METRICS])
-[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSelfdestructedSlotKeepsSetUpValue(uint8) ([METRICS])
-Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
-...
-"#]]);
 }
 
 // BLOCKHASH with symbolic block numbers and `vm.setBlockhash` with concrete and symbolic hashes.
