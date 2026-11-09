@@ -1636,7 +1636,7 @@ impl SymbolicExecutor {
                 if !state.block.set_block_hash(block_number, block_hash)? {
                     return Ok(CheatcodeOutcome::Revert(error_string_return_data(
                         &mut self.cx,
-                        "block number must be less than or equal to the current block number",
+                        "vm.setBlockhash: block number must be less than or equal to the current block number",
                     )));
                 }
                 Ok(CheatcodeOutcome::Continue(Vec::new()))

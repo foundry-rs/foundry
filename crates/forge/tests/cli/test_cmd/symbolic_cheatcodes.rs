@@ -1784,10 +1784,17 @@ contract SymbolicBlockhash is Test {
         vm.roll(299);
         assertEq(blockhash(43), bytes32(uint256(0xbeef)));
 
-        (bool ok,) = address(vm).call(
+        (bool ok, bytes memory data) = address(vm).call(
             abi.encodeWithSignature("setBlockhash(uint256,bytes32)", 300, previousHash)
         );
         assertFalse(ok);
+        assertEq(
+            data,
+            abi.encodeWithSignature(
+                "CheatcodeError(string)",
+                "vm.setBlockhash: block number must be less than or equal to the current block number"
+            )
+        );
     }
 }
 "#,
