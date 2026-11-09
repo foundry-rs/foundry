@@ -520,7 +520,7 @@ pub(crate) fn read_abi_address_word_or_symbolic_slot_arg(
     args_offset: usize,
     index: usize,
 ) -> Result<(Address, SymExpr), SymbolicError> {
-    let word = read_abi_word_arg(cx, &state.memory, args_offset, index)?;
+    let word = read_abi_word_arg(cx, &state.memory, args_offset, index)?.address_operand(cx);
     let address = state.address_or_symbolic_slot(cx, word.clone());
     Ok((address, word))
 }

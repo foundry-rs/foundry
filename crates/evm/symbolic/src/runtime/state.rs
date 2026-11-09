@@ -819,7 +819,7 @@ impl PathState {
         &mut self,
         cx: &mut SymCx,
     ) -> Result<(SymExpr, Address), SymbolicError> {
-        let expr = self.stack.pop()?;
+        let expr = self.stack.pop()?.address_operand(cx);
         let address = self.address_or_symbolic_slot(cx, expr.clone());
         Ok((expr, address))
     }
@@ -2177,6 +2177,7 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
+        let address_expr = address_expr.address_operand(cx);
         if let Some(address) = self.resolve_address(&address_expr) {
             return Ok(self.balance_word_for_address(cx, executor, address));
         }
@@ -2453,6 +2454,7 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
+        let address_expr = address_expr.address_operand(cx);
         if let Some(address) = self.resolve_address(&address_expr) {
             let len = self.extcode(cx, executor, address)?.len();
             return Ok(SymExpr::constant(cx, U256::from(len)));
@@ -2479,6 +2481,7 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
+        let address_expr = address_expr.address_operand(cx);
         if let Some(address) = self.resolve_address(&address_expr) {
             return self.extcode_hash_for_address(cx, executor, address);
         }
@@ -2504,6 +2507,7 @@ impl SymbolicWorld {
         offset: SymExpr,
         size: usize,
     ) -> Result<SymBytes, SymbolicError> {
+        let address_expr = address_expr.address_operand(cx);
         if let Some(address) = self.resolve_address(&address_expr) {
             return Ok(self.extcode(cx, executor, address)?.read_bytes_offset(cx, offset, size));
         }
