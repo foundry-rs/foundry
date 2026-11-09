@@ -7820,3 +7820,38 @@ Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
+
+// Like revm, vm.getFoundryVersion returns the full version with build metadata.
+#[forgetest_init]
+fn symbolic_get_foundry_version_matches_concrete(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_get_foundry_version_matches_concrete");
+
+    prj.add_test(
+        "SymbolicFoundryVersion.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicFoundryVersion is Test {
+    bytes32 expected;
+
+    function setUp() public {
+        expected = keccak256(bytes(vm.getFoundryVersion()));
+    }
+
+    function checkFoundryVersionMatchesConcrete() public view {
+        assertEq(keccak256(bytes(vm.getFoundryVersion())), expected);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicFoundryVersion"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicFoundryVersion.t.sol:SymbolicFoundryVersion
+[PASS] checkFoundryVersionMatchesConcrete() ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
