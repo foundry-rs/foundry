@@ -14,8 +14,8 @@ use foundry_block_explorers::{
 };
 use foundry_cli::utils::LoadConfig;
 use foundry_common::{
-    abi::encode_args, compile::ProjectCompiler, find_matching_contract_artifact,
-    ignore_metadata_hash, shell,
+    FoundryTransactionBuilder, abi::encode_args, compile::ProjectCompiler,
+    find_matching_contract_artifact, ignore_metadata_hash, shell,
 };
 use foundry_compilers::{
     Graph,
@@ -453,8 +453,7 @@ where
 {
     // Derive the created address up front: batched transactions return the last call's result,
     // not the deployment's.
-    let to = request.kind().unwrap_or(TxKind::Create);
-    let input = request.input().cloned().unwrap_or_default();
+    let (to, input) = creation_call::<FEN>(&request);
     let address = if let TxKind::Call(to) = to {
         if to != DEFAULT_CREATE2_DEPLOYER {
             eyre::bail!(
@@ -492,6 +491,21 @@ where
     }
 
     Ok(address)
+}
+
+/// Returns the kind and input of the call that deploys the contract: the first call of a Tempo AA
+/// transaction, or the transaction itself.
+pub fn creation_call<FEN: FoundryEvmNetwork>(
+    request: &TransactionRequestFor<FEN>,
+) -> (TxKind, Bytes) {
+    match request.tempo_calls().first() {
+        Some(&(kind, input)) if request.has_tempo_call_list() => {
+            (kind, Bytes::copy_from_slice(input))
+        }
+        _ => {
+            (request.kind().unwrap_or(TxKind::Create), request.input().cloned().unwrap_or_default())
+        }
+    }
 }
 
 pub async fn get_runtime_codes<FEN>(
