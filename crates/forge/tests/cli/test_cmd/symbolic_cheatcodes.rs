@@ -4335,7 +4335,19 @@ interface IMockedTarget {
     function value(uint256 input) external returns (uint256);
 }
 
+interface IMockedVoid {
+    function doit() external;
+}
+
 contract SymbolicMockCall is Test {
+    function checkMockCallGivesCodelessCalleeCode(uint256) public {
+        address target = address(0xE0A);
+
+        vm.mockCall(target, abi.encodeWithSelector(IMockedVoid.doit.selector), bytes(""));
+        assertEq(target.code.length, 1);
+        IMockedVoid(target).doit();
+    }
+
     function checkMockCall(uint256) public {
         address target = address(0x1234);
 
@@ -4448,12 +4460,13 @@ contract SymbolicMockCall is Test {
             .success()
             .stdout_eq(str![[r#"
 ...
-Ran 4 tests for test/SymbolicMockCall.t.sol:SymbolicMockCall
+Ran 5 tests for test/SymbolicMockCall.t.sol:SymbolicMockCall
 [PASS] checkMockCall(uint256) ([METRICS])
+[PASS] checkMockCallGivesCodelessCalleeCode(uint256) ([METRICS])
 [PASS] checkMockCallRemockReplacesStaleValue(uint256) ([METRICS])
 [PASS] checkMockCallSymbolicCallee(address) ([METRICS])
 [PASS] checkMockCallsAcceptsSymbolicData(address,uint256) ([METRICS])
-Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
             .get_output()

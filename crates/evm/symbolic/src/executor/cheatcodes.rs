@@ -592,13 +592,22 @@ impl SymbolicExecutor {
 
     pub(super) fn add_call_mock(
         &mut self,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         callee: SymExpr,
         value: Option<U256>,
         data: SymBytes,
         returns: Vec<SymReturnData>,
         reverts: bool,
-    ) -> CheatcodeOutcome {
+    ) -> Result<CheatcodeOutcome, SymbolicError> {
+        // Like Forge, a codeless callee gets the one-byte code `0x00`, so Solidity's extcodesize
+        // check before a high-level call passes.
+        if let Some(address) = state.constrained_word(&mut self.cx, &callee).map(word_to_address)
+            && state.world.extcode(&mut self.cx, executor, address)?.is_empty()
+        {
+            let code = SymCode::concrete(&mut self.cx, vec![0]);
+            state.world.install_code(address, code);
+        }
         // Replace identical definitions in place to preserve mock precedence.
         if let Some(existing) = state.call_mocks.iter_mut().find(|mock| {
             mock.callee == callee
@@ -609,7 +618,7 @@ impl SymbolicExecutor {
         } else {
             state.call_mocks.push(CallMock::new(callee, value, data, returns, reverts));
         }
-        CheatcodeOutcome::Continue(Vec::new())
+        Ok(CheatcodeOutcome::Continue(Vec::new()))
     }
 
     pub(super) fn set_function_mock(
@@ -1018,7 +1027,7 @@ impl SymbolicExecutor {
                     message,
                 )?;
                 let data = SymBytes::exprs(&mut self.cx, data);
-                Ok(self.add_call_mock(state, callee, value, data, vec![ret], revert))
+                self.add_call_mock(executor, state, callee, value, data, vec![ret], revert)
             }
             mockCalls_0Call::SELECTOR | mockCalls_1Call::SELECTOR => {
                 let has_value = selector == mockCalls_1Call::SELECTOR;
@@ -1052,7 +1061,7 @@ impl SymbolicExecutor {
                     self.config.max_calldata_bytes as usize,
                 )?;
                 let data = SymBytes::exprs(&mut self.cx, data);
-                Ok(self.add_call_mock(state, callee, value, data, returns, false))
+                self.add_call_mock(executor, state, callee, value, data, returns, false)
             }
             mockFunctionCall::SELECTOR => {
                 let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
