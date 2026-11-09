@@ -180,6 +180,12 @@ pub struct InvariantConfig {
     ///
     /// Example: `check_interval = 10` means assert after calls 10, 20, 30, ... and the last call.
     pub check_interval: u32,
+    /// Gas limit for every call the invariant campaign makes: handler calls, invariant checks
+    /// and `afterInvariant`.
+    ///
+    /// Defaults to the project `gas_limit`, and never raises it. Set it so a handler with a
+    /// fuzzed loop bound cannot run until the campaign deadline and consume the whole budget.
+    pub call_gas_limit: Option<u64>,
 }
 
 impl Default for InvariantConfig {
@@ -206,6 +212,7 @@ impl Default for InvariantConfig {
             max_time_delay: None,
             max_block_delay: None,
             check_interval: 1,
+            call_gas_limit: None,
         }
     }
 }

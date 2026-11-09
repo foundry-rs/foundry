@@ -1801,6 +1801,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         campaign_seed: &InvariantCampaignSeed,
         corpus_seed: WorkerCorpusSeed,
     ) -> Result<(InvariantTest, WorkerCorpus)> {
+        // `setUp` already ran under the project limit; the campaign's own calls get the cap.
+        if let Some(call_gas_limit) = config.call_gas_limit
+            && call_gas_limit < executor.gas_limit()
+        {
+            executor.set_gas_limit(call_gas_limit);
+        }
         let fuzz_state = fuzz_state.into_invariant();
         let targeted_contracts = FuzzRunIdentifiedContracts::new(
             campaign_seed.targeted_contracts.clone(),

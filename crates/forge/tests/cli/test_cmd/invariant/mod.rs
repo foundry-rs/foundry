@@ -3800,3 +3800,51 @@ contract InvariantMetricsTest is Test {
 ...
 "#]]);
 }
+
+#[forgetest_init]
+fn invariant_call_gas_limit_caps_campaign_calls(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 5;
+        config.invariant.call_gas_limit = Some(1_000_000);
+    });
+    prj.add_test(
+        "CallGasLimit.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract GasProbe {
+    uint256 public handlerGas;
+
+    function record() external {
+        handlerGas = gasleft();
+    }
+}
+
+contract CallGasLimitTest is Test {
+    GasProbe probe;
+    uint256 setUpGas;
+
+    function setUp() public {
+        setUpGas = gasleft();
+        probe = new GasProbe();
+        targetContract(address(probe));
+    }
+
+    function invariant_calls_run_under_the_cap() public view {
+        assertGt(setUpGas, 1_000_000);
+        if (probe.handlerGas() != 0) {
+            assertLt(probe.handlerGas(), 1_000_000);
+        }
+    }
+}
+   "#,
+    );
+    cmd.args(["test", "--mt", "invariant_calls_run_under_the_cap"]).assert_success().stdout_eq(
+        str![[r#"
+...
+[PASS] invariant_calls_run_under_the_cap() (runs: 5, calls: 25, reverts: 0)
+...
+"#]],
+    );
+}
