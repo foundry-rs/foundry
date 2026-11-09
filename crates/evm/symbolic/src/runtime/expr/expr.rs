@@ -324,6 +324,28 @@ pub(in crate::runtime::expr) fn low_masked_source_any(expr: &SymExpr) -> Option<
     }
 }
 
+/// Returns `(a, d)` for the rounded product `(a / d) * d` in either operand order.
+pub(crate) fn rounded_product_operands<'a>(
+    left: &'a SymExpr,
+    right: &'a SymExpr,
+) -> Option<(&'a SymExpr, &'a SymExpr)> {
+    [(left, right), (right, left)].into_iter().find_map(|(quotient, factor)| {
+        let (dividend, divisor) = quotient.udiv_operands()?;
+        (divisor == factor).then_some((dividend, divisor))
+    })
+}
+
+/// Returns `a` for the Euclidean sum `(a / d) * d + a % d` in either operand order.
+fn euclidean_sum_dividend<'a>(left: &'a SymExpr, right: &'a SymExpr) -> Option<&'a SymExpr> {
+    [(left, right), (right, left)].into_iter().find_map(|(product, remainder)| {
+        let SymExprKind::BinOp(SymBinOp::URem, dividend, divisor) = remainder.kind() else {
+            return None;
+        };
+        let SymExprKind::BinOp(SymBinOp::Mul, left, right) = product.kind() else { return None };
+        (rounded_product_operands(left, right) == Some((dividend, divisor))).then_some(dividend)
+    })
+}
+
 fn word_from_extracted_bytes(bytes: &[SymExpr]) -> Option<SymExpr> {
     if bytes.len() < 32 {
         return None;
@@ -525,6 +547,9 @@ impl SymExpr {
                         value
                     } else if let Some(value) = Self::add_with_const_ite(cx, &right, &left) {
                         value
+                    } else if let Some(dividend) = euclidean_sum_dividend(&left, &right) {
+                        // `(a / d) * d + a % d => a`.
+                        dividend.clone()
                     } else {
                         Self::from_kind(cx, SymExprKind::BinOp(binop, left, right))
                     }
@@ -539,6 +564,11 @@ impl SymExpr {
                 (_, SymExprKind::Const(value)) if value.is_zero() => left,
                 // `a - a => 0`.
                 _ if left == right => Self::zero(cx),
+                // `a - a % d => (a / d) * d`.
+                (_, SymExprKind::BinOp(SymBinOp::URem, dividend, divisor)) if *dividend == left => {
+                    let quotient = Self::binop(cx, SymBinOp::UDiv, left, divisor.clone());
+                    Self::binop(cx, SymBinOp::Mul, quotient, divisor.clone())
+                }
                 // `bool_word(c) - 1 => ite(c, 0, MAX)`.
                 (_, SymExprKind::Const(value))
                     if *value == U256::ONE
@@ -1633,7 +1663,7 @@ impl SymExpr {
                     {
                         pending.push((left.clone(), false));
                     }
-                    SymExprKind::BinOp(SymBinOp::UDiv, left, _) => {
+                    SymExprKind::BinOp(SymBinOp::UDiv | SymBinOp::URem, left, _) => {
                         pending.push((left.clone(), false));
                     }
                     SymExprKind::TernOp(_, _, _, modulus) => {
@@ -1657,7 +1687,11 @@ impl SymExpr {
                     bit_widths[left].max(bit_widths[right]).saturating_add(1).min(256)
                 }
                 SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
-                    bit_widths[left].saturating_add(bit_widths[right]).min(256)
+                    match rounded_product_operands(left, right) {
+                        // `(a / d) * d <= a`, so the rounded product fits the dividend.
+                        Some((dividend, _)) => bit_widths[dividend],
+                        None => bit_widths[left].saturating_add(bit_widths[right]).min(256),
+                    }
                 }
                 SymExprKind::BinOp(SymBinOp::Shl, left, right) => right
                     .as_const()
@@ -1668,6 +1702,11 @@ impl SymExpr {
                     .and_then(|shift| usize::try_from(shift).ok())
                     .map_or(256, |shift| bit_widths[left].saturating_sub(shift).max(1)),
                 SymExprKind::BinOp(SymBinOp::UDiv, left, _) => bit_widths[left],
+                // `a % d <= a`, and `a % d < d` for a nonzero constant `d`.
+                SymExprKind::BinOp(SymBinOp::URem, left, right) => match right.as_const() {
+                    Some(divisor) if !divisor.is_zero() => bit_widths[left].min(divisor.bit_len()),
+                    _ => bit_widths[left],
+                },
                 SymExprKind::TernOp(_, _, _, modulus) => bit_widths[modulus],
                 SymExprKind::Ite(_, left, right) => bit_widths[left].max(bit_widths[right]),
                 _ => 256,

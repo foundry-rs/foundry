@@ -7356,6 +7356,31 @@ contract RoundedProductTest {
             assert(rounded - value < 37);
         }
     }
+
+    function checkSymbolicDivisorFacts(uint256 value, uint256 divisor) external pure {
+        if (divisor == 0) return;
+        uint256 rounded;
+        assembly {
+            rounded := mul(div(value, divisor), divisor)
+        }
+        assert(value % divisor < divisor);
+        assert(rounded <= value);
+    }
+
+    function checkEuclideanIdentities(uint256 value) external pure {
+        assert(value / 7 * 7 + value % 7 == value);
+        assert(value - value % 1e18 == value / 1e18 * 1e18);
+    }
+
+    function checkNarrowFloorError(uint128 value) external pure {
+        uint128 rounded = value / 1000 * 1000;
+        assert(rounded <= value);
+    }
+
+    function checkBasisPointsFee(uint64 amount, uint16 bps) external pure {
+        require(bps <= 10000);
+        assert(uint256(amount) * bps / 10000 <= amount);
+    }
 }
 "#,
     );
@@ -7367,7 +7392,7 @@ contract RoundedProductTest {
             "--symbolic-timeout",
             "30",
             "--match-test",
-            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip)",
+            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|NarrowFloorError|BasisPointsFee)",
         ])
         .assert_success();
         let output = cmd
