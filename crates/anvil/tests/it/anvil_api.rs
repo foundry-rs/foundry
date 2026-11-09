@@ -9,7 +9,9 @@ use alloy_chains::NamedChain;
 use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_eips::{eip2718::Decodable2718, eip4788::BEACON_ROOTS_ADDRESS};
 use alloy_genesis::{ChainConfig, Genesis};
-use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TxSignerSync};
+use alloy_network::{
+    AnyNetwork, EthereumWallet, ReceiptResponse, TransactionBuilder, TxSignerSync,
+};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256, fixed_bytes, keccak256};
 use alloy_provider::{Provider, ext::TxPoolApi};
 use alloy_rpc_types::{
@@ -39,7 +41,7 @@ use foundry_common::{
 };
 use foundry_evm::hardfork::EthereumHardfork;
 use foundry_evm_networks::NetworkConfigs;
-use foundry_primitives::FoundryTxEnvelope;
+use foundry_primitives::{FoundryTxEnvelope, FoundryTxReceipt};
 use futures::{FutureExt, StreamExt};
 use tempo_hardfork::TempoHardfork;
 
@@ -2404,4 +2406,117 @@ async fn test_rollback_and_reorg_respect_genesis_block_number() {
     assert_eq!(api.backend.best_number(), 102);
     api.anvil_rollback(Some(2)).await.unwrap();
     assert_eq!(api.backend.best_number(), 100);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn lifecycle_transitions_do_not_wait_for_sync_transaction() {
+    let (api, handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let request = WithOtherFields::new(
+        TransactionRequest::default()
+            .with_from(sender)
+            .with_to(Address::repeat_byte(0x77))
+            .with_value(U256::ONE),
+    );
+    let send_sync =
+        || provider.client().request::<_, FoundryTxReceipt>("eth_sendTransactionSync", (&request,));
+    // Drives the RPC until its transaction is pooled and the RPC waits for a receipt.
+    async fn wait_until_pooled(
+        provider: &impl TxPoolApi<AnyNetwork>,
+        send: &mut (impl Future + Unpin),
+    ) {
+        loop {
+            assert!(futures::poll!(&mut *send).is_pending());
+            if provider.txpool_status().await.unwrap().pending == 1 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    }
+    let mine = || provider.client().request::<_, String>("evm_mine", ());
+    mine().await.unwrap();
+
+    // A rollback keeps the pool, so the waiting RPC returns the receipt of the next block.
+    let mut send = Box::pin(send_sync());
+    tokio::time::timeout(Duration::from_secs(5), wait_until_pooled(&provider, &mut send))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        provider.client().request::<_, ()>("anvil_rollback", (1,)).await.unwrap();
+        assert_eq!(provider.get_block_number().await.unwrap(), 0);
+        mine().await.unwrap();
+    })
+    .await
+    .expect("rollback waited for the synchronous transaction");
+    let receipt = tokio::time::timeout(Duration::from_secs(5), send).await.unwrap().unwrap();
+    assert_eq!(receipt.block_number(), Some(1));
+
+    // A reset clears the pool, so the waiting RPC gets no receipt, but other RPCs still run.
+    let instance_id = api.instance_id();
+    let mut send = Box::pin(send_sync());
+    tokio::time::timeout(Duration::from_secs(5), wait_until_pooled(&provider, &mut send))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        provider.client().request::<_, ()>("anvil_reset", ()).await.unwrap();
+        assert_eq!(provider.get_block_number().await.unwrap(), 0);
+        mine().await.unwrap();
+        assert_eq!(provider.get_block_number().await.unwrap(), 1);
+    })
+    .await
+    .expect("reset waited for the synchronous transaction");
+    assert_ne!(api.instance_id(), instance_id);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn requests_see_one_state_across_reset() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    api.mine_one().await.unwrap();
+    let instance_id = api.instance_id();
+
+    let metadata = (0..32)
+        .map(|_| provider.client().request::<_, Metadata>("anvil_metadata", ()))
+        .collect::<futures::stream::FuturesUnordered<_>>()
+        .collect::<Vec<_>>();
+    let (metadata, reset) = tokio::join!(metadata, api.anvil_reset(None));
+    reset.unwrap();
+
+    let reset_instance_id = api.instance_id();
+    assert_ne!(reset_instance_id, instance_id);
+    for metadata in metadata {
+        let metadata = metadata.unwrap();
+        let state = (metadata.instance_id, metadata.latest_block_number);
+        assert!(
+            state == (instance_id, 1) || state == (reset_instance_id, 0),
+            "metadata mixes states: {state:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_fork_resets_serialize() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    origin_api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
+    let (api, _handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+
+    let resets = (1..=3).map(|block_number| {
+        api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(block_number) }))
+    });
+    for reset in futures::future::join_all(resets).await {
+        reset.unwrap();
+    }
+
+    let fork_block_number = api.get_fork().unwrap().block_number();
+    assert!((1..=3).contains(&fork_block_number));
+    assert_eq!(api.backend.best_number(), fork_block_number);
+    let metadata = api.anvil_metadata().await.unwrap();
+    assert_eq!(metadata.latest_block_number, fork_block_number);
+    assert_eq!(metadata.forked_network.unwrap().fork_block_number, fork_block_number);
 }
