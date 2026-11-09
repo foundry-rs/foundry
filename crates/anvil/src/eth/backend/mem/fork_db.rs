@@ -171,6 +171,10 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
         *db.storage.write() = storage;
         *db.block_hashes.write() = block_hashes;
     }
+
+    fn prefetch(&self, accounts: &[Address], slots: &[(Address, U256)]) {
+        Self::prefetch(self, accounts, slots)
+    }
 }
 
 impl<N: Network> MaybeFullDatabase for ForkDbStateSnapshot<N> {

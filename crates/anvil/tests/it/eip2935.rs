@@ -531,3 +531,54 @@ async fn geth_block_replay_discards_partial_results_on_execution_error() {
     assert_eq!(provider.get_transaction_count(from).await.unwrap(), 3);
     assert_eq!(provider.get_block_number().await.unwrap(), block_number);
 }
+
+/// Blocks mined on a fork run their system calls against slots prefetched from the origin, and
+/// store the same values a local chain does.
+#[tokio::test(flavor = "multi_thread")]
+async fn fork_system_calls_store_parent_hash_and_beacon_root() {
+    let (origin_api, origin_handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    for _ in 0..3 {
+        origin_api.mine_one().await.unwrap();
+    }
+    let (fork_api, fork_handle) = spawn(
+        NodeConfig::test()
+            .with_no_storage_caching(true)
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint())),
+    )
+    .await;
+    let provider = http_provider(&fork_handle.http_endpoint());
+    let history = |number: u64| {
+        TransactionRequest::default()
+            .with_to(HISTORY_STORAGE_ADDRESS)
+            .with_input(U256::from(number).to_be_bytes::<32>())
+    };
+
+    // A hash the origin stored before the fork is read from the origin.
+    let block2 = provider.get_block_by_number(2.into()).await.unwrap().unwrap();
+    let stored = provider.call(history(2).into()).await.unwrap();
+    assert_eq!(B256::from_slice(&stored), block2.header.hash);
+
+    for _ in 0..2 {
+        fork_api.mine_one().await.unwrap();
+        let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+        let parent = block.header.number - 1;
+
+        let stored = provider.call(history(parent).into()).await.unwrap();
+        assert_eq!(B256::from_slice(&stored), block.header.parent_hash);
+
+        let slot = block.header.timestamp % 8191;
+        let timestamp = provider
+            .get_storage_at(BEACON_ROOTS_ADDRESS, U256::from(slot))
+            .block_id(BlockId::latest())
+            .await
+            .unwrap();
+        assert_eq!(timestamp, U256::from(block.header.timestamp));
+        let root = provider
+            .get_storage_at(BEACON_ROOTS_ADDRESS, U256::from(slot + 8191))
+            .block_id(BlockId::latest())
+            .await
+            .unwrap();
+        assert_eq!(B256::from(root), block.header.parent_beacon_block_root.unwrap());
+    }
+}

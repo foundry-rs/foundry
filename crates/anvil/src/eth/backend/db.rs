@@ -105,6 +105,12 @@ pub trait MaybeFullDatabase: crate::mem::DatabaseRef + Send + Sync {
 
     /// Reverses `clear_into_snapshot` by initializing the db's state with the state snapshot.
     fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot);
+
+    /// Starts fetching `accounts` and `slots` that are not held locally, without waiting, so the
+    /// reads that follow do not each make a round trip.
+    ///
+    /// Only a database backed by a remote endpoint fetches anything.
+    fn prefetch(&self, _accounts: &[Address], _slots: &[(Address, U256)]) {}
 }
 
 /// A borrowed, type-erased state that overlays are built on, so that EVMs are monomorphized once.
@@ -137,6 +143,10 @@ where
     fn clear(&mut self) {}
 
     fn init_from_state_snapshot(&mut self, _state_snapshot: StateSnapshot) {}
+
+    fn prefetch(&self, accounts: &[Address], slots: &[(Address, U256)]) {
+        T::prefetch(self, accounts, slots)
+    }
 }
 
 impl<T: MaybeFullDatabase + ?Sized> MaybeFullDatabase for Box<T>
@@ -177,6 +187,10 @@ where
 
     fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
         T::init_from_state_snapshot(self, state_snapshot)
+    }
+
+    fn prefetch(&self, accounts: &[Address], slots: &[(Address, U256)]) {
+        T::prefetch(self, accounts, slots)
     }
 }
 
@@ -626,6 +640,10 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
             );
         }
         self.cache.block_hashes = block_hashes;
+    }
+
+    fn prefetch(&self, accounts: &[Address], slots: &[(Address, U256)]) {
+        self.db.prefetch(accounts, slots)
     }
 }
 

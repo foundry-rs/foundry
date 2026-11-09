@@ -152,6 +152,22 @@ impl<N: Network, B: ForkBlockEnv> ForkedDatabase<N, B> {
             false
         }
     }
+
+    /// Starts fetching `accounts` and `slots` from the remote endpoint at once, without waiting,
+    /// so the reads that follow find them in flight or cached instead of making one round trip
+    /// each.
+    ///
+    /// Keys this database already holds locally are not fetched.
+    pub fn prefetch(&self, accounts: &[Address], slots: &[(Address, U256)]) {
+        let local = &self.cache_db.cache.accounts;
+        super::prefetch::spawn_reads(
+            &self.backend,
+            accounts.iter().copied().filter(|address| !local.contains_key(address)),
+            slots.iter().copied().filter(|(address, slot)| {
+                !local.get(address).is_some_and(|account| account.storage.contains_key(slot))
+            }),
+        );
+    }
 }
 
 impl<N: Network, B: ForkBlockEnv> Database for ForkedDatabase<N, B> {
