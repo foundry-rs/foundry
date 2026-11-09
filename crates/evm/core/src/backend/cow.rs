@@ -15,7 +15,7 @@ use crate::{
 };
 use alloy_evm::Evm;
 use alloy_genesis::GenesisAccount;
-use alloy_primitives::{Address, B256, TxKind, U256};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
 use revm::{
@@ -312,6 +312,17 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
 
     fn active_fork_url(&self) -> Option<String> {
         self.backend.active_fork_url()
+    }
+
+    fn prefetch_call(
+        &self,
+        caller: Address,
+        target: Address,
+        value: U256,
+        input: &Bytes,
+        top_level: bool,
+    ) {
+        self.backend.prefetch_call(caller, target, value, input, top_level)
     }
 
     fn active_fork_options(&self) -> Option<CreateFork> {

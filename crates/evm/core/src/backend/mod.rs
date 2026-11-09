@@ -2,7 +2,10 @@
 
 use crate::{
     FoundryBlock, FoundryChain, FoundryInspectorExt, FoundryTransaction, FromAnyRpcTransaction,
-    constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
+    constants::{
+        CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS,
+        TEST_CONTRACT_ADDRESS,
+    },
     evm::{
         BlockEnvFor, ChainFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor, FoundryEvmFactory,
         FoundryEvmNetwork, HaltReasonFor, SpecFor, TxEnvFor,
@@ -23,11 +26,19 @@ use alloy_genesis::GenesisAccount;
 use alloy_network::{
     AnyNetwork, AnyRpcBlock, AnyRpcTransaction, BlockResponse, Network, TransactionResponse,
 };
-use alloy_primitives::{Address, B256, ChainId, TxKind, U256, keccak256, map::AddressSet, uint};
-use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
+use alloy_primitives::{
+    Address, B256, Bytes, ChainId, TxKind, U256, keccak256,
+    map::{AddressSet, B256HashMap},
+    uint,
+};
+use alloy_rpc_types::{
+    BlockNumberOrTag, BlockTransactions, TransactionRequest,
+    state::{AccountOverride, StateOverride},
+};
 use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
 use foundry_evm_networks::{NetworkConfigs, apply_bsc_p256_precompile};
+use foundry_fork_db::AccessListPrefetch;
 pub use foundry_fork_db::{
     AccountFetchPolicy, BlockchainDb, ForkBlock, ForkBlockEnv, SharedBackend,
     cache::BlockchainDbMeta,
@@ -414,6 +425,23 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
 
     /// Returns the Fork url that's currently used in the database, if fork mode is on
     fn active_fork_url(&self) -> Option<String>;
+
+    /// Prefetches the remote state a call is about to read, if the active fork can predict it.
+    ///
+    /// The call is simulated on the fork's endpoint and the accounts and slots it touches there
+    /// are fetched in parallel while the EVM runs it. A top-level call is simulated once per
+    /// target and selector, with the state that only exists locally, such as the test contract,
+    /// applied as overrides. A nested call is simulated as is, so one into a contract that exists
+    /// only locally is skipped, as are calls to precompiles and cheatcode contracts. Nothing
+    /// happens without an active fork.
+    fn prefetch_call(
+        &self,
+        caller: Address,
+        target: Address,
+        value: U256,
+        input: &Bytes,
+        top_level: bool,
+    );
 
     /// Returns the options used to create the active fork, if fork mode is on.
     fn active_fork_options(&self) -> Option<CreateFork>;
@@ -2493,6 +2521,38 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         self.active_fork_ids.map(|(id, _)| id)
     }
 
+    fn prefetch_call(
+        &self,
+        caller: Address,
+        target: Address,
+        value: U256,
+        input: &Bytes,
+        top_level: bool,
+    ) {
+        let Some(fork) = self.active_fork() else { return };
+        if target <= Address::with_last_byte(0xff)
+            || target == CHEATCODE_ADDRESS
+            || target == HARDHAT_CONSOLE_ADDRESS
+        {
+            return;
+        }
+        let overrides = if top_level { fork_state_override(&fork.db) } else { None };
+        // An account the fork cached locally but never loaded from the endpoint was deployed here,
+        // so the endpoint can only simulate a call into it with the local state as overrides.
+        if overrides.is_none()
+            && fork.db.cache.accounts.contains_key(&target)
+            && !fork.db.db.data().accounts.read().contains_key(&target)
+        {
+            return;
+        }
+        let tx = TransactionRequest::default()
+            .from(caller)
+            .to(target)
+            .value(value)
+            .input(input.clone().into());
+        fork.db.db.prefetch_access_list(AccessListPrefetch { tx, overrides, once: top_level });
+    }
+
     fn active_fork_url(&self) -> Option<String> {
         let fork = self.inner.issued_local_fork_ids.get(&self.active_fork_id()?)?;
         self.forks.get_fork_url(fork.clone()).ok()?
@@ -2891,6 +2951,70 @@ pub enum BackendDatabaseSnapshot<N: Network, B: ForkBlockEnv = BlockEnv> {
     InMemory(FoundryEvmInMemoryDB),
     /// Contains the entire forking mode database
     Forked(LocalForkId, ForkId, ForkLookupIndex, Box<Fork<N, B>>),
+}
+
+/// Runtime code that returns one zero word, standing in for the cheatcode contract in a
+/// simulation on the fork's endpoint: `PUSH1 0x20 PUSH1 0x00 RETURN`.
+const CHEATCODE_STUB: Bytes = Bytes::from_static(&[0x60, 0x20, 0x60, 0x00, 0xf3]);
+
+/// Largest local state, in storage slots, sent as overrides with a simulated call.
+const MAX_OVERRIDE_SLOTS: usize = 8192;
+
+/// Collects the state of a fork that differs from its endpoint as overrides for a simulation.
+///
+/// Accounts and slots the fork loaded from the endpoint are left out, so the overrides hold
+/// contracts deployed locally, such as the test contract, and local changes to remote accounts,
+/// such as balances and storage set with cheatcodes. The cheatcode contract gets a stub that
+/// returns one zero word, so the simulation runs past most cheatcode calls. Returns `None` when
+/// the local state is too large to send.
+fn fork_state_override<N: Network, B: ForkBlockEnv>(db: &ForkDB<N, B>) -> Option<StateOverride> {
+    let remote = db.db.data();
+    let remote_accounts = remote.accounts.read();
+    let remote_storage = remote.storage.read();
+    let mut overrides = StateOverride::default();
+    let mut slots = 0;
+    for (address, account) in &db.cache.accounts {
+        if account.account_state == AccountState::NotExisting {
+            continue;
+        }
+        let remote_account = remote_accounts.get(address);
+        let mut account_override = AccountOverride::default();
+        if remote_account.is_none_or(|remote| remote.code_hash() != account.info.code_hash()) {
+            let code = account
+                .info
+                .code
+                .as_ref()
+                .or_else(|| db.cache.contracts.get(&account.info.code_hash))
+                .map(|code| code.original_bytes())
+                .unwrap_or_default();
+            account_override.code = Some(code);
+        }
+        if remote_account.is_none_or(|remote| remote.balance != account.info.balance) {
+            account_override.balance = Some(account.info.balance);
+        }
+        if remote_account.is_none_or(|remote| remote.nonce != account.info.nonce) {
+            account_override.nonce = Some(account.info.nonce);
+        }
+        let remote_slots = remote_storage.get(address);
+        let diff = account
+            .storage
+            .iter()
+            .filter(|(slot, value)| remote_slots.and_then(|slots| slots.get(slot)) != Some(value))
+            .map(|(slot, value)| (B256::from(*slot), B256::from(*value)))
+            .collect::<B256HashMap<_>>();
+        slots += diff.len();
+        if slots > MAX_OVERRIDE_SLOTS {
+            return None;
+        }
+        if !diff.is_empty() {
+            account_override.state_diff = Some(diff);
+        }
+        if account_override != AccountOverride::default() {
+            overrides.insert(*address, account_override);
+        }
+    }
+    overrides.entry(CHEATCODE_ADDRESS).or_default().code = Some(CHEATCODE_STUB);
+    Some(overrides)
 }
 
 /// Represents a fork

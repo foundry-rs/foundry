@@ -530,6 +530,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         inspector.tracing_requirements(self.trace_requirements());
         inspector.collect_line_coverage(self.line_coverage);
         inspector.enable_isolation(self.isolation);
+        inspector.fork_prefetch(self.evm_opts.fork_prefetch);
         executor.set_spec_id(self.spec_id);
         executor.set_legacy_assertions(self.config.legacy_assertions);
     }
@@ -560,6 +561,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
                     .trace_requirements(self.trace_requirements())
                     .line_coverage(self.line_coverage)
                     .enable_isolation(self.isolation)
+                    .fork_prefetch(self.evm_opts.fork_prefetch)
                     .create2_deployer(self.evm_opts.create2_deployer)
                     .set_analysis(analysis)
             })

@@ -90,6 +90,8 @@ pub struct InspectorStackBuilder<BLOCK: Clone> {
     /// In isolation mode all top-level calls are executed as a separate transaction in a separate
     /// EVM context, enabling more precise gas accounting and transaction state changes.
     pub enable_isolation: bool,
+    /// Whether to prefetch the remote state of calls into fork contracts.
+    pub fork_prefetch: bool,
     /// Configuration retained for Celo precompile support.
     // TODO(celo-execution-owner): Replace this residual with concrete Celo precompile
     // configuration. This is independent of the Monad lifecycle migration.
@@ -118,6 +120,7 @@ impl<BLOCK: Clone> Default for InspectorStackBuilder<BLOCK> {
             print: None,
             chisel_state: None,
             enable_isolation: false,
+            fork_prefetch: false,
             networks: NetworkConfigs::default(),
             tempo_labels: None,
             extra_cheatcode_addresses: &[],
@@ -219,6 +222,14 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         self
     }
 
+    /// Set whether to prefetch the remote state of calls into fork contracts.
+    /// See [`InspectorStack::fork_prefetch`].
+    #[inline]
+    pub const fn fork_prefetch(mut self, yes: bool) -> Self {
+        self.fork_prefetch = yes;
+        self
+    }
+
     /// Sets networks when building an inspector stack directly.
     ///
     /// [`ExecutorBuilder::build`](crate::executors::ExecutorBuilder::build) overrides this with its
@@ -265,6 +276,7 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
             print,
             chisel_state,
             enable_isolation,
+            fork_prefetch,
             networks,
             tempo_labels,
             extra_cheatcode_addresses,
@@ -300,6 +312,7 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         stack.tracing_requirements(trace_requirements);
 
         stack.enable_isolation(enable_isolation);
+        stack.fork_prefetch(fork_prefetch);
         stack.networks(networks);
         stack.inner.tempo_labels = tempo_labels;
         stack.set_extra_cheatcode_addresses(extra_cheatcode_addresses);
@@ -463,6 +476,9 @@ pub struct InspectorStackInner {
     /// Whether to capture sancov trace-cmp operands for dictionary injection.
     pub sancov_trace_cmp: bool,
     pub enable_isolation: bool,
+    /// Whether calls into fork contracts prefetch the remote state they are about to read, see
+    /// [`DatabaseExt::prefetch_call`].
+    pub fork_prefetch: bool,
     pub networks: NetworkConfigs,
     /// Additional addresses installed and recognized as cheatcode contracts.
     pub extra_cheatcode_addresses: &'static [Address],
@@ -806,6 +822,16 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     #[inline]
     pub const fn enable_isolation(&mut self, yes: bool) {
         self.inner.enable_isolation = yes;
+    }
+
+    /// Set whether calls into fork contracts prefetch the remote state they are about to read.
+    ///
+    /// Each call is simulated on the fork's endpoint with `eth_createAccessList` while the EVM runs
+    /// it, and the accounts and slots of the result are fetched in parallel, so a cold call costs a
+    /// few round trips instead of one per slot.
+    #[inline]
+    pub const fn fork_prefetch(&mut self, yes: bool) {
+        self.inner.fork_prefetch = yes;
     }
 
     /// Set networks with enabled features.
@@ -1821,6 +1847,21 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
 
         if let Some(revert_diag) = self.revert_diag.as_deref_mut() {
             revert_diag.frame_start();
+        }
+
+        // Delegate calls run inside a call that was already simulated.
+        if self.inner.fork_prefetch
+            && matches!(call.scheme, CallScheme::Call | CallScheme::StaticCall)
+        {
+            let input = call.input.bytes(ecx);
+            let top_level = ecx.journal().depth() == 0;
+            ecx.db().prefetch_call(
+                call.caller,
+                call.target_address,
+                call.call_value(),
+                &input,
+                top_level,
+            );
         }
 
         let storage_hook_callback = self

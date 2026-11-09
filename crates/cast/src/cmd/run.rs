@@ -535,6 +535,7 @@ impl RunArgs {
         config.fork_block_number = Some(tx_block_number - 1);
 
         let create2_deployer = evm_opts.create2_deployer;
+        let fork_prefetch = evm_opts.fork_prefetch;
         let (block, receipt, mut fork) = tokio::try_join!(
             // fetch the block the transaction was mined in
             provider.get_block(tx_block_number.into()).full().into_future().map_err(Into::into),
@@ -602,6 +603,7 @@ impl RunArgs {
             create2_deployer,
             None,
         )?;
+        executor.inspector_mut().fork_prefetch(fork_prefetch);
         // The fork is pinned to the parent block, but the replayed transactions execute in the
         // target's block, which block queries such as Arbitrum's `ArbSys.arbBlockNumber()` must
         // report.
