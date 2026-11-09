@@ -7820,3 +7820,150 @@ Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
+
+// Like Forge, the next non-static call from the frame that declared a `vm.expectEmit` must emit
+// every log it expects. A call that does not fails with `log != expected log` and keeps the
+// expectation pending, so a later call cannot meet it unless the failure is caught.
+#[forgetest_init]
+fn symbolic_expect_emit_checked_at_next_call(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_expect_emit_checked_at_next_call");
+
+    prj.add_test(
+        "SymbolicExpectEmitNextCall.t.sol",
+        r#"
+interface Vm {
+    function expectEmit() external;
+    function expectEmit(uint64 count) external;
+}
+
+contract NextCallEmitter {
+    event Ev(uint256 x);
+
+    function nop() external {}
+
+    function emitEv(uint256 x) external {
+        emit Ev(x);
+    }
+
+    function halt() external {
+        assembly {
+            invalid()
+        }
+    }
+}
+
+contract SymbolicExpectEmitNextCall {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    event Ev(uint256 x);
+    NextCallEmitter emitter;
+
+    function setUp() public {
+        emitter = new NextCallEmitter();
+    }
+
+    function checkEmitInNextCall(uint256 x) public {
+        vm.expectEmit();
+        emit Ev(x);
+        emitter.emitEv(x);
+        emitter.nop();
+    }
+
+    function checkEmitInLaterCall(uint256 x) public {
+        vm.expectEmit();
+        emit Ev(x);
+        emitter.nop();
+        emitter.emitEv(x);
+    }
+
+    function checkCountSplitAcrossCalls(uint256 x) public {
+        vm.expectEmit(uint64(2));
+        emit Ev(x);
+        emitter.emitEv(x);
+        emitter.emitEv(x);
+    }
+
+    // Like Forge, the failed call keeps the expectation, so a later call can meet it.
+    function checkCaughtFailureKeepsExpectation(uint256 x) public {
+        vm.expectEmit();
+        emit Ev(x);
+        (bool success,) = address(emitter).call(abi.encodeCall(NextCallEmitter.nop, ()));
+        assert(!success);
+        emitter.emitEv(x);
+    }
+
+    function checkCodelessCallFails(uint256 x) public {
+        vm.expectEmit();
+        emit Ev(x);
+        (bool success,) = address(0xdead).call("");
+        assert(!success);
+        emitter.emitEv(x);
+    }
+
+    function checkHaltedCallReturnsFailure(uint256 x) public {
+        vm.expectEmit();
+        emit Ev(x);
+        (bool success, bytes memory data) =
+            address(emitter).call(abi.encodeCall(NextCallEmitter.halt, ()));
+        assert(!success && data.length != 0);
+        emitter.emitEv(x);
+    }
+
+    // Like Forge, a static call does not check the expectation.
+    function checkStaticCallKeepsExpectation(uint256 x) public {
+        vm.expectEmit();
+        emit Ev(x);
+        (bool success,) = address(emitter).staticcall(abi.encodeCall(NextCallEmitter.nop, ()));
+        assert(success);
+        emitter.emitEv(x);
+    }
+
+    function testEmitInNextCall() public {
+        checkEmitInNextCall(1);
+    }
+
+    function testCaughtFailureKeepsExpectation() public {
+        checkCaughtFailureKeepsExpectation(1);
+    }
+
+    function testCodelessCallFails() public {
+        checkCodelessCallFails(1);
+    }
+
+    function testHaltedCallReturnsFailure() public {
+        checkHaltedCallReturnsFailure(1);
+    }
+
+    function testStaticCallKeepsExpectation() public {
+        checkStaticCallKeepsExpectation(1);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-contract", "SymbolicExpectEmitNextCall", "--match-test", "^test"])
+        .assert_success();
+    cmd.forge_fuse();
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicExpectEmitNextCall",
+        "--match-test",
+        "^check",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 7 tests for test/SymbolicExpectEmitNextCall.t.sol:SymbolicExpectEmitNextCall
+[PASS] checkCaughtFailureKeepsExpectation(uint256) ([METRICS])
+[PASS] checkCodelessCallFails(uint256) ([METRICS])
+[FAIL: log != expected log; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCountSplitAcrossCalls(uint256) ([METRICS])
+[FAIL: log != expected log; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkEmitInLaterCall(uint256) ([METRICS])
+[PASS] checkEmitInNextCall(uint256) ([METRICS])
+[PASS] checkHaltedCallReturnsFailure(uint256) ([METRICS])
+[PASS] checkStaticCallKeepsExpectation(uint256) ([METRICS])
+Suite result: FAILED. 5 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
