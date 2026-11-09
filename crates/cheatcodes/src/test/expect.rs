@@ -285,17 +285,7 @@ impl Cheatcode for expectCall_6Call {
             CallKind::StaticCall => ExpectedCallScheme::StaticCall,
             _ => bail!("invalid call kind"),
         };
-        expect_call(
-            state,
-            callee,
-            data,
-            None,
-            None,
-            None,
-            Some(scheme),
-            1,
-            ExpectedCallType::NonCount,
-        )
+        expect_call(state, callee, data, Some(scheme), ExpectedCallData::default())
     }
 }
 
