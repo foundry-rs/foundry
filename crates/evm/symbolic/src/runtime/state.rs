@@ -261,7 +261,7 @@ impl PathState {
             model.insert(var, value);
         }
 
-        expr.eval_model(&model).ok()
+        expr.eval_model_recording_keccak_preimages(cx, &model).ok()
     }
 
     pub(crate) fn split_corpus_seed_models(
