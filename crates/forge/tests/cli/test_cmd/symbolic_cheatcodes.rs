@@ -3560,8 +3560,8 @@ Suite result: FAILED. 9 passed; 8 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
-// Like evm2, a value transfer reverts when the sender is short, which matches `vm.assumeNoRevert`,
-// and saturates the recipient balance instead of failing when it would overflow.
+// A value transfer reverts when the sender is short, which matches `vm.assumeNoRevert`, and
+// saturates the recipient balance, as does a `SELFDESTRUCT` beneficiary.
 #[forgetest_init]
 fn symbolic_vm_assume_no_revert_transfer_overflow_saturates(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_vm_assume_no_revert_transfer_overflow_saturates");
@@ -3570,6 +3570,12 @@ fn symbolic_vm_assume_no_revert_transfer_overflow_saturates(prj: _, cmd: _) {
         "SymbolicTransferOverflow.t.sol",
         r#"
 import "forge-std/Test.sol";
+
+contract SymbolicSelfDestructTo {
+    constructor(address to) payable {
+        selfdestruct(payable(to));
+    }
+}
 
 contract SymbolicTransferOverflow is Test {
     address constant DST = address(0x1234);
@@ -3582,6 +3588,10 @@ contract SymbolicTransferOverflow is Test {
         assertTrue(ok);
         assertEq(data.length, 0);
         assertEq(address(this).balance, 1);
+        assertEq(DST.balance, type(uint256).max);
+
+        new SymbolicSelfDestructTo{value: 1}(DST);
+        assertEq(address(this).balance, 0);
         assertEq(DST.balance, type(uint256).max);
     }
 

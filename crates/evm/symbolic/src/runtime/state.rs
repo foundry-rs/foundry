@@ -2206,9 +2206,8 @@ impl SymbolicWorld {
         }
     }
 
-    /// Moves `value` from `from` to `to`. Like evm2's `State::transfer`, a call saturates the
-    /// recipient's balance at `U256::MAX`; like evm2's `State::create_account`, a creation
-    /// endowment wraps it.
+    /// Moves `value` from `from` to `to`, saturating the recipient's balance at `U256::MAX` when
+    /// `saturate` is set and wrapping it otherwise.
     pub(crate) fn transfer(
         &mut self,
         cx: &mut SymCx,
@@ -2301,7 +2300,7 @@ impl SymbolicWorld {
         if beneficiary != address && !balance.as_const().is_some_and(|value| value.is_zero()) {
             let beneficiary_balance = self.balance_word_for_address(cx, executor, beneficiary);
             let beneficiary_balance =
-                SymExpr::binop(cx, SymBinOp::Add, beneficiary_balance, balance);
+                SymMemory::saturating_add_word(cx, beneficiary_balance, balance);
             self.set_balance_word(beneficiary, beneficiary_balance);
         }
         let nonce = if self.nonces.contains_key(&address) {
@@ -2340,7 +2339,7 @@ impl SymbolicWorld {
             // Symbolic balances are treated as possibly non-zero, matching transfer's
             // account-existence approximation.
             let beneficiary_balance =
-                SymExpr::binop(cx, SymBinOp::Add, beneficiary_balance, balance);
+                SymMemory::saturating_add_word(cx, beneficiary_balance, balance);
             self.set_balance_word(beneficiary, beneficiary_balance);
             let zero = SymExpr::zero(cx);
             Arc::make_mut(&mut self.state).balances.insert(address, zero);
