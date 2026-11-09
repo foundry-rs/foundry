@@ -149,13 +149,7 @@ impl SymBoolExpr {
                         // `keccak(a) == keccak(b) => len(a) == len(b) && bytes(a) == bytes(b)`.
                         let mut conditions =
                             vec![Self::eq(cx, left_len.clone(), right_len.clone())];
-                        conditions.extend(
-                            left_bytes
-                                .iter()
-                                .cloned()
-                                .zip(right_bytes.iter().cloned())
-                                .map(|(left, right)| Self::eq(cx, left, right)),
-                        );
+                        conditions.extend(Self::bytes_eq(cx, left_bytes, right_bytes));
                         Self::and(cx, conditions)
                     }
                     (
@@ -167,12 +161,7 @@ impl SymBoolExpr {
                         && left_bytes.len() == right_bytes.len() =>
                     {
                         // `hash(a) == hash(b) => bytes(a) == bytes(b)`.
-                        let conditions = left_bytes
-                            .iter()
-                            .cloned()
-                            .zip(right_bytes.iter().cloned())
-                            .map(|(left, right)| Self::eq(cx, left, right))
-                            .collect();
+                        let conditions = Self::bytes_eq(cx, left_bytes, right_bytes);
                         Self::and(cx, conditions)
                     }
                     _ => {
@@ -393,14 +382,31 @@ impl SymBoolExpr {
             return Some(Self::constant(cx, false));
         }
         // `keccak(a) == keccak(b) => bytes(a) == bytes(b)`.
-        let conditions = bytes
-            .get(..preimage.len())?
-            .iter()
-            .cloned()
-            .zip(preimage.iter().cloned())
-            .map(|(byte, expected)| Self::eq(cx, byte, expected))
-            .collect();
+        let conditions = Self::bytes_eq(cx, bytes.get(..preimage.len())?, &preimage);
         Some(Self::and(cx, conditions))
+    }
+
+    /// Compares two byte sequences, comparing words where both sides extract the bytes of one
+    /// word each.
+    ///
+    /// A word comparison lets nested hashes inside a preimage go through the Keccak equality
+    /// rewrite instead of leaving their bytes as free solver symbols.
+    fn bytes_eq(cx: &mut SymCx, left: &[SymExpr], right: &[SymExpr]) -> Vec<Self> {
+        let mut conditions = Vec::with_capacity(left.len().min(right.len()));
+        let mut index = 0;
+        while index < left.len().min(right.len()) {
+            if let (Some(left_word), Some(right_word)) = (
+                word_from_extracted_bytes(&left[index..]),
+                word_from_extracted_bytes(&right[index..]),
+            ) {
+                conditions.push(Self::eq(cx, left_word, right_word));
+                index += 32;
+            } else {
+                conditions.push(Self::eq(cx, left[index].clone(), right[index].clone()));
+                index += 1;
+            }
+        }
+        conditions
     }
 
     /// Computes a conservative upper bound for the unfolded Boolean result without interning it.

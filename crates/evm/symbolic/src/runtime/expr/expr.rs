@@ -324,7 +324,7 @@ pub(in crate::runtime::expr) fn low_masked_source_any(expr: &SymExpr) -> Option<
     }
 }
 
-fn word_from_extracted_bytes(bytes: &[SymExpr]) -> Option<SymExpr> {
+pub(in crate::runtime::expr) fn word_from_extracted_bytes(bytes: &[SymExpr]) -> Option<SymExpr> {
     if bytes.len() < 32 {
         return None;
     }
@@ -2355,9 +2355,7 @@ pub(crate) fn keccak_word_with_len(cx: &mut SymCx, bytes: Vec<SymExpr>, len: Sym
         && let Ok(concrete) = concrete_expr_bytes(&bytes[..len], "symbolic keccak input")
     {
         let hash = Into::<U256>::into(keccak256(concrete));
-        if len == 32 || len == 64 {
-            cx.record_concrete_keccak_preimage(hash, bytes[..len].to_vec().into());
-        }
+        cx.record_concrete_keccak_preimage(hash, bytes[..len].to_vec().into());
         return SymExpr::constant(cx, hash);
     }
 

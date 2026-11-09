@@ -676,6 +676,17 @@ contract SymbolicKeccakPreimage {
     function checkKnownKeccakPreimage(uint256 x) public pure {
         assert(keccak256(abi.encode(x)) != keccak256(abi.encode(uint256(42))));
     }
+
+    function checkKnownShortKeccakPreimage(uint8 x) public pure {
+        assert(keccak256(abi.encodePacked(x)) != keccak256(abi.encodePacked(uint8(42))));
+    }
+
+    function checkNestedKeccakInjective(uint256 a, uint256 b) public pure {
+        require(a != b);
+        bytes32 left = keccak256(abi.encodePacked(hex"1901", bytes32(0), keccak256(abi.encode(a))));
+        bytes32 right = keccak256(abi.encodePacked(hex"1901", bytes32(0), keccak256(abi.encode(b))));
+        assert(left != right);
+    }
 }
 "#,
     );
@@ -684,11 +695,13 @@ contract SymbolicKeccakPreimage {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 3 tests for test/SymbolicKeccakPreimage.t.sol:SymbolicKeccakPreimage
+Ran 5 tests for test/SymbolicKeccakPreimage.t.sol:SymbolicKeccakPreimage
 [PASS] checkArrayElementSurvivesMappingWrite(address,uint256,uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x4df8b26f000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkKnownKeccakPreimage(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x78ccac51000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkKnownShortKeccakPreimage(uint8) ([METRICS])
 [PASS] checkNestedArraySurvivesMappingWrite(address,address,uint256,uint256) ([METRICS])
-Suite result: FAILED. 2 passed; 1 failed; 0 skipped; [ELAPSED]
+[PASS] checkNestedKeccakInjective(uint256,uint256) ([METRICS])
+Suite result: FAILED. 3 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
