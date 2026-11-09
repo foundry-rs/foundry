@@ -274,6 +274,8 @@ and warns if a requested stateless target cannot be imported.
 > for symbolic `KECCAK256` and hash-like precompile terms. The executor may use
 > equal symbolic hashes to infer equal symbolic preimages or lengths in modeled
 > cases, and it does not search for Keccak collisions or adversarial preimages.
+> Symbolic `modexp` outputs are opaque terms that may collide, so equal outputs
+> do not imply equal inputs.
 > Concrete counterexamples are still replayed before they are reported.
 
 Symbolic exploration is bounded by configuration, including

@@ -217,6 +217,9 @@ pub(crate) fn execute_symbolic_precompile(
     }
 }
 
+/// Opaque term algorithm of the modexp precompile, whose outputs may collide.
+pub(crate) const MODEXP_ALGORITHM: &str = "modexp";
+
 pub(crate) fn symbolic_modexp_precompile(
     cx: &mut SymCx,
     input: &SymBytes,
@@ -234,7 +237,13 @@ pub(crate) fn symbolic_modexp_precompile(
     if modulus_len > 4096 {
         return Err(SymbolicError::Unsupported("symbolic modexp output length"));
     }
-    Ok(Some(symbolic_fixed_len_precompile_output(cx, "modexp", input, input_len, modulus_len)))
+    Ok(Some(symbolic_fixed_len_precompile_output(
+        cx,
+        MODEXP_ALGORITHM,
+        input,
+        input_len,
+        modulus_len,
+    )))
 }
 
 pub(crate) fn concrete_precompile_word_at(
