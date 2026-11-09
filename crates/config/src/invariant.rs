@@ -185,6 +185,8 @@ pub struct InvariantConfig {
     ///
     /// Defaults to the project `gas_limit`, and never raises it. Set it so a handler with a
     /// fuzzed loop bound cannot run until the campaign deadline and consume the whole budget.
+    /// A handler call whose EIP-7623 calldata floor is above the limit runs with the floor as its
+    /// limit, so large fuzzed arrays do not stop the campaign.
     pub call_gas_limit: Option<u64>,
 }
 

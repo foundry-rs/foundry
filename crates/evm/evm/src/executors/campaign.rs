@@ -1,7 +1,8 @@
 //! Worker-local call execution policy shared by stateless and invariant fuzz campaigns.
 
 use super::{Executor, RawCallResult};
-use alloy_primitives::U256;
+use alloy_network::TransactionBuilder;
+use alloy_primitives::{TxKind, U256};
 use eyre::{Result, eyre};
 use foundry_evm_core::{
     constants::MAGIC_ASSUME,
@@ -219,8 +220,28 @@ pub(super) fn execute_invariant_tx<FEN: FoundryEvmNetwork>(
     // Persist exactly what was sent so replay, shrinking, and corpus entries do not claim an
     // unavailable value was executed.
     tx.call_details.value = (!value.is_zero()).then_some(value);
+    let kind = TxKind::Call(tx.call_details.target);
+    let (mut evm_env, mut tx_request) =
+        executor.prepare_call_env(tx.sender, kind, tx.call_details.calldata.clone(), value);
+    // The EVM rejects a transaction whose gas limit is below the EIP-7623 calldata floor. Large
+    // fuzzed arrays reach that floor under a `call_gas_limit`, and the error would abort the
+    // campaign, so the floor is the lower bound of a call's limit. The block limit of the
+    // prepared env is the same cap, so it moves with the call.
+    let (_, floor_gas) = evm2::ethereum::intrinsic_and_floor_gas(
+        &evm_env.version,
+        tx.sender,
+        kind,
+        &tx.call_details.calldata,
+        0,
+        0,
+        value,
+    );
+    if floor_gas > tx_request.gas_limit().unwrap_or_default() {
+        tx_request.set_gas_limit(floor_gas);
+        evm_env.block.gas_limit = evm_env.block.gas_limit.max(U256::from(floor_gas));
+    }
     executor
-        .call_raw(tx.sender, tx.call_details.target, tx.call_details.calldata.clone(), value)
+        .call_with_env(evm_env, tx_request)
         .map_err(|error| eyre!("Could not make raw evm call: {error}"))
 }
 

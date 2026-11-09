@@ -3848,3 +3848,37 @@ contract CallGasLimitTest is Test {
 "#]],
     );
 }
+
+// A handler call whose calldata floor is above `call_gas_limit` runs with the floor as its limit
+// instead of aborting the campaign with a transaction validation error.
+#[forgetest_init]
+fn invariant_call_gas_limit_covers_the_calldata_floor(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 5;
+        config.invariant.call_gas_limit = Some(40_000);
+    });
+    prj.add_test(
+        "CallGasFloor.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract WideCalldata {
+    function poke(bytes32[64] calldata) external {}
+}
+
+contract CallGasFloorTest is Test {
+    function setUp() public {
+        targetContract(address(new WideCalldata()));
+    }
+
+    function invariant_wide_calls_run() public {}
+}
+   "#,
+    );
+    cmd.args(["test", "--mt", "invariant_wide_calls_run"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS] invariant_wide_calls_run() (runs: 5, calls: 25, reverts: 0)
+...
+"#]]);
+}
