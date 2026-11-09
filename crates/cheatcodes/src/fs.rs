@@ -1120,14 +1120,11 @@ impl Cheatcode for getDeployment_0Call {
         let Self { contractName } = self;
         let chain_id = ccx.chain_id();
 
-        let latest_broadcast = latest_broadcast::<AnyNetwork>(
-            contractName,
-            chain_id,
-            &ccx.state.core.config.broadcast,
-            vec![CallKind::Create, CallKind::Create2],
-        )?;
+        let address =
+            BroadcastReader::new(contractName.clone(), chain_id, &ccx.state.core.config.broadcast)?
+                .read_latest_deployment::<AnyNetwork>()?;
 
-        Ok(latest_broadcast.contractAddress.abi_encode())
+        Ok(address.abi_encode())
     }
 }
 
@@ -1135,14 +1132,11 @@ impl Cheatcode for getDeployment_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { contractName, chainId } = self;
 
-        let latest_broadcast = latest_broadcast::<AnyNetwork>(
-            contractName,
-            *chainId,
-            &state.config.broadcast,
-            vec![CallKind::Create, CallKind::Create2],
-        )?;
+        let address =
+            BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
+                .read_latest_deployment::<AnyNetwork>()?;
 
-        Ok(latest_broadcast.contractAddress.abi_encode())
+        Ok(address.abi_encode())
     }
 }
 
