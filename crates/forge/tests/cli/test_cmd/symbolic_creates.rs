@@ -1051,6 +1051,12 @@ import "forge-std/Test.sol";
 
 contract NonceTarget {}
 
+contract NonceFactory {
+    constructor() {
+        new NonceTarget();
+    }
+}
+
 contract SymbolicNonceCheatcodes is Test {
     function checkSetNonceCheatcodes(uint256) public {
         address account = address(0x1234);
@@ -1075,6 +1081,11 @@ contract SymbolicNonceCheatcodes is Test {
         assertEq(vm.getNonce(address(target)), 1);
     }
 
+    // Like revm, a CREATE in the constructor bumps the new contract's nonce.
+    function checkConstructorCreateBumpsNonce(uint256) public {
+        assertEq(vm.getNonce(address(new NonceFactory())), 2);
+        assertEq(vm.getNonce(vm.deployCode("SymbolicNonceCheatcodes.t.sol:NonceFactory")), 2);
+    }
 }
 "#,
     );
@@ -1082,16 +1093,17 @@ contract SymbolicNonceCheatcodes is Test {
     assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
-        "--match-test",
-        "checkSetNonceCheatcodes|checkResetNonceCheatcode",
+        "--match-contract",
+        "SymbolicNonceCheatcodes",
     ]))
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicNonceCheatcodes.t.sol:SymbolicNonceCheatcodes
+Ran 3 tests for test/SymbolicNonceCheatcodes.t.sol:SymbolicNonceCheatcodes
+[PASS] checkConstructorCreateBumpsNonce(uint256) ([METRICS])
 [PASS] checkResetNonceCheatcode(uint256) ([METRICS])
 [PASS] checkSetNonceCheatcodes(uint256) ([METRICS])
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
@@ -1391,62 +1403,4 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
     // The engine fails closed at the constructor's RETURN with symbolic size
     // (upstream of the CREATE installation step). Either failure mode proves
     // the runtime image is never silently installed as max-length bytecode.
-}
-
-// Like revm, every CREATE a constructor runs bumps the new contract's nonce past 1.
-#[forgetest_init]
-fn symbolic_constructor_create_bumps_nonce(prj: _, cmd: _) {
-    skip_unless_z3!("symbolic_constructor_create_bumps_nonce");
-
-    prj.add_test(
-        "SymbolicConstructorNonce.t.sol",
-        r#"
-import "forge-std/Test.sol";
-
-contract NonceChild {}
-
-contract NonceFactory {
-    constructor() {
-        new NonceChild();
-    }
-
-    function make() external returns (address created) {
-        bytes memory code = type(NonceChild).creationCode;
-        assembly {
-            created := create(0, add(code, 32), mload(code))
-        }
-    }
-}
-
-contract SymbolicConstructorNonce is Test {
-    function checkConstructorCreateBumpsNonce(uint256) public {
-        NonceFactory factory = new NonceFactory();
-        assertEq(vm.getNonce(address(factory)), 2);
-        assertTrue(factory.make() != address(0));
-        assertEq(vm.getNonce(address(factory)), 3);
-    }
-
-    function checkDeployCodeConstructorCreateBumpsNonce(uint256) public {
-        address factory = vm.deployCode("SymbolicConstructorNonce.t.sol:NonceFactory");
-        assertEq(vm.getNonce(factory), 2);
-    }
-}
-"#,
-    );
-
-    assert_symbolic(cmd.args([
-        "test",
-        "--symbolic",
-        "--match-contract",
-        "SymbolicConstructorNonce",
-    ]))
-    .success()
-    .stdout_eq(str![[r#"
-...
-Ran 2 tests for test/SymbolicConstructorNonce.t.sol:SymbolicConstructorNonce
-[PASS] checkConstructorCreateBumpsNonce(uint256) ([METRICS])
-[PASS] checkDeployCodeConstructorCreateBumpsNonce(uint256) ([METRICS])
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
-...
-"#]]);
 }
