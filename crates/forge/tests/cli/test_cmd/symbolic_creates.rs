@@ -573,6 +573,14 @@ contract SymbolicCreate2 {
         CreatedHelper helper = new CreatedHelper{salt: bytes32(uint256(123))}();
         assert(helper.inc(x) != 11);
     }
+
+    function checkCreate2PredictedAddress(bytes32 salt) public {
+        CreatedHelper helper = new CreatedHelper{salt: salt}();
+        address predicted = address(uint160(uint256(keccak256(abi.encodePacked(
+            bytes1(0xff), address(this), salt, keccak256(type(CreatedHelper).creationCode)
+        )))));
+        assert(address(helper) == predicted);
+    }
 }
 "#,
     );
@@ -582,9 +590,10 @@ contract SymbolicCreate2 {
             .failure()
             .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicCreate2.t.sol:SymbolicCreate2
+Ran 2 tests for test/SymbolicCreate2.t.sol:SymbolicCreate2
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCreate2(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+[PASS] checkCreate2PredictedAddress(bytes32) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
             .get_output()
