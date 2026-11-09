@@ -5376,23 +5376,38 @@ contract SymbolicBoundInvalid is Test {
     function checkInvalidSignedBound(int256 x) public {
         vm.bound(x, 3, -3);
     }
+
+    function checkConstantBoundReachesInnerValues() public {
+        uint256 bounded = vm.bound(uint256(5), uint256(0), uint256(10));
+        assertTrue(bounded == 0 || bounded == 10);
+    }
+
+    function checkConstantSignedBoundReachesInnerValues() public {
+        int256 bounded = vm.bound(int256(5), int256(-10), int256(10));
+        assertTrue(bounded == -10 || bounded == 10);
+    }
 }
 "#,
     );
 
+    // The concrete replay draws the bounded value from Forge's RNG, so pin the seed.
     let stdout = assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
         "--match-contract",
         "SymbolicBoundInvalid",
+        "--fuzz-seed",
+        "1",
     ]))
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicBoundInvalid.t.sol:SymbolicBoundInvalid
+Ran 4 tests for test/SymbolicBoundInvalid.t.sol:SymbolicBoundInvalid
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkConstantBoundReachesInnerValues() ([METRICS])
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkConstantSignedBoundReachesInnerValues() ([METRICS])
 [FAIL: vm.bound: cannot bound 0 in [3, -3] range; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkInvalidSignedBound(int256) ([METRICS])
 [FAIL: vm.bound: cannot bound 0 in [12, 10] range; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkInvalidUnsignedBound(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()

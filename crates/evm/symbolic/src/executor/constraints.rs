@@ -187,19 +187,6 @@ impl SymbolicExecutor {
             if signed { I256::from_raw(*a).cmp(&I256::from_raw(*b)) } else { a.cmp(b) }
         };
 
-        if let (Some(value), Some(min), Some(max)) =
-            (value.as_const(), min.as_const(), max.as_const())
-        {
-            if !order(&min, &max).is_lt()
-                || order(&value, &min).is_lt()
-                || order(&value, &max).is_gt()
-            {
-                return Ok(CheatcodeOutcome::Failure);
-            }
-            let bounded = if value == min { max } else { min };
-            return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(&mut self.cx, bounded)]));
-        }
-
         if let (Some(min), Some(max)) = (min.as_const(), max.as_const())
             && !order(&min, &max).is_lt()
         {
