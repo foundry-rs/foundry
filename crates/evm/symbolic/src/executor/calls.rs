@@ -1,4 +1,5 @@
 use super::*;
+use foundry_cheatcodes_spec::Vm::VmCalls;
 
 impl SymbolicExecutor {
     pub(super) fn call(
@@ -1575,9 +1576,20 @@ impl SymbolicExecutor {
                 SymBoolExpr::eq(&mut self.cx, target.clone(), address)
             })
             .collect::<Vec<_>>();
+        // The cheatcode addresses have code, so an unconstrained target may alias them. They are
+        // not call candidates: Forge reverts a call to them with an unknown selector.
+        let cheatcode_constraints =
+            [CHEATCODE_ADDRESS, SYMBOLIC_VM_COMPAT_ADDRESS].map(|address| {
+                let address = SymExpr::constant(&mut self.cx, address_word(address));
+                SymBoolExpr::eq(&mut self.cx, target.clone(), address)
+            });
         let mut outside_constraints = state.constraints.clone();
         outside_constraints.extend(
-            candidate_constraints.iter().cloned().map(|condition| condition.not(&mut self.cx)),
+            candidate_constraints
+                .iter()
+                .chain(&cheatcode_constraints)
+                .cloned()
+                .map(|condition| condition.not(&mut self.cx)),
         );
         let outside_sat = self.is_sat_with_state(state, &outside_constraints)?;
 
@@ -1674,6 +1686,38 @@ impl SymbolicExecutor {
         }
 
         let call_input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset.clone());
+        let mut cheatcode_branch = state.clone();
+        let is_cheatcode = SymBoolExpr::or(&mut self.cx, cheatcode_constraints.to_vec());
+        cheatcode_branch.constraints.push(is_cheatcode);
+        if self.is_sat_with_state(&cheatcode_branch, &cheatcode_branch.constraints)? {
+            let selector = call_input
+                .slice_concrete(&mut self.cx, 0, 4)
+                .concrete_bytes(&mut self.cx, "symbolic cheatcode selector")?;
+            if let Ok(selector) = <[u8; 4]>::try_from(selector)
+                && VmCalls::signature_by_selector(selector).is_some()
+            {
+                return Err(SymbolicError::Unsupported("symbolic cheatcode CALL target"));
+            }
+            let return_data = SymReturnData::empty(&mut self.cx);
+            match self.finish_codeless_call(
+                executor,
+                &mut cheatcode_branch,
+                kind,
+                CallStatus::Revert,
+                return_data,
+                CHEATCODE_ADDRESS,
+                out_offset.clone(),
+                &out_size,
+            )? {
+                StepOutcome::Continue => parents.push_back(cheatcode_branch),
+                StepOutcome::AssumeRejected => {}
+                outcome => {
+                    *state = cheatcode_branch;
+                    return Ok(outcome);
+                }
+            }
+        }
+
         for (to, constraint) in candidates.into_iter().zip(candidate_constraints) {
             let mut branch = state.clone();
             branch.constraints.push(constraint);
