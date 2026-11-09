@@ -1440,6 +1440,12 @@ impl CallMock {
         (self.data.len(), self.value.is_some())
     }
 
+    /// Returns whether the mock answers the call; Forge runs the real callee when the selected
+    /// mock's return queue is empty.
+    pub(crate) const fn answers(&self) -> bool {
+        !self.returns.is_empty()
+    }
+
     pub(crate) fn match_condition(
         &self,
         cx: &mut SymCx,
@@ -1447,10 +1453,7 @@ impl CallMock {
         value: Option<U256>,
         calldata: &SymBytes,
     ) -> Option<SymBoolExpr> {
-        // Like Forge, an empty return queue mocks nothing, so the real code runs.
-        if self.returns.is_empty()
-            || !self.value.is_none_or(|expected| value.is_some_and(|value| expected == value))
-        {
+        if !self.value.is_none_or(|expected| value.is_some_and(|value| expected == value)) {
             return None;
         }
         let data_condition = calldata.prefix_condition(cx, &self.data)?;
