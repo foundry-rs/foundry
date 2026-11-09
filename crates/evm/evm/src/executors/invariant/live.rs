@@ -3,7 +3,6 @@
 
 use super::RecordedCallSequence;
 use crate::{
-    EVM_THREAD_STACK_SIZE,
     executors::{
         EarlyExit, EvmExecutionCancellation, Executor,
         fuzz::{FuzzBranchFrontier, FuzzFrontierRecorder, comparison_result},
@@ -100,7 +99,7 @@ impl LiveInvariantSolver {
         let deadline = Instant::now() + Duration::from_secs(config.timeout.unwrap_or(30).into());
         let max_queries = config.max_solver_queries as usize;
         let builder = thread::Builder::new().name("invariant-symbolic".into());
-        let thread = builder.stack_size(EVM_THREAD_STACK_SIZE).spawn(move || {
+        let thread = builder.stack_size(32 * 1024 * 1024).spawn(move || {
             let mut stats = LiveInvariantStats::default();
             while !cancelled.load(Ordering::Relaxed)
                 && Instant::now() < deadline

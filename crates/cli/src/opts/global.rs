@@ -4,8 +4,13 @@ use foundry_common::{
     version::{IS_NIGHTLY_VERSION, NIGHTLY_VERSION_WARNING_MESSAGE},
 };
 use foundry_config::{Config, figment::Profile};
-use foundry_evm::EVM_THREAD_STACK_SIZE;
 use serde::{Deserialize, Serialize};
+
+/// Stack size of the threads that run EVM executions.
+///
+/// evm2 executes every call frame as a native recursion, so a call at the maximum depth of 1024
+/// needs several MiB of stack in debug builds, more than the default 2 MiB.
+const EVM_THREAD_STACK_SIZE: usize = 32 * 1024 * 1024;
 
 /// Global arguments for the CLI.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, Parser)]
