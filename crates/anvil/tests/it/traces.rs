@@ -3645,3 +3645,31 @@ async fn test_debug_trace_block() {
         }
     }
 }
+
+// A tracer that fails to build is reported per transaction with its plain error text.
+#[cfg(feature = "js-tracer")]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_block_invalid_js_tracer_error() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = crate::utils::http_provider(&handle.http_endpoint());
+    let from = handle.dev_accounts().next().unwrap();
+    let tx = TransactionRequest::default().from(from).to(from).value(U256::from(1));
+    let receipt = provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+
+    let traces = api
+        .debug_trace_block_by_number(
+            BlockNumberOrTag::Latest,
+            GethDebugTracingOptions::js_tracer("not a tracer"),
+        )
+        .await
+        .unwrap();
+
+    let [TraceResult::Error { error, tx_hash }] = traces.as_slice() else {
+        panic!("expected one trace error: {traces:?}");
+    };
+    assert_eq!(*tx_hash, Some(receipt.transaction_hash));
+    assert_eq!(
+        error,
+        "failed to evaluate JS code: SyntaxError: expected one of ')' or ',', got 'a' in CoverParenthesizedExpressionAndArrowParameterList at line 1, col 6 (native)"
+    );
+}

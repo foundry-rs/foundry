@@ -51,7 +51,7 @@ pub enum BlockchainError {
     SignerError(#[from] SignerError),
     #[error("Rpc Endpoint not implemented")]
     RpcUnimplemented,
-    #[error("Rpc error {0:?}")]
+    #[error("{}", .0.message)]
     RpcError(RpcError),
     #[error(transparent)]
     InvalidTransaction(#[from] InvalidTransactionError),
