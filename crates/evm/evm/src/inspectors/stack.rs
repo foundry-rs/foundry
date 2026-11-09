@@ -2263,6 +2263,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         // If the CREATE2 deployer is invalid, return the error here, after the other inspectors
         // were notified, so tracing stays balanced.
         if let Some(error) = self.inner.pending_create2_error.take() {
+            if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+                cheats.unrun_create_depth = Some(usize::from(depth));
+            }
             return Some(message_result(message, InstrStop::Revert, error));
         }
 

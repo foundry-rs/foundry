@@ -815,6 +815,9 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// The `vm.accessList` the running transaction last applied to a call or create. It replaces
     /// the transaction's access list when computing its stipend.
     pub applied_access_list: Option<AccessList>,
+
+    /// Depth of a create that a hook ended with a revert without running its frame.
+    pub unrun_create_depth: Option<usize>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -899,6 +902,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             deploy_code_create_state_gas: 0,
             deploy_code_output: None,
             applied_access_list: None,
+            unrun_create_depth: None,
         }
     }
 
@@ -2534,6 +2538,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             // Reset the flag
             self.core.intercept_next_create_call = false;
 
+            self.unrun_create_depth = Some(curr_depth);
             // Return a revert with the initcode as error data
             return Some(message_result(input, InstrStop::Revert, input.input.to_bytes()));
         }
@@ -2673,6 +2678,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         _backend: &mut dyn CheatcodesBackend<FEN>,
     ) {
         let curr_depth = usize::from(call.depth);
+        let frame_ran = self.unrun_create_depth.take() != Some(curr_depth);
         self.replay_persistent_writes(interp, curr_depth, outcome.is_success());
         // Depth at which the caller resumes and applies the region snapshot correction.
         let isolated_snapshot_gas_used = self.gas_metering.take_isolated_snapshot_gas_used(
@@ -2723,9 +2729,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             // legacy nested CALL handling reports the outermost call per iteration.
             //
             // Only creates whose frame ran and reverted count. A create rejected before its
-            // frame starts (depth, balance, nonce) leaves the reverter to the surrounding
-            // `call_end`, which records the caller.
+            // frame starts (depth, balance, nonce, or a hook's revert) leaves the reverter to
+            // the surrounding `call_end`, which records the caller.
             if outcome.stop.is_revert()
+                && frame_ran
                 && expected_revert.reverter.is_some()
                 && expected_revert.reverted_by.is_none()
             {

@@ -414,6 +414,15 @@ contract ExpectRevertWithReverterTest is Test {
         vm.expectRevert(address(creator));
         creator.deploy();
     }
+
+    // A nested CREATE that `vm.interceptInitcode` stops before its frame starts is
+    // reverted by the calling contract, not the would-be deployed address.
+    function testExpectRevertsWithReverterInterceptedCreate() public {
+        DummyCreator creator = new DummyCreator();
+        vm.interceptInitcode();
+        vm.expectRevert(type(Dummy).creationCode, address(creator));
+        creator.deploy();
+    }
 }
 
 // Used by `testExpectRevertsWithReverterNestedCreate`: a contract whose constructor
@@ -446,6 +455,13 @@ contract EndowedChild {
 contract UnfundedCreator {
     function deploy() external returns (address) {
         return address(new EndowedChild{value: 1}());
+    }
+}
+
+// Used by `testExpectRevertsWithReverterInterceptedCreate`: creates a `Dummy`.
+contract DummyCreator {
+    function deploy() external returns (address) {
+        return address(new Dummy());
     }
 }
 
