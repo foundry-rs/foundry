@@ -1,7 +1,7 @@
 //! Aggregated error type for this module
 
 use alloy_consensus::crypto::RecoveryError;
-use alloy_primitives::{B256, Bytes, SignatureError, TxHash};
+use alloy_primitives::{B256, Bytes, SignatureError, TxHash, U256};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Error as SignerError;
 use alloy_transport::TransportError;
@@ -14,7 +14,7 @@ use evm2::{interpreter::InstrStop, registry::HandlerError};
 use foundry_evm_core::decode::RevertDecoder;
 use foundry_fork_db::DatabaseError;
 use serde::Serialize;
-use tempo_evm::TempoInvalidTransaction;
+use tempo_evm::{FeePaymentError, TempoInvalidTransaction};
 use tokio::time::Duration;
 
 pub(crate) type Result<T> = std::result::Result<T, BlockchainError>;
@@ -221,7 +221,17 @@ impl From<HandlerError> for BlockchainError {
                     };
                 }
                 if let Some(err) = err.downcast_ref::<TempoInvalidTransaction>() {
-                    return Self::Message(format!("tempo transaction error: {err}"));
+                    return match err {
+                        TempoInvalidTransaction::CollectFeePreTx(
+                            FeePaymentError::InsufficientFeeTokenBalance { fee, balance },
+                        ) => Self::InvalidTransaction(
+                            InvalidTransactionError::TempoInsufficientFeeTokenBalance {
+                                balance: *balance,
+                                required: *fee,
+                            },
+                        ),
+                        err => Self::Message(format!("tempo transaction error: {err}")),
+                    };
                 }
                 Self::InvalidTransaction(InvalidTransactionError::Rejected(err.to_string()))
             }
@@ -383,6 +393,9 @@ pub enum InvalidTransactionError {
     /// Tempo transaction has too many authorizations
     #[error("Tempo tx has too many authorizations ({count}), max allowed is {max}")]
     TempoTooManyAuthorizations { count: usize, max: usize },
+    /// Tempo transaction fee payer has insufficient fee token balance
+    #[error("insufficient fee token balance: have {balance}, need {required}")]
+    TempoInsufficientFeeTokenBalance { balance: U256, required: U256 },
 }
 
 impl From<HandlerError> for InvalidTransactionError {
@@ -396,6 +409,9 @@ impl From<HandlerError> for InvalidTransactionError {
             }
             HandlerError::IntrinsicGasTooLow { .. } => {
                 Self::GasTooHigh(ErrDetail { detail: String::from("CallGasCostMoreThanGasLimit") })
+            }
+            HandlerError::GasLimitBelowFloor { .. } => {
+                Self::GasTooHigh(ErrDetail { detail: String::from("GasFloorMoreThanGasLimit") })
             }
             HandlerError::RejectCallerWithCode => Self::SenderNoEOA,
             HandlerError::InsufficientFunds { .. } => Self::InsufficientFunds,

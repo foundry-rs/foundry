@@ -2224,7 +2224,12 @@ async fn test_tempo_pool_requires_max_fee_rounded_up_in_fee_token() {
 
     api.anvil_deal_tip20(sender, PATH_USD, required - U256::ONE).await.unwrap();
     let err = provider.send_raw_transaction(&raw).await.unwrap_err();
-    assert!(err.to_string().contains("insufficient fee token balance"), "unexpected error: {err}");
+    let err = err.as_error_resp().unwrap();
+    assert_eq!(err.code, -32003);
+    assert_eq!(
+        err.message,
+        format!("insufficient fee token balance: have {}, need {required}", required - U256::ONE)
+    );
 
     api.anvil_deal_tip20(sender, PATH_USD, required).await.unwrap();
     let receipt = provider.send_raw_transaction(&raw).await.unwrap().get_receipt().await.unwrap();
