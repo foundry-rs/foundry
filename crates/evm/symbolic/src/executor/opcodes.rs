@@ -1297,8 +1297,14 @@ impl SymbolicExecutor {
                     return Ok(StepOutcome::ExceptionalHalt);
                 }
                 let spec_id = executor.spec_id;
-                let (beneficiary_word, beneficiary) =
-                    state.pop_address_word_or_symbolic_slot(&mut self.cx)?;
+                // A fresh symbolic beneficiary slot never aliases an existing account, so the
+                // credit would ignore the balance the beneficiary already holds.
+                let beneficiary = state.stack.pop()?;
+                let beneficiary = word_to_address(state.expect_constrained_word(
+                    &mut self.cx,
+                    beneficiary,
+                    "symbolic SELFDESTRUCT beneficiary",
+                )?);
                 if spec_id < SpecId::CANCUN
                     || state.world.was_created_in_current_transaction(state.address)
                 {
@@ -1309,11 +1315,6 @@ impl SymbolicExecutor {
                         beneficiary,
                     )?;
                 } else {
-                    if state.constrained_word(&mut self.cx, &beneficiary_word).is_none() {
-                        return Err(SymbolicError::Unsupported(
-                            "symbolic SELFDESTRUCT beneficiary",
-                        ));
-                    }
                     state.world.selfdestruct_cancun_existing(
                         &mut self.cx,
                         executor,

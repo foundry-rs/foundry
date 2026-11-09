@@ -815,15 +815,6 @@ impl PathState {
         self.world.extcode_bytes_word(cx, executor, address_expr, offset, size)
     }
 
-    pub(crate) fn pop_address_word_or_symbolic_slot(
-        &mut self,
-        cx: &mut SymCx,
-    ) -> Result<(SymExpr, Address), SymbolicError> {
-        let expr = self.stack.pop()?;
-        let address = self.address_or_symbolic_slot(cx, expr.clone());
-        Ok((expr, address))
-    }
-
     pub(crate) fn address_or_symbolic_slot(&mut self, cx: &mut SymCx, expr: SymExpr) -> Address {
         if let Some(value) = self.constrained_word(cx, &expr) {
             return word_to_address(value);
