@@ -9,7 +9,7 @@ use anvil::{NodeConfig, eth::backend::tempo_consensus::TempoConsensus, spawn};
 use foundry_common::{fs::read_json_file, provider::ProviderBuilder};
 use foundry_compilers::artifacts::ConfigurableContractArtifact;
 use foundry_evm::hardfork::TempoHardfork;
-use foundry_test_utils::str;
+use foundry_test_utils::{rpc::next_tempo_testnet_rpc_endpoint, str};
 use serde_json::json;
 use std::time::Duration;
 use tempo_alloy::{TempoNetwork, chainspec::TempoChainSpec, rpc::ForkSchedule};
@@ -18,9 +18,7 @@ use tokio::time::timeout;
 #[forgetest]
 #[ignore = "requires native Tempo testnet RPC"]
 async fn tempo_proofs_native_fork(prj: _, cmd: _) {
-    let url = std::env::var("TEMPO_TESTNET_RPC_URL")
-        .expect("set TEMPO_TESTNET_RPC_URL to a native Tempo testnet RPC");
-    assert!(!url.trim().is_empty(), "TEMPO_TESTNET_RPC_URL must not be empty");
+    let url = next_tempo_testnet_rpc_endpoint();
     timeout(Duration::from_secs(180), async {
         let upstream = ProviderBuilder::<TempoNetwork>::new(&url).build().unwrap();
         let chain_id = upstream.get_chain_id().await.unwrap();

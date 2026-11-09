@@ -89,7 +89,7 @@ jobs:
           github.event.inputs.network == 'testnet' ||
           github.event.inputs.network == 'all'
         env:
-          TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL || 'https://rpc.moderato.tempo.xyz' }}
+          TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
         run: |
           cargo test --locked -p forge --test cli tempo_proofs::native::tempo_proofs_native_fork -- --ignored --exact --nocapture
 
