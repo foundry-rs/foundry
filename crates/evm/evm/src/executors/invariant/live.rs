@@ -3,6 +3,7 @@
 
 use super::RecordedCallSequence;
 use crate::{
+    EVM_THREAD_STACK_SIZE,
     executors::{
         EarlyExit, EvmExecutionCancellation, Executor,
         fuzz::{FuzzBranchFrontier, FuzzFrontierRecorder, comparison_result},
@@ -33,8 +34,6 @@ const MAX_CALLDATA_BYTES: usize = 64 * 1024;
 /// outcomes than `frontier_limit` in their first sequence, so this bound is separate from the
 /// submission budget.
 const MAX_OBSERVED_OUTCOMES: usize = 1 << 16;
-/// Stack size of the worker thread, which runs EVM executions.
-const WORKER_STACK_SIZE: usize = 32 * 1024 * 1024;
 
 /// One side of a comparison site: address, pc, opcode, and result.
 type Outcome = (Address, usize, u8, bool);
@@ -101,7 +100,7 @@ impl LiveInvariantSolver {
         let deadline = Instant::now() + Duration::from_secs(config.timeout.unwrap_or(30).into());
         let max_queries = config.max_solver_queries as usize;
         let builder = thread::Builder::new().name("invariant-symbolic".into());
-        let thread = builder.stack_size(WORKER_STACK_SIZE).spawn(move || {
+        let thread = builder.stack_size(EVM_THREAD_STACK_SIZE).spawn(move || {
             let mut stats = LiveInvariantStats::default();
             while !cancelled.load(Ordering::Relaxed)
                 && Instant::now() < deadline
