@@ -445,6 +445,10 @@ contract Pinger {
         return 1;
     }
 
+    function value(uint256) external pure returns (uint256) {
+        return 42;
+    }
+
     function sender() external view returns (address) {
         return msg.sender;
     }
@@ -460,7 +464,8 @@ contract SymbolicSetupAccounts is Test {
         vm.deal(address(a), 1 ether);
         vm.deal(address(b), 1 ether);
         vm.mockCall(address(a), abi.encodeWithSelector(Pinger.price.selector), abi.encode(uint256(5)));
-        vm.mockCalls(address(b), abi.encodeWithSelector(Pinger.price.selector), new bytes[](0));
+        vm.mockCall(address(b), abi.encodeWithSelector(Pinger.value.selector), abi.encode(uint256(5)));
+        vm.mockCalls(address(b), abi.encodeWithSelector(Pinger.value.selector, uint256(7)), new bytes[](0));
         vm.recordLogs();
         a.ping();
         vm.startPrank(address(0xABC));
@@ -474,9 +479,9 @@ contract SymbolicSetupAccounts is Test {
         assert(a.sender() != address(0xABC));
     }
 
-    // An empty return queue runs the real callee.
+    // The most specific mock wins, and its empty return queue runs the real callee.
     function checkSetupEmptyMock() public view {
-        assert(b.price() != 1);
+        assert(b.value(7) == 5);
     }
 
     function checkSetupRecordedLogs() public {
