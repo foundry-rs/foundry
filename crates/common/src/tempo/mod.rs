@@ -535,9 +535,9 @@ fn verify_browser_key_authorization(
     let signed = alloy_rlp::decode_exact::<SignedKeyAuthorization>(signed)
         .wrap_err("invalid SignedKeyAuthorization RLP from wallet")?;
     eyre::ensure!(
-        signed.authorization == *requested,
+        signed.authorization() == requested,
         "wallet returned a mutated KeyAuthorization payload: signed digest {} but requested {}",
-        signed.authorization.signature_hash(),
+        signed.authorization().signature_hash(),
         requested.signature_hash(),
     );
     let recovered = signed
