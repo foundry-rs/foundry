@@ -1680,16 +1680,42 @@ contract SetupSpender {
     }
 }
 
+contract SetupReceiver {
+    function sender() external view returns (address) {
+        return msg.sender;
+    }
+}
+
+// A setUp prank of the test contract does not apply to this handler's calls.
+contract SetupPoker {
+    SetupReceiver receiver;
+    bool public bad;
+
+    constructor(SetupReceiver receiver_) {
+        receiver = receiver_;
+    }
+
+    function poke() external {
+        if (receiver.sender() != address(0xABC)) bad = true;
+    }
+}
+
 contract SymbolicSetupMappingStorageInvariant is Test {
     SetupToken token;
     SetupSpender spender;
+    SetupPoker poker;
 
     function setUp() public {
         token = new SetupToken();
         spender = new SetupSpender();
+        poker = new SetupPoker(new SetupReceiver());
         token.setBalance(address(this), 10);
         token.approve(address(spender), type(uint256).max);
         targetContract(address(this));
+        targetContract(address(poker));
+        vm.startPrank(address(0xABC));
+        // Apply the prank once so `pull` may override it.
+        token.setBalance(address(this), 10);
     }
 
     function pull(uint8 amount) external {
@@ -1704,6 +1730,11 @@ contract SymbolicSetupMappingStorageInvariant is Test {
     function invariant_balanceStaysInitialized() public view {
         assertEq(token.balanceOf(address(this)), 10);
     }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_pokerIsNotPranked() public view {
+        assert(!poker.bad());
+    }
 }
 "#,
     );
@@ -1711,22 +1742,26 @@ contract SymbolicSetupMappingStorageInvariant is Test {
     assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
-        "--match-test",
-        "invariant_balanceStaysInitialized",
+        "--match-contract",
+        "SymbolicSetupMappingStorageInvariant",
     ]))
     .failure()
     .stdout_eq(str![[r#"
 ...
 Failing tests:
-Encountered 1 failing test in test/SymbolicSetupMappingStorageInvariant.t.sol:SymbolicSetupMappingStorageInvariant
+Encountered 2 failing tests in test/SymbolicSetupMappingStorageInvariant.t.sol:SymbolicSetupMappingStorageInvariant
 [FAIL: assertion failed: 3 != 10]
 	[Sequence] (original: 1, shrunk: 1)
 		[SENDER] [SENDER] calldata=pull(uint8) [ARGS]
  invariant_balanceStaysInitialized() ([METRICS])
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=poke() [ARGS]
+ invariant_pokerIsNotPranked() ([METRICS])
 
-Encountered a total of 1 failing tests, 0 tests succeeded
+Encountered a total of 2 failing tests, 0 tests succeeded
 
-Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --rerun` to retry only the 2 failed tests
 
 [SEED] (use `--fuzz-seed` to reproduce)
 

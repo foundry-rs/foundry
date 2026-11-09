@@ -460,6 +460,7 @@ contract SymbolicSetupAccounts is Test {
         vm.deal(address(a), 1 ether);
         vm.deal(address(b), 1 ether);
         vm.mockCall(address(a), abi.encodeWithSelector(Pinger.price.selector), abi.encode(uint256(5)));
+        vm.mockCalls(address(b), abi.encodeWithSelector(Pinger.price.selector), new bytes[](0));
         vm.recordLogs();
         a.ping();
         vm.startPrank(address(0xABC));
@@ -471,6 +472,11 @@ contract SymbolicSetupAccounts is Test {
 
     function checkSetupPrank() public view {
         assert(a.sender() != address(0xABC));
+    }
+
+    // An empty return queue runs the real callee.
+    function checkSetupEmptyMock() public view {
+        assert(b.price() != 1);
     }
 
     function checkSetupRecordedLogs() public {
@@ -532,18 +538,19 @@ contract SymbolicSetupAccounts is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 10 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
+Ran 11 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkBalance(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeBalance(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeCopy(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeHash(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeLength(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkHighLevelCall(address,bool) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupEmptyMock() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupMock() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupPrank() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupRecordedLogs() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnconstrainedHighLevelCall(address) ([METRICS])
-Suite result: FAILED. 0 passed; 10 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 11 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

@@ -308,6 +308,12 @@ impl SymbolicExecutor {
         state.expected_emit = None;
         state.origin = sender;
         state.origin_word = SymExpr::constant(&mut self.cx, address_word(sender));
+        // Like Forge, a prank applies only to calls from the contract that set it.
+        let prank = std::mem::take(&mut state.prank);
+        if prank.has_active() {
+            state.root_pranks.insert(state.address, prank);
+        }
+        state.prank = state.root_pranks.remove(&target).unwrap_or_default();
         let callvalue = SymExpr::zero(&mut self.cx);
         state.frame =
             CallFrame::new(&mut self.cx, target, target, sender, callvalue, false, calldata);
