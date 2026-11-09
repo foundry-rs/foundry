@@ -169,7 +169,7 @@ pub(crate) fn cheatcode_error_revert_condition(
 }
 
 /// Returns the condition under which symbolic revert data is an assertion failure: a
-/// `Panic(0x01)` or an `Error(string)` whose message starts with the assertion prefix.
+/// `Panic(0x01)` or an `Error(string)` whose message contains the assertion prefix.
 pub(crate) fn assertion_revert_condition(
     cx: &mut SymCx,
     data: &SymReturnData,
@@ -181,23 +181,41 @@ pub(crate) fn assertion_revert_condition(
         let has_len = SymBoolExpr::cmp_word_expr(cx, SymCmpOp::Uge, &data.len_word, len);
         encodings.push(SymBoolExpr::and(cx, vec![has_len, prefix]));
     }
-    let message = ASSERTION_FAILED_PREFIX.as_bytes();
-    if data.len() >= ERROR_DATA_MIN_LEN + message.len() {
-        let mut header = Revert::SELECTOR.to_vec();
-        header.extend(U256::from(32).to_be_bytes::<32>());
-        let header = SymBytes::concrete(cx, header);
-        let message_offset = SymExpr::constant(cx, U256::from(ERROR_DATA_MIN_LEN));
-        let actual = data.bytes.read_offset(cx, message_offset, message.len());
-        let message = SymBytes::concrete(cx, message.to_vec());
-        if let (Some(header), Some(message)) =
-            (data.bytes.prefix_condition(cx, &header), actual.prefix_condition(cx, &message))
-        {
-            let len = SymExpr::constant(cx, U256::from(ERROR_DATA_MIN_LEN + actual.len()));
-            let has_len = SymBoolExpr::cmp_word_expr(cx, SymCmpOp::Uge, &data.len_word, len);
-            encodings.push(SymBoolExpr::and(cx, vec![has_len, header, message]));
+    encodings.extend(assertion_message_condition(cx, data));
+    (!encodings.is_empty()).then(|| SymBoolExpr::or(cx, encodings))
+}
+
+/// Returns the condition under which symbolic revert data is an `Error(string)` whose message
+/// contains the assertion prefix, validated like `is_revert_assertion_failure`: the encoded length
+/// must be concrete and within the data, the concrete bytes must decode as UTF-8 and contain the
+/// prefix on their own, and every symbolic byte must be ASCII so the message stays valid UTF-8.
+fn assertion_message_condition(cx: &mut SymCx, data: &SymReturnData) -> Option<SymBoolExpr> {
+    let mut header = Revert::SELECTOR.to_vec();
+    header.extend(U256::from(32).to_be_bytes::<32>());
+    let header = SymBytes::concrete(cx, header);
+    let header = data.bytes.prefix_condition(cx, &header)?;
+    let message_len = usize::try_from(data.bytes.word_at(cx, 36).as_const()?).ok()?;
+    let end = ERROR_DATA_MIN_LEN.checked_add(message_len).filter(|end| *end <= data.len())?;
+    let mut conditions = vec![header];
+    let mut concrete = Vec::with_capacity(message_len);
+    for offset in ERROR_DATA_MIN_LEN..end {
+        let byte = data.bytes.byte(cx, offset);
+        match byte.as_const() {
+            Some(value) => concrete.push(u8::try_from(value).ok()?),
+            None => {
+                // The placeholder is outside the prefix, so symbolic bytes never complete it.
+                concrete.push(b'_');
+                let ascii = SymExpr::constant(cx, U256::from(0x80));
+                conditions.push(SymBoolExpr::cmp_word_expr(cx, SymCmpOp::Ult, &byte, ascii));
+            }
         }
     }
-    (!encodings.is_empty()).then(|| SymBoolExpr::or(cx, encodings))
+    if !std::str::from_utf8(&concrete).ok()?.contains(ASSERTION_FAILED_PREFIX) {
+        return None;
+    }
+    let len = SymExpr::constant(cx, U256::from(end));
+    conditions.push(SymBoolExpr::cmp_word_expr(cx, SymCmpOp::Uge, &data.len_word, len));
+    Some(SymBoolExpr::and(cx, conditions))
 }
 
 pub(crate) fn is_revert_assertion_failure(data: &[u8]) -> bool {

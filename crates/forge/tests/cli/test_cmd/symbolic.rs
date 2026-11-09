@@ -1390,6 +1390,23 @@ contract SymbolicAssert {
             }
         }
     }
+
+    // Like the concrete decoder, the message must be valid UTF-8 within its encoded length.
+    function checkIgnoresInvalidUtf8AssertionMessage(uint256 x) public pure {
+        if (x == 255) revert(string(abi.encodePacked("assertion failed: ", bytes1(uint8(x)))));
+    }
+
+    function checkIgnoresTrailingAssertionMessage(uint256 x) public pure {
+        assembly {
+            if eq(x, 1) {
+                mstore(0, shl(224, 0x08c379a0))
+                mstore(4, 0x20)
+                mstore(36, sub(x, 1))
+                mstore(68, "assertion failed")
+                revert(0, 100)
+            }
+        }
+    }
 }
 "#,
     );
@@ -1399,11 +1416,13 @@ contract SymbolicAssert {
             .failure()
             .stdout_eq(str![[r#"
 ...
-Ran 3 tests for test/SymbolicAssert.t.sol:SymbolicAssert
+Ran 5 tests for test/SymbolicAssert.t.sol:SymbolicAssert
+[PASS] checkIgnoresInvalidUtf8AssertionMessage(uint256) ([METRICS])
+[PASS] checkIgnoresTrailingAssertionMessage(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xf24fa427000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkRejectsFortyTwo(uint256) ([METRICS])
 [FAIL: assertion failed: [..]; counterexample: 		[SENDER] [SENDER] calldata=[..] args=[42]] checkRejectsSymbolicAssertionMessage(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[1]] checkRejectsSymbolicPanicCode(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 2 passed; 3 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
             .get_output()
