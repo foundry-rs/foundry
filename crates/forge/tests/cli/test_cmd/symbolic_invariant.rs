@@ -1729,6 +1729,25 @@ contract PrankingHandler {
     }
 }
 
+contract RepeatPrankingHandler {
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    SenderReporter reporter;
+    uint256 calls;
+    bool public violated;
+
+    constructor(SenderReporter reporter_) {
+        reporter = reporter_;
+    }
+
+    function act() external {
+        if (calls++ == 0) {
+            VM.startPrank(address(0x777));
+            return;
+        }
+        violated = reporter.who() == address(0x777);
+    }
+}
+
 contract SymbolicHandlerPrankInvariant is Test {
     PrankingHandler handler;
     SenderReporter reporter;
@@ -1739,12 +1758,29 @@ contract SymbolicHandlerPrankInvariant is Test {
         targetContract(address(handler));
     }
 
-    // Concretely the prank ends with the handler call, so one act() breaks this. No fuzz runs,
-    // so only the symbolic phase can find it.
+    // Concretely the prank does not reach the predicate, so one act() breaks this. No fuzz
+    // runs, so only the symbolic phase can find it.
     /// forge-config: default.symbolic.invariant_depth = 1
     /// forge-config: default.invariant.runs = 0
     function invariant_prankEndsWithHandlerCall() public view {
         assert(!handler.called() || reporter.who() == address(0x777));
+    }
+}
+
+contract SymbolicRepeatHandlerPrankInvariant is Test {
+    RepeatPrankingHandler handler;
+
+    function setUp() public {
+        handler = new RepeatPrankingHandler(new SenderReporter());
+        targetContract(address(handler));
+    }
+
+    // Concretely the prank stays with the handler, so its second act() breaks this. No fuzz
+    // runs, so only the symbolic phase can find it.
+    /// forge-config: default.symbolic.invariant_depth = 2
+    /// forge-config: default.invariant.runs = 0
+    function invariant_prankStaysWithHandler() public view {
+        assert(!handler.violated());
     }
 }
 "#,
@@ -1789,6 +1825,31 @@ Encountered 1 failing test in test/SymbolicHandlerPrankInvariant.t.sol:SymbolicH
 	[Sequence] (original: 1, shrunk: 1)
 		[SENDER] [SENDER] calldata=act() [ARGS]
  invariant_prankEndsWithHandlerCall() ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_prankStaysWithHandler",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/SymbolicHandlerPrankInvariant.t.sol:SymbolicRepeatHandlerPrankInvariant
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 2, shrunk: 2)
+		[SENDER] [SENDER] calldata=act() [ARGS]
+		[SENDER] [SENDER] calldata=act() [ARGS]
+ invariant_prankStaysWithHandler() ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 

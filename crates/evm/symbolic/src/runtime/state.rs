@@ -19,6 +19,9 @@ pub(crate) struct PathState {
     pub(crate) frame: CallFrame,
     pub(crate) world: SymbolicWorld,
     pub(crate) prank: SymbolicPrank,
+    /// Pranks of other root frames of an invariant sequence, which Forge scopes to the contract
+    /// that set them.
+    pub(crate) root_pranks: HashMap<Address, SymbolicPrank>,
     pub(crate) constraints: Vec<SymBoolExpr>,
     pub(crate) next_symbol: usize,
     pub(crate) recorded_logs: Option<Vec<SymbolicLog>>,
@@ -100,6 +103,7 @@ impl PathState {
             frame,
             world: SymbolicWorld::default(),
             prank: SymbolicPrank::default(),
+            root_pranks: HashMap::default(),
             constraints: Vec::new(),
             next_symbol: 0,
             recorded_logs: None,
