@@ -1,6 +1,6 @@
 //! Query-level SMT-LIB assertion emission with common-subexpression bindings.
 
-use super::*;
+use super::{normalize::ConstraintContext, *};
 
 pub(super) fn write_smt_assertions(
     cx: &SymCx,
@@ -15,14 +15,8 @@ pub(super) fn write_smt_assertions(
     }
 
     let plan = SmtCsePlan::new(constraints);
-    if plan.bindings.is_empty() {
-        for constraint in constraints {
-            let _ = writeln!(out, "(assert {})", constraint.smt(cx));
-        }
-        return Ok(());
-    }
-
-    let writer = SmtCseWriter { cx, plan: &plan };
+    let narrow_divisions = narrow_division_widths(constraints);
+    let writer = SmtCseWriter { cx, plan: &plan, narrow_divisions: &narrow_divisions };
     // define binding_0 = term_0
     // ...
     // define binding_n = term_n
@@ -250,6 +244,8 @@ impl SmtBinding {
 struct SmtCseWriter<'a> {
     cx: &'a SymCx,
     plan: &'a SmtCsePlan,
+    /// Divisions whose operands the constraints bound below `2^width`.
+    narrow_divisions: &'a HashMap<SymExpr, usize>,
 }
 
 impl SmtCseWriter<'_> {
@@ -281,6 +277,10 @@ impl SmtCseWriter<'_> {
                 out.push(')');
             }
             SymExprKind::BinOp(op, left, right) => {
+                if let Some(width) = self.narrow_divisions.get(expr) {
+                    self.write_narrow_division(out, *op, left, right, *width);
+                    return;
+                }
                 let _ = write!(out, "({} ", op.smt());
                 self.write_expr(out, left, skip_expr, skip_bool);
                 out.push(' ');
@@ -299,6 +299,39 @@ impl SmtCseWriter<'_> {
                 self.write_expr(out, right, skip_expr, skip_bool);
                 out.push(')');
             }
+        }
+    }
+
+    /// Writes a division whose operands fit `width` bits over that width.
+    ///
+    /// `bvurem` by zero returns the dividend at any width. `bvudiv` by zero returns all ones, so
+    /// that case keeps the 256-bit result.
+    fn write_narrow_division(
+        &self,
+        out: &mut String,
+        op: SymBinOp,
+        left: &SymExpr,
+        right: &SymExpr,
+        width: usize,
+    ) {
+        if op == SymBinOp::UDiv {
+            out.push_str("(ite (= ");
+            self.write_expr(out, right, None, None);
+            let _ = write!(out, " (_ bv0 256)) (_ bv{} 256) ", U256::MAX);
+        }
+        let _ = write!(
+            out,
+            "((_ zero_extend {}) ({} ((_ extract {} 0) ",
+            256 - width,
+            op.smt(),
+            width - 1
+        );
+        self.write_expr(out, left, None, None);
+        let _ = write!(out, ") ((_ extract {} 0) ", width - 1);
+        self.write_expr(out, right, None, None);
+        out.push_str(")))");
+        if op == SymBinOp::UDiv {
+            out.push(')');
         }
     }
 
@@ -365,4 +398,23 @@ impl SmtCseWriter<'_> {
             }
         }
     }
+}
+
+/// Returns the bit width each unsigned division can run at once the constraints bound both
+/// operands, so the solver bit-blasts a narrow divider instead of a 256-bit one.
+fn narrow_division_widths(constraints: &[SymBoolExpr]) -> HashMap<SymExpr, usize> {
+    let context = ConstraintContext::new(constraints);
+    let mut widths = HashMap::default();
+    for constraint in constraints {
+        let _ = constraint.visit_exprs(&mut |expr| {
+            if let SymExprKind::BinOp(SymBinOp::UDiv | SymBinOp::URem, left, right) = expr.kind() {
+                let width = context.unsigned_bits(left).max(context.unsigned_bits(right));
+                if width < 256 {
+                    widths.insert(expr.clone(), width);
+                }
+            }
+            ControlFlow::<()>::Continue(())
+        });
+    }
+    widths
 }
