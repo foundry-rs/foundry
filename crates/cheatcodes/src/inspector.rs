@@ -2639,14 +2639,19 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         // If `recordAccountAccesses` has been called, record the create
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
-            // Read without loading or warming the account, so recording has no side effects.
-            let old_balance = interp
-                .host()
-                .state_mut()
-                .account_info_untracked(&address)
-                .ok()
-                .flatten()
-                .map_or(U256::ZERO, |info| info.balance);
+            // Read without loading, warming or caching the account, so recording has no side
+            // effects.
+            let state = interp.host().state_mut();
+            let info = if state.loaded_accounts().any(|(loaded, _)| *loaded == address) {
+                state.account_info_untracked(&address)
+            } else {
+                let db = state.overlay_db_mut();
+                match db.cache.accounts.get(&address) {
+                    Some(info) => Ok(info.clone()),
+                    None => db.db.get_account(&address),
+                }
+            };
+            let old_balance = info.ok().flatten().map_or(U256::ZERO, |info| info.balance);
             recorded_account_diffs_stack.push(vec![AccountAccess {
                 chainInfo: crate::Vm::ChainInfo {
                     forkId: backend.backend().active_fork_id().unwrap_or_default(),
