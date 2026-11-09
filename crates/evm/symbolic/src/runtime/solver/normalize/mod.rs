@@ -439,6 +439,31 @@ fn normalize_cmp_for_solver(
                 return SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ule, value, U256::MAX / factor);
             }
         }
+        for (quotient, expected) in [(&left, &right), (&right, &left)] {
+            // solc's checked `x * c` guard, `(x * c) / x == c` under `x != 0`, holds exactly when
+            // the product does not wrap: `x <= MAX / c`. Keep that bound instead of the quotient,
+            // which z3 solves slowly when `c` is a power of two, built as a shift.
+            let (guarded, zero_condition) = match quotient.kind() {
+                SymExprKind::Ite(condition, zero, guarded)
+                    if zero.as_const() == Some(U256::ZERO) =>
+                {
+                    (guarded, Some(condition))
+                }
+                _ => (quotient, None),
+            };
+            if let Some(factor) = expected.as_const().filter(|factor| !factor.is_zero())
+                && let Some((denominator, other)) = ConstraintContext::mul_div_operands(guarded)
+                && other.matches(expected)
+                && denominator.as_const().is_none()
+                && zero_condition
+                    .is_none_or(|condition| condition.zero_check_operand() == Some(denominator))
+            {
+                let nonzero = SymBoolExpr::eq_word_const(cx, denominator, U256::ZERO).not(cx);
+                let fits =
+                    SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ule, denominator, U256::MAX / factor);
+                return SymBoolExpr::and(cx, vec![nonzero, fits]);
+            }
+        }
         if right.as_const().is_some_and(|value| value.is_zero())
             && let SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend) = left.kind()
         {
@@ -795,9 +820,14 @@ impl ConstraintContext {
         }
         if let Some((denominator, other)) = Self::mul_div_operands(&expr)
             && self.interval(denominator).is_some_and(|interval| !interval.min.is_zero())
-            && self.mul_cannot_overflow_256(denominator, other)
         {
-            return other.clone();
+            let other = match other {
+                MulDivFactor::Expr(other) => other.clone(),
+                MulDivFactor::Const(other) => SymExpr::constant(cx, other),
+            };
+            if self.mul_cannot_overflow_256(denominator, &other) {
+                return other;
+            }
         }
         expr
     }
@@ -1230,25 +1260,33 @@ impl ConstraintContext {
 
     fn mul_div_identity_operands<'a>(
         quotient: &'a SymExpr,
-        expected: &SymExpr,
+        expected: &'a SymExpr,
     ) -> Option<(&'a SymExpr, &'a SymExpr)> {
         let (denominator, other) = Self::mul_div_operands(quotient)?;
-        (other == expected).then_some((denominator, other))
+        other.matches(expected).then_some((denominator, expected))
     }
 
-    fn mul_div_operands(quotient: &SymExpr) -> Option<(&SymExpr, &SymExpr)> {
+    /// Returns the denominator `x` and the other factor of `(x * f) / x`.
+    pub(super) fn mul_div_operands(quotient: &SymExpr) -> Option<(&SymExpr, MulDivFactor<'_>)> {
         let (numerator, denominator) = quotient.udiv_operands()?;
-        let SymExprKind::BinOp(SymBinOp::Mul, left, right) = numerator.kind() else {
-            return None;
-        };
-        let other = if left == denominator {
-            right
-        } else if right == denominator {
-            left
-        } else {
-            return None;
-        };
-        Some((denominator, other))
+        match numerator.kind() {
+            SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
+                let other = if left == denominator {
+                    right
+                } else if right == denominator {
+                    left
+                } else {
+                    return None;
+                };
+                Some((denominator, MulDivFactor::Expr(other)))
+            }
+            // Construction rewrites `x * 2**n` to `x << n`, as in solc's checked `x * 2` guard.
+            SymExprKind::BinOp(SymBinOp::Shl, left, shift) if left == denominator => {
+                let shift = shift.as_const().filter(|shift| *shift < U256::from(256))?;
+                Some((denominator, MulDivFactor::Const(U256::ONE << shift.to::<usize>())))
+            }
+            _ => None,
+        }
     }
 
     fn udiv_comparison_operands<'a>(
@@ -1432,6 +1470,23 @@ impl ConstraintContext {
                 Some(WordInterval { min: left.min.min(right.min), max: left.max.max(right.max) })
             }
             _ => None,
+        }
+    }
+}
+
+/// The other factor of a `(x * f) / x` quotient: an expression, or the `2**n` of a shift `x << n`.
+#[derive(Clone, Copy)]
+pub(super) enum MulDivFactor<'a> {
+    Expr(&'a SymExpr),
+    Const(U256),
+}
+
+impl MulDivFactor<'_> {
+    /// Returns whether the factor is `expected`.
+    pub(super) fn matches(self, expected: &SymExpr) -> bool {
+        match self {
+            Self::Expr(other) => other == expected,
+            Self::Const(other) => expected.as_const() == Some(other),
         }
     }
 }
@@ -1952,7 +2007,7 @@ impl ConstraintContext {
     fn checked_quotient_factors<'a>(
         &self,
         quotient: &'a SymExpr,
-        expected: &SymExpr,
+        expected: &'a SymExpr,
         zero_condition: Option<&SymBoolExpr>,
     ) -> Option<(&'a SymExpr, &'a SymExpr)> {
         let (quotient, branch_condition) =
