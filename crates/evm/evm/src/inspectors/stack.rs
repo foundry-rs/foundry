@@ -1510,7 +1510,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             } else {
                 Some(warm_set(evm.state_mut()))
             };
-            let nested_warmth =
+            let warm =
                 result.status.then(|| nested_warmth(child.state_mut(), &executed.pending_state));
             // Isolated calls never change the running transaction's transient storage.
             let transient = take_transient(evm.state_mut());
@@ -1540,7 +1540,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 }
             }
             let cold = if keeps_cold { cold } else { AddressSet::default() };
-            nested_warmth.is_none_or(|warm| {
+            warm.is_none_or(|warm| {
                 warm_nested(evm.state_mut(), &executed.pending_state, warm, &cold).is_ok()
             })
         } else {
@@ -2568,9 +2568,8 @@ fn apply_mocked_function<FEN: FoundryEvmNetwork>(
 }
 
 /// Returns the accounts still warm at the end of a nested transaction detached into `pending`,
-/// with their warm storage slots, which reattaching it to `child` exposes. Accesses of its
-/// reverted frames are cold. Warmth no revert undid survives a failure, such as of the accounts a
-/// `vm.executeTransaction` within it touched.
+/// with their warm storage slots, which reattaching it to `child` exposes. Accesses a revert undid
+/// are cold; others stay warm, such as the accounts a `vm.executeTransaction` within it touched.
 fn nested_warmth(child: &mut State<'_>, pending: &PendingState) -> AddressMap<HashSet<U256>> {
     child.set_pending_state(pending.clone());
     let warm = warm_accounts(child);
@@ -2578,9 +2577,9 @@ fn nested_warmth(child: &mut State<'_>, pending: &PendingState) -> AddressMap<Ha
     warm
 }
 
-/// Warms in `state` the accounts and storage slots in `warm`, the [`nested_warmth`] of a nested
-/// transaction detached into `pending`, as accesses across an isolated call boundary stay warm for
-/// the calling frame. Accounts in `cold` stay cold, but not their slots.
+/// Warms in `state` the storage slots still warm in a nested transaction detached into `pending`,
+/// and the accounts and slots in `warm`, its [`nested_warmth`], as accesses across an isolated call
+/// boundary stay warm for the calling frame. Accounts in `cold` stay cold, but not their slots.
 fn warm_nested(
     state: &mut State<'_>,
     pending: &PendingState,
@@ -2591,6 +2590,13 @@ fn warm_nested(
     // below, so that a later failure leaves them cold.
     for change in pending.account_changes() {
         state.account(&change.address)?;
+        // Slots stay warm even when their account is not in `warm`, such as a target created
+        // earlier in the running transaction.
+        for (key, slot) in &change.storage.slots {
+            if slot.is_warm {
+                state.storage_slot(&change.address, *key)?.warm();
+            }
+        }
     }
     for (address, slots) in warm {
         if !cold.contains(&address) {

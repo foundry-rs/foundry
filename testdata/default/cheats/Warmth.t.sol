@@ -37,8 +37,22 @@ contract WarmthTarget {
         x++;
     }
 
+    // Not `view`, so that isolation runs a call to it as its own transaction.
+    function touchSlot(uint256 key) external {
+        isWarmSlot(key);
+    }
+
     function hasWarmSlot(uint256 key) external view returns (bool) {
         return isWarmSlot(key);
+    }
+}
+
+/// Records whether slot 1 of `target` is warm when it is deployed.
+contract WarmthSlotProbe {
+    bool public warm;
+
+    constructor(WarmthTarget target) {
+        warm = target.hasWarmSlot(1);
     }
 }
 
@@ -261,6 +275,16 @@ contract CheatcodeWarmthIsolatedTest is Test {
     function testRevertedAccessStaysColdAfterIsolatedCall() public {
         poker.tryAccess(address(0x1001));
         vm.assertFalse(isWarm(address(0x1001)));
+    }
+
+    // Slots an isolated call accessed stay warm for the calling frame when its target was
+    // created in the same test. Creating the target warms slot 0, so this checks slot 1.
+    function testCreatedTargetSlotWarmAfterIsolatedCall() public {
+        WarmthTarget target = new WarmthTarget();
+        target.touchSlot(1);
+        // CREATE2 is not isolated, so the probe reads the slot in the calling transaction.
+        WarmthSlotProbe probe = new WarmthSlotProbe{salt: 0}(target);
+        vm.assertTrue(probe.warm());
     }
 
     // An account the STATICCALL cooled is imported warm by an isolated CREATE once a snapshot
