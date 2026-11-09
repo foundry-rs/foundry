@@ -1708,6 +1708,48 @@ contract SymbolicSetupMappingStorageInvariant is Test {
 "#,
     );
 
+    prj.add_test(
+        "SymbolicHandlerPrankInvariant.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SenderReporter {
+    function who() external view returns (address) {
+        return msg.sender;
+    }
+}
+
+contract PrankingHandler {
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    bool public called;
+
+    function act() external {
+        VM.startPrank(address(0x777));
+        called = true;
+    }
+}
+
+contract SymbolicHandlerPrankInvariant is Test {
+    PrankingHandler handler;
+    SenderReporter reporter;
+
+    function setUp() public {
+        handler = new PrankingHandler();
+        reporter = new SenderReporter();
+        targetContract(address(handler));
+    }
+
+    // Concretely the prank ends with the handler call, so one act() breaks this. No fuzz runs,
+    // so only the symbolic phase can find it.
+    /// forge-config: default.symbolic.invariant_depth = 1
+    /// forge-config: default.invariant.runs = 0
+    function invariant_prankEndsWithHandlerCall() public view {
+        assert(!handler.called() || reporter.who() == address(0x777));
+    }
+}
+"#,
+    );
+
     assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
@@ -1723,6 +1765,30 @@ Encountered 1 failing test in test/SymbolicSetupMappingStorageInvariant.t.sol:Sy
 	[Sequence] (original: 1, shrunk: 1)
 		[SENDER] [SENDER] calldata=pull(uint8) [ARGS]
  invariant_balanceStaysInitialized() ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_prankEndsWithHandlerCall",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/SymbolicHandlerPrankInvariant.t.sol:SymbolicHandlerPrankInvariant
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=act() [ARGS]
+ invariant_prankEndsWithHandlerCall() ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 

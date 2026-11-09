@@ -306,6 +306,9 @@ impl SymbolicExecutor {
         state.call_depth_base = 0;
         // Like Forge, expectations end with the root call; only a met count 0 one can remain.
         state.expected_emit = None;
+        // Each sequence call runs with a fresh cheatcode inspector and block hash overlay.
+        state.prank = SymbolicPrank::default();
+        state.block.block_hashes.clear();
         state.origin = sender;
         state.origin_word = SymExpr::constant(&mut self.cx, address_word(sender));
         let callvalue = SymExpr::zero(&mut self.cx);
