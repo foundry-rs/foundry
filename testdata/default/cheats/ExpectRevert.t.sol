@@ -414,6 +414,15 @@ contract ExpectRevertWithReverterTest is Test {
         vm.expectRevert(address(creator));
         creator.deploy();
     }
+
+    // A nested CREATE that `vm.interceptInitcode` stops before its frame starts is
+    // reverted by the calling contract, not the would-be deployed address.
+    function testExpectRevertsWithReverterInterceptedCreate() public {
+        DummyCreator creator = new DummyCreator();
+        vm.interceptInitcode();
+        vm.expectRevert(type(Dummy).creationCode, address(creator));
+        creator.deploy();
+    }
 }
 
 // Used by `testExpectRevertsWithReverterNestedCreate`: a contract whose constructor
@@ -446,6 +455,36 @@ contract EndowedChild {
 contract UnfundedCreator {
     function deploy() external returns (address) {
         return address(new EndowedChild{value: 1}());
+    }
+}
+
+// Used by `testExpectRevertsWithReverterInterceptedCreate`: creates a `Dummy`.
+contract DummyCreator {
+    function deploy() external returns (address) {
+        return address(new Dummy());
+    }
+}
+
+/// forge-config: default.always_use_create_2_factory = true
+contract ExpectRevertMissingCreate2DeployerTest is Test {
+    // A nested CREATE2 that the missing CREATE2 deployer stops before its frame starts
+    // is reverted by the calling contract, not the would-be deployed address.
+    function testExpectRevertsWithReverterMissingCreate2Deployer() public {
+        PrankedCreate2Creator creator = new PrankedCreate2Creator();
+        vm.etch(0x4e59b44847b379578588920cA78FbF26c0B4956C, "");
+        vm.expectRevert(address(creator));
+        creator.deploy();
+    }
+}
+
+// Used by `testExpectRevertsWithReverterMissingCreate2Deployer`: pranks its CREATE2 so
+// it goes through the CREATE2 deployer.
+contract PrankedCreate2Creator {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function deploy() external returns (address) {
+        vm.prank(address(0xA11CE));
+        return address(new Dummy{salt: bytes32(0)}());
     }
 }
 
