@@ -921,6 +921,20 @@ impl SymbolicExecutor {
                 return Ok(outcome);
             }
 
+            if to == CHEATCODE_ADDRESS
+                && let Some(concrete_in_offset) = concrete_in_offset
+                && let Some(outcome) = self.bound_cheatcode_if_needed(
+                    state,
+                    worklist,
+                    selector,
+                    concrete_in_offset,
+                    out_offset.clone(),
+                    &out_size,
+                )?
+            {
+                return Ok(outcome);
+            }
+
             let return_data = if to == CHEATCODE_ADDRESS {
                 let outcome = self.handle_foundry_cheatcode(
                     executor,
@@ -934,10 +948,7 @@ impl SymbolicExecutor {
                     CheatcodeOutcome::Continue(ret) => SymReturnData::from_words(&mut self.cx, ret),
                     CheatcodeOutcome::ContinueData(ret) => ret,
                     CheatcodeOutcome::Revert(ret) => {
-                        state.first_failed_callee.get_or_insert(CHEATCODE_ADDRESS);
-                        state.return_data = ret;
-                        state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
-                        state.stack.push(SymExpr::zero(&mut self.cx))?;
+                        fail_cheatcode_call(&mut self.cx, state, out_offset, &out_size, ret)?;
                         return Ok(StepOutcome::Continue);
                     }
                     CheatcodeOutcome::AssumeRejected => return Ok(StepOutcome::AssumeRejected),

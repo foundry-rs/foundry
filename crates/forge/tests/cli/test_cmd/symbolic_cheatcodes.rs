@@ -5376,6 +5376,15 @@ contract SymbolicBoundInvalid is Test {
     function checkInvalidSignedBound(int256 x) public {
         vm.bound(x, 3, -3);
     }
+
+    // An out-of-range value reverts the cheatcode call; an in-range value continues.
+    function checkCaughtOutOfRangeBound(uint256 x) public view {
+        try vm.bound(x, 0, 10) returns (uint256 bounded) {
+            assert(x <= 10 && bounded <= 10 && bounded != x);
+        } catch {
+            assert(x > 10);
+        }
+    }
 }
 "#,
     );
@@ -5389,10 +5398,11 @@ contract SymbolicBoundInvalid is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicBoundInvalid.t.sol:SymbolicBoundInvalid
+Ran 3 tests for test/SymbolicBoundInvalid.t.sol:SymbolicBoundInvalid
+[PASS] checkCaughtOutOfRangeBound(uint256) ([METRICS])
 [FAIL: vm.bound: cannot bound 0 in [3, -3] range; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkInvalidSignedBound(int256) ([METRICS])
 [FAIL: vm.bound: cannot bound 0 in [12, 10] range; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkInvalidUnsignedBound(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 1 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()

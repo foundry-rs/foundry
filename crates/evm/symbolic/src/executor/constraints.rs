@@ -1,3 +1,5 @@
+use foundry_cheatcodes_spec::Vm::{bound_0Call, bound_1Call};
+
 use super::*;
 
 impl SymbolicExecutor {
@@ -173,41 +175,52 @@ impl SymbolicExecutor {
         if bits <= U256::from(256) { Ok(()) } else { Err(SymbolicError::Unsupported(context)) }
     }
 
-    /// Handles `vm.bound` for unsigned or signed (`int256`) ranges.
-    pub(super) fn handle_bound(
+    /// Handles `vm.bound` when `selector` names it.
+    pub(super) fn bound_cheatcode_if_needed(
         &mut self,
         state: &mut PathState,
+        worklist: &mut VecDeque<PathState>,
+        selector: [u8; 4],
+        in_offset: usize,
+        out_offset: SymExpr,
+        out_size: &BoundedCopySize,
+    ) -> Result<Option<StepOutcome>, SymbolicError> {
+        let signed = match selector {
+            bound_0Call::SELECTOR => false,
+            bound_1Call::SELECTOR => true,
+            _ => return Ok(None),
+        };
+        self.handle_bound(state, worklist, in_offset + 4, signed, out_offset, out_size).map(Some)
+    }
+
+    /// Handles `vm.bound` for unsigned or signed (`int256`) ranges.
+    ///
+    /// Like Forge, a value outside the range reverts the cheatcode call. When the path allows
+    /// both, the revert runs on its own branch.
+    fn handle_bound(
+        &mut self,
+        state: &mut PathState,
+        worklist: &mut VecDeque<PathState>,
         args_offset: usize,
         signed: bool,
-    ) -> Result<CheatcodeOutcome, SymbolicError> {
+        out_offset: SymExpr,
+        out_size: &BoundedCopySize,
+    ) -> Result<StepOutcome, SymbolicError> {
         let value = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
         let min = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
         let max = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 2)?;
-        let order = |a: &U256, b: &U256| {
-            if signed { I256::from_raw(*a).cmp(&I256::from_raw(*b)) } else { a.cmp(b) }
-        };
-
-        if let (Some(value), Some(min), Some(max)) =
-            (value.as_const(), min.as_const(), max.as_const())
-        {
-            if !order(&min, &max).is_lt()
-                || order(&value, &min).is_lt()
-                || order(&value, &max).is_gt()
-            {
-                return Ok(CheatcodeOutcome::Failure);
-            }
-            let bounded = if value == min { max } else { min };
-            return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(&mut self.cx, bounded)]));
-        }
-
-        if let (Some(min), Some(max)) = (min.as_const(), max.as_const())
-            && !order(&min, &max).is_lt()
-        {
-            return Ok(CheatcodeOutcome::Failure);
-        }
         let (Some(min_word), Some(max_word)) = (min.as_const(), max.as_const()) else {
             return Err(SymbolicError::Unsupported("symbolic vm.bound range"));
         };
+        let order = |a: &U256, b: &U256| {
+            if signed { I256::from_raw(*a).cmp(&I256::from_raw(*b)) } else { a.cmp(b) }
+        };
+        let revert =
+            error_string_return_data(&mut self.cx, "vm.bound: cannot bound value in range");
+        if !order(&min_word, &max_word).is_lt() {
+            fail_cheatcode_call(&mut self.cx, state, out_offset, out_size, revert)?;
+            return Ok(StepOutcome::Continue);
+        }
 
         // Signed bounds are expressed as `!(x < min) && !(x > max)`.
         let range_conditions = |cx: &mut SymCx, word: &SymExpr, as_consts: bool| {
@@ -229,23 +242,30 @@ impl SymbolicExecutor {
         };
         let in_range = range_conditions(&mut self.cx, &value, false);
         let in_range = SymBoolExpr::and(&mut self.cx, in_range.into());
-        let (_, in_range_sat) = self.constraints_with_condition(state, in_range.clone())?;
-        if !in_range_sat {
-            return Ok(CheatcodeOutcome::Failure);
-        }
+        let (in_range_constraints, in_range_sat) =
+            self.constraints_with_condition(state, in_range.clone())?;
         let out_of_range = in_range.not(&mut self.cx);
-        let (out_of_range_constraints, out_of_range_sat) =
-            self.constraints_with_condition(state, out_of_range)?;
-        if out_of_range_sat {
-            state.constraints = out_of_range_constraints;
-            return Ok(CheatcodeOutcome::Failure);
+        if let Some(out_of_range_constraints) =
+            self.constraints_for_condition(state, out_of_range)?
+        {
+            if !in_range_sat {
+                fail_cheatcode_call(&mut self.cx, state, out_offset, out_size, revert)?;
+                return Ok(StepOutcome::Continue);
+            }
+            let mut reverted = state.clone();
+            reverted.constraints = out_of_range_constraints;
+            fail_cheatcode_call(&mut self.cx, &mut reverted, out_offset.clone(), out_size, revert)?;
+            worklist.push_back(reverted);
         }
 
+        state.constraints = in_range_constraints;
         let bounded =
             state.fresh_word(&mut self.cx, if signed { "vmBoundInt" } else { "vmBoundUint" });
         state.constraints.extend(range_conditions(&mut self.cx, &bounded, true));
         let same_value = SymBoolExpr::eq(&mut self.cx, bounded.clone(), value);
         state.constraints.push(same_value.not(&mut self.cx));
-        Ok(CheatcodeOutcome::Continue(vec![bounded]))
+        let return_data = SymReturnData::from_words(&mut self.cx, vec![bounded]);
+        complete_cheatcode_call(&mut self.cx, state, out_offset, out_size, return_data)?;
+        Ok(StepOutcome::Continue)
     }
 }
