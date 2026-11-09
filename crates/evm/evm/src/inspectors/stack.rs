@@ -1125,7 +1125,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
 
         // Record first address that reverted the call.
-        if stop.is_revert() && self.inner.reverter.is_none() {
+        if stop.is_frame_revert() && self.inner.reverter.is_none() {
             self.inner.reverter = Some(message.destination);
         }
     }
@@ -1590,7 +1590,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // Pre-computed address for `expectRevert` reverter checks on reverted creates.
         let created_address = result
             .created_address
-            .or_else(|| (is_create && stop.is_revert()).then_some(message.destination));
+            .or_else(|| (is_create && stop.is_frame_revert()).then_some(message.destination));
         let mut outcome = message_result::<_, _>(message, stop, result.output);
         outcome.gas = gas;
         outcome.created_address = created_address;
