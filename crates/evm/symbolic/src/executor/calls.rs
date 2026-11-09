@@ -829,16 +829,27 @@ impl SymbolicExecutor {
                 return Err(SymbolicError::Unsupported("value-bearing cheatcode CALL"));
             }
             let (in_size_word, in_size, has_symbolic_in_size) = in_size.parts(&mut self.cx);
-            if in_size < 4 {
-                return Err(SymbolicError::Unsupported("short cheatcode CALL"));
-            }
-
             let has_symbolic_input_offset = in_offset.as_const().is_none();
             let concrete_in_offset = if has_symbolic_input_offset {
                 None
             } else {
                 Some(in_offset.as_usize_or("symbolic cheatcode CALL input offset")?)
             };
+            // Forge fails a cheatcode call whose calldata its ABI decoder rejects.
+            if to == CHEATCODE_ADDRESS
+                && !has_symbolic_in_size
+                && let Some(concrete_in_offset) = concrete_in_offset
+                && let Ok(input) =
+                    state.memory.read_concrete(&mut self.cx, concrete_in_offset, in_size)
+                && let Err(error) = Vm::VmCalls::abi_decode(&input)
+            {
+                let return_data = error_string_return_data(&mut self.cx, &error.to_string());
+                fail_cheatcode_call(&mut self.cx, state, out_offset, &out_size, return_data)?;
+                return Ok(StepOutcome::Continue);
+            }
+            if in_size < 4 {
+                return Err(SymbolicError::Unsupported("short cheatcode CALL"));
+            }
             let selector = if has_symbolic_input_offset {
                 let minimum_offset = state.lower_bound_usize(&in_offset);
                 let maximum_offset = state.upper_bound_usize(&mut self.cx, &in_offset);
@@ -934,10 +945,7 @@ impl SymbolicExecutor {
                     CheatcodeOutcome::Continue(ret) => SymReturnData::from_words(&mut self.cx, ret),
                     CheatcodeOutcome::ContinueData(ret) => ret,
                     CheatcodeOutcome::Revert(ret) => {
-                        state.first_failed_callee.get_or_insert(CHEATCODE_ADDRESS);
-                        state.return_data = ret;
-                        state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
-                        state.stack.push(SymExpr::zero(&mut self.cx))?;
+                        fail_cheatcode_call(&mut self.cx, state, out_offset, &out_size, ret)?;
                         return Ok(StepOutcome::Continue);
                     }
                     CheatcodeOutcome::AssumeRejected => return Ok(StepOutcome::AssumeRejected),
