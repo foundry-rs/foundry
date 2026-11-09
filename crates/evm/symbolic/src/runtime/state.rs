@@ -2184,9 +2184,7 @@ impl SymbolicWorld {
         let expr = address_expr;
         let representative = expr.representative_symbolic_address();
         let mut result = self.balance_word_for_address(cx, executor, representative);
-        // Cheatcode accounts can hold balances even though they are not code candidates.
-        let cheatcode_addresses = [CHEATCODE_ADDRESS, SYMBOLIC_VM_COMPAT_ADDRESS];
-        for address in self.known_addresses(executor).into_iter().chain(cheatcode_addresses) {
+        for address in self.known_addresses(executor) {
             let balance = self.balance_word_for_address(cx, executor, address);
             let address = SymExpr::constant(cx, address_word(address));
             let condition = SymBoolExpr::eq(cx, expr.clone(), address);
@@ -2538,7 +2536,10 @@ impl SymbolicWorld {
     ) -> Result<Vec<Address>, SymbolicError> {
         let mut targets = Vec::new();
         for address in self.known_addresses(executor) {
-            if is_precompile_for_spec(address, executor.spec_id) {
+            if is_precompile_for_spec(address, executor.spec_id)
+                || address == CHEATCODE_ADDRESS
+                || address == SYMBOLIC_VM_COMPAT_ADDRESS
+            {
                 continue;
             }
             if !self.extcode(cx, executor, address)?.is_empty() {
@@ -2551,7 +2552,8 @@ impl SymbolicWorld {
     /// Returns the concrete accounts a symbolic address may alias, in address order.
     ///
     /// Includes accounts that exist only in the backend, such as contracts deployed in `setUp`,
-    /// which the world caches only once touched. Cheatcode addresses are excluded.
+    /// which the world caches only once touched, and the cheatcode addresses, which have code
+    /// and can hold balances.
     fn known_addresses(&self, executor: &ExecutorView<'_>) -> Vec<Address> {
         let mut addresses = self
             .code_cache
@@ -2560,9 +2562,7 @@ impl SymbolicWorld {
             .chain(&self.existing_accounts)
             .chain(&executor.account_addresses)
             .copied()
-            .filter(|address| {
-                *address != CHEATCODE_ADDRESS && *address != SYMBOLIC_VM_COMPAT_ADDRESS
-            })
+            .chain([CHEATCODE_ADDRESS, SYMBOLIC_VM_COMPAT_ADDRESS])
             .collect::<Vec<_>>();
         addresses.sort_unstable();
         addresses.dedup();

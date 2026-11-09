@@ -292,10 +292,11 @@ import "forge-std/Test.sol";
 contract SymbolicExtcodeSize is Test {
     function checkSymbolicCodeLength(address who) public {
         address coded = address(0xC0DE);
-        vm.assume(who == coded || who == address(0xDEAD));
+        vm.assume(who == coded || who == address(0xDEAD) || who == address(vm));
         vm.etch(coded, hex"60006000");
 
-        uint256 expected = who == coded ? 4 : 0;
+        // Forge gives the cheatcode address the one-byte code 0x00.
+        uint256 expected = who == coded ? 4 : who == address(vm) ? 1 : 0;
         assertEq(who.code.length, expected);
     }
 }
@@ -339,10 +340,12 @@ import "forge-std/Test.sol";
 contract SymbolicExtcodeHash is Test {
     function checkSymbolicCodeHash(address who) public {
         address coded = address(0xC0DE);
-        vm.assume(who == coded || who == address(0xDEAD));
+        vm.assume(who == coded || who == address(0xDEAD) || who == address(vm));
         vm.etch(coded, hex"60006000");
 
-        bytes32 expected = who == coded ? keccak256(hex"60006000") : bytes32(0);
+        bytes32 expected = who == coded
+            ? keccak256(hex"60006000")
+            : who == address(vm) ? keccak256(hex"00") : bytes32(0);
         assertEq(who.codehash, expected);
     }
 }
