@@ -2068,9 +2068,10 @@ impl SymbolicExecutor {
                     "symbolic vm.envOr",
                 )?;
                 self.stateless_retry_safe = false;
-                let value = match std::env::var(name) {
-                    Ok(value) => U256::from(parse_env_bool(&value)?),
-                    Err(_) => read_abi_concrete_word_arg(
+                // Forge treats a set-but-empty variable as missing for the typed overloads.
+                let value = match std::env::var(name).ok().filter(|value| !value.is_empty()) {
+                    Some(value) => U256::from(parse_env_bool(&value)?),
+                    None => read_abi_concrete_word_arg(
                         &mut self.cx,
                         &state.memory,
                         args_offset,
@@ -2099,14 +2100,14 @@ impl SymbolicExecutor {
                     "symbolic vm.envOr",
                 )?;
                 self.stateless_retry_safe = false;
-                let value = match std::env::var(name) {
-                    Ok(value) if selector == envOr_1Call::SELECTOR => parse_env_uint(&value)?,
-                    Ok(value) if selector == envOr_2Call::SELECTOR => parse_env_int(&value)?,
-                    Ok(value) if selector == envOr_3Call::SELECTOR => {
+                let value = match std::env::var(name).ok().filter(|value| !value.is_empty()) {
+                    Some(value) if selector == envOr_1Call::SELECTOR => parse_env_uint(&value)?,
+                    Some(value) if selector == envOr_2Call::SELECTOR => parse_env_int(&value)?,
+                    Some(value) if selector == envOr_3Call::SELECTOR => {
                         address_word(parse_env_address(&value)?)
                     }
-                    Ok(value) => parse_env_bytes32(&value)?,
-                    Err(_) => default,
+                    Some(value) => parse_env_bytes32(&value)?,
+                    None => default,
                 };
                 Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(&mut self.cx, value)]))
             }
@@ -2126,9 +2127,9 @@ impl SymbolicExecutor {
                     decode_cheatcode_args(&mut self.cx, state, selector, in_offset, in_size)?;
                 let name = dyn_string(&values[0])?;
                 self.stateless_retry_safe = false;
-                let value = match std::env::var(name) {
-                    Ok(value) => parse_env_bytes(&value)?,
-                    Err(_) => dyn_bytes(&values[1])?,
+                let value = match std::env::var(name).ok().filter(|value| !value.is_empty()) {
+                    Some(value) => parse_env_bytes(&value)?,
+                    None => dyn_bytes(&values[1])?,
                 };
                 Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(&mut self.cx, &value)))
             }

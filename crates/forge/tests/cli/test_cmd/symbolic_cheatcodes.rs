@@ -934,6 +934,9 @@ contract SymbolicEnvCryptoConsole is Test {
         assertTrue(vm.envExists("FOUNDRY_SYMBOLIC_ENV_PRESENT"));
         assertEq(vm.envUint("FOUNDRY_SYMBOLIC_ENV_UINT"), 42);
         assertEq(vm.envOr("FOUNDRY_SYMBOLIC_ENV_MISSING", uint256(7)), 7);
+        assertEq(vm.envOr("FOUNDRY_SYMBOLIC_ENV_EMPTY", uint256(7)), 7);
+        assertTrue(vm.envOr("FOUNDRY_SYMBOLIC_ENV_EMPTY", true));
+        assertEq(vm.envOr("FOUNDRY_SYMBOLIC_ENV_EMPTY", string("empty")), "");
         assertEq(vm.envString("FOUNDRY_SYMBOLIC_ENV_STRING"), "hello");
 
         uint256[] memory values = vm.envUint("FOUNDRY_SYMBOLIC_ENV_UINTS", ",");
@@ -1025,6 +1028,7 @@ contract SymbolicEnvCryptoConsole is Test {
 
     cmd.env("FOUNDRY_SYMBOLIC_ENV_PRESENT", "1");
     cmd.env("FOUNDRY_SYMBOLIC_ENV_UINT", "42");
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_EMPTY", "");
     cmd.env("FOUNDRY_SYMBOLIC_ENV_STRING", "hello");
     cmd.env("FOUNDRY_SYMBOLIC_ENV_UINTS", "1,2,3");
     cmd.env("FOUNDRY_SYMBOLIC_ENV_STRINGS", "alpha,beta");
