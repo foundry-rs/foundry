@@ -1924,6 +1924,17 @@ contract SymbolicEmptyDomain is Test {
         try vm.skip(x < 5) {} catch {}
         assert(x >= 5);
     }
+
+    // The rejected branch of a repeated assumption is infeasible.
+    function checkCaughtRepeatedAssumption(uint256 x) public {
+        vm.assume(x != 5);
+        try vm.assume(x != 5) {} catch { assert(false); }
+    }
+
+    function checkCaughtRejectedAssumption(uint256 x) public {
+        vm.assume(x != 5);
+        try vm.assume(x != 5) { vm.assume(false); } catch {}
+    }
 }
 "#,
     );
@@ -1937,8 +1948,10 @@ contract SymbolicEmptyDomain is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 8 tests for test/SymbolicEmptyDomain.t.sol:SymbolicEmptyDomain
+Ran 10 tests for test/SymbolicEmptyDomain.t.sol:SymbolicEmptyDomain
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeCaught(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkCaughtRejectedAssumption(uint256) ([METRICS])
+[PASS] checkCaughtRepeatedAssumption(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkConstantAssumption() ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkContradictoryAssumptions(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (RevertAll): all symbolic paths reverted] checkRejectedAndReverted(bool) ([METRICS])

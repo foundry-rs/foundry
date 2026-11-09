@@ -384,9 +384,7 @@ impl SymbolicExecutor {
                 let op = match op {
                     CallPathOpcode::Execute(op) => op,
                     CallPathOpcode::Halt => {
-                        if state.take_deferred_feasibility_check()
-                            && !self.branch_is_sat_or_defer(&state, &state.constraints)?
-                        {
+                        if !self.completed_path_is_feasible(&mut state, StepOutcome::Halt)? {
                             break;
                         }
                         if *completed_paths >= path_limit {
@@ -413,14 +411,7 @@ impl SymbolicExecutor {
                     completed_paths,
                     op,
                 )?;
-                // A branch that kept running without a feasibility check, such as the rejected
-                // branch of `vm.assume`, is checked before its outcome is recorded.
-                if !matches!(
-                    outcome,
-                    StepOutcome::Continue | StepOutcome::Forked | StepOutcome::AssumeRejected
-                ) && state.take_deferred_feasibility_check()
-                    && !self.branch_is_sat_or_defer(&state, &state.constraints)?
-                {
+                if !self.completed_path_is_feasible(&mut state, outcome)? {
                     break;
                 }
                 match outcome {

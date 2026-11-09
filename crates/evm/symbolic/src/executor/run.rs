@@ -95,6 +95,20 @@ impl SymbolicExecutor {
         }
     }
 
+    /// Returns whether a path that kept running without a feasibility check, such as the rejected
+    /// branch of `vm.assume`, is feasible once it completes with `outcome`.
+    pub(super) fn completed_path_is_feasible(
+        &mut self,
+        state: &mut PathState,
+        outcome: StepOutcome,
+    ) -> Result<bool, SymbolicError> {
+        Ok(matches!(
+            outcome,
+            StepOutcome::Continue | StepOutcome::Forked | StepOutcome::AssumeRejected
+        ) || !state.take_deferred_feasibility_check()
+            || self.branch_is_sat_or_defer(state, &state.constraints)?)
+    }
+
     /// Returns any deferred incomplete reason.
     fn deferred_incomplete(&self) -> Option<(SymbolicStopReason, String)> {
         match self.deferred_incomplete? {
@@ -464,6 +478,9 @@ impl SymbolicExecutor {
                     }
                     None => StepOutcome::Halt,
                 };
+                if !self.completed_path_is_feasible(&mut state, outcome)? {
+                    break;
+                }
                 match outcome {
                     StepOutcome::Continue => {}
                     StepOutcome::AssumeRejected | StepOutcome::Forked => break,
