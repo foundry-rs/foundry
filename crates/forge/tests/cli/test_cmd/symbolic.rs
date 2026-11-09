@@ -1375,18 +1375,35 @@ contract SymbolicAssert {
     function checkRejectsFortyTwo(uint256 x) public pure {
         assert(x != 42);
     }
+
+    // The revert data stays symbolic, but the path pins it to an assertion failure.
+    function checkRejectsSymbolicAssertionMessage(uint256 x) public pure {
+        if (x == 42) revert(string(abi.encodePacked("assertion failed: ", bytes32(x))));
+    }
+
+    function checkRejectsSymbolicPanicCode(uint256 x) public pure {
+        assembly {
+            if eq(x, 1) {
+                mstore(0, shl(224, 0x4e487b71))
+                mstore(4, x)
+                revert(0, 0x24)
+            }
+        }
+    }
 }
 "#,
     );
 
     let stderr =
-        assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkRejectsFortyTwo"]))
+        assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicAssert"]))
             .failure()
             .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicAssert.t.sol:SymbolicAssert
+Ran 3 tests for test/SymbolicAssert.t.sol:SymbolicAssert
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xf24fa427000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkRejectsFortyTwo(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL: assertion failed: [..]; counterexample: 		[SENDER] [SENDER] calldata=[..] args=[42]] checkRejectsSymbolicAssertionMessage(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[1]] checkRejectsSymbolicPanicCode(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
             .get_output()

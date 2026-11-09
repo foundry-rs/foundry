@@ -168,6 +168,38 @@ pub(crate) fn cheatcode_error_revert_condition(
     Some(SymBoolExpr::and(cx, vec![has_selector, prefix]))
 }
 
+/// Returns the condition under which symbolic revert data is an assertion failure: a
+/// `Panic(0x01)` or an `Error(string)` whose message starts with the assertion prefix.
+pub(crate) fn assertion_revert_condition(
+    cx: &mut SymCx,
+    data: &SymReturnData,
+) -> Option<SymBoolExpr> {
+    let mut encodings = Vec::new();
+    let panic = SymBytes::concrete(cx, Panic::from(PanicKind::Assert).abi_encode());
+    if let Some(prefix) = data.bytes.prefix_condition(cx, &panic) {
+        let len = SymExpr::constant(cx, U256::from(panic.len()));
+        let has_len = SymBoolExpr::cmp_word_expr(cx, SymCmpOp::Uge, &data.len_word, len);
+        encodings.push(SymBoolExpr::and(cx, vec![has_len, prefix]));
+    }
+    let message = ASSERTION_FAILED_PREFIX.as_bytes();
+    if data.len() >= ERROR_DATA_MIN_LEN + message.len() {
+        let mut header = Revert::SELECTOR.to_vec();
+        header.extend(U256::from(32).to_be_bytes::<32>());
+        let header = SymBytes::concrete(cx, header);
+        let message_offset = SymExpr::constant(cx, U256::from(ERROR_DATA_MIN_LEN));
+        let actual = data.bytes.read_offset(cx, message_offset, message.len());
+        let message = SymBytes::concrete(cx, message.to_vec());
+        if let (Some(header), Some(message)) =
+            (data.bytes.prefix_condition(cx, &header), actual.prefix_condition(cx, &message))
+        {
+            let len = SymExpr::constant(cx, U256::from(ERROR_DATA_MIN_LEN + actual.len()));
+            let has_len = SymBoolExpr::cmp_word_expr(cx, SymCmpOp::Uge, &data.len_word, len);
+            encodings.push(SymBoolExpr::and(cx, vec![has_len, header, message]));
+        }
+    }
+    (!encodings.is_empty()).then(|| SymBoolExpr::or(cx, encodings))
+}
+
 pub(crate) fn is_revert_assertion_failure(data: &[u8]) -> bool {
     if data.len() < ERROR_DATA_MIN_LEN {
         return false;

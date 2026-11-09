@@ -1557,8 +1557,22 @@ impl SymbolicExecutor {
             state.constraints = constraints;
             return Ok(StepOutcome::Failure);
         }
-        if data.is_ok_and(|data| is_assertion_revert(&data)) {
-            return Ok(StepOutcome::Failure);
+        match data {
+            Ok(data) => {
+                if is_assertion_revert(&data) {
+                    return Ok(StepOutcome::Failure);
+                }
+            }
+            // Symbolic revert data fails on the paths where it decodes as an assertion failure.
+            Err(_) => {
+                if let Some(condition) =
+                    assertion_revert_condition(&mut self.cx, &state.return_data)
+                    && let Some(constraints) = self.constraints_for_condition(state, condition)?
+                {
+                    state.constraints = constraints;
+                    return Ok(StepOutcome::Failure);
+                }
+            }
         }
         Ok(StepOutcome::Revert)
     }
