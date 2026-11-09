@@ -84,15 +84,6 @@ pub(crate) fn execute_symbolic_precompile(
     input_len: SymExpr,
     spec_id: SpecId,
 ) -> Result<Option<SymReturnData>, SymbolicError> {
-    if let Some(input_len) = input_len.as_const()
-        && let Ok(input_len) = usize::try_from(input_len)
-        && input_len <= input.len()
-        && let Ok(input) =
-            input.slice_concrete(cx, 0, input_len).concrete_bytes(cx, "symbolic precompile input")
-    {
-        return execute_precompile(cx, address, &input, spec_id);
-    }
-
     match precompile_number_for_spec(address, spec_id) {
         Some(1) => {
             // ECRECOVER ignores trailing bytes and pads short input with zeros.

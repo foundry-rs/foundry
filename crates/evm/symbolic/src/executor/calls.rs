@@ -1076,8 +1076,27 @@ impl SymbolicExecutor {
                     input_len,
                 );
             }
-            let outcome =
-                execute_symbolic_precompile(&mut self.cx, code_address, input, input_len, spec_id)?;
+            // A path can pin a symbolic input to one value, as `if (a == 1)` does before
+            // `sha256(abi.encode(a))`: run the precompile on that value so the result is exact
+            // and a counterexample replays, instead of an opaque term over the pinned bytes.
+            let pinned_input = input_len
+                .as_const()
+                .and_then(|len| usize::try_from(len).ok())
+                .filter(|len| *len <= input.len())
+                .and_then(|len| {
+                    let bytes = input.materialize(&mut self.cx);
+                    constrained_bytes_at(&mut self.cx, state, &bytes, 0, len)
+                });
+            let outcome = match pinned_input {
+                Some(pinned) => execute_precompile(&mut self.cx, code_address, &pinned, spec_id)?,
+                None => execute_symbolic_precompile(
+                    &mut self.cx,
+                    code_address,
+                    input,
+                    input_len,
+                    spec_id,
+                )?,
+            };
             return self.apply_precompile_outcome(
                 executor,
                 state,

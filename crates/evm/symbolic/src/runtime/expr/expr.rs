@@ -1833,6 +1833,22 @@ impl SymExpr {
         if self == expr {
             return Some(value);
         }
+        // `x - c == v`, `c - x == v`, and `x + c == v` pin `x`, as solc's `iszero(sub(x, c))`
+        // form of `x == c` does.
+        if let SymExprKind::BinOp(op @ (SymBinOp::Sub | SymBinOp::Add), left, right) = self.kind() {
+            if let Some(constant) = right.as_const() {
+                let value = match op {
+                    SymBinOp::Sub => value.wrapping_add(constant),
+                    _ => value.wrapping_sub(constant),
+                };
+                return left.equality_forces_const(value, expr, context);
+            }
+            if *op == SymBinOp::Sub
+                && let Some(constant) = left.as_const()
+            {
+                return right.equality_forces_const(constant.wrapping_sub(value), expr, context);
+            }
+        }
         self.equality_forces_const_inner(value, expr, context)
     }
 
