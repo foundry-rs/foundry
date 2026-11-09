@@ -2729,8 +2729,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             // legacy nested CALL handling reports the outermost call per iteration.
             //
             // Only creates whose frame ran and reverted count. A create rejected before its
-            // frame starts (depth, balance, nonce, or a hook's revert) leaves the reverter to
-            // the surrounding `call_end`, which records the caller.
+            // frame starts (depth, balance, nonce, or a revert from `vm.interceptInitcode` or a
+            // missing CREATE2 deployer) leaves the reverter to the surrounding `call_end`, which
+            // records the caller.
             if outcome.stop.is_revert()
                 && frame_ran
                 && expected_revert.reverter.is_some()
