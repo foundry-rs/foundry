@@ -1041,7 +1041,7 @@ async fn test_amsterdam_state_gas_reservoir() {
 }
 
 // A gas limit below the EIP-7623 calldata floor is an intrinsic gas error, which gas estimation
-// reports as out of gas.
+// reports as out of gas and the pool rejects at submission.
 #[tokio::test(flavor = "multi_thread")]
 async fn gas_limit_below_calldata_floor() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
@@ -1059,8 +1059,20 @@ async fn gas_limit_below_calldata_floor() {
     assert_eq!(err.code, -32000);
     assert_eq!(err.message, "intrinsic gas too high -- GasFloorMoreThanGasLimit");
 
-    let err = provider.estimate_gas(tx).await.unwrap_err();
+    let err = provider.estimate_gas(tx.clone()).await.unwrap_err();
     let err = err.as_error_resp().unwrap();
     assert_eq!(err.code, -32003);
     assert_eq!(err.message, "Out of gas: gas required exceeds allowance: 50000");
+
+    let err = provider.send_transaction(tx.clone()).await.unwrap_err();
+    let err = err.as_error_resp().unwrap();
+    assert_eq!(err.code, -32000);
+    assert_eq!(err.message, "intrinsic gas too high -- GasFloorMoreThanGasLimit");
+
+    // Below the calldata intrinsic gas, which is lower than the floor.
+    let err = provider.send_transaction(tx.with_gas_limit(30_000)).await.unwrap_err();
+    let err = err.as_error_resp().unwrap();
+    assert_eq!(err.code, -32000);
+    assert_eq!(err.message, "intrinsic gas too high -- CallGasCostMoreThanGasLimit");
+    assert_eq!(provider.get_block_number().await.unwrap(), 0);
 }
