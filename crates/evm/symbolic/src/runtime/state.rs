@@ -136,6 +136,7 @@ impl PathState {
     pub(crate) fn apply_executor_env(&mut self, cx: &mut SymCx, executor: &ExecutorView<'_>) {
         self.block = SymbolicBlock::from_executor(cx, executor);
         self.gas_price = SymExpr::constant(cx, U256::from(executor.gas_price));
+        self.persistent_accounts.extend(executor.persistent_accounts.iter().copied());
         for &(target, overwrite) in &executor.arbitrary_storage_targets {
             self.world.enable_arbitrary_storage(target, overwrite);
         }
@@ -919,31 +920,27 @@ impl PathState {
         }
     }
 
-    pub(crate) fn read_callers_words(&self, cx: &mut SymCx) -> Vec<SymExpr> {
-        let (mode, caller, origin) = if let Some((_, caller_word)) = self.prank.next_caller.as_ref()
-        {
-            (
-                U256::from(3),
-                caller_word.clone(),
-                self.prank
-                    .next_origin
-                    .as_ref()
-                    .map(|(_, origin_word)| origin_word.clone())
-                    .unwrap_or_else(|| self.origin_word.clone()),
-            )
-        } else if let Some((_, caller_word)) = self.prank.persistent_caller.as_ref() {
-            (
-                U256::from(4),
-                caller_word.clone(),
-                self.prank
-                    .persistent_origin
-                    .as_ref()
-                    .map(|(_, origin_word)| origin_word.clone())
-                    .unwrap_or_else(|| self.origin_word.clone()),
-            )
+    /// Returns the caller mode, sender, and origin of the nearest prank at or below this frame,
+    /// as Forge's `vm.readCallers` reports it.
+    pub(crate) fn callers(&self) -> Option<(U256, SymExpr, SymExpr)> {
+        let (mode, caller_word, origin) = if let Some((_, caller_word)) = &self.prank.next_caller {
+            (U256::from(3), caller_word, &self.prank.next_origin)
+        } else if let Some((_, caller_word)) = &self.prank.persistent_caller {
+            (U256::from(4), caller_word, &self.prank.persistent_origin)
         } else {
-            (U256::ZERO, self.caller_word.clone(), self.origin_word.clone())
+            return self.prank.inherited.clone();
         };
+        let origin_word = origin
+            .as_ref()
+            .map(|(_, origin_word)| origin_word.clone())
+            .unwrap_or_else(|| self.origin_word.clone());
+        Some((mode, caller_word.clone(), origin_word))
+    }
+
+    pub(crate) fn read_callers_words(&self, cx: &mut SymCx) -> Vec<SymExpr> {
+        let (mode, caller, origin) = self
+            .callers()
+            .unwrap_or_else(|| (U256::ZERO, self.origin_word.clone(), self.origin_word.clone()));
         vec![SymExpr::constant(cx, mode), caller, origin]
     }
 
@@ -1727,6 +1724,9 @@ pub(crate) struct SymbolicPrank {
     next_origin: Option<(Address, SymExpr)>,
     persistent_caller: Option<(Address, SymExpr)>,
     persistent_origin: Option<(Address, SymExpr)>,
+    /// The caller mode, sender, and origin a caller frame's prank gave this frame. It does not
+    /// apply to calls this frame makes, but `vm.readCallers` reports it.
+    pub(crate) inherited: Option<(U256, SymExpr, SymExpr)>,
 }
 
 impl SymbolicPrank {

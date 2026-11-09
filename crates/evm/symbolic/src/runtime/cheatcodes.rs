@@ -862,15 +862,16 @@ pub(crate) fn parse_env_value(value: &str, ty: &DynSolType) -> Result<DynSolValu
 }
 
 pub(crate) fn parse_env_uint(value: &str) -> Result<U256, SymbolicError> {
-    value.parse::<U256>().map_err(|_| SymbolicError::Unsupported("symbolic env uint parse"))
+    match DynSolType::Uint(256).coerce_str(value) {
+        Ok(DynSolValue::Uint(value, _)) => Ok(value),
+        _ => Err(SymbolicError::Unsupported("symbolic env uint parse")),
+    }
 }
 
 pub(crate) fn parse_env_int(value: &str) -> Result<U256, SymbolicError> {
-    if let Some(value) = value.strip_prefix('-') {
-        let magnitude = parse_env_uint(value)?;
-        Ok(U256::ZERO.wrapping_sub(magnitude))
-    } else {
-        parse_env_uint(value)
+    match DynSolType::Int(256).coerce_str(value) {
+        Ok(DynSolValue::Int(value, _)) => Ok(value.into_raw()),
+        _ => Err(SymbolicError::Unsupported("symbolic env int parse")),
     }
 }
 

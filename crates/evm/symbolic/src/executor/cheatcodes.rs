@@ -1828,16 +1828,14 @@ impl SymbolicExecutor {
             | toString_4Call::SELECTOR
             | toString_5Call::SELECTOR => {
                 let output = match selector {
-                    toString_0Call::SELECTOR => format!(
-                        "{:?}",
-                        read_abi_address_arg(
-                            &mut self.cx,
-                            &state.memory,
-                            args_offset,
-                            0,
-                            "symbolic vm.toString"
-                        )?
-                    ),
+                    toString_0Call::SELECTOR => read_abi_address_arg(
+                        &mut self.cx,
+                        &state.memory,
+                        args_offset,
+                        0,
+                        "symbolic vm.toString",
+                    )?
+                    .to_string(),
                     toString_1Call::SELECTOR => hex::encode_prefixed(read_abi_dynamic_bytes_arg(
                         &mut self.cx,
                         &state.memory,
@@ -1922,7 +1920,17 @@ impl SymbolicExecutor {
                     value = std::env::var(value)
                         .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
                 }
-                let value = parse_env_value(&value, &ty)?;
+                let value = match parse_env_value(&value, &ty) {
+                    Ok(value) => value,
+                    Err(error) if from_env => return Err(error),
+                    Err(_) => {
+                        let name = message.trim_start_matches("symbolic ");
+                        return Ok(CheatcodeOutcome::Revert(error_string_return_data(
+                            &mut self.cx,
+                            &format!("{name}: failed parsing {value:?} as type `{ty}`"),
+                        )));
+                    }
+                };
                 Ok(match value.as_word() {
                     Some(word) => CheatcodeOutcome::Continue(vec![SymExpr::constant(
                         &mut self.cx,
@@ -1969,14 +1977,10 @@ impl SymbolicExecutor {
                     decode_cheatcode_args(&mut self.cx, state, selector, in_offset, in_size)?;
                 let input = dyn_string(&values[0])?;
                 let delimiter = dyn_string(&values[1])?;
-                let parts = if delimiter.is_empty() {
-                    input.chars().map(|ch| DynSolValue::String(ch.to_string())).collect()
-                } else {
-                    input
-                        .split(&delimiter)
-                        .map(|part| DynSolValue::String(part.to_string()))
-                        .collect()
-                };
+                let parts = input
+                    .split(&delimiter)
+                    .map(|part| DynSolValue::String(part.to_string()))
+                    .collect();
                 Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(
                     &mut self.cx,
                     DynSolValue::Array(parts),
