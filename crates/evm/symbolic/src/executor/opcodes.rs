@@ -1537,6 +1537,19 @@ impl SymbolicExecutor {
         &mut self,
         state: &mut PathState,
     ) -> Result<StepOutcome, SymbolicError> {
+        // Like Forge, a frame that reverts while its own `vm.assumeNoRevert` is still pending,
+        // such as after a reverting CREATE, turns a matching revert into `FOUNDRY::ASSUME`.
+        if let Some(assumption) = state.assume_no_revert_next_call.take()
+            && self.assume_no_revert_matches(
+                state,
+                &assumption,
+                state.address,
+                &state.return_data,
+            )?
+        {
+            state.return_data =
+                SymReturnData::from_concrete_bytes(&mut self.cx, MAGIC_ASSUME.to_vec());
+        }
         if state.call_depth != 0 {
             return Ok(StepOutcome::Revert);
         }
