@@ -3948,4 +3948,25 @@ contract CallGasReplayTest is Test {
 ...
 "#]],
     );
+    // Corpus replay runs under the cap too: without the persisted failure, the corpus entry that
+    // holds the `record()` call must still break the invariant.
+    prj.update_config(|config| {
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+    });
+    let failures = prj.root().join("cache").join("invariant").join("failures");
+    // Without the persisted failure the campaign runs again and writes the corpus.
+    std::fs::remove_dir_all(&failures).unwrap();
+    cmd.forge_fuse().args(["test", "--mt", "invariant_never_low_gas"]).assert_failure();
+    std::fs::remove_dir_all(&failures).unwrap();
+    let corpus_dir = prj.root().join("invariant_corpus");
+    cmd.forge_fuse()
+        .args(["fuzz", "replay", "--mt", "invariant_never_low_gas", "--corpus-dir"])
+        .arg(&corpus_dir)
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: corpus replay failed:
+corpus entry [..] failed during replay: invariant `invariant_never_low_gas` broken] invariant_never_low_gas() ([GAS])
+...
+"#]]);
 }

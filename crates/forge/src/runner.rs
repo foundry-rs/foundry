@@ -4018,7 +4018,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         narrow_generated_corpus_root(corpus_dir, target_dir)
                     })
                     .or(resolved_corpus_dir);
-                return self.run_showmap(func, &func.name, corpus_dir, showmap, replay_target);
+                let executor = self.clone_invariant_executor();
+                return self.run_showmap(
+                    executor,
+                    func,
+                    &func.name,
+                    corpus_dir,
+                    showmap,
+                    replay_target,
+                );
             }
             if let Some(minimize) = minimize {
                 let target = self.fuzz_minimize_target_id(&invariant_display_name);
@@ -5161,7 +5169,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 })
                 .or(legacy_corpus_dir)
                 .or_else(|| fuzz_config.corpus.corpus_dir.clone());
-            return self.run_showmap(func, &test_name, corpus_dir, showmap, replay_target);
+            let executor = self.clone_executor();
+            return self.run_showmap(
+                executor,
+                func,
+                &test_name,
+                corpus_dir,
+                showmap,
+                replay_target,
+            );
         }
         if let Some(minimize) = self.cr.mcr.tcfg.fuzz_minimize.as_ref() {
             let target = self.fuzz_minimize_target_id(&func.signature());
@@ -5344,8 +5360,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     }
 
     /// Replays the persisted corpus and writes AFL-`afl-showmap`-style files.
+    /// Replays a corpus into showmap coverage files on `executor`, which the caller clones
+    /// with the limits of the campaign the corpus came from.
     fn run_showmap(
         mut self,
+        mut executor: Executor<FEN>,
         func: &Function,
         test_name: &str,
         corpus_dir: Option<PathBuf>,
@@ -5363,7 +5382,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // (bytecode_hash, pc) are deterministic across forge processes —
         // `EdgeCovInspector` uses a per-process random hash and would yield
         // non-comparable IDs across approaches.
-        let mut executor = self.clone_executor();
         let domain = showmap.domain;
         executor.inspector_mut().collect_line_coverage(domain.includes_evm());
         executor.inspector_mut().collect_sancov_edges(domain.includes_sancov());
