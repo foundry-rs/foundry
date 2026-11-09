@@ -1769,6 +1769,14 @@ impl<N: Network> Backend<N> {
         if self.is_tempo() {
             return Err(InvalidTransactionError::TempoBlobTransactionUnsupported.into());
         }
+        // OP Stack chains have no blob transaction type either.
+        #[cfg(feature = "base")]
+        if self.is_base() {
+            return Err(InvalidTransactionError::OpStackBlobTransactionUnsupported.into());
+        }
+        if self.is_optimism() {
+            return Err(InvalidTransactionError::OpStackBlobTransactionUnsupported.into());
+        }
         if self.is_eip4844() {
             return Ok(());
         }

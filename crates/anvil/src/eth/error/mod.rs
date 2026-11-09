@@ -356,6 +356,9 @@ pub enum InvalidTransactionError {
     /// Thrown when a blob transaction is submitted on a Tempo network.
     #[error("EIP-4844 blob transactions are not supported on Tempo")]
     TempoBlobTransactionUnsupported,
+    /// Thrown when a blob transaction is submitted on an OP Stack network.
+    #[error("EIP-4844 blob transactions are not supported on OP Stack chains")]
+    OpStackBlobTransactionUnsupported,
     /// Thrown when there are no `blob_hashes` in the transaction.
     #[error("There should be at least one blob in a Blob transaction.")]
     EmptyBlobs,
