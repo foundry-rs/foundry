@@ -200,6 +200,17 @@ contract SymbolicPrankSender is Test {
         assertEq(target.origin(), origin);
         vm.stopPrank();
     }
+
+    function checkPrankRejectsUnusedPrankOverwrite() public {
+        vm.prank(address(0xA));
+        vm.prank(address(0xB));
+    }
+
+    function checkPrankRejectsOngoingStartPrankOverride() public {
+        vm.startPrank(address(0xA));
+        target.sender();
+        vm.prank(address(0xB));
+    }
 }
 "#,
     );
@@ -210,15 +221,17 @@ contract SymbolicPrankSender is Test {
         "--match-contract",
         "SymbolicPrankSender",
     ]))
-    .success()
+    .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 4 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
+Ran 6 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
+[FAIL: vm.prank: cannot override an ongoing prank with a single vm.prank; use vm.startPrank to override the current prank; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkPrankRejectsOngoingStartPrankOverride() ([METRICS])
+[FAIL: vm.prank: cannot overwrite a prank until it is applied at least once; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkPrankRejectsUnusedPrankOverwrite() ([METRICS])
 [PASS] checkSymbolicPrank(address) ([METRICS])
 [PASS] checkSymbolicPrankOrigin(address,address) ([METRICS])
 [PASS] checkSymbolicStartPrank(address) ([METRICS])
 [PASS] checkSymbolicStartPrankOrigin(address,address) ([METRICS])
-Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 4 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()

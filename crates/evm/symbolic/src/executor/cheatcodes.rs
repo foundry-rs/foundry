@@ -1122,6 +1122,13 @@ impl SymbolicExecutor {
                         )
                     })
                     .transpose()?;
+                if let Some(error) = state.prank.overwrite_error(persistent) {
+                    let name = if persistent { "startPrank" } else { "prank" };
+                    return Ok(CheatcodeOutcome::Revert(error_string_return_data(
+                        &mut self.cx,
+                        &format!("vm.{name}: {error}"),
+                    )));
+                }
                 if persistent {
                     state.prank.set_persistent(caller, origin);
                 } else {
