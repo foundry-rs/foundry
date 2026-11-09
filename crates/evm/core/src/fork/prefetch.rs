@@ -145,25 +145,6 @@ fn keys(db: &MemDb) -> Vec<Key> {
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn picks_newest_cache_file_below_block() {
-        let dir = std::env::temp_dir().join(format!("foundry-prefetch-{}", std::process::id()));
-        std::fs::create_dir_all(dir.join("120")).unwrap();
-        for block in ["90", "100", "110", "130", "notes"] {
-            std::fs::write(dir.join(block), b"{}").unwrap();
-        }
-
-        // `120` is a directory, as anvil writes it, and `130` is not below the block.
-        assert_eq!(previous_cache_file(&dir, 125), Some(dir.join("110")));
-        assert_eq!(previous_cache_file(&dir, 90), None);
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-}
-
 /// Runtime code that returns one zero word, standing in for the cheatcode contract in a
 /// simulation on the fork's endpoint: `PUSH1 0x20 PUSH1 0x00 RETURN`.
 const CHEATCODE_STUB: Bytes = Bytes::from_static(&[0x60, 0x20, 0x60, 0x00, 0xf3]);
@@ -229,4 +210,23 @@ pub fn state_override<N: Network, B: ForkBlockEnv>(
     }
     overrides.entry(CHEATCODE_ADDRESS).or_default().code = Some(CHEATCODE_STUB);
     Some(overrides)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn picks_newest_cache_file_below_block() {
+        let dir = std::env::temp_dir().join(format!("foundry-prefetch-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("120")).unwrap();
+        for block in ["90", "100", "110", "130", "notes"] {
+            std::fs::write(dir.join(block), b"{}").unwrap();
+        }
+
+        // `120` is a directory, as anvil writes it, and `130` is not below the block.
+        assert_eq!(previous_cache_file(&dir, 125), Some(dir.join("110")));
+        assert_eq!(previous_cache_file(&dir, 90), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
