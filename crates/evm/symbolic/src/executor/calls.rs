@@ -314,6 +314,8 @@ impl SymbolicExecutor {
         if state.expected_calls.is_empty() {
             return Ok(true);
         }
+        // Like Forge, the call counts for every expectation it matches.
+        let mut observed = true;
         for idx in 0..state.expected_calls.len() {
             if let Some(constraints) = self.expected_call_match_constraints(
                 state,
@@ -324,10 +326,10 @@ impl SymbolicExecutor {
                 calldata,
             )? {
                 state.constraints = constraints;
-                return Ok(state.expected_calls[idx].observe());
+                observed &= state.expected_calls[idx].observe();
             }
         }
-        Ok(true)
+        Ok(observed)
     }
 
     #[expect(clippy::too_many_arguments)]
