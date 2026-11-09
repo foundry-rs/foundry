@@ -345,6 +345,23 @@ contract SymbolicExtcodeHash is Test {
         bytes32 expected = who == coded ? keccak256(hex"60006000") : bytes32(0);
         assertEq(who.codehash, expected);
     }
+
+    // EIP-161: an account that is empty again has no code hash.
+    function checkEmptiedCodeHash() public {
+        address who = address(0xA11CE);
+        vm.deal(who, 1);
+        vm.deal(who, 0);
+        assertEq(who.codehash, bytes32(0));
+        vm.etch(who, hex"00");
+        vm.etch(who, "");
+        assertEq(who.codehash, bytes32(0));
+    }
+
+    function checkSymbolicBalanceCodeHash(uint256 amount) public {
+        address who = address(0xA11CE);
+        vm.deal(who, amount);
+        assertEq(who.codehash, amount == 0 ? bytes32(0) : keccak256(""));
+    }
 }
 "#,
     );
@@ -358,9 +375,11 @@ contract SymbolicExtcodeHash is Test {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicExtcodeHash.t.sol:SymbolicExtcodeHash
+Ran 3 tests for test/SymbolicExtcodeHash.t.sol:SymbolicExtcodeHash
+[PASS] checkEmptiedCodeHash() ([METRICS])
+[PASS] checkSymbolicBalanceCodeHash(uint256) ([METRICS])
 [PASS] checkSymbolicCodeHash(address) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
