@@ -3,9 +3,14 @@ use alloy_provider::{
     Identity, RootProvider, builder,
     fillers::{ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, WalletFiller},
 };
-use foundry_common::provider::{
-    ProviderBuilder, RetryProvider, RetryProviderWithSigner, get_http_provider,
+use alloy_rpc_types::anvil::Forking;
+use anvil::eth::{EthApi, error::BlockchainError};
+use foundry_common::{
+    provider::{ProviderBuilder, RetryProvider, RetryProviderWithSigner, get_http_provider},
+    retry::{Retry, RetryError},
 };
+use foundry_primitives::FoundryNetwork;
+use std::time::Duration;
 
 pub fn http_provider(http_endpoint: &str) -> RetryProvider {
     get_http_provider(http_endpoint)
@@ -63,4 +68,21 @@ pub async fn ipc_provider_with_wallet(
     ProviderBuilder::new(ipc_endpoint)
         .build_with_wallet(wallet)
         .expect("failed to build Alloy IPC provider with signer")
+}
+
+/// Allows background receipt polling to finish without retrying other reset failures.
+pub async fn reset_when_idle(
+    api: &EthApi<FoundryNetwork>,
+    forking: Option<Forking>,
+) -> eyre::Result<()> {
+    tokio::time::timeout(
+        Duration::from_secs(30),
+        Retry::new(50, Duration::from_millis(100)).run_async_until_break(|| async {
+            api.anvil_reset(forking.clone()).await.map_err(|error| match error {
+                error @ BlockchainError::NodeBusy => RetryError::Retry(error.into()),
+                error => RetryError::Break(error.into()),
+            })
+        }),
+    )
+    .await?
 }

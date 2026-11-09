@@ -3,7 +3,7 @@
 use crate::{
     abi::{self, BUSD, Greeter, Multicall},
     fork::fork_config,
-    utils::http_provider_with_signer,
+    utils::{http_provider_with_signer, reset_when_idle},
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{SignableTransaction, TxEip1559};
@@ -2062,7 +2062,7 @@ async fn test_anvil_reset_non_fork() {
     assert_eq!(to_balance_before_reset, val);
 
     // Reset to fresh in-memory state (non-fork)
-    api.anvil_reset(None).await.unwrap();
+    reset_when_idle(&api, None).await.unwrap();
 
     // Check instance id has changed
     let instance_id_after = api.instance_id();
