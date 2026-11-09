@@ -27,8 +27,8 @@ use foundry_common::FoundryTransactionBuilder;
 use foundry_evm_core::{
     backend::{Backend, BackendResult, CowBackend, GLOBAL_FAIL_SLOT, handler_error},
     constants::{
-        CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_CODE,
-        DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
+        CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
+        DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
     decode::{RevertDecoder, SkipReason},
     eip2935::{
@@ -153,16 +153,16 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         backend.extend_persistent_accounts(extra_cheatcode_addresses.iter().copied());
 
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
-        // do not fail.
-        // evm2 requires the code hash to be the hash of the code.
-        let stub = Bytecode::new_raw(Bytes::from_static(&[0]));
-        let stub_hash = stub.hash_slow();
-        for address in
-            std::iter::once(CHEATCODE_ADDRESS).chain(extra_cheatcode_addresses.iter().copied())
+        // do not fail. The code hash is fixed, so each account gets its own stub code seeded with
+        // it: clones share the cached hash.
+        for (address, code_hash) in std::iter::once((CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH))
+            .chain(extra_cheatcode_addresses.iter().map(|&address| (address, keccak256(address))))
         {
+            let stub = Bytecode::new_raw(Bytes::from_static(&[0]));
+            stub.seed_hash(code_hash);
             backend.insert_account_info(
                 address,
-                AccountInfo::new(U256::ZERO, 0, stub_hash, Some(stub.clone())),
+                AccountInfo::new(U256::ZERO, 0, code_hash, Some(stub)),
             );
         }
 
@@ -2098,6 +2098,10 @@ mod tests {
             test_executor(ExecutorBuilder::<MonadEvmNetwork>::new(), NetworkConfigs::with_monad());
         assert!(monad.backend().networks().is_monad());
         assert!(monad.backend().is_persistent(&MONAD_CHEATCODE_ADDRESS));
+        // Each cheatcode account keeps its fixed code hash.
+        let code_hash = |address| monad.account(address).unwrap().code_hash;
+        assert_eq!(code_hash(CHEATCODE_ADDRESS), CHEATCODE_CONTRACT_HASH);
+        assert_eq!(code_hash(MONAD_CHEATCODE_ADDRESS), keccak256(MONAD_CHEATCODE_ADDRESS));
     }
 
     #[test]
