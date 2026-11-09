@@ -406,6 +406,14 @@ contract ExpectRevertWithReverterTest is Test {
         new NestedDContractCreator2{salt: outerSalt}();
         new NestedDContractCreator2{salt: outerSalt}();
     }
+
+    // A nested CREATE that fails before its frame starts (here, out of funds) never
+    // runs at the would-be address, so the reverter is the calling contract.
+    function testExpectRevertsWithReverterUnfundedCreate() public {
+        UnfundedCreator creator = new UnfundedCreator();
+        vm.expectRevert(address(creator));
+        creator.deploy();
+    }
 }
 
 // Used by `testExpectRevertsWithReverterNestedCreate`: a contract whose constructor
@@ -424,6 +432,20 @@ bytes32 constant NESTED_DCONTRACT_CREATOR2_INNER_SALT = bytes32(uint256(0xDEAD))
 contract NestedDContractCreator2 {
     constructor() {
         new DContract{salt: NESTED_DCONTRACT_CREATOR2_INNER_SALT}();
+    }
+}
+
+// Used by `testExpectRevertsWithReverterUnfundedCreate`: a payable child endowed with
+// more value than its creator holds.
+contract EndowedChild {
+    constructor() payable {}
+}
+
+// Used by `testExpectRevertsWithReverterUnfundedCreate`: creates `EndowedChild` without
+// the funds to endow it.
+contract UnfundedCreator {
+    function deploy() external returns (address) {
+        return address(new EndowedChild{value: 1}());
     }
 }
 
