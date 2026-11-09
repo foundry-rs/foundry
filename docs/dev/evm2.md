@@ -49,7 +49,7 @@ These compatibility differences affect execution, gas reports and Anvil library 
   `CREATE2` endowment instead wraps the new account's existing balance modulo 2^256 where revm
   failed the creation. The symbolic engine models the same behavior. The fee reward credited to
   the block beneficiary also wraps modulo 2^256, where revm saturated it: a coinbase that holds
-  `type(uint256).max` keeps only the priority fee after one transaction.
+  `type(uint256).max` holds the priority fee minus 1 wei after one transaction.
 - **Arbitrary storage warmth**: with `vm.setArbitraryStorage`, the revm inspector warmed slots
   before `SLOAD`. evm2 leaves otherwise-cold slots cold until the opcode accesses them, costing
   2,000 more gas per cold read on Berlin and later.
