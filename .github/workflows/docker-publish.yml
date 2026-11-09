@@ -133,7 +133,7 @@ jobs:
       - name: Build and push Foundry image
         id: build
         if: steps.existing.outputs.exists != 'true'
-        uses: depot/build-push-action@98e78adca7817480b8185f474a400b451d74e287 # v1.18.0
+        uses: depot/build-push-action@0f27be7c41d76663a98518dfe68f1c46582242c4 # v1.19.0
         with:
           build-args: |
             RUST_PROFILE=${{ env.RUST_PROFILE }}
