@@ -495,6 +495,7 @@ impl WorkerCorpusSeed {
         };
         let mut seen_entries =
             seed.in_memory_corpus.iter().map(|entry| entry.uuid).collect::<HashSet<_>>();
+        let mut entries = Vec::new();
         for entry in unique_corpus_entries(&replay_dirs, &mut seen_entries) {
             // A corrupt or truncated corpus file must not abort the whole campaign startup: skip
             // it and keep loading the rest of the corpus. Canonical entries are atomically
@@ -507,18 +508,21 @@ impl WorkerCorpusSeed {
                     continue;
                 }
             };
-            if tx_seq.is_empty() {
-                continue;
+            if !tx_seq.is_empty() {
+                entries.push((entry, tx_seq));
             }
+        }
 
-            let coverage = ReplayCoverage {
-                history_map: &mut seed.history_map,
-                edge_indices: &mut seed.edge_indices,
-                sancov_history_map: &mut seed.sancov_history_map,
-                metrics: Some(&mut seed.metrics),
-            };
-            let ReplayOutcome { keep_entry, new_edge, cmp_seq, failed_replays, .. } =
-                replay_corpus_sequence(&tx_seq, executor, target, coverage)?;
+        let coverage = ReplayCoverage {
+            history_map: &mut seed.history_map,
+            edge_indices: &mut seed.edge_indices,
+            sancov_history_map: &mut seed.sancov_history_map,
+            metrics: Some(&mut seed.metrics),
+        };
+        let sequences = entries.iter().map(|(_, tx_seq)| tx_seq.as_slice()).collect::<Vec<_>>();
+        let outcomes = replay_corpus_sequences(&sequences, executor, target, coverage)?;
+        for ((entry, tx_seq), outcome) in entries.into_iter().zip(outcomes) {
+            let ReplayOutcome { keep_entry, new_edge, cmp_seq, failed_replays, .. } = outcome;
             seed.failed_replays += failed_replays;
             // Start the timer at the baseline load if replay hit a first-time edge.
             if new_edge {
@@ -723,14 +727,22 @@ pub(crate) fn register_replay_created(
     let (Some(dynamic), Some(fuzzed_contracts)) = (dynamic, fuzzed_contracts) else {
         return;
     };
+    // A created contract is collected again by every later call that touches it. Record each
+    // address once, so clearing a suffix of `created` never drops a target an earlier call made.
+    let mut collected = Vec::new();
     if let Err(error) = fuzzed_contracts.collect_created_contracts(
         state_changeset,
         dynamic.project_contracts,
         dynamic.setup_contracts,
         dynamic.artifact_filters,
-        created,
+        &mut collected,
     ) {
         warn!(target: "corpus", "{error}");
+    }
+    for address in collected {
+        if !created.contains(&address) {
+            created.push(address);
+        }
     }
 }
 
@@ -875,6 +887,150 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
         cmp_seq,
         failed_replays,
     })
+}
+
+/// Replays persisted corpus sequences, executing each distinct prefix once.
+///
+/// Persisted entries often extend the same prefixes, for example the calls that led to a state
+/// snapshot, so replaying every entry from the initial state executes the shared calls once per
+/// entry. The sequences are merged into a prefix tree that is replayed depth first, and the state
+/// is cloned where sequences diverge. The outcomes are in input order and match replaying each
+/// sequence on its own clone of `executor`, except that coverage is merged in tree order.
+fn replay_corpus_sequences<FEN: FoundryEvmNetwork>(
+    sequences: &[&[BasicTxDetails]],
+    executor: &Executor<FEN>,
+    target: ReplayTarget<'_>,
+    coverage: ReplayCoverage<'_>,
+) -> Result<Vec<ReplayOutcome>> {
+    /// A call in the prefix tree; node 0 is the empty prefix.
+    #[derive(Default)]
+    struct Node<'a> {
+        tx: Option<&'a BasicTxDetails>,
+        parent: usize,
+        children: Vec<usize>,
+        replayed: bool,
+        new_coverage: bool,
+        new_edge: bool,
+        cmp: Vec<ComparisonHint>,
+    }
+
+    let ReplayCoverage { history_map, edge_indices, sancov_history_map, mut metrics } = coverage;
+    let mut nodes = vec![Node::default()];
+    let mut ends = Vec::with_capacity(sequences.len());
+    for sequence in sequences {
+        let mut node = 0;
+        for tx in *sequence {
+            node = if let Some(child) =
+                nodes[node].children.iter().copied().find(|&child| nodes[child].tx == Some(tx))
+            {
+                child
+            } else {
+                let child = nodes.len();
+                nodes.push(Node { tx: Some(tx), parent: node, ..Default::default() });
+                nodes[node].children.push(child);
+                child
+            };
+        }
+        ends.push(node);
+    }
+
+    // Each pending node carries the state before its call and the number of dynamic targets its
+    // ancestors created; targets created in a finished sibling subtree are cleared first.
+    let mut created = Vec::new();
+    let mut pending = nodes[0]
+        .children
+        .iter()
+        .rev()
+        .map(|&child| (child, executor.clone(), 0))
+        .collect::<Vec<_>>();
+    while let Some((node, mut executor, created_len)) = pending.pop() {
+        rollback_replay_created(target.fuzzed_contracts, created.split_off(created_len));
+        let tx = nodes[node].tx.expect("only the root has no call");
+        if !WorkerCorpus::can_replay_tx(
+            tx,
+            target.stateless,
+            target.fuzzed_contracts,
+            target.senders,
+        ) {
+            debug!(target: "corpus", ?tx, "persisted call is outside the current targets");
+            continue;
+        }
+
+        let (kind, mut call_result) = if target.fuzzed_contracts.is_some() {
+            execute_invariant_replay_tx(&mut executor, tx)?
+        } else {
+            (CampaignCallKind::Accepted, execute_tx(&mut executor, tx)?)
+        };
+        let cmp = ComparisonHint::applicable(
+            &tx.call_details.calldata,
+            call_result
+                .evm_cmp_values
+                .take()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|cmp| ComparisonHint { lhs: cmp.op1, rhs: cmp.op2 }),
+        );
+        let (new_coverage, new_edge) =
+            call_result.merge_all_coverage(history_map, edge_indices, sancov_history_map);
+        if new_coverage && let Some(metrics) = metrics.as_deref_mut() {
+            metrics.update_seen(new_edge);
+        }
+        if kind == CampaignCallKind::Accepted {
+            register_replay_created(
+                &call_result.state_changeset,
+                target.dynamic,
+                target.fuzzed_contracts,
+                &mut created,
+            );
+        }
+        let replayed = &mut nodes[node];
+        replayed.replayed = true;
+        replayed.new_coverage = new_coverage;
+        replayed.new_edge = new_edge;
+        replayed.cmp = cmp;
+
+        // The first child continues on this state; later children get their own clone.
+        if let Some((&first, rest)) = nodes[node].children.split_first() {
+            pending
+                .extend(rest.iter().rev().map(|&child| (child, executor.clone(), created.len())));
+            pending.push((first, executor, created.len()));
+        }
+    }
+    rollback_replay_created(target.fuzzed_contracts, created);
+
+    Ok(ends
+        .into_iter()
+        .map(|end| {
+            let mut path = Vec::new();
+            let mut node = end;
+            while node != 0 {
+                path.push(node);
+                node = nodes[node].parent;
+            }
+            let mut outcome = ReplayOutcome {
+                keep_entry: true,
+                new_coverage: false,
+                new_edge: false,
+                cmp_seq: Vec::with_capacity(path.len()),
+                failed_replays: 0,
+            };
+            for &node in path.iter().rev() {
+                let node = &nodes[node];
+                if !node.replayed {
+                    // Loaded sequences run verbatim, so a call outside the current targets,
+                    // selectors, or senders drops the entry.
+                    outcome.keep_entry = false;
+                    outcome.failed_replays = 1;
+                    outcome.cmp_seq.push(Vec::new());
+                    break;
+                }
+                outcome.new_coverage |= node.new_coverage;
+                outcome.new_edge |= node.new_edge;
+                outcome.cmp_seq.push(node.cmp.clone());
+            }
+            outcome
+        })
+        .collect())
 }
 
 impl WorkerCorpus {
@@ -3555,5 +3711,97 @@ mod tests {
                 assert!(seed.optimization_best_sequence.is_empty());
             }
         }
+    }
+
+    #[test]
+    fn prefix_tree_replay_matches_per_sequence_replay() {
+        let target = Address::repeat_byte(0x11);
+        let function = Function::parse("test(uint256)").unwrap();
+        let other = Function::parse("other()").unwrap();
+        let contracts = targeted_contracts_with_selective_functions(
+            target,
+            vec![function.clone(), other.clone()],
+            [function.selector()],
+        );
+        let tx = |arg: u64| {
+            tx_for_function(target, &function, &[DynSolValue::Uint(U256::from(arg), 256)])
+        };
+        let excluded = tx_for_function(target, &other, &[]);
+
+        // Adds the argument to slot 0 and branches on `42 < sum`, so the coverage and the
+        // comparisons of each call depend on the calls before it.
+        let mut code = vec![0x60, 0x04, 0x35, 0x5f, 0x54, 0x01, 0x80, 0x5f, 0x55, 0x60, 0x2a, 0x10];
+        let dest = code.len() + 4;
+        code.extend_from_slice(&[0x60, dest.try_into().unwrap(), 0x57, 0x00, 0x5b, 0x00]);
+        let mut executor = sync_test_executor(temp_corpus_dir(), target);
+        executor.inspector_mut().cheatcodes =
+            Some(Box::new(Cheatcodes::new(Arc::new(CheatsConfig::default()))));
+        executor.inspector_mut().collect_evm_cmp_log(true);
+        executor.set_code(target, Bytecode::new_raw(code.into())).unwrap();
+
+        let sequences = [
+            vec![tx(1), tx(2), tx(3)],
+            vec![tx(1), tx(2), tx(40)],
+            vec![tx(1), excluded, tx(3)],
+            vec![tx(1), tx(2)],
+            vec![tx(50)],
+            vec![tx(1), tx(2), tx(3)],
+        ];
+        let sequences = sequences.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        let replay_target = ReplayTarget {
+            stateless: None,
+            fuzzed_contracts: Some(&contracts),
+            dynamic: None,
+            senders: None,
+        };
+
+        let (mut tree_history, mut tree_indices, mut tree_sancov) =
+            (Vec::new(), EdgeIndexMap::default(), Vec::new());
+        let tree = replay_corpus_sequences(
+            &sequences,
+            &executor,
+            replay_target,
+            ReplayCoverage {
+                history_map: &mut tree_history,
+                edge_indices: &mut tree_indices,
+                sancov_history_map: &mut tree_sancov,
+                metrics: None,
+            },
+        )
+        .unwrap();
+
+        let (mut history, mut indices, mut sancov) =
+            (Vec::new(), EdgeIndexMap::default(), Vec::new());
+        for (sequence, tree) in sequences.iter().zip(&tree) {
+            let outcome = replay_corpus_sequence(
+                sequence,
+                &executor,
+                replay_target,
+                ReplayCoverage {
+                    history_map: &mut history,
+                    edge_indices: &mut indices,
+                    sancov_history_map: &mut sancov,
+                    metrics: None,
+                },
+            )
+            .unwrap();
+            assert_eq!(tree.keep_entry, outcome.keep_entry);
+            assert_eq!(tree.failed_replays, outcome.failed_replays);
+            if outcome.keep_entry {
+                assert_eq!(tree.cmp_seq, outcome.cmp_seq);
+            }
+        }
+        assert_eq!(
+            tree.iter().map(|outcome| outcome.keep_entry).collect::<Vec<_>>(),
+            [true, true, false, true, true, true]
+        );
+        assert!(tree.iter().any(|outcome| outcome.cmp_seq.iter().any(|hints| !hints.is_empty())));
+
+        // The tree assigns edge indices in tree order, so compare the merged hit counts.
+        assert_eq!(tree_indices.edge_count(), indices.edge_count());
+        tree_history.sort_unstable();
+        history.sort_unstable();
+        assert_eq!(tree_history, history);
+        assert!(history.iter().any(|&hit| hit != 0));
     }
 }
