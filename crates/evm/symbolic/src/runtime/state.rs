@@ -1971,6 +1971,21 @@ impl SymbolicWorld {
             .find_map(|(word, slot)| (*slot == address).then(|| word.clone()))
     }
 
+    /// Returns the condition under which `expr` denotes the account at `address`. A
+    /// representative account stands for its symbolic address expression, not for its
+    /// placeholder address.
+    pub(crate) fn symbolic_address_condition(
+        &self,
+        cx: &mut SymCx,
+        expr: &SymExpr,
+        address: Address,
+    ) -> SymBoolExpr {
+        let candidate = self
+            .symbolic_word_for_address(address)
+            .unwrap_or_else(|| SymExpr::constant(cx, address_word(address)));
+        SymBoolExpr::eq(cx, expr.clone(), candidate)
+    }
+
     pub(crate) fn snapshot_state(&mut self) -> U256 {
         let id = U256::from(self.next_snapshot_id);
         self.next_snapshot_id = self.next_snapshot_id.saturating_add(1);
@@ -2188,8 +2203,7 @@ impl SymbolicWorld {
         let cheatcode_addresses = [CHEATCODE_ADDRESS, SYMBOLIC_VM_COMPAT_ADDRESS];
         for address in self.known_addresses(executor).into_iter().chain(cheatcode_addresses) {
             let balance = self.balance_word_for_address(cx, executor, address);
-            let address = SymExpr::constant(cx, address_word(address));
-            let condition = SymBoolExpr::eq(cx, expr.clone(), address);
+            let condition = self.symbolic_address_condition(cx, &expr, address);
             result = SymExpr::ite(cx, condition, balance, result);
         }
 
@@ -2248,6 +2262,18 @@ impl SymbolicWorld {
             .basic(address)
             .map_err(|err| SymbolicError::Backend(err.to_string()))
             .map(|account| account.map(|account| account.nonce).unwrap_or_default())
+    }
+
+    pub(crate) fn nonce_word(
+        &mut self,
+        cx: &mut SymCx,
+        executor: &ExecutorView<'_>,
+        address_expr: SymExpr,
+    ) -> Result<SymExpr, SymbolicError> {
+        self.select_symbolic_account(cx, executor, address_expr, |world, cx, address| {
+            let nonce = world.nonce(executor, address)?;
+            Ok(SymExpr::constant(cx, U256::from(nonce)))
+        })
     }
 
     pub(crate) fn set_nonce(&mut self, address: Address, nonce: u64) {
@@ -2453,24 +2479,10 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
-        if let Some(address) = self.resolve_address(&address_expr) {
-            let len = self.extcode(cx, executor, address)?.len();
-            return Ok(SymExpr::constant(cx, U256::from(len)));
-        }
-
-        let expr = address_expr;
-        let representative = expr.representative_symbolic_address();
-        let len = self.extcode(cx, executor, representative)?.len();
-        let mut result = SymExpr::constant(cx, U256::from(len));
-        for address in self.known_addresses(executor) {
-            let len = self.extcode(cx, executor, address)?.len();
-            let address = SymExpr::constant(cx, address_word(address));
-            let condition = SymBoolExpr::eq(cx, expr.clone(), address);
-            let len = SymExpr::constant(cx, U256::from(len));
-            result = SymExpr::ite(cx, condition, len, result);
-        }
-
-        Ok(result)
+        self.select_symbolic_account(cx, executor, address_expr, |world, cx, address| {
+            let len = world.extcode(cx, executor, address)?.len();
+            Ok(SymExpr::constant(cx, U256::from(len)))
+        })
     }
 
     pub(crate) fn extcode_hash_word(
@@ -2479,21 +2491,9 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
-        if let Some(address) = self.resolve_address(&address_expr) {
-            return self.extcode_hash_for_address(cx, executor, address);
-        }
-
-        let expr = address_expr;
-        let representative = expr.representative_symbolic_address();
-        let mut result = self.extcode_hash_for_address(cx, executor, representative)?;
-        for address in self.known_addresses(executor) {
-            let hash = self.extcode_hash_for_address(cx, executor, address)?;
-            let address = SymExpr::constant(cx, address_word(address));
-            let condition = SymBoolExpr::eq(cx, expr.clone(), address);
-            result = SymExpr::ite(cx, condition, hash, result);
-        }
-
-        Ok(result)
+        self.select_symbolic_account(cx, executor, address_expr, |world, cx, address| {
+            world.extcode_hash_for_address(cx, executor, address)
+        })
     }
 
     pub(crate) fn extcode_bytes_word(
@@ -2521,14 +2521,49 @@ impl SymbolicWorld {
                 offset.clone(),
                 size,
             );
-            let address = SymExpr::constant(cx, address_word(address));
-            let condition = SymBoolExpr::eq(cx, expr.clone(), address);
+            let condition = self.symbolic_address_condition(cx, &expr, address);
             for (idx, byte) in bytes.into_iter().enumerate() {
                 result[idx] = SymExpr::ite(cx, condition.clone(), byte, result[idx].clone());
             }
         }
 
         Ok(SymBytes::exprs(cx, result))
+    }
+
+    pub(crate) fn sload_word(
+        &mut self,
+        cx: &mut SymCx,
+        executor: &ExecutorView<'_>,
+        address_expr: SymExpr,
+        key: SymExpr,
+        concrete_key: Option<U256>,
+    ) -> Result<SymExpr, SymbolicError> {
+        self.select_symbolic_account(cx, executor, address_expr, |world, cx, address| {
+            world.sload(cx, executor, address, key.clone(), concrete_key)
+        })
+    }
+
+    /// Selects `value_for` over the accounts a symbolic address may denote: its representative
+    /// account, then every known account under the condition that the address matches it.
+    fn select_symbolic_account(
+        &mut self,
+        cx: &mut SymCx,
+        executor: &ExecutorView<'_>,
+        address_expr: SymExpr,
+        mut value_for: impl FnMut(&mut Self, &mut SymCx, Address) -> Result<SymExpr, SymbolicError>,
+    ) -> Result<SymExpr, SymbolicError> {
+        if let Some(address) = self.resolve_address(&address_expr) {
+            return value_for(self, cx, address);
+        }
+
+        let representative = address_expr.representative_symbolic_address();
+        let mut result = value_for(self, cx, representative)?;
+        for address in self.known_addresses(executor) {
+            let value = value_for(self, cx, address)?;
+            let condition = self.symbolic_address_condition(cx, &address_expr, address);
+            result = SymExpr::ite(cx, condition, value, result);
+        }
+        Ok(result)
     }
 
     pub(crate) fn symbolic_call_targets(
@@ -2559,6 +2594,7 @@ impl SymbolicWorld {
             .chain(self.balances.keys())
             .chain(&self.existing_accounts)
             .chain(&executor.account_addresses)
+            .chain(self.symbolic_address_aliases.values())
             .copied()
             .filter(|address| {
                 *address != CHEATCODE_ADDRESS && *address != SYMBOLIC_VM_COMPAT_ADDRESS
