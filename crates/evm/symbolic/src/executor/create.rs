@@ -45,6 +45,9 @@ impl SymbolicExecutor {
 
         size.expand_memory(&mut self.cx, &mut state.memory, offset.clone());
 
+        // Like Forge, a CREATE consumes the pending prank, so a later prank can replace it.
+        state.prank_for_next_call();
+
         // A create beyond the call depth limit fails before it increments the creator's
         // nonce or transfers value. Concrete Forge settles a pending revert cheatcode against
         // such a create differently from a joined create outcome, depending on its config.

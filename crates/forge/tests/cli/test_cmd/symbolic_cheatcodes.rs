@@ -211,6 +211,21 @@ contract SymbolicPrankSender is Test {
         target.sender();
         vm.prank(address(0xB));
     }
+
+    function checkCreateConsumesPrank() public {
+        vm.prank(address(0xA));
+        new SenderTarget();
+        vm.prank(address(0xB));
+        assertEq(target.sender(), address(0xB));
+    }
+
+    function checkCreateConsumesStartPrank() public {
+        vm.startPrank(address(this));
+        new SenderTarget();
+        try vm.startPrank(address(0xB)) {
+            assert(false);
+        } catch {}
+    }
 }
 "#,
     );
@@ -224,14 +239,16 @@ contract SymbolicPrankSender is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 6 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
+Ran 8 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
+[PASS] checkCreateConsumesPrank() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCreateConsumesStartPrank() ([METRICS])
 [FAIL: vm.prank: cannot override an ongoing prank with a single vm.prank; use vm.startPrank to override the current prank; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkPrankRejectsOngoingStartPrankOverride() ([METRICS])
 [FAIL: vm.prank: cannot overwrite a prank until it is applied at least once; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkPrankRejectsUnusedPrankOverwrite() ([METRICS])
 [PASS] checkSymbolicPrank(address) ([METRICS])
 [PASS] checkSymbolicPrankOrigin(address,address) ([METRICS])
 [PASS] checkSymbolicStartPrank(address) ([METRICS])
 [PASS] checkSymbolicStartPrankOrigin(address,address) ([METRICS])
-Suite result: FAILED. 4 passed; 2 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 5 passed; 3 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
