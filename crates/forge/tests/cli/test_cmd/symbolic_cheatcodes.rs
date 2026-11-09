@@ -1996,6 +1996,30 @@ contract SymbolicStateSnapshots is Test {
         assertFalse(vm.revertToState(clearedSnapshot));
     }
 
+    function snapshotThenRevert() external {
+        vm.snapshotState();
+        revert("boom");
+    }
+
+    function deleteThenRevert(uint256 snapshotId) external {
+        vm.deleteStateSnapshot(snapshotId);
+        revert("boom");
+    }
+
+    // Concretely snapshots taken or deleted in a reverted call stay taken or deleted.
+    function checkSnapshotsSurviveRevertingCall(uint256) public {
+        try this.snapshotThenRevert() {} catch {}
+        value = 7;
+        assertTrue(vm.revertToState(0));
+        assertEq(value, 0);
+
+        uint256 snapshotId = vm.snapshotState();
+        value = 8;
+        try this.deleteThenRevert(snapshotId) {} catch {}
+        assertFalse(vm.revertToState(snapshotId));
+        assertEq(value, 8);
+    }
+
     receive() external payable {}
 }
 "#,
@@ -2005,14 +2029,15 @@ contract SymbolicStateSnapshots is Test {
         "test",
         "--symbolic",
         "--match-test",
-        "checkStateSnapshots",
+        "^(checkStateSnapshots|checkSnapshotsSurviveRevertingCall)\\(",
     ]))
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicStateSnapshots.t.sol:SymbolicStateSnapshots
+Ran 2 tests for test/SymbolicStateSnapshots.t.sol:SymbolicStateSnapshots
+[PASS] checkSnapshotsSurviveRevertingCall(uint256) ([METRICS])
 [PASS] checkStateSnapshots(uint256) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
