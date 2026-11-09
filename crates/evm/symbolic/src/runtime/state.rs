@@ -1811,10 +1811,19 @@ struct SymbolicReplayStorageSlot {
     slot: U256,
 }
 
+/// A `vm.snapshotState` entry: the world state with the block environment and gas price, which
+/// Forge restores together.
+#[derive(Clone, Debug)]
+struct SymbolicSnapshot {
+    state: Arc<SymbolicWorldState>,
+    block: SymbolicBlock,
+    gas_price: SymExpr,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SymbolicWorld {
     state: Arc<SymbolicWorldState>,
-    snapshots: HashMap<U256, Arc<SymbolicWorldState>>,
+    snapshots: HashMap<U256, SymbolicSnapshot>,
     next_snapshot_id: u64,
 }
 
@@ -1971,19 +1980,23 @@ impl SymbolicWorld {
             .find_map(|(word, slot)| (*slot == address).then(|| word.clone()))
     }
 
-    pub(crate) fn snapshot_state(&mut self) -> U256 {
+    pub(crate) fn snapshot_state(&mut self, block: &SymbolicBlock, gas_price: &SymExpr) -> U256 {
         let id = U256::from(self.next_snapshot_id);
         self.next_snapshot_id = self.next_snapshot_id.saturating_add(1);
-        self.snapshots.insert(id, Arc::clone(&self.state));
+        let snapshot = SymbolicSnapshot {
+            state: Arc::clone(&self.state),
+            block: block.clone(),
+            gas_price: gas_price.clone(),
+        };
+        self.snapshots.insert(id, snapshot);
         id
     }
 
-    pub(crate) fn restore_snapshot(&mut self, id: U256) -> bool {
-        let Some(snapshot) = self.snapshots.get(&id) else {
-            return false;
-        };
-        self.state = Arc::clone(snapshot);
-        true
+    /// Restores the world state of snapshot `id` and returns its block environment and gas price.
+    pub(crate) fn restore_snapshot(&mut self, id: U256) -> Option<(SymbolicBlock, SymExpr)> {
+        let snapshot = self.snapshots.get(&id)?;
+        self.state = Arc::clone(&snapshot.state);
+        Some((snapshot.block.clone(), snapshot.gas_price.clone()))
     }
 
     pub(crate) fn delete_snapshot(&mut self, id: U256) -> bool {

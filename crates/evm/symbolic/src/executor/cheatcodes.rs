@@ -1553,7 +1553,7 @@ impl SymbolicExecutor {
                 "symbolic fork creation and fork block mutation must happen before symbolic execution",
             )),
             snapshotCall::SELECTOR | snapshotStateCall::SELECTOR => {
-                let id = state.world.snapshot_state();
+                let id = state.world.snapshot_state(&state.block, &state.gas_price);
                 let id = SymExpr::constant(&mut self.cx, id);
                 Ok(CheatcodeOutcome::Continue(vec![id]))
             }
@@ -1568,8 +1568,11 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.revertToState snapshot",
                 )?;
-                let success = state.world.restore_snapshot(id);
-                if success {
+                let restored = state.world.restore_snapshot(id);
+                let success = restored.is_some();
+                if let Some((block, gas_price)) = restored {
+                    state.block = block;
+                    state.gas_price = gas_price;
                     state.persistent_writes.push(PersistentWrite::Restore);
                 }
                 if success
@@ -2534,12 +2537,12 @@ impl SymbolicExecutor {
             SymbolicVmCheatcode::SnapshotStorage => {
                 let _target =
                     read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
-                let id = state.world.snapshot_state();
+                let id = state.world.snapshot_state(&state.block, &state.gas_price);
                 let id = SymExpr::constant(&mut self.cx, id);
                 Ok(SymReturnData::from_words(&mut self.cx, vec![id]))
             }
             SymbolicVmCheatcode::SnapshotState => {
-                let id = state.world.snapshot_state();
+                let id = state.world.snapshot_state(&state.block, &state.gas_price);
                 let id = SymExpr::constant(&mut self.cx, id);
                 Ok(SymReturnData::from_words(&mut self.cx, vec![id]))
             }

@@ -1892,6 +1892,34 @@ contract SymbolicBlockEnvironment is Test {
         assertEq(got[0], hashes[0]);
         assertEq(got[1], hashes[1]);
     }
+
+    // Concretely `revertToState` restores the block environment and gas price with the state.
+    function checkSnapshotRestoresEnvironment(uint256) public {
+        vm.chainId(5);
+        vm.roll(100);
+        vm.warp(1000);
+        vm.txGasPrice(7);
+        uint256 snapshotId = vm.snapshotState();
+        vm.chainId(6);
+        vm.roll(200);
+        vm.warp(2000);
+        vm.txGasPrice(8);
+
+        assertTrue(vm.revertToState(snapshotId));
+        assertEq(block.chainid, 5);
+        assertEq(block.number, 100);
+        assertEq(block.timestamp, 1000);
+        assertEq(tx.gasprice, 7);
+    }
+
+    // The restored timestamp is never the warped one.
+    function checkSnapshotWarpIsReverted(uint256 t) public {
+        vm.assume(t != block.timestamp);
+        uint256 snapshotId = vm.snapshotState();
+        vm.warp(t);
+        vm.revertToState(snapshotId);
+        assert(block.timestamp == t);
+    }
 }
 "#,
     );
@@ -1931,15 +1959,16 @@ contract SymbolicPreparedEnvironment is Test {
         "test",
         "--symbolic",
         "--match-test",
-        "^(checkBlockEnvironment|checkPreparedEnvironment)\\(",
+        "^(checkBlockEnvironment|checkPreparedEnvironment|checkSnapshotRestoresEnvironment)\\(",
     ]))
     .success()
     .stdout_eq(
         str![[r#"
 ...
-Ran 1 test for test/SymbolicBlockEnvironment.t.sol:SymbolicBlockEnvironment
+Ran 2 tests for test/SymbolicBlockEnvironment.t.sol:SymbolicBlockEnvironment
 [PASS] checkBlockEnvironment(uint256) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+[PASS] checkSnapshotRestoresEnvironment(uint256) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test for test/SymbolicPreparedEnvironment.t.sol:SymbolicPreparedEnvironment
 [PASS] checkPreparedEnvironment(uint256) ([METRICS])
@@ -1948,6 +1977,21 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]
         .unordered(),
     );
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSnapshotWarpIsReverted",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicBlockEnvironment.t.sol:SymbolicBlockEnvironment
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSnapshotWarpIsReverted(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
