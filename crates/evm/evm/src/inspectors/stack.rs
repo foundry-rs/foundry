@@ -547,7 +547,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
         let mut env = env.unwrap_or_else(|| evm_env(evm));
-        env.version.initial_call_depth = depth;
+        env.initial_call_depth = depth;
         TypesFor::<FEN>::sync_transaction(evm);
         let mut child = backend.backend().lifecycle().nested_evm(evm, tx, Some(env), None);
         let previous = self.enter_inner_context(InnerRoot {
@@ -656,7 +656,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
         let mut env = env.unwrap_or_else(|| evm_env(evm));
-        env.version.initial_call_depth = depth + 1;
+        env.initial_call_depth = depth + 1;
         let (prepared, mut replay) = backend.backend().prepare_nested(tx.clone(), evm, Some(env));
         let mut executed = self.replay(cheats, &mut replay, evm, depth, prepared, true)?;
         drop(replay);
@@ -1309,7 +1309,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             gas_limit = gas_limit.min(env.block.gas_limit.saturating_to());
         }
         // The root keeps its depth in the surrounding trace, with a fresh call-depth budget.
-        env.version.initial_call_depth = message.depth;
+        env.initial_call_depth = message.depth;
         let outer_basefee = env.block.basefee;
         env.block.basefee = U256::ZERO;
         env.set_feature(EvmFeatures::FEE_CHARGE, false);
