@@ -3,6 +3,7 @@ use super::symbolic_helpers::{
     assert_symbolic_witness, json_test_result, read_artifact_ref,
 };
 use crate::skip_unless_z3;
+use alloy_primitives::address;
 use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 
 #[cfg(unix)]
@@ -909,29 +910,40 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 #[forgetest_init]
 fn symbolic_invariant_replays_initial_state_failure(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_replays_initial_state_failure");
-    prj.update_config(|config| config.invariant.runs = 0);
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+        config.sender = address!("0x000000000000000000000000000000000000ABCD");
+    });
 
     prj.add_test(
         "SymbolicInvariantInitialState.t.sol",
         r#"
 import "forge-std/Test.sol";
 
-contract NoopTarget {
-    function touch() external {}
+contract RepairTarget {
+    uint256 public x;
+
+    function fix() external {
+        x = 1;
+    }
 }
 
 contract SymbolicInvariantInitialState is Test {
-    NoopTarget target;
-    uint256 x;
+    address constant CALLER = 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38;
+    RepairTarget target;
 
     function setUp() public {
-        target = new NoopTarget();
+        target = new RepairTarget();
         targetContract(address(target));
     }
 
+    // Forge calls the predicate from CALLER, not the configured sender, and checks it right
+    // after setUp, where the only handler has not repaired `x` yet.
     /// forge-config: default.symbolic.invariant_depth = 1
     function invariant_xIsOne() public view {
-        assertEq(x, 1);
+        assertEq(msg.sender, CALLER);
+        assertEq(tx.origin, CALLER);
+        assertEq(target.x(), 1);
     }
 }
 "#,
@@ -951,35 +963,17 @@ contract SymbolicInvariantInitialState is Test {
     let result = json_test_result(&output, "invariant_xIsOne()");
     assert_eq!(result["status"], "Failure");
     assert_eq!(result["symbolic"]["status"], "fail_counterexample");
-    assert_eq!(result["invariant_failures"][0]["counterexample"]["Sequence"][0], 1);
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+    assert_eq!(result["invariant_failures"][0]["counterexample"]["Sequence"][0], 0);
     assert!(
         result["invariant_failures"][0]["counterexample"]["Sequence"][1]
             .as_array()
             .unwrap()
             .is_empty()
     );
-
-    let artifact_ref = &result["invariant_failures"][0]["artifact"];
-    assert_eq!(result["symbolic"]["artifact"], *artifact_ref);
-    let artifact_path = artifact_ref["path"].as_str().unwrap();
-    assert!(result["symbolic"].get("minimization").is_none());
-    assert!(result["invariant_failures"][0].get("minimization").is_none());
-    let artifact = read_artifact_ref(artifact_ref);
-    assert_eq!(artifact["calls"].as_array().unwrap().len(), 1);
-
-    let replay_output = cmd
-        .forge_fuse()
-        .args(["test", "--json", "--replay-symbolic-artifact", artifact_path])
-        .assert_failure()
-        .get_output()
-        .stdout
-        .clone();
-    let replay_result = json_test_result(&replay_output, "invariant_xIsOne()");
-    assert_eq!(replay_result["status"], "Failure");
-    assert!(
-        replay_result["reason"].as_str().unwrap().contains("assertion failed"),
-        "{replay_result}"
-    );
+    // An empty sequence has no calls to persist, so no artifact is written.
+    assert!(result["invariant_failures"][0].get("artifact").is_none());
+    assert!(result["symbolic"].get("artifact").is_none());
 }
 
 #[forgetest_init]
