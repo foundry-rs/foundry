@@ -211,8 +211,9 @@ impl<T: EvmTypes> Inspector<T> for RevertDiagnostic {
         if let Ok(info) = host.state_mut().account_info_untracked(&target)
             && info.is_none_or(|info| info.is_empty_code_hash())
         {
-            // The revert happens in the calling frame.
-            self.non_contract_call = Some((target, message.kind, interp.message().depth));
+            // The revert happens in the calling frame. The hook can run on a frame EVM whose
+            // interpreter is not the caller's, so take the depth from the message.
+            self.non_contract_call = Some((target, message.kind, message.depth.saturating_sub(1)));
             // The latest observation explains a following empty revert.
             self.non_contract_size_check = None;
         }

@@ -7391,6 +7391,44 @@ Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing te
     assert_eq!(diagnostic_nodes[0]["trace"]["output"], "0x");
 }
 
+// After `vm.chainId`, calls run on a frame EVM built with the new chain ID, and the diagnostic
+// still explains the caller's empty revert.
+#[forgetest_init]
+fn detailed_revert_when_calling_non_contract_address_after_chain_id(prj: _, cmd: _) {
+    prj.add_test(
+        "NonContractCallAfterChainIdTest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface ICounter {
+    function number() external returns (uint256);
+}
+
+contract NonContractCallAfterChainIdTest is Test {
+    function test_non_contract_call_after_chain_id() public {
+        vm.chainId(5);
+        ICounter(0xdEADBEeF00000000000000000000000000000000).number();
+    }
+}
+     "#,
+    );
+
+    cmd.args(["test", "--mc", "NonContractCallAfterChainIdTest", "-vvv"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: EvmError: Revert] test_non_contract_call_after_chain_id() ([GAS])
+Traces:
+  [..] NonContractCallAfterChainIdTest::test_non_contract_call_after_chain_id()
+    ├─ [0] VM::chainId(5)
+    │   └─ ← [Return]
+    ├─ [..] 0xdEADBEeF00000000000000000000000000000000::number()
+    │   └─ ← [Stop]
+    └─ ← [Revert] call to non-contract address 0xdEADBEeF00000000000000000000000000000000
+...
+"#]]);
+}
+
 #[forgetest_init]
 fn detailed_revert_when_delegatecalling_unlinked_library(prj: _, cmd: _) {
     prj.add_test(

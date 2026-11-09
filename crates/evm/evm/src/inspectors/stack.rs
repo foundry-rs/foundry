@@ -1208,8 +1208,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         if pending.is_none() && requested.is_none() {
             return None;
         }
-        let evm = interp.host();
-        let running = evm_env(evm);
+        let running = evm_env(interp.host());
         // Same precedence as the next transaction's environment: `vm.setEvmVersion` overrides
         // the pending spec.
         let (pending_spec, chain_id) = pending.unwrap_or((running.spec, running.chain_id()));
@@ -1219,6 +1218,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
         let mut env = EvmFactoryFor::<FEN>::default().env_with_spec(running, spec);
         env.version.chain_id = chain_id;
+        // The frame EVM's hooks see an interpreter for the message, so the step that started it
+        // ends here, with the caller's.
+        if let Some(recorder) = self.inner.debug_recorder.as_deref_mut() {
+            recorder.end_step_before_frame(interp);
+        }
+        let evm = interp.host();
         let cheatcodes = self.cheatcodes.as_deref_mut();
         let result = self.inner.execute_on_frame_evm(cheatcodes, backend, evm, env, message);
         match result {
