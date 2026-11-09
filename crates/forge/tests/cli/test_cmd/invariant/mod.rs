@@ -1487,6 +1487,67 @@ contract ComparisonCorpusTest is Test {
 "#]]);
 }
 
+// solc compiles `if (a == b)` to `SUB` + `JUMPI`, without an `EQ` opcode.
+#[forgetest_init]
+fn invariant_corpus_reuses_sub_equality_hints(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 100;
+        config.invariant.depth = 1;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.dictionary.dictionary_weight = 0;
+        config.invariant.dictionary.include_storage = false;
+        config.invariant.dictionary.include_push_bytes = false;
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_random_sequence_weight = 0;
+        config.invariant.corpus.mutation_weights = foundry_config::FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 1,
+        };
+    });
+    prj.add_test(
+        "SubEqualityCorpusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract SubEqualityCorpusHandler {
+    bool public reached;
+
+    function compare(uint256 value) external {
+        uint256 magic = uint256(keccak256(abi.encode(address(this)))) % (1 << 40);
+        if (value == magic) reached = true;
+    }
+}
+
+contract SubEqualityCorpusTest is Test {
+    SubEqualityCorpusHandler handler;
+
+    function setUp() public {
+        handler = new SubEqualityCorpusHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_equality_is_reached() public view {
+        assertFalse(handler.reached());
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "SubEqualityCorpusTest", "--fuzz-seed", "0x574"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: assertion failed]
+...
+"#]]);
+}
+
 #[forgetest_init]
 fn parallel_invariant_corpus_uses_worker_dirs(prj: _, cmd: _) {
     prj.update_config(|config| {

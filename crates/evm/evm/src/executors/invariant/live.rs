@@ -181,7 +181,9 @@ impl LiveInvariantSolver {
             if self.observed.len() >= MAX_OBSERVED_OUTCOMES {
                 break;
             }
-            self.observed.insert(outcome(cmp, comparison_result(cmp)));
+            if let Some(result) = comparison_result(cmp) {
+                self.observed.insert(outcome(cmp, result));
+            }
         }
         self.dispatch();
         let room = (MAX_PENDING - self.pending.len())
@@ -201,7 +203,7 @@ impl LiveInvariantSolver {
                     cmps.iter()
                         .copied()
                         .filter(|cmp| {
-                            let result = comparison_result(cmp);
+                            let Some(result) = comparison_result(cmp) else { return false };
                             let reached = outcome(cmp, result);
                             self.observed.contains(&reached)
                                 && if self.admitted.contains(&reached) {

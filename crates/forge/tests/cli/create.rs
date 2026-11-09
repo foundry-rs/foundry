@@ -4,8 +4,15 @@ use crate::constants::*;
 use alloy_primitives::hex;
 use anvil::{NodeConfig, spawn};
 use foundry_compilers::artifacts::BytecodeHash;
-use foundry_test_utils::{forgetest, snapbox::IntoData, str, util::OutputExt};
-use std::{fs, time::Duration};
+use foundry_test_utils::{
+    forgetest, rpc::spawn_rpc_proxy_mapping_method, snapbox::IntoData, str, util::OutputExt,
+};
+use serde_json::Value;
+use std::{
+    fs,
+    sync::atomic::{AtomicUsize, Ordering},
+    time::Duration,
+};
 
 #[forgetest]
 fn create_rejects_unsupported_remote_sponsor(cmd: _) {
@@ -183,6 +190,47 @@ async fn can_create_with_interval_mining(prj: _, cmd: _) {
     let (_api, handle) =
         spawn(NodeConfig::test().with_blocktime(Some(Duration::from_secs(1)))).await;
     let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    cmd.forge_fuse()
+        .args([
+            "create",
+            format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--broadcast",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+[TX_HASH]
+
+"#]]);
+}
+
+// A load-balanced RPC can see the deployment mined before the node serving receipts has it.
+// <https://github.com/foundry-rs/foundry/issues/18229>
+#[forgetest_init]
+async fn can_create_with_lagging_receipts(prj: _, cmd: _) {
+    prj.initialize_default_contracts();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let receipt_requests = AtomicUsize::new(0);
+    let rpc = spawn_rpc_proxy_mapping_method(
+        handle.http_endpoint(),
+        "eth_getTransactionReceipt",
+        move |_, receipt| {
+            if receipt_requests.fetch_add(1, Ordering::SeqCst) < 6 { Value::Null } else { receipt }
+        },
+    )
+    .await;
     let wallet = handle.dev_wallets().next().unwrap();
     let pk = hex::encode(wallet.credential().to_bytes());
 
