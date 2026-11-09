@@ -7474,7 +7474,8 @@ contract DebugCallAfterChainIdTest {
             .unwrap();
     let steps = dump["steps"].as_array().unwrap();
     let call = steps.iter().find(|step| step["op"] == "STATICCALL").unwrap();
-    // The call costs the gas it forwards, and the stack holds the caller's words and call inputs.
+    // The call costs the gas it forwards and the account access, and the stack holds the caller's
+    // words and the call inputs.
     assert_eq!(call["gas_cost"], 1056819103, "{call:#}");
     assert_eq!(
         call["stack"],
