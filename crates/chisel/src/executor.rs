@@ -86,10 +86,8 @@ fn yul_inspection(input: &str, session_source: &str) -> Option<YulInspection> {
 
         let mut assembly = input.to_string();
         assembly.replace_range(expr_range.clone(), &format!("{result_var} := {expression}"));
-        let inspector_input = format!(
-            "uint256 {result_var}; {assembly}\n{}",
-            inspector_return_line(&result_var)
-        );
+        let inspector_input =
+            format!("uint256 {result_var}; {assembly}\n{}", inspector_return_line(&result_var));
 
         let mut replay_input = input.to_string();
         replay_input.replace_range(expr_range, &format!("pop({expression})"));
@@ -121,16 +119,6 @@ fn inspectoor_type<'gcx>(gcx: Gcx<'gcx>, block: Block<'gcx>) -> Option<(bool, Dy
     let ExprKind::Call(_callee, args) = &init.kind else { return None };
     let inner_expr = args.exprs().next()?;
     Some((should_continue(inner_expr), expr_to_dyn(gcx, inner_expr)?))
-}
-
-/// Reads the `bytes` payload whose pointer is the last stack item.
-fn bytes_from_stack_memory(stack: &[U256], memory: &[u8]) -> Option<Vec<u8>> {
-    let mut offset: usize = stack.last()?.try_into().ok()?;
-    debug!("inspect memory @ {offset}: {}", hex::encode(memory));
-    let mem_offset = memory.get(offset..offset + 32)?;
-    let len: usize = U256::try_from_be_slice(mem_offset)?.try_into().ok()?;
-    offset += 32;
-    Some(memory.get(offset..offset + len)?.to_vec())
 }
 
 /// Executor implementation for [SessionSource]
@@ -260,10 +248,9 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
         }
         drop(source_without_inspector);
 
-        // The inspector epilogue returns `abi.encode` payload. Fall back to the solc stack
-        // convention when a compiler leaves that return empty.
-        let returned = res.success.then(|| res.returned.clone()).filter(|data| !data.is_empty());
-        if returned.is_none() && res.state.is_none() {
+        // The inspector epilogue returns the `abi.encode` payload with either compiler.
+        let data = res.returned.clone();
+        if !res.success || data.is_empty() {
             // Show traces and logs, if there are any, and return an error
             if let Ok(decoder) = ChiselDispatcher::decode_traces(&source.config, &mut res).await {
                 ChiselDispatcher::<FEN>::show_traces(&decoder, &mut res).await?;
@@ -291,22 +278,6 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             return Ok(InspectResult::empty(ControlFlow::Continue(())));
         };
 
-        let data = if let Some(data) = returned {
-            data.to_vec()
-        } else {
-            let Some((stack, memory)) = &res.state else {
-                eyre::bail!(
-                    "Failed to inspect last expression: could not retrieve data from memory"
-                );
-            };
-            // Solc leaves the memory offset of `bytes memory inspectoor` on the stack.
-            let Some(data) = bytes_from_stack_memory(stack, memory) else {
-                eyre::bail!(
-                    "Failed to inspect last expression: could not retrieve data from memory"
-                );
-            };
-            data
-        };
         let clear_last_result = dyn_ty_contains_function(&ty);
         let last_result = (!clear_last_result)
             .then(|| format!("abi.decode(hex\"{}\", ({ty}))", hex::encode(&data)));
@@ -1154,79 +1125,5 @@ mod tests {
         let _ = tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
-    }
-
-    /// Regression for <https://github.com/foundry-rs/foundry/issues/18203>.
-    ///
-    /// `solc = "solar"` compiles `uint256 val = 1` but inspection used to fail with
-    /// `could not retrieve data from memory`.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn solar_inspects_local_value() {
-        let output = inspect_local_value(Some(foundry_config::SolcReq::Solar(
-            semver::Version::new(0, 3, 0),
-        )))
-        .await;
-        assert!(output.contains("Type: uint256"), "{output}");
-        assert!(output.contains("Decimal: 1"), "{output}");
-
-        let dynamic = inspect_input(
-            Some(foundry_config::SolcReq::Solar(semver::Version::new(0, 3, 0))),
-            "string memory s = \"hello\";",
-            "s",
-        )
-        .await;
-        assert!(dynamic.contains("UTF-8: hello"), "{dynamic}");
-    }
-
-    /// The same inspection must keep working when bytecode comes from solc.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn solc_inspects_local_value() {
-        let output = inspect_local_value(None).await;
-        assert!(output.contains("Type: uint256"), "{output}");
-        assert!(output.contains("Decimal: 1"), "{output}");
-    }
-
-    async fn inspect_local_value(solc: Option<foundry_config::SolcReq>) -> String {
-        inspect_input(solc, "uint256 val = 1;", "val").await
-    }
-
-    async fn inspect_input(
-        solc: Option<foundry_config::SolcReq>,
-        setup: &str,
-        input: &str,
-    ) -> String {
-        let dir = tempfile::tempdir().unwrap();
-        let mut foundry_config = Config::with_root(dir.path());
-        foundry_config.solc = solc;
-        let mut source = TestSessionSource::new(SessionSourceConfig {
-            foundry_config,
-            no_vm: true,
-            ..Default::default()
-        })
-        .unwrap();
-        source.add_run_code(setup);
-        let inspected = source.inspect(input).await.unwrap_or_else(|err| panic!("{err:?}"));
-        let Some(output) = inspected.formatted_output else {
-            panic!("no inspection output: {inspected:?}");
-        };
-        strip_ansi(&output)
-    }
-
-    fn strip_ansi(input: &str) -> String {
-        let mut out = String::with_capacity(input.len());
-        let mut chars = input.chars().peekable();
-        while let Some(ch) = chars.next() {
-            if ch == '\u{1b}' && chars.peek() == Some(&'[') {
-                chars.next();
-                for next in chars.by_ref() {
-                    if next.is_ascii_alphabetic() {
-                        break;
-                    }
-                }
-            } else {
-                out.push(ch);
-            }
-        }
-        out
     }
 }
