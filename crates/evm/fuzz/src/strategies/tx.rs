@@ -79,7 +79,9 @@ impl TxGenerator {
         let pick = if revert_weighting {
             any::<prop::sample::Index>().prop_map(CallPick::Weighted).boxed()
         } else {
-            any::<prop::sample::Selector>().prop_map(CallPick::Uniform).boxed()
+            any::<prop::sample::Selector>()
+                .prop_map(|selector| CallPick::Uniform(Box::new(selector)))
+                .boxed()
         };
         let strategy = pick
             .prop_flat_map(move |pick| {
@@ -159,7 +161,7 @@ impl TxGenerator {
 #[derive(Clone, Debug)]
 enum CallPick {
     /// Uniform over the planned calls.
-    Uniform(prop::sample::Selector),
+    Uniform(Box<prop::sample::Selector>),
     /// By the current call weights.
     Weighted(prop::sample::Index),
 }
