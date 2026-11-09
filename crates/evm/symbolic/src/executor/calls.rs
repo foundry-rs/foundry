@@ -1424,7 +1424,7 @@ impl SymbolicExecutor {
             CallKind::CallCode => state.address,
             CallKind::DelegateCall | CallKind::StaticCall => return,
         };
-        state.world.transfer(&mut self.cx, executor, from, to, value);
+        state.world.transfer(&mut self.cx, executor, from, to, value, true);
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -1444,22 +1444,11 @@ impl SymbolicExecutor {
             return Ok(None);
         }
 
-        // Like revm's `transfer_loaded`, a short sender balance is an `OutOfFunds` revert, and a
-        // recipient balance overflow is an `OverflowPayment` halt.
+        // Like evm2's `State::transfer`, a short sender balance is an `OutOfFunds` revert, while a
+        // recipient balance overflow saturates instead of failing.
         let balance = state.balance(&mut self.cx, executor, from);
-        let can_pay = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, balance, value.clone());
-        let mut failures = vec![(can_pay.clone().not(&mut self.cx), CallStatus::Revert)];
-        let can_transfer = if from == to {
-            can_pay
-        } else {
-            let balance = state.balance(&mut self.cx, executor, to);
-            let sum = SymExpr::binop(&mut self.cx, SymBinOp::Add, balance.clone(), value);
-            let no_overflow = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, sum, balance);
-            let overflow = no_overflow.clone().not(&mut self.cx);
-            let overflow = SymBoolExpr::and(&mut self.cx, vec![can_pay.clone(), overflow]);
-            failures.push((overflow, CallStatus::ExceptionalHalt));
-            SymBoolExpr::and(&mut self.cx, vec![can_pay, no_overflow])
-        };
+        let can_transfer = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, balance, value);
+        let failures = vec![(can_transfer.clone().not(&mut self.cx), CallStatus::Revert)];
         if can_transfer.as_const() == Some(true) {
             return Ok(None);
         }
@@ -1669,6 +1658,7 @@ impl SymbolicExecutor {
                         call_caller,
                         transfer_to,
                         value.clone(),
+                        true,
                     );
                 }
             }

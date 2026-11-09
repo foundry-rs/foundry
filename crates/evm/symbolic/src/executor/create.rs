@@ -129,7 +129,7 @@ impl SymbolicExecutor {
         child.world.mark_current_transaction_created(created);
         child.persistent_writes.push(PersistentWrite::Created(created));
         child.world.set_nonce(created, 1);
-        child.world.transfer(&mut self.cx, executor, state.address, created, value);
+        child.world.transfer(&mut self.cx, executor, state.address, created, value, false);
 
         let outcomes = self.execute_external_call(executor, child, &initcode, completed_paths)?;
         if outcomes.is_empty() {

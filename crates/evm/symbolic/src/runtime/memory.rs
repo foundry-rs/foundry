@@ -79,7 +79,7 @@ impl SymbolicMemoryWrite {
 }
 
 impl SymMemory {
-    fn saturating_add_word(cx: &mut SymCx, left: SymExpr, right: SymExpr) -> SymExpr {
+    pub(crate) fn saturating_add_word(cx: &mut SymCx, left: SymExpr, right: SymExpr) -> SymExpr {
         let sum = SymExpr::binop(cx, SymBinOp::Add, left.clone(), right);
         let overflow = SymBoolExpr::cmp_word_expr(cx, SymCmpOp::Ult, &sum, left);
         let max = SymExpr::constant(cx, U256::MAX);

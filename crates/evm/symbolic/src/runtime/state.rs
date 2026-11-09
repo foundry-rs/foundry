@@ -2206,6 +2206,9 @@ impl SymbolicWorld {
         }
     }
 
+    /// Moves `value` from `from` to `to`. Like evm2's `State::transfer`, a call saturates the
+    /// recipient's balance at `U256::MAX`; like evm2's `State::create_account`, a creation
+    /// endowment wraps it.
     pub(crate) fn transfer(
         &mut self,
         cx: &mut SymCx,
@@ -2213,6 +2216,7 @@ impl SymbolicWorld {
         from: Address,
         to: Address,
         value: SymExpr,
+        saturate: bool,
     ) {
         if from == to || value.as_const().is_some_and(|value| value.is_zero()) {
             return;
@@ -2220,7 +2224,11 @@ impl SymbolicWorld {
         let from_balance = self.balance_word_for_address(cx, executor, from);
         let to_balance = self.balance_word_for_address(cx, executor, to);
         let from_balance = SymExpr::binop(cx, SymBinOp::Sub, from_balance, value.clone());
-        let to_balance = SymExpr::binop(cx, SymBinOp::Add, to_balance, value);
+        let to_balance = if saturate {
+            SymMemory::saturating_add_word(cx, to_balance, value)
+        } else {
+            SymExpr::binop(cx, SymBinOp::Add, to_balance, value)
+        };
         self.set_balance_word(from, from_balance);
         self.set_balance_word(to, to_balance);
     }

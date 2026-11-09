@@ -3560,11 +3560,11 @@ Suite result: FAILED. 9 passed; 8 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
-// Like revm, a value transfer fails with a revert when the sender is short and with a halt when the
-// recipient balance would overflow, so only the former matches `vm.assumeNoRevert`.
+// Like evm2, a value transfer reverts when the sender is short, which matches `vm.assumeNoRevert`,
+// and saturates the recipient balance instead of failing when it would overflow.
 #[forgetest_init]
-fn symbolic_vm_assume_no_revert_transfer_overflow_halts(prj: _, cmd: _) {
-    skip_unless_z3!("symbolic_vm_assume_no_revert_transfer_overflow_halts");
+fn symbolic_vm_assume_no_revert_transfer_overflow_saturates(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_assume_no_revert_transfer_overflow_saturates");
 
     prj.add_test(
         "SymbolicTransferOverflow.t.sol",
@@ -3579,8 +3579,10 @@ contract SymbolicTransferOverflow is Test {
         vm.deal(DST, type(uint256).max);
         vm.assumeNoRevert();
         (bool ok, bytes memory data) = DST.call{value: 1}("");
-        assertFalse(ok);
+        assertTrue(ok);
         assertEq(data.length, 0);
+        assertEq(address(this).balance, 1);
+        assertEq(DST.balance, type(uint256).max);
     }
 
     function checkSymbolicValue(uint256 value) public {
@@ -3588,8 +3590,10 @@ contract SymbolicTransferOverflow is Test {
         vm.deal(DST, type(uint256).max - 1);
         vm.assumeNoRevert();
         (bool ok, bytes memory data) = DST.call{value: value}("");
-        assertEq(ok, value < 2);
+        assertEq(ok, value <= 2);
         assertEq(data.length == 0, value <= 2);
+        assertEq(address(this).balance, ok ? 2 - value : 2);
+        assertEq(DST.balance, ok && value != 0 ? type(uint256).max : type(uint256).max - 1);
     }
 }
 "#,

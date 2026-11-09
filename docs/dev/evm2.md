@@ -42,7 +42,7 @@ These compatibility differences affect execution, gas reports and Anvil library 
 - **Recipient balance overflow**: evm2's `State::transfer` saturates the recipient's balance at
   `type(uint256).max` instead of halting with revm's `OverflowPayment`. Overflow alone does not
   fail the call: the sender loses the full value and the excess is burned if the transfer commits.
-  The symbolic engine still models revm's failure. A `CREATE` or `CREATE2` endowment instead wraps
+  The symbolic engine saturates it the same way. A `CREATE` or `CREATE2` endowment instead wraps
   the new account's existing balance modulo 2^256 where revm failed the creation.
 - **Arbitrary storage warmth**: with `vm.setArbitraryStorage`, the revm inspector warmed slots
   before `SLOAD`. evm2 leaves otherwise-cold slots cold until the opcode accesses them, costing
