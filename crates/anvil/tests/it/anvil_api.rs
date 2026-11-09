@@ -1764,6 +1764,52 @@ async fn test_rollback() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_reorg_replaces_blocks_that_hold_the_same_transactions() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_accounts().collect::<Vec<_>>();
+
+    let tx = TransactionRequest::default().from(accounts[0]).to(accounts[1]).value(U256::ONE);
+    api.send_transaction(WithOtherFields::new(tx.clone())).await.unwrap();
+    api.mine_one().await.unwrap();
+    api.evm_mine(Some(MineOptions::Options { timestamp: None, blocks: Some(2) })).await.unwrap();
+
+    let hashes = || async {
+        let mut hashes = vec![];
+        for number in 1..=3u64 {
+            let block = provider.get_block(number.into()).await.unwrap().unwrap();
+            hashes.push(block.header.hash);
+        }
+        hashes
+    };
+    let before = hashes().await;
+
+    // Replay the same transaction into the same height: the only difference is the reorg itself.
+    api.anvil_reorg(ReorgOptions {
+        depth: 3,
+        tx_block_pairs: vec![(TransactionData::JSON(tx.into()), 0)],
+    })
+    .await
+    .unwrap();
+    let first_reorg = hashes().await;
+    for (number, (old, new)) in before.iter().zip(&first_reorg).enumerate() {
+        assert_ne!(old, new, "block {} must change on reorg", number + 1);
+    }
+
+    // Replacement blocks with no transactions must differ as well, also from the earlier reorg.
+    api.anvil_reorg(ReorgOptions { depth: 3, tx_block_pairs: vec![] }).await.unwrap();
+    let second_reorg = hashes().await;
+    for (number, (old, new)) in first_reorg.iter().zip(&second_reorg).enumerate() {
+        assert_ne!(old, new, "block {} must change on the second reorg", number + 1);
+    }
+    for number in 2..=3u64 {
+        let block = provider.get_block(number.into()).await.unwrap().unwrap();
+        assert_eq!(block.header.parent_hash, second_reorg[number as usize - 2]);
+    }
+    assert_eq!(provider.get_block_number().await.unwrap(), 3);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_reorg_prices_json_transactions_from_common_block() {
     let (api, handle) = spawn(NodeConfig::test().with_base_fee(Some(20_000_000_000))).await;
     let provider = handle.http_provider();

@@ -6075,7 +6075,7 @@ where
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
         pin_timestamp: bool,
     ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
-        self.do_mine_block_locked(pool_transactions, pin_timestamp).await
+        self.do_mine_block_locked(pool_transactions, pin_timestamp, None).await
     }
 
     /// Replays a transaction-hash fork prefix before the live pool and miner are created.
@@ -6493,14 +6493,18 @@ where
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
     ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
         let _mining_guard = self.mining.lock().await;
-        self.do_mine_block_locked(pool_transactions, false).await
+        self.do_mine_block_locked(pool_transactions, false, None).await
     }
 
     /// Mines a block while the caller holds the mining lock.
+    ///
+    /// `replaced_block` is the hash of the block a reorg replaces at this height. It salts the
+    /// derived `prevrandao`, so the new block never equals the one it replaces.
     async fn do_mine_block_locked(
         &self,
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
         pin_timestamp: bool,
+        replaced_block: Option<B256>,
     ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
 
@@ -6536,10 +6540,15 @@ where
             // Use the values set via `anvil_setNextBlockPrevRandao` and
             // `anvil_setNextBlockParentBeaconBlockRoot` for this block if provided, otherwise
             // derive `prevrandao` from the parent hash and block number and use the zero root.
+            // On a reorg the replaced block's hash is folded in, so the replacement differs.
             // The overrides are consumed once the block is committed so they only apply to it.
             let next_block = self.cheats.next_block_overrides();
-            evm_env.block_env.prevrandao =
-                Some(next_block.prevrandao.value.unwrap_or_else(|| keccak256(input)));
+            evm_env.block_env.prevrandao = Some(next_block.prevrandao.value.unwrap_or_else(|| {
+                let derived = keccak256(input);
+                replaced_block.map_or(derived, |replaced| {
+                    keccak256([derived.as_slice(), replaced.as_slice()].concat())
+                })
+            }));
             let parent_beacon_block_root =
                 Some(next_block.parent_beacon_block_root.value.unwrap_or_default());
 
@@ -6912,17 +6921,23 @@ where
 
     /// Mines replacement blocks after the caller has rewound the chain for a reorg.
     ///
+    /// `replaced_blocks` holds the hashes of the removed blocks, lowest height first. Each
+    /// replacement block derives its `prevrandao` from the block it replaces, so the new chain
+    /// always differs from the old one.
+    ///
     /// The caller must hold the mining lock across ancestor selection, rollback, and this method.
     pub async fn reorg(
         &self,
         depth: u64,
         tx_pairs: HashMap<u64, Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>>,
+        replaced_blocks: &[B256],
         _mining_guard: &tokio::sync::MutexGuard<'_, ()>,
     ) -> Result<(), BlockchainError> {
         // Create the new reorged chain, filling the blocks with transactions if supplied
         for i in 0..depth {
             let to_be_mined = tx_pairs.get(&i).cloned().unwrap_or_else(Vec::new);
-            let outcome = self.do_mine_block_locked(to_be_mined, false).await?;
+            let replaced_block = replaced_blocks.get(i as usize).copied();
+            let outcome = self.do_mine_block_locked(to_be_mined, false, replaced_block).await?;
             node_info!(
                 "    Mined reorg block number {}. With {} valid txs and with invalid {} txs",
                 outcome.block_number,
