@@ -1,6 +1,9 @@
+use foundry_cheatcodes_spec::Vm::{assumeCall, skip_0Call, skip_1Call};
+
 use super::*;
 
 impl SymbolicExecutor {
+    /// Handles `vm.assume` in an invariant predicate, which must cover every reachable state.
     pub(super) fn handle_assume(
         &mut self,
         state: &mut PathState,
@@ -8,9 +11,9 @@ impl SymbolicExecutor {
     ) -> Result<CheatcodeOutcome, SymbolicError> {
         let cond = state.memory.load_word(&mut self.cx, condition_offset)?;
         let cond = cond.nonzero_bool(&mut self.cx);
-        if state.invariant_predicate && cond.as_const() != Some(true) {
-            // A predicate must cover every reachable state. Restricting its input domain would
-            // hide rejected states, including when accepted values remain on this same path.
+        if cond.as_const() != Some(true) {
+            // Restricting the input domain would hide rejected states, including when accepted
+            // values remain on this same path.
             let rejected = cond.not(&mut self.cx);
             let (_, rejected_sat) = self.constraints_with_condition(state, rejected)?;
             if rejected_sat {
@@ -18,38 +21,79 @@ impl SymbolicExecutor {
                     "vm.assume may reject an invariant predicate",
                 ));
             }
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
         }
-        self.assume_condition(state, cond)
+        Ok(CheatcodeOutcome::Continue(Vec::new()))
     }
 
-    pub(super) fn handle_skip(
+    /// Forks `vm.assume` and `vm.skip` as Forge runs them: the accepted branch continues, and the
+    /// rejected branch reverts the cheatcode call, so a caller can catch the revert and the run
+    /// is discarded only when it reaches the test frame.
+    pub(super) fn branch_assume_cheatcode_if_needed(
         &mut self,
         state: &mut PathState,
-        condition_offset: usize,
-    ) -> Result<CheatcodeOutcome, SymbolicError> {
-        let cond = state.memory.load_word(&mut self.cx, condition_offset)?;
-        let cond = cond.nonzero_bool(&mut self.cx).not(&mut self.cx);
-        self.assume_condition(state, cond)
-    }
-
-    pub(super) fn assume_condition(
-        &mut self,
-        state: &mut PathState,
-        condition: SymBoolExpr,
-    ) -> Result<CheatcodeOutcome, SymbolicError> {
-        match condition.as_const() {
-            Some(true) => Ok(CheatcodeOutcome::Continue(Vec::new())),
-            Some(false) => Ok(CheatcodeOutcome::AssumeRejected),
+        worklist: &mut VecDeque<PathState>,
+        selector: [u8; 4],
+        in_offset: usize,
+        out_offset: SymExpr,
+        out_size: &BoundedCopySize,
+    ) -> Result<Option<StepOutcome>, SymbolicError> {
+        let skip = matches!(selector, skip_0Call::SELECTOR | skip_1Call::SELECTOR);
+        if !skip && (selector != assumeCall::SELECTOR || state.invariant_predicate) {
+            return Ok(None);
+        }
+        let cond = state.memory.load_word(&mut self.cx, in_offset + 4)?;
+        let cond = cond.nonzero_bool(&mut self.cx);
+        let accepted = if skip { cond.not(&mut self.cx) } else { cond };
+        let revert_data = if !skip {
+            SymReturnData::from_concrete_bytes(&mut self.cx, MAGIC_ASSUME.to_vec())
+        } else if state.call_depth == 0 {
+            let mut payload = MAGIC_SKIP.to_vec();
+            if selector == skip_1Call::SELECTOR {
+                let reason = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    in_offset + 4,
+                    1,
+                    "symbolic vm.skip reason",
+                )?;
+                payload.extend_from_slice(reason.as_bytes());
+            }
+            SymReturnData::from_concrete_bytes(&mut self.cx, payload)
+        } else {
+            error_string_return_data(&mut self.cx, "vm.skip: `skip` can only be used at test level")
+        };
+        let return_data = SymReturnData::empty(&mut self.cx);
+        match accepted.as_const() {
+            Some(true) => {
+                complete_cheatcode_call(&mut self.cx, state, out_offset, out_size, return_data)?;
+            }
+            Some(false) => {
+                fail_cheatcode_call(&mut self.cx, state, out_offset, out_size, revert_data)?;
+            }
             None => {
-                state.constraints.push(condition);
-                if self.is_sat_with_state(state, &state.constraints)? {
-                    Ok(CheatcodeOutcome::Continue(Vec::new()))
-                } else {
-                    Ok(CheatcodeOutcome::AssumeRejected)
-                }
+                let (accepted_seed_models, rejected_seed_models) =
+                    state.split_corpus_seed_models(&accepted);
+                let mut accepted_state = state.clone();
+                accepted_state.constraints.push(accepted.clone());
+                accepted_state.set_corpus_seed_models(accepted_seed_models);
+                accepted_state.defer_feasibility_check();
+                complete_cheatcode_call(
+                    &mut self.cx,
+                    &mut accepted_state,
+                    out_offset.clone(),
+                    out_size,
+                    return_data,
+                )?;
+                worklist.push_back(accepted_state);
+                // The rejected branch runs in place: an uncaught revert discards it without a
+                // solver query, and a caught one is checked when its frame completes.
+                state.constraints.push(accepted.not(&mut self.cx));
+                state.set_corpus_seed_models(rejected_seed_models);
+                state.defer_feasibility_check();
+                fail_cheatcode_call(&mut self.cx, state, out_offset, out_size, revert_data)?;
             }
         }
+        Ok(Some(StepOutcome::Continue))
     }
 
     pub(super) fn solver_upper_bound_usize(

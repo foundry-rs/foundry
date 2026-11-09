@@ -1541,9 +1541,14 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Revert);
         }
         let data = state.return_data.read_concrete(&mut self.cx, "symbolic revert data");
-        // Like Forge's fuzz and invariant runners, a `vm.assumeNoRevert` rejection that reaches the
-        // top frame discards the run. Invariant predicates still treat it as a revert.
-        if !state.invariant_predicate && data.as_deref().is_ok_and(|data| data == MAGIC_ASSUME) {
+        // Like Forge's fuzz and invariant runners, a `vm.assume` or `vm.assumeNoRevert` rejection
+        // or a `vm.skip` that reaches the top frame discards the run. Invariant predicates still
+        // treat it as a revert.
+        if !state.invariant_predicate
+            && data
+                .as_deref()
+                .is_ok_and(|data| data == MAGIC_ASSUME || data.starts_with(MAGIC_SKIP))
+        {
             return Ok(StepOutcome::AssumeRejected);
         }
         // In `check*`/`prove*` tests, a `CheatcodeError` that reaches the top frame, such as an

@@ -893,6 +893,20 @@ impl SymbolicExecutor {
 
             if to == CHEATCODE_ADDRESS
                 && let Some(concrete_in_offset) = concrete_in_offset
+                && let Some(outcome) = self.branch_assume_cheatcode_if_needed(
+                    state,
+                    worklist,
+                    selector,
+                    concrete_in_offset,
+                    out_offset.clone(),
+                    &out_size,
+                )?
+            {
+                return Ok(outcome);
+            }
+
+            if to == CHEATCODE_ADDRESS
+                && let Some(concrete_in_offset) = concrete_in_offset
                 && let Some(outcome) = self.branch_accesses_cheatcode_if_needed(
                     state,
                     worklist,
@@ -934,13 +948,9 @@ impl SymbolicExecutor {
                     CheatcodeOutcome::Continue(ret) => SymReturnData::from_words(&mut self.cx, ret),
                     CheatcodeOutcome::ContinueData(ret) => ret,
                     CheatcodeOutcome::Revert(ret) => {
-                        state.first_failed_callee.get_or_insert(CHEATCODE_ADDRESS);
-                        state.return_data = ret;
-                        state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
-                        state.stack.push(SymExpr::zero(&mut self.cx))?;
+                        fail_cheatcode_call(&mut self.cx, state, out_offset, &out_size, ret)?;
                         return Ok(StepOutcome::Continue);
                     }
-                    CheatcodeOutcome::AssumeRejected => return Ok(StepOutcome::AssumeRejected),
                     CheatcodeOutcome::Failure => return Ok(StepOutcome::Failure),
                 }
             } else if to == SYMBOLIC_VM_COMPAT_ADDRESS {

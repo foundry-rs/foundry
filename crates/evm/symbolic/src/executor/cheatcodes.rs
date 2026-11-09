@@ -672,7 +672,6 @@ impl SymbolicExecutor {
                 state.assume_no_revert_next_call = Some(filter);
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
-            skip_0Call::SELECTOR | skip_1Call::SELECTOR => self.handle_skip(state, in_offset + 4),
             recordLogsCall::SELECTOR => {
                 state.recorded_logs = Some(Vec::new());
                 state.recorded_logs_generation += 1;
