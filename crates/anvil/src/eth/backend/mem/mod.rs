@@ -9988,8 +9988,7 @@ where
             let evm_tx = TempoEvmNetwork::prepared_evm_tx(&tx, opts.cheats.as_ref())?;
             TempoEvmNetwork::set_tx_context(&mut evm, &evm_tx, &TxContext::default());
             let Err(err) = evm.transact(&evm_tx) else { return Ok(()) };
-            // Tempo's fee token shortfall otherwise converts to the native funds error; name the
-            // token balance instead, since the sender holds no native balance to speak of.
+            // Report a fee token shortfall with the payer's token balance and the required fee.
             if let HandlerError::External(err) = &err
                 && let Some(TempoInvalidTransaction::CollectFeePreTx(
                     FeePaymentError::InsufficientFeeTokenBalance { fee, balance },
