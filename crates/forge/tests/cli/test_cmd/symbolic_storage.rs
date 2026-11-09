@@ -634,3 +634,61 @@ Suite result: FAILED. 1 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
+
+// A symbolic Keccak compared with a hash computed during the run, or with a symbolic Keccak over a
+// different input length, is decided by its input instead of a free alias.
+#[forgetest_init]
+fn symbolic_keccak_known_preimage_bases_do_not_alias(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_keccak_known_preimage_bases_do_not_alias");
+
+    prj.add_test(
+        "SymbolicKeccakPreimage.t.sol",
+        r#"
+contract SymbolicKeccakPreimage {
+    mapping(address => uint256) balances;
+    address[] holders;
+    mapping(address => uint256[]) deposits;
+
+    constructor() {
+        holders.push(address(1));
+        holders.push(address(2));
+    }
+
+    function checkArrayElementSurvivesMappingWrite(address who, uint256 amount, uint256 i) public {
+        require(i < holders.length);
+        address before = holders[i];
+        balances[who] = amount;
+        assert(holders[i] == before);
+    }
+
+    function checkNestedArraySurvivesMappingWrite(
+        address user,
+        address who,
+        uint256 value,
+        uint256 amount
+    ) public {
+        deposits[user].push(value);
+        uint256 before = deposits[user][0];
+        balances[who] = amount;
+        assert(deposits[user][0] == before);
+    }
+
+    function checkKnownKeccakPreimage(uint256 x) public pure {
+        assert(keccak256(abi.encode(x)) != keccak256(abi.encode(uint256(42))));
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicKeccakPreimage"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/SymbolicKeccakPreimage.t.sol:SymbolicKeccakPreimage
+[PASS] checkArrayElementSurvivesMappingWrite(address,uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x4df8b26f000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkKnownKeccakPreimage(uint256) ([METRICS])
+[PASS] checkNestedArraySurvivesMappingWrite(address,address,uint256,uint256) ([METRICS])
+Suite result: FAILED. 2 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}

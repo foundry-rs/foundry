@@ -3717,6 +3717,7 @@ fn symbolic_fuzz_frontier_seeding_ignores_pre_target_counterexamples(prj: _, cmd
         "SymbolicFuzzFrontierTargetGate.t.sol",
         r#"
 /// forge-config: default.symbolic.exploration_order = "dfs"
+/// forge-config: default.fuzz.mutation_weight_cmp = 0
 contract SymbolicFuzzFrontierTargetGate {
     event TargetHit();
 
