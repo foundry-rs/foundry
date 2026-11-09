@@ -2424,7 +2424,7 @@ Suite result: ok. 7 passed; 0 failed; 0 skipped; [ELAPSED]
 }
 
 // `vm.chainId` inside a test applies to the native precompiles of the calls started after it,
-// including after a call that sets the same chain ID again.
+// including after a call that sets the same chain ID again and after a state snapshot restore.
 #[forgetest_init]
 fn test_tempo_chain_id_applies_to_new_frames(prj: _, cmd: _) {
     prj.update_config(|config| {
@@ -2456,6 +2456,15 @@ contract TempoChainIdTest is Test {
         assertEq(PATH_USD.DOMAIN_SEPARATOR(), newDomain);
     }
 
+    function test_domain_separator_survives_state_restore() public {
+        vm.chainId(block.chainid + 1);
+        uint256 snapshot = vm.snapshotState();
+        bytes32 domain = PATH_USD.DOMAIN_SEPARATOR();
+
+        vm.revertToState(snapshot);
+        assertEq(PATH_USD.DOMAIN_SEPARATOR(), domain);
+    }
+
     function setChainId(uint256 chainId) external {
         vm.chainId(chainId);
     }
@@ -2467,9 +2476,10 @@ contract TempoChainIdTest is Test {
         .assert_success()
         .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/TempoChainId.t.sol:TempoChainIdTest
+Ran 2 tests for test/TempoChainId.t.sol:TempoChainIdTest
 [PASS] test_domain_separator_follows_chain_id() ([GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+[PASS] test_domain_separator_survives_state_restore() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

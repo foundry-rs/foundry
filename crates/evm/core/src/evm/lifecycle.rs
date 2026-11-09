@@ -755,10 +755,18 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
     /// Captures the running context and every fork, and returns the snapshot ID.
     pub fn snapshot(&mut self, evm: &mut Evm<'_, F::Types>) -> U256 {
         self.materialize(evm);
+        // A deferred spec or chain ID change, such as `vm.chainId`, is part of the environment.
+        let env = self.pending_env.map_or_else(
+            || evm_env(evm),
+            |mut env| {
+                env.block = *evm.block();
+                env
+            },
+        );
         self.snapshots.insert(LifecycleSnapshot {
             state: evm.state().snapshot(),
             forks: self.forks.clone(),
-            env: evm_env(evm),
+            env,
             ext: StoredExt::new(evm.ext()),
         })
     }
