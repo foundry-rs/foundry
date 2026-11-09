@@ -3108,7 +3108,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     ) -> Option<CheckSequenceOutcome> {
         let policy = invariant_contract.invariant_fns[invariant_idx].1;
         let outcome = check_sequence(
-            self.clone_executor(),
+            self.clone_invariant_executor(),
             sequence,
             replay_order,
             invariant_contract.address,
@@ -3184,7 +3184,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 .and_then(|after_invariant| {
                     let calldata = after_invariant.abi_encode_input(&[]).ok()?.into();
                     let mut replay = check_sequence(
-                        self.clone_executor(),
+                        self.clone_invariant_executor(),
                         sequence,
                         &replay_order,
                         invariant_contract.address,
@@ -3381,7 +3381,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             else {
                 continue;
             };
-            let mut prefix_executor = self.clone_executor();
+            let mut prefix_executor = self.clone_invariant_executor();
             let mut created_contracts = Vec::new();
             let prefix_targets = FuzzRunIdentifiedContracts::new(
                 targeted_contracts.targets().clone(),
@@ -3891,7 +3891,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let anchor_idx =
             live_invariants.iter().position(|(invariant, _)| *invariant == func).unwrap_or(0);
 
-        let mut executor = self.clone_executor();
+        let mut executor = self.clone_invariant_executor();
         if invariant_config.gas_report_samples == 0 {
             // The campaign never reads its call traces or revert diagnostics: a failure and the
             // last run are replayed on a fresh clone of the test executor, which keeps them. The
@@ -4732,7 +4732,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     .unwrap_or_default();
                 match self.replay_error(
                     evm.config(),
-                    self.clone_executor(),
+                    self.clone_invariant_executor(),
                     &invariant_result.optimization_best_sequence,
                     None,
                     false,
@@ -4769,7 +4769,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 // Standard check mode: replay last run for traces.
                 &invariant_contract,
                 anchor,
-                self.clone_executor(),
+                self.clone_invariant_executor(),
                 &self.cr.mcr.known_contracts,
                 identified_contracts.clone(),
                 &mut self.result.logs,
@@ -5434,11 +5434,21 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         self.executor.clone().into_owned()
     }
 
+    /// Clones the executor for an invariant campaign or a replay of its calls. `setUp` already
+    /// ran under the project limit; the campaign's calls, and every replay and shrink of them,
+    /// run under `call_gas_limit` so a counterexample keeps the semantics it was found under.
+    fn clone_invariant_executor(&self) -> Executor<FEN> {
+        let mut executor = self.clone_executor();
+        executor.set_gas_limit(self.config.invariant.call_gas_limit(executor.gas_limit()));
+        executor
+    }
+
+    /// Clones the invariant executor with the storage of a symbolic counterexample applied.
     fn clone_executor_with_symbolic_storage(
         &self,
         storage: &[SymbolicStorageAssignment],
     ) -> Result<Executor<FEN>> {
-        let mut executor = self.clone_executor();
+        let mut executor = self.clone_invariant_executor();
         for assignment in storage {
             executor.set_storage_slot(assignment.address, assignment.slot, assignment.value)?;
             if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut() {

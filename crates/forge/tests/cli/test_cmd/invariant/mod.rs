@@ -3849,10 +3849,10 @@ contract CallGasLimitTest is Test {
     );
 }
 
-// A handler call whose calldata floor is above `call_gas_limit` runs with the floor as its limit
-// instead of aborting the campaign with a transaction validation error.
+// A handler call whose intrinsic gas or calldata floor is above `call_gas_limit` runs with that
+// amount as its limit instead of aborting the campaign with a transaction validation error.
 #[forgetest_init]
-fn invariant_call_gas_limit_covers_the_calldata_floor(prj: _, cmd: _) {
+fn invariant_call_gas_limit_covers_intrinsic_gas(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 5;
         config.invariant.depth = 5;
@@ -3864,7 +3864,7 @@ fn invariant_call_gas_limit_covers_the_calldata_floor(prj: _, cmd: _) {
 import {Test} from "forge-std/Test.sol";
 
 contract WideCalldata {
-    function poke(bytes32[64] calldata) external {}
+    function poke(bytes32[1024] calldata) external {}
 }
 
 contract CallGasFloorTest is Test {
@@ -3876,9 +3876,76 @@ contract CallGasFloorTest is Test {
 }
    "#,
     );
+    // Before Prague there is no calldata floor, and the intrinsic gas alone is above the cap. The
+    // call then runs with exactly its intrinsic gas: nothing is left to execute, so it reverts,
+    // but the campaign goes on.
+    prj.update_config(|config| config.evm_version = "cancun".parse().unwrap());
     cmd.args(["test", "--mt", "invariant_wide_calls_run"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS] invariant_wide_calls_run() (runs: 5, calls: 25, reverts: 25)
+...
+"#]]);
+    // From Prague the calldata floor is the bound, and it leaves the call gas to run.
+    prj.update_config(|config| config.evm_version = "prague".parse().unwrap());
+    cmd.forge_fuse().args(["test", "--mt", "invariant_wide_calls_run"]).assert_success().stdout_eq(
+        str![[r#"
 ...
 [PASS] invariant_wide_calls_run() (runs: 5, calls: 25, reverts: 0)
 ...
-"#]]);
+"#]],
+    );
+}
+
+// A failure found under `call_gas_limit` replays and shrinks under the same limit, so the
+// counterexample still fails when replayed and when persisted.
+#[forgetest_init]
+fn invariant_call_gas_limit_applies_to_replay(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 2;
+        config.invariant.call_gas_limit = Some(1_000_000);
+    });
+    prj.add_test(
+        "CallGasReplay.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract LowGasProbe {
+    bool public lowGas;
+
+    function record() external {
+        lowGas = gasleft() < 2_000_000;
+    }
+}
+
+contract CallGasReplayTest is Test {
+    LowGasProbe probe;
+
+    function setUp() public {
+        probe = new LowGasProbe();
+        targetContract(address(probe));
+    }
+
+    function invariant_never_low_gas() public view {
+        assertTrue(!probe.lowGas());
+    }
+}
+   "#,
+    );
+    // The replayed trace must show the handler under the cap: with the project limit it would
+    // see enough gas, record `false`, and the printed replay would not match the failure.
+    cmd.args(["test", "--mt", "invariant_never_low_gas", "-vvvv"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+[FAIL: assertion failed]
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] addr=[test/CallGasReplay.t.sol:LowGasProbe]0x[..] calldata=record() args=[]
+ invariant_never_low_gas() (runs: 1, calls: 1, reverts: 0)
+...
+  [..] CallGasReplayTest::invariant_never_low_gas()
+    ├─ [..] LowGasProbe::lowGas() [staticcall]
+    │   └─ ← [Return] true
+...
+"#]],
+    );
 }

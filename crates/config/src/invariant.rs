@@ -230,6 +230,11 @@ impl InvariantConfig {
         matches!(self.max_block_delay, Some(delay) if delay > 0)
             || matches!(self.max_time_delay, Some(delay) if delay > 0)
     }
+
+    /// Returns the gas limit of a campaign call: `call_gas_limit` when it is below `gas_limit`.
+    pub fn call_gas_limit(&self, gas_limit: u64) -> u64 {
+        self.call_gas_limit.map_or(gas_limit, |limit| limit.min(gas_limit))
+    }
 }
 
 #[cfg(test)]
