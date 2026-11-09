@@ -2639,6 +2639,14 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         // If `recordAccountAccesses` has been called, record the create
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
+            // Read without loading or warming the account, so recording has no side effects.
+            let old_balance = interp
+                .host()
+                .state_mut()
+                .account_info_untracked(&address)
+                .ok()
+                .flatten()
+                .map_or(U256::ZERO, |info| info.balance);
             recorded_account_diffs_stack.push(vec![AccountAccess {
                 chainInfo: crate::Vm::ChainInfo {
                     forkId: backend.backend().active_fork_id().unwrap_or_default(),
@@ -2653,10 +2661,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 account: address,
                 kind: crate::Vm::AccountAccessKind::Create,
                 initialized: true,
-                oldBalance: U256::ZERO, // updated on create_end
-                newBalance: U256::ZERO, // updated on create_end
-                oldNonce: 0,            // new contract starts with nonce 0
-                newNonce: 1,            // updated on create_end (contracts start with nonce 1)
+                oldBalance: old_balance,
+                newBalance: old_balance, // updated on create_end
+                oldNonce: 0,             // new contract starts with nonce 0
+                newNonce: 1,             // updated on create_end (contracts start with nonce 1)
                 value: input.value,
                 data: input.input.to_bytes(),
                 reverted: false,

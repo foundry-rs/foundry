@@ -1204,6 +1204,28 @@ contract RecordAccountAccessesTest is Test {
         }
     }
 
+    /// @notice Test that a create into a pre-funded address records its balance
+    ///         as unchanged, whether the create reverts or succeeds
+    function testCreatePrefundedBalance() public {
+        bytes[2] memory initcodes = [
+            // Reverts.
+            abi.encodePacked(type(ConstructorStorer).creationCode, abi.encode(true)),
+            // Succeeds.
+            abi.encodePacked(type(ConstructorStorer).creationCode, abi.encode(false))
+        ];
+        for (uint256 i; i < initcodes.length; ++i) {
+            address child = deriveCreate2Address(address(create2or), bytes32(0), keccak256(initcodes[i]));
+            vm.deal(child, 123);
+            vm.startStateDiffRecording();
+            create2or.create2(bytes32(0), initcodes[i]);
+            Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
+            assertEq(called.length, 2, "incorrect length");
+            assertEq(called[1].account, child, "incorrect account");
+            assertEq(called[1].oldBalance, 123, "incorrect oldBalance");
+            assertEq(called[1].newBalance, 123, "incorrect newBalance");
+        }
+    }
+
     /// @notice Test that a call that fails for lack of funds is recorded as reverted
     function testCallOutOfFunds() public {
         vm.startStateDiffRecording();
