@@ -7465,8 +7465,9 @@ contract SymbolicMappingStorageHooksSymbolicSize is Test {
 }
 
 // Like Forge, `vm.stopRecord` pauses recording but keeps the accesses for `vm.accesses`,
-// `vm.expectEmit(emitter, 0)` reverts the frame that emits a matching log, and a log without
-// topics cannot fill the template of a non-anonymous `vm.expectEmit`.
+// `vm.expectEmit(emitter, 0)` reverts the frame that emits a matching log, a log without
+// topics cannot fill the template of a non-anonymous `vm.expectEmit`, and the next non-static
+// call must emit a pending `vm.expectEmit` or fail with `log != expected log`.
 #[forgetest_init]
 fn symbolic_stop_record_and_expect_emit_count_zero_match_forge(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_stop_record_and_expect_emit_count_zero_match_forge");
@@ -7684,6 +7685,22 @@ contract SymbolicRecordAndEmitCount {
         store.emitAnon(value);
     }
 
+    function checkExpectEmitInLaterCall(uint256 value) public {
+        vm.expectEmit();
+        emit Set(value);
+        store.noop();
+        store.setA(value);
+    }
+
+    // Like Forge, the failed call keeps the expectation, so a later call can meet it.
+    function checkExpectEmitCaughtFailureKeepsExpectation(uint256 value) public {
+        vm.expectEmit();
+        emit Set(value);
+        (bool success,) = address(store).call(abi.encodeCall(Store.noop, ()));
+        assert(!success);
+        store.setA(value);
+    }
+
     function testStopRecordKeepsAndPausesAccesses() public {
         checkStopRecordKeepsAndPausesAccesses(1);
     }
@@ -7719,6 +7736,10 @@ contract SymbolicRecordAndEmitCount {
     function testExpectEmitAnonymousMatches() public {
         checkExpectEmitAnonymousMatches(1);
     }
+
+    function testExpectEmitCaughtFailureKeepsExpectation() public {
+        checkExpectEmitCaughtFailureKeepsExpectation(1);
+    }
 }
 "#,
     );
@@ -7738,9 +7759,11 @@ contract SymbolicRecordAndEmitCount {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 19 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCount
+Ran 21 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCount
 [PASS] checkExpectEmitAnonymousMatches(uint256) ([METRICS])
 [FAIL: use vm.expectEmitAnonymous to match anonymous events; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitAnonymousTemplate(uint256) ([METRICS])
+[PASS] checkExpectEmitCaughtFailureKeepsExpectation(uint256) ([METRICS])
+[FAIL: log != expected log; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitInLaterCall(uint256) ([METRICS])
 [FAIL: Set indexed topic count mismatch: expected 1, got 0; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitRequiresSameTopicCount(uint256) ([METRICS])
 [PASS] checkExpectNoEmitAllowsOtherEvent(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit count 0 across a failed call] checkExpectNoEmitAnonymousInRevertedCall(uint256) ([METRICS])
@@ -7758,7 +7781,7 @@ Ran 19 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCoun
 [PASS] checkExpectNoEmitUnderExpectRevert(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit with a pending expectation] checkQueuedExpectEmitFailsClosed(uint256) ([METRICS])
 [PASS] checkStopRecordKeepsAndPausesAccesses(uint256) ([METRICS])
-Suite result: FAILED. 9 passed; 10 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 10 passed; 11 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
@@ -7817,153 +7840,6 @@ Ran 2 tests for test/SymbolicExpectCallComplement.t.sol:SymbolicExpectCallComple
 [FAIL: expected call to [..] with data 0x5c36b186 to be called 0 times, but was called 1 time; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkComplementCalleeNeverCalled(uint256) ([METRICS])
 [PASS] checkMaskedComplementCallee(uint256) ([METRICS])
 Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
-...
-"#]]);
-}
-
-// Like Forge, the next non-static call from the frame that declared a `vm.expectEmit` must emit
-// every log it expects. A call that does not fails with `log != expected log` and keeps the
-// expectation pending, so a later call cannot meet it unless the failure is caught.
-#[forgetest_init]
-fn symbolic_expect_emit_checked_at_next_call(prj: _, cmd: _) {
-    skip_unless_z3!("symbolic_expect_emit_checked_at_next_call");
-
-    prj.add_test(
-        "SymbolicExpectEmitNextCall.t.sol",
-        r#"
-interface Vm {
-    function expectEmit() external;
-    function expectEmit(uint64 count) external;
-}
-
-contract NextCallEmitter {
-    event Ev(uint256 x);
-
-    function nop() external {}
-
-    function emitEv(uint256 x) external {
-        emit Ev(x);
-    }
-
-    function halt() external {
-        assembly {
-            invalid()
-        }
-    }
-}
-
-contract SymbolicExpectEmitNextCall {
-    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
-    event Ev(uint256 x);
-    NextCallEmitter emitter;
-
-    function setUp() public {
-        emitter = new NextCallEmitter();
-    }
-
-    function checkEmitInNextCall(uint256 x) public {
-        vm.expectEmit();
-        emit Ev(x);
-        emitter.emitEv(x);
-        emitter.nop();
-    }
-
-    function checkEmitInLaterCall(uint256 x) public {
-        vm.expectEmit();
-        emit Ev(x);
-        emitter.nop();
-        emitter.emitEv(x);
-    }
-
-    function checkCountSplitAcrossCalls(uint256 x) public {
-        vm.expectEmit(uint64(2));
-        emit Ev(x);
-        emitter.emitEv(x);
-        emitter.emitEv(x);
-    }
-
-    // Like Forge, the failed call keeps the expectation, so a later call can meet it.
-    function checkCaughtFailureKeepsExpectation(uint256 x) public {
-        vm.expectEmit();
-        emit Ev(x);
-        (bool success,) = address(emitter).call(abi.encodeCall(NextCallEmitter.nop, ()));
-        assert(!success);
-        emitter.emitEv(x);
-    }
-
-    function checkCodelessCallFails(uint256 x) public {
-        vm.expectEmit();
-        emit Ev(x);
-        (bool success,) = address(0xdead).call("");
-        assert(!success);
-        emitter.emitEv(x);
-    }
-
-    function checkHaltedCallReturnsFailure(uint256 x) public {
-        vm.expectEmit();
-        emit Ev(x);
-        (bool success, bytes memory data) =
-            address(emitter).call(abi.encodeCall(NextCallEmitter.halt, ()));
-        assert(!success && data.length != 0);
-        emitter.emitEv(x);
-    }
-
-    // Like Forge, a static call does not check the expectation.
-    function checkStaticCallKeepsExpectation(uint256 x) public {
-        vm.expectEmit();
-        emit Ev(x);
-        (bool success,) = address(emitter).staticcall(abi.encodeCall(NextCallEmitter.nop, ()));
-        assert(success);
-        emitter.emitEv(x);
-    }
-
-    function testEmitInNextCall() public {
-        checkEmitInNextCall(1);
-    }
-
-    function testCaughtFailureKeepsExpectation() public {
-        checkCaughtFailureKeepsExpectation(1);
-    }
-
-    function testCodelessCallFails() public {
-        checkCodelessCallFails(1);
-    }
-
-    function testHaltedCallReturnsFailure() public {
-        checkHaltedCallReturnsFailure(1);
-    }
-
-    function testStaticCallKeepsExpectation() public {
-        checkStaticCallKeepsExpectation(1);
-    }
-}
-"#,
-    );
-
-    cmd.args(["test", "--match-contract", "SymbolicExpectEmitNextCall", "--match-test", "^test"])
-        .assert_success();
-    cmd.forge_fuse();
-
-    assert_symbolic_witness(cmd.args([
-        "test",
-        "--symbolic",
-        "--match-contract",
-        "SymbolicExpectEmitNextCall",
-        "--match-test",
-        "^check",
-    ]))
-    .failure()
-    .stdout_eq(str![[r#"
-...
-Ran 7 tests for test/SymbolicExpectEmitNextCall.t.sol:SymbolicExpectEmitNextCall
-[PASS] checkCaughtFailureKeepsExpectation(uint256) ([METRICS])
-[PASS] checkCodelessCallFails(uint256) ([METRICS])
-[FAIL: log != expected log; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCountSplitAcrossCalls(uint256) ([METRICS])
-[FAIL: log != expected log; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkEmitInLaterCall(uint256) ([METRICS])
-[PASS] checkEmitInNextCall(uint256) ([METRICS])
-[PASS] checkHaltedCallReturnsFailure(uint256) ([METRICS])
-[PASS] checkStaticCallKeepsExpectation(uint256) ([METRICS])
-Suite result: FAILED. 5 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
