@@ -7820,3 +7820,82 @@ Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
+
+// Like Forge, `vm.assumeNoRevert` filters match the first call that reverted inside the next call,
+// not the contract the test called.
+#[forgetest_init]
+fn symbolic_vm_assume_no_revert_matches_first_reverter(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_assume_no_revert_matches_first_reverter");
+
+    prj.add_test(
+        "SymbolicAssumeNoRevertFirstReverter.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface SymbolicVm {
+    struct PotentialRevert {
+        address reverter;
+        bool partialMatch;
+        bytes revertData;
+    }
+
+    function assumeNoRevert(PotentialRevert calldata potentialRevert) external pure;
+}
+
+contract FirstReverterInner {
+    function boom() external pure {
+        revert("in");
+    }
+}
+
+contract FirstReverterOuter {
+    FirstReverterInner public immutable inner = new FirstReverterInner();
+
+    function f() external view {
+        inner.boom();
+    }
+}
+
+contract SymbolicAssumeNoRevertFirstReverter is Test {
+    SymbolicVm symbolicVm = SymbolicVm(VM_ADDRESS);
+    FirstReverterOuter outer;
+
+    function setUp() public {
+        outer = new FirstReverterOuter();
+    }
+
+    function callWithFilter(address reverter) internal {
+        bytes memory reason = abi.encodeWithSignature("Error(string)", "in");
+        symbolicVm.assumeNoRevert(SymbolicVm.PotentialRevert(reverter, false, reason));
+        try outer.f() {} catch (bytes memory data) {
+            assertEq(data, reason);
+        }
+    }
+
+    function checkFilterNamesInnerReverter(uint256) public {
+        callWithFilter(address(outer.inner()));
+    }
+
+    function checkFilterNamesOuterCallee(uint256) public {
+        callWithFilter(address(outer));
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicAssumeNoRevertFirstReverter",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicAssumeNoRevertFirstReverter.t.sol:SymbolicAssumeNoRevertFirstReverter
+[FAIL: [..]; counterexample: [..]] checkFilterNamesInnerReverter(uint256) ([METRICS])
+[PASS] checkFilterNamesOuterCallee(uint256) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}

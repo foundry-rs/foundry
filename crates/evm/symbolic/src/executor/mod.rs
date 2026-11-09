@@ -164,6 +164,8 @@ impl SymbolicExecutor {
         let mut parent = state.clone();
         parent.first_failed_callee =
             parent.first_failed_callee.or(outcome.state.first_failed_callee);
+        parent.first_reverted_callee =
+            parent.first_reverted_callee.or(outcome.state.first_reverted_callee);
         parent.take_call_outcome_state(&mut outcome.state);
         if !matches!(outcome.status, CallStatus::Success) {
             parent.discard_failed_call_logs(
@@ -196,14 +198,16 @@ impl SymbolicExecutor {
         }
 
         // Like Forge, a revert under `vm.assumeNoRevert` skips `vm.expectRevert`, and a matching
-        // revert returns `FOUNDRY::ASSUME`, which discards the run only if it reaches the top.
+        // revert returns `FOUNDRY::ASSUME`, which discards the run only if it reaches the top. Its
+        // filters match the first call that reverted in the call, not the callee.
         if let Some(assumption) = assume_no_revert
             && matches!(outcome.status, CallStatus::Revert)
         {
+            let reverter = outcome.state.first_reverted_callee.unwrap_or(outcome.state.address);
             if self.assume_no_revert_matches(
                 &parent,
                 assumption,
-                outcome.state.address,
+                reverter,
                 &outcome.state.frame.return_data,
             )? {
                 outcome.state.frame.return_data =
