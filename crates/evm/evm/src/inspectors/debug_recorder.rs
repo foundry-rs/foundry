@@ -4,7 +4,7 @@ use alloy_primitives::U256;
 use evm2::{
     EvmTypes, Inspector,
     evm::JournalEntry,
-    interpreter::{InstrStop, Interpreter, Message, MessageResult, opcode::OpCode},
+    interpreter::{InstrStop, Interpreter, Message, MessageResult, op, opcode::OpCode},
 };
 use foundry_evm_traces::debug::{
     DebugRecording, DebugStepSink, RecordedFrame, StepConverter, step_record,
@@ -12,8 +12,9 @@ use foundry_evm_traces::debug::{
 use soldb_core::{Bytes, EvmWord, StepRecord, StepTable};
 use std::{fmt, sync::Arc};
 
-/// The most stack words one instruction reads: `SWAP16` reads 17.
-const MAX_INPUTS: usize = 17;
+/// The most stack words the storage opcodes read: `SSTORE` and `TSTORE` read the slot and the
+/// value.
+const STORAGE_INPUTS: usize = 2;
 
 /// Records every opcode step of the debugged calls into a [`StepTable`], with the steps that
 /// each call and creation spans.
@@ -40,6 +41,12 @@ pub struct DebugRecorder {
     calls_below_root: Option<usize>,
     /// The step that started and did not end yet.
     pending: Option<PendingStep>,
+    /// The words of the pending step's stack above the ones it shares with the step appended
+    /// last, bottom first.
+    words: Vec<U256>,
+    /// How many bottom words the next step's stack shares with the stack of the step appended
+    /// last: an instruction changes only the words it reads, so the ones below them stay.
+    shared: usize,
     /// Converts the return data and storage of the steps.
     converter: StepConverter,
 }
@@ -62,11 +69,13 @@ struct PendingStep {
     depth: u64,
     #[cfg(test)]
     memory: Vec<u8>,
-    return_data: Arc<str>,
-    /// The stack height before the step.
-    height: usize,
-    /// The top words the step can pop or change, bottom first.
-    inputs: [U256; MAX_INPUTS],
+    /// The hex return data buffer, or `None` if it is the one of the step appended last.
+    return_data: Option<Arc<str>>,
+    /// How many bottom words of the stack are the ones of the step appended last; the rest are
+    /// in [`DebugRecorder::words`].
+    shared: usize,
+    /// The top words a storage opcode reads, bottom first.
+    inputs: [U256; STORAGE_INPUTS],
     inputs_len: usize,
     /// The journal length before the step.
     journal_len: usize,
@@ -84,6 +93,8 @@ impl DebugRecorder {
             open: Vec::new(),
             calls_below_root: Some(0),
             pending: None,
+            words: Vec::new(),
+            shared: 0,
             converter: StepConverter::default(),
         }
     }
@@ -147,7 +158,15 @@ impl DebugRecorder {
         self.pending = None;
         let exit_step = self.table().len() - self.first_step;
         if let Some(open) = self.open.pop() {
-            self.frames[open.frame].exit_step = exit_step;
+            let frame = &mut self.frames[open.frame];
+            frame.exit_step = exit_step;
+            // The caller's stack shares nothing with the last stack of a frame that ran steps.
+            // A frame without steps, such as a precompile or a cheatcode call, leaves the
+            // caller's call step as the one appended last, and a frame's first step has an
+            // empty stack, so entering a frame shares nothing on its own.
+            if frame.exit_step != frame.entry_step {
+                self.shared = 0;
+            }
             self.table().end_memory_frame();
         }
     }
@@ -193,18 +212,23 @@ impl DebugRecorder {
 
         let return_data = self.converter.return_data(interp.return_data());
 
-        // An instruction changes only the words it reads, so the stack before it is what stays
-        // below them after it, and these.
+        // The step appended last has the bottom `shared` words of this stack, so only the
+        // words above them are copied. An instruction changes only the words it reads, so the
+        // next step shares the ones below them; a `DUP` reads a word but leaves it in place.
         let stack = interp.stack();
         let stack = stack.as_slice();
+        let shared = self.shared.min(stack.len());
+        self.words.clear();
+        self.words.extend_from_slice(&stack[shared..]);
         let read = if op.is_valid() { op.inputs() as usize } else { 0 };
-        let inputs_len = read.min(stack.len()).min(MAX_INPUTS);
-        let mut inputs = [U256::ZERO; MAX_INPUTS];
+        let changed = if matches!(op.get(), op::DUP1..=op::DUP16) { 0 } else { read };
+        self.shared = stack.len() - changed.min(stack.len());
+        let inputs_len = read.min(stack.len()).min(STORAGE_INPUTS);
+        let mut inputs = [U256::ZERO; STORAGE_INPUTS];
         inputs[..inputs_len].copy_from_slice(&stack[stack.len() - inputs_len..]);
 
         let lifted = self.calls_below_root == Some(1);
         let depth = self.frames[open.frame].depth as u64 + 1 - u64::from(lifted);
-        let height = stack.len();
         let pc = interp.pc() as u64;
         let gas = interp.gas().remaining();
         let journal_len = interp.host().state().journal().len();
@@ -216,7 +240,7 @@ impl DebugRecorder {
             #[cfg(test)]
             memory,
             return_data,
-            height,
+            shared,
             inputs,
             inputs_len,
             journal_len,
@@ -253,8 +277,7 @@ impl DebugRecorder {
         // The frame runs another step unless this one ended it; that step starts with the value
         // a load pushed on top.
         let loaded = status.is_none().then(|| after.last().copied()).flatten();
-        let kept = &after[..(step.height - step.inputs_len).min(after.len())];
-        self.append(step, kept, status, gas_cost, loaded, had_value);
+        self.append(step, status, gas_cost, loaded, had_value);
     }
 
     /// Ends the pending step of the instruction that starts a call or creation.
@@ -264,29 +287,22 @@ impl DebugRecorder {
     pub(crate) fn end_step_before_frame<T: EvmTypes>(&mut self, interp: &Interpreter<'_, '_, T>) {
         let Some(step) = self.pending.take() else { return };
         let gas_cost = step.gas.saturating_sub(interp.gas().remaining());
-        let stack = interp.stack();
-        let stack = stack.as_slice();
-        let kept = &stack[..(step.height - step.inputs_len).min(stack.len())];
-        self.append(step, kept, None, gas_cost, None, None);
+        self.append(step, None, gas_cost, None, None);
     }
 
     /// Ends the pending step if an inspector halted the frame before its instruction ran.
-    pub fn end_step_not_run<T: EvmTypes>(&mut self, interp: &Interpreter<'_, '_, T>) {
+    pub fn end_step_not_run(&mut self) {
         let Some(step) = self.pending.take() else { return };
-        let stack = interp.stack();
-        let stack = stack.as_slice();
-        let kept = &stack[..(step.height - step.inputs_len).min(stack.len())];
-        self.append(step, kept, None, 0, None, None);
+        self.append(step, None, 0, None, None);
     }
 
-    /// Appends `step`, whose stack is `kept` and its inputs.
+    /// Appends `step`, whose stack is the shared words of the step appended last and `words`.
     ///
     /// `loaded` is the value an `SLOAD` or `TLOAD` pushed, if the frame went on, and `had_value`
     /// the value an `SSTORE` overwrote, if the journal recorded it.
     fn append(
         &mut self,
         step: PendingStep,
-        kept: &[U256],
         status: Option<InstrStop>,
         gas_cost: u64,
         loaded: Option<U256>,
@@ -294,13 +310,12 @@ impl DebugRecorder {
     ) {
         #[cfg(test)]
         let expected_memory = step.memory;
-        let PendingStep { pc, op, gas, depth, return_data, inputs, inputs_len, .. } = step;
-        let inputs = &inputs[..inputs_len];
-        let storage = self.converter.storage(op.get(), inputs, loaded, had_value);
+        let PendingStep { pc, op, gas, depth, return_data, shared, inputs, inputs_len, .. } = step;
+        let storage = self.converter.storage(op.get(), &inputs[..inputs_len], loaded, had_value);
         let error =
             status.filter(|status| !status.is_success()).map(|status| format!("{status:?}"));
         let table = self.table.as_mut().expect("a frame is open");
-        table.append(
+        table.append_kept(
             StepRecord {
                 pc,
                 op: op.get(),
@@ -312,9 +327,10 @@ impl DebugRecorder {
                 storage: Some(storage.storage),
                 storage_diff: storage.storage_diff,
                 transient_storage: storage.transient_storage,
-                return_data: Some(return_data),
+                return_data,
             },
-            kept.iter().chain(inputs).map(|word| EvmWord(word.to_be_bytes())),
+            shared,
+            self.words.iter().map(|word| EvmWord(word.to_be_bytes())),
         );
         #[cfg(test)]
         assert_eq!(

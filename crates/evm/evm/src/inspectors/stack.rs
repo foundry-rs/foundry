@@ -1806,7 +1806,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             && let Some(recorder) = self.inner.debug_recorder.as_deref_mut()
             && interp.result().is_err()
         {
-            recorder.end_step_not_run(interp);
+            recorder.end_step_not_run();
         }
     }
 

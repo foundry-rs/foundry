@@ -486,7 +486,8 @@ impl TraceBuilder {
             .filter(|_| step.op == OpCode::SSTORE)
             .and_then(|change| change.had_value);
         let storage = self.converter.storage(step.op.get(), stack, loaded, had_value);
-        // `None` would keep the previous step's buffer, so an empty one is spelled out too.
+        // The converter spells out the buffer of the first step and of every change, including
+        // to an empty one; `None` keeps the previous step's.
         let return_data = self.converter.return_data(&step.returndata);
         self.steps.append(
             StepRecord {
@@ -500,7 +501,7 @@ impl TraceBuilder {
                 storage: Some(storage.storage),
                 storage_diff: storage.storage_diff,
                 transient_storage: storage.transient_storage,
-                return_data: Some(return_data),
+                return_data,
             },
             stack.iter().map(|word| EvmWord(word.to_be_bytes())),
         );
