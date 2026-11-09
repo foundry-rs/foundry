@@ -3940,6 +3940,15 @@ contract SymbolicExpectEmit is Test {
         emitter.fire(address(0xB0B), 7, 9);
     }
 
+    function checkExpectEmitFailureHasNoErrorSelector(uint256) public {
+        vm.expectEmit(true, true, false, true, address(emitter));
+        emit Seen(address(0xB0B), 7, 9);
+        (bool ok, bytes memory data) = address(emitter).call(abi.encodeCall(emitter.fireOther, ()));
+        assertFalse(ok);
+        emitter.fire(address(0xB0B), 7, 9);
+        assertEq(bytes4(data), bytes4(keccak256("CheatcodeError(string)")));
+    }
+
     function checkExpectEmitCountOverloads(uint256) public {
         vm.expectEmit(uint64(2));
         emit Seen(address(0xB0B), 7, 9);
@@ -3970,13 +3979,14 @@ contract SymbolicExpectEmit is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 5 tests for test/SymbolicExpectEmit.t.sol:SymbolicExpectEmit
+Ran 6 tests for test/SymbolicExpectEmit.t.sol:SymbolicExpectEmit
 [PASS] checkExpectEmit(uint256) ([METRICS])
 [PASS] checkExpectEmitCountOverloads(uint256) ([METRICS])
 [FAIL: Other != expected Seen; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitFailsAtEndOfMismatchedCall(uint256) ([METRICS])
+[FAIL: assertion failed: 0x0000000000000000000000000000000000000000000000000000000000000000 != 0xeeaa9e6f00000000000000000000000000000000000000000000000000000000; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitFailureHasNoErrorSelector(uint256) ([METRICS])
 [PASS] checkExpectEmitSkipsEarlierLogs(uint256) ([METRICS])
 [PASS] checkExpectEmitSymbolicEmitter(address) ([METRICS])
-Suite result: FAILED. 4 passed; 1 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 4 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
