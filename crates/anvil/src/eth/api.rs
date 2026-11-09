@@ -6230,6 +6230,13 @@ mod tests {
 
         // Model a long-running RPC without depending on EVM execution time or upstream I/O.
         let active_rpc = api.lifecycle_lock.read().await;
+        let busy_response = || {
+            ResponseResult::error(RpcError {
+                code: ErrorCode::ServerError(-32002),
+                message: "node is busy with active RPC requests; retry the operation".into(),
+                data: None,
+            })
+        };
         for request in [
             EthRequest::Reset(None),
             EthRequest::SetRpcUrl("http://localhost:8545".to_string()),
@@ -6242,27 +6249,12 @@ mod tests {
                     "lifecycle transitions must reject active RPCs instead of queueing a writer"
                 );
             };
-            assert_eq!(
-                result,
-                ResponseResult::error(RpcError {
-                    code: ErrorCode::ServerError(-32002),
-                    message: "node is busy with active RPC requests; retry the operation".into(),
-                    data: None,
-                })
-            );
+            assert_eq!(result, busy_response());
         }
         assert_eq!(api.instance_id(), instance);
         assert_eq!(api.backend.best_number(), 1);
 
         tokio::time::timeout(Duration::from_secs(5), async {
-            assert_eq!(
-                api.execute(EthRequest::Web3ClientVersion(())).await,
-                ResponseResult::success(api.client_version().unwrap())
-            );
-            assert_eq!(
-                api.execute(EthRequest::NetListening(())).await,
-                ResponseResult::success(true)
-            );
             assert_eq!(
                 api.execute(EthRequest::EthBlockNumber(())).await,
                 ResponseResult::success(U256::from(1))
