@@ -94,7 +94,7 @@ impl SymCx {
         self.replayable_inputs.contains(&symbol)
     }
 
-    pub(in crate::runtime::expr) fn record_concrete_keccak_preimage(
+    pub(in crate::runtime) fn record_concrete_keccak_preimage(
         &mut self,
         hash: U256,
         bytes: Arc<[SymExpr]>,

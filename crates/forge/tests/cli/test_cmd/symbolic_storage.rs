@@ -636,18 +636,24 @@ Suite result: FAILED. 1 passed; 6 failed; 0 skipped; [ELAPSED]
 }
 
 // A symbolic Keccak compared with a hash computed during the run, or with a symbolic Keccak over a
-// different input length, is decided by its input instead of a free alias.
+// different input length, is decided by its input instead of a free alias. The optimizer folds the
+// slots of `balances[KEY]` and `nested[KEY][1]` into constants; the storage layout and the source
+// literals give them their preimages, so a write through a symbolic key still reaches them.
 #[forgetest_init]
 fn symbolic_keccak_known_preimage_bases_do_not_alias(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_keccak_known_preimage_bases_do_not_alias");
 
+    prj.update_config(|config| config.optimizer = Some(true));
     prj.add_test(
         "SymbolicKeccakPreimage.t.sol",
         r#"
 contract SymbolicKeccakPreimage {
+    address constant KEY = address(0xD00D);
+
     mapping(address => uint256) balances;
     address[] holders;
     mapping(address => uint256[]) deposits;
+    mapping(address => mapping(uint256 => uint256)) nested;
 
     constructor() {
         holders.push(address(1));
@@ -676,6 +682,16 @@ contract SymbolicKeccakPreimage {
     function checkKnownKeccakPreimage(uint256 x) public pure {
         assert(keccak256(abi.encode(x)) != keccak256(abi.encode(uint256(42))));
     }
+
+    function checkFoldedConstantKeySlotAliases(address who) public {
+        balances[who] = 5;
+        assert(balances[KEY] == 0);
+    }
+
+    function checkFoldedNestedConstantKeySlotAliases(address who, uint256 id) public {
+        nested[who][id] = 3;
+        assert(nested[KEY][1] == 0);
+    }
 }
 "#,
     );
@@ -684,11 +700,13 @@ contract SymbolicKeccakPreimage {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 3 tests for test/SymbolicKeccakPreimage.t.sol:SymbolicKeccakPreimage
+Ran 5 tests for test/SymbolicKeccakPreimage.t.sol:SymbolicKeccakPreimage
 [PASS] checkArrayElementSurvivesMappingWrite(address,uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x622f5688000000000000000000000000000000000000000000000000000000000000d00d args=[0x000000000000000000000000000000000000D00d]] checkFoldedConstantKeySlotAliases(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x8633f2c7000000000000000000000000000000000000000000000000000000000000d00d0000000000000000000000000000000000000000000000000000000000000001 args=[0x000000000000000000000000000000000000D00d, 1]] checkFoldedNestedConstantKeySlotAliases(address,uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x4df8b26f000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkKnownKeccakPreimage(uint256) ([METRICS])
 [PASS] checkNestedArraySurvivesMappingWrite(address,address,uint256,uint256) ([METRICS])
-Suite result: FAILED. 2 passed; 1 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 2 passed; 3 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

@@ -367,6 +367,7 @@ impl SymbolicExecutor {
             .ok_or(SymbolicError::MissingAccount(input.target))?;
         let bytecode = account.code.ok_or(SymbolicError::MissingCode(input.target))?;
         let code = SymCode::from_bytecode(&mut self.cx, &bytecode);
+        register_folded_mapping_slots(&mut self.cx, &input.executor);
         let mut roots = Vec::new();
         for calldata in SymbolicCalldata::variants(input.function, &self.config, &mut self.cx)? {
             let corpus_seed_models = input
@@ -616,6 +617,7 @@ impl SymbolicExecutor {
         );
         initial_state.apply_executor_env(&mut self.cx, &input.executor);
         initial_state.world.set_storage_layout(self.config.storage_layout);
+        register_folded_mapping_slots(&mut self.cx, &input.executor);
         let initial = SequencePath { state: initial_state, steps: Vec::new() };
 
         if symbolic_invariant_should_check(0, input.depth, input.check_interval) {

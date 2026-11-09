@@ -1,6 +1,7 @@
 use super::*;
 use evm2::evm::{AccountInfo, DbResult};
-use foundry_evm::core::backend::Backend;
+use foundry_common::contracts::ContractsByArtifact;
+use foundry_evm::{core::backend::Backend, fuzz::strategies::LiteralsDictionary};
 
 /// Reads of a backend's accepted state, independent of its network.
 pub(crate) trait AcceptedState {
@@ -52,6 +53,10 @@ pub struct ExecutorView<'a> {
     pub(crate) storage_load_hooks: Vec<(Address, SymbolicStorageHook)>,
     pub(crate) storage_store_hooks: Vec<(Address, SymbolicStorageHook)>,
     pub(crate) mapping_storage_store_hooks: Vec<((Address, U256), SymbolicStorageHook)>,
+    /// Project artifacts, used to find the storage layouts of deployed contracts.
+    pub(crate) known_contracts: Option<&'a ContractsByArtifact>,
+    /// Source literals, used as candidate keys of constant-folded mapping slots.
+    pub(crate) literals: Option<&'a LiteralsDictionary>,
 }
 
 /// Block environment values exposed to symbolic execution.
@@ -172,6 +177,20 @@ impl<'a> ExecutorView<'a> {
                     )
                 })
                 .collect(),
+            known_contracts: None,
+            literals: None,
         }
+    }
+
+    /// Attaches the project artifacts and source literals that register the constant-folded
+    /// mapping slots of deployed contracts before a run.
+    pub fn with_project(
+        mut self,
+        known_contracts: &'a ContractsByArtifact,
+        literals: &'a LiteralsDictionary,
+    ) -> Self {
+        self.known_contracts = Some(known_contracts);
+        self.literals = Some(literals);
+        self
     }
 }

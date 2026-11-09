@@ -117,6 +117,7 @@ impl SymbolicExecutor {
         );
         initial_state.apply_executor_env(&mut self.cx, &input.executor);
         initial_state.world.set_storage_layout(self.config.storage_layout);
+        register_folded_mapping_slots(&mut self.cx, &input.executor);
 
         let calldatas = SymbolicCalldata::variants_with_prefix(
             &input.target.function,

@@ -1997,7 +1997,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         branch_target: Option<SymbolicBranchTarget>,
     ) -> SymbolicRunInput<'f> {
         SymbolicRunInput {
-            executor: ExecutorView::new(self.executor.as_ref()),
+            executor: ExecutorView::new(self.executor.as_ref())
+                .with_project(&self.cr.mcr.known_contracts, &self.cr.mcr.fuzz_literals),
             target: self.address,
             sender,
             function: func,
@@ -3249,7 +3250,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             .collect::<Vec<_>>();
         let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
         let result = symbolic.search_invariant_candidates(SymbolicInvariantCandidateInput {
-            executor: ExecutorView::new(prefix_executor),
+            executor: ExecutorView::new(prefix_executor)
+                .with_project(&self.cr.mcr.known_contracts, &self.cr.mcr.invariant_literals),
             invariant_address: invariant_contract.address,
             invariants: &invariants,
             after_invariant,
@@ -3513,7 +3515,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 frontier.operands.result,
             );
             let search = symbolic.search_branch_target(SymbolicRunInput {
-                executor: ExecutorView::new(&prefix_executor),
+                executor: ExecutorView::new(&prefix_executor)
+                    .with_project(&self.cr.mcr.known_contracts, &self.cr.mcr.invariant_literals),
                 target: call.call_details.target,
                 sender: call.sender,
                 function,
@@ -4377,7 +4380,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             };
             let mut symbolic = SymbolicExecutor::new(symbolic_config.clone());
             match symbolic.run_invariant(SymbolicInvariantRunInput {
-                executor: ExecutorView::new(&evm.executor),
+                executor: ExecutorView::new(&evm.executor)
+                    .with_project(&self.cr.mcr.known_contracts, &self.cr.mcr.invariant_literals),
                 invariant_address: self.address,
                 sender: self.sender,
                 invariant: anchor,
