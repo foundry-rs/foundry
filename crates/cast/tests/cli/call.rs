@@ -1308,3 +1308,18 @@ Error: --auth cannot be combined with --curl
 "#]]);
     }
 }
+
+#[casttest]
+fn curl_call_rejects_create(cmd: _) {
+    for args in [&["0x6000"][..], &["0x6000", "0x12345678", "123"][..]] {
+        cmd.cast_fuse()
+            .args(["call", "--chain", "1", "--rpc-url", "http://127.0.0.1:1", "--curl", "--create"])
+            .args(args)
+            .assert_failure()
+            .stdout_eq(str![""])
+            .stderr_eq(str![[r#"
+Error: --create cannot be combined with --curl
+
+"#]]);
+    }
+}
