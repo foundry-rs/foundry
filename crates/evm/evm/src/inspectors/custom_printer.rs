@@ -22,9 +22,10 @@ impl<T: EvmTypesHost> Inspector<T> for CustomPrintTracer {
         let gas_remaining = gas.remaining();
         let refunded = gas.refunded();
 
+        // Depth counts call frames from 1, as in geth struct logs.
         let _ = sh_println!(
             "depth:{}, PC:{}, gas:{:#x}({}), OPCODE: {:?}({:?})  refund:{:#x}({}) Stack:{:?}, Data size:{}",
-            interp.message().depth,
+            interp.message().depth + 1,
             interp.pc(),
             gas_remaining,
             gas_remaining,
