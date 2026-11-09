@@ -4060,6 +4060,11 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_getTransactionReceipt`
     pub async fn transaction_receipt(&self, hash: B256) -> Result<Option<FoundryTxReceipt>> {
         node_info!("eth_getTransactionReceipt");
+        // The fork cannot know a pooled transaction. The pool drops a transaction only after its
+        // block is stored, so its receipt, if any, is local.
+        if self.pool.contains(&hash) {
+            return Ok(self.backend.mined_transaction_receipt(hash).map(|receipt| receipt.inner));
+        }
         self.backend.transaction_receipt(hash).await
     }
 
