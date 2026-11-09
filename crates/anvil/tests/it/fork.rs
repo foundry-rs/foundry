@@ -5654,3 +5654,26 @@ async fn test_fork_headers_are_not_sent_to_redirect_origins() {
         spawn(NodeConfig::test().with_eth_rpc_url(Some(configured_url.clone()))).await;
     api.anvil_set_rpc_url(format!("{configured_url}/redirect")).await.unwrap();
 }
+
+// A pooled transaction has no receipt yet, so its receipt lookup must not reach the fork.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_pooled_transaction_receipt_skips_fork() {
+    let (_origin_api, origin) = spawn(NodeConfig::test()).await;
+    let (fork_url, reject_receipts) = spawn_rpc_proxy_rejecting_method_when_enabled(
+        origin.http_endpoint(),
+        "eth_getTransactionReceipt",
+    )
+    .await;
+    let (api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    reject_receipts.store(true, Ordering::SeqCst);
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let tx = TransactionRequest::default().with_from(from).with_to(from).with_value(U256::from(1));
+    let hash = *provider.send_transaction(tx.into()).await.unwrap().tx_hash();
+    assert!(provider.get_transaction_receipt(hash).await.unwrap().is_none());
+
+    api.mine_one().await.unwrap();
+    assert!(provider.get_transaction_receipt(hash).await.unwrap().is_some());
+}
