@@ -686,6 +686,7 @@ impl SymbolicExecutor {
     pub(super) fn take_loop_jump(
         &self,
         state: &mut PathState,
+        jumpdests: &JumpTable,
         source_pc: usize,
         dest: usize,
     ) -> bool {
@@ -695,7 +696,15 @@ impl SymbolicExecutor {
         if dest >= source_pc {
             return true;
         }
-        let count = state.loop_jumps.entry(dest).or_default();
+        // Key the back-edge by the return addresses on the stack, so an internal function called
+        // from different sites does not count as one loop.
+        let return_pcs = state
+            .stack
+            .iter()
+            .filter_map(|word| word.as_const().and_then(|word| usize::try_from(word).ok()))
+            .filter(|pc| jumpdests.is_valid(*pc))
+            .collect();
+        let count = state.loop_jumps.entry((dest, return_pcs)).or_default();
         if *count >= bound {
             return false;
         }

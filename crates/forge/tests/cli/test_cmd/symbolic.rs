@@ -1339,22 +1339,39 @@ contract SymbolicLoopBound {
         }
         assert(i <= 2);
     }
+
+    // Internal helper calls are not loop iterations: four checked additions stay in bound.
+    /// forge-config: default.symbolic.loop = 2
+    function checkLoopBoundIgnoresInternalCalls(uint256 x, bool b) public pure {
+        if (b) {
+            uint256 y = x + 1;
+            y = y + 1;
+            y = y + 1;
+            y = y + 1;
+            assert(y != 9);
+        }
+    }
 }
 "#,
     );
 
-    let stdout =
-        assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkLoopBound"]))
-            .success()
-            .stdout_eq(str![[r#"
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicLoopBound",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicLoopBound.t.sol:SymbolicLoopBound
+Ran 2 tests for test/SymbolicLoopBound.t.sol:SymbolicLoopBound
 [PASS] checkLoopBound(uint8) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkLoopBoundIgnoresInternalCalls(uint256,bool) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
-            .get_output()
-            .stdout_lossy();
+    .get_output()
+    .stdout_lossy();
 
     assert!(!stdout.contains("symbolic depth limit exceeded"), "{stdout}");
 }
