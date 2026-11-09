@@ -221,6 +221,29 @@ contract SymbolicExp {
             assert(y == 65536);
         }
     }
+
+    // A base the path pins resolves like a literal, so a constant exponent above 32 and a wide
+    // symbolic exponent stay supported.
+    function checkSymbolicExpBasePinnedConstantExponent(uint256 b) public pure {
+        require(b == 3);
+        uint256 r;
+        assembly {
+            r := exp(b, 33)
+        }
+        assert(r == 5559060566555523);
+    }
+
+    function checkSymbolicExpBasePinnedSymbolicExponent(uint256 b, uint8 raw) public pure {
+        require(b == 2);
+        uint256 e = uint256(raw) & 63;
+        uint256 r;
+        assembly {
+            r := exp(b, e)
+        }
+        if (e == 40) {
+            assert(r == 1099511627776);
+        }
+    }
 }
 "#,
     );
@@ -234,9 +257,11 @@ contract SymbolicExp {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicExp.t.sol:SymbolicExp
+Ran 3 tests for test/SymbolicExp.t.sol:SymbolicExp
 [PASS] checkSymbolicExpBase(uint8) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+[PASS] checkSymbolicExpBasePinnedConstantExponent(uint256) ([METRICS])
+[PASS] checkSymbolicExpBasePinnedSymbolicExponent(uint256,uint8) ([METRICS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -331,52 +356,6 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     .stdout_lossy();
 
     assert!(!stdout.contains("symbolic EXP exponent"), "{stdout}");
-}
-
-// A base pinned by the path constraints must resolve like a literal base, so constant exponents
-// above 32 and wide symbolic exponents stay supported.
-#[forgetest_init]
-fn symbolic_exp_resolves_base_pinned_by_require(prj: _, cmd: _) {
-    skip_unless_z3!("symbolic_exp_resolves_base_pinned_by_require");
-
-    prj.add_test(
-        "SymbolicExpPinnedBase.t.sol",
-        r#"
-contract SymbolicExpPinnedBase {
-    function checkPinnedBaseConstantExponent(uint256 b) public pure {
-        require(b == 3);
-        uint256 r;
-        assembly {
-            r := exp(b, 33)
-        }
-        assert(r == 5559060566555523);
-    }
-
-    function checkPinnedBaseSymbolicExponent(uint256 b, uint8 raw) public pure {
-        require(b == 2);
-        uint256 e = uint256(raw) & 63;
-        uint256 r;
-        assembly {
-            r := exp(b, e)
-        }
-        if (e == 40) {
-            assert(r == 1099511627776);
-        }
-    }
-}
-"#,
-    );
-
-    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkPinnedBase"]))
-        .success()
-        .stdout_eq(str![[r#"
-...
-Ran 2 tests for test/SymbolicExpPinnedBase.t.sol:SymbolicExpPinnedBase
-[PASS] checkPinnedBaseConstantExponent(uint256) ([METRICS])
-[PASS] checkPinnedBaseSymbolicExponent(uint256,uint8) ([METRICS])
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
-...
-"#]]);
 }
 
 // The engine does not model gas consumption, so `GAS` / `gasleft()` must fail
