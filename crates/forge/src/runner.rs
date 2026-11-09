@@ -962,6 +962,8 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         let should_override_setup_tracing =
             !self.tcfg.debug && (self.executor.inspector().tracer.is_some() || has_invariants);
 
+        // The call-level requirements also install a revert diagnostic; `set_tracer` drops it again
+        // with the tracer, so tests of a contract with invariants do not run the diagnostic.
         let prev_tracer = should_override_setup_tracing.then(|| {
             let prev_tracer = self.executor.inspector_mut().tracer.take();
             self.executor.set_trace_requirements(TraceRequirements::none().with_calls(true));
@@ -3887,9 +3889,19 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             live_invariants.iter().position(|(invariant, _)| *invariant == func).unwrap_or(0);
 
         let mut executor = self.clone_executor();
-        // Every campaign call would append its steps to the shared step table. The replays that
-        // the debugger shows run on clones of the test executor, which keeps its recorder.
-        executor.inspector_mut().debug_recorder = None;
+        if invariant_config.gas_report_samples == 0 {
+            // The campaign never reads its call traces or revert diagnostics: a failure and the
+            // last run are replayed on a fresh clone of the test executor, which keeps them. The
+            // gas report samples are the one consumer, so the tracer stays only while samples
+            // are requested. This also drops the revert diagnostic that the setUp pass installed
+            // with its temporary tracer, which otherwise runs on every campaign opcode.
+            executor.set_trace_requirements(TraceRequirements::none());
+        } else {
+            // Every campaign call would append its steps to the shared step table. The replays
+            // that the debugger shows run on clones of the test executor, which keeps its
+            // recorder.
+            executor.inspector_mut().debug_recorder = None;
+        }
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
         // metrics (useful for benchmarking the fuzzer).
         executor.inspector_mut().collect_edge_coverage_with_config(&invariant_config.corpus);
