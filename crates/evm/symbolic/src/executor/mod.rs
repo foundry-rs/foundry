@@ -368,7 +368,8 @@ impl SymbolicExecutor {
                                 halted.constraints = out_of_bounds_constraints;
                                 halted.return_data = SymReturnData::empty(&mut self.cx);
                                 *completed_paths += 1;
-                                let status = self.successful_call_status(kind, &halted);
+                                let status =
+                                    self.successful_call_status(executor, kind, &mut halted)?;
                                 outcomes.push(CallOutcome { status, state: halted });
                             }
 
@@ -390,7 +391,7 @@ impl SymbolicExecutor {
                         *completed_paths += 1;
                         // Running past the end of code stops like STOP, with no output.
                         state.return_data = SymReturnData::empty(&mut self.cx);
-                        let status = self.successful_call_status(kind, &state);
+                        let status = self.successful_call_status(executor, kind, &mut state)?;
                         outcomes.push(CallOutcome { status, state });
                         break;
                     }
@@ -414,7 +415,7 @@ impl SymbolicExecutor {
                             return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
                         }
                         *completed_paths += 1;
-                        let status = self.successful_call_status(kind, &state);
+                        let status = self.successful_call_status(executor, kind, &mut state)?;
                         outcomes.push(CallOutcome { status, state });
                         break;
                     }
@@ -452,11 +453,20 @@ impl SymbolicExecutor {
         Ok(outcomes)
     }
 
-    fn successful_call_status(&self, kind: CallPathKind, state: &PathState) -> CallStatus {
-        if matches!(kind, CallPathKind::External) || state.expectations_satisfied() {
-            CallStatus::Success
+    /// Like Forge, a sequence call that ends with an unmet expectation or with the global fail
+    /// slot set has failed.
+    fn successful_call_status(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        kind: CallPathKind,
+        state: &mut PathState,
+    ) -> Result<CallStatus, SymbolicError> {
+        if matches!(kind, CallPathKind::External)
+            || (state.expectations_satisfied() && !self.global_fail_slot_set(executor, state)?)
+        {
+            Ok(CallStatus::Success)
         } else {
-            CallStatus::Failure
+            Ok(CallStatus::Failure)
         }
     }
 }

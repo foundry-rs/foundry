@@ -1,6 +1,7 @@
 use super::*;
 use alloy_sol_types::{Revert, SolError};
 use evm2::interpreter::gas::CALL_STIPEND;
+use foundry_evm::core::backend::GLOBAL_FAIL_SLOT;
 
 const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
 
@@ -1852,6 +1853,21 @@ impl SymbolicWorld {
 
     pub(crate) fn sstore(&mut self, address: Address, key: SymExpr, value: SymExpr) {
         Arc::make_mut(&mut self.state).storage.push(StorageWrite::new(address, key, value));
+    }
+
+    /// Reads the global fail slot: Forge bookkeeping, so arbitrary storage never makes it up.
+    pub(crate) fn global_fail_slot(
+        &self,
+        cx: &mut SymCx,
+        executor: &ExecutorView<'_>,
+    ) -> Result<SymExpr, SymbolicError> {
+        let base = executor
+            .backend
+            .storage(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
+            .map(|value| SymExpr::constant(cx, value))
+            .map_err(|err| SymbolicError::Backend(err.to_string()))?;
+        let key = SymExpr::constant(cx, GLOBAL_FAIL_SLOT);
+        Ok(StorageWrite::select_from(cx, &self.storage, CHEATCODE_ADDRESS, key, base))
     }
 
     pub(crate) fn tload(&self, cx: &mut SymCx, address: Address, key: SymExpr) -> SymExpr {
