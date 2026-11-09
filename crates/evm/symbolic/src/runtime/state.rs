@@ -1447,7 +1447,10 @@ impl CallMock {
         value: Option<U256>,
         calldata: &SymBytes,
     ) -> Option<SymBoolExpr> {
-        if !self.value.is_none_or(|expected| value.is_some_and(|value| expected == value)) {
+        // Like Forge, an empty return queue mocks nothing, so the real code runs.
+        if self.returns.is_empty()
+            || !self.value.is_none_or(|expected| value.is_some_and(|value| expected == value))
+        {
             return None;
         }
         let data_condition = calldata.prefix_condition(cx, &self.data)?;

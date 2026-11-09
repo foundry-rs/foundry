@@ -4823,6 +4823,16 @@ contract SymbolicCallDataCheatcodes is Test {
         assertEq(ISymbolicDataTarget(mocked).value(input), input + 1);
     }
 
+    function checkMockCallsEmptyQueueRunsRealCode(uint256 input) public {
+        vm.mockCalls(
+            address(target),
+            abi.encodeWithSelector(SymbolicDataTarget.value.selector, input),
+            new bytes[](0)
+        );
+
+        assertEq(target.value(input), input);
+    }
+
     function checkMockCallAcceptsSymbolicBytes4Selector(bytes4 selector) public {
         vm.assume(selector == ISymbolicDataTarget.value.selector);
         address mocked = address(0xFACE);
@@ -4869,13 +4879,14 @@ contract SymbolicCallDataCheatcodes is Test {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 5 tests for test/SymbolicCallDataCheatcodes.t.sol:SymbolicCallDataCheatcodes
+Ran 6 tests for test/SymbolicCallDataCheatcodes.t.sol:SymbolicCallDataCheatcodes
 [PASS] checkExpectCallAcceptsSymbolicData(uint256) ([METRICS])
 [PASS] checkMockCallAcceptsSymbolicBytes4Selector(bytes4) ([METRICS])
 [PASS] checkMockCallAcceptsSymbolicDataAndReturn(uint256) ([METRICS])
+[PASS] checkMockCallsEmptyQueueRunsRealCode(uint256) ([METRICS])
 [PASS] checkMockFunctionAcceptsSymbolicCallee(address,uint256) ([METRICS])
 [PASS] checkMockFunctionAcceptsSymbolicData(uint256) ([METRICS])
-Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 6 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
