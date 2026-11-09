@@ -2639,6 +2639,19 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         // If `recordAccountAccesses` has been called, record the create
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
+            // Read without loading, warming or caching the account, so recording has no side
+            // effects.
+            let state = interp.host().state_mut();
+            let info = if state.loaded_accounts().any(|(loaded, _)| *loaded == address) {
+                state.account_info_untracked(&address)
+            } else {
+                let db = state.overlay_db_mut();
+                match db.cache.accounts.get(&address) {
+                    Some(info) => Ok(info.clone()),
+                    None => db.db.get_account(&address),
+                }
+            };
+            let old_balance = info.ok().flatten().map_or(U256::ZERO, |info| info.balance);
             recorded_account_diffs_stack.push(vec![AccountAccess {
                 chainInfo: crate::Vm::ChainInfo {
                     forkId: backend.backend().active_fork_id().unwrap_or_default(),
@@ -2653,10 +2666,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 account: address,
                 kind: crate::Vm::AccountAccessKind::Create,
                 initialized: true,
-                oldBalance: U256::ZERO, // updated on create_end
-                newBalance: U256::ZERO, // updated on create_end
-                oldNonce: 0,            // new contract starts with nonce 0
-                newNonce: 1,            // updated on create_end (contracts start with nonce 1)
+                oldBalance: old_balance,
+                newBalance: old_balance, // updated on create_end
+                oldNonce: 0,             // new contract starts with nonce 0
+                newNonce: 1,             // updated on create_end (contracts start with nonce 1)
                 value: input.value,
                 data: input.input.to_bytes(),
                 reverted: false,
@@ -2730,8 +2743,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             //
             // Only creates whose frame ran and reverted count. A create rejected before its
             // frame starts (depth, balance, nonce, or a revert from `vm.interceptInitcode` or a
-            // missing CREATE2 deployer) leaves the reverter to the surrounding `call_end`, which
-            // records the caller.
+            // missing or invalid CREATE2 deployer) leaves the reverter to the surrounding
+            // `call_end`, which records the caller.
             if outcome.stop.is_revert()
                 && frame_ran
                 && expected_revert.reverter.is_some()
@@ -2799,7 +2812,19 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         create_access.kind as u8,
                         crate::Vm::AccountAccessKind::Create as u8
                     );
-                    if let Some(address) = outcome.created_address
+                    // `created_address` is set only on success. A create that failed inside its
+                    // frame reads the would-be address instead; one rejected before its frame
+                    // ran keeps the placeholder values.
+                    let frame_ran = frame_ran
+                        && !matches!(
+                            outcome.stop,
+                            InstrStop::CallTooDeep
+                                | InstrStop::OutOfFunds
+                                | InstrStop::NonceOverflow
+                                | InstrStop::CreateCollision
+                        );
+                    if let Some(address) =
+                        outcome.created_address.or(frame_ran.then_some(call.destination))
                         && let Ok(mut account) = interp.host().state_mut().account(&address)
                     {
                         create_access.newBalance = account.balance();

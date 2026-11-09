@@ -465,6 +465,17 @@ contract DummyCreator {
     }
 }
 
+// Used by `testExpectRevertWithBytes4SelectorAndReverterTopLevelCreate`: constructor
+// reverts with a parameter-less custom error so the full revert data is exactly the
+// 4-byte selector.
+contract DCustomErrorContract {
+    error CustomError();
+
+    constructor() {
+        revert CustomError();
+    }
+}
+
 /// forge-config: default.always_use_create_2_factory = true
 contract ExpectRevertMissingCreate2DeployerTest is Test {
     // A nested CREATE2 that the missing CREATE2 deployer stops before its frame starts
@@ -485,17 +496,6 @@ contract PrankedCreate2Creator {
     function deploy() external returns (address) {
         vm.prank(address(0xA11CE));
         return address(new Dummy{salt: bytes32(0)}());
-    }
-}
-
-// Used by `testExpectRevertWithBytes4SelectorAndReverterTopLevelCreate`: constructor
-// reverts with a parameter-less custom error so the full revert data is exactly the
-// 4-byte selector.
-contract DCustomErrorContract {
-    error CustomError();
-
-    constructor() {
-        revert CustomError();
     }
 }
 
