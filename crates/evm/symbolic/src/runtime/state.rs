@@ -2022,7 +2022,17 @@ impl SymbolicWorld {
                 .map(|value| SymExpr::constant(cx, value))
                 .map_err(|err| SymbolicError::Backend(err.to_string()))
         } else if self.zero_init_symbolic_storage {
-            Ok(SymExpr::zero(cx))
+            // Unwritten slots are zero, but the slots `setUp` wrote are known concrete state.
+            let mut value = SymExpr::zero(cx);
+            for (slot, slot_value) in executor.backend.storage_slots(address) {
+                if slot_value.is_zero() {
+                    continue;
+                }
+                let slot = SymExpr::constant(cx, slot);
+                let slot_value = SymExpr::constant(cx, slot_value);
+                value = key.clone().select_storage_write(cx, slot, slot_value, value);
+            }
+            Ok(value)
         } else {
             let name = symbolic_storage_symbol(cx, address, key);
             Ok(SymExpr::get_var(cx, name))
