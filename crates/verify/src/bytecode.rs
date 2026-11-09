@@ -28,7 +28,7 @@ use foundry_cli::{
     utils::{self, LoadConfig, read_constructor_args_file},
 };
 use foundry_common::{
-    SYSTEM_TRANSACTION_TYPE, is_known_system_sender,
+    FoundryTransactionBuilder, SYSTEM_TRANSACTION_TYPE, is_known_system_sender,
     provider::{ProviderBuilder, RetryProvider},
     shell,
 };
@@ -910,18 +910,20 @@ impl<FEN: FoundryEvmNetwork> RuntimeVerification<FEN> {
         }
         tx.set_from(TransactionResponse::from(&transaction));
 
-        // Replace the `input` with local creation code in the creation tx.
-        if let Some(TxKind::Call(to)) = tx.kind() {
+        // Replace the `input` with local creation code in the creation tx, which is the first call
+        // of a Tempo AA transaction.
+        let (kind, salt) = crate::utils::creation_call::<FEN>(&tx);
+        if let TxKind::Call(to) = kind {
             if to == DEFAULT_CREATE2_DEPLOYER {
-                let mut input = tx.input().map(|input| input[..32].to_vec()).unwrap_or_default(); // Salt
+                let mut input = salt.get(..32).unwrap_or_default().to_vec();
                 input.extend_from_slice(&local_bytecode_vec);
-                tx.set_input(Bytes::from(input));
+                tx.set_first_call_input(Bytes::from(input));
 
                 // Deploy default CREATE2 deployer
                 executor.deploy_create2_deployer()?;
             }
         } else {
-            tx.set_input(Bytes::from(local_bytecode_vec));
+            tx.set_first_call_input(Bytes::from(local_bytecode_vec));
         }
 
         let fork_address = crate::utils::deploy_contract::<FEN>(&mut executor, &evm_env, tx, ext)?;
