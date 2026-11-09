@@ -1510,6 +1510,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             } else {
                 Some(warm_set(evm.state_mut()))
             };
+            let nested_warmth =
+                result.status.then(|| nested_warmth(child.state_mut(), &executed.pending_state));
             // Isolated calls never change the running transaction's transient storage.
             let transient = take_transient(evm.state_mut());
             child.commit_source(&executed.pending_state);
@@ -1538,20 +1540,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 }
             }
             let cold = if keeps_cold { cold } else { AddressSet::default() };
-            !result.status || warm_accessed(evm.state_mut(), &executed.pending_state, &cold).is_ok()
+            nested_warmth.is_none_or(|warm| {
+                warm_nested(evm.state_mut(), &executed.pending_state, warm, &cold).is_ok()
+            })
         } else {
             let merged = merge_pending_changes(evm.state_mut(), &executed.pending_state)
                 .and_then(|()| {
-                    if result.status {
-                        warm_accessed(evm.state_mut(), &executed.pending_state, &cold)
-                    } else {
-                        warm_surviving(
-                            evm.state_mut(),
-                            child.state_mut(),
-                            &executed.pending_state,
-                            &cold,
-                        )
-                    }
+                    let warm = nested_warmth(child.state_mut(), &executed.pending_state);
+                    warm_nested(evm.state_mut(), &executed.pending_state, warm, &cold)
                 })
                 .is_ok();
             // Keep cheatcode block changes and network extension state from the nested EVM.
@@ -2571,37 +2567,26 @@ fn apply_mocked_function<FEN: FoundryEvmNetwork>(
     }
 }
 
-/// Warms in `state` the accounts a successful nested transaction loaded and the storage slots it
-/// accessed, as accesses across an isolated call boundary stay warm for the calling frame.
-/// Accounts in `cold` stay cold.
-fn warm_accessed(state: &mut State<'_>, pending: &PendingState, cold: &AddressSet) -> DbResult<()> {
-    for change in pending.account_changes() {
-        if !cold.contains(&change.address) {
-            state.account(&change.address)?.warm();
-        }
-        for (key, slot) in &change.storage.slots {
-            if slot.is_warm {
-                state.storage_slot(&change.address, *key)?.warm();
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Warms in `state` the accounts and storage slots still warm at the end of a failed nested
-/// transaction detached into `pending`, which reattaching it to `child` exposes. Warmth no revert
-/// undid survives the failure, such as of the accounts a `vm.executeTransaction`
-/// within it touched, while accesses of its reverted frames do not. Accounts in `cold` stay cold,
-/// but not their slots.
-fn warm_surviving(
-    state: &mut State<'_>,
-    child: &mut State<'_>,
-    pending: &PendingState,
-    cold: &AddressSet,
-) -> DbResult<()> {
+/// Returns the accounts still warm at the end of a nested transaction detached into `pending`,
+/// with their warm storage slots, which reattaching it to `child` exposes. Accesses of its
+/// reverted frames are cold. Warmth no revert undid survives a failure, such as of the accounts a
+/// `vm.executeTransaction` within it touched.
+fn nested_warmth(child: &mut State<'_>, pending: &PendingState) -> AddressMap<HashSet<U256>> {
     child.set_pending_state(pending.clone());
     let warm = warm_accounts(child);
     child.clear_transaction_state();
+    warm
+}
+
+/// Warms in `state` the accounts and storage slots in `warm`, the [`nested_warmth`] of a nested
+/// transaction detached into `pending`, as accesses across an isolated call boundary stay warm for
+/// the calling frame. Accounts in `cold` stay cold, but not their slots.
+fn warm_nested(
+    state: &mut State<'_>,
+    pending: &PendingState,
+    warm: AddressMap<HashSet<U256>>,
+    cold: &AddressSet,
+) -> DbResult<()> {
     // The running transaction holds every account the nested one loaded, cold unless warmed
     // below, so that a later failure leaves them cold.
     for change in pending.account_changes() {

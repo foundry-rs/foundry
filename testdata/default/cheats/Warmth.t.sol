@@ -46,6 +46,15 @@ contract WarmthPoker {
     function poke(WarmthTarget target) external {
         target.inc();
     }
+
+    function tryAccess(address target) external {
+        try this.accessThenRevert(target) {} catch {}
+    }
+
+    function accessThenRevert(address target) external view {
+        isWarm(target);
+        revert();
+    }
 }
 
 contract WarmthReverter {
@@ -245,6 +254,13 @@ contract CheatcodeWarmthIsolatedTest is Test {
         poker.poke(counter);
         vm.assertFalse(isWarm(address(counter)));
         vm.assertTrue(isWarm(address(counter)));
+    }
+
+    // Accesses of a frame that reverted inside a successful isolated call stay cold for the
+    // calling frame.
+    function testRevertedAccessStaysColdAfterIsolatedCall() public {
+        poker.tryAccess(address(0x1001));
+        vm.assertFalse(isWarm(address(0x1001)));
     }
 
     // An account the STATICCALL cooled is imported warm by an isolated CREATE once a snapshot
