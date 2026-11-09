@@ -2252,6 +2252,11 @@ contract SymbolicRevertKeepsCheatcodes is Test {
         revert("boom");
     }
 
+    function gasPriceThenRevert(uint256 p) external {
+        vm.txGasPrice(p);
+        revert("boom");
+    }
+
     // Concretely the warp outlives the revert, so any t >= DEADLINE breaks this.
     function checkWarpSurvivesRevertingCall(uint256 t) public {
         try this.warpThenRevert(t) {} catch {}
@@ -2262,6 +2267,12 @@ contract SymbolicRevertKeepsCheatcodes is Test {
     function checkMockSurvivesRevertingCall(address user) public {
         try this.mockThenRevert(user) {} catch {}
         assert(token.balanceOf(user) == 7);
+    }
+
+    // Concretely the gas price outlives the revert, so any p >= DEADLINE breaks this.
+    function checkGasPriceSurvivesRevertingCall(uint256 p) public {
+        try this.gasPriceThenRevert(p) {} catch {}
+        assert(tx.gasprice < DEADLINE);
     }
 }
 "#,
@@ -2276,10 +2287,11 @@ contract SymbolicRevertKeepsCheatcodes is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicRevertKeepsCheatcodes.t.sol:SymbolicRevertKeepsCheatcodes
+Ran 3 tests for test/SymbolicRevertKeepsCheatcodes.t.sol:SymbolicRevertKeepsCheatcodes
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xcd02017c00000000000000000000000000000000000000000000000000000000000003e8 args=[1000]] checkGasPriceSurvivesRevertingCall(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x9389e44d0000000000000000000000000000000000000000000000000000000000000000 args=[0x0000000000000000000000000000000000000000]] checkMockSurvivesRevertingCall(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xe9b7d25400000000000000000000000000000000000000000000000000000000000003e8 args=[1000]] checkWarpSurvivesRevertingCall(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
