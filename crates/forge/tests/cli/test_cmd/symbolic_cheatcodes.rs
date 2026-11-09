@@ -930,6 +930,17 @@ import "forge-std/Test.sol";
 import "forge-std/console2.sol";
 
 contract SymbolicEnvCryptoConsole is Test {
+    bytes32 foundryVersionHash;
+
+    function setUp() public {
+        foundryVersionHash = keccak256(bytes(vm.getFoundryVersion()));
+    }
+
+    // Like Forge, the version includes its build metadata.
+    function checkFoundryVersion() public view {
+        assertEq(keccak256(bytes(vm.getFoundryVersion())), foundryVersionHash);
+    }
+
     function checkEnvCryptoConsole(uint256 x) public {
         assertTrue(vm.envExists("FOUNDRY_SYMBOLIC_ENV_PRESENT"));
         assertEq(vm.envUint("FOUNDRY_SYMBOLIC_ENV_UINT"), 42);
@@ -1039,13 +1050,14 @@ contract SymbolicEnvCryptoConsole is Test {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 5 tests for test/SymbolicEnvCryptoConsole.t.sol:SymbolicEnvCryptoConsole
+Ran 6 tests for test/SymbolicEnvCryptoConsole.t.sol:SymbolicEnvCryptoConsole
 [PASS] checkBase64Utilities() ([METRICS])
 [PASS] checkEnvCryptoConsole(uint256) ([METRICS])
+[PASS] checkFoundryVersion() ([METRICS])
 [PASS] checkKeyUtilities() ([METRICS])
 [PASS] checkParseToStringUtilities() ([METRICS])
 [PASS] checkStringUtilities() ([METRICS])
-Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 6 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -7817,41 +7829,6 @@ Ran 2 tests for test/SymbolicExpectCallComplement.t.sol:SymbolicExpectCallComple
 [FAIL: expected call to [..] with data 0x5c36b186 to be called 0 times, but was called 1 time; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkComplementCalleeNeverCalled(uint256) ([METRICS])
 [PASS] checkMaskedComplementCallee(uint256) ([METRICS])
 Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
-...
-"#]]);
-}
-
-// Like revm, vm.getFoundryVersion returns the full version with build metadata.
-#[forgetest_init]
-fn symbolic_get_foundry_version_matches_concrete(prj: _, cmd: _) {
-    skip_unless_z3!("symbolic_get_foundry_version_matches_concrete");
-
-    prj.add_test(
-        "SymbolicFoundryVersion.t.sol",
-        r#"
-import "forge-std/Test.sol";
-
-contract SymbolicFoundryVersion is Test {
-    bytes32 expected;
-
-    function setUp() public {
-        expected = keccak256(bytes(vm.getFoundryVersion()));
-    }
-
-    function checkFoundryVersionMatchesConcrete() public view {
-        assertEq(keccak256(bytes(vm.getFoundryVersion())), expected);
-    }
-}
-"#,
-    );
-
-    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicFoundryVersion"]))
-        .success()
-        .stdout_eq(str![[r#"
-...
-Ran 1 test for test/SymbolicFoundryVersion.t.sol:SymbolicFoundryVersion
-[PASS] checkFoundryVersionMatchesConcrete() ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
