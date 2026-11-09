@@ -201,6 +201,7 @@ impl Executor<MonadEvmNetwork> {
         let sancov_edges = stack.inner.sancov_edges;
         let sancov_trace_cmp = stack.inner.sancov_trace_cmp;
         let sancov_active = sancov_edges || sancov_trace_cmp;
+        let fork_prefetch = stack.inner.fork_prefetch;
         let backend = self.backend_mut();
 
         let (result, evm_env, tx_env, used_system_replay) = {
@@ -237,6 +238,16 @@ impl Executor<MonadEvmNetwork> {
                         TxKind::Create => Some(tx_env.caller().create(tx_env.nonce())),
                         TxKind::Call(_) => None,
                     };
+                    // The inspector is off while the prefix replays, so prefetch here.
+                    if fork_prefetch && let TxKind::Call(to) = tx_env.kind() {
+                        evm.db_mut().prefetch_call(
+                            tx_env.caller(),
+                            to,
+                            tx_env.value(),
+                            tx_env.input(),
+                            true,
+                        );
+                    }
                     let result = evm.transact(tx_env).wrap_err_with(|| {
                         format!(
                             "Failed to execute transaction: {tx_hash:?} in block {block_number}"
@@ -987,6 +998,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         let sancov_edges = stack.inner.sancov_edges;
         let sancov_trace_cmp = stack.inner.sancov_trace_cmp;
         let sancov_active = sancov_edges || sancov_trace_cmp;
+        let fork_prefetch = stack.inner.fork_prefetch;
         let backend = self.backend_mut();
 
         let (result, evm_env, tx_env) = {
@@ -1012,6 +1024,16 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
                     TxKind::Create => Some(tx_env.caller().create(tx_env.nonce())),
                     TxKind::Call(_) => None,
                 };
+                // The inspector is off while the prefix replays, so prefetch here.
+                if fork_prefetch && let TxKind::Call(to) = tx_env.kind() {
+                    evm.db_mut().prefetch_call(
+                        tx_env.caller(),
+                        to,
+                        tx_env.value(),
+                        tx_env.input(),
+                        true,
+                    );
+                }
                 let result = evm.transact(tx_env).wrap_err_with(|| {
                     format!("Failed to execute transaction: {tx_hash:?} in block {block_number}")
                 })?;
