@@ -889,11 +889,34 @@ contract SymbolicCreateRevertData {
 "#,
     );
 
+    prj.add_test(
+        "SymbolicCreateNonceLimit.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicCreateNonceLimit is Test {
+    // EIP-2681: a creator nonce at `type(uint64).max` fails CREATE and CREATE2.
+    function checkCreateNonceLimit() public {
+        vm.setNonce(address(this), type(uint64).max);
+        address first;
+        address second;
+        assembly {
+            first := create(0, 0, 0)
+            second := create2(0, 0, 0, 0)
+        }
+        assert(first == address(0));
+        assert(second == address(0));
+        assert(vm.getNonce(address(this)) == type(uint64).max);
+    }
+}
+"#,
+    );
+
     assert_symbolic(cmd.args([
         "test",
         "--symbolic",
         "--match-test",
-        "^(checkCreate2Collision|checkCreateFailureNonce|checkCreateRevertData)\\(",
+        "^(checkCreate2Collision|checkCreateFailureNonce|checkCreateRevertData|checkCreateNonceLimit)\\(",
     ]))
     .success()
     .stdout_eq(
@@ -909,6 +932,10 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test for test/SymbolicCreateFailureNonce.t.sol:SymbolicCreateFailureNonce
 [PASS] checkCreateFailureNonce(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicCreateNonceLimit.t.sol:SymbolicCreateNonceLimit
+[PASS] checkCreateNonceLimit() ([METRICS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]
