@@ -150,11 +150,55 @@ contract SenderTarget {
     }
 }
 
+contract CreatedBySender {
+    address public creator;
+    address public origin;
+
+    constructor() payable {
+        creator = msg.sender;
+        origin = tx.origin;
+    }
+}
+
 contract SymbolicPrankSender is Test {
     SenderTarget target;
 
     function setUp() public {
         target = new SenderTarget();
+    }
+
+    // A prank also sets the creator of a CREATE, and a one-shot prank ends with it.
+    function checkSymbolicPrankCreate(address who) public {
+        vm.assume(who != address(0));
+        vm.assume(who != address(this));
+        vm.assume(who != address(vm));
+        vm.assume(who != address(target));
+        vm.assume(uint160(who) > 0xff);
+
+        vm.deal(who, 5);
+        vm.prank(who);
+        CreatedBySender created = new CreatedBySender{value: 5}();
+        assertEq(created.creator(), who);
+        assertEq(address(created), vm.computeCreateAddress(who, 0));
+        assertEq(vm.getNonce(who), 1);
+        assertEq(who.balance, 0);
+        assertEq(address(created).balance, 5);
+        assertEq(target.sender(), address(this));
+    }
+
+    function checkSymbolicStartPrankCreate2(address who, address origin) public {
+        vm.assume(who != address(0));
+        vm.assume(who != address(this));
+        vm.assume(who != address(vm));
+        vm.assume(who != address(target));
+        vm.assume(uint160(who) > 0xff);
+
+        vm.startPrank(who, origin);
+        CreatedBySender created = new CreatedBySender{salt: bytes32(uint256(7))}();
+        assertEq(created.creator(), who);
+        assertEq(created.origin(), origin);
+        assertEq(target.sender(), who);
+        vm.stopPrank();
     }
 
     function checkSymbolicPrank(address who) public {
@@ -213,12 +257,14 @@ contract SymbolicPrankSender is Test {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 4 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
+Ran 6 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
 [PASS] checkSymbolicPrank(address) ([METRICS])
+[PASS] checkSymbolicPrankCreate(address) ([METRICS])
 [PASS] checkSymbolicPrankOrigin(address,address) ([METRICS])
 [PASS] checkSymbolicStartPrank(address) ([METRICS])
+[PASS] checkSymbolicStartPrankCreate2(address,address) ([METRICS])
 [PASS] checkSymbolicStartPrankOrigin(address,address) ([METRICS])
-Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 6 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()

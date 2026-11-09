@@ -45,6 +45,10 @@ impl SymbolicExecutor {
 
         size.expand_memory(&mut self.cx, &mut state.memory, offset.clone());
 
+        // Like Forge, a prank sets the creator: the constructor's `msg.sender`, the account whose
+        // nonce derives the address and increments, and the account that pays the value.
+        let (creator, creator_word, pranked_origin) = state.prank_for_next_call();
+
         // A create beyond the call depth limit fails before it increments the creator's
         // nonce or transfers value. Concrete Forge settles a pending revert cheatcode against
         // such a create differently from a joined create outcome, depending on its config.
@@ -78,25 +82,28 @@ impl SymbolicExecutor {
         };
         let (created_word, created) = match kind {
             CreateKind::Create => {
-                let nonce = state.world.nonce(executor, state.address)?;
-                let address = state.address.create(nonce);
-                (SymExpr::constant(&mut self.cx, address_word(address)), address)
+                let nonce = state.world.nonce(executor, creator)?;
+                let nonce = SymExpr::constant(&mut self.cx, U256::from(nonce));
+                let word =
+                    compute_create_address_word(&mut self.cx, state, creator_word.clone(), nonce)?;
+                let address = state.address_or_symbolic_slot(&mut self.cx, word.clone());
+                (word, address)
             }
             CreateKind::Create2 => create2_address_word(
                 &mut self.cx,
                 state,
-                state.address,
+                &creator_word,
                 salt.expect("CREATE2 salt exists"),
                 &initcode,
             )?,
         };
 
-        if !self.prepare_create_value_transfer(executor, state, worklist, value.clone())? {
+        if !self.prepare_create_value_transfer(executor, state, worklist, creator, value.clone())? {
             return Ok(StepOutcome::Continue);
         }
 
         let mut failure_world = state.world.clone();
-        failure_world.increment_nonce(executor, state.address)?;
+        failure_world.increment_nonce(executor, creator)?;
 
         if failure_world.has_code_or_nonce(&mut self.cx, executor, created)? {
             state.world = failure_world;
@@ -106,17 +113,10 @@ impl SymbolicExecutor {
 
         let calldata = SymBytes::empty(&mut self.cx);
         let calldata = SymCalldata::from_bytes(&mut self.cx, calldata);
-        let mut frame = CallFrame::new(
-            &mut self.cx,
-            created,
-            created,
-            state.address,
-            value.clone(),
-            false,
-            calldata,
-        );
+        let mut frame =
+            CallFrame::new(&mut self.cx, created, created, creator, value.clone(), false, calldata);
         frame.address_word = created_word.clone();
-        frame.caller_word = state.address_word.clone();
+        frame.caller_word = creator_word;
         // Isolation runs a CREATE, but not a CREATE2, as its own transaction.
         let isolated =
             matches!(kind, CreateKind::Create) && state.starts_isolated_transaction(executor);
@@ -126,10 +126,14 @@ impl SymbolicExecutor {
             child.world.clear_transient_storage();
             child.call_depth_base = child.call_depth;
         }
+        if let Some((origin, origin_word)) = pranked_origin {
+            child.origin = origin;
+            child.origin_word = origin_word;
+        }
         child.world.mark_current_transaction_created(created);
         child.persistent_writes.push(PersistentWrite::Created(created));
         child.world.set_nonce(created, 1);
-        child.world.transfer(&mut self.cx, executor, state.address, created, value, false);
+        child.world.transfer(&mut self.cx, executor, creator, created, value, false);
 
         let outcomes = self.execute_external_call(executor, child, &initcode, completed_paths)?;
         if outcomes.is_empty() {
@@ -196,7 +200,7 @@ impl SymbolicExecutor {
                     // Under an unmet `vm.expectRevert`, the caller sees a failed CREATE, but the
                     // code stays deployed and `expectCreate` does not count it.
                     if !unmet_expected_revert {
-                        self.observe_expected_create(&mut parent, state.address, kind, runtime)?;
+                        self.observe_expected_create(&mut parent, creator, kind, runtime)?;
                     }
                     if !parent.world.is_destroyed(created) {
                         parent.world.install_code(created, runtime.to_code(&mut self.cx)?);

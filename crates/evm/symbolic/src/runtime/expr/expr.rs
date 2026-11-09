@@ -2385,40 +2385,42 @@ pub(crate) fn symbolic_hash_word_with_len(
 pub(crate) fn create2_address_word(
     cx: &mut SymCx,
     state: &mut PathState,
-    creator: Address,
+    creator: &SymExpr,
     salt: SymExpr,
     initcode: &SymCode,
 ) -> Result<(SymExpr, Address), SymbolicError> {
-    match (salt.as_const(), initcode.concrete_bytes(cx, "symbolic CREATE2 initcode")) {
-        (Some(salt), Ok(initcode)) => {
+    let creator_concrete = state.constrained_word(cx, creator).map(word_to_address);
+    let initcode_bytes = initcode.concrete_bytes(cx, "symbolic CREATE2 initcode");
+    match (creator_concrete, salt.as_const(), initcode_bytes) {
+        (Some(creator), Some(salt), Ok(initcode)) => {
             let address = creator.create2_from_code(salt.to_be_bytes::<32>(), &initcode);
             Ok((SymExpr::constant(cx, address_word(address)), address))
         }
-        (None, Ok(initcode)) => {
+        (_, _, Ok(initcode)) => {
             let initcode_hash = keccak256(&initcode);
             let word = symbolic_create2_address_word(
                 cx,
                 state,
-                format!("address:{creator:?}"),
+                deployer_identity(creator_concrete, creator),
                 salt,
                 format!("hash:{initcode_hash:?}"),
             );
             let address = state.world.symbolic_address_slot(word.clone());
             Ok((word, address))
         }
-        (_, Err(SymbolicError::Unsupported("symbolic CREATE2 initcode"))) => {
+        (_, _, Err(SymbolicError::Unsupported("symbolic CREATE2 initcode"))) => {
             let initcode_bytes = initcode.read_byte_exprs(cx, 0, initcode.len());
             let word = symbolic_create2_address_word(
                 cx,
                 state,
-                format!("address:{creator:?}"),
+                deployer_identity(creator_concrete, creator),
                 salt,
                 format!("initcode:{:?}", ExpressionDigests::identity(&initcode_bytes)),
             );
             let address = state.world.symbolic_address_slot(word.clone());
             Ok((word, address))
         }
-        (_, Err(err)) => Err(err),
+        (_, _, Err(err)) => Err(err),
     }
 }
 

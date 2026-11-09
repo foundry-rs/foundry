@@ -1494,13 +1494,14 @@ impl SymbolicExecutor {
         executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
+        from: Address,
         value: SymExpr,
     ) -> Result<bool, SymbolicError> {
         if state.constrained_word(&mut self.cx, &value).is_some_and(|value| value.is_zero()) {
             return Ok(true);
         }
 
-        let balance = state.balance(&mut self.cx, executor, state.address);
+        let balance = state.balance(&mut self.cx, executor, from);
         let can_pay = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, balance, value);
         match can_pay.as_const() {
             Some(true) => Ok(true),
