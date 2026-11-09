@@ -225,7 +225,7 @@ impl DebugRecorder {
     ///
     /// evm2 ends such a step after its frame returns, but the step comes before the frame's
     /// steps, so it ends when the frame starts, with the gas the caller charged for it.
-    fn end_step_before_frame<T: EvmTypes>(&mut self, interp: &Interpreter<'_, '_, T>) {
+    pub(crate) fn end_step_before_frame<T: EvmTypes>(&mut self, interp: &Interpreter<'_, '_, T>) {
         let Some(step) = self.pending.take() else { return };
         let gas_cost = step.gas.saturating_sub(interp.gas().remaining());
         let stack = interp.stack();
