@@ -206,6 +206,8 @@ alloy-sol-type-parser.opt-level = 3
 alloy-sol-types.opt-level = 3
 
 bitvec.opt-level = 3
+evm2.opt-level = 3
+evm2-inspectors.opt-level = 3
 
 foundry-cheatcodes.opt-level = 3
 foundry-evm.opt-level = 3
