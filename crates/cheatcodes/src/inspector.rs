@@ -2730,8 +2730,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             //
             // Only creates whose frame ran and reverted count. A create rejected before its
             // frame starts (depth, balance, nonce, or a revert from `vm.interceptInitcode` or a
-            // missing CREATE2 deployer) leaves the reverter to the surrounding `call_end`, which
-            // records the caller.
+            // missing or invalid CREATE2 deployer) leaves the reverter to the surrounding
+            // `call_end`, which records the caller.
             if outcome.stop.is_revert()
                 && frame_ran
                 && expected_revert.reverter.is_some()
@@ -2799,7 +2799,19 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         create_access.kind as u8,
                         crate::Vm::AccountAccessKind::Create as u8
                     );
-                    if let Some(address) = outcome.created_address
+                    // `created_address` is set only on success. A create that failed inside its
+                    // frame reads the would-be address instead; one rejected before its frame
+                    // ran keeps the placeholder values.
+                    let frame_ran = frame_ran
+                        && !matches!(
+                            outcome.stop,
+                            InstrStop::CallTooDeep
+                                | InstrStop::OutOfFunds
+                                | InstrStop::NonceOverflow
+                                | InstrStop::CreateCollision
+                        );
+                    if let Some(address) =
+                        outcome.created_address.or(frame_ran.then_some(call.destination))
                         && let Ok(mut account) = interp.host().state_mut().account(&address)
                     {
                         create_access.newBalance = account.balance();

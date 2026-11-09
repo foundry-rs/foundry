@@ -1182,6 +1182,28 @@ contract RecordAccountAccessesTest is Test {
         );
     }
 
+    /// @notice Test that a create that reverts or halts inside its frame records
+    ///         the unchanged nonce of the would-be deployed account
+    function testCreateFailedInFrameNonce() public {
+        bytes[2] memory initcodes = [
+            // Reverts.
+            abi.encodePacked(type(ConstructorStorer).creationCode, abi.encode(true)),
+            // Halts on INVALID.
+            bytes(hex"fe")
+        ];
+        for (uint256 i; i < initcodes.length; ++i) {
+            vm.startStateDiffRecording();
+            create2or.create2(bytes32(0), initcodes[i]);
+            Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
+            address child = deriveCreate2Address(address(create2or), bytes32(0), keccak256(initcodes[i]));
+            assertEq(called.length, 2, "incorrect length");
+            assertEq(toUint(called[1].kind), toUint(Vm.AccountAccessKind.Create), "incorrect kind");
+            assertEq(called[1].account, child, "incorrect account");
+            assertEq(called[1].newNonce, 0, "incorrect newNonce");
+            assertEq(vm.getNonce(child), 0, "incorrect child nonce");
+        }
+    }
+
     /// @notice Test that a call that fails for lack of funds is recorded as reverted
     function testCallOutOfFunds() public {
         vm.startStateDiffRecording();
