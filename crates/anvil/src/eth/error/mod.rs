@@ -222,14 +222,10 @@ impl From<HandlerError> for BlockchainError {
                 }
                 if let Some(err) = err.downcast_ref::<TempoInvalidTransaction>() {
                     return match err {
+                        // Pool validation names the fee token balance instead.
                         TempoInvalidTransaction::CollectFeePreTx(
-                            FeePaymentError::InsufficientFeeTokenBalance { fee, balance },
-                        ) => Self::InvalidTransaction(
-                            InvalidTransactionError::TempoInsufficientFeeTokenBalance {
-                                balance: *balance,
-                                required: *fee,
-                            },
-                        ),
+                            FeePaymentError::InsufficientFeeTokenBalance { .. },
+                        ) => Self::InvalidTransaction(InvalidTransactionError::InsufficientFunds),
                         err => Self::Message(format!("tempo transaction error: {err}")),
                     };
                 }

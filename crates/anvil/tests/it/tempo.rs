@@ -2210,13 +2210,14 @@ async fn test_tempo_pool_requires_max_fee_rounded_up_in_fee_token() {
         "the fee must round up for the boundary to matter"
     );
 
+    let to = Address::random();
     let tx = TxEip1559 {
         chain_id,
         nonce: 0,
         gas_limit,
         max_fee_per_gas,
         max_priority_fee_per_gas: gas_price / 10,
-        to: TxKind::Call(Address::random()),
+        to: TxKind::Call(to),
         ..Default::default()
     };
     let signature = signer.sign_hash(&tx.signature_hash()).await.unwrap();
@@ -2230,6 +2231,39 @@ async fn test_tempo_pool_requires_max_fee_rounded_up_in_fee_token() {
         err.message,
         format!("insufficient fee token balance: have {}, need {required}", required - U256::ONE)
     );
+
+    // Only pool admission names the fee token balance; calls, estimates and simulations report
+    // the shortfall as missing funds.
+    let mut request = WithOtherFields::new(
+        TransactionRequest::default()
+            .with_from(sender)
+            .with_to(to)
+            .with_gas_limit(gas_limit)
+            .with_max_fee_per_gas(max_fee_per_gas)
+            .with_max_priority_fee_per_gas(gas_price / 10),
+    );
+    request.other.insert("feeToken".into(), serde_json::to_value(PATH_USD).unwrap());
+    for err in [
+        provider.call(request.clone()).await.unwrap_err(),
+        provider.estimate_gas(request.clone()).await.unwrap_err(),
+    ] {
+        let err = err.as_error_resp().unwrap();
+        assert_eq!(err.code, -32003);
+        assert_eq!(err.message, "Insufficient funds for gas * price + value");
+    }
+    let err = provider
+        .raw_request::<_, serde_json::Value>(
+            "eth_simulateV1".into(),
+            (
+                serde_json::json!({ "blockStateCalls": [{ "calls": [request] }], "validation": true }),
+                "latest",
+            ),
+        )
+        .await
+        .unwrap_err();
+    let err = err.as_error_resp().unwrap();
+    assert_eq!(err.code, -38014);
+    assert_eq!(err.message, "err: Insufficient funds for gas * price + value");
 
     api.anvil_deal_tip20(sender, PATH_USD, required).await.unwrap();
     let receipt = provider.send_raw_transaction(&raw).await.unwrap().get_receipt().await.unwrap();
