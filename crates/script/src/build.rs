@@ -9,7 +9,7 @@ use crate::{
     progress::ScriptProgress,
     receipts::is_mined_receipt_for,
     recovery::recovery_exists,
-    sequence::{ScriptSequenceKind, blocked_pending},
+    sequence::{DelegatedResolution, ScriptSequenceKind, blocked_pending},
     session::{SignerScope, script_session_expected_sender_if_configured},
 };
 use alloy_network::{AnyNetwork, ReceiptResponse};
@@ -359,11 +359,11 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             sequence.set_rpc_override(fork_url);
         }
 
-        let resolution = sequence.restore_delegated_pending(
+        let resolution = sequence.restore_delegated_pending(DelegatedResolution::new(
             self.args.resume_attempt,
             self.args.resume_tx_hash,
             self.args.resume_retry,
-        )?;
+        )?)?;
         if !self.args.batch {
             if let Some((sequence_index, _, attempt_id, hash)) = resolution {
                 let provider = ProviderBuilder::<FEN::Network>::from_config_with_url(

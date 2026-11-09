@@ -18,7 +18,9 @@ use alloy_primitives::{
     map::{AddressMap, HashMap, HashSet},
 };
 use evm2::evm::PendingState;
-use foundry_evm_core::{constants::CHEATCODE_ADDRESS, evm::FoundryEvmNetwork};
+use foundry_evm_core::{
+    constants::CHEATCODE_ADDRESS, eip2935::is_history_storage_address, evm::FoundryEvmNetwork,
+};
 use foundry_evm_fuzz::BasicTxDetails;
 use proptest::{prelude::Rng, test_runner::TestRunner};
 use std::{
@@ -265,7 +267,9 @@ impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
         let mut features = Vec::new();
         for (address, storage) in changeset {
             let address = &address;
-            if *address == CHEATCODE_ADDRESS {
+            // History storage holds block hashes written by cheatcodes such as `vm.roll`, not
+            // target state.
+            if *address == CHEATCODE_ADDRESS || is_history_storage_address(address) {
                 continue;
             }
             let mut cardinality_changed = false;
@@ -395,6 +399,7 @@ mod tests {
     use crate::executors::{ExecutorBuilder, test_executor};
     use alloy_primitives::Bytes;
     use foundry_evm_core::{
+        eip2935::HISTORY_STORAGE_ADDRESS,
         evm::{EthEvmNetwork, ExecutionPhase},
         fork::CreateFork,
         opts::EvmOpts,
@@ -444,12 +449,14 @@ mod tests {
     }
 
     #[test]
-    fn unchanged_and_cheatcode_writes_are_ignored() {
+    fn unchanged_cheatcode_and_history_writes_are_ignored() {
         let mut snapshots = snapshots();
         assert!(snapshots.observe_writes(write(U256::ZERO, U256::ONE, U256::ONE)).is_empty());
-        let mut changeset = write(U256::ZERO, U256::ZERO, U256::ONE);
-        changeset[0].0 = CHEATCODE_ADDRESS;
-        assert!(snapshots.observe_writes(changeset).is_empty());
+        for address in [CHEATCODE_ADDRESS, HISTORY_STORAGE_ADDRESS] {
+            let mut changeset = write(U256::ZERO, U256::ZERO, U256::ONE);
+            changeset[0].0 = address;
+            assert!(snapshots.observe_writes(changeset).is_empty());
+        }
     }
 
     #[test]
