@@ -115,7 +115,7 @@ impl SymbolicExecutor {
             input.handler_sender,
             input.ffi_enabled,
         );
-        initial_state.apply_executor_env(&mut self.cx, &input.executor);
+        initial_state.apply_executor_env(&mut self.cx, &input.executor)?;
         initial_state.world.set_storage_layout(self.config.storage_layout);
 
         let calldatas = SymbolicCalldata::variants_with_prefix(

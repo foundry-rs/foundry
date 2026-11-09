@@ -435,7 +435,19 @@ fn symbolic_account_queries_see_setup_accounts(prj: _, cmd: _) {
 import "forge-std/Test.sol";
 
 contract Pinger {
-    function ping() external {}
+    event Pinged();
+
+    function ping() external {
+        emit Pinged();
+    }
+
+    function price() external pure returns (uint256) {
+        return 1;
+    }
+
+    function sender() external view returns (address) {
+        return msg.sender;
+    }
 }
 
 contract SymbolicSetupAccounts is Test {
@@ -447,6 +459,22 @@ contract SymbolicSetupAccounts is Test {
         b = new Pinger();
         vm.deal(address(a), 1 ether);
         vm.deal(address(b), 1 ether);
+        vm.mockCall(address(a), abi.encodeWithSelector(Pinger.price.selector), abi.encode(uint256(5)));
+        vm.recordLogs();
+        a.ping();
+        vm.startPrank(address(0xABC));
+    }
+
+    function checkSetupMock() public view {
+        assert(a.price() != 5);
+    }
+
+    function checkSetupPrank() public view {
+        assert(a.sender() != address(0xABC));
+    }
+
+    function checkSetupRecordedLogs() public {
+        assert(vm.getRecordedLogs().length == 0);
     }
 
     function checkBalance(address target) public view {
@@ -504,15 +532,18 @@ contract SymbolicSetupAccounts is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 7 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
+Ran 10 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkBalance(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeBalance(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeCopy(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeHash(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeLength(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkHighLevelCall(address,bool) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupMock() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupPrank() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupRecordedLogs() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnconstrainedHighLevelCall(address) ([METRICS])
-Suite result: FAILED. 0 passed; 7 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 10 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
