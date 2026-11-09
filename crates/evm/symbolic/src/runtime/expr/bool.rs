@@ -604,7 +604,21 @@ impl SymBoolExpr {
 
     pub(crate) fn upper_bound_usize(&self, expr: &SymExpr) -> Option<usize> {
         match self.kind() {
-            SymBoolExprKind::Const(_) | SymBoolExprKind::Not(_) => None,
+            SymBoolExprKind::Const(_) => None,
+            SymBoolExprKind::Not(value) => match value.kind() {
+                // `!(a > k) => a <= k`, so a negated comparison bounds through its complement.
+                SymBoolExprKind::Cmp(op, left, right) => {
+                    let complement = match op {
+                        SymCmpOp::Ult => SymCmpOp::Uge,
+                        SymCmpOp::Ugt => SymCmpOp::Ule,
+                        SymCmpOp::Ule => SymCmpOp::Ugt,
+                        SymCmpOp::Uge => SymCmpOp::Ult,
+                        SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => return None,
+                    };
+                    cmp_upper_bound_usize(complement, left, right, expr)
+                }
+                _ => None,
+            },
             SymBoolExprKind::And(values) => {
                 let mut bound: Option<usize> = None;
                 for value in values.iter() {
@@ -614,40 +628,7 @@ impl SymBoolExpr {
                 }
                 bound
             }
-            SymBoolExprKind::Cmp(op, left, right) => {
-                if *op == SymCmpOp::Eq {
-                    return match (left == expr, right == expr) {
-                        (true, _) => right.as_const().and_then(|value| usize::try_from(value).ok()),
-                        (_, true) => left.as_const().and_then(|value| usize::try_from(value).ok()),
-                        _ => None,
-                    };
-                }
-                if left == expr {
-                    match *op {
-                        SymCmpOp::Ult => right
-                            .as_const()
-                            .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::ONE))
-                            .and_then(|value| usize::try_from(value).ok()),
-                        SymCmpOp::Ule => {
-                            right.as_const().and_then(|value| usize::try_from(value).ok())
-                        }
-                        _ => None,
-                    }
-                } else if right == expr {
-                    match *op {
-                        SymCmpOp::Ugt => left
-                            .as_const()
-                            .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::ONE))
-                            .and_then(|value| usize::try_from(value).ok()),
-                        SymCmpOp::Uge => {
-                            left.as_const().and_then(|value| usize::try_from(value).ok())
-                        }
-                        _ => None,
-                    }
-                } else {
-                    None
-                }
-            }
+            SymBoolExprKind::Cmp(op, left, right) => cmp_upper_bound_usize(*op, left, right, expr),
         }
     }
 
@@ -868,6 +849,43 @@ impl SymCmpOp {
             Self::Slt => I256::from_raw(left) < I256::from_raw(right),
             Self::Sgt => I256::from_raw(left) > I256::from_raw(right),
         }
+    }
+}
+
+/// Returns the constant upper bound a comparison places on `expr`, when it fits a `usize`.
+fn cmp_upper_bound_usize(
+    op: SymCmpOp,
+    left: &SymExpr,
+    right: &SymExpr,
+    expr: &SymExpr,
+) -> Option<usize> {
+    if op == SymCmpOp::Eq {
+        return match (left == expr, right == expr) {
+            (true, _) => right.as_const().and_then(|value| usize::try_from(value).ok()),
+            (_, true) => left.as_const().and_then(|value| usize::try_from(value).ok()),
+            _ => None,
+        };
+    }
+    if left == expr {
+        match op {
+            SymCmpOp::Ult => right
+                .as_const()
+                .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::ONE))
+                .and_then(|value| usize::try_from(value).ok()),
+            SymCmpOp::Ule => right.as_const().and_then(|value| usize::try_from(value).ok()),
+            _ => None,
+        }
+    } else if right == expr {
+        match op {
+            SymCmpOp::Ugt => left
+                .as_const()
+                .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::ONE))
+                .and_then(|value| usize::try_from(value).ok()),
+            SymCmpOp::Uge => left.as_const().and_then(|value| usize::try_from(value).ok()),
+            _ => None,
+        }
+    } else {
+        None
     }
 }
 
