@@ -167,23 +167,41 @@ impl SymbolicExecutor {
             parent.first_failed_callee.or(outcome.state.first_failed_callee);
         parent.take_call_outcome_state(&mut outcome.state);
         // Like Forge's `call_end`, a frame that ends with its own `vm.expectRevert` still pending
-        // reverts with this reason. A frame that returned keeps its state, like a call that
-        // succeeds under the caller's `vm.expectRevert`.
-        if outcome.state.expected_revert.is_some() {
-            const REASON: &str = "call didn't revert at a lower depth than cheatcode call depth";
+        // reverts. If a deeper revert already matched a counted expectation, Forge's depth check
+        // passed and the reason is the unmet one. A frame that returned keeps its state, like a
+        // call that succeeds under the caller's `vm.expectRevert`; in internal expect-revert mode
+        // it returns and leaves the expectation pending for the caller.
+        if let Some(expected) = outcome.state.expected_revert.take() {
+            const DEPTH_REASON: &str =
+                "call didn't revert at a lower depth than cheatcode call depth";
             match outcome.status {
-                CallStatus::Success => {
+                CallStatus::Success if executor.internal_expect_revert => {
+                    parent.expected_revert = Some(expected);
                     return Ok(JoinedCallOutcome::Success {
                         parent,
                         child: outcome.state,
-                        unmet_expected_revert: Some(REASON),
+                        unmet_expected_revert: None,
                     });
                 }
-                CallStatus::Revert => {
-                    outcome.state.frame.return_data =
-                        error_string_return_data(&mut self.cx, REASON);
+                CallStatus::Success => {
+                    let reason = if expected.matched_any() {
+                        "next call did not revert as expected"
+                    } else {
+                        DEPTH_REASON
+                    };
+                    return Ok(JoinedCallOutcome::Success {
+                        parent,
+                        child: outcome.state,
+                        unmet_expected_revert: Some(reason),
+                    });
                 }
-                CallStatus::ExceptionalHalt | CallStatus::Failure => {}
+                CallStatus::Revert
+                    if !executor.internal_expect_revert && !expected.matched_any() =>
+                {
+                    outcome.state.frame.return_data =
+                        error_string_return_data(&mut self.cx, DEPTH_REASON);
+                }
+                CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {}
             }
         }
         if !matches!(outcome.status, CallStatus::Success) {

@@ -2255,6 +2255,15 @@ contract SymbolicRevertKeepsCheatcodes is Test {
         vm.expectRevert();
     }
 
+    function boom() external pure {
+        revert("boom");
+    }
+
+    function expectTwoRevertsThenReturn() external {
+        vm.expectRevert(uint64(2));
+        this.boom();
+    }
+
     function mockThenRevert(address user) external {
         vm.mockCall(
             address(token),
@@ -2285,6 +2294,30 @@ contract SymbolicRevertKeepsCheatcodes is Test {
     function checkExpectRevertPendingInCalleeReverts() public {
         this.expectRevertThenReturn();
     }
+
+    // In internal expect-revert mode the callee returns and its expectation stays pending, so
+    // the next revert is swallowed and the final assertion fails.
+    /// forge-config: default.allow_internal_expect_revert = true
+    function checkInternalModeKeepsPendingExpectRevert() public {
+        (bool ok,) = address(this).call(abi.encodeCall(this.expectRevertThenReturn, ()));
+        if (ok) {
+            (bool swallowed,) = address(this).call(abi.encodeCall(this.boom, ()));
+            assert(swallowed);
+            assert(false);
+        }
+    }
+
+    // A deeper revert matched one of two expected reverts, so the callee fails with the unmet
+    // reason, not the depth one.
+    function checkPartiallyMetExpectRevertReason() public {
+        (bool ok, bytes memory data) =
+            address(this).call(abi.encodeCall(this.expectTwoRevertsThenReturn, ()));
+        bytes memory unmet =
+            abi.encodeWithSignature("CheatcodeError(string)", "next call did not revert as expected");
+        if (ok || keccak256(data) == keccak256(unmet)) {
+            assert(false);
+        }
+    }
 }
 "#,
     );
@@ -2298,12 +2331,14 @@ contract SymbolicRevertKeepsCheatcodes is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 4 tests for test/SymbolicRevertKeepsCheatcodes.t.sol:SymbolicRevertKeepsCheatcodes
+Ran 6 tests for test/SymbolicRevertKeepsCheatcodes.t.sol:SymbolicRevertKeepsCheatcodes
 [FAIL: expected an emit, but no logs were emitted afterwards. you might have mismatched events or not enough events were emitted; counterexample: 		[SENDER] [SENDER] calldata=0x3e65ad21 args=[]] checkExpectEmitSurvivesRevertingCall() ([METRICS])
 [FAIL: call didn't revert at a lower depth than cheatcode call depth; counterexample: 		[SENDER] [SENDER] calldata=0xea358207 args=[]] checkExpectRevertPendingInCalleeReverts() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x6807c02f args=[]] checkInternalModeKeepsPendingExpectRevert() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x9389e44d0000000000000000000000000000000000000000000000000000000000000000 args=[0x0000000000000000000000000000000000000000]] checkMockSurvivesRevertingCall(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x507454da args=[]] checkPartiallyMetExpectRevertReason() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xe9b7d25400000000000000000000000000000000000000000000000000000000000003e8 args=[1000]] checkWarpSurvivesRevertingCall(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
