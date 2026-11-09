@@ -1346,11 +1346,40 @@ contract SymbolicDelegateCall {
 "#,
     );
 
+    prj.add_test(
+        "SymbolicCheatcodeDelegateCall.t.sol",
+        r#"
+interface Vm {
+    function assume(bool condition) external pure;
+    function warp(uint256 timestamp) external;
+}
+
+contract SymbolicCheatcodeDelegateCall {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+
+    // Like Forge, only CALL and STATICCALL reach a cheatcode. A DELEGATECALL or CALLCODE to the
+    // cheatcode address runs its one-byte code and has no effect.
+    function checkCheatcodeDelegateCall(uint256 x) public {
+        (bool ok,) = address(vm).delegatecall(abi.encodeCall(Vm.assume, (x > 10)));
+        assert(ok);
+        (ok,) = address(vm).delegatecall(abi.encodeCall(Vm.warp, (12345)));
+        assert(ok && block.timestamp != 12345);
+        bytes memory data = abi.encodeCall(Vm.assume, (false));
+        address target = address(vm);
+        assembly {
+            ok := callcode(gas(), target, 0, add(data, 32), mload(data), 0, 0)
+        }
+        assert(ok);
+    }
+}
+"#,
+    );
+
     assert_symbolic(cmd.args([
         "test",
         "--symbolic",
         "--match-test",
-        "^(checkStatic|checkStaticCallValue|checkDelegate)\\(",
+        "^(checkStatic|checkStaticCallValue|checkDelegate|checkCheatcodeDelegateCall)\\(",
     ]))
     .success()
     .stdout_eq(
@@ -1366,6 +1395,10 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test for test/SymbolicStaticCallValue.t.sol:SymbolicStaticCallValue
 [PASS] checkStaticCallValue(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicCheatcodeDelegateCall.t.sol:SymbolicCheatcodeDelegateCall
+[PASS] checkCheatcodeDelegateCall(uint256) ([METRICS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]
