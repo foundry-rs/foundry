@@ -1472,11 +1472,12 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Moved out of the cheatcode state on conversion since `commit` moves that state back into
     /// the executor before results are classified.
     pub skip_payloads: Vec<Bytes>,
-    /// Whether a `vm.assert*` cheatcode failed during this call, even if the call reverted later.
+    /// Message of the first `vm.assert*` cheatcode that failed during this call, even if the call
+    /// reverted later.
     ///
     /// Moved out of the cheatcode state on conversion, like `skip_payloads`, so it resets per
     /// call.
-    pub assertion_failed: bool,
+    pub failed_assertion: Option<String>,
 }
 
 impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
@@ -1510,7 +1511,7 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
             chisel_state: None,
             reverter: None,
             skip_payloads: Vec::new(),
-            assertion_failed: false,
+            failed_assertion: None,
         }
     }
 }
@@ -1801,8 +1802,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork, H: IntoInstructionResult>(
         .filter(|txs| !txs.is_empty());
     let skip_payloads =
         cheatcodes.as_mut().map(|c| std::mem::take(&mut c.skip_payloads)).unwrap_or_default();
-    let assertion_failed =
-        cheatcodes.as_mut().is_some_and(|c| std::mem::take(&mut c.assertion_failed));
+    let failed_assertion = cheatcodes.as_mut().and_then(|c| c.failed_assertion.take());
 
     Ok(RawCallResult {
         exit_reason: Some(exit_reason),
@@ -1833,7 +1833,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork, H: IntoInstructionResult>(
         chisel_state,
         reverter,
         skip_payloads,
-        assertion_failed,
+        failed_assertion,
     })
 }
 

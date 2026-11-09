@@ -1027,19 +1027,24 @@ fn selector_from_calldata(calldata: &Bytes) -> Selector {
 }
 
 fn call_failure_reason<FEN: FoundryEvmNetwork>(
-    call_result: RawCallResult<FEN>,
+    mut call_result: RawCallResult<FEN>,
     rd: Option<&RevertDecoder>,
 ) -> Option<String> {
+    // A caught `vm.assert*` failure only explains a call that did not revert.
+    let failed_assertion = call_result.failed_assertion.take().filter(|_| !call_result.reverted);
     match call_result.into_evm_error(rd) {
-        EvmError::Execution(err) => Some(err.reason),
+        EvmError::Execution(err) => Some(failed_assertion.unwrap_or(err.reason)),
         _ => None,
     }
 }
 
 fn assertion_failure_reason<FEN: FoundryEvmNetwork>(
-    call_result: RawCallResult<FEN>,
+    mut call_result: RawCallResult<FEN>,
     rd: Option<&RevertDecoder>,
 ) -> Option<String> {
+    if let Some(message) = call_result.failed_assertion.take() {
+        return Some(message);
+    }
     call_failure_reason(call_result, rd).or_else(|| Some("assertion failed".to_string()))
 }
 
@@ -1678,7 +1683,7 @@ mod tests {
 
         let (kind, result) = execute_invariant_replay_tx(&mut executor.clone(), &calls[1]).unwrap();
         assert_eq!(kind, CampaignCallKind::AssumptionRejected);
-        assert!(result.assertion_failed);
+        assert!(result.failed_assertion.is_some());
         let full = replay_handler_failure_sequence(executor.clone(), &calls, &[0, 1], false, None)
             .unwrap();
         assert!(full.anchor_asserted);

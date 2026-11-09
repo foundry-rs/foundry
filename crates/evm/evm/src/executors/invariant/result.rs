@@ -164,7 +164,7 @@ pub fn did_fail_on_assert<FEN: FoundryEvmNetwork>(
     state_changeset: &StateChangeset,
 ) -> bool {
     is_assertion_failure(call_result)
-        || call_result.assertion_failed
+        || call_result.failed_assertion.is_some()
         || call_result.has_state_snapshot_failure
         || Executor::<FEN>::has_pending_global_failure(state_changeset)
 }

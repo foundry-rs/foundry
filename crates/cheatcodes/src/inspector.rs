@@ -757,11 +757,11 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// payloads, so user-crafted `FOUNDRY::SKIP` revert data never skips a test on its own.
     pub skip_payloads: Vec<Bytes>,
 
-    /// Whether a `vm.assert*` cheatcode failed during the current call.
+    /// Message of the first `vm.assert*` cheatcode that failed during the current call.
     ///
     /// Unlike the global failure slot, this survives reverts, so callers still see the failure
     /// when the asserting call reverts afterwards.
-    pub assertion_failed: bool,
+    pub failed_assertion: Option<String>,
 
     /// ETH `deal`s recorded in the current root transaction, rolled back if it fails.
     pub eth_deals: Vec<DealRecord>,
@@ -892,7 +892,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             broadcast: Default::default(),
             broadcastable_transactions: Default::default(),
             skip_payloads: Default::default(),
-            assertion_failed: false,
+            failed_assertion: None,
             eth_deals: Default::default(),
             gas_metering: Default::default(),
             gas_snapshots: Default::default(),
