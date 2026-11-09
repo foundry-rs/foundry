@@ -187,6 +187,18 @@ pub trait MaybeForkedDatabase {
     fn maybe_flush_cache(&self) -> Result<(), String>;
 
     fn maybe_inner(&self) -> Result<&BlockchainDb, String>;
+
+    /// Prefetches the remote state a call is about to read on a fork, see
+    /// [`ForkedDatabase::prefetch_call`](foundry_evm::backend::ForkedDatabase::prefetch_call).
+    /// Does nothing on a database without a fork.
+    fn maybe_prefetch_call(
+        &self,
+        _caller: Address,
+        _target: Address,
+        _value: U256,
+        _input: &Bytes,
+    ) {
+    }
 }
 
 /// `dyn Db` satisfies all `alloy_evm::Database` requirements via its supertraits, but the

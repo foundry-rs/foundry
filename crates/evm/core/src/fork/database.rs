@@ -5,9 +5,11 @@ use crate::{
     state_snapshot::StateSnapshots,
 };
 use alloy_network::Network;
-use alloy_primitives::{Address, B256, U256};
-use alloy_rpc_types::BlockId;
-use foundry_fork_db::{BlockchainDb, DatabaseError, ForkBlockEnv, SharedBackend};
+use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_rpc_types::{BlockId, TransactionRequest};
+use foundry_fork_db::{
+    AccessListPrefetch, BlockchainDb, DatabaseError, ForkBlockEnv, SharedBackend,
+};
 use parking_lot::Mutex;
 use revm::{
     Database, DatabaseCommit,
@@ -62,6 +64,23 @@ impl<N: Network, B: ForkBlockEnv> ForkedDatabase<N, B> {
 
     pub const fn database_mut(&mut self) -> &mut CacheDB<SharedBackend<N, B>> {
         &mut self.cache_db
+    }
+
+    /// Prefetches the remote state a call is about to read, see
+    /// [`SharedBackend::prefetch_access_list`]. The state that exists only locally goes along as
+    /// overrides, so the simulation follows the call through contracts deployed here. Calls to
+    /// precompiles are skipped.
+    pub fn prefetch_call(&self, caller: Address, target: Address, value: U256, input: &Bytes) {
+        if target <= Address::with_last_byte(0xff) {
+            return;
+        }
+        let overrides = super::prefetch::state_override(&self.cache_db);
+        let tx = TransactionRequest::default()
+            .from(caller)
+            .to(target)
+            .value(value)
+            .input(input.clone().into());
+        self.backend.prefetch_access_list(AccessListPrefetch { tx, overrides, once: false });
     }
 
     pub const fn state_snapshots(&self) -> &Arc<Mutex<StateSnapshots<ForkDbStateSnapshot<N, B>>>> {

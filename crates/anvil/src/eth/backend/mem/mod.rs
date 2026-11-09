@@ -1167,6 +1167,8 @@ pub struct Backend<N: Network> {
     enable_steps_tracing: bool,
     print_logs: bool,
     print_traces: bool,
+    /// Whether calls and transactions on a fork prefetch the remote state they read.
+    fork_prefetch: bool,
     /// Recorder used for decoding traces, used together with print_traces.
     call_trace_decoder: Arc<RwLock<Arc<CallTraceDecoder>>>,
     /// How to keep history state
@@ -1220,6 +1222,7 @@ impl<N: Network> Clone for Backend<N> {
             enable_steps_tracing: self.enable_steps_tracing,
             print_logs: self.print_logs,
             print_traces: self.print_traces,
+            fork_prefetch: self.fork_prefetch,
             call_trace_decoder: self.call_trace_decoder.clone(),
             prune_state_history_config: self.prune_state_history_config,
             transaction_block_keeper: self.transaction_block_keeper,
@@ -3842,6 +3845,16 @@ impl<N: Network> Backend<N> {
     where
         I: BackendInspector<ExecutionDb<&'db dyn DatabaseRef>>,
     {
+        // Calls on a fork read cold state one round trip at a time; a simulation on the endpoint
+        // fetches it ahead of the EVM. The lock is only taken when free, since the caller may
+        // hold it.
+        if self.fork_prefetch
+            && let TxKind::Call(target) = tx_env.base().kind
+            && let Ok(db) = self.db.try_read()
+        {
+            let tx = tx_env.base();
+            db.maybe_prefetch_call(tx.caller, target, tx.value, &tx.data);
+        }
         match tx_env {
             CallTxEnv::Eth(tx_env) => {
                 self.transact_eth_with_inspector_ref(db, evm_env, inspector, tx_env)
@@ -4712,6 +4725,7 @@ impl<N: Network> Backend<N> {
         enable_steps_tracing: bool,
         print_logs: bool,
         print_traces: bool,
+        fork_prefetch: bool,
         call_trace_decoder: Arc<CallTraceDecoder>,
         prune_state_history_config: PruneStateHistoryConfig,
         max_persisted_states: Option<usize>,
@@ -4852,6 +4866,7 @@ impl<N: Network> Backend<N> {
             enable_steps_tracing,
             print_logs,
             print_traces,
+            fork_prefetch,
             call_trace_decoder: Arc::new(RwLock::new(call_trace_decoder)),
             prune_state_history_config,
             transaction_block_keeper,
@@ -6483,6 +6498,21 @@ where
         pin_timestamp: bool,
     ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
+
+        if self.fork_prefetch {
+            let db = self.db.read().await;
+            for pool_tx in &pool_transactions {
+                let tx = &pool_tx.pending_transaction.transaction;
+                if let Some(target) = tx.to() {
+                    db.maybe_prefetch_call(
+                        *pool_tx.pending_transaction.sender(),
+                        target,
+                        tx.value(),
+                        tx.input(),
+                    );
+                }
+            }
+        }
 
         let (outcome, header, block_hash) = {
             let current_base_fee = self.base_fee();

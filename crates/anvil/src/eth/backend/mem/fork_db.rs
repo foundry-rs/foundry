@@ -4,7 +4,7 @@ use crate::eth::backend::db::{
     cache_block_hash,
 };
 use alloy_network::Network;
-use alloy_primitives::{Address, B256, U256, map::AddressMap};
+use alloy_primitives::{Address, B256, Bytes, U256, map::AddressMap};
 use alloy_rpc_types::BlockId;
 use foundry_evm::{
     backend::{
@@ -228,5 +228,9 @@ impl<N: Network> MaybeForkedDatabase for ForkedDatabase<N> {
 
     fn maybe_inner(&self) -> Result<&BlockchainDb, String> {
         Ok(self.inner())
+    }
+
+    fn maybe_prefetch_call(&self, caller: Address, target: Address, value: U256, input: &Bytes) {
+        self.prefetch_call(caller, target, value, input)
     }
 }

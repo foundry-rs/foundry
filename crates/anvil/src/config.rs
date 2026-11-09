@@ -335,6 +335,8 @@ pub struct NodeConfig {
     pub fork_retry_backoff: Duration,
     /// available CUPS
     pub compute_units_per_second: u64,
+    /// Prefetch the remote state of calls and transactions on a fork.
+    pub fork_prefetch: bool,
     /// The ipc path
     pub ipc_path: Option<Option<String>>,
     /// Enable transaction/call steps tracing for debug calls returning geth-style traces
@@ -698,6 +700,7 @@ impl Default for NodeConfig {
             enable_tracing: true,
             enable_steps_tracing: false,
             print_logs: true,
+            fork_prefetch: false,
             print_traces: false,
             enable_auto_impersonate: false,
             no_storage_caching: false,
@@ -1283,6 +1286,15 @@ impl NodeConfig {
     }
 
     /// Sets whether to print `console.log` invocations to stdout.
+    /// Sets whether calls and transactions on a fork prefetch the remote state they are about to
+    /// read: each is simulated on the endpoint with `eth_createAccessList` and the accounts and
+    /// slots of the result are fetched in batches before the EVM reads them.
+    #[must_use]
+    pub const fn with_fork_prefetch(mut self, fork_prefetch: bool) -> Self {
+        self.fork_prefetch = fork_prefetch;
+        self
+    }
+
     #[must_use]
     pub const fn with_print_logs(mut self, print_logs: bool) -> Self {
         self.print_logs = print_logs;
@@ -1661,6 +1673,7 @@ impl NodeConfig {
             self.enable_steps_tracing,
             self.print_logs,
             self.print_traces,
+            self.fork_prefetch,
             Arc::new(decoder_builder.build()),
             self.prune_history,
             self.max_persisted_states,
