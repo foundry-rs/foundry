@@ -300,6 +300,21 @@ pub struct CallTraceDecoder {
     pub compact_labels: bool,
 }
 
+/// The identities a [`CallTraceDecoder`] collected for addresses, see
+/// [`CallTraceDecoder::address_identities`].
+#[derive(Clone, Debug, Default)]
+pub struct AddressIdentities {
+    contracts: HashMap<Address, String>,
+    labels: HashMap<Address, String>,
+    receive_contracts: HashSet<Address>,
+    fallback_contracts: HashMap<Address, HashSet<Selector>>,
+    non_fallback_contracts: HashMap<Address, HashSet<Selector>>,
+    functions_by_address: HashMap<Address, HashMap<Selector, Vec<Function>>>,
+    constructors_by_address: HashMap<Address, Constructor>,
+    constructor_args_offsets: HashMap<Address, usize>,
+    events_by_address: Option<Box<AddressEvents>>,
+}
+
 impl CallTraceDecoder {
     fn register_celo_metadata(&mut self) {
         if precompiles::is_known_precompile(
@@ -512,6 +527,35 @@ impl CallTraceDecoder {
             hardfork: None,
             compact_labels: false,
         }
+    }
+
+    /// Returns a copy of everything [`Self::clear_addresses`] resets, so that
+    /// [`Self::restore_address_identities`] can bring the decoder back to this point.
+    pub fn address_identities(&self) -> AddressIdentities {
+        AddressIdentities {
+            contracts: self.contracts.clone(),
+            labels: self.labels.clone(),
+            receive_contracts: self.receive_contracts.clone(),
+            fallback_contracts: self.fallback_contracts.clone(),
+            non_fallback_contracts: self.non_fallback_contracts.clone(),
+            functions_by_address: self.functions_by_address.clone(),
+            constructors_by_address: self.constructors_by_address.clone(),
+            constructor_args_offsets: self.constructor_args_offsets.clone(),
+            events_by_address: self.events_by_address.clone(),
+        }
+    }
+
+    /// Restores the identities saved by [`Self::address_identities`].
+    pub fn restore_address_identities(&mut self, identities: &AddressIdentities) {
+        self.contracts.clone_from(&identities.contracts);
+        self.labels.clone_from(&identities.labels);
+        self.receive_contracts.clone_from(&identities.receive_contracts);
+        self.fallback_contracts.clone_from(&identities.fallback_contracts);
+        self.non_fallback_contracts.clone_from(&identities.non_fallback_contracts);
+        self.functions_by_address.clone_from(&identities.functions_by_address);
+        self.constructors_by_address.clone_from(&identities.constructors_by_address);
+        self.constructor_args_offsets.clone_from(&identities.constructor_args_offsets);
+        self.events_by_address.clone_from(&identities.events_by_address);
     }
 
     /// Clears all known addresses.
@@ -1254,10 +1298,8 @@ impl CallTraceDecoder {
     fn decode_cheatcode_inputs(&self, func: &Function, data: &[u8]) -> Option<Vec<String>> {
         match func.name.as_str() {
             "expectRevert" => {
-                let decoded = match data.get(SELECTOR_LEN..) {
-                    Some(data) => func.abi_decode_input(data).ok(),
-                    None => None,
-                };
+                let decoded =
+                    data.get(SELECTOR_LEN..).and_then(|data| func.abi_decode_input(data).ok());
                 let Some(decoded) = decoded else {
                     return Some(vec![self.revert_decoder.decode(data, None)]);
                 };
@@ -1902,7 +1944,7 @@ mod tests {
     use crate::CallKind;
     use alloy_primitives::{address, aliases::U96, bytes, hex};
     use alloy_sol_types::{SolCall, SolError, SolEvent};
-    use foundry_evm_core::{abi::Vm, precompiles::P256_VERIFY};
+    use foundry_evm_core::{abi::Vm, precompiles::P256_VERIFY, tempo::TEMPO_PRECOMPILE_ADDRESSES};
     use std::borrow::Cow;
     use tempo_precompiles::{
         ACCOUNT_KEYCHAIN_ADDRESS, SIGNATURE_VERIFIER_ADDRESS, STORAGE_CREDITS_ADDRESS,
@@ -2115,9 +2157,6 @@ mod tests {
 
     #[test]
     fn test_selector_collision_resolution() {
-        use alloy_json_abi::Function;
-        use alloy_primitives::Address;
-
         // Create two functions with the same selector but different signatures
         let func1 = Function::parse("transferFrom(address,address,uint256)").unwrap();
         let func2 = Function::parse("gasprice_bit_ether(int128)").unwrap();
@@ -2146,9 +2185,6 @@ mod tests {
 
     #[test]
     fn test_selector_collision_resolution_second_function() {
-        use alloy_json_abi::Function;
-        use alloy_primitives::Address;
-
         // Create two functions with the same selector but different signatures
         let func1 = Function::parse("transferFrom(address,address,uint256)").unwrap();
         let func2 = Function::parse("gasprice_bit_ether(int128)").unwrap();
@@ -3837,8 +3873,6 @@ mod tests {
 
     #[test]
     fn test_identify_addresses_skips_evm_precompiles() {
-        use foundry_evm_core::precompiles::SHA_256;
-
         let decoder = CallTraceDecoder::new();
 
         let mut arena = CallTraceArena::default();
@@ -3877,8 +3911,6 @@ mod tests {
 
     #[test]
     fn test_identify_addresses_skips_tempo_precompiles() {
-        use foundry_evm_core::tempo::{TEMPO_PRECOMPILE_ADDRESSES, TIP20_CHANNEL_RESERVE_ADDRESS};
-
         // Decoder with Tempo chain ID (4217).
         let decoder = CallTraceDecoderBuilder::new()
             .with_chain_id(Some(4217))
@@ -4152,8 +4184,6 @@ mod tests {
 
     #[test]
     fn test_tempo_hardfork_none_does_not_remove_user_reserve_label() {
-        use foundry_evm_core::tempo::TIP20_CHANNEL_RESERVE_ADDRESS;
-
         let reserve_label = "UserReserve".to_string();
         let decoder = CallTraceDecoderBuilder::new()
             .with_labels([(TIP20_CHANNEL_RESERVE_ADDRESS, reserve_label.clone())])
@@ -4453,8 +4483,6 @@ mod tests {
 
     #[test]
     fn test_identify_addresses_does_not_skip_future_tempo_precompiles() {
-        use foundry_evm_core::tempo::TIP20_CHANNEL_RESERVE_ADDRESS;
-
         let decoder = CallTraceDecoderBuilder::new()
             .with_chain_id(Some(4217))
             .with_hardfork(Some(TempoHardfork::T4.into()))
@@ -4483,8 +4511,6 @@ mod tests {
 
     #[test]
     fn test_identify_addresses_does_not_skip_tempo_precompiles_on_other_chains() {
-        use foundry_evm_core::tempo::TEMPO_PRECOMPILE_ADDRESSES;
-
         // Decoder with Ethereum mainnet chain ID (1).
         let mut decoder = CallTraceDecoder::new().clone();
         decoder.chain_id = Some(1);

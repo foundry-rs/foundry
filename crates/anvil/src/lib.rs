@@ -39,7 +39,7 @@ use tokio::{
     runtime::Handle,
     task::{JoinError, JoinHandle},
 };
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{EnvFilter, prelude::*};
 
 #[cfg(feature = "optimism")]
 use op_alloy_rpc_types as _;
@@ -157,6 +157,13 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
             .wrap_err("failed to replay fork transaction prefix")?;
     }
 
+    let tempo_consensus_identity = if !config.silent && backend.is_tempo() {
+        Some(backend.tempo_consensus_identity().await?)
+    } else {
+        None
+    };
+    let tempo_epoch_length_fallback_warning = backend.tempo_epoch_length_fallback_warning().await;
+
     backend.commit_startup_fork_cache();
     let backend = Arc::new(backend);
 
@@ -179,7 +186,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
         ..
     } = config.clone();
 
-    let pool = Arc::new(Pool::default());
+    let pool = Arc::new(Pool::new(backend.fees().clone()));
 
     let mode = if let Some(block_time) = block_time {
         if mixed_mining {
@@ -277,6 +284,18 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
     };
 
     handle.print(fork.as_ref())?;
+    if let Some(identity) = tempo_consensus_identity {
+        sh_eprintln!(
+            "\nTempo Consensus\n==================\nIdentity:       {}\nProposer:       {}\nEpoch length:   {}",
+            identity.identity,
+            identity.proposer,
+            identity.epoch_length,
+        )?;
+    }
+
+    if let Some(warning) = tempo_epoch_length_fallback_warning {
+        let _ = sh_warn!("{warning}");
+    }
 
     Ok((api, handle))
 }
@@ -470,8 +489,6 @@ impl Future for NodeHandle {
 
 #[doc(hidden)]
 pub fn init_tracing() -> LoggingManager {
-    use tracing_subscriber::prelude::*;
-
     let manager = LoggingManager::default();
 
     let _ = if let Ok(rust_log_val) = std::env::var("RUST_LOG")

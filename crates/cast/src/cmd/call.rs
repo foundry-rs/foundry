@@ -570,6 +570,7 @@ impl CallArgs {
                 arena: call_frame_to_arena(&frame, None),
                 ignored: Default::default(),
                 diagnostics: Default::default(),
+                debug_steps: None,
             };
             let result = TraceResult {
                 success: frame.error.is_none() && frame.revert_reason.is_none(),
@@ -654,7 +655,7 @@ impl CallArgs {
 
             let trace_requirements = TraceRequirements::none()
                 .with_calls(true)
-                .with_debug(debug)
+                .with_debug_recording(debug)
                 .with_decode_internal(if tracing.decode_internal {
                     InternalTraceMode::Full
                 } else {

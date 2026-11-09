@@ -6,8 +6,10 @@ use figment::{
 };
 use foundry_compilers::ProjectPathsConfig;
 use heck::ToSnakeCase;
+use serde::de::Error as _;
 use std::{
     cell::OnceCell,
+    env,
     path::{Path, PathBuf},
 };
 
@@ -84,8 +86,6 @@ impl TomlFileProvider {
 
     /// Reads and processes the TOML configuration file, handling inheritance if configured.
     fn read(&self) -> Result<Map<Profile, Dict>, Error> {
-        use serde::de::Error as _;
-
         // Get the config file path and validate it exists
         let local_path = self.file();
         if !local_path.exists() {
@@ -128,11 +128,22 @@ impl TomlFileProvider {
                 ))
             })?;
 
+            // `extends` takes a file path, but a profile name is an easy mistake to make.
+            let names_profile = partial_config
+                .profile
+                .as_ref()
+                .is_some_and(|profiles| profiles.contains_key(extends_path));
             let base_path =
                 foundry_compilers::utils::canonicalize(local_dir.join(&relative_base_path))
                     .map_err(|e| {
+                        let hint = if names_profile {
+                            "; `extends` takes the path of another config file, and every \
+                             profile already inherits from `[profile.default]`"
+                        } else {
+                            ""
+                        };
                         Error::custom(format!(
-                            "Failed to resolve inherited config path: {}: {e}",
+                            "Failed to resolve inherited config path: {}: {e}{hint}",
                             relative_base_path.display()
                         ))
                     })?;
@@ -639,9 +650,6 @@ impl Provider for DappEnvCompatProvider {
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        use serde::de::Error as _;
-        use std::env;
-
         let mut dict = Dict::new();
         if let Ok(val) = env::var("DAPP_TEST_NUMBER") {
             dict.insert(

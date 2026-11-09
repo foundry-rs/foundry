@@ -162,8 +162,8 @@ struct FeeState {
 /// Chain-derived fee state for the next block.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FeeSnapshot {
-    base_fee: u64,
-    blob_excess_gas_and_price: BlobExcessGasAndPrice,
+    pub(crate) base_fee: u64,
+    pub(crate) blob_excess_gas_and_price: BlobExcessGasAndPrice,
 }
 
 impl FeeManager {

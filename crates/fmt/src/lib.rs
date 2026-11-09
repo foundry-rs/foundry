@@ -22,7 +22,7 @@ use solar::{
     sema::{Compiler, Gcx, Source},
 };
 
-use std::{path::Path, sync::Arc};
+use std::{fmt::Write, path::Path, sync::Arc};
 
 pub use foundry_config::fmt::*;
 
@@ -174,7 +174,6 @@ fn format_inner(
 }
 
 fn diff(first: &str, second: &str) -> impl std::fmt::Display {
-    use std::fmt::Write;
     let diff = similar::TextDiff::from_lines(first, second);
     let mut s = String::new();
     for change in diff.iter_all_changes() {

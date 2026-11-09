@@ -52,6 +52,7 @@ revm.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 serde.workspace = true
 solar.workspace = true
+soldb-core.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["time", "macros"] }
 tracing.workspace = true
@@ -60,7 +61,6 @@ yansi.workspace = true
 [dev-dependencies]
 ron.workspace = true
 snapbox.workspace = true
-tokio = { workspace = true, features = ["test-util"] }
 
 [features]
 default = ["optimism"]

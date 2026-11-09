@@ -156,6 +156,9 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
         config.show_solidity,
     );
 
+    // Every shrink attempt would append its steps to the shared step table, so only the replay of
+    // the shrunk sequence records them.
+    let recorder = executor.inspector_mut().debug_recorder.take();
     let (calls, check_result, optimization_value) = if let Some(target) = target_value {
         let (calls, value) = shrink_sequence_value(
             &config,
@@ -183,6 +186,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
         )?;
         (shrunk.calls, shrunk.result, None)
     };
+    executor.inspector_mut().debug_recorder = recorder;
 
     if let Some(sequence) = inner_sequence {
         set_up_inner_replay(&mut executor, &sequence);

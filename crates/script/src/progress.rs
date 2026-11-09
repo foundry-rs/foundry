@@ -146,6 +146,27 @@ impl SequenceProgressState {
     }
 }
 
+/// How [`ScriptProgress::wait_for_pending`] obtains the status of the next pending hash.
+enum Polling<S> {
+    /// Waiting on receipts concurrently, each up to the transaction timeout.
+    Waiting(S),
+    /// Waiting stopped, so each hash left unpolled is checked once. Hashes are popped from the
+    /// end, which holds the earliest operation.
+    Sweeping(Vec<B256>),
+}
+
+impl<S> Polling<S> {
+    /// Stops waiting on receipts and queues every hash of `pending` not yet in `polled` for a
+    /// single check. Does nothing once sweeping.
+    fn stop_waiting(&mut self, pending: &[B256], polled: &[B256]) {
+        if let Self::Waiting(_) = self {
+            *self = Self::Sweeping(
+                pending.iter().rev().filter(|hash| !polled.contains(hash)).copied().collect(),
+            );
+        }
+    }
+}
+
 /// Cloneable wrapper around [SequenceProgressState].
 #[derive(Debug, Clone)]
 pub struct SequenceProgress {
@@ -231,37 +252,31 @@ impl ScriptProgress {
         let futs = pending
             .iter()
             .filter(|hash| !blocked_hashes.contains(hash))
-            .map(|&tx| check_tx_status(provider, tx, timeout, confirmations));
-        let mut tasks = Some(futures::stream::iter(futs).buffer_unordered(10));
+            .map(|&tx| check_tx_status(provider, tx, timeout, confirmations, &self.multi));
+        let mut polling = Polling::Waiting(futures::stream::iter(futs).buffer_unordered(10));
         let mut polled = Vec::with_capacity(count);
-        let mut unpolled = None;
 
         let mut errors: Vec<String> = vec![];
         let mut discarded_transactions = false;
 
         loop {
-            let (tx_hash, result) = if let Some(tasks) = &mut tasks
-                && let Some((tx_hash, result)) = tasks.next().await
-            {
-                polled.push(tx_hash);
-                (tx_hash, result)
-            } else {
-                // Polling stopped, so check every hash left unpolled once.
-                tasks = None;
-                let unpolled = unpolled.get_or_insert_with(|| {
-                    pending
-                        .iter()
-                        .rev()
-                        .filter(|hash| !polled.contains(hash))
-                        .copied()
-                        .collect::<Vec<_>>()
-                });
-                let Some(tx_hash) = unpolled.pop() else { break };
-                let Some(status) = check_tx_status_once(provider, tx_hash, confirmations).await
-                else {
-                    continue;
-                };
-                (tx_hash, Ok(status))
+            let (tx_hash, result) = match &mut polling {
+                Polling::Waiting(tasks) => {
+                    let Some((tx_hash, result)) = tasks.next().await else {
+                        polling.stop_waiting(&pending, &polled);
+                        continue;
+                    };
+                    polled.push(tx_hash);
+                    (tx_hash, result)
+                }
+                Polling::Sweeping(unpolled) => {
+                    let Some(tx_hash) = unpolled.pop() else { break };
+                    let Some(status) = check_tx_status_once(provider, tx_hash, confirmations).await
+                    else {
+                        continue;
+                    };
+                    (tx_hash, Ok(status))
+                }
             };
             match result {
                 Err(err) => {
@@ -309,7 +324,7 @@ impl ScriptProgress {
 
                     // A later nonce can stay visible indefinitely behind this transaction, so
                     // stop polling and check every remaining hash once instead.
-                    tasks = None;
+                    polling.stop_waiting(&pending, &polled);
                 }
                 Ok(TxStatus::Success(receipt)) => {
                     trace!(tx_hash=?tx_hash, "received tx receipt");

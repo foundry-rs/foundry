@@ -107,7 +107,7 @@ impl<'gcx> Visit<'gcx> for LiteralCollector<'gcx> {
     fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Self::BreakValue> {
         // Yul literals commonly encode structural values such as memory offsets, masks, and
         // selectors, where extracting a constant would not necessarily improve readability.
-        if matches!(stmt.kind, StmtKind::AssemblyBlock(_)) {
+        if matches!(stmt.kind, StmtKind::AssemblyBlock(..)) {
             return ControlFlow::Continue(());
         }
         self.walk_stmt(stmt)

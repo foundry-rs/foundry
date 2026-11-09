@@ -40,6 +40,7 @@ use std::{
     fs::File,
     io::BufReader,
     path::Path,
+    sync::Arc,
 };
 
 /// Number of preceding block hashes available to the EVM's `BLOCKHASH` opcode.
@@ -79,6 +80,11 @@ pub trait MaybeFullDatabase: crate::mem::DatabaseRef + Send + Sync {
     /// Returns an owned, recursively merged view of all available accounts.
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
         self.maybe_as_full_db().cloned()
+    }
+
+    /// Returns the accounts if they are stored behind a shared, immutable allocation.
+    fn maybe_shared_full_db(&self) -> Option<Arc<AddressMap<DbAccount>>> {
+        None
     }
 
     /// Returns whether snapshots of this database use structural sharing.
@@ -147,6 +153,10 @@ where
 
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
         T::maybe_full_db(self)
+    }
+
+    fn maybe_shared_full_db(&self) -> Option<Arc<AddressMap<DbAccount>>> {
+        T::maybe_shared_full_db(self)
     }
 
     fn is_persistent(&self) -> bool {
@@ -311,6 +321,34 @@ impl<T: DatabaseRef> DatabaseRef for EmptyAsAbsentDb<T> {
     }
 
     fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
+        self.0.block_hash_ref(number)
+    }
+}
+
+/// A [`Database`] over a read-only database that loads accounts as execution at `spec` does.
+///
+/// Like [`AnvilCacheDB`] when mining, this loads empty accounts as absent from Spurious Dragon
+/// on (see [`existing_account`]), so calls, estimates, simulations and replays charge and refund
+/// for accounts exactly as mining does.
+#[derive(Debug)]
+pub(super) struct ExecutionDb<T>(pub(super) T, pub(super) SpecId);
+
+impl<T: DatabaseRef> Database for ExecutionDb<T> {
+    type Error = T::Error;
+
+    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        Ok(existing_account(self.1, self.0.basic_ref(address)?))
+    }
+
+    fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        self.0.code_by_hash_ref(code_hash)
+    }
+
+    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        self.0.storage_ref(address, index)
+    }
+
+    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
         self.0.block_hash_ref(number)
     }
 }
@@ -661,6 +699,10 @@ impl MaybeFullDatabase for StateDb {
 
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
         self.0.maybe_full_db()
+    }
+
+    fn maybe_shared_full_db(&self) -> Option<Arc<AddressMap<DbAccount>>> {
+        self.0.maybe_shared_full_db()
     }
 
     fn is_persistent(&self) -> bool {
@@ -1015,6 +1057,7 @@ mod test {
     use super::*;
     use crate::eth::backend::mem::fork_db::ForkedDatabase;
     use alloy_consensus::Header;
+    use alloy_eips::eip4895::Withdrawal;
     use alloy_network::AnyNetwork;
     use alloy_provider::ProviderBuilder;
     use alloy_transport::mock::Asserter;
@@ -1183,8 +1226,6 @@ mod test {
 
     #[test]
     fn test_block_withdrawals_preserved() {
-        use alloy_eips::eip4895::Withdrawal;
-
         // create a block with withdrawals (like post-Shanghai blocks)
         let withdrawal = Withdrawal {
             index: 42,

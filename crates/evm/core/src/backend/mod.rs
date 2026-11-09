@@ -44,7 +44,7 @@ use revm::{
     state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
 };
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, hash_map::Entry},
     fmt::Debug,
     time::Instant,
 };
@@ -124,8 +124,31 @@ struct TransactionForkTarget {
     fork_block: BlockNumHash,
     transaction: AnyRpcTransaction,
     block: AnyRpcBlock,
-    mined: bool,
-    position: Option<TransactionPosition>,
+    inclusion: TransactionInclusion,
+}
+
+/// Whether a transaction is mined, which decides how a fork is positioned at it.
+#[derive(Clone, Copy)]
+enum TransactionInclusion {
+    /// Mined in the target block: the fork rolls to its parent and replays the transactions
+    /// before it. `position` is known when the block lists full transactions.
+    Mined { position: Option<TransactionPosition> },
+    /// Still pending: the fork rolls to the latest block and nothing is replayed.
+    Pending,
+}
+
+impl TransactionInclusion {
+    const fn is_mined(self) -> bool {
+        matches!(self, Self::Mined { .. })
+    }
+
+    /// The transaction's position in its block, known only for a mined transaction.
+    const fn position(self) -> Option<TransactionPosition> {
+        match self {
+            Self::Mined { position } => position,
+            Self::Pending => None,
+        }
+    }
 }
 
 /// Position of a transaction in its canonical block.
@@ -1242,7 +1265,12 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 })?,
                 block.header().parent_hash(),
             );
-            Ok(TransactionForkTarget { fork_block, transaction: tx, block, mined: true, position })
+            Ok(TransactionForkTarget {
+                fork_block,
+                transaction: tx,
+                block,
+                inclusion: TransactionInclusion::Mined { position },
+            })
         } else {
             if self.networks.is_monad() {
                 eyre::bail!(
@@ -1257,8 +1285,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 fork_block,
                 transaction: tx,
                 block,
-                mined: false,
-                position: None,
+                inclusion: TransactionInclusion::Pending,
             })
         }
     }
@@ -1622,9 +1649,10 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             trace!(?id, ?transaction, "roll fork to transaction");
             let id = self.ensure_fork(id)?;
             let affects_active = self.is_active_fork(id);
-            let TransactionForkTarget { fork_block, block, position, .. } =
+            let TransactionForkTarget { fork_block, block, inclusion, .. } =
                 self.get_block_number_and_block_for_transaction(id, transaction)?;
-            let position = position.expect("Monad transaction target includes canonical position");
+            let position =
+                inclusion.position().expect("Monad transaction target includes canonical position");
             let block_context = self.block_context_inputs(id, &block)?;
             let context_update = if affects_active && let Some(tx) = _tx_env {
                 let fork_position = ForkPosition::BeforeTransaction {
@@ -1729,7 +1757,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let id = self.ensure_fork(id)?;
         let _affects_active = self.is_active_fork(id);
 
-        let TransactionForkTarget { fork_block, block, mined, position, .. } =
+        let TransactionForkTarget { fork_block, block, inclusion, .. } =
             self.get_block_number_and_block_for_transaction(id, transaction)?;
         #[cfg(feature = "monad")]
         let context_update =
@@ -1738,7 +1766,14 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let context_update = std::marker::PhantomData;
 
         // The parent roll must not prepare an intermediate synthetic context.
-        self.roll_fork_exact_with_context(id, fork_block, mined, evm_env, None, journaled_state)?;
+        self.roll_fork_exact_with_context(
+            id,
+            fork_block,
+            inclusion.is_mined(),
+            evm_env,
+            None,
+            journaled_state,
+        )?;
 
         let source_chain_id = self.inner.get_fork_by_id(id)?.source_chain_id;
         update_env_block::<AnyNetwork, _, _>(evm_env, &block, source_chain_id, self.networks);
@@ -1746,25 +1781,26 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let mut replay_env = evm_env.clone();
         self.apply_fork_tx_replay_env_changes(id, &mut replay_env)?;
         let persistent_accounts = self.inner.persistent_accounts.clone();
-        let target = if mined {
-            let fork_id = self.inner.ensure_fork_id(id)?.clone();
-            let forks = self.forks.clone();
-            let fork = self.inner.get_fork_by_id_mut(id)?;
-            Self::replay_until(
-                fork,
-                ReplayInputs { fork_id, forks, evm_env: replay_env, networks: self.networks },
-                &block,
-                #[cfg(feature = "monad")]
-                None,
-                transaction,
-                journaled_state,
-                &persistent_accounts,
-            )?
-        } else {
-            None
+        let target = match inclusion {
+            TransactionInclusion::Mined { .. } => {
+                let fork_id = self.inner.ensure_fork_id(id)?.clone();
+                let forks = self.forks.clone();
+                let fork = self.inner.get_fork_by_id_mut(id)?;
+                Self::replay_until(
+                    fork,
+                    ReplayInputs { fork_id, forks, evm_env: replay_env, networks: self.networks },
+                    &block,
+                    #[cfg(feature = "monad")]
+                    None,
+                    transaction,
+                    journaled_state,
+                    &persistent_accounts,
+                )?
+            }
+            TransactionInclusion::Pending => None,
         };
         if target.is_some()
-            && let Some(position) = position
+            && let Some(position) = inclusion.position()
         {
             self.inner.get_fork_by_id_mut(id)?.position = ForkPosition::BeforeTransaction {
                 block: BlockNumHash::new(block.header().number(), block.header().hash),
@@ -2319,7 +2355,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             transaction: tx,
             block,
             #[cfg(feature = "monad")]
-            position,
+            inclusion,
             ..
         } = self.get_block_number_and_block_for_transaction(id, transaction)?;
         let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&tx)?;
@@ -2336,7 +2372,10 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         #[cfg(feature = "monad")]
         let chain_context = if let Some(context) = &block_context {
             context.transaction(
-                position.expect("Monad transaction target includes canonical position").index,
+                inclusion
+                    .position()
+                    .expect("Monad transaction target includes canonical position")
+                    .index,
             )
         } else {
             ChainFor::<FEN>::for_transaction(&tx_env)
@@ -2347,7 +2386,8 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
 
         #[cfg(feature = "monad")]
         let next_position = if block_context.is_some() {
-            let position = position.expect("Monad transaction target includes canonical position");
+            let position =
+                inclusion.position().expect("Monad transaction target includes canonical position");
             Some(
                 self.inner
                     .get_fork_by_id(id)?
@@ -3329,7 +3369,6 @@ fn merge_db_account_data<ExtDB: DatabaseRef, N: Network, B: ForkBlockEnv>(
     }
 
     // port account storage over
-    use std::collections::hash_map::Entry;
     match fork_db.cache.accounts.entry(addr) {
         Entry::Vacant(vacant) => {
             trace!("target account not present - inserting from active");

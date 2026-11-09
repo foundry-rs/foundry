@@ -1993,6 +1993,157 @@ Assertion Tests: 1 assertion bug(s) found
 }
 
 #[forgetest_init]
+fn invariant_fail_on_vm_assert_custom_message(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+    });
+
+    prj.add_test(
+        "InvariantFailOnVmAssertCustomMessage.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract VmAssertHandler {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function alwaysVmAssert() external {
+        vm.assertTrue(false, "custom message");
+    }
+}
+
+contract InvariantFailOnVmAssertCustomMessage is Test {
+    VmAssertHandler handler;
+
+    function setUp() public {
+        handler = new VmAssertHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_vm_assert_custom_message() public view {}
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantFailOnVmAssertCustomMessage.t.sol:InvariantFailOnVmAssertCustomMessage
+Assertion Tests: 1 assertion bug(s) found
+[FAIL: custom message][..]
+...
+ invariant_vm_assert_custom_message() ([RUNS])
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn invariant_fail_on_vm_assert_before_revert(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+        config.assertions_revert = false;
+    });
+
+    prj.add_test(
+        "InvariantFailOnVmAssertBeforeRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract VmAssertHandler {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function vmAssertThenRevert() external {
+        vm.assertEq(uint256(1), uint256(2), "custom message");
+        revert();
+    }
+}
+
+contract InvariantFailOnVmAssertBeforeRevert is Test {
+    VmAssertHandler handler;
+
+    function setUp() public {
+        handler = new VmAssertHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_vm_assert_before_revert() public view {}
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantFailOnVmAssertBeforeRevert.t.sol:InvariantFailOnVmAssertBeforeRevert
+Assertion Tests: 1 assertion bug(s) found
+[FAIL: EvmError: Revert] test/InvariantFailOnVmAssertBeforeRevert.t.sol:VmAssertHandler::vmAssertThenRevert
+...
+ invariant_vm_assert_before_revert() ([RUNS])
+...
+"#]]);
+}
+
+// A caught `vm.assert*` is a handler assertion failure whether or not the invariant is checked
+// after the call.
+#[forgetest_init]
+fn invariant_fail_on_caught_vm_assert(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+    });
+
+    prj.add_test(
+        "InvariantFailOnCaughtVmAssert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract VmAssertHandler {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function caughtVmAssert() external {
+        try vm.assertTrue(false, "custom message") {} catch {}
+    }
+}
+
+contract InvariantCaughtVmAssertInterval1 is Test {
+    function setUp() public {
+        targetContract(address(new VmAssertHandler()));
+    }
+
+    /// forge-config: default.invariant.check_interval = 1
+    function invariant_caught_vm_assert() public view {}
+}
+
+contract InvariantCaughtVmAssertInterval2 is Test {
+    function setUp() public {
+        targetContract(address(new VmAssertHandler()));
+    }
+
+    /// forge-config: default.invariant.check_interval = 2
+    function invariant_caught_vm_assert() public view {}
+}
+"#,
+    );
+
+    for interval in [1, 2] {
+        assert_invariant(cmd.forge_fuse().args([
+            "test",
+            "--mc",
+            &format!("InvariantCaughtVmAssertInterval{interval}"),
+        ]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Assertion Tests: 1 assertion bug(s) found
+[FAIL: assertion failed] test/InvariantFailOnCaughtVmAssert.t.sol:VmAssertHandler::caughtVmAssert
+...
+"#]]);
+    }
+}
+
+#[forgetest_init]
 fn invariant_shrink_with_assert(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(100u32));
@@ -2721,12 +2872,12 @@ contract OptimizationTest {
     function invariant_optimize() public view returns (int256) { return queue.value(); }
 }
 "#);
-    // Seed 3 reaches 3 with a pop among four pushes. Dropping the pop reaches 4; dropping it in a
-    // block with a push would keep 3.
-    cmd.args(["test", "--fuzz-seed", "3", "-vv"]).assert_success().stdout_eq(str![[r#"
+    // Seed 57 reaches 2 with two pops among four pushes. Dropping the pops reaches 4; dropping them
+    // in blocks with pushes would keep 2.
+    cmd.args(["test", "--fuzz-seed", "57", "-vv"]).assert_success().stdout_eq(str![[r#"
 ...
 [PASS]
-	[Best sequence] (original: 12, shrunk: 5)
+	[Best sequence] (original: 9, shrunk: 5)
 [..]calldata=push() args=[]
 [..]calldata=push() args=[]
 [..]calldata=push() args=[]
@@ -2766,24 +2917,22 @@ contract OptimizationTest {
 ...
 [PASS]
 	[Best sequence] (original: 10, shrunk: 2)
-[..]roll=4324 calldata=start() args=[]
-[..]roll=1518 calldata=noop() args=[]
- invariant_optimize() (best: 5843, runs: 1, calls: 10)
+		sender=0x000000000000000000000000000000000000019e addr=[test/Optimization.t.sol:Handler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f roll=3448 calldata=start() args=[]
+		sender=0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f addr=[test/Optimization.t.sol:Handler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f roll=1226 calldata=noop() args=[]
+ invariant_optimize() (best: 4675, runs: 1, calls: 10)
 ...
 "#]]);
     // The rerun replays the persisted witness, which must still reach the reported value.
     prj.update_config(|config| config.invariant.runs = 0);
-    cmd.forge_fuse().args(["test", "--fuzz-seed", "1", "-vv"]).assert_success().stdout_eq(str![[
-        r#"
+    cmd.forge_fuse().args(["test", "--fuzz-seed", "1", "-vv"]).assert_success().stdout_eq(str![[r#"
 ...
 [PASS]
 	[Best sequence] (original: 2, shrunk: 2)
-[..]roll=4324 calldata=start() args=[]
-[..]roll=1518 calldata=noop() args=[]
- invariant_optimize() (best: 5843, runs: 0, calls: 0)
+		sender=0x000000000000000000000000000000000000019e addr=[test/Optimization.t.sol:Handler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f roll=3448 calldata=start() args=[]
+		sender=0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f addr=[test/Optimization.t.sol:Handler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f roll=1226 calldata=noop() args=[]
+ invariant_optimize() (best: 4675, runs: 0, calls: 0)
 ...
-"#
-    ]]);
+"#]]);
 }
 
 #[forgetest]
@@ -2813,9 +2962,9 @@ contract OptimizationTest {
     function invariant_optimize() public view returns (int256) { return handler.score(); }
 }
 "#);
-    // Seed 7 calls penalize, earn, finish. Dropping penalize makes earn assert but keeps its warp,
+    // Seed 2 calls penalize, earn, finish. Dropping penalize makes earn assert but keeps its warp,
     // which scores 1000; the campaign would fail on that assertion, so the witness must keep it.
-    cmd.args(["test", "--fuzz-seed", "7", "-vv"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--fuzz-seed", "2", "-vv"]).assert_success().stdout_eq(str![[r#"
 ...
 [PASS]
 	[Best sequence] (original: 3, shrunk: 3)
@@ -3619,8 +3768,7 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 "#]]);
 }
 
-// Handler calls are committed within a run, while invariant predicate writes are discarded and
-// each run starts again from the post-setup state.
+// Handler calls are committed within a run, while invariant predicate writes are discarded.
 #[forgetest]
 fn invariant_checks_do_not_commit_state(prj: _, cmd: _) {
     prj.update_config(|config| {
@@ -3643,7 +3791,6 @@ contract Handler {
 
     function step() external {
         require(!poisoned, "predicate write leaked");
-        require(count < 4, "run baseline leaked");
         count++;
     }
 
@@ -3671,7 +3818,8 @@ contract InvariantCheckStateTest {
     }
 
     function afterInvariant() public view {
-        require(handler.count() == 4, "handler state not retained");
+        // Runs may resume from snapshots of earlier runs, so the count is at least the depth.
+        require(handler.count() >= 4, "handler state not retained");
         require(!handler.poisoned(), "predicate write leaked at end");
     }
 }
@@ -3688,6 +3836,60 @@ Ran 1 test for test/InvariantCheckState.t.sol:InvariantCheckStateTest
 +==================================================+
 | Handler  | step     | 16    | 0       | 0        |
 ╰----------+----------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+}
+
+// Reverted handler calls are committed, so they must not roll back deals that earlier committed
+// transactions made. Isolation restores the pre-call state, which would mask this.
+#[forgetest_init]
+fn invariant_reverted_calls_keep_committed_deals(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.isolate = false;
+        config.invariant.runs = 4;
+        config.invariant.depth = 16;
+        config.invariant.fail_on_revert = false;
+    });
+
+    prj.add_test(
+        "InvariantDealRevertedCalls.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract DealHandler {
+    function succeed() external {}
+
+    function fail() external {
+        revert();
+    }
+}
+
+contract InvariantDealRevertedCallsTest is Test {
+    address constant SENDER = address(0xA11CE);
+
+    function setUp() public {
+        targetContract(address(new DealHandler()));
+        targetSender(SENDER);
+        vm.deal(SENDER, 100 ether);
+    }
+
+    function invariant_deal_survives_reverted_calls() public view {
+        assertEq(SENDER.balance, 100 ether);
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test", "--fuzz-seed", "1"])).success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantDealRevertedCalls.t.sol:InvariantDealRevertedCallsTest
+[PASS] invariant_deal_survives_reverted_calls() ([RUNS])
+
+[STATS]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 

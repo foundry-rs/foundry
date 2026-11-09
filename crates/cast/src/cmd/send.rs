@@ -26,9 +26,9 @@ use foundry_common::{
     tempo::maybe_print_fee_token,
 };
 use foundry_config::Config;
-use foundry_wallets::{TempoAccountsWallet, WalletSigner, wallet_browser::signer::BrowserSigner};
+use foundry_wallets::{WalletSigner, wallet_browser::signer::BrowserSigner};
 use std::{path::PathBuf, str::FromStr};
-use tempo_alloy::TempoNetwork;
+use tempo_alloy::{TempoNetwork, accounts::TempoAccountsWallet};
 use tempo_contracts::precompiles::{TIP20_FACTORY_ADDRESS, is_iso4217_currency};
 use tempo_primitives::transaction::FEE_PAYER_SIGNATURE_MARKER;
 use url::Url;
@@ -493,11 +493,29 @@ pub(crate) struct SendOptions {
     sync: bool,
     confirmations: u64,
     timeout: u64,
-    /// Whether to resolve a missing Tempo fee token for the sender before sending. Otherwise the
-    /// fee token is left as built, e.g. when a sponsor already selected it.
-    resolve_fee_token: bool,
+    /// How the Tempo fee token is handled before sending.
+    fee_token: FeeTokenMode,
+}
+
+/// How [`cast_send`] handles the Tempo fee token of a transaction before sending it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FeeTokenMode {
+    /// Leave the fee token as built, e.g. when a sponsor already selected it, and print it
+    /// without querying the provider.
+    AsBuilt,
+    /// Resolve a missing fee token for the sender, querying the provider for the stored fee token
+    /// and its symbol.
+    Resolve,
+    /// Resolve a missing fee token for the sender without querying the provider, e.g. when the
+    /// request is only rendered as `curl`.
+    ResolveOffline,
+}
+
+impl FeeTokenMode {
     /// Whether the provider may be queried for the stored fee token and its symbol.
-    query_fee_token: bool,
+    const fn queries_provider(self) -> bool {
+        matches!(self, Self::Resolve)
+    }
 }
 
 impl SendOptions {
@@ -508,19 +526,21 @@ impl SendOptions {
             sync: send_tx.sync,
             confirmations: send_tx.confirmations,
             timeout: send_tx.timeout.unwrap_or(config.transaction_timeout),
-            resolve_fee_token: false,
-            query_fee_token: false,
+            fee_token: FeeTokenMode::AsBuilt,
         }
     }
 
     /// Resolves the sender's fee token before sending when `resolve` is set, querying the RPC
     /// unless the request is only rendered as `curl`.
     pub(crate) const fn resolving_fee_token(self, resolve: bool, config: &Config) -> Self {
-        Self {
-            resolve_fee_token: resolve,
-            query_fee_token: resolve && !config.eth_rpc_curl,
-            ..self
-        }
+        let fee_token = if !resolve {
+            FeeTokenMode::AsBuilt
+        } else if config.eth_rpc_curl {
+            FeeTokenMode::ResolveOffline
+        } else {
+            FeeTokenMode::Resolve
+        };
+        Self { fee_token, ..self }
     }
 
     /// Prints the hash of a submitted transaction, or its receipt unless `--async` was passed.
@@ -564,11 +584,12 @@ impl SendOptions {
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        let provider = self.query_fee_token.then_some(provider);
-        if self.resolve_fee_token {
-            tempo::resolve_and_print_fee_token(provider, tx, None).await
-        } else {
-            maybe_print_fee_token(provider, tx.fee_token()).await
+        let provider = self.fee_token.queries_provider().then_some(provider);
+        match self.fee_token {
+            FeeTokenMode::AsBuilt => maybe_print_fee_token(provider, tx.fee_token()).await,
+            FeeTokenMode::Resolve | FeeTokenMode::ResolveOffline => {
+                tempo::resolve_and_print_fee_token(provider, tx, None).await
+            }
         }
     }
 }
@@ -776,8 +797,7 @@ mod tests {
             sync: true,
             confirmations: 1,
             timeout: 1,
-            resolve_fee_token: false,
-            query_fee_token: false,
+            fee_token: FeeTokenMode::AsBuilt,
         };
         let actual_hash = cast_send_with_tempo_wallet(&provider, tx, &wallet, &opts).await.unwrap();
 

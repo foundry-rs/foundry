@@ -15,10 +15,8 @@ use foundry_evm_core::constants::MAGIC_ASSUME;
 impl Cheatcode for isImplicitlyApprovedCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { spender } = *self;
-        let approved = match active_tempo_hardfork(ccx) {
-            Some(hardfork) => address_registry::is_implicitly_approved(spender, hardfork),
-            None => false,
-        };
+        let approved = active_tempo_hardfork(ccx)
+            .is_some_and(|hardfork| address_registry::is_implicitly_approved(spender, hardfork));
         Ok(approved.abi_encode())
     }
 }
@@ -26,10 +24,8 @@ impl Cheatcode for isImplicitlyApprovedCall {
 impl Cheatcode for assumeImplicitApprovalCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { spender } = *self;
-        let approved = match active_tempo_hardfork(ccx) {
-            Some(hardfork) => address_registry::is_implicitly_approved(spender, hardfork),
-            None => false,
-        };
+        let approved = active_tempo_hardfork(ccx)
+            .is_some_and(|hardfork| address_registry::is_implicitly_approved(spender, hardfork));
         if approved { Ok(Default::default()) } else { Err(Error::from(MAGIC_ASSUME)) }
     }
 }

@@ -1,4 +1,4 @@
-use alloy_primitives::{U256, keccak256};
+use alloy_primitives::{Address, U256, address, keccak256};
 use foundry_test_utils::{
     TestCommand, forgetest_init, snapbox::cmd::OutputAssert, str, util::OutputExt,
 };
@@ -10,6 +10,7 @@ use std::{
 
 mod common;
 mod handler;
+mod snapshot;
 mod storage;
 mod target;
 
@@ -475,9 +476,9 @@ contract InvariantSelectorsWeightTest is Test {
     function afterInvariant() public {
         assertEq(handlerOne.hit1(), 2);
         assertEq(handlerTwo.hit2(), 2);
-        assertEq(handlerTwo.hit3(), 3);
+        assertEq(handlerTwo.hit3(), 2);
         assertEq(handlerTwo.hit4(), 2);
-        assertEq(handlerTwo.hit5(), 1);
+        assertEq(handlerTwo.hit5(), 2);
     }
 
     function invariant_selectors_weight() public view {}
@@ -499,11 +500,11 @@ Ran 1 test for test/InvariantSelectorsWeightTest.t.sol:InvariantSelectorsWeightT
 |------------+-----------+-------+---------+----------|
 | HandlerTwo | selector2 | 2     | 0       | 0        |
 |------------+-----------+-------+---------+----------|
-| HandlerTwo | selector3 | 3     | 0       | 0        |
+| HandlerTwo | selector3 | 2     | 0       | 0        |
 |------------+-----------+-------+---------+----------|
 | HandlerTwo | selector4 | 2     | 0       | 0        |
 |------------+-----------+-------+---------+----------|
-| HandlerTwo | selector5 | 1     | 0       | 0        |
+| HandlerTwo | selector5 | 2     | 0       | 0        |
 ╰------------+-----------+-------+---------+----------╯
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
@@ -1191,123 +1192,6 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-}
-
-#[forgetest_init]
-fn invariant_selector_focus_worker_exercises_targeted_selector(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.invariant.runs = 2;
-        config.invariant.depth = 1;
-        config.invariant.workers =
-            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap());
-        config.fuzz.seed = Some(U256::ZERO);
-    });
-    prj.add_test(
-        "InvariantSelectorFocusTest.t.sol",
-        r#"
-import {Test} from "forge-std/Test.sol";
-
-contract FocusTarget {
-    bool public broken;
-
-    function aaaBreak() public {
-        broken = true;
-    }
-
-    function zzzSafe() public {}
-}
-
-contract InvariantSelectorFocusTest is Test {
-    FocusTarget target;
-
-    function setUp() public {
-        target = new FocusTarget();
-        bytes4[] memory selectors = new bytes4[](2);
-        selectors[0] = target.aaaBreak.selector;
-        selectors[1] = target.zzzSafe.selector;
-        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
-    }
-
-    function invariant_focus() public view {
-        require(!target.broken(), "focused");
-    }
-}
-   "#,
-    );
-
-    let output = cmd.args(["test", "--mt", "invariant_focus"]).assert_failure();
-    let stdout = output.get_output().stdout_lossy();
-    assert!(stdout.contains("[FAIL: focused]"), "{stdout}");
-    assert!(stdout.contains("invariant_focus()"), "{stdout}");
-    assert!(stdout.contains("aaaBreak"), "{stdout}");
-}
-
-#[forgetest_init]
-fn invariant_selector_focus_workers_respect_user_filters(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.invariant.runs = 2;
-        config.invariant.depth = 4;
-        config.invariant.workers =
-            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap());
-        config.fuzz.seed = Some(U256::ONE);
-    });
-    prj.add_test(
-        "InvariantSelectorFocusFiltersTest.t.sol",
-        r#"
-import {Test} from "forge-std/Test.sol";
-
-contract FocusFilterTarget {
-    bool public broken;
-
-    function aaaBreak() public {
-        broken = true;
-    }
-
-    function yyySafe() public {}
-
-    function zzzSafe() public {}
-}
-
-contract InvariantSelectorFocusAllowlistTest is Test {
-    FocusFilterTarget target;
-
-    function setUp() public {
-        target = new FocusFilterTarget();
-        bytes4[] memory selectors = new bytes4[](1);
-        selectors[0] = target.zzzSafe.selector;
-        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
-    }
-
-    function invariant_allowlist_focus() public view {
-        require(!target.broken(), "focused");
-    }
-}
-
-contract InvariantSelectorFocusBlocklistTest is Test {
-    FocusFilterTarget target;
-
-    function setUp() public {
-        target = new FocusFilterTarget();
-        bytes4[] memory selectors = new bytes4[](1);
-        selectors[0] = target.aaaBreak.selector;
-        excludeSelector(FuzzSelector({addr: address(target), selectors: selectors}));
-    }
-
-    function invariant_blocklist_focus() public view {
-        require(!target.broken(), "focused");
-    }
-}
-   "#,
-    );
-
-    let output = cmd.args(["test", "--mt", "invariant_allowlist_focus"]).assert_success();
-    let stdout = output.get_output().stdout_lossy();
-    assert!(!stdout.contains("aaaBreak"), "{stdout}");
-
-    let output =
-        cmd.forge_fuse().args(["test", "--mt", "invariant_blocklist_focus"]).assert_success();
-    let stdout = output.get_output().stdout_lossy();
-    assert!(!stdout.contains("aaaBreak"), "{stdout}");
 }
 
 // <https://github.com/foundry-rs/foundry/issues/11453>
@@ -2132,7 +2016,9 @@ contract JunitInvariantCounterexampleTest is Test {
 #[forgetest_init]
 fn check_interval_zero_only_checks_last_call(prj: _, cmd: _) {
     prj.update_config(|config| {
-        config.invariant.runs = 5;
+        // One run: later runs may resume from snapshots of earlier runs, so counter would not
+        // restart at 0.
+        config.invariant.runs = 1;
         config.invariant.depth = 10;
         config.invariant.check_interval = 0;
     });
@@ -2170,7 +2056,7 @@ contract CheckIntervalTest is Test {
 
     cmd.args(["test", "--mt", "invariant_counter"]).assert_success().stdout_eq(str![[r#"
 ...
-[PASS] invariant_counter_multiple_of_depth() (runs: 5, calls: 50, reverts: 0)
+[PASS] invariant_counter_multiple_of_depth() (runs: 1, calls: 10, reverts: 0)
 ...
 "#]]);
 }
@@ -3610,6 +3496,85 @@ Ran 1 test for test/CorpusPolicyTest.t.sol:CorpusPolicyTest
 ╰--------------------+----------+-------+---------+----------╯
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#
+    ]]);
+}
+
+// Corpus entries that share a prefix which creates a dynamic target must all replay: the shared
+// prefix is executed once and its created target stays registered for every entry under it.
+#[forgetest_init]
+fn invariant_corpus_replays_shared_dynamic_target_prefix(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 8;
+        config.invariant.depth = 5;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    prj.add_test(
+        "DynamicCorpusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Child {
+    uint256 public calls;
+
+    function f() external {
+        calls++;
+    }
+
+    function g() external {
+        calls++;
+    }
+}
+
+contract Factory {
+    Child public child;
+
+    function create() external {
+        child = new Child();
+    }
+}
+
+contract DynamicCorpusTest is Test {
+    Factory factory;
+
+    function setUp() public {
+        factory = new Factory();
+    }
+
+    function invariant_dynamic_targets() public view {}
+}
+   "#,
+    );
+
+    // `setUp` deploys the factory from the test contract, and `create()` deploys the child from
+    // the factory; both use the first nonce.
+    let factory = address!("0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496").create(1);
+    let child = factory.create(1);
+    let tx = |target: Address, selector: &str| {
+        format!(
+            r#"{{"sender":"0x0000000000000000000000000000000000010000","target":"{target}","calldata":"{selector}","value":"0x0"}}"#
+        )
+    };
+    let create = tx(factory, "0xefc81a8c");
+    let corpus = prj.root().join("invariant_corpus").join("DynamicCorpusTest");
+    std::fs::create_dir_all(&corpus).unwrap();
+    for (id, call) in [(1, "0x26121ff0"), (2, "0xe2179b8e")] {
+        std::fs::write(
+            corpus.join(format!("00000000-0000-0000-0000-00000000000{id}-1.json")),
+            format!("[{create},{}]", tx(child, call)),
+        )
+        .unwrap();
+    }
+    assert_eq!(std::fs::read_dir(&corpus).unwrap().count(), 2);
+
+    assert_invariant(cmd.args(["test", "--mc", "DynamicCorpusTest"])).success().stdout_eq(str![[
+        r#"
+...
+[PASS] invariant_dynamic_targets() ([RUNS])
 ...
 "#
     ]]);

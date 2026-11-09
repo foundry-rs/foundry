@@ -100,6 +100,13 @@ A `ScriptSequence` compatibility artifact stores:
 - chain ID, libraries, script returns, source commit, and timestamp;
 - each transaction's RPC URL in a separate sensitive-cache file.
 
+Direct creations and recorded `additionalContracts` carry an optional `label` from the script's final
+`vm.label` map. Unlabelled creations omit the field, and old artifacts without it remain readable.
+After an ordinary or Tempo batch broadcast, including resume, a human-readable deployment summary
+lists recorded creations whose parent transaction has a successful receipt. It is written to stderr
+and suppressed by `--json` and `--quiet`. With `--skip-simulation`, additional creations are not
+collected, so only direct deployments can be listed.
+
 Each `TransactionWithMetadata` has an optional transaction hash. The authoritative recovery plan
 wraps these transactions with stable operation IDs, immutable attempt records, and recovery state.
 Ordinary recovery selects incomplete operations by their own hash associations. Batch recovery
@@ -141,15 +148,26 @@ existing attempt.
 ## Pending reconciliation and receipts
 
 Before sending new work, `BundledState::wait_for_pending` checks each hash in `pending`. Sequences
-from a multichain deployment are checked concurrently. A confirmed success removes the hash from
-`pending` and appends its receipt. A revert removes the hash, records it in `reverted` rather than
-`receipts`, which consumers treat as successful, and returns an error. A later `--resume` warns
-about each recorded revert, never resubmits it, continues with the remaining operations, and
-replaces the final success message with a warning listing the reverts. Receipt-watcher timeouts
-keep retrying without consuming the retry budget while the selected RPC still returns the
-transaction, so ordinary polling is unbounded; Tempo batches use `transaction_timeout`. If that
-endpoint returns no transaction, the durable attempt remains the source of identity: signed bytes
-may be replayed; delegated attempts with a known hash remain checkpointed for a later plain
+from a multichain deployment are checked concurrently. Outside `--batch`, `--resume` first checks
+the sequences in order in `CompiledState::resume`; a failing sequence does not stop the others, each
+result is saved, and the errors are returned together, so this later check usually finds nothing
+pending. In multichain runs, broadcast and reconcile errors name their chain, and the sequence
+number when several sequences share it. A confirmed success removes the hash from `pending` and
+appends its receipt. A revert removes the hash, records it in `reverted` rather than `receipts`,
+which consumers treat as successful, and returns an error. A later `--resume` never resubmits a
+recorded revert. The script would have stopped at the failed call, so from the first sequence with a
+recorded revert on, on any chain, resume sends no operation that was never submitted, with neither a
+hash nor a saved attempt. Operations submitted before the revert was recorded are still reconciled,
+and their saved attempts replayed. While such never-submitted operations remain, resume fails,
+pointing to `--broadcast --start-fresh`: before broadcasting when nothing is left to recover, and
+otherwise once the recovered attempts all have a receipt or recorded revert. Otherwise it warns
+about each revert and replaces the final success message with a warning listing them.
+Receipt-watcher timeouts keep retrying without consuming the retry budget while the selected RPC
+still returns the transaction, so ordinary polling is unbounded; Tempo batches use
+`transaction_timeout`. Outside `--batch`, each polled hash prints
+one warning naming it after its first such timeout (hidden by `--quiet`), and waiting continues. If
+that endpoint returns no transaction, the durable attempt remains the source of identity: signed
+bytes may be replayed; delegated attempts with a known hash remain checkpointed for a later plain
 `--resume`, while unknown outcomes remain blocked until explicitly resolved. Removing a hash from
 `pending` this way prints an immediate `--resume` warning, so the guidance survives a later batch
 failure. An ordinary broadcast that otherwise succeeds while a submitted operation still lacks a
@@ -197,6 +215,16 @@ cache file. Complete snapshots are atomically promoted, and a process-lifetime f
 second writer. The public and sensitive JSON files are compatibility exports generated from that
 snapshot; failure between their writes cannot roll authoritative recovery backward.
 
+A new `--broadcast` refuses to replace a previous broadcast that submitted anything, through a
+transaction hash or a saved attempt, and left an operation, on any chain, with neither a receipt nor
+a recorded revert. Without a snapshot, progress written before snapshots existed is checked through
+the broadcast export. A broadcast export written with a snapshot cannot show a submission whose
+response was lost, so when its snapshot is missing, for example in a checkout without `cache/`, it
+blocks while any operation lacks a receipt or recorded revert, even if nothing was sent. With
+`--start-fresh`, it first moves the snapshot, including an interrupted pending commit, and both
+exports to timestamped names. Dry runs never block, and neither do runs that never signed or sent
+anything while their snapshot is present.
+
 Resume obtains the current chain ID for a single-chain run and loads the authoritative snapshot,
 restoring sensitive RPC URLs by stable operation position. Corrupt, inconsistent, or unsupported
 generation-tagged state fails closed. A generationless legacy public/sensitive pair may be imported
@@ -218,8 +246,10 @@ replayed.
 
 The saved RPC is part of the sensitive sequence. A single-chain resume uses the `--rpc-url`
 endpoint for Forge-managed reconciliation and submission, after checking that it reports the saved
-chain, without rewriting the saved endpoint. Browser-wallet submission stays wallet-controlled, and
-multichain resume keeps the saved endpoints.
+chain, without rewriting the saved endpoint. Without `--rpc-url`, it uses the saved endpoint; a
+configured `eth_rpc_url` or `FOUNDRY_ETH_RPC_URL` only selects the chain and sequence.
+Browser-wallet submission stays wallet-controlled, and multichain resume keeps the saved endpoints
+and warns when `--rpc-url` is passed.
 
 ## Tempo and multichain behavior
 
@@ -245,7 +275,8 @@ resolution. Delegated attempts are never replaced automatically.
 Multichain mode stores per-chain sequences in one `MultiChainSequence`. Pending hashes are
 reconciled per chain, while new sequences are broadcast in container order. There is no cross-chain
 atomicity. Recovery must preserve independent per-chain progress and must not infer that one chain's
-completion permits skipping an operation on another.
+completion permits skipping an operation on another. With `--verify`, every sequence is verified
+even after one fails, and the failures are returned together, each naming its chain.
 
 ## Known failure windows
 
@@ -362,8 +393,9 @@ fees or validity fields. Replacement workflows are not supported.
 - Pre-signed envelopes, saved signed payloads, and saved batch attempts do not require a signer for
   recovery. Other incomplete unsigned requests remain eligible for signer acquisition. Unknown
   delegated outcomes block resume before signer acquisition.
-- A single-chain resume reaches the chain through `--rpc-url` instead of the saved endpoint, so a
-  handoff does not need the original operator's RPC. Multichain resume keeps the saved endpoints.
+- A single-chain resume reaches the chain through an explicit `--rpc-url` instead of the saved
+  endpoint, so a handoff does not need the original operator's RPC. Without the flag, it uses the
+  saved endpoint. Multichain resume keeps the saved endpoints.
 - Legacy batch-attempt import validates transaction, hash, pending, receipt, and sensitive-metadata
   associations. If it cannot prove a safe batch state, it fails closed rather than guessing.
 

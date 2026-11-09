@@ -37,41 +37,38 @@ pub async fn handle_get_blobs<N: Network>(
     headers: HeaderMap,
     State(api): State<EthApi<N>>,
     Path(block_id): Path<String>,
-    Query(versioned_hashes): Query<HashMap<String, String>>,
+    Query(params): Query<Vec<(String, String)>>,
 ) -> Response {
     // Parse block_id from path parameter
     let Ok(block_id) = BlockId::from_str(&block_id) else {
         return BeaconError::invalid_block_id(block_id).into_response();
     };
 
-    // Parse versioned hashes from query parameters
-    // Supports comma-separated format: ?versioned_hashes=0x...,0x...
-    let versioned_hashes: Vec<B256> = match versioned_hashes.get("versioned_hashes") {
-        Some(s) => {
-            let mut hashes = Vec::new();
-            for hash in s.split(',') {
-                let hash = hash.trim();
-                if hash.is_empty() {
-                    continue;
-                }
-                match B256::from_str(hash) {
-                    Ok(h) => hashes.push(h),
-                    Err(_) => {
-                        return BeaconError::new(
-                            super::error::BeaconErrorCode::BadRequest,
-                            format!("Invalid versioned hash: {hash}"),
-                        )
-                        .into_response();
-                    }
-                }
-            }
-            hashes
+    // Parse versioned hashes from query parameters. Supports repeated keys, the spec's array
+    // format (?versioned_hashes=0x...&versioned_hashes=0x...), and comma-separated values
+    // (?versioned_hashes=0x...,0x...).
+    let mut versioned_hashes = Vec::new();
+    for hash in params
+        .iter()
+        .filter(|(key, _)| key == "versioned_hashes")
+        .flat_map(|(_, value)| value.split(','))
+    {
+        let hash = hash.trim();
+        if hash.is_empty() {
+            continue;
         }
-        None => Vec::new(),
-    };
+        let Ok(hash) = B256::from_str(hash) else {
+            return BeaconError::new(
+                super::error::BeaconErrorCode::BadRequest,
+                format!("Invalid versioned hash: {hash}"),
+            )
+            .into_response();
+        };
+        versioned_hashes.push(hash);
+    }
 
     // Get the blob sidecars using existing EthApi logic
-    match api.anvil_get_blobs_by_block_id(block_id, versioned_hashes) {
+    match api.anvil_get_blobs_by_block_id(block_id, versioned_hashes).await {
         Ok(Some(blobs)) => {
             if must_be_ssz(&headers) {
                 blobs.as_ssz_bytes().into_response()

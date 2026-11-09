@@ -637,6 +637,7 @@ fn compile_and_test<FEN: FoundryEvmNetwork>(
         .filter(|path| path.exists())
         .collect::<Vec<_>>();
     let compiler = ProjectCompiler::new()
+        .allow_linked_libraries(config.allow_linked_libraries)
         .dynamic_test_linking(config.dynamic_test_linking)
         .quiet(true)
         .files(files);

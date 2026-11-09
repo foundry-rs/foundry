@@ -65,10 +65,20 @@ pub struct SequenceGenerator {
 pub struct SequencePlan {
     initial: InitialSequence,
     tx: TxGenerator,
-    fresh_weight: u32,
-    has_corpus_dir: bool,
-    stateless: bool,
+    continuation: Continuation,
     source: Option<usize>,
+}
+
+/// How a [`SequencePlan`] continues past its first transaction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Continuation {
+    /// A stateless sequence is a single transaction and never continues.
+    Stateless,
+    /// Every further transaction is freshly generated, as there is no corpus to follow.
+    Fresh,
+    /// Further transactions follow the initial sequence by depth until it runs out, each drawing
+    /// a fresh transaction instead with a `fresh_weight` percent chance.
+    Initial { fresh_weight: u32 },
 }
 
 enum InitialSequence {
@@ -102,23 +112,40 @@ impl SequencePlan {
     pub const fn source(&self) -> Option<usize> {
         self.source
     }
+
+    /// Replays an unmutated candidate before generating any continuation.
+    pub fn replay(mut self, transactions: Vec<BasicTxDetails>) -> Result<Self> {
+        if transactions.is_empty() {
+            return Err(eyre!("replay sequence has no transactions"));
+        }
+        self.initial = InitialSequence::Multiple(transactions);
+        if self.continuation != Continuation::Stateless {
+            self.continuation = Continuation::Initial { fresh_weight: 0 };
+        }
+        self.source = None;
+        Ok(self)
+    }
+
     pub fn next(
         &self,
         runner: &mut TestRunner,
         discarded: bool,
         depth: usize,
     ) -> Result<BasicTxDetails> {
-        if self.stateless {
-            return Err(eyre!("stateless sequence is limited to one transaction"));
-        }
-        if !self.has_corpus_dir || discarded {
-            return self.tx.next_tx(runner);
-        }
-        let fresh = self.fresh_weight > 0 && runner.rng().random_ratio(self.fresh_weight, 100);
-        if depth >= self.initial.as_slice().len() || fresh {
-            self.tx.next_tx(runner)
-        } else {
-            Ok(self.initial.as_slice()[depth].clone())
+        match self.continuation {
+            Continuation::Stateless => {
+                Err(eyre!("stateless sequence is limited to one transaction"))
+            }
+            Continuation::Fresh => self.tx.next_tx(runner),
+            Continuation::Initial { .. } if discarded => self.tx.next_tx(runner),
+            Continuation::Initial { fresh_weight } => {
+                let fresh = fresh_weight > 0 && runner.rng().random_ratio(fresh_weight, 100);
+                if depth >= self.initial.as_slice().len() || fresh {
+                    self.tx.next_tx(runner)
+                } else {
+                    Ok(self.initial.as_slice()[depth].clone())
+                }
+            }
         }
     }
 }
@@ -236,14 +263,18 @@ impl SequenceGenerator {
                 self.start_invariant(runner, corpus_len, &mut entry_at, coverage, targets)?
             }
         };
-        Ok(SequencePlan {
-            initial,
-            tx: self.tx.clone(),
-            fresh_weight: self.fresh_weight,
-            has_corpus_dir: self.has_corpus_dir,
-            stateless: matches!(self.mode, SequenceMode::Stateless(_)),
-            source,
-        })
+        Ok(SequencePlan { initial, tx: self.tx.clone(), continuation: self.continuation(), source })
+    }
+
+    /// How the sequences this generator starts continue past their first transaction.
+    const fn continuation(&self) -> Continuation {
+        match self.mode {
+            SequenceMode::Stateless(_) => Continuation::Stateless,
+            SequenceMode::Invariant(_) if self.has_corpus_dir => {
+                Continuation::Initial { fresh_weight: self.fresh_weight }
+            }
+            SequenceMode::Invariant(_) => Continuation::Fresh,
+        }
     }
 
     fn start_stateless<'a>(
@@ -439,9 +470,41 @@ impl ComparisonHint {
     ///
     /// Cmp mutations only rewrite the calldata stored with the hints, so other hints can never
     /// produce a mutation.
+    ///
+    /// This gives the same result as filtering with [`Self::applies_to`], but scans `calldata`
+    /// once per operand width instead of once per hint and width.
     pub fn applicable(calldata: &[u8], hints: impl IntoIterator<Item = Self>) -> Vec<Self> {
         let mut seen = HashSet::<Self>::default();
-        hints.into_iter().filter(|hint| seen.insert(*hint) && hint.applies_to(calldata)).collect()
+        let hints = hints.into_iter().filter(|hint| seen.insert(*hint)).collect::<Vec<_>>();
+        if hints.is_empty() {
+            return hints;
+        }
+        let operands = hints
+            .iter()
+            .map(|hint| (hint.lhs.to_be_bytes::<32>(), hint.rhs.to_be_bytes::<32>()))
+            .collect::<Vec<_>>();
+        let found = CMP_WIDTHS.map(|width| {
+            find_operands(
+                calldata,
+                operands.iter().flat_map(|(lhs, rhs)| {
+                    let lhs = &lhs[32 - width..];
+                    let rhs = &rhs[32 - width..];
+                    (lhs != rhs).then_some([lhs, rhs]).into_iter().flatten()
+                }),
+            )
+        });
+        hints
+            .into_iter()
+            .zip(&operands)
+            .filter(|(_, (lhs, rhs))| {
+                CMP_WIDTHS.iter().zip(&found).any(|(&width, found)| {
+                    let lhs = &lhs[32 - width..];
+                    let rhs = &rhs[32 - width..];
+                    lhs != rhs && (found.contains(lhs) || found.contains(rhs))
+                })
+            })
+            .map(|(hint, _)| hint)
+            .collect()
     }
 
     /// Returns whether a cmp mutation can replace one of this comparison's operands in
@@ -546,9 +609,11 @@ impl SequenceMutator {
         } else {
             (0..rounds).map(|_| runner.rng().random_range(0..function.inputs.len())).collect()
         };
-        let mut inputs = function
-            .abi_decode_input(&tx.call_details.calldata[4..])
-            .map_err(|err| eyre!("failed to load previous inputs: {err}"))?;
+        // Observed sub-calls and older corpus entries can match a selector without decoding, so
+        // keep their calldata instead of aborting the campaign.
+        let Ok(mut inputs) = function.abi_decode_input(&tx.call_details.calldata[4..]) else {
+            return Ok(());
+        };
         while rounds > 0 {
             let index = indices[rounds - 1];
             inputs[index] = mutate_param_value(
@@ -642,6 +707,30 @@ fn is_replaceable_operand(calldata: &[u8], pattern: &[u8]) -> bool {
 fn contains_operand(calldata: &[u8], pattern: &[u8]) -> bool {
     is_replaceable_operand(calldata, pattern)
         && calldata[SELECTOR_LEN..].windows(pattern.len()).any(|window| window == pattern)
+}
+
+/// Returns the `patterns` that [`contains_operand`] finds in `calldata`.
+///
+/// All `patterns` must have the same width. The calldata is scanned once for all of them.
+fn find_operands<'a>(
+    calldata: &[u8],
+    patterns: impl IntoIterator<Item = &'a [u8]>,
+) -> HashSet<&'a [u8]> {
+    let mut missing = patterns
+        .into_iter()
+        .filter(|pattern| is_replaceable_operand(calldata, pattern))
+        .collect::<HashSet<_>>();
+    let mut found = HashSet::default();
+    let Some(width) = missing.iter().next().map(|pattern| pattern.len()) else { return found };
+    for window in calldata[SELECTOR_LEN..].windows(width) {
+        if let Some(pattern) = missing.take(window) {
+            found.insert(pattern);
+            if missing.is_empty() {
+                break;
+            }
+        }
+    }
+    found
 }
 
 fn replace_operand(
@@ -817,6 +906,25 @@ mod tests {
     }
 
     #[test]
+    fn abi_mutation_keeps_undecodable_calldata() {
+        let function = Function::parse("test(uint256)").unwrap();
+        let mut input = tx(1);
+        input.call_details.calldata = function.selector().to_vec().into();
+        let calldata = input.call_details.calldata.clone();
+
+        SequenceMutator::abi_mutate(
+            &mut input,
+            &function,
+            &mut TestRunner::deterministic(),
+            &state(),
+            &FuzzFixtures::default(),
+            0,
+        )
+        .unwrap();
+        assert_eq!(input.call_details.calldata, calldata);
+    }
+
+    #[test]
     fn cmp_mutation_rejects_dirty_value_words() {
         let mut runner = TestRunner::deterministic();
         for (signature, value, lhs, rhs) in [
@@ -961,10 +1069,8 @@ mod tests {
         let mut runner = TestRunner::default();
         let plan = SequencePlan {
             initial: InitialSequence::Multiple(vec![tx(1), tx(2)]),
+            continuation: generator.continuation(),
             tx: generator.tx,
-            fresh_weight: generator.fresh_weight,
-            has_corpus_dir: generator.has_corpus_dir,
-            stateless: false,
             source: Some(0),
         };
 
@@ -984,9 +1090,7 @@ mod tests {
             let plan = SequencePlan {
                 initial: InitialSequence::Multiple(vec![tx(1), tx(2)]),
                 tx: generator_tx(9),
-                fresh_weight,
-                has_corpus_dir: true,
-                stateless: false,
+                continuation: Continuation::Initial { fresh_weight },
                 source: Some(0),
             };
             let mut actual = TestRunner::deterministic();
@@ -1211,5 +1315,47 @@ mod tests {
             .unwrap();
             assert_eq!(mutated, applicable.contains(&hint));
         }
+    }
+
+    #[test]
+    fn applicable_hints_match_per_hint_filter() {
+        fn word(rng: &mut impl Rng, bytes: &[u8]) -> U256 {
+            let mut word = [0u8; 32];
+            let start = 32 - rng.random_range(0..=bytes.len().min(32));
+            word[start..].copy_from_slice(&bytes[..32 - start]);
+            U256::from_be_bytes(word)
+        }
+
+        let mut runner = TestRunner::deterministic();
+        let rng = runner.rng();
+        let (mut kept, mut dropped) = (0, 0);
+        for _ in 0..1000 {
+            // A small byte alphabet makes partial and repeated operand matches common.
+            let len = rng.random_range(0..100);
+            let calldata = (0..len).map(|_| rng.random_range(0..3u8)).collect::<Vec<_>>();
+            let hints = (0..rng.random_range(0..16))
+                .map(|_| {
+                    let random = (0..32).map(|_| rng.random_range(0..3u8)).collect::<Vec<_>>();
+                    let start = rng.random_range(0..=calldata.len());
+                    let lhs = word(rng, &random);
+                    let rhs = word(rng, &calldata[start..]);
+                    if rng.random() {
+                        ComparisonHint { lhs, rhs }
+                    } else {
+                        ComparisonHint { lhs: rhs, rhs: lhs }
+                    }
+                })
+                .collect::<Vec<_>>();
+            let mut seen = HashSet::<ComparisonHint>::default();
+            let expected = hints
+                .iter()
+                .copied()
+                .filter(|hint| seen.insert(*hint) && hint.applies_to(&calldata))
+                .collect::<Vec<_>>();
+            kept += expected.len();
+            dropped += seen.len() - expected.len();
+            assert_eq!(ComparisonHint::applicable(&calldata, hints), expected);
+        }
+        assert!(kept > 1000 && dropped > 500, "kept {kept}, dropped {dropped}");
     }
 }

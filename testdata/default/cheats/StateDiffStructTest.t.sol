@@ -48,6 +48,28 @@ contract DiffTest {
     }
 }
 
+/// User-defined value types, at file level and in a library, wider than a byte.
+type FileId is uint96;
+
+library Ids {
+    type LibId is uint96;
+}
+
+contract UdvtStore {
+    struct Packed {
+        address owner; // slot 0, offset 0
+        FileId fileId; // slot 0, offset 20
+        uint32 count; // slot 1, offset 0
+        Ids.LibId libId; // slot 1, offset 4
+    }
+
+    Packed internal packed;
+
+    function set(address owner, uint96 fileId, uint96 libId) public {
+        packed = Packed(owner, FileId.wrap(fileId), 1, Ids.LibId.wrap(libId));
+    }
+}
+
 contract StateDiffStructTest is Test {
     DiffTest internal test;
 
@@ -251,6 +273,24 @@ contract StateDiffStructTest is Test {
         );
 
         // Stop recording
+        vm.stopAndReturnStateDiff();
+    }
+
+    /// A user-defined value type decodes as its full width, whether declared at file level or in a
+    /// library, packed with other fields too.
+    function testUserDefinedValueTypeMembers() public {
+        UdvtStore store = new UdvtStore();
+
+        vm.startStateDiffRecording();
+        store.set(address(0xBEEF), 1108152157446, 2216304314892);
+        string memory stateDiffJson = vm.getStateDiffJson();
+        emit log_string(stateDiffJson);
+
+        assertTrue(vm.contains(stateDiffJson, '"label":"packed.fileId","type":"FileId"'));
+        assertTrue(vm.contains(stateDiffJson, '"decoded":{"previousValue":"0","newValue":"1108152157446"}'));
+        assertTrue(vm.contains(stateDiffJson, '"label":"packed.libId","type":"Ids.LibId"'));
+        assertTrue(vm.contains(stateDiffJson, '"decoded":{"previousValue":"0","newValue":"2216304314892"}'));
+
         vm.stopAndReturnStateDiff();
     }
 }

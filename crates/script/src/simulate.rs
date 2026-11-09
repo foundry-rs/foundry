@@ -1,8 +1,9 @@
 use super::{
     multi_sequence::MultiChainSequence,
     providers::{ProviderInfo, ProvidersManager},
+    recovery::RecoveryStore,
     runner::ScriptRunner,
-    sequence::ScriptSequenceKind,
+    sequence::{ScriptSequenceKind, SequenceData},
     transaction::ScriptTransactionBuilder,
 };
 use crate::{
@@ -14,7 +15,7 @@ use crate::{
 };
 use alloy_chains::{Chain, NamedChain};
 use alloy_evm::revm::context::Block;
-use alloy_network::TransactionBuilder;
+use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Address, U256, map::HashMap, utils::format_units};
 use alloy_provider::Provider;
 use dialoguer::Confirm;
@@ -58,7 +59,29 @@ pub struct PreSimulationState<FEN: FoundryEvmNetwork> {
     pub execution_artifacts: ExecutionArtifacts,
 }
 
-type SimulationOutcome<N> = (String, Option<TransactionWithMetadata<N>>, bool, Traces);
+/// The result of simulating one transaction against its RPC.
+struct SimulationOutcome<N: Network> {
+    rpc: String,
+    transaction: SimulatedTransaction<N>,
+    traces: Traces,
+}
+
+/// Whether a simulated transaction executed, and what it became.
+enum SimulatedTransaction<N: Network> {
+    /// Execution failed, which aborts the script once every outcome is reported.
+    Failed,
+    /// Execution succeeded, filling in the transaction's gas and metadata.
+    Succeeded(TransactionWithMetadata<N>),
+    /// Execution succeeded, but the transaction sends no value to an address without code.
+    NoCode(TransactionWithMetadata<N>),
+}
+
+impl<N: Network> SimulatedTransaction<N> {
+    /// Classifies a successful execution of `transaction`.
+    const fn succeeded(transaction: TransactionWithMetadata<N>, no_code: bool) -> Self {
+        if no_code { Self::NoCode(transaction) } else { Self::Succeeded(transaction) }
+    }
+}
 
 struct RpcSimulationContext<R> {
     runner: R,
@@ -158,6 +181,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                 if to.is_some() {
                     builder.set_call(
                         &address_to_abi,
+                        &self.build_data.known_contracts,
                         decoder,
                         self.script_config.evm_opts.create2_deployer,
                     )?;
@@ -165,7 +189,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                     builder.set_create(
                         false,
                         tx.contract_address.unwrap_or_else(|| sender.create(nonce)),
-                        &address_to_abi,
+                        &self.build_data.known_contracts,
                     )?;
                 }
 
@@ -178,8 +202,21 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
 
     fn into_filled(
         self,
-        transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
+        mut transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
     ) -> FilledTransactionsState<FEN> {
+        // Use the final script labels, including labels set after a deployment. Additional
+        // contracts are only known after transaction simulation.
+        let labels = &self.execution_result.labeled_addresses;
+        for transaction in &mut transactions {
+            if transaction.call_kind.is_any_create() {
+                transaction.label =
+                    transaction.contract_address.and_then(|address| labels.get(&address)).cloned();
+            }
+            for contract in &mut transaction.additional_contracts {
+                contract.label = labels.get(&contract.address).cloned();
+            }
+        }
+
         FilledTransactionsState {
             args: self.args,
             script_config: self.script_config,
@@ -215,7 +252,11 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                     .wrap_err("Internal EVM error during simulation")?;
 
                 if !result.success {
-                    return Ok((rpc, None, false, result.traces));
+                    return Ok(SimulationOutcome {
+                        rpc,
+                        transaction: SimulatedTransaction::Failed,
+                        traces: result.traces,
+                    });
                 }
 
                 // Simulate mining the transaction if the user passes `--slow`.
@@ -235,10 +276,14 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                         &result,
                         self.args.gas_estimate_multiplier,
                         &self.build_data,
-                    )
+                    )?
                     .build();
 
-                eyre::Ok((rpc, Some(transaction), is_noop_tx, result.traces))
+                eyre::Ok(SimulationOutcome {
+                    rpc,
+                    transaction: SimulatedTransaction::succeeded(transaction, is_noop_tx),
+                    traces: result.traces,
+                })
             })
             .collect::<Vec<_>>();
 
@@ -263,10 +308,12 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
 
         let mut abort = false;
         for res in results {
-            let (rpc, tx, is_noop_tx, mut traces) = res?;
+            let SimulationOutcome { rpc, transaction, mut traces } = res?;
 
-            // Transaction will be `None`, if execution didn't pass.
-            if !shell::is_json() && (tx.is_none() || tracing.verbosity > 3) {
+            // Failed executions always show their traces.
+            if !shell::is_json()
+                && (matches!(transaction, SimulatedTransaction::Failed) || tracing.verbosity > 3)
+            {
                 let decoder = &contexts.get(&rpc).expect("invalid rpc url").decoder;
                 for (_, trace) in &mut traces {
                     decode_trace_arena(trace, decoder).await;
@@ -280,27 +327,32 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                 }
             }
 
-            if let Some(tx) = tx {
-                if is_noop_tx {
+            match transaction {
+                SimulatedTransaction::Failed => abort = true,
+                SimulatedTransaction::Succeeded(tx) => final_txs.push_back(tx),
+                SimulatedTransaction::NoCode(tx) => {
                     let to = tx.contract_address.unwrap();
                     sh_warn!(
                         "Script contains a transaction to {to} which does not contain any code."
                     )?;
 
                     // Only prompt if we're broadcasting and we've not disabled interactivity.
-                    if self.args.should_broadcast()
-                        && !self.args.non_interactive
-                        && !Confirm::new()
+                    if self.args.should_broadcast() && !self.args.non_interactive {
+                        if !dialoguer::console::Term::stderr().is_term() {
+                            eyre::bail!(
+                                "transaction to {to} has no code; pass --non-interactive to continue without confirmation"
+                            );
+                        }
+                        if !Confirm::new()
                             .with_prompt("Do you wish to continue?".to_string())
                             .interact()?
-                    {
-                        eyre::bail!("User canceled the script.");
+                        {
+                            eyre::bail!("User canceled the script.");
+                        }
                     }
-                }
 
-                final_txs.push_back(tx);
-            } else {
-                abort = true;
+                    final_txs.push_back(tx);
+                }
             }
         }
 
@@ -743,25 +795,22 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             }
         }
 
-        let sequence = if sequences.len() == 1 {
-            ScriptSequenceKind::new_single(
-                sequences.pop().expect("empty sequences"),
-                self.args.batch,
-                self.script_config.tempo.sponsor,
-            )?
+        let data = if sequences.len() == 1 {
+            SequenceData::Single(Box::new(sequences.pop().expect("empty sequences")))
         } else {
-            ScriptSequenceKind::new_multi(
-                MultiChainSequence::new(
-                    sequences,
-                    &self.args.sig,
-                    &self.build_data.build_data.target,
-                    &self.script_config.config,
-                    !self.args.broadcast,
-                )?,
-                self.args.batch,
-                self.script_config.tempo.sponsor,
-            )?
+            SequenceData::Multi(MultiChainSequence::new(
+                sequences,
+                &self.args.sig,
+                &self.build_data.build_data.target,
+                &self.script_config.config,
+                !self.args.broadcast,
+            )?)
         };
+        if self.args.start_fresh {
+            RecoveryStore::<FEN::Network>::archive_unfinished(&data)?;
+        }
+        let sequence =
+            ScriptSequenceKind::create(data, self.args.batch, self.script_config.tempo.sponsor)?;
 
         Ok(BundledState {
             args: self.args,
@@ -770,6 +819,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             browser_wallet: self.browser_wallet,
             build_data: self.build_data,
             sequence,
+            resume_script_error: None,
         })
     }
 

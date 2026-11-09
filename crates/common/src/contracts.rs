@@ -229,6 +229,14 @@ impl ContractsByArtifact {
         self.find_by_code(code, 0.1, true, ContractData::bytecode)
     }
 
+    /// Finds the first artifact whose nonempty creation bytecode is a prefix of `code`.
+    /// Unlike [`matches_contract_creation`], this does not validate the trailing constructor data.
+    pub fn find_by_creation_code_prefix(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
+        self.iter().find(|(_, contract)| {
+            contract.bytecode().is_some_and(|bytecode| code.starts_with(bytecode))
+        })
+    }
+
     /// Finds a contract which has a similar deployed bytecode as `code`.
     pub fn find_by_deployed_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
         self.find_by_code(code, 0.15, false, ContractData::deployed_bytecode)
@@ -245,7 +253,7 @@ impl ContractsByArtifact {
     ) -> Option<ArtifactWithContractRef<'_>> {
         self.iter()
             .filter_map(|(id, contract)| {
-                if let Some(deployed_bytecode) = get(contract) {
+                get(contract).and_then(|deployed_bytecode| {
                     let mut code = code;
                     if strip_ctor_args && code.len() > deployed_bytecode.len() {
                         // Try to decode ctor args with contract abi.
@@ -261,9 +269,7 @@ impl ContractsByArtifact {
 
                     let score = bytecode_diff_score(deployed_bytecode.as_ref(), code);
                     (score <= accepted_score).then_some((score, (id, contract)))
-                } else {
-                    None
-                }
+                })
             })
             .min_by(|(score1, _), (score2, _)| score1.total_cmp(score2))
             .map(|(_, data)| data)
@@ -282,7 +288,8 @@ impl ContractsByArtifact {
         code: &[u8],
         preferred: impl Fn(&ArtifactId) -> bool,
     ) -> Option<ArtifactWithContractRef<'_>> {
-        self.find_by_deployed_code_exact_inner(code, false, preferred).0
+        let (exact, partial, _) = self.find_by_deployed_code_exact_inner(code, false, preferred);
+        exact.or(partial)
     }
 
     /// Finds the only contract whose deployed bytecode exactly matches the given code.
@@ -299,14 +306,24 @@ impl ContractsByArtifact {
         &self,
         code: &[u8],
     ) -> Result<Option<ArtifactWithContractRef<'_>>> {
-        let (matched, ambiguous_partial) =
+        let (exact, partial, ambiguous_partial) =
             self.find_by_deployed_code_exact_inner(code, false, |_| true);
         if ambiguous_partial {
             eyre::bail!(
                 "Multiple local contracts match the deployed bytecode with different metadata. Specify the contract as <path>:<contract>"
             );
         }
-        Ok(matched)
+        Ok(exact.or(partial))
+    }
+
+    /// Finds an exact deployed-code match, including metadata. Accounts for link references,
+    /// immutables, library call protection, and Vyper's appended immutable data, but does not
+    /// accept matches differing only in metadata.
+    pub fn find_by_deployed_code_exact_with_metadata(
+        &self,
+        code: &[u8],
+    ) -> Option<ArtifactWithContractRef<'_>> {
+        self.find_by_deployed_code_exact_inner(code, false, |_| true).0
     }
 
     fn find_by_deployed_code_exact_inner(
@@ -314,10 +331,10 @@ impl ContractsByArtifact {
         code: &[u8],
         unique: bool,
         preferred: impl Fn(&ArtifactId) -> bool,
-    ) -> (Option<ArtifactWithContractRef<'_>>, bool) {
+    ) -> (Option<ArtifactWithContractRef<'_>>, Option<ArtifactWithContractRef<'_>>, bool) {
         // Immediately return None if the code is empty.
         if code.is_empty() {
-            return (None, false);
+            return (None, None, false);
         }
 
         let mut partial_match = None;
@@ -446,13 +463,13 @@ impl ContractsByArtifact {
 
             if matches_metadata {
                 if unique && exact_match.is_some() {
-                    return (None, false);
+                    return (None, None, false);
                 }
                 if exact_match.is_none() || preferred(id) {
                     exact_match = Some((id, contract));
                 }
                 if !unique && preferred(id) {
-                    return (exact_match, false);
+                    return (exact_match, None, false);
                 }
             } else {
                 ambiguous_partial |= partial_match.is_some();
@@ -463,7 +480,7 @@ impl ContractsByArtifact {
         }
 
         let ambiguous_partial = exact_match.is_none() && ambiguous_partial;
-        (if unique { exact_match } else { exact_match.or(partial_match) }, ambiguous_partial)
+        (exact_match, partial_match, ambiguous_partial)
     }
 
     /// Finds a contract which has the same contract name or identifier as `id`. If more than one is
@@ -837,6 +854,7 @@ mod tests {
         ]);
 
         assert!(contracts.find_by_deployed_code_exact_unique(&code).is_none());
+        assert_eq!(contracts.find_by_deployed_code_exact_with_metadata(&code).unwrap().0.name, "A");
 
         let contracts = ContractsByArtifact::new([deployed_artifact("A", code.clone())]);
         assert_eq!(contracts.find_by_deployed_code_exact_unique(&code).unwrap().0.name, "A");
@@ -850,6 +868,7 @@ mod tests {
 
         assert!(contracts.find_by_deployed_code_exact(&deployed_code).is_some());
         assert!(contracts.find_by_deployed_code_exact_unique(&deployed_code).is_none());
+        assert!(contracts.find_by_deployed_code_exact_with_metadata(&deployed_code).is_none());
     }
 
     #[test]

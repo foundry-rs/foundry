@@ -9,7 +9,7 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_network::{
     Ethereum, ReceiptResponse, TransactionBuilder, TxSignerSync, eip2718::Encodable2718,
 };
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, bytes, hex, keccak256};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256, bytes, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{AccessList, AccessListItem, Authorization, TransactionRequest};
 use alloy_signer::SignerSync;
@@ -46,6 +46,60 @@ use tempo_alloy::TempoNetwork;
 use rexpect::{Encoding, process::wait::WaitStatus, reader::Options, spawn_with_options};
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
+
+#[forgetest]
+fn script_non_interactive_help_covers_confirmations(cmd: _) {
+    cmd.args(["script", "--help"]).assert_success().stderr_eq(str![""]).stdout_eq(str![[r#"
+...
+      --non-interactive
+          Skips script confirmation prompts, including no-code targets and oversized contracts
+...
+"#]]);
+}
+
+#[forgetest]
+async fn script_no_code_target_without_terminal(prj: _, cmd: _) {
+    prj.add_script(
+        "NoCodeTarget.s.sol",
+        r#"
+interface Vm { function startBroadcast() external; }
+
+contract NoCodeTarget {
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        VM.startBroadcast();
+        (bool success,) = address(0xBEEF).call("");
+        require(success);
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let sender = handle.dev_wallets().next().unwrap().address();
+    let rpc = handle.http_endpoint();
+    let args = [
+        "script",
+        "NoCodeTarget",
+        "--rpc-url",
+        rpc.as_str(),
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+    ];
+
+    cmd.args(args).assert_failure().stderr_eq(str![[r#"
+...
+Warning: Script contains a transaction to 0x000000000000000000000000000000000000bEEF which does not contain any code.
+Error: transaction to 0x000000000000000000000000000000000000bEEF has no code; pass --non-interactive to continue without confirmation
+
+"#]]);
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 0);
+
+    cmd.forge_fuse().args(args).arg("--non-interactive").assert_success();
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 1);
+}
 
 #[forgetest]
 fn script_slow_help_explains_presimulation(cmd: _) {
@@ -1202,9 +1256,12 @@ contract InvisibleSubmission is Script {
         .expect("forge did not finish");
         let output = child.kill_and_wait();
         assert!(output.status.success());
+        // Successors that time out before the first one is found dropped warn that they are
+        // still waited on.
         assert_data_eq!(
             String::from_utf8(output.stderr).unwrap(),
             str![[r#"
+...
 Warning: Some transactions were discarded by the RPC node. Use `--resume` to retry these transactions.
 ...
 "#]]
@@ -1250,7 +1307,12 @@ Warning: Some transactions were discarded by the RPC node. Use `--resume` to ret
             private_key,
             "--resume",
         ]);
-        cmd.assert_success().stderr_eq(str![""]);
+        let sender = handle.dev_accounts().next().unwrap();
+        let deployments = (0..12)
+            .map(|nonce| format!("  InvisibleSubmissionTarget  {}\n", sender.create(nonce)))
+            .collect::<String>();
+        cmd.assert_success()
+            .stderr_eq(format!("\nDeployed contracts (chain 31337):\n{deployments}"));
         let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
         assert_eq!(sequence["receipts"].as_array().unwrap().len(), 12);
         assert!(sequence["pending"].as_array().unwrap().is_empty());
@@ -1287,9 +1349,18 @@ contract UnpolledReceipts is Script {
 "#,
     );
     let path = prj.root().join("broadcast/UnpolledReceipts.s.sol/31337/run-latest.json");
+    let recovery_path =
+        prj.root().join("cache/UnpolledReceipts.s.sol/31337/run-latest.json.recovery.json");
     prj.update_config(|config| config.transaction_timeout = 1);
 
     for revert in [false, true] {
+        // Each iteration broadcasts to a new chain, so the unfinished previous broadcast is
+        // dropped rather than resumed.
+        for path in [&path, &recovery_path] {
+            if path.exists() {
+                fs::remove_file(path).unwrap();
+            }
+        }
         let (api, handle) = spawn(NodeConfig::test()).await;
         // Runtime that reverts once storage slot 0 is set.
         api.anvil_set_code(gate, bytes!("60005415600b57600080fd5b00")).await.unwrap();
@@ -1376,6 +1447,12 @@ contract UnpolledReceipts is Script {
             .map(|receipt| receipt["transactionHash"].clone())
             .collect::<Vec<_>>();
         if revert {
+            // Transactions still waited on when a receipt timeout elapses warn about it first.
+            let stderr = stderr
+                .lines()
+                .filter(|line| !line.ends_with("still waiting for its receipt."))
+                .map(|line| format!("{line}\n"))
+                .collect::<String>();
             assert!(!output.status.success());
             assert_eq!(
                 stderr,
@@ -1391,6 +1468,7 @@ contract UnpolledReceipts is Script {
             assert_data_eq!(
                 stderr,
                 str![[r#"
+...
 Warning: Some transactions were discarded by the RPC node. Use `--resume` to retry these transactions.
 ...
 "#]]
@@ -1403,10 +1481,166 @@ Warning: Some transactions were discarded by the RPC node. Use `--resume` to ret
     }
 }
 
-// A mined revert is recorded outside `receipts`, and resume warns about it, never resubmits it, and
-// continues with the operations after it.
+// A transaction that stays pending past the receipt timeout is named once, without aborting or
+// changing the eventual result.
 #[forgetest_init]
-async fn resume_skips_recorded_revert(prj: _, cmd: _) {
+async fn broadcast_warns_once_while_waiting_for_receipt(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "WaitingReceipt.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract WaitingReceipt is Script {
+    function run() external {
+        vm.broadcast();
+        payable(address(0xBEEF)).transfer(1);
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    // Each receipt timeout is followed by a lookup that finds the transaction still pending.
+    let lookups = Arc::new(AtomicUsize::new(0));
+    let rpc = spawn_rpc_proxy_mapping_method(handle.http_endpoint(), "eth_getTransactionByHash", {
+        let lookups = lookups.clone();
+        move |_, result| {
+            if !result.is_null() {
+                lookups.fetch_add(1, Ordering::SeqCst);
+            }
+            result
+        }
+    })
+    .await;
+    prj.update_config(|config| config.transaction_timeout = 1);
+
+    cmd.arg("script").arg(&script).args([
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+    ]);
+    let mut child = KillOnDrop::spawn(cmd.cmd().env("RUST_LOG", "off"));
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while lookups.load(Ordering::SeqCst) < 2 {
+            assert!(child.is_running(), "a receipt timeout stopped the broadcast");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not keep waiting after receipt timeouts");
+
+    api.mine_one().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while child.is_running() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not finish after the transaction mined");
+    let output = child.kill_and_wait();
+    assert!(output.status.success());
+    let sequence: Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/WaitingReceipt.s.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        format!(
+            "Warning: Transaction {} has not been mined after 1s; still waiting for its receipt.\n",
+            sequence["transactions"][0]["hash"].as_str().unwrap()
+        )
+    );
+}
+
+// Other tools parse broadcast files, so renaming or removing a key breaks them. A new key only
+// updates this snapshot.
+#[forgetest_init]
+async fn broadcast_file_keys(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "BroadcastKeys.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract Child {}
+
+contract Factory {
+    constructor() {
+        new Child();
+    }
+
+    function deploy() external returns (Child) {
+        return new Child();
+    }
+}
+
+contract BroadcastKeys is Script {
+    function run() external returns (Factory factory) {
+        vm.startBroadcast();
+        factory = new Factory();
+        factory.deploy();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let factory = handle.dev_accounts().next().unwrap().create(0);
+    cmd.args([
+        "script",
+        script.to_str().unwrap(),
+        "--tc",
+        "BroadcastKeys",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+    ])
+    .assert_success()
+    .stderr_eq(format!(
+        "\nDeployed contracts (chain 31337):\n  Factory  {factory}\n  Child    {}\n  Child    {}\n",
+        factory.create(1),
+        factory.create(2),
+    ));
+
+    let sequence: Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/BroadcastKeys.s.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    let transactions = sequence["transactions"].as_array().unwrap();
+    let additional_contracts =
+        transactions.iter().flat_map(|tx| tx["additionalContracts"].as_array().unwrap());
+    let keys = |values: Vec<&Value>| {
+        values
+            .into_iter()
+            .flat_map(|value| value.as_object().unwrap().keys().cloned())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    assert_data_eq!(
+        format!(
+            "top level: {}\ntransaction: {}\nadditional contract: {}\n",
+            keys(vec![&sequence]),
+            keys(transactions.iter().collect()),
+            keys(additional_contracts.collect()),
+        ),
+        str![[r#"
+top level: chain, commit, libraries, pending, receipts, recovery_generation, returns, timestamp, transactions
+transaction: additionalContracts, arguments, contractAddress, contractName, exactArtifactMatch, function, functionAbi, hash, isFixedGasLimit, transaction, transactionType
+additional contract: address, contractName, creatorCodeAddresses, exactArtifactMatch, initCode, transactionType
+
+"#]]
+    );
+}
+
+// A mined revert is recorded outside `receipts`. The script would have stopped at it, so resume
+// never resubmits it and refuses to send the operations planned after it.
+#[forgetest_init]
+async fn resume_refuses_operations_after_recorded_revert(prj: _, cmd: _) {
     let gate = address!("0x000000000000000000000000000000000000bEEF");
     let script = prj.add_script(
         "RevertedResume.s.sol",
@@ -1477,19 +1711,17 @@ contract RevertedResume is Script {
     assert_eq!(sequence["reverted"], serde_json::json!([reverted]));
     assert!(sequence["receipts"].as_array().unwrap().is_empty());
 
-    // Every resume skips the revert; the first submits the remaining calls, the second nothing.
+    // Every resume refuses without sending the transfers that `require(success)` blocks.
     let provider = handle.http_provider();
     for _ in 0..2 {
         cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--resume");
-        cmd.assert_success().stderr_eq(format!(
-            "Warning: Transaction {reverted} on chain 31337 reverted; resume will not resubmit it.\nWarning: ONCHAIN EXECUTION COMPLETE WITH REVERTED TRANSACTIONS:\nchain 31337: {reverted}\n"
+        cmd.assert_failure().stderr_eq(format!(
+            "Error: transaction {reverted} reverted, so the script would not have sent the operations after it; resume will not send them. Pass `--broadcast --start-fresh` to archive this broadcast and run the script again\n"
         ));
         let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
         assert_eq!(sequence["reverted"], serde_json::json!([reverted]));
-        let receipts = sequence["receipts"].as_array().unwrap();
-        assert_eq!(receipts.len(), 2);
-        assert!(receipts.iter().all(|receipt| receipt["status"] == "0x1"));
-        assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 3);
+        assert!(sequence["receipts"].as_array().unwrap().is_empty());
+        assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
     }
 }
 
@@ -1579,6 +1811,26 @@ contract InterruptedResume is Script {
     #[cfg(unix)]
     assert_eq!(output.status.signal(), Some(9), "forge was not terminated by SIGKILL");
     assert!(recovery_path.exists(), "authoritative recovery snapshot was not checkpointed");
+
+    // A new broadcast refuses to replace the unfinished one, and sends nothing.
+    let snapshot = std::fs::read(&recovery_path).unwrap();
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "InterruptedResume",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+        "--slow",
+    ]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: the previous broadcast `[..]/broadcast/InterruptedResume.s.sol/31337/run-latest.json` has unfinished operations; finish it with `--resume`, or pass `--start-fresh` to archive it and broadcast anew
+
+"#]]);
+    assert_eq!(std::fs::read(&recovery_path).unwrap(), snapshot);
+    assert_eq!(submissions.lock().unwrap().len(), 1);
+
     std::fs::remove_file(&path).unwrap();
     std::fs::remove_file(&sensitive_path).unwrap();
 
@@ -1609,6 +1861,94 @@ contract InterruptedResume is Script {
     let second_address =
         sequence["transactions"][1]["contractAddress"].as_str().unwrap().parse().unwrap();
     assert!(!provider.get_code_at(second_address).await.unwrap().is_empty());
+}
+
+// `--start-fresh` archives an unfinished broadcast before broadcasting anew, while a completed
+// broadcast is replaced without it.
+#[forgetest_init]
+async fn start_fresh_archives_unfinished_broadcast(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "StartFresh.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract StartFreshTarget {}
+
+contract StartFresh is Script {
+    function run() external {
+        vm.startBroadcast();
+        new StartFreshTarget();
+        new StartFreshTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (rpc, reject_after_first) = spawn_rpc_proxy_rejecting_method_after_when_enabled(
+        handle.http_endpoint(),
+        "eth_sendRawTransaction",
+        1,
+    )
+    .await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let cache = prj.root().join("cache/StartFresh.s.sol/31337");
+    let recovery_path = cache.join("run-latest.json.recovery.json");
+    let archives = || {
+        fs::read_dir(&cache)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path != &recovery_path
+                    && path.to_string_lossy().contains(".recovery.")
+                    && path.extension().is_some_and(|ext| ext == "json")
+            })
+            .collect::<Vec<_>>()
+    };
+    let args = [
+        "--tc",
+        "StartFresh",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+    ];
+
+    // Only the first operation is sent.
+    cmd.arg("script").arg(&script).args(args);
+    cmd.assert_failure();
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+    let unfinished = fs::read(&recovery_path).unwrap();
+
+    reject_after_first.store(false, Ordering::SeqCst);
+    cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--start-fresh");
+    cmd.assert_success().stderr_eq(str![[r#"
+Archived `[..]/cache/StartFresh.s.sol/31337/run-latest.json.recovery.json` to `[..]/cache/StartFresh.s.sol/31337/run-latest.json.recovery.[..].json`
+Archived `[..]/broadcast/StartFresh.s.sol/31337/run-latest.json` to `[..]/broadcast/StartFresh.s.sol/31337/run-latest.[..].json`
+Archived `[..]/cache/StartFresh.s.sol/31337/run-latest.json` to `[..]/cache/StartFresh.s.sol/31337/run-latest.[..].json`
+
+Deployed contracts (chain 31337):
+  StartFreshTarget  0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+  StartFreshTarget  0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
+
+"#]]);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 3);
+    let [archive] = archives().try_into().unwrap();
+    assert_eq!(fs::read(archive).unwrap(), unfinished);
+    let unfinished: Value = serde_json::from_slice(&unfinished).unwrap();
+    let fresh: Value = foundry_common::fs::read_json_file(&recovery_path).unwrap();
+    assert_ne!(fresh["generation"], unfinished["generation"]);
+
+    cmd.forge_fuse().arg("script").arg(&script).args(args);
+    cmd.assert_success().stderr_eq(format!(
+        "\nDeployed contracts (chain 31337):\n  StartFreshTarget  {}\n  StartFreshTarget  {}\n",
+        sender.create(3),
+        sender.create(4),
+    ));
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 5);
+    assert_eq!(archives().len(), 1);
 }
 
 #[forgetest_init]
@@ -1716,6 +2056,60 @@ contract RebindResume is Script {
 }
 
 #[forgetest_init]
+async fn resume_without_rpc_url_uses_saved_endpoint(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "SavedResume.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract SavedResumeTarget {}
+
+contract SavedResume is Script {
+    function run() external {
+        vm.startBroadcast();
+        new SavedResumeTarget();
+        new SavedResumeTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (rpc_a, submissions_a) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let (rpc_b, submissions_b) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = handle.dev_accounts().next().unwrap();
+
+    // Simulate through A, then make B the configured RPC for the same chain.
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "SavedResume",
+        "--rpc-url",
+        &rpc_a,
+        "--private-key",
+        private_key,
+    ]);
+    cmd.assert_success();
+    prj.update_config(|config| config.eth_rpc_url = Some(rpc_b));
+
+    // Without `--rpc-url`, the configured RPC selects the chain but the saved endpoint submits.
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "SavedResume",
+        "--private-key",
+        private_key,
+        "--resume",
+    ]);
+    cmd.assert_success();
+
+    assert_eq!(submissions_a.lock().unwrap().len(), 2);
+    assert!(submissions_b.lock().unwrap().is_empty());
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 2);
+}
+
+#[forgetest_init]
 async fn broadcast_reports_submission_without_receipt(prj: _, cmd: _) {
     let script = prj.add_script(
         "InvisibleSubmission.s.sol",
@@ -1799,7 +2193,14 @@ Add `--resume` to your command to check them again and replay dropped signed tra
         private_key,
         "--resume",
     ]);
-    cmd.assert_success().stderr_eq(str![""]).stdout_eq(str![[r#"
+    cmd.assert_success()
+        .stderr_eq(str![[r#"
+
+Deployed contracts (chain 31337):
+  InvisibleSubmissionTarget  0x5FbDB2315678afecb367f032d93F642f64180aa3
+
+"#]])
+        .stdout_eq(str![[r#"
 ...
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 ...
@@ -1919,6 +2320,64 @@ async fn can_resume_script(prj: _, cmd: _) {
         .run(ScriptOutcome::OkBroadcast)
         .assert_nonce_increment(&[(0, 2), (1, 1)])
         .await;
+}
+
+// Resume reports a failed signer-collecting run from `setUp` or `run`, and only fails if signers
+// are still missing.
+#[forgetest_init]
+async fn resume_reports_failed_signer_rerun(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let script = prj.add_script(
+        "ResumeRerun.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract ResumeRerunTarget {}
+
+contract ResumeRerun is Script {
+    uint256 key;
+
+    function setUp() public {
+        key = vm.envUint("RESUME_RERUN_PK");
+    }
+
+    function run() external {
+        vm.startBroadcast(key);
+        new ResumeRerunTarget();
+        vm.stopBroadcast();
+        require(vm.envOr("RESUME_RERUN_GO", false), "resume gate closed");
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc]);
+    cmd.env("RESUME_RERUN_PK", private_key);
+    cmd.env("RESUME_RERUN_GO", "true");
+    cmd.assert_success();
+
+    // `setUp` fails before the signer is reached.
+    cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--resume"]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: No associated wallet for addresses: [0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266]. Unlocked wallets: []
+Resume re-ran the script to collect signers, but it failed: vm.envUint: environment variable "RESUME_RERUN_PK" not found
+
+"#]]);
+
+    // `run` fails after the signer is collected, so resume still broadcasts.
+    cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--resume"]);
+    cmd.env("RESUME_RERUN_PK", private_key);
+    cmd.assert_success().stderr_eq(str![[r#"
+Warning: Resume re-ran the script to collect signers, but it failed: resume gate closed
+
+Deployed contracts (chain 31337):
+  ResumeRerunTarget  0x5FbDB2315678afecb367f032d93F642f64180aa3
+
+"#]]);
+    let sender = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 1);
 }
 
 #[forgetest]
@@ -3952,7 +4411,7 @@ contract BlockGasLimitScript {{
         "--broadcast",
     ])
     .assert_success()
-    .stderr_eq(str![""])
+    .stderr_eq(format!("\nDeployed contracts (chain 31337):\n  BlockGasLimit  {target}\n"))
     .stdout_eq(str![[r#"
 ...
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
@@ -4109,7 +4568,11 @@ Error: Simulated execution failed.
                 .args(common)
                 .args(["--sig", "run(bytes)", &hex::encode_prefixed(transaction.encoded_2718())])
                 .assert_success()
-                .stderr_eq(str![""])
+                .stderr_eq(if create {
+                    format!("\nDeployed contracts (chain 31337):\n  -  {target}\n")
+                } else {
+                    String::new()
+                })
                 .stdout_eq(str![[r#"
 ...
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
@@ -4319,6 +4782,63 @@ contract WalletScript is Script {
             "unexpected script exit: {output}"
         );
     }
+}
+
+// A keystore without an `address` field, as written by `cast wallet new` and `cast wallet import`,
+// is unlocked to find the script sender instead of running as the default sender.
+#[cfg(unix)]
+#[forgetest_init]
+fn keystore_without_address_sets_script_sender(prj: _, cmd: _) {
+    let script = prj.add_source(
+        "SenderScript",
+        r#"
+import {Script} from "forge-std/Script.sol";
+
+contract SenderScript is Script {
+    function run() public {
+        require(msg.sender == 0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2, "unexpected sender");
+        vm.startBroadcast();
+        vm.stopBroadcast();
+    }
+}"#,
+    );
+    let mut keystore: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../cast/tests/fixtures/keystore/UTC--2022-12-20T10-30-43.591916000Z--ec554aeafe75601aaab43bd4621a22284db566c2"
+    ))
+    .unwrap();
+    keystore.as_object_mut().unwrap().remove("address");
+    let keystore_path = prj.root().join("keystore-without-address");
+    fs::write(&keystore_path, keystore.to_string()).unwrap();
+    cmd.args(["build"]).assert_success();
+
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_forge"));
+    command
+        .current_dir(prj.root())
+        .env_remove("CI")
+        .env("NO_COLOR", "1")
+        .env("TERM", "dumb")
+        .arg("script")
+        .arg(&script)
+        .arg("--keystore")
+        .arg(&keystore_path);
+    let mut session = spawn_with_options(
+        command,
+        Options {
+            timeout_ms: Some(30_000),
+            strip_ansi_escape_codes: true,
+            encoding: Encoding::UTF8,
+        },
+    )
+    .unwrap();
+    session.exp_string("Enter keystore password:").unwrap();
+    session.send_line("keystorepassword").unwrap();
+    // `vm.startBroadcast` reuses the unlocked keystore: a second prompt would time out here.
+    session.exp_string("Script ran successfully.").unwrap();
+    let output = session.exp_eof().unwrap();
+    assert!(
+        matches!(session.process.wait().unwrap(), WaitStatus::Exited(_, 0)),
+        "unexpected script exit: {output}"
+    );
 }
 
 #[forgetest_init]
@@ -4714,6 +5234,34 @@ SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet
 
 [SAVED_SENSITIVE_VALUES]
 
+
+"#]]);
+}
+
+#[forgetest_init]
+async fn dryrun_with_default_sender_warns(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    prj.add_source(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract Called {}
+
+contract DryRunTest is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Called();
+    }
+}
+   "#,
+    );
+
+    cmd.args(["script", "DryRunTest", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: Simulated with Foundry's default sender, so addresses and nonces may not match your deployer. Set your own --sender.
 
 "#]]);
 }
@@ -5708,6 +6256,8 @@ contract Counter {
 import {Counter} from "./Counter.sol";
 
 contract Factory {
+    Counter public initial = new Counter();
+
     function deployCounter() public returns (Counter) {
         return new Counter();
     }
@@ -5734,6 +6284,8 @@ contract FactoryScript is Script {
         counter = factory.deployCounter();
 
         vm.stopBroadcast();
+        vm.label(address(factory.initial()), "ConstructorCounter");
+        vm.label(address(counter), "FactoryCounter");
     }
 }
    "#,
@@ -5741,6 +6293,7 @@ contract FactoryScript is Script {
 
     let deploy_contract = deploy_script.display().to_string() + ":FactoryScript";
     let (_api, handle) = spawn(NodeConfig::test()).await;
+    let factory = handle.dev_accounts().next().unwrap().create(0);
     cmd.args([
         "script",
         &deploy_contract,
@@ -5753,13 +6306,16 @@ contract FactoryScript is Script {
         "--private-key",
         "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
     ])
-    .assert_success();
+    .assert_success()
+    .stderr_eq(format!(
+        "\nDeployed contracts (chain 31337):\n  -                   Factory  {factory}\n  ConstructorCounter  Counter  {}\n  FactoryCounter      Counter  {}\n",
+        factory.create(1), factory.create(2),
+    ));
 
-    let broadcast_log = prj.root().join("broadcast/Factory.s.sol/31337/run-latest.json");
-    let script_sequence: ScriptSequence<Ethereum> = serde_json::from_reader(
-        fs::File::open(prj.artifacts().join(broadcast_log)).expect("no broadcast log"),
+    let script_sequence: ScriptSequence<Ethereum> = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/Factory.s.sol/31337/run-latest.json"),
     )
-    .expect("no script sequence");
+    .unwrap();
 
     let counter_contract = script_sequence
         .transactions
@@ -5769,6 +6325,11 @@ contract FactoryScript is Script {
         .first()
         .expect("no Counter contract");
     assert_eq!(counter_contract.contract_name, Some("Counter".to_string()));
+    assert_eq!(counter_contract.label.as_deref(), Some("FactoryCounter"));
+    assert_eq!(
+        script_sequence.transactions[0].additional_contracts[0].label.as_deref(),
+        Some("ConstructorCounter"),
+    );
 }
 
 // <https://github.com/foundry-rs/foundry/issues/11213>
@@ -6052,6 +6613,7 @@ contract SaltedScript is Script {
         "salted broadcast must be recorded as CREATE2, got: {tx}"
     );
     assert_eq!(tx["contractName"], "Token");
+    assert_eq!(tx["exactArtifactMatch"], true);
     assert_eq!(tx["arguments"][0], "SaltedTok");
 }
 
@@ -6889,7 +7451,10 @@ async fn tempo_batch_resume_fee_token(
     cmd.assert_success();
 
     cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--resume").args(resume_args);
-    cmd.assert_success().stderr_eq(format!("Paying gas in {} ({})\n", expected.0, expected.1));
+    cmd.assert_success().stderr_eq(format!(
+        "Paying gas in {} ({})\n\nDeployed contracts (chain 31337):\n  A  0x[..]\n  B  0x[..]\n  C  0x[..]\n",
+        expected.0, expected.1,
+    ));
     let sequence: Value =
         foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
     let receipts = sequence["receipts"].as_array().unwrap();
@@ -7472,6 +8037,9 @@ contract TempoFeeToken is Script {
     cmd.assert_success().stderr_eq(str![[r#"
 Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
 
+Deployed contracts (chain 31337):
+  TempoFeeTokenTarget  0x5FbDB2315678afecb367f032d93F642f64180aa3
+
 "#]]);
     // CREATE requests stay Ethereum transactions; the protocol still charges the stored token.
     assert_eq!(
@@ -7492,6 +8060,9 @@ Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
     cmd.assert_success().stderr_eq(str![[r#"
 Warning: --batch rewrites CREATE → CREATE2 via the Arachnid factory; deployed addresses follow the CREATE2 formula and constructor msg.sender is the factory, not the EOA.
 Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
+
+Deployed contracts (chain 31337):
+  TempoFeeTokenTarget  0x[..]
 
 "#]]);
     assert_eq!(
@@ -7595,15 +8166,18 @@ contract DeployTempoBatch is Script {
         );
         ITempoBatchCodeDeployment(first).ping();
         vm.stopBroadcast();
+        vm.label(first, "First");
+        vm.label(second, "Second");
     }
 }
 "#,
     );
 
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
-    cmd.arg("script").arg(script).args([
+    let rpc = handle.http_endpoint();
+    let args = [
         "--rpc-url",
-        &handle.http_endpoint(),
+        &rpc,
         "--private-key",
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
         "--tc",
@@ -7612,8 +8186,16 @@ contract DeployTempoBatch is Script {
         "--batch",
         "--network",
         "tempo",
-    ]);
-    cmd.assert_success();
+    ];
+    let summary = str![[r#"
+...
+Deployed contracts (chain 31337):
+  First   TempoBatchCodeDeployment  0x[..]
+  Second  TempoBatchCodeDeployment  0x[..]
+  -       TempoBatchCodeDeployment  0x[..]
+
+"#]];
+    cmd.arg("script").arg(&script).args(args).assert_success().stderr_eq(summary.clone());
 
     let run_latest = latest_broadcast_path(prj.root());
     let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
@@ -7638,6 +8220,15 @@ contract DeployTempoBatch is Script {
         handle.http_provider().get_storage_at(deployed[0], U256::ZERO).await.unwrap(),
         U256::ONE
     );
+
+    cmd.forge_fuse()
+        .arg("script")
+        .arg(&script)
+        .args(args)
+        .arg("--resume")
+        .assert_success()
+        .stderr_eq(summary);
+    cmd.arg("--json").assert_success().stderr_eq(str![""]);
 }
 
 #[forgetest_init]
@@ -8253,6 +8844,32 @@ contract DeployLarge is Script {
     );
 }
 
+#[forgetest_init]
+async fn script_oversized_contract_without_terminal(prj: _, cmd: _) {
+    write_large_runtime_deploy_script(&prj, 30_000);
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    for var in ["FOUNDRY_CODE_SIZE_LIMIT", "DAPP_CODE_SIZE_LIMIT", "DAPP_TEST_CODE_SIZE_LIMIT"] {
+        cmd.unset_env(var);
+    }
+    cmd.args([
+        "script",
+        "DeployLarge",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+...
+Error: `LargeRuntime` is above the contract size limit ([..] > 24576).
+Error: contract above the code size limit requires confirmation; pass --non-interactive to continue without confirmation
+
+"#]]);
+}
+
 // Tests that `forge script` reports a contract-size violation against the default runtime limit
 // when neither the CLI nor foundry.toml override `code_size_limit`.
 #[forgetest_init]
@@ -8268,6 +8885,7 @@ async fn script_check_contract_sizes_warns_at_default_limit(prj: _, cmd: _) {
         .assert_success()
         .stderr_eq(str![[r#"
 Error: `LargeRuntime` is above the contract size limit ([..] > 24576).
+Warning: Simulated with Foundry's default sender, so addresses and nonces may not match your deployer. Set your own --sender.
 
 "#]]);
 }
@@ -8361,7 +8979,10 @@ async fn script_check_contract_sizes_honors_config_limit(prj: _, cmd: _) {
     }
     cmd.args(["script", "DeployLarge", "--rpc-url", &handle.http_endpoint()])
         .assert_success()
-        .stderr_eq(str![[r#""#]]);
+        .stderr_eq(str![[r#"
+Warning: Simulated with Foundry's default sender, so addresses and nonces may not match your deployer. Set your own --sender.
+
+"#]]);
 }
 
 // Regression test for https://github.com/foundry-rs/foundry/issues/15207: the broadcast simulation
@@ -9113,4 +9734,192 @@ fn latest_broadcast_path(root: &Path) -> PathBuf {
             path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
         })
         .expect("no latest broadcast artifact")
+}
+
+// `vm.attachBlob` transactions are simulated with their blob hashes and broadcast with a blob fee.
+#[forgetest]
+async fn can_broadcast_attached_blob(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let sender = handle.dev_accounts().next().unwrap();
+
+    prj.add_script(
+        "AttachBlob.s.sol",
+        r#"
+interface Vm {
+    function startBroadcast() external;
+    function stopBroadcast() external;
+    function attachBlob(bytes calldata blob) external;
+}
+
+contract BlobProbe {
+    bytes32 public observed;
+
+    event Observed(bytes32 hash);
+
+    function record() external {
+        bytes32 hash;
+        assembly {
+            hash := blobhash(0)
+        }
+        observed = hash;
+        emit Observed(hash);
+    }
+}
+
+contract AttachBlobScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        vm.startBroadcast();
+        BlobProbe probe = new BlobProbe();
+        vm.attachBlob(abi.encode("blob"));
+        probe.record();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "script",
+        "AttachBlobScript",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--private-key",
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+        "-vvvv",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Simulated On-chain Traces:
+...
+    ├─ emit Observed(hash: 0x0185c370ea4989f6959ae08350fe8f02bc3d6f43a8001b641fa89d4200649a2c)
+...
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+...
+"#]]);
+
+    let observed =
+        handle.http_provider().get_storage_at(sender.create(0), U256::ZERO).await.unwrap();
+    assert_eq!(
+        B256::from(observed),
+        b256!("0x0185c370ea4989f6959ae08350fe8f02bc3d6f43a8001b641fa89d4200649a2c")
+    );
+}
+
+// Script gas limits must be simulated under a chain hardfork that is ahead of `evm_version`, since
+// Amsterdam (EIP-8037) charges far more gas per deployed code byte than Osaka.
+#[forgetest_init]
+async fn script_broadcast_simulates_chain_hardfork_ahead_of_evm_version(prj: _, cmd: _) {
+    write_large_runtime_deploy_script(&prj, 10_000);
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()))).await;
+
+    cmd.args([
+        "script",
+        "DeployLarge",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--private-key",
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+        "--non-interactive",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+...
+"#]]);
+}
+
+// A broadcast lists the contracts it created, named by their `vm.label`, and records the labels in
+// the run file.
+#[forgetest_init]
+async fn broadcast_lists_deployed_contracts_with_labels(prj: _, cmd: _) {
+    let script = prj.add_source(
+        "DeployPools.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract Pool {}
+contract Router {}
+
+contract DeployPools is Script {
+    function run() external {
+        vm.startBroadcast();
+        Pool usdc = new Pool();
+        Pool weth = new Pool();
+        new Router();
+        vm.stopBroadcast();
+        vm.label(address(usdc), "UsdcPool");
+        vm.label(address(weth), "WethPool");
+    }
+}"#,
+    );
+    cmd.set_current_dir(prj.root());
+    let summary = str![[r#"
+
+Deployed contracts (chain 31337):
+  UsdcPool  Pool    0x5FbDB2315678afecb367f032d93F642f64180aa3
+  WethPool  Pool    0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+  -         Router  0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
+
+"#]];
+    let target = format!("{}:DeployPools", script.display());
+    for skip_simulation in [false, true] {
+        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let rpc = handle.http_endpoint();
+        let args = [
+            "script",
+            &target,
+            "--root",
+            prj.root().to_str().unwrap(),
+            "--rpc-url",
+            &rpc,
+            "--broadcast",
+            "--private-key",
+            "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        ];
+        cmd.forge_fuse().args(args);
+        if skip_simulation {
+            cmd.arg("--skip-simulation");
+        }
+        cmd.assert_success().stderr_eq(summary.clone());
+
+        let mut run: Value = foundry_common::fs::read_json_file(
+            &prj.root().join("broadcast/DeployPools.s.sol/31337/run-latest.json"),
+        )
+        .unwrap();
+        // Snapshot the label keys themselves so an absent label cannot pass as null or "-".
+        let transactions = run["transactions"].as_array_mut().unwrap();
+        for transaction in &mut *transactions {
+            transaction
+                .as_object_mut()
+                .unwrap()
+                .retain(|key, _| matches!(key.as_str(), "contractName" | "label"));
+        }
+        assert_data_eq!(
+            serde_json::to_string(transactions).unwrap().is_json(),
+            str![[r#"
+[
+  { "contractName": "Pool", "label": "UsdcPool" },
+  { "contractName": "Pool", "label": "WethPool" },
+  { "contractName": "Router" }
+]
+"#]]
+            .is_json(),
+        );
+
+        cmd.forge_fuse().args(args).arg("--resume").assert_success().stderr_eq(summary.clone());
+        for flag in ["--json", "--quiet"] {
+            cmd.forge_fuse()
+                .args(args)
+                .args(["--resume", flag])
+                .assert_success()
+                .stderr_eq(str![""]);
+        }
+    }
 }

@@ -112,6 +112,8 @@ contract RevertedFrameEffectsTest is Test {
     RevertedFrameOuter outer;
     RevertedFrameProbe probe;
 
+    event Recorded(uint256 value);
+
     function setUp() public {
         helper = new RevertedFrameHelper();
         outer = new RevertedFrameOuter();
@@ -328,24 +330,28 @@ contract RevertedFrameEffectsTest is Test {
         assertEq(writes.length, 0);
     }
 
-    function test_recordLogs_persists_depth1() public {
+    function test_recordLogs_persists_without_reverted_logs_depth1() public {
         runAndCatch(FrameEffect.RecordLogs, false);
+        assertEq(vm.getRecordedLogs().length, 0);
+        emit Recorded(456);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         assertEq(logs.length, 1);
-        assertEq(logs[0].emitter, address(helper));
+        assertEq(logs[0].emitter, address(this));
         assertEq(logs[0].topics.length, 1);
         assertEq(logs[0].topics[0], keccak256("Recorded(uint256)"));
-        assertEq(logs[0].data, abi.encode(uint256(123)));
+        assertEq(logs[0].data, abi.encode(uint256(456)));
     }
 
-    function test_recordLogs_persists_depth2() public {
+    function test_recordLogs_persists_without_reverted_logs_depth2() public {
         runAndCatch(FrameEffect.RecordLogs, true);
+        assertEq(vm.getRecordedLogs().length, 0);
+        emit Recorded(456);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         assertEq(logs.length, 1);
-        assertEq(logs[0].emitter, address(helper));
+        assertEq(logs[0].emitter, address(this));
         assertEq(logs[0].topics.length, 1);
         assertEq(logs[0].topics[0], keccak256("Recorded(uint256)"));
-        assertEq(logs[0].data, abi.encode(uint256(123)));
+        assertEq(logs[0].data, abi.encode(uint256(456)));
     }
 
     function runAndCatch(FrameEffect effect, bool nested) internal {

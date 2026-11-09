@@ -508,7 +508,7 @@ impl<'gcx> Cx<'gcx> {
                     self.may_return(then) || otherwise.is_some_and(|stmt| self.may_return(stmt))
                 }
                 StmtKind::Return(_)
-                | StmtKind::AssemblyBlock(_)
+                | StmtKind::AssemblyBlock(..)
                 | StmtKind::Try(_)
                 | StmtKind::Switch(_) => true,
                 _ => false,
@@ -632,11 +632,9 @@ impl<'gcx> Cx<'gcx> {
         }) {
             return false;
         }
-        match self.resolved_internal_callee(expr).filter(|&id| !self.gcx.hir.function(id).virtual_)
-        {
-            Some(id) => self.callable_may_change_account_code(id, seen),
-            None => true,
-        }
+        self.resolved_internal_callee(expr)
+            .filter(|&id| !self.gcx.hir.function(id).virtual_)
+            .is_none_or(|id| self.callable_may_change_account_code(id, seen))
     }
 
     /// Whether a statically known same-frame callable can create code, directly, through an
@@ -1320,7 +1318,7 @@ const fn is_internal(function: &hir::Function<'_>) -> bool {
 }
 
 const fn is_assembly(stmt: &Stmt<'_>) -> bool {
-    matches!(stmt.kind, StmtKind::AssemblyBlock(_))
+    matches!(stmt.kind, StmtKind::AssemblyBlock(..))
 }
 
 /// Whether the variable cannot change between the delegation and the callback guard. An

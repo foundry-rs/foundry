@@ -39,6 +39,14 @@ pub struct BuildOpts {
     #[serde(skip)]
     pub no_dynamic_test_linking: bool,
 
+    /// Reject contracts that depend on externally linked Solidity libraries.
+    ///
+    /// Internal libraries and dynamic test linking remain available. Overrides
+    /// `allow_linked_libraries` in configuration and environment variables.
+    #[arg(long, help_heading = "Linker options")]
+    #[serde(skip)]
+    pub disallow_linked_libraries: bool,
+
     /// Set pre-linked libraries.
     #[arg(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -76,9 +84,10 @@ pub struct BuildOpts {
     #[serde(skip)]
     pub no_auto_detect: bool,
 
-    /// Specify the solc version, path, or executable name on `PATH` to build with.
+    /// Specify the solc version, Solar version, path, or executable name on `PATH` to build with.
     ///
-    /// Valid values are in the format `x.y.z`, `solc:x.y.z`, `path/to/solc`, or `solc`.
+    /// Valid values are in the format `x.y.z`, `solc:x.y.z`, `solar:x.y.z`, `path/to/solc`, or
+    /// `solc`.
     #[arg(
         long = "use",
         alias = "compiler-version",
@@ -90,7 +99,7 @@ pub struct BuildOpts {
 
     /// Do not access the network.
     ///
-    /// Missing solc versions will not be installed.
+    /// Missing solc versions and Solar releases will not be installed.
     #[arg(help_heading = "Compiler options", long)]
     #[serde(skip)]
     pub offline: bool,
@@ -309,6 +318,13 @@ impl Provider for BuildOpts {
             dict.insert("revert_strings".to_string(), revert.to_string().into());
         }
 
-        Ok(Map::from([(Config::selected_profile(), dict)]))
+        let mut data = Map::from([(Config::selected_profile(), dict)]);
+        if self.disallow_linked_libraries {
+            // Environment variables use the global profile, which wins over named profiles.
+            data.entry(Profile::Global)
+                .or_default()
+                .insert("allow_linked_libraries".to_string(), false.into());
+        }
+        Ok(data)
     }
 }

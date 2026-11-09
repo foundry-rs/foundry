@@ -7,6 +7,7 @@
 //! This module provides a storage provider adapter for Anvil's `Db` trait and
 //! uses the shared initialization logic from `foundry-evm-core`.
 
+use alloy_evm::precompiles::{Precompile, PrecompilesMap};
 use alloy_primitives::{Address, B256, U256, address};
 use foundry_evm::core::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
@@ -14,10 +15,10 @@ use foundry_evm::core::tempo::{
 };
 use revm::{
     DatabaseRef,
-    context::{BlockEnv, journaled_state::JournalCheckpoint},
+    context::{BlockEnv, CfgEnv, journaled_state::JournalCheckpoint},
     state::{AccountInfo, Bytecode},
 };
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     TIP_FEE_MANAGER_ADDRESS,
@@ -26,11 +27,13 @@ use tempo_precompiles::{
         IAccountKeychain::{KeyRestrictions, SignatureType},
     },
     error::TempoPrecompileError,
-    storage::{PrecompileStorageProvider, StorageCtx},
+    extend_tempo_precompiles,
+    storage::{PrecompileStorageProvider, StorageActions, StorageCtx},
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{ITIP20, TIP20Token},
 };
 use tempo_primitives::TempoBlockEnv;
+use tempo_revm::gas_params::tempo_gas_params;
 
 use super::db::Db;
 
@@ -331,4 +334,17 @@ pub fn initialize_tempo_precompiles(
     })?;
 
     Ok(())
+}
+
+/// Returns the name of a native precompile using Tempo's execution lookup.
+pub(crate) fn native_precompile_name(address: Address, hardfork: TempoHardfork) -> Option<String> {
+    let cfg = CfgEnv::new_with_spec_and_gas_params(hardfork, tempo_gas_params(hardfork));
+    let mut precompiles = PrecompilesMap::new(Cow::Owned(Default::default()));
+    extend_tempo_precompiles(
+        &mut precompiles,
+        &cfg,
+        StorageActions::disabled(),
+        Default::default(),
+    );
+    precompiles.get(&address).map(|precompile| precompile.precompile_id().name().to_string())
 }
