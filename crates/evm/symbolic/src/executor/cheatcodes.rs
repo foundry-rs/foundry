@@ -590,6 +590,77 @@ impl SymbolicExecutor {
         Ok(accesses_return_data(&mut self.cx, Some(&record), Address::ZERO))
     }
 
+    /// Reverts a cheatcode call whose arguments Forge rejects. A check on symbolic arguments
+    /// forks the path: the reverting branch completes here and the valid branch continues into
+    /// the cheatcode.
+    pub(super) fn branch_cheatcode_argument_check_if_needed(
+        &mut self,
+        state: &mut PathState,
+        worklist: &mut VecDeque<PathState>,
+        selector: [u8; 4],
+        in_offset: usize,
+        out_offset: &SymExpr,
+        out_size: &BoundedCopySize,
+    ) -> Result<Option<StepOutcome>, SymbolicError> {
+        let args_offset = in_offset + 4;
+        let above = |cx: &mut SymCx, memory: &SymMemory, index: usize, max: U256| {
+            let word = read_abi_word_arg(cx, memory, args_offset, index)?;
+            Ok::<_, SymbolicError>(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ugt, &word, max))
+        };
+        let u64_max = U256::from(u64::MAX);
+        let (invalid, message) = match selector {
+            chainIdCall::SELECTOR => (
+                above(&mut self.cx, &state.memory, 0, u64_max)?,
+                "vm.chainId: chain ID must be less than 2^64",
+            ),
+            feeCall::SELECTOR => (
+                above(&mut self.cx, &state.memory, 0, u64_max)?,
+                "vm.fee: base fee must be less than 2^64",
+            ),
+            txGasPriceCall::SELECTOR => (
+                above(&mut self.cx, &state.memory, 0, u64_max)?,
+                "vm.txGasPrice: gas price must be less than 2^64",
+            ),
+            blobBaseFeeCall::SELECTOR => (
+                above(&mut self.cx, &state.memory, 0, U256::from(u128::MAX))?,
+                "vm.blobBaseFee: blob base fee must be less than 2^128",
+            ),
+            setBlockhashCall::SELECTOR => (
+                above(&mut self.cx, &state.memory, 0, u64_max)?,
+                "vm.setBlockhash: blockNumber must be less than 2^64",
+            ),
+            computeCreateAddressCall::SELECTOR => (
+                above(&mut self.cx, &state.memory, 1, u64_max)?,
+                "vm.computeCreateAddress: nonce must be less than 2^64",
+            ),
+            _ => return Ok(None),
+        };
+
+        let (invalid_constraints, invalid_sat) =
+            self.constraints_with_condition(state, invalid.clone())?;
+        if !invalid_sat {
+            return Ok(None);
+        }
+        let return_data = error_string_return_data(&mut self.cx, message);
+        let valid = invalid.not(&mut self.cx);
+        if let Some(valid_constraints) = self.constraints_for_condition(state, valid)? {
+            let mut revert_state = state.clone();
+            revert_state.constraints = invalid_constraints;
+            revert_cheatcode_call(
+                &mut self.cx,
+                &mut revert_state,
+                out_offset.clone(),
+                out_size,
+                return_data,
+            )?;
+            worklist.push_back(revert_state);
+            state.constraints = valid_constraints;
+            return Ok(None);
+        }
+        revert_cheatcode_call(&mut self.cx, state, out_offset.clone(), out_size, return_data)?;
+        Ok(Some(StepOutcome::Continue))
+    }
+
     pub(super) fn add_call_mock(
         &mut self,
         state: &mut PathState,
@@ -1284,6 +1355,12 @@ impl SymbolicExecutor {
             storeCall::SELECTOR => {
                 let target =
                     read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
+                if is_precompile_for_spec(target, executor.spec_id) {
+                    return Ok(CheatcodeOutcome::Revert(error_string_return_data(
+                        &mut self.cx,
+                        &format!("vm.store: cannot use precompile {target} as an argument"),
+                    )));
+                }
                 let slot = state.memory.load_word(&mut self.cx, in_offset + 36)?;
                 let value = state.memory.load_word(&mut self.cx, in_offset + 68)?;
                 let failed_slot = SymExpr::constant(&mut self.cx, GLOBAL_FAIL_SLOT);
@@ -1337,6 +1414,12 @@ impl SymbolicExecutor {
             etchCall::SELECTOR => {
                 let target =
                     read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
+                if is_precompile_for_spec(target, executor.spec_id) {
+                    return Ok(CheatcodeOutcome::Revert(error_string_return_data(
+                        &mut self.cx,
+                        &format!("vm.etch: cannot use precompile {target} as an argument"),
+                    )));
+                }
                 let code = read_abi_symbolic_dynamic_byte_exprs_arg(
                     &mut self.cx,
                     state,
@@ -1675,6 +1758,13 @@ impl SymbolicExecutor {
             }
             getChainIdCall::SELECTOR => {
                 Ok(CheatcodeOutcome::Continue(vec![state.block.chain_id.clone()]))
+            }
+            difficultyCall::SELECTOR if executor.spec_id >= SpecId::MERGE => {
+                Ok(CheatcodeOutcome::Revert(error_string_return_data(
+                    &mut self.cx,
+                    "vm.difficulty: `difficulty` is not supported after the Paris hard fork, use \
+                     `prevrandao` instead; see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399",
+                )))
             }
             difficultyCall::SELECTOR => {
                 state.block.difficulty = state.memory.load_word(&mut self.cx, in_offset + 4)?;
