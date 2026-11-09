@@ -2,7 +2,7 @@
 
 use crate::{
     abi::{ERC721, Greeter},
-    utils::{http_provider, http_provider_with_signer, reset_when_idle},
+    utils::{http_provider, http_provider_with_signer},
 };
 use alloy_chains::NamedChain;
 use alloy_eips::{
@@ -1809,7 +1809,7 @@ async fn test_fork_reset() {
     assert_eq!(nonce, initial_nonce + 1);
     let to_balance = provider.get_balance(to).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
-    reset_when_idle(&api, Some(Forking { json_rpc_url: None, block_number: Some(block_number) }))
+    api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(block_number) }))
         .await
         .unwrap();
 
@@ -1824,7 +1824,7 @@ async fn test_fork_reset() {
     assert_eq!(balance, handle.genesis_balance());
 
     // reset to latest
-    reset_when_idle(&api, Some(Forking::default())).await.unwrap();
+    api.anvil_reset(Some(Forking::default())).await.unwrap();
 
     let new_block_num = provider.get_block_number().await.unwrap();
     assert!(new_block_num > block_number);
@@ -2069,7 +2069,7 @@ async fn can_reset_properly() {
     assert_eq!(origin_nonce + 1, fork_provider.get_transaction_count(account).await.unwrap());
 
     // resetting to origin state
-    reset_when_idle(&fork_api, Some(Forking::default())).await.unwrap();
+    fork_api.anvil_reset(Some(Forking::default())).await.unwrap();
 
     // nonce reset to origin
     assert_eq!(origin_nonce, fork_provider.get_transaction_count(account).await.unwrap());
@@ -2142,7 +2142,7 @@ async fn test_fork_timestamp() {
 
     let start = std::time::Instant::now();
     // reset to check timestamp works after resetting
-    reset_when_idle(&api, Some(Forking { json_rpc_url: None, block_number: Some(BLOCK_NUMBER) }))
+    api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(BLOCK_NUMBER) }))
         .await
         .unwrap();
     let block = provider.get_block(BlockId::number(BLOCK_NUMBER)).await.unwrap().unwrap();
@@ -2160,7 +2160,7 @@ async fn test_fork_timestamp() {
 
     // ensure that after setting a timestamp manually, then next block time is correct
     let start = std::time::Instant::now();
-    reset_when_idle(&api, Some(Forking { json_rpc_url: None, block_number: Some(BLOCK_NUMBER) }))
+    api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(BLOCK_NUMBER) }))
         .await
         .unwrap();
     api.evm_set_next_block_timestamp(BLOCK_TIMESTAMP + 1).unwrap();
@@ -2758,13 +2758,10 @@ async fn flaky_test_fork_reset_moonbeam() {
     assert!(status);
 
     // reset to check timestamp works after resetting
-    reset_when_idle(
-        &api,
-        Some(Forking {
-            json_rpc_url: Some("https://moonbeam.api.onfinality.io/public".to_string()),
-            block_number: None,
-        }),
-    )
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some("https://moonbeam.api.onfinality.io/public".to_string()),
+        block_number: None,
+    }))
     .await
     .unwrap();
 
@@ -3813,7 +3810,7 @@ async fn test_fork_reset_to_new_url_updates_source_chain_id() {
     };
     assert!(send().await.unwrap().get_receipt().await.unwrap().status());
 
-    reset_when_idle(&api, None).await.unwrap();
+    api.anvil_reset(None).await.unwrap();
     assert_eq!(provider.get_chain_id().await.unwrap(), 31337);
     assert!(send().await.unwrap().get_receipt().await.unwrap().status());
 }
@@ -5291,10 +5288,10 @@ async fn test_fork_reset_follows_amsterdam_tx_gas_limit_cap() {
             }
 
             if let Some(json_rpc_url) = next_url {
-                reset_when_idle(
-                    &api,
-                    Some(Forking { json_rpc_url: Some(json_rpc_url), block_number: None }),
-                )
+                api.anvil_reset(Some(Forking {
+                    json_rpc_url: Some(json_rpc_url),
+                    block_number: None,
+                }))
                 .await
                 .unwrap();
             }

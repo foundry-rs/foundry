@@ -167,8 +167,6 @@ pub enum BlockchainError {
     Eip8130TransactionRejected(String),
     #[error("filter not found")]
     FilterNotFound,
-    #[error("node is busy with active RPC requests; retry the operation")]
-    NodeBusy,
 }
 
 impl From<eyre::Report> for BlockchainError {
@@ -662,12 +660,6 @@ fn blockchain_error_to_rpc_result(err: BlockchainError) -> ResponseResult {
         },
         err @ BlockchainError::UnknownBlock => RpcError {
             code: ErrorCode::ServerError(-32000),
-            message: err.to_string().into(),
-            data: None,
-        },
-        err @ BlockchainError::NodeBusy => RpcError {
-            // Resource unavailable, as defined by EIP-1474.
-            code: ErrorCode::ServerError(-32002),
             message: err.to_string().into(),
             data: None,
         },

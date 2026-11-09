@@ -1133,6 +1133,10 @@ pub struct Backend<N: Network> {
     /// so calls that need to read from it, while it's currently written to, don't block. E.g.
     /// a new block is currently mined and a new [`Self::set_storage_at()`] request is being
     /// executed.
+    ///
+    /// Resets, rollbacks, snapshot reverts, and mining publish all the state they replace while
+    /// they hold the write lock. A reader that needs several fields from one state holds the read
+    /// lock across those reads.
     db: Arc<AsyncRwLock<Box<dyn Db>>>,
     /// stores all block related data in memory.
     blockchain: Blockchain<N>,
@@ -1151,6 +1155,8 @@ pub struct Backend<N: Network> {
     fork: Arc<RwLock<Option<ClientFork>>>,
     /// The last source that supplied the live fork backend, retained across memory resets.
     last_fork_cache_source: Arc<RwLock<Option<ForkCacheSource>>>,
+    /// The instance ID. Changes on every reset.
+    instance_id: Arc<RwLock<B256>>,
     /// Provides time related info, like timestamp.
     time: TimeManager,
     /// Contains state of custom overrides.
@@ -1211,6 +1217,7 @@ impl<N: Network> Clone for Backend<N> {
             hardfork: self.hardfork.clone(),
             fork: self.fork.clone(),
             last_fork_cache_source: self.last_fork_cache_source.clone(),
+            instance_id: self.instance_id.clone(),
             time: self.time.clone(),
             cheats: self.cheats.clone(),
             fees: self.fees.clone(),
@@ -1284,6 +1291,16 @@ impl<N: Network> Backend<N> {
     /// Returns the database
     pub fn get_db(&self) -> &Arc<AsyncRwLock<Box<dyn Db>>> {
         &self.db
+    }
+
+    /// Returns the current instance's ID.
+    pub fn instance_id(&self) -> B256 {
+        *self.instance_id.read()
+    }
+
+    /// Resets the instance ID.
+    pub(crate) fn reset_instance_id(&self) {
+        *self.instance_id.write() = B256::random();
     }
 
     /// Locks block production while a backend-wide lifecycle transition is committed.
@@ -4843,6 +4860,7 @@ impl<N: Network> Backend<N> {
             hardfork: Arc::new(RwLock::new(hardfork)),
             fork,
             last_fork_cache_source: Arc::new(RwLock::new(last_fork_cache_source)),
+            instance_id: Arc::new(RwLock::new(B256::random())),
             time: TimeManager::new(start_timestamp),
             cheats: Default::default(),
             new_block_listeners: Default::default(),
@@ -5454,19 +5472,8 @@ impl<N: Network> Backend<N> {
         }
     }
 
-    /// Discards a prepared fork replacement and restores the live fork's persisted cache.
-    pub(crate) async fn discard_fork_reset(
-        &self,
-        staged: StagedForkReset,
-    ) -> Result<(), BlockchainError> {
-        let StagedForkReset { db, cache_lease, flush_old_cache, .. } = staged;
-        // Release the staged database before its lease removes any cache written on drop.
-        drop(db);
-        self.rollback_staged_fork_cache(cache_lease, flush_old_cache).await
-    }
-
     /// Atomically publishes a fully prepared fork replacement and captures its fallback warning.
-    /// The caller emits the warning after releasing its lifecycle locks.
+    /// The caller emits the warning after releasing its state locks.
     pub(crate) async fn commit_fork_reset(
         &self,
         staged: StagedForkReset,
@@ -5522,6 +5529,7 @@ impl<N: Network> Backend<N> {
         *self.evm_env.write() = evm_env;
         *self.fork.write() = Some(fork);
         *self.last_fork_cache_source.write() = fork_cache_source;
+        self.reset_instance_id();
         {
             let mut storage = self.blockchain.storage.write();
             let mut replacement = BlockchainStorage::forked(
@@ -5734,6 +5742,7 @@ impl<N: Network> Backend<N> {
         *self.evm_env.write() = evm_env;
         *self.hardfork.write() = hardfork;
         *self.fork.write() = None;
+        self.reset_instance_id();
         {
             let mut live_storage = self.blockchain.storage.write();
             storage.tempo = live_storage.tempo.take();
@@ -8009,7 +8018,18 @@ where
     pub async fn rollback(
         &self,
         common_block: Block,
+        mining_guard: &tokio::sync::MutexGuard<'_, ()>,
+    ) -> Result<(), BlockchainError> {
+        self.rollback_and_publish(common_block, mining_guard, || {}).await
+    }
+
+    /// Rolls back to `common_block` and runs `publish` before releasing the database write lock,
+    /// so readers see the rewound state and the published state together.
+    pub(crate) async fn rollback_and_publish(
+        &self,
+        common_block: Block,
         _mining_guard: &tokio::sync::MutexGuard<'_, ()>,
+        publish: impl FnOnce(),
     ) -> Result<(), BlockchainError> {
         let hash = common_block.header.hash_slow();
 
@@ -8139,6 +8159,7 @@ where
         for (block_num, hash) in block_hashes {
             db.insert_block_hash(U256::from(block_num), hash);
         }
+        publish();
 
         Ok(())
     }
@@ -10221,13 +10242,13 @@ impl Backend<FoundryNetwork> {
     /// Runs `f` inside a Tempo storage context initialized from the current state
     /// (Tempo-only).
     async fn with_tempo_storage<R>(&self, f: impl FnOnce() -> R) -> R {
+        // Read the context under the database guard so a reset cannot replace it in between.
+        let mut db = self.db.write().await;
         let hardfork = self.hardfork();
-        // One consistent snapshot of the current env to build the storage context.
         let (chain_id, timestamp, block_number) = {
             let env = self.evm_env.read();
             (env.cfg_env.chain_id, env.block_env.timestamp, env.block_env.number.to::<u64>())
         };
-        let mut db = self.db.write().await;
         let mut storage = AnvilStorageProvider::new(
             &mut **db,
             chain_id,
@@ -12097,47 +12118,5 @@ mod tests {
             decoder.labels.get(&ActivationRegistryStorage::ADDRESS).map(String::as_str),
             Some("ActivationRegistry")
         );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn discard_fork_reset_restores_live_cache() {
-        let chain_id = u64::from_be_bytes(B256::random()[..8].try_into().unwrap());
-        let cache_dir = foundry_config::Config::foundry_chain_cache_dir(chain_id).unwrap();
-        let (origin_api, origin_handle) =
-            spawn(NodeConfig::test().with_chain_id(Some(chain_id)).with_no_mining(true)).await;
-        let (api, handle) = spawn(
-            NodeConfig::test()
-                .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
-                .with_no_mining(true),
-        )
-        .await;
-        let staged =
-            api.backend.prepare_fork_reset(Default::default(), api.instance_id()).await.unwrap();
-        let live_db = api.backend.db.read().await.maybe_inner().unwrap().clone();
-        let staged_db = staged.db.maybe_inner().unwrap().clone();
-        let cache_path = live_db.cache().cache_path().unwrap().to_path_buf();
-        assert_eq!(staged_db.cache().cache_path(), Some(cache_path.as_path()));
-
-        // Remote cache entries learned by the live fork after staging must survive rejection.
-        live_db.block_hashes().write().insert(U256::from(123), B256::repeat_byte(0x33));
-        live_db.cache().flush();
-        let expected = std::fs::read(&cache_path).unwrap();
-        staged_db.block_hashes().write().insert(U256::from(124), B256::repeat_byte(0x44));
-        staged_db.cache().flush();
-        assert_ne!(std::fs::read(&cache_path).unwrap(), expected);
-
-        api.backend.discard_fork_reset(staged).await.unwrap();
-
-        assert!(staged_db.block_hashes().read().is_empty());
-        assert_eq!(std::fs::read(&cache_path).unwrap(), expected);
-        assert_eq!(
-            live_db.block_hashes().read().get(&U256::from(123)),
-            Some(&B256::repeat_byte(0x33))
-        );
-
-        // Release the disk-backed fork before cleanup so shutdown cannot recreate its cache.
-        api.anvil_reset(None).await.unwrap();
-        drop((live_db, staged_db, api, handle, origin_api, origin_handle));
-        std::fs::remove_dir_all(cache_dir).unwrap();
     }
 }

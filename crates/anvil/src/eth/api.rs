@@ -106,6 +106,7 @@ use foundry_primitives::{
 use futures::{
     StreamExt, TryFutureExt,
     channel::{mpsc::Receiver, oneshot},
+    future::BoxFuture,
 };
 use parking_lot::{Mutex, RwLock};
 use revm::{
@@ -138,6 +139,14 @@ use base_execution_eip8130::{FeeCheck, IntrinsicGas};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
+
+/// The maximum number of accepted lifecycle transitions waiting to run.
+///
+/// Transitions run one at a time. If the queue is full, callers wait for space instead of failing.
+const LIFECYCLE_QUEUE_CAPACITY: usize = 16;
+
+/// A lifecycle transition that reports its result to the caller when it completes.
+type LifecycleTransition = BoxFuture<'static, ()>;
 
 #[derive(Clone, Copy)]
 struct TransactionFeeDefaults {
@@ -177,12 +186,8 @@ pub struct EthApi<N: Network> {
     transaction_order: Arc<RwLock<TransactionOrder>>,
     /// Whether we're listening for RPC calls
     net_listening: bool,
-    /// The instance ID. Changes on every reset.
-    instance_id: Arc<RwLock<B256>>,
-    /// Serializes RPC execution with lifecycle transitions.
-    lifecycle_lock: Arc<tokio::sync::RwLock<()>>,
-    /// Serializes reset preparation without blocking identity RPCs made by the target endpoint.
-    reset_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Queues lifecycle transitions for the lifecycle task, which runs them in order.
+    lifecycle: mpsc::Sender<LifecycleTransition>,
     /// Serializes automatic nonce assignment through pool insertion for each sender.
     nonce_locks: Arc<RwLock<HashMap<Address, Arc<tokio::sync::Mutex<()>>>>>,
 }
@@ -202,9 +207,7 @@ impl<N: Network> Clone for EthApi<N> {
             filters: self.filters.clone(),
             transaction_order: self.transaction_order.clone(),
             net_listening: self.net_listening,
-            instance_id: self.instance_id.clone(),
-            lifecycle_lock: self.lifecycle_lock.clone(),
-            reset_lock: self.reset_lock.clone(),
+            lifecycle: self.lifecycle.clone(),
             nonce_locks: self.nonce_locks.clone(),
         }
     }
@@ -213,7 +216,9 @@ impl<N: Network> Clone for EthApi<N> {
 // == impl EthApi<N: Network> generic methods ==
 
 impl<N: Network> EthApi<N> {
-    /// Creates a new instance
+    /// Creates a new instance and spawns its lifecycle task.
+    ///
+    /// Must be called within a Tokio runtime.
     #[expect(clippy::too_many_arguments)]
     pub fn new(
         pool: Arc<Pool<N::TxEnvelope>>,
@@ -226,6 +231,14 @@ impl<N: Network> EthApi<N> {
         filters: Filters<N>,
         transactions_order: TransactionOrder,
     ) -> Self {
+        let (lifecycle, mut transitions) = mpsc::channel(LIFECYCLE_QUEUE_CAPACITY);
+        // The task owns each accepted transition, so it completes even if its caller is dropped.
+        // It exits after the last API handle drops the sender.
+        tokio::spawn(async move {
+            while let Some(transition) = transitions.recv().await {
+                transition.await;
+            }
+        });
         Self {
             pool,
             pool_snapshots: Arc::new(Mutex::new(HashMap::default())),
@@ -239,9 +252,7 @@ impl<N: Network> EthApi<N> {
             filters,
             net_listening: true,
             transaction_order: Arc::new(RwLock::new(transactions_order)),
-            instance_id: Arc::new(RwLock::new(B256::random())),
-            lifecycle_lock: Arc::new(tokio::sync::RwLock::new(())),
-            reset_lock: Arc::new(tokio::sync::Mutex::new(())),
+            lifecycle,
             nonce_locks: Default::default(),
         }
     }
@@ -434,7 +445,8 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `anvil_setCode`
     pub async fn anvil_set_code(&self, address: Address, code: Bytes) -> Result<()> {
         node_info!("anvil_setCode");
-        let _lifecycle = self.lifecycle_lock.read().await;
+        // Check the precompile under the write guard so a reset cannot change the hardfork first.
+        let mut db = self.backend.get_db().write().await;
         if self.backend.is_tempo()
             && let Some(name) =
                 backend::tempo::native_precompile_name(address, self.backend.tempo_hardfork())
@@ -444,7 +456,8 @@ impl<N: Network> EthApi<N> {
             ))
             .into());
         }
-        self.backend.set_code(address, code).await?;
+        db.set_code(address, code)?;
+        drop(db);
         #[cfg(feature = "base")]
         self.invalidate_base_eip8130_pool();
         Ok(())
@@ -555,7 +568,8 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `anvil_nodeInfo`
     pub async fn anvil_node_info(&self) -> Result<WithOtherFields<NodeInfo>> {
         node_info!("anvil_nodeInfo");
-        let _lifecycle = self.lifecycle_lock.read().await;
+        // Lifecycle transitions publish under the database write lock.
+        let _epoch = self.backend.get_db().read().await;
 
         let evm_env = self.backend.evm_env().read().clone();
         let fork_config = self.backend.get_fork();
@@ -609,7 +623,8 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `anvil_metadata`
     pub async fn anvil_metadata(&self) -> Result<Metadata> {
         node_info!("anvil_metadata");
-        let _lifecycle = self.lifecycle_lock.read().await;
+        // Lifecycle transitions publish under the database write lock.
+        let _epoch = self.backend.get_db().read().await;
         let fork_config = self.backend.get_fork();
 
         Ok(Metadata {
@@ -619,7 +634,7 @@ impl<N: Network> EthApi<N> {
             chain_id: self.backend.chain_id().to::<u64>(),
             latest_block_hash: self.backend.best_hash(),
             latest_block_number: self.backend.best_number(),
-            instance_id: *self.instance_id.read(),
+            instance_id: self.backend.instance_id(),
             forked_network: fork_config.map(|cfg| ForkedNetwork {
                 chain_id: cfg.chain_id(),
                 fork_block_number: cfg.block_number(),
@@ -640,7 +655,6 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `evm_snapshot`
     pub async fn evm_snapshot(&self) -> Result<U256> {
         node_info!("evm_snapshot");
-        let _lifecycle = self.lifecycle_lock.read().await;
         let _mining = self.backend.lock_mining().await;
         let pool = self.pool.snapshot();
         let id = self.backend.create_state_snapshot().await;
@@ -710,15 +724,15 @@ impl<N: Network> EthApi<N> {
 
     /// Sets the backend rpc url
     ///
-    /// Returns a resource-unavailable error if another RPC is active. Retry once it completes.
-    ///
     /// Handler for ETH RPC call: `anvil_setRpcUrl`
     pub async fn anvil_set_rpc_url(&self, url: String) -> Result<()> {
         node_info!("anvil_setRpcUrl");
-        let _reset = self.reset_lock.lock().await;
-        // Avoid remote validation when the node is already busy. RPCs may start during staging,
-        // so exclusive access must still be checked again before publishing the replacement.
-        drop(self.try_lock_lifecycle()?);
+        let api = self.clone();
+        self.run_lifecycle_transition(async move { api.set_rpc_url(url).await }).await
+    }
+
+    /// Replaces the fork RPC URL on the lifecycle task.
+    async fn set_rpc_url(&self, url: String) -> Result<()> {
         let staged_fork = if let Some(fork) = self.backend.get_fork() {
             let mut validation_config = self.backend.node_config.read().await.clone();
             validation_config.warn_if_fork_headers_withheld(&url);
@@ -753,7 +767,6 @@ impl<N: Network> EthApi<N> {
             None
         };
 
-        let _lifecycle = self.try_lock_lifecycle()?;
         let _mining = self.backend.lock_mining().await;
         let mut node_config = self.backend.node_config.write().await;
         if let Some((fork, provider, endpoint_identity)) = staged_fork {
@@ -817,12 +830,12 @@ impl<N: Network> EthApi<N> {
 
     /// Returns the current instance's ID.
     pub fn instance_id(&self) -> B256 {
-        *self.instance_id.read()
+        self.backend.instance_id()
     }
 
     /// Resets the instance ID.
     pub fn reset_instance_id(&self) {
-        *self.instance_id.write() = B256::random();
+        self.backend.reset_instance_id();
     }
 
     /// Returns the first signer that can sign for the given address
@@ -914,47 +927,36 @@ impl<N: Network> EthApi<N> {
     ///
     /// If `forking` is `None` then this will disable forking entirely.
     ///
-    /// Returns a resource-unavailable error if another RPC is active. Retry once it completes.
-    ///
     /// Handler for RPC call: `anvil_reset`
     pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
         node_info!("anvil_reset");
-        let _reset = self.reset_lock.lock().await;
+        let api = self.clone();
+        self.run_lifecycle_transition(async move { api.reset(forking).await }).await
+    }
+
+    /// Resets the node on the lifecycle task.
+    async fn reset(&self, forking: Option<Forking>) -> Result<()> {
         let warning = if let Some(forking) = forking {
-            // Avoid remote staging when the node is already busy. RPCs may start during staging,
-            // so exclusive access must still be checked again before publishing the replacement.
-            drop(self.try_lock_lifecycle()?);
             let staged = self.backend.prepare_fork_reset(forking, self.instance_id()).await?;
-            let _lifecycle = match self.try_lock_lifecycle() {
-                Ok(lifecycle) => lifecycle,
-                Err(err) => {
-                    self.backend.discard_fork_reset(staged).await?;
-                    return Err(err);
-                }
-            };
             // Stop an old-context block before publishing the replacement DB and environment.
             let _mining = self.backend.lock_mining().await;
             let warning = self.backend.commit_fork_reset(staged).await?;
-            self.reset_instance_id();
             self.pool.clear();
             self.pool_snapshots.lock().clear();
             self.fee_history_cache.lock().clear();
             warning
         } else {
-            let _lifecycle = self.try_lock_lifecycle()?;
             // Unlike fork preparation, memory preparation snapshots live local fee state and does
-            // no remote I/O. Keep that snapshot and its publication in one lifecycle transition.
+            // no remote I/O. Keep that snapshot and its publication under one mining guard.
             let _mining = self.backend.lock_mining().await;
             let staged = self.backend.prepare_memory_reset().await?;
             self.backend.commit_memory_reset(staged).await?;
-            self.reset_instance_id();
             self.pool.clear();
             self.pool_snapshots.lock().clear();
             self.fee_history_cache.lock().clear();
             None
         };
-        drop(_reset);
-        // Diagnostics describe the completed reset and must not hold its lifecycle or state locks.
+        // Diagnostics describe the completed reset and must not hold its state locks.
         if let Some(warning) = warning {
             let _ = sh_warn!("{warning}");
         }
@@ -970,7 +972,6 @@ impl<N: Network> EthApi<N> {
         N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
     {
         node_info!("evm_revert");
-        let _lifecycle = self.lifecycle_lock.read().await;
         let _mining = self.backend.lock_mining().await;
         let reverted = self.backend.revert_state_snapshot(id).await?;
         if reverted {
@@ -1748,11 +1749,23 @@ impl<N: Network> EthApi<N> {
         Ok(BlockRequest::Number(self.backend.ensure_trace_block_number(block_id).await?))
     }
 
-    /// Acquires exclusive lifecycle access without blocking subsequent RPCs behind a writer.
-    fn try_lock_lifecycle(&self) -> Result<tokio::sync::RwLockWriteGuard<'_, ()>> {
-        // A queued writer in this fair RwLock would prevent new readers, including RPCs that
-        // could complete an active request, such as mining a synchronously submitted transaction.
-        self.lifecycle_lock.try_write().map_err(|_| BlockchainError::NodeBusy)
+    /// Runs a reset, RPC URL replacement, rollback, or reorg on the lifecycle task.
+    ///
+    /// Transitions run one at a time in submission order. Requests never wait for them, because
+    /// each transition publishes its state under the backend database write lock.
+    async fn run_lifecycle_transition<T: Send + 'static>(
+        &self,
+        transition: impl Future<Output = Result<T>> + Send + 'static,
+    ) -> Result<T> {
+        let (tx, rx) = oneshot::channel();
+        self.lifecycle
+            .send(Box::pin(async move {
+                let _ = tx.send(transition.await);
+            }))
+            .await
+            .map_err(|_| BlockchainError::Internal("lifecycle task stopped".to_string()))?;
+        rx.await
+            .map_err(|_| BlockchainError::Internal("lifecycle transition aborted".to_string()))?
     }
 }
 
@@ -1964,12 +1977,15 @@ impl EthApi<FoundryNetwork> {
     /// Depth specifies the height to rollback the chain back to. Depth must not exceed the current
     /// chain height, i.e. can't rollback past the genesis block.
     ///
-    /// Returns a resource-unavailable error if another RPC is active. Retry once it completes.
-    ///
     /// Handler for RPC call: `anvil_rollback`
     pub async fn anvil_rollback(&self, depth: Option<u64>) -> Result<()> {
         node_info!("anvil_rollback");
-        let _lifecycle = self.try_lock_lifecycle()?;
+        let api = self.clone();
+        self.run_lifecycle_transition(async move { api.rollback(depth).await }).await
+    }
+
+    /// Rolls back the chain on the lifecycle task.
+    async fn rollback(&self, depth: Option<u64>) -> Result<()> {
         let mining_guard = self.backend.lock_mining().await;
         let depth = depth.unwrap_or(1);
 
@@ -2244,30 +2260,6 @@ impl EthApi<FoundryNetwork> {
     #[allow(clippy::large_stack_frames)]
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
         trace!(target: "rpc::api", "executing eth request");
-        // Fork reset and RPC URL replacement take the write lock internally after their fallible
-        // remote staging work. Memory reset takes it before staging because it snapshots live
-        // state. Identity, snapshot, chain-rewind, and SetCode methods also lock internally to keep
-        // direct API callers safe without recursively acquiring the lock. Lifecycle writers reject
-        // busy transitions instead of queueing behind active requests and blocking later readers.
-        // Consensus queries snapshot their source under the backend DB lock before upstream I/O.
-        let _lifecycle = if matches!(
-            &request,
-            EthRequest::Reset(_)
-                | EthRequest::SetCode(_, _)
-                | EthRequest::SetRpcUrl(_)
-                | EthRequest::NodeInfo(_)
-                | EthRequest::AnvilMetadata(_)
-                | EthRequest::EvmSnapshot(_)
-                | EthRequest::EvmRevert(_)
-                | EthRequest::Reorg(_)
-                | EthRequest::Rollback(_)
-                | EthRequest::ConsensusGetFinalization(_)
-                | EthRequest::ConsensusGetLatest(_)
-        ) {
-            None
-        } else {
-            Some(self.lifecycle_lock.read().await)
-        };
         match request {
             EthRequest::EthProtocolVersion(()) => self.protocol_version().to_rpc_result(),
             EthRequest::Web3ClientVersion(()) => self.client_version().to_rpc_result(),
@@ -4616,12 +4608,15 @@ impl EthApi<FoundryNetwork> {
     /// Optionally supply a list of transaction and block pairs that will populate the reorged
     /// blocks. The maximum block number of the pairs must not exceed the specified depth.
     ///
-    /// Returns a resource-unavailable error if another RPC is active. Retry once it completes.
-    ///
     /// Handler for RPC call: `anvil_reorg`
     pub async fn anvil_reorg(&self, options: ReorgOptions) -> Result<()> {
         node_info!("anvil_reorg");
-        let _lifecycle = self.try_lock_lifecycle()?;
+        let api = self.clone();
+        self.run_lifecycle_transition(async move { api.reorg(options).await }).await
+    }
+
+    /// Reorgs the chain on the lifecycle task.
+    async fn reorg(&self, options: ReorgOptions) -> Result<()> {
         let mining_guard = self.backend.lock_mining().await;
         let depth = options.depth;
         let mut tx_block_pairs = options.tx_block_pairs;
@@ -6008,7 +6003,6 @@ mod tests {
     use super::*;
     use crate::{NodeConfig, spawn};
     use foundry_evm::constants::HARDHAT_CONSOLE_ADDRESS;
-    use futures::FutureExt;
 
     #[cfg(feature = "base")]
     #[tokio::test(flavor = "multi_thread")]
@@ -6201,173 +6195,16 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn set_code_waits_for_lifecycle_before_native_guard() {
+    async fn set_code_checks_native_guard_under_db_lock() {
         let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
-        let lifecycle = api.lifecycle_lock.write().await;
+        let db = api.backend.get_db().write().await;
         let mut write = std::pin::pin!(
             api.anvil_set_code(foundry_evm::core::tempo::PATH_USD_ADDRESS, Bytes::new())
         );
 
         assert!(futures::poll!(write.as_mut()).is_pending());
-        drop(lifecycle);
+        drop(db);
         let error = tokio::time::timeout(Duration::from_secs(5), write).await.unwrap().unwrap_err();
         assert!(matches!(error, BlockchainError::RpcError(_)));
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn lifecycle_transitions_reject_active_rpc_without_blocking_requests() {
-        let (api, _handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
-        api.mine_one().await.unwrap();
-        let instance = api.instance_id();
-
-        // Model a long-running RPC without depending on EVM execution time or upstream I/O.
-        let active_rpc = api.lifecycle_lock.read().await;
-        for request in [
-            EthRequest::Reset(None),
-            EthRequest::SetRpcUrl("http://localhost:8545".to_string()),
-            EthRequest::Rollback(Some(1)),
-            EthRequest::Reorg(ReorgOptions { depth: 1, tx_block_pairs: Vec::new() }),
-        ] {
-            assert_eq!(
-                api.execute(request).now_or_never(),
-                Some(Err::<(), _>(BlockchainError::NodeBusy).to_rpc_result())
-            );
-        }
-        assert_eq!(api.instance_id(), instance);
-        assert_eq!(api.backend.best_number(), 1);
-
-        tokio::time::timeout(Duration::from_secs(5), async {
-            assert_eq!(
-                api.execute(EthRequest::EthBlockNumber(())).await,
-                ResponseResult::success(U256::from(1))
-            );
-            assert_eq!(
-                api.execute(EthRequest::EvmMine(None)).await,
-                ResponseResult::success("0x0")
-            );
-        })
-        .await
-        .unwrap();
-
-        drop(active_rpc);
-        api.anvil_reset(None).await.unwrap();
-        assert_ne!(api.instance_id(), instance);
-        assert_eq!(api.backend.best_number(), 0);
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn fork_lifecycle_transitions_preserve_live_state_when_busy() {
-        let (origin_api, origin_handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
-        origin_api.mine_one().await.unwrap();
-        let (api, _handle) = spawn(
-            NodeConfig::test()
-                .with_no_mining(true)
-                .with_no_storage_caching(true)
-                .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
-                .with_fork_block_number(Some(0u64)),
-        )
-        .await;
-        let (replacement_api, replacement_handle) =
-            spawn(NodeConfig::test().with_no_mining(true)).await;
-
-        let instance = api.instance_id();
-        let head = api.backend.best_hash();
-        let (original_url, original_identity) = {
-            let fork = api.backend.get_fork().unwrap();
-            let config = fork.config.read();
-            (config.eth_rpc_url().unwrap().to_string(), config.endpoint_identity)
-        };
-        let account = Address::repeat_byte(0x77);
-        api.anvil_set_balance(account, U256::from(123)).await.unwrap();
-
-        // Keep both lifecycle locks occupied so staging would block on a remote RPC without the
-        // preflight check. The target reader models the active RPC being protected.
-        let active_rpc = api.lifecycle_lock.read().await;
-        let replacement_lifecycle = replacement_api.lifecycle_lock.write().await;
-        assert!(matches!(
-            api.anvil_set_rpc_url(replacement_handle.http_endpoint()).now_or_never(),
-            Some(Err(BlockchainError::NodeBusy))
-        ));
-
-        {
-            let fork = api.backend.get_fork().unwrap();
-            let config = fork.config.read();
-            assert_eq!(config.eth_rpc_url(), Some(original_url.as_str()));
-            assert_eq!(config.endpoint_identity, original_identity);
-        }
-        assert_eq!(api.backend.best_hash(), head);
-
-        drop(replacement_lifecycle);
-        drop(active_rpc);
-
-        let origin_lifecycle = origin_api.lifecycle_lock.write().await;
-        let mut reset =
-            Box::pin(api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(1) })));
-        // Gate the origin so a new RPC starts after preflight but before fork staging completes.
-        assert!(futures::poll!(reset.as_mut()).is_pending());
-        let active_rpc = api.lifecycle_lock.read().await;
-        drop(origin_lifecycle);
-        let error = tokio::time::timeout(Duration::from_secs(5), reset)
-            .await
-            .expect("fork reset must reject active RPCs instead of queueing a writer")
-            .unwrap_err();
-        assert!(matches!(error, BlockchainError::NodeBusy));
-        assert_eq!(api.instance_id(), instance);
-        assert_eq!(api.backend.best_hash(), head);
-        assert_eq!(api.get_fork().unwrap().block_number(), 0);
-        assert_eq!(api.balance(account, None).await.unwrap(), U256::from(123));
-
-        drop(active_rpc);
-        api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(1) })).await.unwrap();
-        assert_ne!(api.instance_id(), instance);
-        assert_eq!(api.get_fork().unwrap().block_number(), 1);
-        assert_eq!(api.balance(account, None).await.unwrap(), U256::ZERO);
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn automatic_fork_reset_retries_busy_without_blocking_requests() {
-        let (origin_api, origin_handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
-        origin_api.mine_one().await.unwrap();
-        let (api, _handle) = spawn(
-            NodeConfig::test()
-                .with_no_mining(true)
-                .with_no_storage_caching(true)
-                .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
-                .with_fork_block_number(Some(0u64)),
-        )
-        .await;
-        let active_rpc = api.lifecycle_lock.read().await;
-        let mut reset = Box::pin(crate::tasks::reset_on_new_block(&api, 1));
-        assert!(futures::poll!(reset.as_mut()).is_pending());
-        assert_eq!(api.get_fork().unwrap().block_number(), 0);
-        assert_eq!(
-            tokio::time::timeout(Duration::from_secs(5), api.execute(EthRequest::NetListening(())))
-                .await
-                .unwrap(),
-            ResponseResult::success(true)
-        );
-
-        drop(active_rpc);
-        tokio::time::timeout(Duration::from_secs(5), reset).await.unwrap();
-        assert_eq!(api.get_fork().unwrap().block_number(), 1);
-
-        // Shutdown must still cancel a block listener while its reset is waiting to retry.
-        let active_rpc = api.lifecycle_lock.read().await;
-        let (signal, shutdown) = crate::shutdown::signal();
-        let listener_api = api.clone();
-        let mut listener = Box::pin(crate::tasks::block_listener::BlockListener::new(
-            shutdown,
-            futures::stream::iter([0]),
-            move |block| {
-                let api = listener_api.clone();
-                async move { crate::tasks::reset_on_new_block(&api, block).await }
-            },
-        ));
-        assert!(futures::poll!(listener.as_mut()).is_pending());
-        signal.fire().unwrap();
-        assert!(futures::poll!(listener.as_mut()).is_ready());
-        drop(listener);
-        drop(active_rpc);
-        assert_eq!(api.get_fork().unwrap().block_number(), 1);
     }
 }
