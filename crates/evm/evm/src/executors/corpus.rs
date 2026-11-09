@@ -77,9 +77,11 @@ use std::{
     fmt,
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc,
     },
+    thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
@@ -156,6 +158,20 @@ impl CorpusEntry {
         }
     }
 
+    /// Clones the fields that persistence needs; the comparison hints stay with the campaign.
+    fn persistence_copy(&self) -> Self {
+        Self {
+            uuid: self.uuid,
+            total_mutations: self.total_mutations,
+            new_finds_produced: self.new_finds_produced,
+            tx_seq: self.tx_seq.clone(),
+            cmp_seq: Vec::new(),
+            is_favored: self.is_favored,
+            timestamp: self.timestamp,
+            persisted_file_name: self.persisted_file_name.clone(),
+        }
+    }
+
     fn write_to_disk_in(&self, dir: &Path, can_gzip: bool) -> foundry_common::fs::Result<PathBuf> {
         let should_gzip = self.should_gzip(can_gzip);
         let file_name = self.file_name(should_gzip);
@@ -194,6 +210,93 @@ impl CorpusEntry {
         }
         let size: usize = self.tx_seq.iter().map(|tx| tx.estimate_serialized_size()).sum();
         size > GZIP_THRESHOLD
+    }
+}
+
+/// Persists live corpus entries off the campaign thread.
+///
+/// Serializing and compressing a sequence costs more than the handler call that found it, so the
+/// campaign thread only clones the sequence and queues it. Writes complete in queue order, and
+/// [`CorpusWriter::flush`] waits for the queue to drain before another worker may read the
+/// directory.
+struct CorpusWriter {
+    sender: Option<mpsc::Sender<CorpusWrite>>,
+    thread: Option<thread::JoinHandle<()>>,
+    pending: Arc<(Mutex<usize>, Condvar)>,
+}
+
+/// A queued corpus write.
+struct CorpusWrite {
+    entry: CorpusEntry,
+    gzip: bool,
+}
+
+impl CorpusWriter {
+    /// Starts the writer thread for `worker_id`, persisting into `dir`.
+    fn spawn(worker_id: usize, dir: PathBuf) -> Self {
+        let (sender, receiver) = mpsc::channel::<CorpusWrite>();
+        let pending = Arc::new((Mutex::new(0usize), Condvar::new()));
+        let thread_pending = Arc::clone(&pending);
+        let thread = thread::Builder::new()
+            .name(format!("corpus-writer-{worker_id}"))
+            .spawn(move || {
+                let mut warned = false;
+                for CorpusWrite { entry, gzip } in receiver {
+                    match entry.write_to_disk_in(&dir, gzip) {
+                        Ok(_) => trace!(
+                            target: "corpus",
+                            "persisted {} inputs for new coverage for {} corpus",
+                            entry.tx_seq.len(),
+                            entry.uuid,
+                        ),
+                        Err(err) => {
+                            if !warned {
+                                let _ = sh_warn!(
+                                    "Failed to persist coverage corpus entries for worker {worker_id} in {}: {err}",
+                                    dir.display()
+                                );
+                                warned = true;
+                            }
+                            debug!(target: "corpus", %err, "failed to record call sequence {:?}", entry.tx_seq);
+                        }
+                    }
+                    let (count, done) = &*thread_pending;
+                    *count.lock().unwrap() -= 1;
+                    done.notify_all();
+                }
+            })
+            .expect("failed to spawn the corpus writer thread");
+        Self { sender: Some(sender), thread: Some(thread), pending }
+    }
+
+    /// Queues `entry` for persistence.
+    fn write(&self, entry: CorpusEntry, gzip: bool) {
+        let (count, _) = &*self.pending;
+        *count.lock().unwrap() += 1;
+        if let Some(sender) = &self.sender
+            && sender.send(CorpusWrite { entry, gzip }).is_err()
+        {
+            *count.lock().unwrap() -= 1;
+        }
+    }
+
+    /// Blocks until every queued write has completed, or the writer thread has ended.
+    fn flush(&self) {
+        let (count, done) = &*self.pending;
+        let mut count = count.lock().unwrap();
+        while *count > 0 && self.thread.as_ref().is_some_and(|thread| !thread.is_finished()) {
+            count = done.wait_timeout(count, Duration::from_millis(50)).unwrap().0;
+        }
+    }
+}
+
+impl Drop for CorpusWriter {
+    fn drop(&mut self) {
+        // Closing the channel ends the thread once the queue is drained.
+        self.sender.take();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 
@@ -687,8 +790,8 @@ pub struct WorkerCorpus {
     /// Worker Dir
     /// corpus_dir/worker1/
     worker_dir: Option<PathBuf>,
-    /// Whether this worker already warned that a live corpus entry could not be persisted.
-    warned_persistence_failure: bool,
+    /// Writes live corpus entries to the worker directory off the campaign thread.
+    writer: Option<CorpusWriter>,
     /// Metrics at last sync - used to calculate deltas while syncing with global metrics
     last_sync_metrics: CorpusMetrics,
     /// Optimization mode: the best value found so far (loaded from disk or discovered in-run).
@@ -975,8 +1078,10 @@ impl WorkerCorpus {
             worker_sync_enabled: false,
             new_entry_indices: Default::default(),
             initial_export_dirs,
+            writer: worker_dir
+                .as_ref()
+                .map(|worker_dir| CorpusWriter::spawn(id, worker_dir.join(CORPUS_DIR))),
             worker_dir,
-            warned_persistence_failure: false,
             last_sync_metrics: Default::default(),
             optimization_best_value: seed.optimization_best_value,
             optimization_best_sequence: seed.optimization_best_sequence,
@@ -1111,28 +1216,9 @@ impl WorkerCorpus {
 
     fn insert_corpus_entry(&mut self, corpus: CorpusEntry, insertion_mode: CorpusInsertionMode) {
         if matches!(insertion_mode, CorpusInsertionMode::Live)
-            && let Some(worker_dir) = &self.worker_dir
+            && let Some(writer) = &self.writer
         {
-            let worker_corpus = worker_dir.join(CORPUS_DIR);
-            let write_result = corpus.write_to_disk_in(&worker_corpus, self.config.corpus_gzip);
-            if let Err(err) = write_result {
-                if !self.warned_persistence_failure {
-                    let _ = sh_warn!(
-                        "Failed to persist coverage corpus entries for worker {} in {}: {err}",
-                        self.id,
-                        worker_corpus.display()
-                    );
-                    self.warned_persistence_failure = true;
-                }
-                debug!(target: "corpus", %err, "failed to record call sequence {:?}", corpus.tx_seq);
-            } else {
-                trace!(
-                    target: "corpus",
-                    "persisted {} inputs for new coverage for {} corpus",
-                    corpus.tx_seq.len(),
-                    corpus.uuid,
-                );
-            }
+            writer.write(corpus.persistence_copy(), self.config.corpus_gzip);
         }
 
         self.push_corpus_entry(corpus);
@@ -1326,6 +1412,13 @@ impl WorkerCorpus {
     }
     /// Flush the oldest corpus mutated more than configured max mutations unless it is favored
     /// or pending synchronization.
+    /// Waits until every queued live corpus write has reached the worker directory.
+    fn flush_writes(&self) {
+        if let Some(writer) = &self.writer {
+            writer.flush();
+        }
+    }
+
     fn evict_oldest_corpus(&mut self) -> Result<()> {
         if self.in_memory_corpus.len() > self.config.corpus_min_size.max(1)
             && let Some(index) =
@@ -1526,6 +1619,7 @@ impl WorkerCorpus {
         if self.new_entry_indices.is_empty() || self.worker_dir.is_none() {
             return Ok(());
         }
+        self.flush_writes();
 
         let worker_dir = self.worker_dir.as_ref().unwrap();
         let Some(master_sync_dir) = self
@@ -1575,6 +1669,7 @@ impl WorkerCorpus {
         if self.worker_dir.is_none() {
             return Ok(());
         }
+        self.flush_writes();
 
         let worker_dir = self.worker_dir.as_ref().unwrap();
         let master_corpus_dir = worker_dir.join(CORPUS_DIR);
@@ -2617,6 +2712,7 @@ mod tests {
 
         assert_eq!(manager.in_memory_corpus.len(), 1);
         assert_eq!(manager.metrics.corpus_count, 1);
+        manager.flush_writes();
         assert_eq!(read_corpus_dir(&worker_subdir.join(CORPUS_DIR)).count(), 1);
     }
 
@@ -2696,6 +2792,7 @@ mod tests {
         );
 
         let worker_corpus_dir = corpus_root.join("worker1").join(CORPUS_DIR);
+        manager.flush_writes();
         let entries = read_corpus_dir(&worker_corpus_dir).collect::<Vec<_>>();
         assert_eq!(entries.len(), 1);
         let persisted_sequence = entries[0].read_tx_seq().unwrap();
@@ -3081,6 +3178,7 @@ mod tests {
         );
 
         assert_eq!(manager.in_memory_corpus.len(), 1);
+        manager.flush_writes();
         assert_eq!(read_corpus_dir(&worker_corpus_dir).count(), 1);
     }
 
@@ -3258,6 +3356,7 @@ mod tests {
 
         manager.push_observed_sequence(vec![basic_tx()], CorpusInsertionMode::Live);
         assert_eq!(manager.in_memory_corpus.len(), 1);
+        manager.flush_writes();
         assert_eq!(read_corpus_dir(&worker0_corpus_dir).count(), 1);
 
         let mut manager = empty_worker_corpus(1, corpus_root.clone());
