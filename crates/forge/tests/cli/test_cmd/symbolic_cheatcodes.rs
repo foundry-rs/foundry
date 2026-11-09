@@ -2230,14 +2230,24 @@ contract Token {
     }
 }
 
+contract Boomer {
+    function boom() external pure {
+        revert("boom");
+    }
+}
+
 contract SymbolicRevertKeepsCheatcodes is Test {
     event Emitted(uint256 value);
 
     uint256 constant DEADLINE = 1000;
     Token token;
+    Boomer a;
+    Boomer b;
 
     function setUp() public {
         token = new Token();
+        a = new Boomer();
+        b = new Boomer();
     }
 
     function warpThenRevert(uint256 t) external {
@@ -2262,6 +2272,10 @@ contract SymbolicRevertKeepsCheatcodes is Test {
     function expectTwoRevertsThenReturn() external {
         vm.expectRevert(uint64(2));
         this.boom();
+    }
+
+    function expectReverterThenReturn(address reverter) external {
+        vm.expectRevert(reverter);
     }
 
     function mockThenRevert(address user) external {
@@ -2307,6 +2321,17 @@ contract SymbolicRevertKeepsCheatcodes is Test {
         }
     }
 
+    // The inherited expectation carries the callee's reverter history, so the earlier revert of
+    // `a` does not match an expectation for `a` that `b`'s revert must satisfy.
+    /// forge-config: default.allow_internal_expect_revert = true
+    function checkInternalModeInheritsReverterTracking() public {
+        (bool aOk,) = address(a).call(abi.encodeCall(Boomer.boom, ()));
+        assert(!aOk);
+        this.expectReverterThenReturn(address(a));
+        (bool bOk,) = address(b).call(abi.encodeCall(Boomer.boom, ()));
+        if (!bOk) assert(false);
+    }
+
     // A deeper revert matched one of two expected reverts, so the callee fails with the unmet
     // reason, not the depth one.
     function checkPartiallyMetExpectRevertReason() public {
@@ -2331,14 +2356,15 @@ contract SymbolicRevertKeepsCheatcodes is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 6 tests for test/SymbolicRevertKeepsCheatcodes.t.sol:SymbolicRevertKeepsCheatcodes
+Ran 7 tests for test/SymbolicRevertKeepsCheatcodes.t.sol:SymbolicRevertKeepsCheatcodes
 [FAIL: expected an emit, but no logs were emitted afterwards. you might have mismatched events or not enough events were emitted; counterexample: 		[SENDER] [SENDER] calldata=0x3e65ad21 args=[]] checkExpectEmitSurvivesRevertingCall() ([METRICS])
 [FAIL: call didn't revert at a lower depth than cheatcode call depth; counterexample: 		[SENDER] [SENDER] calldata=0xea358207 args=[]] checkExpectRevertPendingInCalleeReverts() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xd07dbb64 args=[]] checkInternalModeInheritsReverterTracking() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x6807c02f args=[]] checkInternalModeKeepsPendingExpectRevert() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x9389e44d0000000000000000000000000000000000000000000000000000000000000000 args=[0x0000000000000000000000000000000000000000]] checkMockSurvivesRevertingCall(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x507454da args=[]] checkPartiallyMetExpectRevertReason() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xe9b7d25400000000000000000000000000000000000000000000000000000000000003e8 args=[1000]] checkWarpSurvivesRevertingCall(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 7 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()

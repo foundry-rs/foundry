@@ -176,7 +176,9 @@ impl SymbolicExecutor {
                 "call didn't revert at a lower depth than cheatcode call depth";
             match outcome.status {
                 CallStatus::Success if executor.internal_expect_revert => {
+                    // The reverter history belongs to the expectation, which the child reset.
                     parent.expected_revert = Some(expected);
+                    parent.first_failed_callee = outcome.state.first_failed_callee;
                     return Ok(JoinedCallOutcome::Success {
                         parent,
                         child: outcome.state,
