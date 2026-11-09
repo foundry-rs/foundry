@@ -128,6 +128,7 @@ use evm2::{
     AccountInfo,
     evm::{BalContext, BlockAccessIndex, BlockStateAccumulator, PendingState, StateChangeSource},
     interpreter::InstrStop,
+    registry::HandlerError,
 };
 use evm2_inspectors::{
     access_list::AccessListInspector,
@@ -164,6 +165,7 @@ use std::{
     time::Duration,
 };
 use storage::{Blockchain, DEFAULT_HISTORY_LIMIT, MinedTransaction};
+use tempo_evm::{FeePaymentError, TempoInvalidTransaction};
 use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     NONCE_PRECOMPILE_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
@@ -9983,20 +9985,29 @@ where
             // Pool admission does not require the lower validity bound or fee AMM liquidity.
             evm.ext_mut().skip_valid_after_check = true;
             evm.ext_mut().skip_liquidity_check = true;
-            match crate::eth::backend::evm::transact::<TempoEvmNetwork>(
-                &mut evm,
-                &tx,
-                &TxContext::default(),
-                opts.cheats.as_ref(),
-            ) {
-                Ok(_) => Ok(()),
+            let evm_tx = TempoEvmNetwork::prepared_evm_tx(&tx, opts.cheats.as_ref())?;
+            TempoEvmNetwork::set_tx_context(&mut evm, &evm_tx, &TxContext::default());
+            let Err(err) = evm.transact(&evm_tx) else { return Ok(()) };
+            // Report a fee token shortfall with the payer's token balance and the required fee.
+            if let HandlerError::External(err) = &err
+                && let Some(TempoInvalidTransaction::CollectFeePreTx(
+                    FeePaymentError::InsufficientFeeTokenBalance { fee, balance },
+                )) = err.downcast_ref()
+            {
+                return Err(InvalidTransactionError::TempoInsufficientFeeTokenBalance {
+                    balance: *balance,
+                    required: *fee,
+                }
+                .into());
+            }
+            match err.into() {
                 // The pool queues transactions ahead of their nonce lane, and fee AMM liquidity
                 // is only required at inclusion; evm2 has no validation-only entry point.
-                Err(BlockchainError::InvalidTransaction(InvalidTransactionError::NonceTooHigh)) => {
+                BlockchainError::InvalidTransaction(InvalidTransactionError::NonceTooHigh) => {
                     Ok(())
                 }
-                Err(err) if err.to_string().contains("InsufficientLiquidity") => Ok(()),
-                Err(err) => Err(err),
+                err if err.to_string().contains("InsufficientLiquidity") => Ok(()),
+                err => Err(err),
             }
         })
         .await?
