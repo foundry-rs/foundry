@@ -1,6 +1,6 @@
 //! Sequential Monad simulation owns its block cursor independently of local script execution.
 
-use super::{PreSimulationState, RpcSimulationContext};
+use super::{PreSimulationState, RpcSimulationContext, SimulatedTransaction, SimulationOutcome};
 use crate::{
     ScriptResult,
     runner::{GasSearch, ScriptRunner, needs_more_gas},
@@ -186,7 +186,11 @@ impl PreSimulationState<MonadEvmNetwork> {
                     .simulate(tx, transaction.is_fixed_gas_limit)
                     .wrap_err("Internal EVM error during simulation")?;
                 if !result.success {
-                    return Ok((rpc, None, false, result.traces));
+                    return Ok(SimulationOutcome {
+                        rpc,
+                        transaction: SimulatedTransaction::Failed,
+                        traces: result.traces,
+                    });
                 }
                 if self.args.slow {
                     simulation.advance_block();
@@ -202,9 +206,13 @@ impl PreSimulationState<MonadEvmNetwork> {
                         &result,
                         self.args.gas_estimate_multiplier,
                         &self.build_data,
-                    )
+                    )?
                     .build();
-                eyre::Ok((rpc, Some(transaction), is_noop, result.traces))
+                eyre::Ok(SimulationOutcome {
+                    rpc,
+                    transaction: SimulatedTransaction::succeeded(transaction, is_noop),
+                    traces: result.traces,
+                })
             })
             .collect::<Vec<_>>();
         let transactions = self.collect_simulation_results(results, &contexts).await?;
