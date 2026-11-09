@@ -1,4 +1,5 @@
 use super::*;
+use alloy_sol_types::{Revert, SolError};
 
 impl SymbolicExecutor {
     pub(super) fn call(
@@ -960,9 +961,22 @@ impl SymbolicExecutor {
         }
 
         if to == HARDHAT_CONSOLE_ADDRESS {
-            state.return_data = SymReturnData::empty(&mut self.cx);
+            // Forge's console inspector reverts a call it cannot decode.
+            let input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset);
+            let error = input
+                .concrete_bytes(&mut self.cx, "symbolic console input")
+                .ok()
+                .and_then(|input| console::hh::ConsoleCalls::abi_decode(&input).err());
+            state.return_data = match &error {
+                Some(error) => {
+                    state.first_failed_callee.get_or_insert(HARDHAT_CONSOLE_ADDRESS);
+                    let revert = Revert::from(error.to_string()).abi_encode();
+                    SymReturnData::from_concrete_bytes(&mut self.cx, revert)
+                }
+                None => SymReturnData::empty(&mut self.cx),
+            };
             state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
-            state.stack.push(SymExpr::one(&mut self.cx))?;
+            state.stack.push(SymExpr::constant(&mut self.cx, U256::from(error.is_none())))?;
             return Ok(StepOutcome::Continue);
         }
 
