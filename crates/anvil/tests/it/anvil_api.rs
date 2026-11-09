@@ -1790,6 +1790,64 @@ async fn test_reorg_prices_json_transactions_from_common_block() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_reorg_estimates_json_tx_gas_against_common_block() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+
+    // `COUNTER_INIT_CODE` writes slot zero during creation. This init code installs the same
+    // runtime and leaves the slot unset, so the first call on the deploy block is a
+    // zero-to-nonzero SSTORE.
+    let init_code = alloy_primitives::bytes!("600a600c600039600a6000f360005460010160005500");
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let deploy = TransactionRequest::default().from(sender).with_deploy_code(init_code);
+    api.send_transaction(WithOtherFields::new(deploy)).await.unwrap();
+    api.mine_one().await.unwrap();
+
+    let deploy_block = provider.get_block(1.into()).full().await.unwrap().unwrap();
+    let deploy_hash = deploy_block.transactions.hashes().next().unwrap();
+    let deploy_receipt = provider.get_transaction_receipt(deploy_hash).await.unwrap().unwrap();
+    assert!(deploy_receipt.status());
+    let contract = deploy_receipt.contract_address.unwrap();
+    assert_eq!(provider.get_code_at(contract).await.unwrap(), abi::COUNTER_RUNTIME_CODE);
+    assert_eq!(provider.get_storage_at(contract, U256::ZERO).await.unwrap(), U256::ZERO);
+
+    // One increment per block. After five calls the head prices a nonzero slot, while a depth-5
+    // reorg executes on the deploy block.
+    for _ in 0..5 {
+        let call = TransactionRequest::default().from(sender).to(contract);
+        api.send_transaction(WithOtherFields::new(call)).await.unwrap();
+        api.mine_one().await.unwrap();
+    }
+    api.anvil_set_auto_mine(true).await.unwrap();
+
+    let head = provider.get_block_number().await.unwrap();
+    assert_eq!(head, 6);
+    assert_eq!(provider.get_storage_at(contract, U256::ZERO).await.unwrap(), U256::from(5));
+
+    let increase = TransactionRequest::default().from(sender).to(contract);
+    api.anvil_reorg(ReorgOptions {
+        depth: 5,
+        tx_block_pairs: vec![
+            (TransactionData::JSON(increase.clone().into()), 0),
+            (TransactionData::JSON(increase.clone().into()), 0),
+            (TransactionData::JSON(increase.into()), 0),
+        ],
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(provider.get_block_number().await.unwrap(), head);
+    let block = provider.get_block(2.into()).full().await.unwrap().unwrap();
+    assert_eq!(block.transactions.len(), 3);
+    for hash in block.transactions.hashes() {
+        let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
+        assert!(receipt.status(), "reorged call {hash} reverted: {receipt:?}");
+    }
+    assert_eq!(provider.get_storage_at(contract, U256::ZERO).await.unwrap(), U256::from(3));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_rollback_to_genesis_restores_initial_fees() {
     // The genesis header records 1 gwei, but the explicit zero base fee applies to block 1.
     let (zero_api, zero_handle) = spawn(
