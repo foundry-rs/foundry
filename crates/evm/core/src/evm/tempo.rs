@@ -36,7 +36,14 @@ pub struct TempoEvmNetwork;
 /// Tempo envelope of Foundry's RPC types.
 type TempoNetworkTxEnvelope = TxEnvelopeFor<TempoEvmNetwork>;
 
-impl FoundryEvmExt<TempoTxEnv> for TempoEvmExt {}
+impl FoundryEvmExt<TempoTxEnv> for TempoEvmExt {
+    fn resume_context(&mut self, _ext: Self) {
+        // Tempo has no context state: the EVM kind, fee manager and pool flags are the same in
+        // every context, and the resolved fee token, key expiry, storage actions and
+        // non-creditable slots belong to the running transaction, the last two shared with its
+        // precompiles.
+    }
+}
 
 // SAFETY: `detached` allocates fresh transaction-local state instead of cloning or reading the
 // `Rc` handles; every other field is `Send + Sync`.

@@ -35,8 +35,9 @@ These compatibility differences affect execution, gas reports and Anvil library 
 - **Fork warmth**: warmth resets between transactions instead of leaking from `setUp` through
   revm's retained fork journals. Within a transaction, forks retain their own warmth and persistent
   accounts carry warmth across switches. Isolated calls are separate transactions; an isolated
-  call that switches forks can replace the outer transaction's warmth with its own. See
-  [`ForkSwitch.t.sol`](../../testdata/default/cheats/ForkSwitch.t.sol).
+  call that switches forks can replace the outer transaction's warmth with its own. Transient
+  storage follows the same lifetime, so it no longer leaks from `setUp` into a test through a fork.
+  See [`ForkSwitch.t.sol`](../../testdata/default/cheats/ForkSwitch.t.sol).
 - **`vm.transact` cheatcode access**: accounts granted `vm.allowCheatcodes` retain access inside
   `vm.transact`; revm's fresh replay backend did not preserve those permissions.
 - **Amsterdam isolation**: isolated `CREATE`s use the creator's current nonce for EIP-8037

@@ -724,10 +724,12 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         self.forks.local.warm.clear();
         self.forks.local.originals.clear();
         self.forks.local.switched.clear();
+        self.forks.local.transient.clear();
         for entry in self.forks.forks.values_mut() {
             entry.context.warm.clear();
             entry.context.originals.clear();
             entry.context.switched.clear();
+            entry.context.transient.clear();
         }
         if let Some(mut env) = self.pending_env.take() {
             env.block = *evm.block();
@@ -1035,7 +1037,9 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         let state = evm.state_mut();
         let loaded = loaded_slots(state);
         let warm = warm_accounts(state);
+        let transient = take_transient(state);
         let context = self.active_mut();
+        context.transient = transient;
         for (address, slots) in loaded {
             if state.account(&address).is_ok_and(|account| account.is_created()) {
                 context.created.insert(address);
@@ -1174,6 +1178,9 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         *state.logs_mut() = logs;
         *state.prewarm_set_mut() = prewarm;
         *evm.state_mut() = state;
+        // Before anything else journals, so a revert to a checkpoint taken before the switch keeps
+        // as much of it as possible.
+        put_transient(evm.state_mut(), mem::take(&mut self.active_mut().transient));
         evm.ext_mut().resume_context(ext);
 
         let factory = self.factory.configure_for(&db, &env);
@@ -1488,6 +1495,37 @@ pub fn warm_accounts(state: &mut State<'_>) -> AddressMap<HashSet<U256>> {
         warm.insert(address, slots);
     }
     warm
+}
+
+/// Removes and returns the transient storage of the running transaction in `state`, as address, key
+/// and value, sorted so writing it back is deterministic.
+pub fn take_transient(state: &mut State<'_>) -> Vec<(Address, U256, U256)> {
+    // `tstore` journals every change and the journal is only cleared together with transient
+    // storage, so the journal names every address that holds some.
+    let addresses = state
+        .journal()
+        .iter()
+        .filter_map(|entry| match entry {
+            JournalEntry::TransientStorageChange { address, .. } => Some(*address),
+            _ => None,
+        })
+        .collect::<AddressSet>();
+    let mut transient = Vec::new();
+    for address in addresses {
+        for (key, value) in state.take_transient_storage(&address) {
+            transient.push((address, key, value));
+        }
+    }
+    transient.sort_unstable();
+    transient
+}
+
+/// Writes `transient` storage taken with [`take_transient`] into the running transaction in
+/// `state`.
+pub fn put_transient(state: &mut State<'_>, transient: Vec<(Address, U256, U256)>) {
+    for (address, key, value) in transient {
+        state.tstore(&address, &key, &value);
+    }
 }
 
 /// Turns the accepted values of the slots of `originals` in the fresh `state` back into pending

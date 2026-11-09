@@ -2474,6 +2474,45 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
+// A fork switch inside a Tempo transaction keeps the fee token the transaction resolved, so it
+// still settles on the selected fork.
+#[forgetest_init]
+async fn tempo_fork_switch_keeps_resolved_fee_token(prj: _, cmd: _) {
+    let (api, handle) = anvil::spawn(anvil::NodeConfig::test().with_tempo()).await;
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
+    let endpoint = handle.http_endpoint();
+    prj.add_test(
+        "TempoForkSwitch.t.sol",
+        &format!(
+            r#"
+import {{Test}} from "forge-std/Test.sol";
+
+contract TempoForkSwitchTest is Test {{
+    function test_fork_switches() public {{
+        uint256 fork = vm.createFork("{endpoint}", 2);
+        vm.createSelectFork("{endpoint}", 1);
+        assertEq(block.number, 1);
+        vm.selectFork(fork);
+        vm.rollFork(1);
+        assertEq(block.number, 1);
+    }}
+}}
+"#
+        ),
+    );
+
+    cmd.args(["test", "--network", "tempo", "--mc", "TempoForkSwitchTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/TempoForkSwitch.t.sol:TempoForkSwitchTest
+[PASS] test_fork_switches() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
 // Regression test for <https://github.com/foundry-rs/foundry/issues/13040>:
 // configured evm_version must be preserved after createSelectFork / rollFork.
 #[forgetest_init]

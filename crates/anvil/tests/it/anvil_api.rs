@@ -2489,6 +2489,9 @@ async fn test_rollback_and_reorg_respect_genesis_block_number() {
     api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
     assert_eq!(api.backend.best_number(), 102);
 
+    let err = api.debug_execution_witness(BlockNumberOrTag::Number(100)).await.unwrap_err();
+    assert_eq!(err.to_string(), "genesis block has no parent state to build a witness from");
+
     // Depth 3 would go below genesis.
     let err = api.anvil_rollback(Some(3)).await.unwrap_err();
     let BlockchainError::RpcError(err) = err else { panic!("unexpected rollback error: {err}") };

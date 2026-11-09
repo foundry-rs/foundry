@@ -27,7 +27,7 @@ use alloy_rpc_types::{
     Authorization, BlockId, BlockNumberOrTag, EIP1186AccountProofResponse, TransactionRequest,
     anvil::Forking,
     trace::{
-        geth::{GethDebugTracingOptions, GethTrace},
+        geth::{CallConfig, GethDebugTracingOptions, GethTrace, TraceResult},
         parity::Action,
     },
 };
@@ -8677,6 +8677,39 @@ async fn test_tempo_genesis_contract_nonces() {
 
         // Independent of the shared table: CreateX derives CREATE addresses from its nonce.
         assert_eq!(provider.get_transaction_count(CREATEX_ADDRESS).await.unwrap(), 1);
+    }
+}
+
+/// Call traces with logs skip the fee token transfers Tempo emits outside any call frame, both for
+/// a transaction and for a block of several, which replays them together.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_call_tracer_with_logs() {
+    let (api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let mut hashes = Vec::new();
+    for _ in 0..2 {
+        let transfer = IERC20::transferCall { to: Address::random(), amount: U256::from(1) };
+        let request = TransactionRequest::default()
+            .from(sender)
+            .to(PATH_USD)
+            .with_input(transfer.abi_encode());
+        let pending = provider.send_transaction(WithOtherFields::new(request)).await.unwrap();
+        hashes.push(*pending.tx_hash());
+    }
+    api.mine_one().await.unwrap();
+
+    let options = GethDebugTracingOptions::call_tracer(CallConfig::default().with_log());
+    let block_traces = provider
+        .debug_trace_block_by_number(BlockNumberOrTag::Latest, options.clone())
+        .await
+        .unwrap();
+    let tx_trace = provider.debug_trace_transaction(hashes[0], options).await.unwrap();
+    assert_eq!(block_traces.len(), 2);
+    for trace in block_traces.iter().map(TraceResult::success).chain([Some(&tx_trace)]) {
+        let Some(GethTrace::CallTracer(frame)) = trace else { panic!("expected call trace") };
+        assert_eq!(frame.logs.len(), 1);
+        assert_eq!(frame.logs[0].address, Some(PATH_USD));
     }
 }
 

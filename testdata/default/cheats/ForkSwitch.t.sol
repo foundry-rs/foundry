@@ -407,3 +407,50 @@ contract ForkSwitchCreatedAccountIsolatedTest is ForkSwitchCreatedAccountTest {
         assertEq(address(box).code.length, 0);
     }
 }
+
+contract ForkSwitchTransientHelper {
+    Vm constant vm = Vm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+
+    function roundTrip(uint256 from, uint256 to) external {
+        vm.selectFork(to);
+        vm.selectFork(from);
+    }
+}
+
+// Each fork keeps the running transaction's transient storage across switches, and a fork starts
+// with the local context's, including for accounts the transaction never loaded.
+/// forge-config: default.isolate = false
+contract ForkSwitchTransientStorageTest is Test {
+    address constant TARGET = address(0xBEEF);
+    bytes32 constant KEY = bytes32(uint256(1));
+
+    function set(uint256 own, uint256 target) internal {
+        vm.storeTransient(address(this), KEY, bytes32(own));
+        vm.storeTransient(TARGET, KEY, bytes32(target));
+    }
+
+    function check(uint256 own, uint256 target, string memory context) internal {
+        assertEq(uint256(vm.loadTransient(address(this), KEY)), own, context);
+        assertEq(uint256(vm.loadTransient(TARGET, KEY)), target, context);
+    }
+
+    function testForkSwitchKeepsTransientStorage() public {
+        set(5, 55);
+        uint256 forkA = vm.createSelectFork("mainnet");
+        check(5, 55, "fork A inherits local");
+        set(6, 66);
+        uint256 forkB = vm.createSelectFork("mainnet");
+        check(5, 55, "fork B inherits local");
+        set(7, 77);
+        vm.selectFork(forkA);
+        check(6, 66, "back on fork A");
+
+        ForkSwitchTransientHelper helper = new ForkSwitchTransientHelper();
+        vm.makePersistent(address(helper));
+        helper.roundTrip(forkA, forkB);
+        check(6, 66, "after round trip in call");
+    }
+}
+
+/// forge-config: default.isolate = true
+contract ForkSwitchTransientStorageIsolatedTest is ForkSwitchTransientStorageTest {}

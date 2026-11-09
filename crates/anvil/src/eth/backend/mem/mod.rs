@@ -53,7 +53,7 @@ use crate::{
         preserve_simulation_request_fields,
     },
     mem::{
-        inspector::{AnvilInspector, InspectorTxConfig},
+        inspector::{AnvilInspector, FrameGuard, InspectorTxConfig},
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
     },
 };
@@ -3705,7 +3705,8 @@ impl<N: Network> Backend<N> {
         let PreparedCall { mut evm_env, mut tx, .. } =
             self.prepare_call_env(state, request, fee_details, block_env)?;
         Self::use_block_fees(&mut evm_env, &mut tx, block_fees);
-        let mut inspector = AccessListInspector::new(initial);
+        let mut inspector = AccessListInspector::new(initial)
+            .with_excluded_from_tx(&tx.tx, evm_env.cfg_env.chain_id);
         let executed = self.transact_call_with_inspector_ref(
             state,
             &evm_env,
@@ -4254,7 +4255,7 @@ impl<N: Network> Backend<N> {
             let executed = self.replay_envelope_with_inspector_ref_and_context(
                 &cache_db,
                 &evm_env,
-                &mut inspector,
+                &mut FrameGuard::new(&mut inspector),
                 &target_tx,
                 EnvelopeExecution::replay(transaction_context, hardfork),
             )?;
@@ -7552,7 +7553,8 @@ where
         if number > best {
             return Err(BlockchainError::BlockOutOfRange(best, number));
         }
-        let Some(parent) = number.checked_sub(1) else {
+        let genesis = if self.is_fork() { 0 } else { self.genesis_number() };
+        let Some(parent) = (number > genesis).then(|| number - 1) else {
             return Err(BlockchainError::Message(
                 "genesis block has no parent state to build a witness from".to_string(),
             ));
@@ -7990,7 +7992,7 @@ where
                 let executed = self.replay_envelope_with_inspector_ref_and_context(
                     &cache_db,
                     &evm_env,
-                    &mut inspector,
+                    &mut FrameGuard::new(&mut inspector),
                     &pending,
                     EnvelopeExecution::replay(transaction_context, hardfork),
                 )?;

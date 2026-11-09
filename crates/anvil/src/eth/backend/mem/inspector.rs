@@ -4,7 +4,7 @@ use crate::eth::macros::node_info;
 use alloy_primitives::{Address, B256, Log, LogData, U256};
 use alloy_sol_types::{SolEvent, SolInterface, SolValue};
 use evm2::{
-    EvmTypes, Inspector,
+    EvmTypes, Inspector, InspectorConfig,
     interpreter::{GasTracker, InstrStop, Interpreter, Message, MessageKind, MessageResult},
 };
 use evm2_inspectors::{
@@ -312,6 +312,15 @@ impl<T: EvmTypes> Inspector<T> for AnvilInspector {
         }
     }
 
+    fn inspector_config(&self) -> InspectorConfig {
+        // The simulation log collector syncs journal logs on every step.
+        if self.simulation_logs.is_some() {
+            return InspectorConfig::new();
+        }
+        // Only the tracer uses the step hooks.
+        Inspector::<T>::inspector_config(&self.tracer)
+    }
+
     fn step(&mut self, interp: &mut Interpreter<'_, '_, T>) {
         if let Some(collector) = &mut self.simulation_logs {
             collector.sync_journal_logs(interp.host().logs());
@@ -464,5 +473,94 @@ impl<T: EvmTypes> Inspector<T> for AnvilInspector {
 pub fn print_logs(logs: &[Log]) {
     for log in decode_console_logs(logs) {
         tracing::info!(target: crate::logging::EVM_CONSOLE_LOG_TARGET, "{}", log);
+    }
+}
+
+/// Forwards to an inspector only the log hooks that run inside a call or create frame.
+///
+/// Networks such as Tempo emit logs outside any frame, which a bare [`TracingInspector`] that
+/// records logs cannot attribute to a trace.
+#[derive(Debug)]
+pub(crate) struct FrameGuard<I> {
+    inner: I,
+    depth: usize,
+}
+
+impl<I> FrameGuard<I> {
+    /// Wraps `inner`.
+    pub(crate) const fn new(inner: I) -> Self {
+        Self { inner, depth: 0 }
+    }
+}
+
+impl<T: EvmTypes, I: Inspector<T>> Inspector<T> for FrameGuard<I> {
+    fn initialize_interp(&mut self, interp: &mut Interpreter<'_, '_, T>) {
+        self.inner.initialize_interp(interp);
+    }
+
+    fn inspector_config(&self) -> InspectorConfig {
+        self.inner.inspector_config()
+    }
+
+    fn step(&mut self, interp: &mut Interpreter<'_, '_, T>) {
+        self.inner.step(interp);
+    }
+
+    fn step_end(&mut self, interp: &mut Interpreter<'_, '_, T>) {
+        self.inner.step_end(interp);
+    }
+
+    fn log(&mut self, log: &Log, host: &mut T::Host<'_>) {
+        if self.depth > 0 {
+            self.inner.log(log, host);
+        }
+    }
+
+    fn call(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, T>,
+        message: &mut Message<T>,
+    ) -> Option<MessageResult<T>> {
+        self.depth += 1;
+        self.inner.call(interp, message)
+    }
+
+    fn call_end(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, T>,
+        message: &Message<T>,
+        result: &mut MessageResult<T>,
+    ) {
+        self.depth = self.depth.saturating_sub(1);
+        self.inner.call_end(interp, message, result);
+    }
+
+    fn create(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, T>,
+        message: &mut Message<T>,
+    ) -> Option<MessageResult<T>> {
+        self.depth += 1;
+        self.inner.create(interp, message)
+    }
+
+    fn create_end(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, T>,
+        message: &Message<T>,
+        result: &mut MessageResult<T>,
+    ) {
+        self.depth = self.depth.saturating_sub(1);
+        self.inner.create_end(interp, message, result);
+    }
+
+    fn selfdestruct(
+        &mut self,
+        contract: &Address,
+        target: &Address,
+        value: &U256,
+        host: &mut T::Host<'_>,
+    ) {
+        self.inner.selfdestruct(contract, target, value, host);
     }
 }
