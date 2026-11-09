@@ -716,6 +716,9 @@ impl<N: Network> EthApi<N> {
     pub async fn anvil_set_rpc_url(&self, url: String) -> Result<()> {
         node_info!("anvil_setRpcUrl");
         let _reset = self.reset_lock.lock().await;
+        // Avoid remote validation when the node is already busy. RPCs may start during staging,
+        // so exclusive access must still be checked again before publishing the replacement.
+        drop(self.try_lock_lifecycle()?);
         let staged_fork = if let Some(fork) = self.backend.get_fork() {
             let mut validation_config = self.backend.node_config.read().await.clone();
             validation_config.warn_if_fork_headers_withheld(&url);
@@ -6276,6 +6279,61 @@ mod tests {
         api.anvil_reset(None).await.unwrap();
         assert_ne!(api.instance_id(), instance);
         assert_eq!(api.backend.best_number(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_set_rpc_url_rejects_active_rpc_before_remote_staging() {
+        let genesis_timestamp = 1_700_000_000u64;
+        let (_origin_api, origin_handle) = spawn(
+            NodeConfig::test().with_genesis_timestamp(Some(genesis_timestamp)).with_no_mining(true),
+        )
+        .await;
+        let (api, _handle) = spawn(
+            NodeConfig::test()
+                .with_genesis_timestamp(Some(genesis_timestamp))
+                .with_no_mining(true)
+                .with_no_storage_caching(true)
+                .with_eth_rpc_url(Some(origin_handle.http_endpoint())),
+        )
+        .await;
+        let (replacement_api, replacement_handle) = spawn(
+            NodeConfig::test().with_genesis_timestamp(Some(genesis_timestamp)).with_no_mining(true),
+        )
+        .await;
+
+        let (original_url, original_identity, original_head) = {
+            let fork = api.backend.get_fork().unwrap();
+            let config = fork.config.read();
+            (
+                config.eth_rpc_url().unwrap().to_string(),
+                config.endpoint_identity,
+                api.backend.best_hash(),
+            )
+        };
+
+        // Keep both lifecycle locks occupied so staging would block on a remote RPC without the
+        // preflight check. The target reader models the active RPC being protected.
+        let active_rpc = api.lifecycle_lock.read().await;
+        let replacement_lifecycle = replacement_api.lifecycle_lock.write().await;
+        let error = tokio::time::timeout(
+            Duration::from_secs(5),
+            api.anvil_set_rpc_url(replacement_handle.http_endpoint()),
+        )
+        .await
+        .expect("setRpcUrl waited for remote staging before rejecting a busy node")
+        .unwrap_err();
+        assert!(matches!(error, BlockchainError::NodeBusy));
+
+        {
+            let fork = api.backend.get_fork().unwrap();
+            let config = fork.config.read();
+            assert_eq!(config.eth_rpc_url(), Some(original_url.as_str()));
+            assert_eq!(config.endpoint_identity, original_identity);
+        }
+        assert_eq!(api.backend.best_hash(), original_head);
+
+        drop(replacement_lifecycle);
+        drop(active_rpc);
     }
 
     #[tokio::test(flavor = "multi_thread")]
