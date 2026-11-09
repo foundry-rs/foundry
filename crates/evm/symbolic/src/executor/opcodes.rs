@@ -1338,12 +1338,17 @@ impl SymbolicExecutor {
             }
             opcode::BLOBHASH => {
                 let index = state.stack.pop()?;
-                let index = state.expect_constrained_usize(
+                let index = state.expect_constrained_word(
                     &mut self.cx,
                     index,
                     "symbolic BLOBHASH index",
                 )?;
-                let hash = state.block.blob_hashes.get(index).copied().unwrap_or_default();
+                // An index past the blob list, including one beyond `usize`, reads zero.
+                let hash = usize::try_from(index)
+                    .ok()
+                    .and_then(|index| state.block.blob_hashes.get(index))
+                    .copied()
+                    .unwrap_or_default();
                 let hash = SymExpr::constant(&mut self.cx, U256::from_be_slice(hash.as_slice()));
                 state.stack.push(hash)?;
             }
