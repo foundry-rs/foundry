@@ -3679,13 +3679,14 @@ contract DynamicCorpusTest is Test {
     let create = tx(factory, "0xefc81a8c");
     let corpus = prj.root().join("invariant_corpus").join("DynamicCorpusTest");
     std::fs::create_dir_all(&corpus).unwrap();
-    for (name, call) in [("f", "0x26121ff0"), ("g", "0xe2179b8e")] {
+    for (id, call) in [(1, "0x26121ff0"), (2, "0xe2179b8e")] {
         std::fs::write(
-            corpus.join(format!("00000000-0000-0000-0000-00000000000{}-1.json", name.len())),
+            corpus.join(format!("00000000-0000-0000-0000-00000000000{id}-1.json")),
             format!("[{create},{}]", tx(child, call)),
         )
         .unwrap();
     }
+    assert_eq!(std::fs::read_dir(&corpus).unwrap().count(), 2);
 
     assert_invariant(cmd.args(["test", "--mc", "DynamicCorpusTest"])).success().stdout_eq(str![[
         r#"
