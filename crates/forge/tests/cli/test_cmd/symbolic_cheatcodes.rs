@@ -1299,9 +1299,8 @@ contract SymbolicCodeHash is Test {
         address target = address(0xBEEF);
         vm.etch(target, hex"");
 
-        bytes32 emptyHash = keccak256(new bytes(0));
         assert(target.code.length == 0);
-        assert(target.codehash == emptyHash);
+        assert(target.codehash == bytes32(0));
         assert(address(0xCAFE).codehash == bytes32(0));
     }
 }
