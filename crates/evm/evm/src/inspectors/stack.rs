@@ -1423,6 +1423,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         } else {
             Vec::new()
         };
+        // The accounts the call self-destructs keep their state until the running transaction ends.
+        let outer_destructs = self.inner.executed_destructs.replace(AddressMap::default());
         child.set_inspector(InspectorStackRefMut {
             cheatcodes: self.cheatcodes.as_deref_mut(),
             inner: &mut *self.inner,
@@ -1431,6 +1433,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let executed = child.transact(&tx).map(|executed| executed.detach());
         // SAFETY: The nested EVM runs over the lifecycle's owned databases.
         let mut child = unsafe { release_inspector(child) };
+        let destructed = mem::replace(&mut self.inner.executed_destructs, outer_destructs);
         self.inner.isolated_source_fork = previous_source_fork;
         if !persistent_warmth.is_empty() {
             backend.backend_mut().restore_persistent_warmth(persistent_warmth);
@@ -1544,12 +1547,18 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 warm_nested(evm.state_mut(), &executed.pending_state, warm, &cold).is_ok()
             })
         } else {
-            let merged = merge_pending_changes(evm.state_mut(), &executed.pending_state)
-                .and_then(|()| {
-                    let warm = nested_warmth(child.state_mut(), &executed.pending_state);
-                    warm_nested(evm.state_mut(), &executed.pending_state, warm, &cold)
-                })
-                .is_ok();
+            let merged = merge_pending_changes(
+                evm.state_mut(),
+                &executed.pending_state,
+                destructed.unwrap_or_default(),
+                |_| true,
+                None,
+            )
+            .and_then(|()| {
+                let warm = nested_warmth(child.state_mut(), &executed.pending_state);
+                warm_nested(evm.state_mut(), &executed.pending_state, warm, &cold)
+            })
+            .is_ok();
             // Keep cheatcode block changes and network extension state from the nested EVM.
             evm.set_block(*child.block());
             evm.ext_mut().replace_while_executing(child.ext().clone());
