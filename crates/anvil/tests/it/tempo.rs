@@ -2188,7 +2188,8 @@ async fn test_tempo_eip7702_replay_signature_override() {
 
 /// The pool admits a Tempo transaction only once the fee payer can cover the maximum fee,
 /// rounded up to a whole fee token unit like the execution precharge: one unit short is rejected,
-/// the exact amount is admitted and mined.
+/// the exact amount is admitted and mined. Calls, estimates and simulations report the shortfall
+/// as missing funds.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_pool_requires_max_fee_rounded_up_in_fee_token() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
