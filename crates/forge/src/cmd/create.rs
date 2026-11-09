@@ -4,9 +4,11 @@ use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::JsonAbi;
 use alloy_network::{Ethereum, EthereumWallet, Network, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, U256, hex};
-use alloy_provider::{PendingTransactionError, Provider, ProviderBuilder as AlloyProviderBuilder};
+use alloy_provider::{
+    PendingTransactionBuilder, PendingTransactionError, Provider,
+    ProviderBuilder as AlloyProviderBuilder,
+};
 use alloy_signer::{Signature, Signer};
-use alloy_transport::TransportError;
 use clap::{Parser, ValueHint};
 use eyre::{Context, ContextCompat, Result};
 use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs, parse_etherscan_license_type};
@@ -24,6 +26,7 @@ use foundry_common::{
         ProviderBuilder,
         fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
     },
+    retry::Retry,
     shell,
     tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
 };
@@ -646,43 +649,16 @@ impl CreateArgs {
         let (deployed_contract, receipt) = if let Some(browser) = browser_signer {
             // Browser wallet signs and sends the transaction
             let tx_hash = browser.send_transaction_via_browser(deployer.tx).await?;
-
-            // Wait for the transaction to be confirmed, then fetch the receipt.
-            provider
-                .watch_pending_transaction(alloy_provider::PendingTransactionConfig::new(tx_hash))
+            wait_for_deployment(PendingTransactionBuilder::new(provider.root().clone(), tx_hash))
                 .await?
-                .await?;
-
-            let receipt = provider
-                .get_transaction_receipt(tx_hash)
-                .await?
-                .ok_or_else(|| eyre::eyre!("could not get transaction receipt for {tx_hash}"))?;
-
-            if !receipt.status() {
-                eyre::bail!("deployment transaction failed (receipt status 0): {tx_hash}");
-            }
-
-            let address = receipt
-                .contract_address()
-                .ok_or_else(|| eyre::eyre!("contract was not deployed"))?;
-
-            (address, receipt)
         } else if let Some(wallet) = tempo_keychain {
             let raw_tx = deployer.tx.sign_with_tempo_wallet(&wallet).await?;
-
-            let receipt = provider
+            let pending = provider
                 .send_raw_transaction(&raw_tx)
                 .await?
                 .with_required_confirmations(1)
-                .with_timeout(Some(Duration::from_secs(timeout)))
-                .get_receipt()
-                .await?;
-
-            let address = receipt
-                .contract_address()
-                .ok_or_else(|| eyre::eyre!("contract was not deployed"))?;
-
-            (address, receipt)
+                .with_timeout(Some(Duration::from_secs(timeout)));
+            wait_for_deployment(pending).await?
         } else {
             deployer.send_with_receipt().await?
         };
@@ -812,28 +788,48 @@ impl<N: Network, P: Provider<N>> Deployer<N, P> {
     /// Broadcasts the contract deployment transaction and after waiting for it to
     /// be sufficiently confirmed (default: 1), it returns a tuple with the [`Address`] at the
     /// deployed contract's address and the corresponding receipt.
-    pub async fn send_with_receipt(
-        self,
-    ) -> Result<(Address, N::ReceiptResponse), ContractDeploymentError> {
-        let receipt = self
+    pub async fn send_with_receipt(self) -> Result<(Address, N::ReceiptResponse)> {
+        let pending = self
             .client
             .borrow()
             .send_transaction(self.tx)
             .await?
             .with_required_confirmations(self.confs as u64)
-            .with_timeout(Some(Duration::from_secs(self.timeout)))
-            .get_receipt()
-            .await?;
-
-        if !receipt.status() {
-            return Err(ContractDeploymentError::DeploymentFailed(receipt.transaction_hash()));
-        }
-
-        let address =
-            receipt.contract_address().ok_or(ContractDeploymentError::ContractNotDeployed)?;
-
-        Ok((address, receipt))
+            .with_timeout(Some(Duration::from_secs(self.timeout)));
+        wait_for_deployment(pending).await
     }
+}
+
+/// Waits for a deployment transaction's receipt and returns the deployed address with it.
+///
+/// A load-balanced RPC can report the transaction as mined before the node that serves
+/// `eth_getTransactionReceipt` has its receipt, which alloy reports as a null response. The
+/// deployment went through, so keep polling for the receipt instead of failing it.
+async fn wait_for_deployment<N: Network>(
+    pending: PendingTransactionBuilder<N>,
+) -> Result<(Address, N::ReceiptResponse)> {
+    let tx_hash = *pending.tx_hash();
+    let provider = pending.provider().clone();
+    let receipt = match pending.get_receipt().await {
+        Err(PendingTransactionError::TransportError(err)) if err.is_null_resp() => {
+            Retry::new(15, Duration::from_secs(1))
+                .run_async(|| async {
+                    provider
+                        .get_transaction_receipt(tx_hash)
+                        .await?
+                        .wrap_err("the RPC has no receipt for the mined transaction yet")
+                })
+                .await
+        }
+        res => res.map_err(Into::into),
+    }
+    .wrap_err_with(|| {
+        format!("transaction {tx_hash} was sent, but waiting for its receipt failed")
+    })?;
+
+    eyre::ensure!(receipt.status(), "deployment transaction failed (receipt status 0): {tx_hash}");
+    let address = receipt.contract_address().wrap_err("contract was not deployed")?;
+    Ok((address, receipt))
 }
 
 /// To deploy a contract to the Ethereum network, a [`DeploymentTxFactory`] can be
@@ -893,18 +889,6 @@ pub enum ContractDeploymentError {
     ConstructorError,
     #[error(transparent)]
     DetokenizationError(#[from] alloy_dyn_abi::Error),
-    #[error("contract was not deployed")]
-    ContractNotDeployed,
-    #[error("deployment transaction failed (receipt status 0): {0}")]
-    DeploymentFailed(alloy_primitives::TxHash),
-    #[error(transparent)]
-    RpcError(#[from] TransportError),
-}
-
-impl From<PendingTransactionError> for ContractDeploymentError {
-    fn from(_err: PendingTransactionError) -> Self {
-        Self::ContractNotDeployed
-    }
 }
 
 #[cfg(test)]
