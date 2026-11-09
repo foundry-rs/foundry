@@ -1182,6 +1182,16 @@ contract RecordAccountAccessesTest is Test {
         );
     }
 
+    /// @notice Test that a call that fails for lack of funds is recorded as reverted
+    function testCallOutOfFunds() public {
+        vm.startStateDiffRecording();
+        (bool success,) = address(1234).call{value: address(this).balance + 1}("");
+        assertTrue(!success);
+        Vm.AccountAccess[] memory called = vm.stopAndReturnStateDiff();
+        assertEq(called.length, 1, "incorrect length");
+        assertTrue(called[0].reverted, "call not reverted");
+    }
+
     /// @notice It is important to test SELFDESTRUCT behavior as long as there
     ///         are public networks that support the opcode, regardless of whether
     ///         or not Ethereum mainnet does.

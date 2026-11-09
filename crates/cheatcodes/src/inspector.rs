@@ -2302,7 +2302,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if let Some(assume_no_revert) = &mut self.assume_no_revert {
             // Record current reverter address before processing the expect revert if call reverted,
             // expect revert is set with expected reverter address and no actual reverter set yet.
-            if outcome.stop.is_revert() && assume_no_revert.reverted_by.is_none() {
+            if outcome.stop.is_frame_revert() && assume_no_revert.reverted_by.is_none() {
                 assume_no_revert.reverted_by = Some(target);
             }
 
@@ -2310,7 +2310,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             if curr_depth <= assume_no_revert.depth && !cheatcode_call {
                 // Discard run if we're at the same depth as cheatcode, call reverted, and no
                 // specific reason was supplied
-                if outcome.stop.is_revert() {
+                if outcome.stop.is_frame_revert() {
                     let assume_no_revert = std::mem::take(&mut self.assume_no_revert).unwrap();
                     return match revert_handlers::handle_assume_no_revert(
                         &assume_no_revert,
@@ -2424,7 +2424,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             {
                 // Update the reverted status of all deeper calls if this call reverted, in
                 // accordance with EVM behavior
-                if outcome.stop.is_revert() {
+                if outcome.stop.is_frame_revert() {
                     mark_account_accesses_reverted(&mut last_recorded_depth);
                 }
 
@@ -2452,7 +2452,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         // If the call already reverted, preserve that primary failure and skip post-call
         // expect* validation so it cannot overwrite the original revert.
-        if outcome.stop.is_revert() {
+        if outcome.stop.is_frame_revert() {
             // if there's a revert and a previous call was diagnosed as fork related revert then we
             // can return a better error here
             if let Some(err) = diag {
@@ -2721,7 +2721,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             //
             // This intentionally differs from `call_end` for `count > 1`, where
             // legacy nested CALL handling reports the outermost call per iteration.
-            if outcome.stop.is_revert()
+            if outcome.stop.is_frame_revert()
                 && expected_revert.reverter.is_some()
                 && expected_revert.reverted_by.is_none()
             {
@@ -2776,7 +2776,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         {
             // Update the reverted status of all deeper calls if this call reverted, in
             // accordance with EVM behavior.
-            if outcome.stop.is_revert() {
+            if outcome.stop.is_frame_revert() {
                 mark_account_accesses_reverted(&mut last_depth);
             }
 
