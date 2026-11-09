@@ -332,6 +332,21 @@ contract SymbolicAdvancedPrecompileInput is Test {
         assertEq(keccak256(outA), keccak256(outB));
     }
 
+    // EIP-7823: from Osaka, an input longer than 1024 bytes makes the call fail.
+    function checkSymbolicModexpLengthLimit(uint256 base) public {
+        bytes memory input = abi.encodePacked(
+            uint256(32),
+            uint256(32),
+            uint256(1025),
+            base,
+            uint256(1),
+            new bytes(1025)
+        );
+        (bool ok,) = address(5).staticcall(input);
+
+        assert(!ok);
+    }
+
     function checkSymbolicBlake2f(bytes1 tweak) public {
         bytes memory input = new bytes(213);
         input[10] = tweak;
@@ -358,10 +373,11 @@ contract SymbolicAdvancedPrecompileInput is Test {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicAdvancedPrecompileInput.t.sol:SymbolicAdvancedPrecompileInput
+Ran 3 tests for test/SymbolicAdvancedPrecompileInput.t.sol:SymbolicAdvancedPrecompileInput
 [PASS] checkSymbolicBlake2f(bytes1) ([METRICS])
 [PASS] checkSymbolicModexp(bytes1) ([METRICS])
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+[PASS] checkSymbolicModexpLengthLimit(uint256) ([METRICS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()

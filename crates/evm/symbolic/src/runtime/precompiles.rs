@@ -137,7 +137,7 @@ pub(crate) fn execute_symbolic_precompile(
             Ok(Some(SymReturnData::from_byte_exprs(cx, bytes)))
         }
         Some(4) => Ok(Some(SymReturnData { len_word: input_len, bytes: input })),
-        Some(5) => symbolic_modexp_precompile(cx, &input, input_len),
+        Some(5) => symbolic_modexp_precompile(cx, &input, input_len, spec_id),
         Some(6) => {
             let input_len = input_len.as_usize_or("symbolic precompile input")?;
             if input_len > input.len() {
@@ -221,6 +221,7 @@ pub(crate) fn symbolic_modexp_precompile(
     cx: &mut SymCx,
     input: &SymBytes,
     input_len: SymExpr,
+    spec_id: SpecId,
 ) -> Result<Option<SymReturnData>, SymbolicError> {
     let input_len = input_len.as_usize_or("symbolic precompile input")?;
     if input_len > input.len() {
@@ -228,6 +229,14 @@ pub(crate) fn symbolic_modexp_precompile(
     }
 
     let modulus_len = concrete_precompile_word_at(cx, input, 64)?;
+    if spec_id.enables(SpecId::OSAKA) {
+        let limit = U256::from(MODEXP_INPUT_SIZE_LIMIT);
+        let base_len = concrete_precompile_word_at(cx, input, 0)?;
+        let exponent_len = concrete_precompile_word_at(cx, input, 32)?;
+        if base_len > limit || exponent_len > limit || modulus_len > limit {
+            return Ok(None);
+        }
+    }
     let modulus_len = usize::try_from(modulus_len)
         .ok()
         .ok_or(SymbolicError::Unsupported("symbolic modexp output length"))?;
