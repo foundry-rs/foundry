@@ -636,6 +636,7 @@ impl EvmOpts {
             .maybe_initial_backoff(self.fork_retry_backoff)
             .maybe_headers(self.fork_headers.clone().or_else(|| self.rpc_headers.clone()))
             .compute_units_per_second(self.get_compute_units_per_second())
+            .rate_limit(self.proactive_rate_limit())
             .accept_invalid_certs(self.rpc_accept_invalid_certs)
             .no_proxy(self.rpc_no_proxy);
         if let Some(jwt) = &self.rpc_jwt {
@@ -1247,6 +1248,15 @@ impl EvmOpts {
         } else {
             ALCHEMY_FREE_TIER_CUPS
         }
+    }
+
+    /// Returns the explicit client-side pacing budget for fork requests.
+    ///
+    /// Returns `Some` only when the user set `--compute-units-per-second` without
+    /// `--no-rate-limit`, so the default behaviour and disabled rate limiting are
+    /// both left unchanged.
+    const fn proactive_rate_limit(&self) -> Option<u64> {
+        if self.no_rpc_rate_limit { None } else { self.compute_units_per_second }
     }
 
     /// Returns the chain ID from the RPC, if any.
