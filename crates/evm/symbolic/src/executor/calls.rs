@@ -1424,7 +1424,7 @@ impl SymbolicExecutor {
             CallKind::CallCode => state.address,
             CallKind::DelegateCall | CallKind::StaticCall => return,
         };
-        state.world.transfer(&mut self.cx, executor, from, to, value);
+        state.world.transfer(&mut self.cx, executor, from, to, value, true);
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -1444,77 +1444,49 @@ impl SymbolicExecutor {
             return Ok(None);
         }
 
-        // Like revm's `transfer_loaded`, a short sender balance is an `OutOfFunds` revert, and a
-        // recipient balance overflow is an `OverflowPayment` halt.
+        // A sender balance below `value` fails the call with an `OutOfFunds` revert.
         let balance = state.balance(&mut self.cx, executor, from);
-        let can_pay = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, balance, value.clone());
-        let mut failures = vec![(can_pay.clone().not(&mut self.cx), CallStatus::Revert)];
-        let can_transfer = if from == to {
-            can_pay
-        } else {
-            let balance = state.balance(&mut self.cx, executor, to);
-            let sum = SymExpr::binop(&mut self.cx, SymBinOp::Add, balance.clone(), value);
-            let no_overflow = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, sum, balance);
-            let overflow = no_overflow.clone().not(&mut self.cx);
-            let overflow = SymBoolExpr::and(&mut self.cx, vec![can_pay.clone(), overflow]);
-            failures.push((overflow, CallStatus::ExceptionalHalt));
-            SymBoolExpr::and(&mut self.cx, vec![can_pay, no_overflow])
-        };
+        let can_transfer = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, balance, value);
         if can_transfer.as_const() == Some(true) {
             return Ok(None);
         }
 
+        let cannot_transfer = can_transfer.clone().not(&mut self.cx);
         let success_constraints = self.constraints_for_condition(state, can_transfer)?;
-        let mut feasible_failures = Vec::new();
-        for (condition, status) in failures {
-            if let Some(constraints) = self.constraints_for_condition(state, condition)? {
-                feasible_failures.push((constraints, status));
-            }
-        }
-        // Without a feasible transfer, the last feasible failure continues on this path.
-        let last_failure =
-            if success_constraints.is_none() { feasible_failures.pop() } else { None };
-        for (constraints, status) in feasible_failures {
-            let mut failure = state.clone();
-            failure.constraints = constraints;
-            let return_data = SymReturnData::empty(&mut self.cx);
-            match self.finish_codeless_call(
-                executor,
-                &mut failure,
-                kind,
-                status,
-                return_data,
-                to,
-                out_offset.clone(),
-                out_size,
-            )? {
-                StepOutcome::Continue => worklist.push_back(failure),
-                outcome => {
-                    *state = failure;
-                    return Ok(Some(outcome));
-                }
-            }
-        }
-        if let Some(constraints) = success_constraints {
+        let Some(failure_constraints) = self.constraints_for_condition(state, cannot_transfer)?
+        else {
+            let Some(constraints) = success_constraints else {
+                return Ok(Some(StepOutcome::AssumeRejected));
+            };
             state.constraints = constraints;
             return Ok(None);
-        }
-        let Some((constraints, status)) = last_failure else {
-            return Ok(Some(StepOutcome::AssumeRejected));
         };
-        state.constraints = constraints;
+        let mut failure = state.clone();
+        failure.constraints = failure_constraints;
         let return_data = SymReturnData::empty(&mut self.cx);
-        self.finish_codeless_call(
+        let outcome = self.finish_codeless_call(
             executor,
-            state,
+            &mut failure,
             kind,
-            status,
+            CallStatus::Revert,
             return_data,
             to,
             out_offset,
             out_size,
-        )
-        .map(Some)
+        )?;
+        match success_constraints {
+            Some(constraints) if matches!(outcome, StepOutcome::Continue) => {
+                worklist.push_back(failure);
+                state.constraints = constraints;
+                Ok(None)
+            }
+            // Without a feasible transfer, or when the failure ends execution, the failure
+            // continues on this path.
+            _ => {
+                *state = failure;
+                Ok(Some(outcome))
+            }
+        }
     }
 
     pub(super) fn prepare_create_value_transfer(
@@ -1669,6 +1641,7 @@ impl SymbolicExecutor {
                         call_caller,
                         transfer_to,
                         value.clone(),
+                        true,
                     );
                 }
             }
