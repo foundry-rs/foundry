@@ -17,7 +17,9 @@ use alloy_primitives::{
     Address, U256,
     map::{AddressMap, HashMap, HashSet},
 };
-use foundry_evm_core::{constants::CHEATCODE_ADDRESS, evm::FoundryEvmNetwork};
+use foundry_evm_core::{
+    constants::CHEATCODE_ADDRESS, eip2935::is_history_storage_address, evm::FoundryEvmNetwork,
+};
 use foundry_evm_fuzz::BasicTxDetails;
 use proptest::{prelude::Rng, test_runner::TestRunner};
 use revm::state::Account;
@@ -246,7 +248,9 @@ impl<FEN: FoundryEvmNetwork> StateSnapshots<FEN> {
     pub(super) fn observe(&mut self, changeset: &AddressMap<Account>) -> Vec<u64> {
         let mut features = Vec::new();
         for (address, account) in changeset {
-            if *address == CHEATCODE_ADDRESS {
+            // History storage holds block hashes written by cheatcodes such as `vm.roll`, not
+            // target state.
+            if *address == CHEATCODE_ADDRESS || is_history_storage_address(address) {
                 continue;
             }
             let mut cardinality_changed = false;
@@ -380,6 +384,7 @@ mod tests {
     use alloy_primitives::Bytes;
     use foundry_evm_core::{
         backend::{Backend, DatabaseExt},
+        eip2935::HISTORY_STORAGE_ADDRESS,
         evm::EthEvmNetwork,
         fork::CreateFork,
         opts::EvmOpts,
@@ -439,13 +444,15 @@ mod tests {
     }
 
     #[test]
-    fn unchanged_and_cheatcode_writes_are_ignored() {
+    fn unchanged_cheatcode_and_history_writes_are_ignored() {
         let mut snapshots = snapshots();
         assert!(snapshots.observe(&write(U256::ZERO, U256::ONE, U256::ONE)).is_empty());
-        let mut changeset = write(U256::ZERO, U256::ZERO, U256::ONE);
-        let account = changeset.remove(&Address::repeat_byte(0x11)).unwrap();
-        changeset.insert(CHEATCODE_ADDRESS, account);
-        assert!(snapshots.observe(&changeset).is_empty());
+        for address in [CHEATCODE_ADDRESS, HISTORY_STORAGE_ADDRESS] {
+            let mut changeset = write(U256::ZERO, U256::ZERO, U256::ONE);
+            let account = changeset.remove(&Address::repeat_byte(0x11)).unwrap();
+            changeset.insert(address, account);
+            assert!(snapshots.observe(&changeset).is_empty());
+        }
     }
 
     #[test]
