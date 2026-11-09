@@ -3884,6 +3884,7 @@ import "forge-std/Test.sol";
 
 contract SymbolicEmitter {
     event Seen(address indexed who, uint256 indexed id, uint256 value);
+    event Other(uint256 value);
 
     function fire(address who, uint256 id, uint256 value) external {
         emit Seen(who, id, value);
@@ -3891,6 +3892,11 @@ contract SymbolicEmitter {
 
     function fireTwice(address who, uint256 id, uint256 value) external {
         emit Seen(who, id, value);
+        emit Seen(who, id, value);
+    }
+
+    function fireAfterOther(address who, uint256 id, uint256 value) external {
+        emit Other(1);
         emit Seen(who, id, value);
     }
 }
@@ -3915,6 +3921,12 @@ contract SymbolicExpectEmit is Test {
         vm.expectEmit(true, true, false, true, expectedEmitter);
         emit Seen(address(0xB0B), 7, 9);
         emitter.fire(address(0xB0B), 7, 9);
+    }
+
+    function checkExpectEmitSkipsEarlierLogs(uint256) public {
+        vm.expectEmit(true, true, false, true, address(emitter));
+        emit Seen(address(0xB0B), 7, 9);
+        emitter.fireAfterOther(address(0xB0B), 7, 9);
     }
 
     function checkExpectEmitCountOverloads(uint256) public {
@@ -3947,11 +3959,12 @@ contract SymbolicExpectEmit is Test {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 3 tests for test/SymbolicExpectEmit.t.sol:SymbolicExpectEmit
+Ran 4 tests for test/SymbolicExpectEmit.t.sol:SymbolicExpectEmit
 [PASS] checkExpectEmit(uint256) ([METRICS])
 [PASS] checkExpectEmitCountOverloads(uint256) ([METRICS])
+[PASS] checkExpectEmitSkipsEarlierLogs(uint256) ([METRICS])
 [PASS] checkExpectEmitSymbolicEmitter(address) ([METRICS])
-Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()

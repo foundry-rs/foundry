@@ -715,37 +715,37 @@ impl SymbolicExecutor {
         };
 
         if let Some(template) = expected.template().cloned() {
-            if expected.is_forbidden() {
-                // Like Forge, a log matching a `count = 0` expectation reverts the emitting frame.
-                let Some(condition) = expected.match_condition(&mut self.cx, &template, &log)
-                else {
+            // Like Forge, a log that does not match keeps the expectation pending for a later
+            // log, so a feasible mismatch continues on its own path.
+            let condition = match expected.match_condition(&mut self.cx, &template, &log) {
+                Some(condition) => condition,
+                None if expected.is_forbidden() => {
                     return Err(SymbolicError::Unsupported(
                         "symbolic vm.expectEmit count 0 with symbolic log size",
                     ));
-                };
-                let (match_constraints, match_sat) =
-                    self.constraints_with_condition(state, condition.clone())?;
-                if !match_sat {
-                    state.expected_emit = Some(expected);
-                    state.record_log(log);
-                    return Ok(StepOutcome::Continue);
                 }
-                let mismatch = condition.not(&mut self.cx);
-                if let Some(constraints) = self.constraints_for_condition(state, mismatch)? {
-                    let mut mismatch_state = state.clone();
-                    mismatch_state.constraints = constraints;
-                    mismatch_state.expected_emit = Some(expected.clone());
-                    mismatch_state.record_log(log);
-                    worklist.push_back(mismatch_state);
-                }
-                state.constraints = match_constraints;
-                state.expected_emit = Some(expected);
-                return self.revert_expect_emit(state, "log emitted but expected 0 times");
-            }
-            if !self.expected_emit_matches(state, &expected, &template, &log)? {
+                None => SymBoolExpr::constant(&mut self.cx, false),
+            };
+            let (match_constraints, match_sat) =
+                self.constraints_with_condition(state, condition.clone())?;
+            if !match_sat {
                 state.expected_emit = Some(expected);
                 state.record_log(log);
-                return Ok(StepOutcome::Failure);
+                return Ok(StepOutcome::Continue);
+            }
+            let mismatch = condition.not(&mut self.cx);
+            if let Some(constraints) = self.constraints_for_condition(state, mismatch)? {
+                let mut mismatch_state = state.clone();
+                mismatch_state.constraints = constraints;
+                mismatch_state.expected_emit = Some(expected.clone());
+                mismatch_state.record_log(log.clone());
+                worklist.push_back(mismatch_state);
+            }
+            state.constraints = match_constraints;
+            if expected.is_forbidden() {
+                // Like Forge, a log matching a `count = 0` expectation reverts the emitting frame.
+                state.expected_emit = Some(expected);
+                return self.revert_expect_emit(state, "log emitted but expected 0 times");
             }
             if !expected.consume_one() {
                 state.expected_emit = Some(expected);
@@ -776,35 +776,6 @@ impl SymbolicExecutor {
     ) -> Result<StepOutcome, SymbolicError> {
         state.return_data = error_string_return_data(&mut self.cx, reason);
         self.classify_revert(state)
-    }
-
-    /// Returns whether `expected_emit_matches` holds.
-    pub(super) fn expected_emit_matches(
-        &mut self,
-        state: &mut PathState,
-        expected: &ExpectedEmit,
-        template: &SymbolicLog,
-        actual: &SymbolicLog,
-    ) -> Result<bool, SymbolicError> {
-        let Some(condition) = expected.match_condition(&mut self.cx, template, actual) else {
-            return Ok(false);
-        };
-        let (match_constraints, match_sat) =
-            self.constraints_with_condition(state, condition.clone())?;
-        if !match_sat {
-            return Ok(false);
-        }
-
-        let mismatch_condition = condition.not(&mut self.cx);
-        let (mismatch_constraints, mismatch_sat) =
-            self.constraints_with_condition(state, mismatch_condition)?;
-        if mismatch_sat {
-            state.constraints = mismatch_constraints;
-            return Ok(false);
-        }
-
-        state.constraints = match_constraints;
-        Ok(true)
     }
 
     #[expect(clippy::too_many_arguments)]
