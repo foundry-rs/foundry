@@ -2318,7 +2318,8 @@ impl SymbolicWorld {
         }
         state.storage.retain(|write| write.address != address);
         state.transient_storage.retain(|write| write.address != address);
-        state.created_accounts.remove(&address);
+        // The account's storage is gone, so later reads see zero, not its pre-run storage.
+        state.created_accounts.insert(address);
         state.current_transaction_created_accounts.remove(&address);
         state.existing_accounts.remove(&address);
         state.destroyed_accounts.insert(address);
