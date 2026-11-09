@@ -2210,6 +2210,20 @@ contract SymbolicAddressAlias is Test {
         vm.store(address(uint160(x % 8 + 0x2000)), 0, bytes32(uint256(5)));
         assert(uint256(vm.load(address(uint160(y % 8 + 0x2000)), 0)) != 5);
     }
+
+    // An alias without state of its own must not shadow the real account it may denote.
+    function checkPrankPreservesBalance(uint256 x) public {
+        vm.deal(address(0x2000), 5);
+        vm.prank(address(uint160(x % 8 + 0x2000)));
+        vm.stopPrank();
+        assert(address(uint160((x + 8) % 8 + 0x2000)).balance != 5);
+    }
+
+    function checkDealPreservesCode(uint256 x) public {
+        vm.etch(address(0x2000), hex"00");
+        vm.deal(address(uint160(x % 8 + 0x2000)), 1);
+        assert(address(uint160((x + 8) % 8 + 0x2000)).code.length != 1);
+    }
 }
 "#,
     );
@@ -2218,12 +2232,14 @@ contract SymbolicAddressAlias is Test {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 4 tests for test/SymbolicAddressAlias.t.sol:SymbolicAddressAlias
+Ran 6 tests for test/SymbolicAddressAlias.t.sol:SymbolicAddressAlias
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkComputedAddressDealIsVisible(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkComputedAddressStoreIsVisible(uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealPreservesCode(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x5b3b1d1100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 args=[0x0000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000]] checkDealsMayTargetOneAccount(address,address) ([METRICS])
 [PASS] checkDistinctDealsAreIndependent(address,address) ([METRICS])
-Suite result: FAILED. 1 passed; 3 failed; 0 skipped; [ELAPSED]
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankPreservesBalance(uint256) ([METRICS])
+Suite result: FAILED. 1 passed; 5 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
