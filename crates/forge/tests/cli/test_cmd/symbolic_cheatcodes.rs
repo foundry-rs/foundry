@@ -2231,6 +2231,8 @@ contract Token {
 }
 
 contract SymbolicRevertKeepsCheatcodes is Test {
+    event Emitted(uint256 value);
+
     uint256 constant DEADLINE = 1000;
     Token token;
 
@@ -2241,6 +2243,16 @@ contract SymbolicRevertKeepsCheatcodes is Test {
     function warpThenRevert(uint256 t) external {
         vm.warp(t);
         revert("boom");
+    }
+
+    function expectEmitThenRevert() external {
+        vm.expectEmit();
+        emit Emitted(1);
+        revert("boom");
+    }
+
+    function expectRevertThenReturn() external {
+        vm.expectRevert();
     }
 
     function mockThenRevert(address user) external {
@@ -2263,6 +2275,16 @@ contract SymbolicRevertKeepsCheatcodes is Test {
         try this.mockThenRevert(user) {} catch {}
         assert(token.balanceOf(user) == 7);
     }
+
+    // Concretely the pending emit expectation outlives the revert and fails the test.
+    function checkExpectEmitSurvivesRevertingCall() public {
+        try this.expectEmitThenRevert() {} catch {}
+    }
+
+    // Concretely a callee that returns with its own pending expectRevert reverts.
+    function checkExpectRevertPendingInCalleeReverts() public {
+        this.expectRevertThenReturn();
+    }
 }
 "#,
     );
@@ -2276,10 +2298,12 @@ contract SymbolicRevertKeepsCheatcodes is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicRevertKeepsCheatcodes.t.sol:SymbolicRevertKeepsCheatcodes
+Ran 4 tests for test/SymbolicRevertKeepsCheatcodes.t.sol:SymbolicRevertKeepsCheatcodes
+[FAIL: expected an emit, but no logs were emitted afterwards. you might have mismatched events or not enough events were emitted; counterexample: 		[SENDER] [SENDER] calldata=0x3e65ad21 args=[]] checkExpectEmitSurvivesRevertingCall() ([METRICS])
+[FAIL: call didn't revert at a lower depth than cheatcode call depth; counterexample: 		[SENDER] [SENDER] calldata=0xea358207 args=[]] checkExpectRevertPendingInCalleeReverts() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x9389e44d0000000000000000000000000000000000000000000000000000000000000000 args=[0x0000000000000000000000000000000000000000]] checkMockSurvivesRevertingCall(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xe9b7d25400000000000000000000000000000000000000000000000000000000000003e8 args=[1000]] checkWarpSurvivesRevertingCall(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()

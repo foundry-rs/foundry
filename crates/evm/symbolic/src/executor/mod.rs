@@ -28,11 +28,12 @@ enum CallStatus {
 
 enum JoinedCallOutcome {
     ExpectedRevert(PathState),
-    /// A successful call; `unmet_expected_revert` means the caller must see it as a revert.
+    /// A successful call; `unmet_expected_revert` is the reason the caller must see as a revert
+    /// instead.
     Success {
         parent: PathState,
         child: PathState,
-        unmet_expected_revert: bool,
+        unmet_expected_revert: Option<&'static str>,
     },
     Revert {
         parent: PathState,
@@ -165,6 +166,26 @@ impl SymbolicExecutor {
         parent.first_failed_callee =
             parent.first_failed_callee.or(outcome.state.first_failed_callee);
         parent.take_call_outcome_state(&mut outcome.state);
+        // Like Forge's `call_end`, a frame that ends with its own `vm.expectRevert` still pending
+        // reverts with this reason. A frame that returned keeps its state, like a call that
+        // succeeds under the caller's `vm.expectRevert`.
+        if outcome.state.expected_revert.is_some() {
+            const REASON: &str = "call didn't revert at a lower depth than cheatcode call depth";
+            match outcome.status {
+                CallStatus::Success => {
+                    return Ok(JoinedCallOutcome::Success {
+                        parent,
+                        child: outcome.state,
+                        unmet_expected_revert: Some(REASON),
+                    });
+                }
+                CallStatus::Revert => {
+                    outcome.state.frame.return_data =
+                        error_string_return_data(&mut self.cx, REASON);
+                }
+                CallStatus::ExceptionalHalt | CallStatus::Failure => {}
+            }
+        }
         if !matches!(outcome.status, CallStatus::Success) {
             parent.discard_failed_call_logs(
                 state.recorded_logs.as_ref().map_or(0, Vec::len),
@@ -223,7 +244,7 @@ impl SymbolicExecutor {
                 return Ok(JoinedCallOutcome::Success {
                     parent,
                     child: outcome.state,
-                    unmet_expected_revert: true,
+                    unmet_expected_revert: Some("next call did not revert as expected"),
                 });
             }
             match outcome.status {
@@ -252,7 +273,7 @@ impl SymbolicExecutor {
             CallStatus::Success => JoinedCallOutcome::Success {
                 parent,
                 child: outcome.state,
-                unmet_expected_revert: false,
+                unmet_expected_revert: None,
             },
             CallStatus::Revert => JoinedCallOutcome::Revert { parent, child: outcome.state },
             CallStatus::ExceptionalHalt => JoinedCallOutcome::ExceptionalHalt(parent),
