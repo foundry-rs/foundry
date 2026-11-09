@@ -215,13 +215,19 @@ impl DebugRecorder {
         // The step appended last has the bottom `shared` words of this stack, so only the
         // words above them are copied. An instruction changes only the words it reads, so the
         // next step shares the ones below them; a `DUP` reads a word but leaves it in place.
+        // `SWAPN` and `EXCHANGE` declare no inputs but swap words at the depth their immediate
+        // gives, so they share nothing.
         let stack = interp.stack();
         let stack = stack.as_slice();
         let shared = self.shared.min(stack.len());
         self.words.clear();
         self.words.extend_from_slice(&stack[shared..]);
         let read = if op.is_valid() { op.inputs() as usize } else { 0 };
-        let changed = if matches!(op.get(), op::DUP1..=op::DUP16) { 0 } else { read };
+        let changed = match op.get() {
+            op::DUP1..=op::DUP16 => 0,
+            op::SWAPN | op::EXCHANGE => stack.len(),
+            _ => read,
+        };
         self.shared = stack.len() - changed.min(stack.len());
         let inputs_len = read.min(stack.len()).min(STORAGE_INPUTS);
         let mut inputs = [U256::ZERO; STORAGE_INPUTS];
@@ -503,6 +509,7 @@ mod tests {
     use alloy_network::TransactionBuilder;
     use alloy_primitives::{Address, hex};
     use evm2::{
+        SpecId,
         bytecode::Bytecode,
         evm::{AccountInfo, InMemoryDB},
     };
@@ -583,8 +590,31 @@ mod tests {
             AccountInfo::default()
                 .with_code(Bytecode::new_legacy(hex::decode("61cafe5f5260205ff3").unwrap().into())),
         );
+        assert_reconstructs(db, target, SpecFor::<EthEvmNetwork>::default());
+    }
+
+    #[test]
+    fn immediate_stack_swaps_reconstruct_interpreter_stack() {
+        let target = Address::with_last_byte(0x40);
+        // `PUSH1 1; PUSH1 2; PUSH1 3; EXCHANGE 0x8e; STOP`.
+        let exchange = "600160026003e88e00".to_string();
+        // 18 pushes, `SWAPN 0x80`, and `STOP`.
+        let swapn = (1..=18).map(|i| format!("60{i:02x}")).collect::<String>() + "e78000";
+        for code in [exchange, swapn] {
+            let mut db = InMemoryDB::default();
+            db.insert_account_info(
+                &target,
+                AccountInfo::default()
+                    .with_code(Bytecode::new_legacy(hex::decode(&code).unwrap().into())),
+            );
+            assert_reconstructs(db, target, SpecId::AMSTERDAM);
+        }
+    }
+
+    /// Calls `target` under `spec` and checks that each recorded step has the interpreter's
+    /// memory and stack, read backwards and then forwards.
+    fn assert_reconstructs(db: InMemoryDB, target: Address, spec: SpecFor<EthEvmNetwork>) {
         let factory = EvmFactoryFor::<EthEvmNetwork>::default();
-        let spec = SpecFor::<EthEvmNetwork>::default();
         let mut evm =
             factory.create_evm(db, EvmEnv::new(spec, factory.version(spec, 1), Default::default()));
         evm.set_inspector(Snapshots::default());
