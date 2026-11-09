@@ -590,6 +590,7 @@ impl SymbolicExecutor {
         Ok(accesses_return_data(&mut self.cx, Some(&record), Address::ZERO))
     }
 
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn add_call_mock(
         &mut self,
         executor: &ExecutorView<'_>,
