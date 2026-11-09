@@ -429,11 +429,11 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
     /// Prefetches the remote state a call is about to read, if the active fork can predict it.
     ///
     /// The call is simulated on the fork's endpoint and the accounts and slots it touches there
-    /// are fetched in parallel while the EVM runs it. A top-level call is simulated once per
-    /// target and selector, with the state that only exists locally, such as the test contract,
-    /// applied as overrides. A nested call is simulated as is, so one into a contract that exists
-    /// only locally is skipped, as are calls to precompiles and cheatcode contracts. Nothing
-    /// happens without an active fork.
+    /// are fetched in parallel while the EVM runs it. A top-level call is simulated with the
+    /// state that only exists locally, such as the test contract, applied as overrides. A nested
+    /// call is simulated as is, so one into a contract that exists only locally is skipped, as
+    /// are calls to precompiles and cheatcode contracts. Nothing happens without an active
+    /// fork.
     fn prefetch_call(
         &self,
         caller: Address,
@@ -2550,7 +2550,10 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             .to(target)
             .value(value)
             .input(input.clone().into());
-        fork.db.db.prefetch_access_list(AccessListPrefetch { tx, overrides, once: top_level });
+        // A repeated top-level call, such as a fuzz run or a replayed transaction, reads other
+        // slots with other arguments, so it is simulated again; the backend skips simulations
+        // while reads hit the cache.
+        fork.db.db.prefetch_access_list(AccessListPrefetch { tx, overrides, once: false });
     }
 
     fn active_fork_url(&self) -> Option<String> {
