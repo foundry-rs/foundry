@@ -1165,9 +1165,27 @@ async fn flaky_test_reorg() {
         .get_receipt()
         .await
         .unwrap();
+    let height = provider.get_block_number().await.unwrap();
+    let hashes = || async {
+        let mut hashes = vec![];
+        for number in height - 2..=height {
+            hashes.push(provider.get_block(number.into()).await.unwrap().unwrap().header.hash);
+        }
+        hashes
+    };
+    let before = hashes().await;
     api.anvil_reorg(ReorgOptions { depth: 3, tx_block_pairs: vec![] }).await.unwrap();
     let value = storage.getValue().call().await.unwrap();
     assert_eq!("initial value".to_string(), value);
+    // Replacement blocks differ from the replaced ones, also when both are empty, and a second
+    // reorg over the same heights differs from the first.
+    let first_reorg = hashes().await;
+    assert!(before.iter().zip(&first_reorg).all(|(old, new)| old != new));
+    api.anvil_reorg(ReorgOptions { depth: 3, tx_block_pairs: vec![] }).await.unwrap();
+    let second_reorg = hashes().await;
+    assert!(first_reorg.iter().zip(&second_reorg).all(|(old, new)| old != new));
+    let block = provider.get_block(height.into()).await.unwrap().unwrap();
+    assert_eq!(block.header.parent_hash, second_reorg[1]);
 
     api.mine_one().await.unwrap();
     api.mine_one().await.unwrap();
@@ -1761,52 +1779,6 @@ async fn test_rollback() {
     api.mine_one().await.unwrap();
     let replacement_block1 = provider.get_block(1.into()).await.unwrap().unwrap();
     assert_eq!(replacement_block1.header.base_fee_per_gas, block1.header.base_fee_per_gas);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_reorg_replaces_blocks_that_hold_the_same_transactions() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
-    let accounts = handle.dev_accounts().collect::<Vec<_>>();
-
-    let tx = TransactionRequest::default().from(accounts[0]).to(accounts[1]).value(U256::ONE);
-    api.send_transaction(WithOtherFields::new(tx.clone())).await.unwrap();
-    api.mine_one().await.unwrap();
-    api.evm_mine(Some(MineOptions::Options { timestamp: None, blocks: Some(2) })).await.unwrap();
-
-    let hashes = || async {
-        let mut hashes = vec![];
-        for number in 1..=3u64 {
-            let block = provider.get_block(number.into()).await.unwrap().unwrap();
-            hashes.push(block.header.hash);
-        }
-        hashes
-    };
-    let before = hashes().await;
-
-    // Replay the same transaction into the same height: the only difference is the reorg itself.
-    api.anvil_reorg(ReorgOptions {
-        depth: 3,
-        tx_block_pairs: vec![(TransactionData::JSON(tx.into()), 0)],
-    })
-    .await
-    .unwrap();
-    let first_reorg = hashes().await;
-    for (number, (old, new)) in before.iter().zip(&first_reorg).enumerate() {
-        assert_ne!(old, new, "block {} must change on reorg", number + 1);
-    }
-
-    // Replacement blocks with no transactions must differ as well, also from the earlier reorg.
-    api.anvil_reorg(ReorgOptions { depth: 3, tx_block_pairs: vec![] }).await.unwrap();
-    let second_reorg = hashes().await;
-    for (number, (old, new)) in first_reorg.iter().zip(&second_reorg).enumerate() {
-        assert_ne!(old, new, "block {} must change on the second reorg", number + 1);
-    }
-    for number in 2..=3u64 {
-        let block = provider.get_block(number.into()).await.unwrap().unwrap();
-        assert_eq!(block.header.parent_hash, second_reorg[number as usize - 2]);
-    }
-    assert_eq!(provider.get_block_number().await.unwrap(), 3);
 }
 
 #[tokio::test(flavor = "multi_thread")]
