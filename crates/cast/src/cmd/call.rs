@@ -262,6 +262,9 @@ impl CallArgs {
             if !self.tx.auth.is_empty() {
                 eyre::bail!("--auth cannot be combined with --curl");
             }
+            if self.command.is_some() {
+                eyre::bail!("--create cannot be combined with --curl");
+            }
             return self.run_curl().await;
         }
 
