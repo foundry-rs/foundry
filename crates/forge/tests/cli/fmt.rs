@@ -337,7 +337,7 @@ HINT: If you are working outside of the project, try providing paths to your sou
 }
 
 #[forgetest]
-fn fmt_external_configured_directories(prj: _, cmd: _) {
+fn fmt_skips_external_configured_directories(prj: _, cmd: _) {
     let outside = tempfile::tempdir().unwrap();
     for name in ["src", "test", "script"] {
         let dir = outside.path().join(name);
@@ -350,7 +350,20 @@ fn fmt_external_configured_directories(prj: _, cmd: _) {
         config.script = outside.path().join("script");
     });
 
-    cmd.args(["fmt", "--check"]).assert_failure().stderr_eq("");
+    cmd.args(["fmt", "--check"]).assert_success().stdout_eq("").stderr_eq(
+        str![[r#"
+Warning: Skipping [..]/src/External.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Warning: Skipping [..]/test/External.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Warning: Skipping [..]/script/External.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Warning: Nothing to format.
+HINT: If you are working outside of the project, try providing paths to your source files: `forge fmt <paths>`
+
+"#]]
+        .unordered(),
+    );
     for name in ["src", "test", "script"] {
         assert_data_eq!(
             std::fs::read_to_string(outside.path().join(name).join("External.sol")).unwrap(),
@@ -360,9 +373,14 @@ fn fmt_external_configured_directories(prj: _, cmd: _) {
 
     cmd.forge_fuse().arg("fmt").assert_success().stdout_eq("").stderr_eq(
         str![[r#"
-Formatted [..]/src/External.sol
-Formatted [..]/test/External.sol
-Formatted [..]/script/External.sol
+Warning: Skipping [..]/src/External.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Warning: Skipping [..]/test/External.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Warning: Skipping [..]/script/External.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Warning: Nothing to format.
+HINT: If you are working outside of the project, try providing paths to your source files: `forge fmt <paths>`
 
 "#]]
         .unordered(),
@@ -370,10 +388,23 @@ Formatted [..]/script/External.sol
     for name in ["src", "test", "script"] {
         assert_data_eq!(
             std::fs::read_to_string(outside.path().join(name).join("External.sol")).unwrap(),
-            FORMATTED,
+            UNFORMATTED,
         );
     }
-    cmd.forge_fuse().args(["fmt", "--check"]).assert_success().stdout_eq("").stderr_eq("");
+    cmd.forge_fuse().args(["fmt", "--check"]).assert_success().stdout_eq("").stderr_eq(
+        str![[r#"
+Warning: Skipping [..]/src/External.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Warning: Skipping [..]/test/External.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Warning: Skipping [..]/script/External.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Warning: Nothing to format.
+HINT: If you are working outside of the project, try providing paths to your source files: `forge fmt <paths>`
+
+"#]]
+        .unordered(),
+    );
 }
 
 #[forgetest]
@@ -446,4 +477,41 @@ Formatted [..]/Script.sol
         assert_data_eq!(std::fs::read_to_string(prj.root().join(file)).unwrap(), FORMATTED);
     }
     cmd.forge_fuse().args(["fmt", "--check"]).assert_success().stdout_eq("").stderr_eq("");
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn fmt_skips_symlinked_default_source_root(prj: _, cmd: _) {
+    let outside = tempfile::tempdir().unwrap();
+    let outside_file = outside.path().join("Outside.sol");
+    std::fs::write(&outside_file, UNFORMATTED).unwrap();
+
+    std::fs::remove_dir(prj.root().join("src")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), prj.root().join("src")).unwrap();
+
+    cmd.args(["fmt", "--check"]).assert_success();
+    assert_data_eq!(std::fs::read_to_string(&outside_file).unwrap(), UNFORMATTED);
+
+    cmd.forge_fuse().arg("fmt").assert_success();
+    assert_data_eq!(std::fs::read_to_string(&outside_file).unwrap(), UNFORMATTED);
+
+    // An explicit directory remains an opt-in for external targets.
+    cmd.forge_fuse().args(["fmt", "src"]).assert_success();
+    assert_data_eq!(std::fs::read_to_string(&outside_file).unwrap(), FORMATTED);
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn fmt_skips_symlinked_configured_file(prj: _, cmd: _) {
+    let outside = tempfile::tempdir().unwrap();
+    let outside_file = outside.path().join("Outside.sol");
+    std::fs::write(&outside_file, UNFORMATTED).unwrap();
+    std::os::unix::fs::symlink(&outside_file, prj.root().join("src/Link.sol")).unwrap();
+    prj.update_config(|config| config.src = "src/Link.sol".into());
+
+    cmd.args(["fmt", "--check"]).assert_success();
+    assert_data_eq!(std::fs::read_to_string(&outside_file).unwrap(), UNFORMATTED);
+
+    cmd.forge_fuse().arg("fmt").assert_success();
+    assert_data_eq!(std::fs::read_to_string(outside_file).unwrap(), UNFORMATTED);
 }

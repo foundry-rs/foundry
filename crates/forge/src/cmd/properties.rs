@@ -61,6 +61,20 @@ mod matcher;
 /// of independent agents rarely repeat.
 const DEFAULT_AGENTS: usize = 4;
 const DEFAULT_QUORUM: usize = 2;
+/// The focus of each agent without `--focus`, by agent number, wrapping: the four strategy lanes
+/// of ultrafuzz's smoke benchmark (MIT). On an audited vault, five runs of four agents with these
+/// focuses found 3.6 distinct real bugs per run against 2.2 without, at a lower cost and with
+/// the same hit rate on the audit's findings. A single agent gets no focus.
+const DEFAULT_FOCUSES: [&str; 4] = [
+    "block and time transitions, accrual, vesting, auctions, deadlines, stale snapshots, and \
+     sequences whose result depends on elapsed time.",
+    "stale, reverting, zero, extreme, or adversarial oracle, strategy, pool, token, gauge, hook, \
+     and callback values.",
+    "cached or stored balances, donations, fees, rewards, bad debt, utilization, exchange rates, \
+     and state that can diverge from live balances.",
+    "agreement of max, preview, and view functions before, during, and after lifecycle \
+     transitions, especially empty, paused, removed, nested, and terminal states.",
+];
 /// How often Forge checks whether an agent session with a timeout has exited. Sessions take
 /// minutes, so this adds no noticeable delay.
 const SESSION_POLL: Duration = Duration::from_millis(100);
@@ -149,6 +163,7 @@ pub struct PropertiesArgs {
     /// FORGE_PROPERTIES_CONTEXT  absolute paths of the --context files, one per line
     /// FORGE_PROPERTIES_OUT      absolute, empty directory for the agent's tests
     /// FORGE_PROPERTIES_SEED     the agent's own seed, in hex
+    /// FORGE_PROPERTIES_FOCUS    the agent's focus, as in the task, or empty
     /// FORGE_PROPERTIES_USAGE    file where the agent can write its model usage as JSON:
     ///                           {"input_tokens": N, "output_tokens": N, "cost_usd": X}
     ///
@@ -205,6 +220,19 @@ pub struct PropertiesArgs {
     /// copy of the project, with its own seed.
     #[arg(long, default_value_t = DEFAULT_AGENTS, value_name = "N")]
     agents: usize,
+
+    /// An area for one agent to search first. Agent N gets the Nth focus, wrapping. Can be given
+    /// at most --agents times.
+    ///
+    /// Without it, two or more agents get built-in focuses: time and sequence effects, external
+    /// dependency boundaries, stored state against live balances, and limit and view functions
+    /// across lifecycle states.
+    #[arg(long, value_name = "TEXT")]
+    focus: Vec<String>,
+
+    /// Give every agent the same task, without a focus.
+    #[arg(long, conflicts_with = "focus")]
+    no_focus: bool,
 
     /// Number of agents that must report the same root cause before Forge reports it as a
     /// possible bug.
@@ -422,9 +450,8 @@ struct TestRun {
 /// What one agent session left.
 struct Session {
     id: usize,
-    /// Why the agent command failed, if it did.
-    error: Option<String>,
-    timed_out: bool,
+    /// How the agent command ended.
+    exit: AgentExit,
     usage: Option<Usage>,
     possible_bugs: Vec<AgentFailure>,
     rejected: Vec<Rejected>,
@@ -435,6 +462,16 @@ struct Session {
     /// The files of `files` that each of them imports, directly or not, as the compiler resolves
     /// the imports.
     imports: BTreeMap<PathBuf, BTreeSet<PathBuf>>,
+}
+
+/// How an agent command ended.
+enum AgentExit {
+    /// The command exited successfully.
+    Succeeded,
+    /// The command failed, for this reason.
+    Failed(String),
+    /// The command reached the timeout, so Forge ended it.
+    TimedOut,
 }
 
 /// The output directories that a run reserved. The ones it left empty are removed on drop.
@@ -458,6 +495,7 @@ impl PropertiesArgs {
         ensure!(self.agents > 0, "--agents must be greater than zero");
         let quorum = self.quorum.unwrap_or(self.agents.min(DEFAULT_QUORUM));
         ensure!((1..=self.agents).contains(&quorum), "--quorum must be between 1 and --agents");
+        ensure!(self.focus.len() <= self.agents, "--focus can be given at most --agents times");
         ensure!(
             self.target.iter().all(|path| workspace::is_safe_relative_path(path)),
             "--target paths must be project-relative paths"
@@ -639,8 +677,9 @@ impl Campaign<'_> {
         for (id, result) in (1..).zip(results) {
             match result {
                 Ok(session) => {
-                    errors
-                        .extend(session.error.as_ref().map(|error| format!("agent {id}: {error}")));
+                    if let AgentExit::Failed(error) = &session.exit {
+                        errors.push(format!("agent {id}: {error}"));
+                    }
                     sessions.push(session);
                 }
                 Err(error) => errors.push(format!("agent {id}: {error:#}")),
@@ -797,7 +836,7 @@ impl Campaign<'_> {
         }
         let timed_out = sessions
             .iter()
-            .filter(|session| session.timed_out)
+            .filter(|session| matches!(session.exit, AgentExit::TimedOut))
             .map(|session| session.id)
             .collect::<Vec<_>>();
         if !timed_out.is_empty() {
@@ -902,8 +941,21 @@ impl Campaign<'_> {
         let out_dir = workspace.path().join(&out);
         ensure_inside(workspace.path(), &out_dir, &out)?;
         fs::create_dir_all(&out_dir)?;
+        let focuses = if args.no_focus || (args.focus.is_empty() && args.agents == 1) {
+            vec![]
+        } else if args.focus.is_empty() {
+            DEFAULT_FOCUSES.to_vec()
+        } else {
+            args.focus.iter().map(String::as_str).collect()
+        };
+        let focus = (!focuses.is_empty()).then(|| focuses[(id - 1) % focuses.len()]);
+        // The other agents have other focuses only when each agent has its own.
+        let distinct = args.agents > 1 && args.agents <= focuses.len();
         let prompt = cache.join("prompt.md");
-        fs::write(&prompt, session_prompt(&inputs.targets, &inputs.context, &out_dir))?;
+        fs::write(
+            &prompt,
+            session_prompt(&inputs.targets, &inputs.context, &out_dir, focus, distinct),
+        )?;
         let usage_path = cache.join("usage.json");
         let log_path = cache.join("agent.log");
         let log = fs::File::create(&log_path)?;
@@ -924,20 +976,25 @@ impl Campaign<'_> {
             .env("FORGE_PROPERTIES_CONTEXT", lines(&inputs.context))
             .env("FORGE_PROPERTIES_OUT", &out_dir)
             .env("FORGE_PROPERTIES_SEED", format!("{seed:#x}"))
+            .env("FORGE_PROPERTIES_FOCUS", focus.unwrap_or_default())
             .env("FORGE_PROPERTIES_USAGE", &usage_path)
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)
             .stderr(log);
         let status = run_session(&mut command, args.timeout, "agent")?;
         let log_display = log_path.strip_prefix(&self.config.root).unwrap_or(&log_path);
-        let error = status.filter(|status| !status.success()).map(|status| {
-            format!("agent command failed ({status}): see {}", log_display.display())
-        });
+        let exit = match status {
+            None => AgentExit::TimedOut,
+            Some(status) if status.success() => AgentExit::Succeeded,
+            Some(status) => AgentExit::Failed(format!(
+                "agent command failed ({status}): see {}",
+                log_display.display()
+            )),
+        };
         let usage = read_usage(&usage_path, &format!("agent {id}"))?;
         let mut session = Session {
             id,
-            error,
-            timed_out: status.is_none(),
+            exit,
             usage,
             possible_bugs: vec![],
             rejected: vec![],
@@ -1456,7 +1513,13 @@ fn group_failures(failures: Vec<AgentFailure>) -> Vec<BugGroup> {
 /// Returns the task of an agent session. On 26 held-out cases, plain independent small-model
 /// audits with a task of this kind found 0.05 to 0.10 more planted bugs at every spend level than
 /// agents that returned candidate JSON in short rounds.
-fn session_prompt(targets: &[PathBuf], context: &[PathBuf], out: &Path) -> String {
+fn session_prompt(
+    targets: &[PathBuf],
+    context: &[PathBuf],
+    out: &Path,
+    focus: Option<&str>,
+    distinct: bool,
+) -> String {
     let list = |paths: &[PathBuf]| {
         paths.iter().map(|path| format!("- {}\n", path.display())).collect::<String>()
     };
@@ -1482,6 +1545,13 @@ fn session_prompt(targets: &[PathBuf], context: &[PathBuf], out: &Path) -> Strin
          freely.\n",
         out.display()
     ));
+    if let Some(focus) = focus {
+        let others = if distinct { " (the other agents have other focuses)" } else { "" };
+        prompt.push_str(&format!(
+            "\nYour focus{others}: {focus} Trace a small number of concrete high-signal paths in \
+             this area first; then widen if budget is left.\n"
+        ));
+    }
     prompt
 }
 

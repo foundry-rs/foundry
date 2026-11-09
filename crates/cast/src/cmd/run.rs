@@ -186,6 +186,33 @@ struct TargetFetch {
     provider: RetryProvider,
 }
 
+/// Where the state right before the target transaction comes from.
+///
+/// `RunArgs::prepare` picks the first source that applies, in this order: `--quick`, a
+/// prestate trace (`--prestate-tracer`), the block's access list, and finally replaying the
+/// earlier transactions of the block.
+enum PrestateSource {
+    /// `--quick`: the target executes directly on the parent block's state.
+    ParentState,
+    /// The prestate returned by `debug_traceTransaction` was applied to the executor.
+    PrestateTrace,
+    /// The block access list of the target's block, from which the backend reads the writes of
+    /// the earlier transactions.
+    BlockAccessList(Arc<Bal>),
+    /// The transactions before the target in its block are replayed.
+    BlockReplay,
+}
+
+impl PrestateSource {
+    /// Whether the transactions before the target are executed by a block replay.
+    ///
+    /// Only the ordinary path reads a block access list; other paths, such as Monad's, still
+    /// replay the block prefix.
+    const fn replays_prefix(&self) -> bool {
+        matches!(self, Self::BlockAccessList(_) | Self::BlockReplay)
+    }
+}
+
 /// Chain-specific gas limits for transactions replayed by `cast run`.
 enum ReplayGasLimits {
     Unchanged,
@@ -203,9 +230,8 @@ struct PreparedRun<FEN: FoundryEvmNetwork> {
     evm_env: EvmEnvFor<FEN>,
     executor: TracingExecutor<FEN>,
     trace_context: TraceContext,
-    prestate_applied: bool,
-    /// The block access list of the target's block, when the node serves one.
-    block_access_list: Option<Arc<Bal>>,
+    /// Where the state right before the target transaction comes from.
+    prestate: PrestateSource,
     replay_gas_limits: ReplayGasLimits,
     /// The target's receipt, which the replay is checked against.
     receipt: Option<AnyTransactionReceipt>,
@@ -594,8 +620,9 @@ impl RunArgs {
         // `debug_` namespace, which most nodes don't expose, so it is opt-in and silently falls
         // back to the block access list, then to replaying previous transactions in the block,
         // if the call or parsing fails.
-        let mut prestate_applied = false;
-        if !self.quick && self.prestate_tracer {
+        let mut prestate =
+            if self.quick { PrestateSource::ParentState } else { PrestateSource::BlockReplay };
+        if matches!(prestate, PrestateSource::BlockReplay) && self.prestate_tracer {
             trace!(?tx_hash, "attempting to fetch prestate via debug_traceTransaction");
             match provider
                 .debug_trace_transaction(
@@ -607,7 +634,7 @@ impl RunArgs {
                 Ok(trace) => match trace.try_into_pre_state_frame() {
                     Ok(pre_state_frame) => {
                         executor.apply_prestate_trace(pre_state_frame.into_pre_state())?;
-                        prestate_applied = true;
+                        prestate = PrestateSource::PrestateTrace;
                         trace!("prestate trace applied successfully, skipping block replay");
                     }
                     Err(err) => {
@@ -625,23 +652,19 @@ impl RunArgs {
         // transactions. Before Cancun, SELFDESTRUCT wipes storage the list does not enumerate.
         // Explicit execution rules must replay the prefix: canonical writes may differ under
         // the requested EVM version or hardfork.
-        let block_access_list = if !self.quick
+        if matches!(prestate, PrestateSource::BlockReplay)
             && !self.no_bal
-            && !prestate_applied
             && self.evm_version.is_none()
             && config.hardfork.is_none()
             && is_cancun
             && let Some(block) = &block
+            && let Some(bal) = fetch_block_access_list(&provider, block).await?
         {
-            fetch_block_access_list(&provider, block).await?
-        } else {
-            None
-        };
+            prestate = PrestateSource::BlockAccessList(bal);
+        }
 
         let mut replay_tx_hashes = vec![tx_hash];
-        if !self.quick
-            && !prestate_applied
-            && block_access_list.is_none()
+        if matches!(prestate, PrestateSource::BlockReplay)
             && let Some(block) = &block
         {
             replay_tx_hashes.extend(
@@ -667,8 +690,7 @@ impl RunArgs {
             evm_env,
             executor,
             trace_context,
-            prestate_applied,
-            block_access_list,
+            prestate,
             replay_gas_limits,
             receipt,
             #[cfg(feature = "monad")]
@@ -749,13 +771,13 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
     }
 
     /// Calls `f` for every transaction mined before the target, unless the block replay was
-    /// skipped (`--quick` or an applied prestate).
+    /// skipped (`--quick` or an applied prestate trace).
     fn for_each_prefix_transaction(
         &self,
         target_index: usize,
         mut f: impl FnMut(usize, &AnyRpcTransaction) -> Result<()>,
     ) -> Result<()> {
-        if self.args.quick || self.prestate_applied {
+        if !self.prestate.replays_prefix() {
             return Ok(());
         }
         sh_status!("Executing previous transactions from the block.")?;
@@ -797,7 +819,8 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
         self.prepare_target();
 
         let mut replay = Vec::new();
-        if let Some(bal) = self.block_access_list.take() {
+        if let PrestateSource::BlockAccessList(bal) = &self.prestate {
+            let bal = Arc::clone(bal);
             // Index 0 holds the pre-block system writes and transaction `i` is index `i + 1`, so
             // reads positioned at the target's own index see exactly the earlier writes.
             trace!("reading prestate from block access list, skipping block replay");

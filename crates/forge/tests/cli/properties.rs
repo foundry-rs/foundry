@@ -1734,3 +1734,78 @@ fi
     .unwrap();
     assert_eq!(preserved, first);
 }
+
+// Agent N gets the Nth `--focus`, wrapping, or a built-in focus without the flag when there is
+// more than one agent. Agents are told that the others have other focuses only when every agent
+// has its own. `--no-focus` gives every agent the same task.
+#[forgetest_init]
+fn properties_gives_each_agent_a_focus(prj: _, cmd: _) {
+    fs::create_dir_all(prj.root().join("cache")).unwrap();
+    let focuses = prj.root().join("cache/focuses");
+    let args = properties_args(
+        &prj,
+        &format!(
+            r#"
+prompt="$FORGE_PROPERTIES_PROMPT"
+[ -z "$FORGE_PROPERTIES_FOCUS" ] || grep -qF ": $FORGE_PROPERTIES_FOCUS Trace" "$prompt"
+label=$(sed -n 's/^\(Your focus[^:]*\):.*/\1/p' "$prompt")
+echo "$agent [$label] $FORGE_PROPERTIES_FOCUS" >> {focuses}
+"#,
+            focuses = focuses.display()
+        ),
+    );
+    let read = || {
+        let text = fs::read_to_string(&focuses).unwrap();
+        fs::remove_file(&focuses).unwrap();
+        let mut lines = text.lines().map(String::from).collect::<Vec<_>>();
+        lines.sort();
+        lines.join("\n")
+    };
+
+    cmd.args(&args).args(["--agents", "2", "--focus", "rounding", "--focus", "pause"]);
+    cmd.assert_success();
+    assert_data_eq!(
+        read(),
+        str![[r#"
+1 [Your focus (the other agents have other focuses)] rounding
+2 [Your focus (the other agents have other focuses)] pause
+"#]]
+    );
+
+    cmd.forge_fuse().args(&args).args(["--agents", "3", "--focus", "rounding", "--focus", "pause"]);
+    cmd.assert_success();
+    assert_data_eq!(
+        read(),
+        str![[r#"
+1 [Your focus] rounding
+2 [Your focus] pause
+3 [Your focus] rounding
+"#]]
+    );
+
+    cmd.forge_fuse().args(&args).assert_success();
+    assert_data_eq!(
+        read(),
+        str![[r#"
+1 [Your focus (the other agents have other focuses)] block and time transitions, accrual, vesting, auctions, deadlines, stale snapshots, and sequences whose result depends on elapsed time.
+2 [Your focus (the other agents have other focuses)] stale, reverting, zero, extreme, or adversarial oracle, strategy, pool, token, gauge, hook, and callback values.
+3 [Your focus (the other agents have other focuses)] cached or stored balances, donations, fees, rewards, bad debt, utilization, exchange rates, and state that can diverge from live balances.
+4 [Your focus (the other agents have other focuses)] agreement of max, preview, and view functions before, during, and after lifecycle transitions, especially empty, paused, removed, nested, and terminal states.
+"#]]
+    );
+
+    cmd.forge_fuse().args(&args).args(["--agents", "1"]).assert_success();
+    assert_data_eq!(read(), str!["1 [] "]);
+
+    cmd.forge_fuse().args(&args).args(["--agents", "1", "--focus", "rounding"]).assert_success();
+    assert_data_eq!(read(), str!["1 [Your focus] rounding"]);
+
+    cmd.forge_fuse().args(&args).args(["--agents", "2", "--no-focus"]).assert_success();
+    assert_data_eq!(read(), str!["1 [] \n2 [] "]);
+
+    cmd.forge_fuse().args(&args).args(["--agents", "1", "--focus", "a", "--focus", "b"]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: --focus can be given at most --agents times
+
+"#]]);
+}

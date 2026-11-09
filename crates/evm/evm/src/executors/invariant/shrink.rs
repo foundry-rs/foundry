@@ -1167,6 +1167,11 @@ impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for HandlerReplayPolicy<'_> {
         call_result: RawCallResult<FEN>,
         _counters: &mut ReplayCounters,
     ) -> Option<HandlerReplayOutcome> {
+        // Rejected calls cannot reproduce a handler bug, even if an assertion failed
+        // before the assumption. Match the live campaign and ordinary sequence replay.
+        if call_result.result.as_ref() == MAGIC_ASSUME {
+            return None;
+        }
         let asserted = did_fail_on_assert(&call_result, &call_result.state_changeset);
         if sequence.last() == Some(&idx) {
             let snapshot = snapshot_edge_fingerprint(&call_result);
@@ -1313,11 +1318,11 @@ pub fn check_sequence_value<FEN: FoundryEvmNetwork>(
             last_call_scored =
                 handlers_succeeded(&executor, test_address, &gate_targets, &call_result);
             // Campaigns drop rejected calls. A failed gate stops them under `fail_on_revert`, and
-            // an assertion failure is a handler bug that fails the test in any configuration.
+            // an assertion failure, even a caught one that passes the gate, is a handler bug that
+            // fails the test in any configuration.
             if kind == CampaignCallKind::AssumptionRejected
-                || (!last_call_scored
-                    && (fail_on_revert
-                        || did_fail_on_assert(&call_result, &call_result.state_changeset)))
+                || did_fail_on_assert(&call_result, &call_result.state_changeset)
+                || (!last_call_scored && fail_on_revert)
             {
                 return Ok(None);
             }
@@ -1371,8 +1376,8 @@ mod tests {
     use crate::executors::ExecutorBuilder;
     use alloy_primitives::hex;
     use evm2::bytecode::Bytecode;
-    use foundry_cheatcodes::CheatsConfig;
-    use foundry_evm_core::evm::EthEvmNetwork;
+    use foundry_cheatcodes::{CheatsConfig, Vm};
+    use foundry_evm_core::{constants::CHEATCODE_ADDRESS, evm::EthEvmNetwork};
     use foundry_evm_fuzz::CallDetails;
     use std::sync::Arc;
 
@@ -1625,5 +1630,69 @@ mod tests {
         assert_eq!(message.matches("sender=").count(), LIVE_SHRINK_SEQUENCE_EDGE_CALLS * 2);
         assert!(message.contains("calldata=0x00 args=[]"));
         assert!(message.contains("calldata=0x22 args=[]"));
+    }
+
+    #[test]
+    fn handler_replay_rejects_assumption_after_caught_assertion() {
+        let mut executor = crate::executors::test_executor(
+            ExecutorBuilder::<EthEvmNetwork>::default()
+                .inspectors(|stack| stack.cheatcodes(Arc::new(CheatsConfig::default())))
+                .gas_limit(1 << 24),
+            Default::default(),
+        );
+        let handler = Address::repeat_byte(0x11);
+        let assertion =
+            Vm::assertTrue_1Call { condition: false, err: "custom reason".into() }.abi_encode();
+        let assumption = Vm::assumeCall { condition: false }.abi_encode();
+        // Four-byte calldata prepares slot zero. Otherwise, catch the assertion revert, assume
+        // slot zero is set, and bubble the assumption's return data. The anchor's EVM path is
+        // identical whether assume accepts or rejects; only the native cheatcode result differs.
+        let mut code = hex!("366004146000573660006000376000600060").to_vec();
+        code.push(assertion.len() as u8);
+        code.extend_from_slice(&hex!("6000600073"));
+        code.extend_from_slice(CHEATCODE_ADDRESS.as_slice());
+        code.extend_from_slice(&hex!("5af15060005460"));
+        code.push((assertion.len() + 4) as u8);
+        code.extend_from_slice(&hex!("526000600060"));
+        code.push(assumption.len() as u8);
+        code.push(0x60);
+        code.push(assertion.len() as u8);
+        code.extend_from_slice(&hex!("600073"));
+        code.extend_from_slice(CHEATCODE_ADDRESS.as_slice());
+        code.extend_from_slice(&hex!("5af1503d600060003e3d6000fd"));
+        code[5] = code.len() as u8;
+        code.extend_from_slice(&hex!("5b600160005500"));
+        executor.set_code(handler, Bytecode::new_raw(code.into())).unwrap();
+        let mut calldata = assertion;
+        calldata.extend_from_slice(&assumption);
+        let mut call = tx(None, None);
+        call.call_details.target = handler;
+        call.call_details.calldata = calldata.into();
+        let mut prepare = call.clone();
+        prepare.call_details.calldata = Bytes::from_static(&[1, 2, 3, 4]);
+        let calls = [prepare, call];
+
+        let (kind, result) = execute_invariant_replay_tx(&mut executor.clone(), &calls[1]).unwrap();
+        assert_eq!(kind, CampaignCallKind::AssumptionRejected);
+        assert!(result.assertion_failed);
+        let full = replay_handler_failure_sequence(executor.clone(), &calls, &[0, 1], false, None)
+            .unwrap();
+        assert!(full.anchor_asserted);
+        let replay =
+            replay_handler_failure_sequence(executor.clone(), &calls, &[1], false, None).unwrap();
+
+        let config = InvariantConfig::default();
+        let progress = ShrinkProgress::new(&config, None, "test", None, None, false);
+        let shrunk = shrink_handler_sequence(
+            &config,
+            &calls,
+            full.anchor_fingerprint,
+            &executor,
+            &progress,
+            &EarlyExit::new(false),
+        )
+        .unwrap();
+        assert_eq!(shrunk, calls);
+        assert!(!replay.anchor_asserted);
     }
 }

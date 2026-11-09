@@ -728,6 +728,12 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// was taken.
     pub persistent_write_snapshots: HashMap<U256, usize>,
 
+    /// Whether a `vm.assert*` cheatcode failed during the current call.
+    ///
+    /// Unlike the global failure slot, this survives reverts, so callers still see the failure
+    /// when the asserting call reverts afterwards.
+    pub assertion_failed: bool,
+
     /// Gas metering state.
     pub gas_metering: GasMetering,
 
@@ -865,6 +871,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             persistent_writes: Default::default(),
             frame_rollback: Default::default(),
             persistent_write_snapshots: Default::default(),
+            assertion_failed: false,
             gas_metering: Default::default(),
             gas_snapshots: Default::default(),
             pc: Default::default(),

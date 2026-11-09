@@ -586,11 +586,10 @@ solar-lsp = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
 solar-lint = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
 
 ## foundry-core
-# foundry-rs/foundry-core#286 (engine-agnostic fork-db) on main 39cc9fb.
-foundry-wallets = { git = "https://github.com/mablr/foundry-core", rev = "a2f9087f5035baf3b9f6cf0457d84ff2051fd174" }
-foundry-compilers = { git = "https://github.com/mablr/foundry-core", rev = "a2f9087f5035baf3b9f6cf0457d84ff2051fd174" }
-foundry-block-explorers = { git = "https://github.com/mablr/foundry-core", rev = "a2f9087f5035baf3b9f6cf0457d84ff2051fd174" }
-foundry-fork-db = { git = "https://github.com/mablr/foundry-core", rev = "a2f9087f5035baf3b9f6cf0457d84ff2051fd174" }
+foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "a611430808f484546ce36a90b33d91780ec81ea7" }
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "a611430808f484546ce36a90b33d91780ec81ea7" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "a611430808f484546ce36a90b33d91780ec81ea7" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "a611430808f484546ce36a90b33d91780ec81ea7" }
 
 ## alloy-core
 alloy-dyn-abi = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
@@ -653,9 +652,9 @@ reth-zstd-compressors = { git = "https://github.com/paradigmxyz/reth-core", rev 
 ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]
 
 # The single evm2 revision for the whole graph: alloy-rs/evm2#1001 at `cf7a0e4`. Tempo, reth,
-# reth-core, evm2-networks and foundry-core all pin `alloy-rs/evm2`, at different revisions. Cargo
-# rejects a patch from the same source, so this goes through `DaniPopes/evm2`, the pre-transfer
-# URL of alloy-rs/evm2, which GitHub redirects to it. Replace with upstream main after #1001 lands.
+# reth-core and evm2-networks all pin `alloy-rs/evm2`, at different revisions. Cargo rejects a
+# patch from the same source, so this goes through `DaniPopes/evm2`, the pre-transfer URL of
+# alloy-rs/evm2, which GitHub redirects to it. Replace with upstream main after #1001 lands.
 [patch."https://github.com/alloy-rs/evm2"]
 evm2 = { git = "https://github.com/DaniPopes/evm2", rev = "cf7a0e4631a820d38d0c23b2b2046f507b6c340b" }
 evm2-inspectors = { git = "https://github.com/DaniPopes/evm2", rev = "cf7a0e4631a820d38d0c23b2b2046f507b6c340b" }

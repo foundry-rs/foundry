@@ -315,6 +315,30 @@ attachment semantics provide no such integration.
 cargo nextest run -p forge --test cli tempo_proofs
 ```
 
+The opt-in [native-source fork test](../../crates/forge/tests/cli/tempo_proofs/native.rs) reads a real
+Tempo testnet RPC and records its anchor height and hash separately from a later locally mined
+height. It collects the certificate, raw header and account/storage proofs at that local height.
+The existing Solidity verifier binds the signatures to the header digest and state root, then to
+the account, slot and expected value; a wrong value must fail. Real Tempo provides the fork anchor,
+while Anvil's development committee certifies the local sealed partial trie.
+
+The test uses the epoch length from the pinned Moderato chain specification and configures Anvil
+explicitly. It checks the RPC chain ID and genesis hash, verifies the anchor's native epoch, then
+checks native headers on both sides of the expected epoch boundary, including their parent hash
+linkage. These source-header checks validate the epoch length independently of Anvil; the genesis
+hash alone does not authenticate it. The public RPC rejects `debug_chainConfig`, so this test does
+not exercise Anvil's automatic epoch metadata probe. It leaves the hardfork unset and checks Anvil's
+selection against `tempo_forkSchedule` at the anchor timestamp.
+It only reads the upstream chain and runs on nightly CI or manual testnet dispatches, using the
+public Moderato RPC when no private endpoint is configured. Run it explicitly with a Moderato
+endpoint:
+
+```sh
+TEMPO_TESTNET_RPC_URL=https://rpc.moderato.tempo.xyz \
+  cargo test --locked -p forge --test cli \
+  tempo_proofs::native::tempo_proofs_native_fork -- --ignored --exact --nocapture
+```
+
 ## Documentation and releases
 
 User-facing selection, configuration, and workflows belong in the

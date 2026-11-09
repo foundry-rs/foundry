@@ -8,6 +8,26 @@ use foundry_evm_traces::RevertDiagnostic as DetailedRevertReason;
 
 const IGNORE: [Address; 2] = [HARDHAT_CONSOLE_ADDRESS, CHEATCODE_ADDRESS];
 
+/// An `EXTCODESIZE` probe of an address without executable code.
+///
+/// The probe is cached optimistically when the opcode starts, and validated against the opcode's
+/// output when it ends.
+#[derive(Clone, Copy, Debug)]
+enum SizeCheck {
+    /// `EXTCODESIZE` is executing; its output is validated in `step_end`.
+    Pending { addr: Address, depth: u16 },
+    /// `EXTCODESIZE` did not report any code for the address.
+    NonContract { addr: Address, depth: u16 },
+}
+
+impl SizeCheck {
+    const fn target(self) -> (Address, u16) {
+        match self {
+            Self::Pending { addr, depth } | Self::NonContract { addr, depth } => (addr, depth),
+        }
+    }
+}
+
 /// An inspector that tracks call context to enhances revert diagnostics.
 /// Useful for understanding reverts that are not linked to custom errors or revert strings.
 ///
@@ -29,9 +49,7 @@ pub struct RevertDiagnostic {
     /// Tracks calls with calldata that target an address without executable code.
     non_contract_call: Option<(Address, MessageKind, u16)>,
     /// Tracks EXTCODESIZE checks that target an address without executable code.
-    non_contract_size_check: Option<(Address, u16)>,
-    /// Whether the step opcode is EXTCODESIZE or not.
-    is_extcodesize_step: bool,
+    non_contract_size_check: Option<SizeCheck>,
     /// Diagnostic detected for the currently executing frame.
     pending: Option<DetailedRevertReason>,
     /// Trace nodes for active frames. `None` means the tracer did not create a node.
@@ -53,7 +71,8 @@ impl RevertDiagnostic {
             return Some(reason);
         }
 
-        if let Some((addr, _)) = self.non_contract_size_check {
+        if let Some(check) = self.non_contract_size_check {
+            let (addr, _) = check.target();
             // unknown schema as the call never took place --> output most generic reason
             return Some(DetailedRevertReason::CallToNonContract(addr));
         }
@@ -114,7 +133,8 @@ impl RevertDiagnostic {
             }
 
             // Check empty revert with same depth as a non-contract size check
-            if let Some((_, check_depth)) = self.non_contract_size_check {
+            if let Some(check) = self.non_contract_size_check {
+                let (_, check_depth) = check.target();
                 if check_depth == depth {
                     self.pending = self.reason();
                 } else {
@@ -139,21 +159,27 @@ impl RevertDiagnostic {
 
             // Optimistically cache --> validated and cleared (if necessary) at `fn
             // step_end()`
-            self.non_contract_size_check = Some((addr, depth));
-            self.is_extcodesize_step = true;
+            self.non_contract_size_check = Some(SizeCheck::Pending { addr, depth });
         }
     }
 
-    /// Tracks `EXTCODESIZE` output. If the bytecode size is NOT 0, clears the cache.
+    /// Validates a pending `EXTCODESIZE` probe against its output: a non-zero size clears it,
+    /// otherwise the address is confirmed to have no code and supersedes any earlier non-contract
+    /// call.
     #[cold]
-    fn handle_extcodesize_output<T: EvmTypes>(&mut self, interp: &Interpreter<'_, '_, T>) {
-        if let Some(size) = interp.stack().peek(0)
-            && !size.is_zero()
-        {
-            self.non_contract_size_check = None;
-        }
-
-        self.is_extcodesize_step = false;
+    fn handle_extcodesize_output<T: EvmTypes>(
+        &mut self,
+        interp: &Interpreter<'_, '_, T>,
+        addr: Address,
+        depth: u16,
+    ) {
+        self.non_contract_size_check = match interp.stack().peek(0) {
+            Some(size) if !size.is_zero() => None,
+            _ => {
+                self.non_contract_call = None;
+                Some(SizeCheck::NonContract { addr, depth })
+            }
+        };
     }
 }
 
@@ -162,7 +188,7 @@ impl<T: EvmTypes> Inspector<T> for RevertDiagnostic {
         InspectorConfig::new().with_steps([op::REVERT, op::EXTCODESIZE].into_iter().collect())
     }
 
-    /// Tracks the first call with non-zero calldata that targets a non-contract address. Excludes
+    /// Tracks the latest call with non-zero calldata that targets a non-contract address. Excludes
     /// precompiles and test addresses.
     fn call(
         &mut self,
@@ -187,6 +213,8 @@ impl<T: EvmTypes> Inspector<T> for RevertDiagnostic {
         {
             // The revert happens in the calling frame.
             self.non_contract_call = Some((target, message.kind, interp.message().depth));
+            // The latest observation explains a following empty revert.
+            self.non_contract_size_check = None;
         }
         None
     }
@@ -201,8 +229,8 @@ impl<T: EvmTypes> Inspector<T> for RevertDiagnostic {
     }
 
     fn step_end(&mut self, interp: &mut Interpreter<'_, '_, T>) {
-        if self.is_extcodesize_step {
-            self.handle_extcodesize_output(interp);
+        if let Some(SizeCheck::Pending { addr, depth }) = self.non_contract_size_check {
+            self.handle_extcodesize_output(interp, addr, depth);
         }
     }
 }
@@ -210,4 +238,61 @@ impl<T: EvmTypes> Inspector<T> for RevertDiagnostic {
 /// Checks if the call scheme corresponds to any sort of delegate call
 pub const fn is_delegatecall(kind: MessageKind) -> bool {
     matches!(kind, MessageKind::DelegateCall | MessageKind::CallCode)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_network::TransactionBuilder;
+    use alloy_primitives::hex;
+    use evm2::{
+        bytecode::Bytecode,
+        evm::{AccountInfo, InMemoryDB},
+    };
+    use foundry_evm_core::evm::{
+        EthEvmNetwork, EvmEnv, EvmFactoryFor, FoundryEvmFactory, FoundryTxConversion, SpecFor,
+        TransactionRequestFor, TypesFor,
+    };
+
+    #[test]
+    fn latest_non_contract_observation_explains_empty_revert() {
+        let target = Address::with_last_byte(0x40);
+        let probed = Address::with_last_byte(0xe2);
+        let mut db = InMemoryDB::default();
+        let code = hex::decode(concat!(
+            "5f5f60015f5f60e15af150", // CALL(gas, 0xe1, 0, 0, 1, 0, 0) to an address without code.
+            "60e23b50",               // EXTCODESIZE(0xe2), which has no code either.
+            "5f5ffd"                  // REVERT(0, 0).
+        ))
+        .unwrap();
+        db.insert_account_info(
+            &target,
+            AccountInfo::default().with_code(Bytecode::new_legacy(code.into())),
+        );
+        let factory = EvmFactoryFor::<EthEvmNetwork>::default();
+        let spec = SpecFor::<EthEvmNetwork>::default();
+        let mut evm =
+            factory.create_evm(db, EvmEnv::new(spec, factory.version(spec, 1), Default::default()));
+        evm.set_inspector(RevertDiagnostic::default());
+        let request = TransactionRequestFor::<EthEvmNetwork>::default()
+            .with_from(Address::with_last_byte(0x30))
+            .with_to(target)
+            .with_nonce(0)
+            .with_chain_id(1)
+            .with_gas_limit(1_000_000)
+            .with_max_fee_per_gas(0)
+            .with_max_priority_fee_per_gas(0);
+        let tx = TypesFor::<EthEvmNetwork>::tx_from_request(request).unwrap();
+        let result = evm.transact(&tx).unwrap().commit();
+        let diagnostic = evm.clear_inspector_as::<RevertDiagnostic>().unwrap();
+        assert!(!result.status);
+        assert!(
+            matches!(
+                diagnostic.pending,
+                Some(DetailedRevertReason::CallToNonContract(addr)) if addr == probed
+            ),
+            "{:?}",
+            diagnostic.pending
+        );
+    }
 }

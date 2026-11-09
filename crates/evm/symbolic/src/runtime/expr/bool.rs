@@ -95,6 +95,8 @@ impl SymBoolExpr {
             SymCmpOp::Eq => {
                 if let Some(condition) = Self::ite_eq_arm(cx, &left, &right)
                     .or_else(|| Self::ite_eq_arm(cx, &right, &left))
+                    .or_else(|| Self::keccak_eq_known_preimage(cx, &left, &right))
+                    .or_else(|| Self::keccak_eq_known_preimage(cx, &right, &left))
                 {
                     return condition;
                 }
@@ -128,6 +130,17 @@ impl SymBoolExpr {
                         // `a == b => ordered(a, b)`.
                         let (left, right) = SymExpr::ordered_commutative_operands(left, right);
                         Self::from_kind(cx, SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right))
+                    }
+                    (
+                        SymExprKind::Keccak { len: left_len, .. },
+                        SymExprKind::Keccak { len: right_len, .. },
+                    ) if left_len
+                        .as_const()
+                        .zip(right_len.as_const())
+                        .is_some_and(|(left_len, right_len)| left_len != right_len) =>
+                    {
+                        // `keccak(a) == keccak(b) => false` for different input lengths.
+                        Self::constant(cx, false)
                     }
                     (
                         SymExprKind::Keccak { len: left_len, bytes: left_bytes, .. },
@@ -364,6 +377,30 @@ impl SymBoolExpr {
             );
         }
         None
+    }
+
+    /// Compares a symbolic Keccak with a hash whose preimage was computed during the run.
+    ///
+    /// Assuming no collisions, the hashes are equal only when the inputs are equal.
+    fn keccak_eq_known_preimage(cx: &mut SymCx, keccak: &SymExpr, hash: &SymExpr) -> Option<Self> {
+        let SymExprKind::Keccak { len, bytes, .. } = keccak.kind() else {
+            return None;
+        };
+        let preimage = cx.concrete_keccak_preimage(hash.as_const()?)?;
+        let len = len.as_const()?;
+        if len != U256::from(preimage.len()) {
+            // `keccak(a) == keccak(b) => false` for different input lengths.
+            return Some(Self::constant(cx, false));
+        }
+        // `keccak(a) == keccak(b) => bytes(a) == bytes(b)`.
+        let conditions = bytes
+            .get(..preimage.len())?
+            .iter()
+            .cloned()
+            .zip(preimage.iter().cloned())
+            .map(|(byte, expected)| Self::eq(cx, byte, expected))
+            .collect();
+        Some(Self::and(cx, conditions))
     }
 
     /// Computes a conservative upper bound for the unfolded Boolean result without interning it.
