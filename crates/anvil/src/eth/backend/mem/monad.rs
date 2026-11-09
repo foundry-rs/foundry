@@ -427,12 +427,13 @@ impl<N: Network> Backend<N> {
         N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
     {
         let profile = self.prepare_monad_rollback_profile(&common_block).await;
-        self.rollback(common_block, mining_guard).await?;
-        if let Some(profile) = profile {
-            profile.apply_env(&mut self.evm_env.write());
-            self.publish_monad_rollback_profile(profile);
-        }
-        Ok(())
+        self.rollback_and_publish(common_block, mining_guard, || {
+            if let Some(profile) = profile {
+                profile.apply_env(&mut self.evm_env.write());
+                self.publish_monad_rollback_profile(profile);
+            }
+        })
+        .await
     }
 
     /// Publishes the staged Monad fee rules and inferred hardfork after a rewind.

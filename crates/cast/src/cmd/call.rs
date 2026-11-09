@@ -262,6 +262,9 @@ impl CallArgs {
             if !self.tx.auth.is_empty() {
                 eyre::bail!("--auth cannot be combined with --curl");
             }
+            if self.command.is_some() {
+                eyre::bail!("--create cannot be combined with --curl");
+            }
             return self.run_curl().await;
         }
 
@@ -845,7 +848,13 @@ impl CallArgs {
         } else if let Some(sig) = &self.sig {
             // If sig is already hex data, use it directly
             match hex::decode(sig) {
-                Ok(data) => data,
+                Ok(data) => {
+                    eyre::ensure!(
+                        self.args.is_empty(),
+                        "Arguments cannot be used with raw calldata. Use a function signature to encode arguments, or provide the complete calldata without arguments."
+                    );
+                    data
+                }
                 Err(_) => encode_function_args(&get_func(sig)?, &self.args)?,
             }
         } else {
