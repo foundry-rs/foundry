@@ -1512,7 +1512,7 @@ impl Doctor {
                     "not on-chain yet; key_authorization will provision a fresh key",
                 ));
                 check_expiry(
-                    signed.authorization.expiry.map(|expiry| expiry.get()),
+                    signed.authorization().expiry.map(|expiry| expiry.get()),
                     &chain_timestamp,
                     "key_authorization ",
                     "refresh the access key to get a later key_authorization expiry",
@@ -1532,7 +1532,7 @@ impl Doctor {
             }
             KeyRegistration::Pending(signed) => (
                 check_authorization_spending_limits(signed, fee_token, is_t3),
-                Some(&signed.authorization),
+                Some(signed.authorization()),
             ),
         };
         self.steps.push(limits);
@@ -1786,7 +1786,7 @@ fn validate_pending_key_authorization(
             "authorize the key with `cast keychain authorize <KEY>` or refresh the local key_authorization",
         ));
     };
-    let auth = &signed.authorization;
+    let auth = signed.authorization();
 
     if auth.key_id != subject.key_address {
         return Err(fail(
@@ -2000,7 +2000,7 @@ fn check_authorization_spending_limits(
     fee_token: Address,
     is_t3: Option<bool>,
 ) -> DoctorStep {
-    let auth = &signed.authorization;
+    let auth = signed.authorization();
     if is_t3.is_none() && auth.has_periodic_limits() {
         return DoctorStep::warn(
             SPENDING_LIMITS,
@@ -2637,10 +2637,10 @@ fn print_signed_key_authorization(
             "rlp_length": encoded.len(),
             "signer": signer_address,
             "authorized_key_type": key_type_name(authorized_key_type.into()),
-            "signature_type": key_type_name(signed.signature.signature_type().into()),
-            "witness": signed.authorization.witness(),
-            "is_admin": signed.authorization.is_admin(),
-            "account": signed.authorization.account,
+            "signature_type": key_type_name(signed.signature().signature_type().into()),
+            "witness": signed.authorization().witness(),
+            "is_admin": signed.authorization().is_admin(),
+            "account": signed.authorization().account,
         }),
         hex::encode_prefixed(&encoded),
     )
@@ -2661,7 +2661,7 @@ fn decode_and_validate_key_authorization(
             // Signer recovery is best-effort so `inspect` still surfaces fields for a corrupt sig.
             Ok(signed) => {
                 let signer = signed.recover_signer().ok();
-                (signed.authorization, true, signer)
+                (signed.authorization().clone(), true, signer)
             }
             Err(signed_err) => match tempo::decode_key_authorization::<KeyAuthorization>(raw) {
                 Ok(unsigned) => (unsigned, false, None),
@@ -3348,7 +3348,7 @@ const fn key_role(is_root: bool, is_admin: bool) -> &'static str {
 
 fn print_key_entry(entry: &tempo::KeyEntry) -> Result<()> {
     let is_direct = entry.key_address == entry.wallet_address;
-    let auth = entry.key_authorization.as_ref().map(|signed| &signed.authorization);
+    let auth = entry.key_authorization.as_ref().map(|signed| signed.authorization());
     let is_admin = auth.is_some_and(KeyAuthorization::is_admin);
 
     sh_println!("Wallet:       {}", entry.wallet_address)?;
@@ -3384,7 +3384,7 @@ fn print_key_entry(entry: &tempo::KeyEntry) -> Result<()> {
 
 fn key_entry_to_json(entry: &tempo::KeyEntry) -> Value {
     let is_direct = entry.key_address == entry.wallet_address;
-    let auth = entry.key_authorization.as_ref().map(|signed| &signed.authorization);
+    let auth = entry.key_authorization.as_ref().map(|signed| signed.authorization());
     let is_admin = auth.is_some_and(KeyAuthorization::is_admin);
     let limits: Vec<_> =
         entry.limits.iter().map(|l| json!({ "currency": l.currency, "limit": l.limit })).collect();
@@ -3549,7 +3549,7 @@ mod tests {
             admin_a.clone().into_signed(PrimitiveSignature::from_bytes(&[0u8; 65]).unwrap());
         let encoded = alloy_rlp::encode(&signed);
         let decoded = SignedKeyAuthorization::decode(&mut encoded.as_slice()).unwrap();
-        assert_eq!(decoded.authorization, admin_a);
+        assert_eq!(decoded.authorization(), &admin_a);
 
         // Local store entries expose the decoded authorization witness.
         let witness = B256::repeat_byte(0x53);
