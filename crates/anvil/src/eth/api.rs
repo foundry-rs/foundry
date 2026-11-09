@@ -6055,20 +6055,12 @@ mod tests {
         // Model an in-flight miner that publishes its final fee update before completing. Reset
         // must wait to snapshot that state until mining finishes.
         let mining = api.backend.lock_mining().await;
-        let reset_api = api.clone();
-        let reset = tokio::spawn(async move { reset_api.anvil_reset(None).await });
-
-        tokio::time::timeout(Duration::from_secs(5), async {
-            while api.lifecycle_lock.try_read().is_ok() {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
+        let mut reset = std::pin::pin!(api.anvil_reset(None));
+        assert!(futures::poll!(reset.as_mut()).is_pending());
 
         api.backend.set_base_fee(456);
         drop(mining);
-        tokio::time::timeout(Duration::from_secs(5), reset).await.unwrap().unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(5), reset).await.unwrap().unwrap();
 
         assert_eq!(api.backend.evm_env().read().block_env.basefee, 456);
         assert_eq!(api.base_fee().unwrap(), Some(U256::from(crate::eth::fees::INITIAL_BASE_FEE)));
