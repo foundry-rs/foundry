@@ -166,10 +166,16 @@ impl PathState {
             let origin = prank
                 .new_origin
                 .map(|origin| (origin, SymExpr::constant(cx, address_word(origin))));
-            if prank.single_call {
-                self.prank.set_next(caller, origin);
+            // A run rooted at a handler parks the test contract's prank for that caller.
+            let slot = if prank.prank_caller == self.address {
+                &mut self.prank
             } else {
-                self.prank.set_persistent(caller, origin);
+                self.root_pranks.entry(prank.prank_caller).or_default()
+            };
+            if prank.single_call {
+                slot.set_next(caller, origin);
+            } else {
+                slot.set_persistent(caller, origin);
             }
         }
         if let Some(accesses) = executor.accesses
