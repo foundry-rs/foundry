@@ -76,9 +76,9 @@ impl SymbolicExecutor {
                 *max_size,
             ),
         };
+        let nonce = state.world.nonce(executor, state.address)?;
         let (created_word, created) = match kind {
             CreateKind::Create => {
-                let nonce = state.world.nonce(executor, state.address)?;
                 let address = state.address.create(nonce);
                 (SymExpr::constant(&mut self.cx, address_word(address)), address)
             }
@@ -92,6 +92,12 @@ impl SymbolicExecutor {
         };
 
         if !self.prepare_create_value_transfer(executor, state, worklist, value.clone())? {
+            return Ok(StepOutcome::Continue);
+        }
+
+        // EIP-2681: a creator nonce at `u64::MAX` fails the create after the balance check.
+        if nonce == u64::MAX {
+            self.fail_create_before_frame(executor, state)?;
             return Ok(StepOutcome::Continue);
         }
 
