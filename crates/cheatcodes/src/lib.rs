@@ -50,6 +50,7 @@ mod env;
 pub use env::{current_execution_context, set_execution_context};
 
 mod evm;
+pub use evm::{RecordAccess, prank::Prank};
 
 mod expected_emit;
 

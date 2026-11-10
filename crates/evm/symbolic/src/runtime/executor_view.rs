@@ -1,6 +1,9 @@
 use super::*;
 use evm2::evm::{AccountInfo, DbResult};
-use foundry_evm::core::backend::Backend;
+use foundry_evm::{
+    core::backend::Backend,
+    inspectors::cheatcodes::{CheatcodesCore, Prank, RecordAccess},
+};
 
 /// Reads of a backend's accepted state, independent of its network.
 pub(crate) trait AcceptedState {
@@ -52,6 +55,12 @@ pub struct ExecutorView<'a> {
     pub(crate) storage_load_hooks: Vec<(Address, SymbolicStorageHook)>,
     pub(crate) storage_store_hooks: Vec<(Address, SymbolicStorageHook)>,
     pub(crate) mapping_storage_store_hooks: Vec<((Address, U256), SymbolicStorageHook)>,
+    /// Cheatcode state that `setUp` left behind, which Forge keeps for the test.
+    pub(crate) cheatcodes: Option<&'a CheatcodesCore>,
+    pub(crate) pranks: Vec<Prank>,
+    pub(crate) accesses: Option<&'a RecordAccess>,
+    pub(crate) recording_accesses: bool,
+    pub(crate) persistent_accounts: Vec<Address>,
 }
 
 /// Block environment values exposed to symbolic execution.
@@ -172,6 +181,11 @@ impl<'a> ExecutorView<'a> {
                     )
                 })
                 .collect(),
+            cheatcodes: cheats.map(|cheats| &cheats.core),
+            pranks: cheats.into_iter().flat_map(|cheats| cheats.pranks.values().copied()).collect(),
+            accesses: cheats.map(|cheats| &cheats.accesses),
+            recording_accesses: cheats.is_some_and(|cheats| cheats.recording_accesses),
+            persistent_accounts: backend.lifecycle().forks().persistent_accounts().collect(),
         }
     }
 }

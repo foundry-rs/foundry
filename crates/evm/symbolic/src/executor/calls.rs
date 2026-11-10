@@ -364,9 +364,26 @@ impl SymbolicExecutor {
         value: Option<U256>,
         calldata: &SymBytes,
     ) -> Result<Option<CallMockOutcome>, SymbolicError> {
-        if state.call_mocks.is_empty() {
+        let Some((idx, constraints)) = self.select_call_mock(state, callee, value, calldata)?
+        else {
+            return Ok(None);
+        };
+        state.constraints = constraints;
+        if !state.call_mocks[idx].answers() {
             return Ok(None);
         }
+        Ok(Some(state.call_mocks[idx].next_outcome(&mut self.cx)))
+    }
+
+    /// Selects the most specific `vm.mockCall` matching this call, with the constraints of the
+    /// match, before deciding whether it answers the call, as Forge does.
+    fn select_call_mock(
+        &mut self,
+        state: &PathState,
+        callee: Address,
+        value: Option<U256>,
+        calldata: &SymBytes,
+    ) -> Result<Option<(usize, Vec<SymBoolExpr>)>, SymbolicError> {
         let mut best = None;
         for idx in 0..state.call_mocks.len() {
             let Some(constraints) = self.call_mock_match_constraints(
@@ -388,11 +405,7 @@ impl SymbolicExecutor {
                 best = Some((idx, specificity, constraints));
             }
         }
-        let Some((idx, _, constraints)) = best else {
-            return Ok(None);
-        };
-        state.constraints = constraints;
-        Ok(Some(state.call_mocks[idx].next_outcome(&mut self.cx)))
+        Ok(best.map(|(idx, _, constraints)| (idx, constraints)))
     }
 
     /// Returns whether a `vm.mockCall` answers this call.
@@ -403,16 +416,10 @@ impl SymbolicExecutor {
         value: &SymExpr,
         calldata: &SymBytes,
     ) -> Result<bool, SymbolicError> {
-        if state.call_mocks.is_empty() {
-            return Ok(false);
-        }
         let value = state.constrained_word(&mut self.cx, value);
-        for mock in &state.call_mocks {
-            if self.call_mock_match_constraints(state, mock, callee, value, calldata)?.is_some() {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        Ok(self
+            .select_call_mock(state, callee, value, calldata)?
+            .is_some_and(|(idx, _)| state.call_mocks[idx].answers()))
     }
 
     pub(super) fn branch_symbolic_match_condition_if_needed(
@@ -871,6 +878,14 @@ impl SymbolicExecutor {
             if has_symbolic_input_offset && !full_word_array_assertion {
                 return Err(SymbolicError::Unsupported("symbolic cheatcode CALL input offset"));
             }
+            // Forge rejects a shorter input as an ABI decoding error, so never read cheatcode
+            // arguments from memory past the input.
+            if !has_symbolic_in_size
+                && to == CHEATCODE_ADDRESS
+                && foundry_cheatcode_min_input_size(selector).is_some_and(|min| in_size < min)
+            {
+                return Err(SymbolicError::Unsupported("short cheatcode CALL"));
+            }
             if has_symbolic_in_size {
                 let min_size = if to == CHEATCODE_ADDRESS {
                     foundry_cheatcode_min_input_size(selector)
@@ -921,6 +936,21 @@ impl SymbolicExecutor {
                 return Ok(outcome);
             }
 
+            if to == CHEATCODE_ADDRESS
+                && let Some(concrete_in_offset) = concrete_in_offset
+                && let Some(outcome) = self.branch_cheatcode_argument_check_if_needed(
+                    executor,
+                    state,
+                    worklist,
+                    selector,
+                    concrete_in_offset,
+                    &out_offset,
+                    &out_size,
+                )?
+            {
+                return Ok(outcome);
+            }
+
             let return_data = if to == CHEATCODE_ADDRESS {
                 let outcome = self.handle_foundry_cheatcode(
                     executor,
@@ -934,10 +964,7 @@ impl SymbolicExecutor {
                     CheatcodeOutcome::Continue(ret) => SymReturnData::from_words(&mut self.cx, ret),
                     CheatcodeOutcome::ContinueData(ret) => ret,
                     CheatcodeOutcome::Revert(ret) => {
-                        state.first_failed_callee.get_or_insert(CHEATCODE_ADDRESS);
-                        state.return_data = ret;
-                        state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
-                        state.stack.push(SymExpr::zero(&mut self.cx))?;
+                        revert_cheatcode_call(&mut self.cx, state, out_offset, &out_size, ret)?;
                         return Ok(StepOutcome::Continue);
                     }
                     CheatcodeOutcome::AssumeRejected => return Ok(StepOutcome::AssumeRejected),
@@ -1494,13 +1521,14 @@ impl SymbolicExecutor {
         executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
+        from: Address,
         value: SymExpr,
     ) -> Result<bool, SymbolicError> {
         if state.constrained_word(&mut self.cx, &value).is_some_and(|value| value.is_zero()) {
             return Ok(true);
         }
 
-        let balance = state.balance(&mut self.cx, executor, state.address);
+        let balance = state.balance(&mut self.cx, executor, from);
         let can_pay = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, balance, value);
         match can_pay.as_const() {
             Some(true) => Ok(true),

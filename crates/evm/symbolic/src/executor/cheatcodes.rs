@@ -297,17 +297,31 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Revert);
         }
 
+        // Like Forge, the CREATE applies and consumes a pending prank.
+        let (creator, creator_word, pranked_origin) = state.prank_for_next_call();
+        if creator != state.address
+            && state.constrained_word(&mut self.cx, &creator_word).map(word_to_address)
+                != Some(creator)
+        {
+            return Err(SymbolicError::Unsupported("symbolic vm.deployCode prank"));
+        }
         self.stateless_retry_safe = false;
         let mut initcode = artifact_code(&artifact, false)?;
         initcode.extend_from_slice(&constructor_args);
         let initcode = SymCode::concrete(&mut self.cx, initcode);
 
-        let nonce = state.world.nonce(executor, state.address)?;
-        let created = state.address.create(nonce);
+        let nonce = state.world.nonce(executor, creator)?;
+        // EIP-2681: the create fails at a `u64::MAX` creator nonce, so the cheatcode reverts.
+        if nonce == u64::MAX {
+            let return_data = SymReturnData::empty(&mut self.cx);
+            revert_cheatcode_call(&mut self.cx, state, out_offset, out_size, return_data)?;
+            return Ok(StepOutcome::Continue);
+        }
+        let created = creator.create(nonce);
         let created_word = SymExpr::constant(&mut self.cx, address_word(created));
 
         let mut failure_world = state.world.clone();
-        failure_world.increment_nonce(executor, state.address)?;
+        failure_world.increment_nonce(executor, creator)?;
         if failure_world.has_code_or_nonce(&mut self.cx, executor, created)? {
             state.world = failure_world;
             let zero = SymExpr::zero(&mut self.cx);
@@ -320,9 +334,9 @@ impl SymbolicExecutor {
         let calldata = SymBytes::empty(&mut self.cx);
         let calldata = SymCalldata::from_bytes(&mut self.cx, calldata);
         let mut frame =
-            CallFrame::new(&mut self.cx, created, created, state.address, zero, false, calldata);
+            CallFrame::new(&mut self.cx, created, created, creator, zero, false, calldata);
         frame.address_word = created_word.clone();
-        frame.caller_word = state.address_word.clone();
+        frame.caller_word = creator_word;
         // Isolation runs a `deployCode` from the test frame as its own transaction.
         let isolated = state.starts_isolated_transaction(executor);
         let mut child = state.child(frame);
@@ -332,6 +346,10 @@ impl SymbolicExecutor {
         child.world = failure_world.clone();
         if isolated {
             child.world.clear_transient_storage();
+        }
+        if let Some((origin, origin_word)) = pranked_origin {
+            child.origin = origin;
+            child.origin_word = origin_word;
         }
         child.world.mark_current_transaction_created(created);
         child.persistent_writes.push(PersistentWrite::Created(created));
@@ -397,7 +415,7 @@ impl SymbolicExecutor {
                     parent.expected_emit = child.expected_emit;
                     self.observe_expected_create(
                         &mut parent,
-                        state.address,
+                        creator,
                         CreateKind::Create,
                         &child.frame.return_data,
                     )?;
@@ -588,6 +606,68 @@ impl SymbolicExecutor {
         }
 
         Ok(accesses_return_data(&mut self.cx, Some(&record), Address::ZERO))
+    }
+
+    /// Reverts a cheatcode call whose arguments Forge rejects. A check on symbolic arguments
+    /// forks the path: the reverting branch completes here and the valid branch continues into
+    /// the cheatcode.
+    #[expect(clippy::too_many_arguments)]
+    pub(super) fn branch_cheatcode_argument_check_if_needed(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        state: &mut PathState,
+        worklist: &mut VecDeque<PathState>,
+        selector: [u8; 4],
+        in_offset: usize,
+        out_offset: &SymExpr,
+        out_size: &BoundedCopySize,
+    ) -> Result<Option<StepOutcome>, SymbolicError> {
+        let u64_max = U256::from(u64::MAX);
+        let (index, max, message) = match selector {
+            chainIdCall::SELECTOR => (0, u64_max, "vm.chainId: chain ID must be less than 2^64"),
+            feeCall::SELECTOR => (0, u64_max, "vm.fee: base fee must be less than 2^64"),
+            txGasPriceCall::SELECTOR => {
+                (0, u64_max, "vm.txGasPrice: gas price must be less than 2^64")
+            }
+            // Like Forge, the hard fork check comes first, in the cheatcode.
+            blobBaseFeeCall::SELECTOR if executor.spec_id < SpecId::CANCUN => return Ok(None),
+            blobBaseFeeCall::SELECTOR => {
+                (0, U256::from(u128::MAX), "vm.blobBaseFee: blob base fee must be less than 2^128")
+            }
+            setBlockhashCall::SELECTOR => {
+                (0, u64_max, "vm.setBlockhash: blockNumber must be less than 2^64")
+            }
+            computeCreateAddressCall::SELECTOR => {
+                (1, u64_max, "vm.computeCreateAddress: nonce must be less than 2^64")
+            }
+            _ => return Ok(None),
+        };
+        let word = read_abi_word_arg(&mut self.cx, &state.memory, in_offset + 4, index)?;
+        let invalid = SymBoolExpr::cmp_word_const(&mut self.cx, SymCmpOp::Ugt, &word, max);
+
+        let (invalid_constraints, invalid_sat) =
+            self.constraints_with_condition(state, invalid.clone())?;
+        if !invalid_sat {
+            return Ok(None);
+        }
+        let return_data = error_string_return_data(&mut self.cx, message);
+        let valid = invalid.not(&mut self.cx);
+        if let Some(valid_constraints) = self.constraints_for_condition(state, valid)? {
+            let mut revert_state = state.clone();
+            revert_state.constraints = invalid_constraints;
+            revert_cheatcode_call(
+                &mut self.cx,
+                &mut revert_state,
+                out_offset.clone(),
+                out_size,
+                return_data,
+            )?;
+            worklist.push_back(revert_state);
+            state.constraints = valid_constraints;
+            return Ok(None);
+        }
+        revert_cheatcode_call(&mut self.cx, state, out_offset.clone(), out_size, return_data)?;
+        Ok(Some(StepOutcome::Continue))
     }
 
     pub(super) fn add_call_mock(
@@ -1122,6 +1202,22 @@ impl SymbolicExecutor {
                         )
                     })
                     .transpose()?;
+                // Like Forge, root frames share one prank slot, so a prank parked for another root
+                // frame also blocks an overwrite, and a new prank ends it.
+                let parked = state.root_pranks.values().filter(|_| state.call_depth == 0);
+                if let Some(error) = std::iter::once(&state.prank)
+                    .chain(parked)
+                    .find_map(|prank| prank.overwrite_error(persistent))
+                {
+                    let name = if persistent { "startPrank" } else { "prank" };
+                    return Ok(CheatcodeOutcome::Revert(error_string_return_data(
+                        &mut self.cx,
+                        &format!("vm.{name}: {error}"),
+                    )));
+                }
+                if state.call_depth == 0 {
+                    state.root_pranks.clear();
+                }
                 if persistent {
                     state.prank.set_persistent(caller, origin);
                 } else {
@@ -1130,6 +1226,10 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             stopPrankCall::SELECTOR => {
+                // A stopped prank also ends a prank parked for another root frame.
+                if state.call_depth == 0 {
+                    state.root_pranks.clear();
+                }
                 state.prank = SymbolicPrank::default();
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
@@ -1553,7 +1653,7 @@ impl SymbolicExecutor {
                 "symbolic fork creation and fork block mutation must happen before symbolic execution",
             )),
             snapshotCall::SELECTOR | snapshotStateCall::SELECTOR => {
-                let id = state.world.snapshot_state();
+                let id = state.world.snapshot_state(&state.block, &state.gas_price);
                 let id = SymExpr::constant(&mut self.cx, id);
                 Ok(CheatcodeOutcome::Continue(vec![id]))
             }
@@ -1568,8 +1668,11 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.revertToState snapshot",
                 )?;
-                let success = state.world.restore_snapshot(id);
-                if success {
+                let restored = state.world.restore_snapshot(id);
+                let success = restored.is_some();
+                if let Some((block, gas_price)) = restored {
+                    state.block = block;
+                    state.gas_price = gas_price;
                     state.persistent_writes.push(PersistentWrite::Restore);
                 }
                 if success
@@ -1633,7 +1736,12 @@ impl SymbolicExecutor {
                     "symbolic vm.setBlockhash block number",
                 )?;
                 let block_hash = state.memory.load_word(&mut self.cx, in_offset + 36)?;
-                state.block.set_block_hash(block_number, block_hash)?;
+                if !state.block.set_block_hash(block_number, block_hash)? {
+                    return Ok(CheatcodeOutcome::Revert(error_string_return_data(
+                        &mut self.cx,
+                        "vm.setBlockhash: block number must be less than or equal to the current block number",
+                    )));
+                }
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             prevrandao_0Call::SELECTOR | prevrandao_1Call::SELECTOR => {
@@ -1661,6 +1769,13 @@ impl SymbolicExecutor {
             feeCall::SELECTOR => {
                 state.block.basefee = state.memory.load_word(&mut self.cx, in_offset + 4)?;
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
+            }
+            blobBaseFeeCall::SELECTOR if executor.spec_id < SpecId::CANCUN => {
+                Ok(CheatcodeOutcome::Revert(error_string_return_data(
+                    &mut self.cx,
+                    "vm.blobBaseFee: `blobBaseFee` is not supported before the Cancun hard fork; \
+                     see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844",
+                )))
             }
             blobBaseFeeCall::SELECTOR => {
                 state.block.blob_basefee = state.memory.load_word(&mut self.cx, in_offset + 4)?;
@@ -2534,12 +2649,12 @@ impl SymbolicExecutor {
             SymbolicVmCheatcode::SnapshotStorage => {
                 let _target =
                     read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
-                let id = state.world.snapshot_state();
+                let id = state.world.snapshot_state(&state.block, &state.gas_price);
                 let id = SymExpr::constant(&mut self.cx, id);
                 Ok(SymReturnData::from_words(&mut self.cx, vec![id]))
             }
             SymbolicVmCheatcode::SnapshotState => {
-                let id = state.world.snapshot_state();
+                let id = state.world.snapshot_state(&state.block, &state.gas_price);
                 let id = SymExpr::constant(&mut self.cx, id);
                 Ok(SymReturnData::from_words(&mut self.cx, vec![id]))
             }

@@ -19,6 +19,9 @@ pub(crate) struct PathState {
     pub(crate) frame: CallFrame,
     pub(crate) world: SymbolicWorld,
     pub(crate) prank: SymbolicPrank,
+    /// Pranks of other root frames of an invariant sequence, which Forge scopes to the contract
+    /// that set them.
+    pub(crate) root_pranks: HashMap<Address, SymbolicPrank>,
     pub(crate) constraints: Vec<SymBoolExpr>,
     pub(crate) next_symbol: usize,
     pub(crate) recorded_logs: Option<Vec<SymbolicLog>>,
@@ -100,6 +103,7 @@ impl PathState {
             frame,
             world: SymbolicWorld::default(),
             prank: SymbolicPrank::default(),
+            root_pranks: HashMap::default(),
             constraints: Vec::new(),
             next_symbol: 0,
             recorded_logs: None,
@@ -133,7 +137,12 @@ impl PathState {
         }
     }
 
-    pub(crate) fn apply_executor_env(&mut self, cx: &mut SymCx, executor: &ExecutorView<'_>) {
+    /// Applies the executor's environment and the cheatcode state `setUp` left behind.
+    pub(crate) fn apply_executor_env(
+        &mut self,
+        cx: &mut SymCx,
+        executor: &ExecutorView<'_>,
+    ) -> Result<(), SymbolicError> {
         self.block = SymbolicBlock::from_executor(cx, executor);
         self.gas_price = SymExpr::constant(cx, U256::from(executor.gas_price));
         for &(target, overwrite) in &executor.arbitrary_storage_targets {
@@ -146,6 +155,100 @@ impl PathState {
         self.storage_store_hooks.extend(executor.storage_store_hooks.iter().copied());
         self.mapping_storage_store_hooks
             .extend(executor.mapping_storage_store_hooks.iter().copied());
+        self.persistent_accounts.extend(executor.persistent_accounts.iter().copied());
+
+        // Forge applies a `setUp` prank from the test frame, which is depth 1 in the inspector.
+        for prank in &executor.pranks {
+            if prank.depth != 1 || prank.delegate_call {
+                return Err(SymbolicError::Unsupported("symbolic prank inherited from setUp"));
+            }
+            let caller = (prank.new_caller, SymExpr::constant(cx, address_word(prank.new_caller)));
+            let origin = prank
+                .new_origin
+                .map(|origin| (origin, SymExpr::constant(cx, address_word(origin))));
+            // A run rooted at a handler parks the test contract's prank for that caller.
+            let slot = if prank.prank_caller == self.address {
+                &mut self.prank
+            } else {
+                self.root_pranks.entry(prank.prank_caller).or_default()
+            };
+            if prank.single_call {
+                slot.set_next(caller, origin);
+            } else {
+                slot.set_persistent(caller, origin);
+                // A `startPrank` that `setUp` already applied can be replaced.
+                slot.persistent_used = prank.used;
+            }
+        }
+        if let Some(accesses) = executor.accesses
+            && (executor.recording_accesses || !accesses.reads.is_empty())
+        {
+            let slots = |cx: &mut SymCx, slots: &HashMap<Address, Vec<U256>>| {
+                slots
+                    .iter()
+                    .map(|(address, slots)| {
+                        (*address, slots.iter().map(|slot| SymExpr::constant(cx, *slot)).collect())
+                    })
+                    .collect()
+            };
+            self.access_record = Some(AccessRecord {
+                reads: slots(cx, &accesses.reads),
+                writes: slots(cx, &accesses.writes),
+                stopped: !executor.recording_accesses,
+            });
+        }
+        let Some(cheats) = executor.cheatcodes else { return Ok(()) };
+        let mut mocked_calls = cheats.mocked_calls.iter().collect::<Vec<_>>();
+        mocked_calls.sort_by_key(|(callee, _)| **callee);
+        for (callee, mocks) in mocked_calls {
+            let callee = SymExpr::constant(cx, address_word(*callee));
+            for (mock, returns) in mocks {
+                let data = SymBytes::concrete(cx, mock.calldata.to_vec());
+                let reverts = returns.front().is_some_and(|data| data.reverts);
+                let returns = returns
+                    .iter()
+                    .map(|data| SymReturnData::from_concrete_bytes(cx, data.data.to_vec()))
+                    .collect();
+                self.call_mocks.push(CallMock::new(
+                    callee.clone(),
+                    mock.value,
+                    data,
+                    returns,
+                    reverts,
+                ));
+            }
+        }
+        for (callee, mocks) in &cheats.mocked_functions {
+            let callee = SymExpr::constant(cx, address_word(*callee));
+            for (data, target) in mocks {
+                let data = SymBytes::concrete(cx, data.to_vec());
+                self.function_mocks.push(FunctionMock::new(callee.clone(), *target, data));
+            }
+        }
+        if let Some(logs) = &cheats.recorded_logs {
+            let logs = logs
+                .iter()
+                .map(|log| {
+                    let topics = log
+                        .topics
+                        .iter()
+                        .map(|topic| SymExpr::constant(cx, (*topic).into()))
+                        .collect();
+                    let data_len = SymExpr::constant(cx, U256::from(log.data.len()));
+                    let data = SymBytes::concrete(cx, log.data.to_vec());
+                    SymbolicLog::new(topics, data_len, data, log.emitter)
+                })
+                .collect();
+            self.recorded_logs = Some(logs);
+        }
+        if let Some(wallets) = &cheats.wallets {
+            let wallets = wallets
+                .signers()
+                .map_err(|_| SymbolicError::Unsupported("symbolic wallets inherited from setUp"))?;
+            self.wallets.extend(wallets);
+        }
+        self.labels.extend(cheats.labels.iter().map(|(address, label)| (*address, label.clone())));
+        Ok(())
     }
 
     pub(crate) fn child(&self, frame: CallFrame) -> Self {
@@ -330,14 +433,22 @@ impl PathState {
             std::mem::take(&mut child.mapping_hook_keccak_preimages);
         self.recorded_logs = child.recorded_logs.take();
         self.recorded_logs_generation = child.recorded_logs_generation;
-        self.access_record = child.access_record.take();
-        // Inspector state survives child reverts and exceptional halts.
-        self.block = child.block.clone();
-        self.expected_calls = std::mem::take(&mut child.expected_calls);
-        self.expected_creates = std::mem::take(&mut child.expected_creates);
-        self.call_mocks = std::mem::take(&mut child.call_mocks);
-        self.function_mocks = std::mem::take(&mut child.function_mocks);
+        self.take_inspector_state(child);
         self.persistent_writes = std::mem::take(&mut child.persistent_writes);
+    }
+
+    /// Takes the cheatcode state of `other`, which survives reverts and exceptional halts.
+    fn take_inspector_state(&mut self, other: &mut Self) {
+        self.access_record = other.access_record.take();
+        self.block = other.block.clone();
+        self.gas_price = other.gas_price.clone();
+        self.wallets = std::mem::take(&mut other.wallets);
+        self.labels = std::mem::take(&mut other.labels);
+        self.persistent_accounts = std::mem::take(&mut other.persistent_accounts);
+        self.expected_calls = std::mem::take(&mut other.expected_calls);
+        self.expected_creates = std::mem::take(&mut other.expected_creates);
+        self.call_mocks = std::mem::take(&mut other.call_mocks);
+        self.function_mocks = std::mem::take(&mut other.function_mocks);
     }
 
     /// Drops logs recorded by a failed call that started with `len` logs in `generation`.
@@ -353,19 +464,22 @@ impl PathState {
         let recorded_logs_len = self.recorded_logs.as_ref().map_or(0, Vec::len);
         let recorded_logs_generation = self.recorded_logs_generation;
         self.take_noncommitting_check_state(&mut reverted);
-        self.block = reverted.block;
+        self.take_inspector_state(&mut reverted);
+        self.world.take_snapshots_from(&mut reverted.world);
         self.recorded_logs = reverted.recorded_logs;
         self.recorded_logs_generation = reverted.recorded_logs_generation;
         self.discard_failed_call_logs(recorded_logs_len, recorded_logs_generation);
-        self.access_record = reverted.access_record;
         self.expected_revert = reverted.expected_revert;
         self.first_failed_callee = reverted.first_failed_callee;
         self.assume_no_revert_next_call = reverted.assume_no_revert_next_call;
         self.expected_emit = reverted.expected_emit;
-        self.expected_calls = reverted.expected_calls;
-        self.expected_creates = reverted.expected_creates;
-        self.call_mocks = reverted.call_mocks;
-        self.function_mocks = reverted.function_mocks;
+        // Like Forge's pranks, the root frames' pranks survive the revert. `self.prank` is
+        // already parked in `reverted.root_pranks` under this frame's address.
+        self.root_pranks = reverted.root_pranks;
+        if reverted.prank.has_active() {
+            self.root_pranks.insert(reverted.frame.address, reverted.prank);
+        }
+        self.prank = self.root_pranks.remove(&self.frame.address).unwrap_or_default();
     }
 
     /// Returns `true` if the path can be materialized into a replayable corpus seed.
@@ -905,11 +1019,21 @@ impl PathState {
     }
 
     pub(crate) fn prank_for_next_call(&mut self) -> (Address, SymExpr, Option<(Address, SymExpr)>) {
+        // Any root call ends an unused single-call prank at this depth, even when it was set by
+        // another handler in the same invariant sequence.
+        if self.call_depth == 0 {
+            self.root_pranks.retain(|_, prank| {
+                prank.next_caller = None;
+                prank.next_origin = None;
+                prank.has_active()
+            });
+        }
         if let Some((caller, caller_word)) = self.prank.next_caller.take() {
             (caller, caller_word, self.prank.next_origin.take())
         } else {
             match self.prank.persistent_caller.clone() {
                 Some((caller, caller_word)) => {
+                    self.prank.persistent_used = true;
                     (caller, caller_word, self.prank.persistent_origin.clone())
                 }
                 None => {
@@ -1440,6 +1564,12 @@ impl CallMock {
         (self.data.len(), self.value.is_some())
     }
 
+    /// Returns whether the mock answers the call; Forge runs the real callee when the selected
+    /// mock's return queue is empty.
+    pub(crate) const fn answers(&self) -> bool {
+        !self.returns.is_empty()
+    }
+
     pub(crate) fn match_condition(
         &self,
         cx: &mut SymCx,
@@ -1727,6 +1857,8 @@ pub(crate) struct SymbolicPrank {
     next_origin: Option<(Address, SymExpr)>,
     persistent_caller: Option<(Address, SymExpr)>,
     persistent_origin: Option<(Address, SymExpr)>,
+    /// Whether a call used the `vm.startPrank` caller.
+    persistent_used: bool,
 }
 
 impl SymbolicPrank {
@@ -1746,6 +1878,23 @@ impl SymbolicPrank {
     ) {
         self.persistent_caller = Some(caller);
         self.persistent_origin = origin;
+        self.persistent_used = false;
+    }
+
+    /// Returns Forge's error for a `vm.prank` or `vm.startPrank` (`persistent`) that would
+    /// replace the active prank.
+    pub(crate) const fn overwrite_error(&self, persistent: bool) -> Option<&'static str> {
+        if self.next_caller.is_some() || (self.persistent_caller.is_some() && !self.persistent_used)
+        {
+            Some("cannot overwrite a prank until it is applied at least once")
+        } else if self.persistent_caller.is_some() && !persistent {
+            Some(
+                "cannot override an ongoing prank with a single vm.prank; use vm.startPrank to \
+                 override the current prank",
+            )
+        } else {
+            None
+        }
     }
 
     pub(crate) const fn has_active(&self) -> bool {
@@ -1811,10 +1960,19 @@ struct SymbolicReplayStorageSlot {
     slot: U256,
 }
 
+/// A `vm.snapshotState` entry: the world state with the block environment and gas price, which
+/// Forge restores together.
+#[derive(Clone, Debug)]
+struct SymbolicSnapshot {
+    state: Arc<SymbolicWorldState>,
+    block: SymbolicBlock,
+    gas_price: SymExpr,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SymbolicWorld {
     state: Arc<SymbolicWorldState>,
-    snapshots: HashMap<U256, Arc<SymbolicWorldState>>,
+    snapshots: HashMap<U256, SymbolicSnapshot>,
     next_snapshot_id: u64,
 }
 
@@ -1971,19 +2129,23 @@ impl SymbolicWorld {
             .find_map(|(word, slot)| (*slot == address).then(|| word.clone()))
     }
 
-    pub(crate) fn snapshot_state(&mut self) -> U256 {
+    pub(crate) fn snapshot_state(&mut self, block: &SymbolicBlock, gas_price: &SymExpr) -> U256 {
         let id = U256::from(self.next_snapshot_id);
         self.next_snapshot_id = self.next_snapshot_id.saturating_add(1);
-        self.snapshots.insert(id, Arc::clone(&self.state));
+        let snapshot = SymbolicSnapshot {
+            state: Arc::clone(&self.state),
+            block: block.clone(),
+            gas_price: gas_price.clone(),
+        };
+        self.snapshots.insert(id, snapshot);
         id
     }
 
-    pub(crate) fn restore_snapshot(&mut self, id: U256) -> bool {
-        let Some(snapshot) = self.snapshots.get(&id) else {
-            return false;
-        };
-        self.state = Arc::clone(snapshot);
-        true
+    /// Restores the world state of snapshot `id` and returns its block environment and gas price.
+    pub(crate) fn restore_snapshot(&mut self, id: U256) -> Option<(SymbolicBlock, SymExpr)> {
+        let snapshot = self.snapshots.get(&id)?;
+        self.state = Arc::clone(&snapshot.state);
+        Some((snapshot.block.clone(), snapshot.gas_price.clone()))
     }
 
     pub(crate) fn delete_snapshot(&mut self, id: U256) -> bool {
@@ -1992,6 +2154,13 @@ impl SymbolicWorld {
 
     pub(crate) fn delete_snapshots(&mut self) {
         self.snapshots.clear();
+    }
+
+    /// Takes `other`'s snapshot registry; like Forge's backend, a failed call keeps the snapshots
+    /// it took or deleted.
+    pub(crate) fn take_snapshots_from(&mut self, other: &mut Self) {
+        self.snapshots = std::mem::take(&mut other.snapshots);
+        self.next_snapshot_id = other.next_snapshot_id;
     }
 
     pub(crate) fn storage_base(
@@ -2627,16 +2796,19 @@ impl SymbolicBlock {
         }
     }
 
+    /// Stores a block hash as `vm.setBlockhash` does, returning `false` for a block after the
+    /// current one, which the cheatcode rejects. `block_hash` applies the BLOCKHASH window.
     pub(crate) fn set_block_hash(
         &mut self,
         block_number: U256,
         block_hash: SymExpr,
-    ) -> Result<(), SymbolicError> {
+    ) -> Result<bool, SymbolicError> {
         let current = self.number.as_const_or("symbolic vm.setBlockhash current number")?;
-        if block_number < current && current - block_number <= U256::from(256) {
-            self.block_hashes.insert(block_number, block_hash);
+        if block_number > current {
+            return Ok(false);
         }
-        Ok(())
+        self.block_hashes.insert(block_number, block_hash);
+        Ok(true)
     }
 
     pub(crate) fn block_hash(

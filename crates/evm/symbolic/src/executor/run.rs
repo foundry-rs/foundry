@@ -384,7 +384,7 @@ impl SymbolicExecutor {
             );
             root.set_corpus_seed_models(corpus_seed_models);
             root.set_branch_target(input.branch_target);
-            root.apply_executor_env(&mut self.cx, &input.executor);
+            root.apply_executor_env(&mut self.cx, &input.executor)?;
             root.world.set_storage_layout(self.config.storage_layout);
             root.world.clear_transaction_scoped_state();
             roots.push(root);
@@ -614,7 +614,7 @@ impl SymbolicExecutor {
             input.sender,
             input.ffi_enabled,
         );
-        initial_state.apply_executor_env(&mut self.cx, &input.executor);
+        initial_state.apply_executor_env(&mut self.cx, &input.executor)?;
         initial_state.world.set_storage_layout(self.config.storage_layout);
         let initial = SequencePath { state: initial_state, steps: Vec::new() };
 

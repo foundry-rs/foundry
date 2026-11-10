@@ -108,7 +108,7 @@ impl SymbolicExecutor {
             input.handler_sender,
             input.ffi_enabled,
         );
-        initial_state.apply_executor_env(&mut self.cx, &input.executor);
+        initial_state.apply_executor_env(&mut self.cx, &input.executor)?;
         initial_state.world.set_storage_layout(self.config.storage_layout);
 
         let calldatas = SymbolicCalldata::variants_with_prefix(
@@ -297,8 +297,16 @@ impl SymbolicExecutor {
         state.call_depth_base = 0;
         // Like Forge, expectations end with the root call; only a met count 0 one can remain.
         state.expected_emit = None;
+        // Each sequence call runs with a fresh block hash overlay.
+        state.block.block_hashes.clear();
         state.origin = sender;
         state.origin_word = SymExpr::constant(&mut self.cx, address_word(sender));
+        // Like Forge, a prank applies only to calls from the contract that set it.
+        let prank = std::mem::take(&mut state.prank);
+        if prank.has_active() {
+            state.root_pranks.insert(state.address, prank);
+        }
+        state.prank = state.root_pranks.remove(&target).unwrap_or_default();
         let callvalue = SymExpr::zero(&mut self.cx);
         state.frame =
             CallFrame::new(&mut self.cx, target, target, sender, callvalue, false, calldata);

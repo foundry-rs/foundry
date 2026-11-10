@@ -1674,16 +1674,42 @@ contract SetupSpender {
     }
 }
 
+contract SetupReceiver {
+    function sender() external view returns (address) {
+        return msg.sender;
+    }
+}
+
+// A setUp prank of the test contract does not apply to this handler's calls.
+contract SetupPoker {
+    SetupReceiver receiver;
+    bool public bad;
+
+    constructor(SetupReceiver receiver_) {
+        receiver = receiver_;
+    }
+
+    function poke() external {
+        if (receiver.sender() != address(0xABC)) bad = true;
+    }
+}
+
 contract SymbolicSetupMappingStorageInvariant is Test {
     SetupToken token;
     SetupSpender spender;
+    SetupPoker poker;
 
     function setUp() public {
         token = new SetupToken();
         spender = new SetupSpender();
+        poker = new SetupPoker(new SetupReceiver());
         token.setBalance(address(this), 10);
         token.approve(address(spender), type(uint256).max);
         targetContract(address(this));
+        targetContract(address(poker));
+        vm.startPrank(address(0xABC));
+        // Apply the prank once so `pull` may override it.
+        token.setBalance(address(this), 10);
     }
 
     function pull(uint8 amount) external {
@@ -1698,6 +1724,230 @@ contract SymbolicSetupMappingStorageInvariant is Test {
     function invariant_balanceStaysInitialized() public view {
         assertEq(token.balanceOf(address(this)), 10);
     }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_pokerIsNotPranked() public view {
+        assert(!poker.bad());
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicHandlerPrankInvariant.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SenderReporter {
+    function who() external view returns (address) {
+        return msg.sender;
+    }
+}
+
+contract PrankingHandler {
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    bool public called;
+
+    function act() external {
+        VM.startPrank(address(0x777));
+        called = true;
+    }
+}
+
+contract RepeatPrankingHandler {
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    SenderReporter reporter;
+    uint256 calls;
+    bool public violated;
+
+    constructor(SenderReporter reporter_) {
+        reporter = reporter_;
+    }
+
+    function act() external {
+        if (calls++ == 0) {
+            VM.startPrank(address(0x777));
+            return;
+        }
+        violated = reporter.who() == address(0x777);
+    }
+}
+
+contract SymbolicHandlerPrankInvariant is Test {
+    PrankingHandler handler;
+    SenderReporter reporter;
+
+    function setUp() public {
+        handler = new PrankingHandler();
+        reporter = new SenderReporter();
+        targetContract(address(handler));
+    }
+
+    // Concretely the prank does not reach the predicate, so one act() breaks this. No fuzz
+    // runs, so only the symbolic phase can find it.
+    /// forge-config: default.symbolic.invariant_depth = 1
+    /// forge-config: default.invariant.runs = 0
+    function invariant_prankEndsWithHandlerCall() public view {
+        assert(!handler.called() || reporter.who() == address(0x777));
+    }
+}
+
+contract StartingHandler {
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    SenderReporter reporter;
+    bool started;
+    bool public violated;
+
+    constructor(SenderReporter reporter_) {
+        reporter = reporter_;
+    }
+
+    function start() external {
+        started = true;
+        VM.startPrank(address(0x777));
+    }
+
+    function query() external {
+        if (started && reporter.who() != address(0x777)) {
+            violated = true;
+        }
+    }
+}
+
+contract StoppingHandler {
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function stop() external {
+        VM.stopPrank();
+    }
+}
+
+contract OneShotPrankingHandler {
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    SenderReporter reporter;
+    bool armed;
+    bool queried;
+    bool public violated;
+
+    constructor(SenderReporter reporter_) {
+        reporter = reporter_;
+    }
+
+    function arm() external {
+        if (!armed) {
+            armed = true;
+            VM.prank(address(0x777));
+        }
+    }
+
+    function query() external {
+        if (armed && !queried) {
+            queried = true;
+            violated = reporter.who() != address(0x777);
+        }
+    }
+}
+
+contract CallingHandler {
+    SenderReporter reporter;
+    address public lastSender;
+
+    constructor(SenderReporter reporter_) {
+        reporter = reporter_;
+    }
+
+    function ping() external {
+        lastSender = reporter.who();
+    }
+}
+
+contract SymbolicRepeatHandlerPrankInvariant is Test {
+    RepeatPrankingHandler handler;
+
+    function setUp() public {
+        handler = new RepeatPrankingHandler(new SenderReporter());
+        targetContract(address(handler));
+    }
+
+    // Concretely the prank stays with the handler, so its second act() breaks this. No fuzz
+    // runs, so only the symbolic phase can find it.
+    /// forge-config: default.symbolic.invariant_depth = 2
+    /// forge-config: default.invariant.runs = 0
+    function invariant_prankStaysWithHandler() public view {
+        assert(!handler.violated());
+    }
+}
+
+contract SymbolicStoppedPrankInvariant is Test {
+    StartingHandler starter;
+
+    function setUp() public {
+        starter = new StartingHandler(new SenderReporter());
+        targetContract(address(starter));
+        targetContract(address(new StoppingHandler()));
+    }
+
+    // Concretely root frames share one prank slot, so another handler's stopPrank ends the
+    // prank. No fuzz runs, so only the symbolic phase can find it.
+    /// forge-config: default.symbolic.invariant_depth = 3
+    /// forge-config: default.invariant.runs = 0
+    function invariant_stoppedPrankStaysStopped() public view {
+        assert(!starter.violated());
+    }
+}
+
+contract RevertingPrankingHandler {
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    SenderReporter reporter;
+    bool public violated;
+
+    constructor(SenderReporter reporter_) {
+        reporter = reporter_;
+    }
+
+    function arm() external {
+        VM.startPrank(address(0x777));
+        revert("boom");
+    }
+
+    function query() external {
+        if (reporter.who() == address(0x777)) violated = true;
+    }
+}
+
+contract SymbolicRevertedPrankInvariant is Test {
+    RevertingPrankingHandler handler;
+
+    function setUp() public {
+        handler = new RevertingPrankingHandler(new SenderReporter());
+        targetContract(address(handler));
+    }
+
+    // Concretely cheatcode state is not journaled, so a prank set by a reverted handler call
+    // stays with the handler. No fuzz runs, so only the symbolic phase can find it.
+    /// forge-config: default.symbolic.invariant_depth = 2
+    /// forge-config: default.invariant.runs = 0
+    function invariant_revertedPrankStaysWithHandler() public view {
+        assert(!handler.violated());
+    }
+}
+
+contract SymbolicConsumedPrankInvariant is Test {
+    OneShotPrankingHandler handler;
+
+    function setUp() public {
+        SenderReporter reporter = new SenderReporter();
+        handler = new OneShotPrankingHandler(reporter);
+        targetContract(address(handler));
+        targetContract(address(new CallingHandler(reporter)));
+    }
+
+    // A root call from another handler consumes an unused one-shot prank.
+    /// forge-config: default.symbolic.invariant_depth = 3
+    /// forge-config: default.invariant.runs = 0
+    function invariant_oneShotPrankEndsAfterOtherHandlerCalls() public view {
+        assert(!handler.violated());
+    }
 }
 "#,
     );
@@ -1705,18 +1955,148 @@ contract SymbolicSetupMappingStorageInvariant is Test {
     assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
-        "--match-test",
-        "invariant_balanceStaysInitialized",
+        "--match-contract",
+        "SymbolicSetupMappingStorageInvariant",
     ]))
     .failure()
     .stdout_eq(str![[r#"
 ...
 Failing tests:
-Encountered 1 failing test in test/SymbolicSetupMappingStorageInvariant.t.sol:SymbolicSetupMappingStorageInvariant
+Encountered 2 failing tests in test/SymbolicSetupMappingStorageInvariant.t.sol:SymbolicSetupMappingStorageInvariant
 [FAIL: assertion failed: 3 != 10]
 	[Sequence] (original: 1, shrunk: 1)
 		[SENDER] [SENDER] calldata=pull(uint8) [ARGS]
  invariant_balanceStaysInitialized() ([METRICS])
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=poke() [ARGS]
+ invariant_pokerIsNotPranked() ([METRICS])
+
+Encountered a total of 2 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 2 failed tests
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_prankEndsWithHandlerCall",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/SymbolicHandlerPrankInvariant.t.sol:SymbolicHandlerPrankInvariant
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=act() [ARGS]
+ invariant_prankEndsWithHandlerCall() ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_prankStaysWithHandler",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/SymbolicHandlerPrankInvariant.t.sol:SymbolicRepeatHandlerPrankInvariant
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 2, shrunk: 2)
+		[SENDER] [SENDER] calldata=act() [ARGS]
+		[SENDER] [SENDER] calldata=act() [ARGS]
+ invariant_prankStaysWithHandler() ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_stoppedPrankStaysStopped",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/SymbolicHandlerPrankInvariant.t.sol:SymbolicStoppedPrankInvariant
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 3, shrunk: 3)
+		[SENDER] [SENDER] calldata=start() [ARGS]
+		[SENDER] [SENDER] calldata=stop() [ARGS]
+		[SENDER] [SENDER] calldata=query() [ARGS]
+ invariant_stoppedPrankStaysStopped() ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_revertedPrankStaysWithHandler",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/SymbolicHandlerPrankInvariant.t.sol:SymbolicRevertedPrankInvariant
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 2, shrunk: 2)
+		[SENDER] [SENDER] calldata=arm() [ARGS]
+		[SENDER] [SENDER] calldata=query() [ARGS]
+ invariant_revertedPrankStaysWithHandler() ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_oneShotPrankEndsAfterOtherHandlerCalls",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/SymbolicHandlerPrankInvariant.t.sol:SymbolicConsumedPrankInvariant
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 3, shrunk: 3)
+		[SENDER] [SENDER] calldata=arm() [ARGS]
+		[SENDER] [SENDER] calldata=ping() [ARGS]
+		[SENDER] [SENDER] calldata=query() [ARGS]
+ invariant_oneShotPrankEndsAfterOtherHandlerCalls() ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
