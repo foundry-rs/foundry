@@ -428,6 +428,10 @@ impl PathState {
         self.access_record = child.access_record.take();
         // Inspector state survives child reverts and exceptional halts.
         self.block = child.block.clone();
+        self.gas_price = child.gas_price.clone();
+        self.wallets = std::mem::take(&mut child.wallets);
+        self.labels = std::mem::take(&mut child.labels);
+        self.persistent_accounts = std::mem::take(&mut child.persistent_accounts);
         self.expected_calls = std::mem::take(&mut child.expected_calls);
         self.expected_creates = std::mem::take(&mut child.expected_creates);
         self.call_mocks = std::mem::take(&mut child.call_mocks);
@@ -450,6 +454,10 @@ impl PathState {
         self.take_noncommitting_check_state(&mut reverted);
         self.world.take_snapshots_from(&mut reverted.world);
         self.block = reverted.block;
+        self.gas_price = reverted.gas_price;
+        self.wallets = reverted.wallets;
+        self.labels = reverted.labels;
+        self.persistent_accounts = reverted.persistent_accounts;
         self.recorded_logs = reverted.recorded_logs;
         self.recorded_logs_generation = reverted.recorded_logs_generation;
         self.discard_failed_call_logs(recorded_logs_len, recorded_logs_generation);
