@@ -148,6 +148,12 @@ contract SenderTarget {
     function context() external view returns (address, address) {
         return (msg.sender, tx.origin);
     }
+
+    function rawSender() external view returns (uint256 word) {
+        assembly {
+            word := caller()
+        }
+    }
 }
 
 contract CreatedBySender {
@@ -279,6 +285,14 @@ contract SymbolicPrankSender is Test {
             assert(false);
         } catch {}
     }
+
+    // The callee sees the low 160 bits of a dirty `vm.prank` address word.
+    function checkDirtyPrankWord() public {
+        uint256 dirty = uint256(uint160(0xBEEF)) | (uint256(0xdead) << 160);
+        (bool ok,) = address(vm).call(abi.encodeWithSignature("prank(address)", dirty));
+        assertTrue(ok);
+        assertEq(target.rawSender(), uint256(uint160(0xBEEF)));
+    }
 }
 "#,
     );
@@ -292,10 +306,11 @@ contract SymbolicPrankSender is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 11 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
+Ran 12 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
 [PASS] checkCreateConsumesPrank() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCreateConsumesStartPrank() ([METRICS])
 [PASS] checkDeployCodeConsumesPrank() ([METRICS])
+[PASS] checkDirtyPrankWord() ([METRICS])
 [FAIL: vm.prank: cannot override an ongoing prank with a single vm.prank; use vm.startPrank to override the current prank; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkPrankRejectsOngoingStartPrankOverride() ([METRICS])
 [FAIL: vm.prank: cannot overwrite a prank until it is applied at least once; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkPrankRejectsUnusedPrankOverwrite() ([METRICS])
 [PASS] checkSymbolicPrank(address) ([METRICS])
@@ -304,7 +319,7 @@ Ran 11 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
 [PASS] checkSymbolicStartPrank(address) ([METRICS])
 [PASS] checkSymbolicStartPrankCreate2(address,address) ([METRICS])
 [PASS] checkSymbolicStartPrankOrigin(address,address) ([METRICS])
-Suite result: FAILED. 8 passed; 3 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 9 passed; 3 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -337,6 +352,19 @@ contract SymbolicBalance is Test {
         uint256 expected = who == funded ? 123 : 0;
         assertEq(who.balance, expected);
     }
+
+    function checkHighBitsBalance(uint256 w) public {
+        address funded = address(0xBEEF);
+        vm.deal(funded, 123);
+        vm.assume(w >> 160 != 0);
+        vm.assume(address(uint160(w)) == funded);
+
+        uint256 found;
+        assembly {
+            found := balance(w)
+        }
+        assertEq(found, 123);
+    }
 }
 "#,
     );
@@ -350,9 +378,10 @@ contract SymbolicBalance is Test {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicBalance.t.sol:SymbolicBalance
+Ran 2 tests for test/SymbolicBalance.t.sol:SymbolicBalance
+[PASS] checkHighBitsBalance(uint256) ([METRICS])
 [PASS] checkSymbolicBalance(address) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -384,6 +413,20 @@ contract SymbolicExtcodeSize is Test {
         uint256 expected = who == coded ? 4 : 0;
         assertEq(who.code.length, expected);
     }
+
+    // The EVM reads only the low 160 bits of an address operand.
+    function checkHighBitsCodeLength(uint256 w) public {
+        address coded = address(0xC0DE);
+        vm.etch(coded, hex"60006000");
+        vm.assume(w >> 160 != 0);
+        vm.assume(address(uint160(w)) == coded);
+
+        uint256 size;
+        assembly {
+            size := extcodesize(w)
+        }
+        assertEq(size, 4);
+    }
 }
 "#,
     );
@@ -397,9 +440,10 @@ contract SymbolicExtcodeSize is Test {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicExtcodeSize.t.sol:SymbolicExtcodeSize
+Ran 2 tests for test/SymbolicExtcodeSize.t.sol:SymbolicExtcodeSize
+[PASS] checkHighBitsCodeLength(uint256) ([METRICS])
 [PASS] checkSymbolicCodeLength(address) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()

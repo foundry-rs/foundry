@@ -42,6 +42,7 @@ impl SymbolicExecutor {
         }
         let target = state.stack.pop()?;
         ensure_expr_not_gasleft(&target)?;
+        let target = target.address_operand(&mut self.cx);
         let target_address = state.world.resolve_address(&target);
         let value = match (kind, target_address) {
             (CallKind::Call, Some(to))
