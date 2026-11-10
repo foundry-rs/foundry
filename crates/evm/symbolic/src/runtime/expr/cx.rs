@@ -111,7 +111,7 @@ impl SymCx {
 
     /// Returns the closest recorded concrete hash below `value` that `value` is a storage layout
     /// offset from, so a folded `keccak(..) + offset` constant keeps its hash base.
-    pub(in crate::runtime::expr) fn concrete_keccak_base(
+    pub(in crate::runtime) fn concrete_keccak_base(
         &self,
         value: U256,
         offset_bits: usize,

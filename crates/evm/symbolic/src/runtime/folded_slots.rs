@@ -15,13 +15,22 @@ use super::*;
 use foundry_common::slot_identifier::{ENCODING_INPLACE, ENCODING_MAPPING};
 use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
 
+const MAX_NESTED_MAPPING_HASHES: usize = 1 << 18;
+
 /// Candidate keys and storage layouts of the deployed contracts, kept to resolve the nested level
 /// of a folded mapping slot on demand.
 #[derive(Default)]
 pub(crate) struct FoldedSlots {
-    contracts: HashMap<Address, (Arc<StorageLayout>, Vec<U256>)>,
+    contracts: HashMap<Address, FoldedContract>,
     /// Contract slots already searched for a nested preimage.
     searched: HashSet<(Address, U256)>,
+    nested_hashes: usize,
+}
+
+struct FoldedContract {
+    layout: Arc<StorageLayout>,
+    keys: Vec<U256>,
+    constants: HashSet<U256>,
 }
 
 impl FoldedSlots {
@@ -54,9 +63,11 @@ impl FoldedSlots {
                     known_contracts.find_by_deployed_code_exact(code.original_byte_slice())
                 && let Some(layout) = &contract.storage_layout
             {
+                let constants = push_immediates(code.original_byte_slice()).collect::<HashSet<_>>();
                 let mut keys = literals.clone();
-                keys.extend(push_immediates(code.original_byte_slice()));
-                let keys = keys.into_iter().collect::<Vec<_>>();
+                keys.extend(constants.iter().copied());
+                let mut keys = keys.into_iter().collect::<Vec<_>>();
+                keys.sort_unstable();
                 for entry in &layout.storage {
                     if let Ok(slot) = entry.slot.parse::<U256>()
                         && !walk_mapping_slots(
@@ -75,7 +86,9 @@ impl FoldedSlots {
                         return folded;
                     }
                 }
-                folded.contracts.insert(address, (layout.clone(), keys));
+                folded
+                    .contracts
+                    .insert(address, FoldedContract { layout: layout.clone(), keys, constants });
             }
         }
         folded
@@ -91,37 +104,56 @@ impl FoldedSlots {
         address: Address,
         slot: U256,
         deadline: Option<Instant>,
-    ) {
+    ) -> bool {
         let max_offset = U256::ONE << STORAGE_LAYOUT_OFFSET_BITS;
-        if slot < max_offset || self.searched.contains(&(address, slot)) {
-            return;
+        if slot < max_offset
+            || self.searched.contains(&(address, slot))
+            || cx.concrete_keccak_base(slot, STORAGE_LAYOUT_OFFSET_BITS).is_some()
+        {
+            return true;
         }
-        let Some((layout, keys)) = self.contracts.get(&address) else { return };
-        for entry in &layout.storage {
-            if let Ok(root) = entry.slot.parse::<U256>()
-                && !walk_mapping_slots(
+        let Some(contract) = self.contracts.get(&address) else { return true };
+        if !contract.constants.contains(&slot) {
+            return true;
+        }
+        let nested_hashes = &mut self.nested_hashes;
+        for entry in &contract.layout.storage {
+            let mut found = false;
+            let completed = if let Ok(root) = entry.slot.parse::<U256>() {
+                walk_mapping_slots(
                     cx,
-                    layout,
+                    &contract.layout,
                     root,
                     &entry.storage_type,
-                    keys,
+                    &contract.keys,
                     2,
                     &mut |cx, key, base| {
-                        if past_deadline(deadline) {
+                        if *nested_hashes >= MAX_NESTED_MAPPING_HASHES || past_deadline(deadline) {
                             return None;
                         }
+                        *nested_hashes += 1;
                         let (hash, bytes) = mapping_preimage(key, base);
                         if slot.wrapping_sub(hash) < max_offset {
                             record_preimage_bytes(cx, hash, &bytes);
+                            found = true;
+                            return None;
                         }
                         Some(hash)
                     },
                 )
-            {
-                return;
+            } else {
+                true
+            };
+            if !completed && !found {
+                return false;
+            }
+            if found {
+                self.searched.insert((address, slot));
+                return true;
             }
         }
         self.searched.insert((address, slot));
+        true
     }
 }
 
@@ -227,4 +259,53 @@ fn record_mapping_preimage(cx: &mut SymCx, key: U256, slot: U256) -> U256 {
 fn record_preimage_bytes(cx: &mut SymCx, hash: U256, bytes: &[u8; 64]) {
     let preimage = bytes.iter().map(|&byte| SymExpr::constant(cx, U256::from(byte))).collect();
     cx.record_concrete_keccak_preimage(hash, preimage);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nested_search_budget_reports_incomplete() {
+        let mut layout = StorageLayout::default();
+        layout.storage.push(Storage {
+            ast_id: 0,
+            contract: String::new(),
+            label: String::new(),
+            offset: 0,
+            slot: "0".into(),
+            storage_type: "outer".into(),
+        });
+        let word = StorageType {
+            encoding: ENCODING_INPLACE.into(),
+            key: None,
+            label: "uint256".into(),
+            number_of_bytes: "32".into(),
+            value: None,
+            other: Default::default(),
+        };
+        let mapping = |value: &str| StorageType {
+            encoding: ENCODING_MAPPING.into(),
+            key: Some("word".into()),
+            label: String::new(),
+            number_of_bytes: "32".into(),
+            value: Some(value.into()),
+            other: Default::default(),
+        };
+        layout.types.insert("word".into(), word);
+        layout.types.insert("inner".into(), mapping("word"));
+        layout.types.insert("outer".into(), mapping("inner"));
+
+        let slot = U256::ONE << 255;
+        let keys = (0u64..600).map(U256::from).collect();
+        let mut folded = FoldedSlots::default();
+        let mut constants = HashSet::default();
+        constants.insert(slot);
+        folded
+            .contracts
+            .insert(Address::ZERO, FoldedContract { layout: Arc::new(layout), keys, constants });
+        let mut cx = SymCx::new();
+        assert!(!folded.resolve_nested(&mut cx, Address::ZERO, slot, None));
+        assert_eq!(folded.nested_hashes, MAX_NESTED_MAPPING_HASHES);
+    }
 }
