@@ -144,6 +144,13 @@ pub trait FoundryExecutionHooks: EvmTypes {
     ) {
         Self::refresh_transaction(evm);
     }
+
+    /// Returns how many levels below the transaction its handler runs `tx`'s top-level calls,
+    /// such as one for Tempo's AA transactions. A nested transaction lowers its initial call
+    /// depth by it, so its calls keep their depth in the surrounding trace.
+    fn tx_call_depth_offset(_tx: &Self::Tx) -> u16 {
+        0
+    }
 }
 
 /// Per-EVM network state, such as OP L1 block info or Monad's reserve-balance context.

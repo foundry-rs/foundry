@@ -549,7 +549,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
         let mut env = env.unwrap_or_else(|| evm_env(evm));
-        env.initial_call_depth = depth;
+        env.initial_call_depth = depth - TypesFor::<FEN>::tx_call_depth_offset(tx);
         TypesFor::<FEN>::sync_transaction(evm);
         let mut child = backend.backend().lifecycle().nested_evm(evm, tx, Some(env), None);
         let previous = self.enter_inner_context(InnerRoot {
@@ -658,7 +658,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
         let mut env = env.unwrap_or_else(|| evm_env(evm));
-        env.initial_call_depth = depth + 1;
+        env.initial_call_depth = depth + 1 - TypesFor::<FEN>::tx_call_depth_offset(tx);
         let (prepared, mut replay) = backend.backend().prepare_nested(tx.clone(), evm, Some(env));
         let mut executed = self.replay(cheats, &mut replay, evm, depth, prepared, true)?;
         drop(replay);
@@ -1036,12 +1036,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         Some((cheats, &mut *self.backend, &mut *self.inner))
     }
 
-    /// Whether a frame at `depth` runs as an isolated transaction: a top-level frame, or a
-    /// synthetic `deployCode` create rewritten to a CREATE2 factory call.
-    fn isolates(&self, depth: u16) -> bool {
+    /// Whether a frame at `depth` runs as an isolated transaction: a top-level frame one level
+    /// below the transaction's root at `root`, or a synthetic `deployCode` create rewritten to a
+    /// CREATE2 factory call.
+    fn isolates(&self, root: u16, depth: u16) -> bool {
         self.inner.enable_isolation
             && !self.inner.in_inner_context
-            && (depth == 1 || self.inner.synthetic_create_depth == Some(depth))
+            && (depth == root + 1 || self.inner.synthetic_create_depth == Some(depth))
     }
 
     /// Converts the result of a CREATE frame redirected to the CREATE2 factory, if `message` is
@@ -1363,6 +1364,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             Ok(tx) => tx,
             Err(err) => return not_executed(err.to_string().into_bytes().into()),
         };
+        env.initial_call_depth -= TypesFor::<FEN>::tx_call_depth_offset(&tx);
 
         let backend = &mut *self.backend;
         let source_fork = backend.backend().active_fork_id();
@@ -1618,11 +1620,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         outcome
     }
 
-    /// Invoked at the beginning of a new top-level (0 depth) frame.
+    /// Invoked at the beginning of a new top-level frame, at the EVM's initial call depth.
     fn top_level_frame_start(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
         warm_arbitrum_system_contract::<FEN>(interp);
         self.inner.tx_created.clear();
         if let Some(cheatcodes) = &mut self.cheatcodes {
+            cheatcodes.root_depth = usize::from(interp.host().initial_call_depth());
             // Transactions run from the test or script carry no access list.
             cheatcodes.tx_warm_addresses = tx_warm_addresses(&evm_env(interp.host()), None);
             cheatcodes.clear_storage_hook_mapping_slots();
@@ -2032,7 +2035,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         }
 
         let depth = message.depth;
-        if depth == 0 && !self.inner.in_inner_context {
+        // A transaction handler can run the top-level calls below the transaction, such as
+        // Tempo's for the calls of an AA transaction.
+        let root = interp.host().initial_call_depth();
+        if depth == root && !self.inner.in_inner_context {
             self.top_level_frame_start(interp);
         }
 
@@ -2098,8 +2104,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         // and broadcasts. Keep the trace lifecycle ordering, but remember the node so its caller
         // can be synchronized with the inputs that are actually executed.
         let trace_idx = self.inner.tracer.as_ref().map(|tracer| tracer.traces().nodes().len() - 1);
-        let isolate = self.isolates(depth);
-        let precharged_state = if isolate && depth == 1 && message.kind == MessageKind::Call {
+        let isolate = self.isolates(root, depth);
+        let precharged_state = if isolate && depth == root + 1 && message.kind == MessageKind::Call
+        {
             account_creation_state_gas::<FEN>(interp, message)
         } else {
             0
@@ -2219,7 +2226,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         }
 
         let depth = message.depth;
-        if depth == 0 && !self.inner.in_inner_context {
+        // A transaction handler can run the top-level calls below the transaction, such as
+        // Tempo's for the calls of an AA transaction.
+        let root = interp.host().initial_call_depth();
+        if depth == root && !self.inner.in_inner_context {
             self.top_level_frame_start(interp);
         }
 
@@ -2254,7 +2264,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         // charge first. A synthetic `deployCode` create carries the charge of the cheatcode.
         let precharged_state = if self.inner.synthetic_create_depth == Some(depth) {
             self.cheatcodes.as_deref().map_or(0, |cheats| cheats.deploy_code_create_state_gas)
-        } else if depth == 1
+        } else if depth == root + 1
             && message.kind == MessageKind::Create
             && self.inner.enable_isolation
             && !self.inner.in_inner_context
@@ -2287,7 +2297,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
             return Some(message_result(message, InstrStop::Revert, error));
         }
 
-        if message.kind != MessageKind::Create2 && self.isolates(depth) {
+        if message.kind != MessageKind::Create2 && self.isolates(root, depth) {
             return Some(self.transact_inner(interp, message, precharged_state));
         }
 

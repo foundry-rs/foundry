@@ -636,6 +636,14 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// transaction instead.
     pub root_call_target: Option<Address>,
 
+    /// Call depth of the running transaction's top-level calls, set by the inspector stack when
+    /// each one starts.
+    ///
+    /// This is the EVM's initial call depth, which is zero unless the transaction handler runs
+    /// the calls below the transaction, such as Tempo's for the calls of an AA transaction.
+    /// Nested transactions, such as isolated calls and replays, keep the running transaction's.
+    pub root_depth: usize,
+
     /// The EIP-3651 coinbase and access-list addresses the running transaction warmed when it
     /// started, which `vm.cool` keeps warm.
     ///
@@ -849,6 +857,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             fork_epoch: Default::default(),
             snapshot_restores: Default::default(),
             root_call_target: Default::default(),
+            root_depth: Default::default(),
             tx_warm_addresses: Default::default(),
             pranks: Default::default(),
             expected_revert: Default::default(),
@@ -1284,12 +1293,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) -> Option<MessageResultFor<FEN>> {
         let tx_origin = interp.host().tx_env().origin;
         let curr_depth = usize::from(call.depth);
-        self.start_created_accounts_frame(
-            curr_depth == 0,
-            CreatedAccountsFrameKind::Call,
-            curr_depth,
-        );
-        if curr_depth == 0 {
+        let is_root = curr_depth == self.root_depth;
+        self.start_created_accounts_frame(is_root, CreatedAccountsFrameKind::Call, curr_depth);
+        if is_root {
             self.root_call_target = Some(call.destination);
             self.applied_access_list = None;
         }
@@ -1297,7 +1303,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // At the root call to test function or script `run()`/`setUp()` functions, we are
         // decreasing sender nonce to ensure that it matches on-chain nonce once we start
         // broadcasting.
-        if curr_depth == 0 {
+        if is_root {
             let result = interp.host().state_mut().account(&tx_origin).map(|mut account| {
                 let prev = account.nonce();
                 account.set_nonce(prev.saturating_sub(1));
@@ -2354,7 +2360,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 let needs_processing = expected_revert.needs_processing(
                     cheatcode_call,
                     call_failed,
-                    curr_depth,
+                    curr_depth - self.root_depth,
                     self.core.config.internal_expect_revert,
                 );
 
@@ -2417,7 +2423,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // previous call depth's recorded accesses, if any
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // The root call cannot be recorded.
-            if curr_depth > 0
+            if curr_depth > self.root_depth
                 && let Some(mut last_recorded_depth) = recorded_account_diffs_stack.pop()
             {
                 // Update the reverted status of all deeper calls if this call reverted, in
@@ -2483,8 +2489,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             }
         }
 
-        // If the depth is 0, then this is the root call terminating
-        if curr_depth == 0 {
+        // The root call is terminating.
+        if curr_depth == self.root_depth {
             // Match expected calls
             if let Some(msg) =
                 expect::first_unmet_call(&self.core.expected_calls, outcome.is_success())
@@ -2517,12 +2523,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) -> Option<MessageResultFor<FEN>> {
         let tx_origin = interp.host().tx_env().origin;
         let curr_depth = usize::from(input.depth);
-        self.start_created_accounts_frame(
-            curr_depth == 0,
-            CreatedAccountsFrameKind::Create,
-            curr_depth,
-        );
-        if curr_depth == 0 {
+        let is_root = curr_depth == self.root_depth;
+        self.start_created_accounts_frame(is_root, CreatedAccountsFrameKind::Create, curr_depth);
+        if is_root {
             self.root_call_target = None;
             self.applied_access_list = None;
         }
@@ -2612,7 +2615,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
 
         // The creator changed, so the created address derives from the new creator.
-        if caller_changed && curr_depth > 0 {
+        if caller_changed && curr_depth > self.root_depth {
             let nonce = match interp.host().state_mut().account(&input.caller) {
                 Ok(account) => account.nonce(),
                 Err(err) => {
@@ -2631,7 +2634,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         // Allow cheatcodes from the address of the new contract
         let address = input.destination;
-        Self::allow_cheatcodes_on_create(backend, curr_depth, input.caller, address);
+        Self::allow_cheatcodes_on_create(
+            backend,
+            curr_depth - self.root_depth,
+            input.caller,
+            address,
+        );
 
         self.record_created_account(backend.backend().active_fork_id(), address);
 
@@ -2784,7 +2792,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             }
         }
 
-        if curr_depth > 0 {
+        if curr_depth > self.root_depth {
             // Record the gas usage of the create frame, this allows the `lastFrameGas` cheatcode to
             // retrieve the gas usage of the last call or create.
             self.gas_metering.last_frame_gas = Some(frame_gas(outcome.stop, &outcome.gas));
