@@ -6467,3 +6467,52 @@ Warning: Persisted failure for [..] was recorded at fork block 0 but is replayed
 "#]])
         .stderr_eq(str![""]);
 }
+
+// Instrumented campaigns run frames on the plain interpreter loop, which must step aside while
+// `expectEmit` can fail the emitting frame.
+#[forgetest]
+fn fuzz_instrumented_edges_expect_no_emit_under_expect_revert(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.fuzz.runs = 8;
+        config.fuzz.corpus.instrumented_edges = true;
+    });
+    prj.add_test(
+        "InstrumentedExpectEmit.t.sol",
+        r#"
+interface Vm {
+    function expectEmit(address emitter, uint64 count) external;
+    function expectRevert() external;
+}
+
+contract Store {
+    event Set(uint256 value);
+
+    function setA(uint256 value) external {
+        emit Set(value);
+    }
+}
+
+contract InstrumentedExpectEmitTest {
+    event Set(uint256 value);
+
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    Store store = new Store();
+
+    function testFuzz_expectNoEmitUnderExpectRevert(uint256 value) public {
+        vm.expectEmit(address(store), 0);
+        emit Set(value);
+        vm.expectRevert();
+        store.setA(value);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--mt", "testFuzz_expectNoEmitUnderExpectRevert"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[PASS] testFuzz_expectNoEmitUnderExpectRevert(uint256) (runs: 8, [AVG_GAS])
+...
+"#]]);
+}

@@ -4,7 +4,7 @@ use foundry_common::mapping_slots::{
     MappingSlots, PendingMappingHash, capture_hash as capture_mapping_hash,
     record_hash as record_mapping_hash, step as mapping_step,
 };
-use foundry_evm_core::constants::CHEATCODE_ADDRESS;
+use foundry_evm_core::{constants::CHEATCODE_ADDRESS, edgecov::MappingEvent};
 use revm::{
     Inspector,
     context::{ContextTr, JournalTr, Transaction},
@@ -129,8 +129,7 @@ impl Fuzzer {
 
     /// Records a mapping slot observation from the instruction hooks, as `step` and `step_end`
     /// record it around `KECCAK256` and `SSTORE`.
-    pub fn record_mapping_event(&mut self, event: foundry_evm_core::edgecov::MappingEvent) {
-        use foundry_evm_core::edgecov::MappingEvent;
+    pub fn record_mapping_event(&mut self, event: MappingEvent) {
         let Some(mapping_slots) = &mut self.mapping_slots else { return };
         match event {
             MappingEvent::Hash { address, result, key, parent } => {

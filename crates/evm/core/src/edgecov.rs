@@ -25,8 +25,8 @@
 //!
 //! Every wrapper records and then runs revm's default instruction for its opcode, which all
 //! networks that install these hooks (Ethereum, Optimism, Base, Tempo) use for these opcodes.
-//! With no inspector left that needs `step`, frames then run on the interpreter's plain loop
-//! (see [`InspectorExt::run_frame_plain`](crate::InspectorExt::run_frame_plain)).
+//! With no inspector left that needs `step`, Ethereum frames then run on the interpreter's plain
+//! loop (see [`InspectorExt::run_frame_plain`](crate::InspectorExt::run_frame_plain)).
 
 use alloy_primitives::{Address, B256, U256, map::HashMap};
 use revm::{

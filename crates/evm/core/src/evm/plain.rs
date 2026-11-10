@@ -64,7 +64,7 @@ where
 {
     type IT = EthInterpreter;
 
-    /// revm's inspected execution loop, with [`run_frame`] in place of
+    /// revm's inspected execution loop, with `run_frame` in place of
     /// [`InspectorEvmTr::inspect_frame_run`].
     fn inspect_run_exec_loop(
         &mut self,

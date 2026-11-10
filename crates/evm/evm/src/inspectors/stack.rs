@@ -476,7 +476,7 @@ pub struct InspectorStackInner {
     /// Whether to collect `EDGECOV` hits as the call's edge coverage.
     ///
     /// While on, the other per-opcode fuzz signals also come from instruction hooks instead of
-    /// `step`: cmp-log through [`Self::cmp_log_hooks`], and the fuzzer's stack values
+    /// `step`: cmp-log through `cmp_log_hooks`, and the fuzzer's stack values
     /// through the caller stacks that `CALL`/`CREATE`-family instructions record.
     pub instrumented_edges: bool,
     /// Whether EVM comparison operands were requested with `collect_evm_cmp_log`.
@@ -1935,7 +1935,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             }
         }
 
-        if self.inner.instrumented_edges && self.inner.fuzzer.is_some() {
+        if self.inner.instrumented_edges
+            && let Some(fuzzer) = self.inner.fuzzer.as_deref_mut()
+        {
             // The word the caller resumes with on top of the stack its instruction left.
             let pushed = match frame_result {
                 FrameResult::Call(outcome) => U256::from(outcome.result.result.is_ok()),
@@ -1950,7 +1952,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             // The fuzzer's `step` is skipped while a storage hook runs.
             let collect =
                 !self.cheatcodes.as_deref().is_some_and(Cheatcodes::is_storage_hook_active);
-            let fuzzer = self.inner.fuzzer.as_deref_mut().unwrap();
             fuzzer.frame_end(pushed, collect);
             if fuzzer.mapping_slots.is_some() {
                 edgecov::take_mapping_events(|event| fuzzer.record_mapping_event(event));
@@ -2440,12 +2441,17 @@ impl<FEN: FoundryEvmNetwork> InspectorExt for InspectorStackRefMut<'_, FEN> {
     }
 
     fn run_frame_plain(&mut self, interpreter: &mut Interpreter) -> bool {
-        if !self.inner.needs_no_steps()
+        // Only instrumented campaigns run plain. Log hooks need a live interpreter, since
+        // `expectEmit` fails the emitting frame from `log_full`, which the plain loop only calls
+        // once the frame has suspended.
+        if !self.inner.instrumented_edges
+            || !self.inner.needs_no_steps()
             || self.cheatcodes.as_deref().is_some_and(|cheats| {
                 cheats.has_step_hooks()
                     || cheats.has_step_end_hooks()
                     || cheats.has_storage_hooks()
                     || cheats.is_storage_hook_active()
+                    || cheats.has_log_hooks()
             })
         {
             return false;
