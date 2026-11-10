@@ -2224,6 +2224,16 @@ contract SymbolicAddressAlias is Test {
         vm.deal(address(uint160(x % 8 + 0x2000)), 1);
         assert(address(uint160((x + 8) % 8 + 0x2000)).code.length != 1);
     }
+
+    // A code read through the alias caches its empty code but does not write it.
+    function checkCodeReadPreservesCode(uint256 x) public {
+        vm.etch(address(0x2000), hex"00");
+        address a = address(uint160(x % 8 + 0x2000));
+        vm.prank(a);
+        vm.stopPrank();
+        vm.assume(a.code.length < 2);
+        assert(address(uint160((x + 8) % 8 + 0x2000)).code.length != 1);
+    }
 }
 "#,
     );
@@ -2232,14 +2242,15 @@ contract SymbolicAddressAlias is Test {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 6 tests for test/SymbolicAddressAlias.t.sol:SymbolicAddressAlias
+Ran 7 tests for test/SymbolicAddressAlias.t.sol:SymbolicAddressAlias
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkCodeReadPreservesCode(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkComputedAddressDealIsVisible(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkComputedAddressStoreIsVisible(uint256,uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealPreservesCode(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x5b3b1d1100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 args=[0x0000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000]] checkDealsMayTargetOneAccount(address,address) ([METRICS])
 [PASS] checkDistinctDealsAreIndependent(address,address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankPreservesBalance(uint256) ([METRICS])
-Suite result: FAILED. 1 passed; 5 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 1 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

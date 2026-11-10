@@ -1793,6 +1793,8 @@ pub(crate) struct SymbolicWorldState {
     current_transaction_created_accounts: HashSet<Address>,
     balances: HashMap<Address, SymExpr>,
     code_cache: HashMap<Address, SymCode>,
+    /// Accounts whose code was written during the run; `code_cache` also holds backend reads.
+    written_code: HashSet<Address>,
     nonces: HashMap<Address, u64>,
     existing_accounts: HashSet<Address>,
     destroyed_accounts: HashSet<Address>,
@@ -2318,6 +2320,7 @@ impl SymbolicWorld {
     pub(crate) fn install_code(&mut self, address: Address, code: SymCode) {
         let state = Arc::make_mut(&mut self.state);
         state.code_cache.insert(address, code);
+        state.written_code.insert(address);
         state.existing_accounts.insert(address);
         state.destroyed_accounts.remove(&address);
     }
@@ -2347,6 +2350,7 @@ impl SymbolicWorld {
         let state = Arc::make_mut(&mut self.state);
         state.balances.insert(address, zero);
         state.code_cache.insert(address, empty_code);
+        state.written_code.insert(address);
         if let Some(nonce) = nonce {
             state.nonces.insert(address, nonce);
         }
@@ -2491,7 +2495,7 @@ impl SymbolicWorld {
             cx,
             executor,
             address_expr,
-            |world, address| world.code_cache.contains_key(&address),
+            |world, address| world.written_code.contains(&address),
             |world, cx, address| {
                 let len = world.extcode(cx, executor, address)?.len();
                 Ok(SymExpr::constant(cx, U256::from(len)))
@@ -2509,7 +2513,7 @@ impl SymbolicWorld {
             cx,
             executor,
             address_expr,
-            |world, address| world.code_cache.contains_key(&address),
+            |world, address| world.written_code.contains(&address),
             |world, cx, address| world.extcode_hash_for_address(cx, executor, address),
         )
     }
@@ -2533,9 +2537,8 @@ impl SymbolicWorld {
             offset.clone(),
             size,
         );
-        let candidates = self.candidate_addresses(executor, |world, address| {
-            world.code_cache.contains_key(&address)
-        });
+        let candidates = self
+            .candidate_addresses(executor, |world, address| world.written_code.contains(&address));
         for address in candidates {
             let bytes = self.extcode(cx, executor, address)?.read_byte_exprs_offset(
                 cx,
@@ -2598,9 +2601,8 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
     ) -> Result<Vec<Address>, SymbolicError> {
         let mut targets = Vec::new();
-        let candidates = self.candidate_addresses(executor, |world, address| {
-            world.code_cache.contains_key(&address)
-        });
+        let candidates = self
+            .candidate_addresses(executor, |world, address| world.written_code.contains(&address));
         for address in candidates {
             if is_precompile_for_spec(address, executor.spec_id) {
                 continue;
