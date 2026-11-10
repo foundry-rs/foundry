@@ -242,9 +242,9 @@ impl EquivalenceArgs {
             || (both_succeeded
                 && (!slots.is_empty() || !balances.is_empty() || !accounts_differ.is_empty()))
             || logs_differ;
-        // A model that answers calls into unknown code, reads `GAS` or picks a separate origin
-        // cannot always be replayed by plain execution; like hevm, it is still reported.
-        let unconfirmed = (!replayed).then(|| {
+        // Only a model that replays concretely is a counterexample. One that answers calls into
+        // unknown code, reads `GAS` or picks a separate origin may not, so say why.
+        if !replayed {
             let mut reasons = Vec::new();
             if unknown_calls > 0 {
                 reasons.push(format!("answers {unknown_calls} calls into unknown code"));
@@ -255,17 +255,16 @@ impl EquivalenceArgs {
             if env.origin != env.caller {
                 reasons.push("needs tx.origin to differ from the sender".to_string());
             }
-            reasons
-        });
-        if let Some(reasons) = &unconfirmed
-            && reasons.is_empty()
-        {
+            let reasons = if reasons.is_empty() {
+                String::new()
+            } else {
+                format!("; it {}", reasons.join(", "))
+            };
             bail!(
                 "equivalence check incomplete (Error): the solver's counterexample {calldata} did \
-                 not replay concretely"
+                 not replay concretely{reasons}"
             );
         }
-        let unconfirmed = unconfirmed.map(|reasons| reasons.join(", "));
 
         if shell::is_json() {
             let side = |run: &ConcreteRun| {
@@ -289,9 +288,7 @@ impl EquivalenceArgs {
                 "{}",
                 json!({
                     "status": "not_equivalent",
-                    "replayed": replayed,
                     "out_of_gas": run_a.out_of_gas != run_b.out_of_gas,
-                    "unconfirmed": unconfirmed,
                     "calldata": calldata,
                     "args": args.iter().map(format_value).collect::<Vec<_>>(),
                     "env": env_json(&env),
@@ -323,45 +320,39 @@ impl EquivalenceArgs {
                 env.number,
                 env.timestamp
             )?;
-            if let Some(reasons) = &unconfirmed {
+            if run_a.out_of_gas != run_b.out_of_gas {
                 sh_println!(
-                    "  The solver's counterexample {reasons}, so it was not replayed concretely."
+                    "  Only one contract runs out of gas here; pass --ignore-out-of-gas to \
+                     compare them modulo gas, as hevm does."
                 )?;
-            } else {
-                if run_a.out_of_gas != run_b.out_of_gas {
+            }
+            sh_println!("  code-a: {}", describe(&run_a))?;
+            sh_println!("  code-b: {}", describe(&run_b))?;
+            for ((address, slot), a, b) in &slots {
+                if *address == env.address {
+                    sh_println!("  storage slot {slot:#x}: code-a {a:#x}, code-b {b:#x}")?;
+                } else {
                     sh_println!(
-                        "  Only one contract runs out of gas here; pass --ignore-out-of-gas to \
-                         compare them modulo gas, as hevm does."
+                        "  storage slot {slot:#x} of {address}: code-a {a:#x}, code-b {b:#x}"
                     )?;
                 }
-                sh_println!("  code-a: {}", describe(&run_a))?;
-                sh_println!("  code-b: {}", describe(&run_b))?;
-                for ((address, slot), a, b) in &slots {
-                    if *address == env.address {
-                        sh_println!("  storage slot {slot:#x}: code-a {a:#x}, code-b {b:#x}")?;
-                    } else {
-                        sh_println!(
-                            "  storage slot {slot:#x} of {address}: code-a {a:#x}, code-b {b:#x}"
-                        )?;
-                    }
-                }
-                for (account, a, b) in &balances {
-                    sh_println!("  balance of {account}: code-a {a}, code-b {b}")?;
-                }
-                for (account, (nonce_a, code_a), (nonce_b, code_b)) in
-                    accounts_differ.iter().filter(|_| both_succeeded)
-                {
-                    sh_println!(
-                        "  account {account}: code-a nonce {nonce_a} code {code_a}, code-b nonce \
-                         {nonce_b} code {code_b}"
-                    )?;
-                }
-                if logs_differ {
-                    sh_println!("  code-a logs:")?;
-                    print_logs(&run_a.logs)?;
-                    sh_println!("  code-b logs:")?;
-                    print_logs(&run_b.logs)?;
-                }
+            }
+            for (account, a, b) in &balances {
+                sh_println!("  balance of {account}: code-a {a}, code-b {b}")?;
+            }
+            for (account, (nonce_a, code_a), (nonce_b, code_b)) in
+                accounts_differ.iter().filter(|_| both_succeeded)
+            {
+                sh_println!(
+                    "  account {account}: code-a nonce {nonce_a} code {code_a}, code-b nonce \
+                     {nonce_b} code {code_b}"
+                )?;
+            }
+            if logs_differ {
+                sh_println!("  code-a logs:")?;
+                print_logs(&run_a.logs)?;
+                sh_println!("  code-b logs:")?;
+                print_logs(&run_b.logs)?;
             }
             print_stats(&stats)?;
         }

@@ -642,13 +642,13 @@ optimizer do.
 A counterexample is replayed through the concrete executor with the model's
 environment and pre-state, and printed with both results and every storage
 slot, balance, nonce and code that differs; the command then exits with a
-non-zero status. A model that answers calls into unknown code, depends on
-`GAS`, or needs `tx.origin` to differ from the sender is reported as
-unconfirmed when plain execution does not reproduce it, as hevm does. `--json`
-prints the same result as JSON. `Equivalent` is scoped to the modeled EVM
-surface and the configured bounds (calldata and return-data sizes, loop
-iterations, depth and paths); a check that cannot finish reports an incomplete
-result instead.
+non-zero status. A model that plain execution does not reproduce, such as one
+that answers calls into unknown code, depends on `GAS`, or needs `tx.origin` to
+differ from the sender, is reported as an incomplete check, never as a
+counterexample. `--json` prints the same result as JSON. `Equivalent` is scoped
+to the modeled EVM surface and the configured bounds (calldata and return-data
+sizes, loop iterations, depth and paths); a check that cannot finish reports an
+incomplete result instead.
 
 ## Configuration
 

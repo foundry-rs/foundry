@@ -2805,6 +2805,9 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
         address: Address,
     ) -> Result<SymExpr, SymbolicError> {
+        if self.is_unknown_account(cx, executor, address)? {
+            return Ok(SymExpr::var(cx, &format!("codehash_{address:?}")));
+        }
         // Cheatcode accounts keep Forge's fixed code hash, not the hash of their stub code,
         // until `vm.etch` or a self-destruct writes their code.
         if (address == CHEATCODE_ADDRESS || address == SYMBOLIC_VM_COMPAT_ADDRESS)
@@ -2832,6 +2835,20 @@ impl SymbolicWorld {
         Ok(SymExpr::ite(cx, empty, zero, hash))
     }
 
+    /// Returns the code size of `address`, which is symbolic for an account without known code.
+    fn extcode_size_for_address(
+        &mut self,
+        cx: &mut SymCx,
+        executor: &ExecutorView<'_>,
+        address: Address,
+    ) -> Result<SymExpr, SymbolicError> {
+        if self.is_unknown_account(cx, executor, address)? {
+            return Ok(SymExpr::var(cx, &format!("codesize_{address:?}")));
+        }
+        let len = self.extcode(cx, executor, address)?.len();
+        Ok(SymExpr::constant(cx, U256::from(len)))
+    }
+
     pub(crate) fn extcode_size_word(
         &mut self,
         cx: &mut SymCx,
@@ -2847,20 +2864,12 @@ impl SymbolicWorld {
         {
             return Ok(SymExpr::constant(cx, U256::ONE));
         }
-        if let Some(address) = self.resolve_address(&address_expr.clone().address_operand(cx))
-            && self.is_unknown_account(cx, executor, address)?
-        {
-            return Ok(SymExpr::var(cx, &format!("codesize_{address:?}")));
-        }
         self.select_symbolic_account(
             cx,
             executor,
             address_expr,
             |world, address| world.written_code.contains(&address),
-            |world, cx, address| {
-                let len = world.extcode(cx, executor, address)?.len();
-                Ok(SymExpr::constant(cx, U256::from(len)))
-            },
+            |world, cx, address| world.extcode_size_for_address(cx, executor, address),
         )
     }
 
@@ -2870,11 +2879,6 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
-        if let Some(address) = self.resolve_address(&address_expr.clone().address_operand(cx))
-            && self.is_unknown_account(cx, executor, address)?
-        {
-            return Ok(SymExpr::var(cx, &format!("codehash_{address:?}")));
-        }
         self.select_symbolic_account(
             cx,
             executor,
@@ -2902,6 +2906,9 @@ impl SymbolicWorld {
 
         let expr = address_expr;
         let representative = expr.representative_symbolic_address();
+        if self.is_unknown_account(cx, executor, representative)? {
+            return Err(SymbolicError::Unsupported("EXTCODECOPY of unknown code"));
+        }
         let mut result = self.extcode(cx, executor, representative)?.read_byte_exprs_offset(
             cx,
             offset.clone(),

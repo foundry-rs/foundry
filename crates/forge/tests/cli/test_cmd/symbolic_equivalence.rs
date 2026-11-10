@@ -1,7 +1,7 @@
 //! `forge equivalence` checks of two runtime bytecodes.
 
 use crate::skip_unless_z3;
-use foundry_test_utils::{forgetest, util::OutputExt};
+use foundry_test_utils::{forgetest, str, util::OutputExt};
 
 // Returns `calldataload(4) + 1` with the addition's operands in either order.
 const ADD_ONE: &str = "0x60043560010160005260206000f3";
@@ -281,7 +281,8 @@ contract KeepAll {
         ])
         .assert_success();
 
-    // Even a call that sends nothing lets the unknown callee send ether back, as in hevm.
+    // Even a call that sends nothing lets the unknown callee send ether back, as in hevm, but
+    // plain execution can't replay that, so the check is incomplete.
     cmd.forge_fuse()
         .args([
             "equivalence",
@@ -340,14 +341,15 @@ fn equivalence_abstracts_calls_into_unknown_code(cmd: _) {
     // The same call answers the same in both programs.
     cmd.args(["equivalence", "--code-a", &call, "--code-b", &format!("0x5b{}", &call[2..])])
         .assert_success();
-    // A call with different calldata may answer differently; the model is not replayable.
-    let out = cmd
-        .forge_fuse()
+    // A call with different calldata may answer differently, but plain execution can't replay
+    // that answer, so the check is incomplete.
+    cmd.forge_fuse()
         .args(["equivalence", "--code-a", &call, "--code-b", &static_call_then_revert("6001")])
         .assert_failure()
-        .get_output()
-        .stdout_lossy();
-    assert!(out.contains("answers 2 calls into unknown code"), "{out}");
+        .stderr_eq(str![[r#"
+Error: equivalence check incomplete (Error): the solver's counterexample [..] did not replay concretely; it answers 2 calls into unknown code, depends on GAS[..]
+
+"#]]);
 }
 
 #[forgetest]
@@ -373,4 +375,28 @@ fn equivalence_compares_modulo_gas_on_request(cmd: _) {
     cmd.forge_fuse()
         .args(["equivalence", "--code-a", touch_memory, "--code-b", "0x00", "--ignore-out-of-gas"])
         .assert_success();
+}
+
+#[forgetest]
+fn equivalence_treats_unknown_code_as_symbolic(cmd: _) {
+    skip_unless_z3!("equivalence_treats_unknown_code_as_symbolic");
+    // Returns `extcodesize(calldataload(0)) == 5`.
+    let size_is_five = "0x5f353b6005145f5260205ff3";
+    // Both codes read the same unknown account's size.
+    cmd.args(["equivalence", "--code-a", size_is_five, "--code-b", "0x5b5f353b6005145f5260205ff3"])
+        .assert_success();
+    // Against returning zero: the size check above, the same with `extcodehash`, and the size
+    // check of an address that equals one read before, 0xdead.
+    for (code_a, code_b) in [
+        (size_is_five, "0x60205ff3"),
+        ("0x5f353f6005145f5260205ff3", "0x60205ff3"),
+        (
+            "0x61dead3b5061dead5f35146011575f5ffd5b5f353b6005145f5260205ff3",
+            "0x61dead3b5061dead5f35146011575f5ffd5b60205ff3",
+        ),
+    ] {
+        cmd.forge_fuse()
+            .args(["equivalence", "--code-a", code_a, "--code-b", code_b])
+            .assert_failure();
+    }
 }
