@@ -928,6 +928,7 @@ impl SymbolicExecutor {
                     worklist,
                     selector,
                     concrete_in_offset,
+                    in_size,
                     &out_offset,
                     &out_size,
                 )?
