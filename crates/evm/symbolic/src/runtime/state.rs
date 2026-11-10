@@ -1001,6 +1001,15 @@ impl PathState {
     }
 
     pub(crate) fn prank_for_next_call(&mut self) -> (Address, SymExpr, Option<(Address, SymExpr)>) {
+        // Any root call ends an unused single-call prank at this depth, even when it was set by
+        // another handler in the same invariant sequence.
+        if self.call_depth == 0 {
+            self.root_pranks.retain(|_, prank| {
+                prank.next_caller = None;
+                prank.next_origin = None;
+                prank.has_active()
+            });
+        }
         if let Some((caller, caller_word)) = self.prank.next_caller.take() {
             (caller, caller_word, self.prank.next_origin.take())
         } else {

@@ -297,6 +297,8 @@ impl SymbolicExecutor {
         state.call_depth_base = 0;
         // Like Forge, expectations end with the root call; only a met count 0 one can remain.
         state.expected_emit = None;
+        // Each sequence call runs with a fresh block hash overlay.
+        state.block.block_hashes.clear();
         state.origin = sender;
         state.origin_word = SymExpr::constant(&mut self.cx, address_word(sender));
         // Like Forge, a prank applies only to calls from the contract that set it.
