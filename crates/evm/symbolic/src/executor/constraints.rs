@@ -215,9 +215,8 @@ impl SymbolicExecutor {
         let order = |a: &U256, b: &U256| {
             if signed { I256::from_raw(*a).cmp(&I256::from_raw(*b)) } else { a.cmp(b) }
         };
-        let revert =
-            error_string_return_data(&mut self.cx, "vm.bound: cannot bound value in range");
         if !order(&min_word, &max_word).is_lt() {
+            let revert = self.bound_revert_data(state, &value, min_word, max_word, signed);
             fail_cheatcode_call(&mut self.cx, state, out_offset, out_size, revert)?;
             return Ok(StepOutcome::Continue);
         }
@@ -249,11 +248,13 @@ impl SymbolicExecutor {
             self.constraints_for_condition(state, out_of_range)?
         {
             if !in_range_sat {
+                let revert = self.bound_revert_data(state, &value, min_word, max_word, signed);
                 fail_cheatcode_call(&mut self.cx, state, out_offset, out_size, revert)?;
                 return Ok(StepOutcome::Continue);
             }
             let mut reverted = state.clone();
             reverted.constraints = out_of_range_constraints;
+            let revert = self.bound_revert_data(&reverted, &value, min_word, max_word, signed);
             fail_cheatcode_call(&mut self.cx, &mut reverted, out_offset.clone(), out_size, revert)?;
             worklist.push_back(reverted);
         }
@@ -267,5 +268,35 @@ impl SymbolicExecutor {
         let return_data = SymReturnData::from_words(&mut self.cx, vec![bounded]);
         complete_cheatcode_call(&mut self.cx, state, out_offset, out_size, return_data)?;
         Ok(StepOutcome::Continue)
+    }
+
+    fn bound_revert_data(
+        &mut self,
+        state: &PathState,
+        value: &SymExpr,
+        min: U256,
+        max: U256,
+        signed: bool,
+    ) -> SymReturnData {
+        let Some(value) = state.constrained_word(&mut self.cx, value) else {
+            // A caught revert may inspect its bytes. The payload depends on the symbolic value,
+            // so a placeholder must not turn this path into a proof.
+            self.defer_incomplete("symbolic vm.bound revert payload");
+            return error_string_return_data(
+                &mut self.cx,
+                "vm.bound: cannot bound symbolic value in range",
+            );
+        };
+        let message = if signed {
+            format!(
+                "vm.bound: cannot bound {} in [{}, {}] range",
+                I256::from_raw(value),
+                I256::from_raw(min),
+                I256::from_raw(max)
+            )
+        } else {
+            format!("vm.bound: cannot bound {value} in [{min}, {max}] range")
+        };
+        error_string_return_data(&mut self.cx, &message)
     }
 }
