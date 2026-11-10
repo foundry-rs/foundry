@@ -5811,6 +5811,15 @@ contract SymbolicBoundInvalid is Test {
         int256 bounded = vm.bound(int256(5), int256(-10), int256(10));
         assertTrue(bounded == -10 || bounded == 10);
     }
+
+    // An out-of-range value reverts the cheatcode call; an in-range value continues.
+    function checkCaughtOutOfRangeBound(uint256 x) public view {
+        try vm.bound(x, 0, 10) returns (uint256 bounded) {
+            assert(x <= 10 && bounded <= 10 && bounded != x);
+        } catch {
+            assert(x > 10);
+        }
+    }
 }
 "#,
     );
@@ -5827,12 +5836,13 @@ contract SymbolicBoundInvalid is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 4 tests for test/SymbolicBoundInvalid.t.sol:SymbolicBoundInvalid
+Ran 5 tests for test/SymbolicBoundInvalid.t.sol:SymbolicBoundInvalid
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.bound revert payload] checkCaughtOutOfRangeBound(uint256) ([METRICS])
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkConstantBoundReachesInnerValues() ([METRICS])
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkConstantSignedBoundReachesInnerValues() ([METRICS])
 [FAIL: vm.bound: cannot bound 0 in [3, -3] range; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkInvalidSignedBound(int256) ([METRICS])
 [FAIL: vm.bound: cannot bound 0 in [12, 10] range; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkInvalidUnsignedBound(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -5840,6 +5850,55 @@ Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
 
     assert!(!stdout.contains("symbolic vm.bound range"), "{stdout}");
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_vm_bound_caught_revert_payload_matches_concrete(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_bound_caught_revert_payload_matches_concrete because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicBoundPayload.t.sol",
+        r#"
+interface VmBound {
+    function bound(uint256 current, uint256 min, uint256 max) external returns (uint256);
+}
+
+contract SymbolicBoundPayload {
+    VmBound constant vm = VmBound(address(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D));
+
+    function checkCaughtBoundPayload() public {
+        try vm.bound(11, 0, 10) returns (uint256) {
+            assert(false);
+        } catch (bytes memory data) {
+            bytes memory expected = abi.encodeWithSignature(
+                "CheatcodeError(string)", "vm.bound: cannot bound 11 in [0, 10] range"
+            );
+            assert(keccak256(data) != keccak256(expected));
+        }
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicBoundPayload",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicBoundPayload.t.sol:SymbolicBoundPayload
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCaughtBoundPayload() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]

@@ -2168,9 +2168,6 @@ impl SymbolicExecutor {
                     encoded.as_bytes(),
                 )))
             }
-            bound_0Call::SELECTOR | bound_1Call::SELECTOR => {
-                self.handle_bound(state, args_offset, selector == bound_1Call::SELECTOR)
-            }
             envExistsCall::SELECTOR => {
                 let name = read_abi_string_arg(
                     &mut self.cx,
