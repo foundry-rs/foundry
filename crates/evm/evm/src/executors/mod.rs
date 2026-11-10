@@ -1151,7 +1151,7 @@ fn install_env<FEN: FoundryEvmNetwork>(
     let lifecycle = backend.lifecycle();
     let factory = lifecycle.factory().configure_for(&lifecycle.forks().active_db(), &env);
     let precompiles = factory.precompiles(&env, evm.ext());
-    let EvmEnv { spec, version, block } = env;
+    let EvmEnv { spec, version, block, initial_call_depth } = env;
     evm.set_block_and_execution_config(
         block,
         factory.execution_config(spec, version),
@@ -1159,11 +1159,13 @@ fn install_env<FEN: FoundryEvmNetwork>(
         factory.tx_registry(spec),
         precompiles,
     );
+    evm.set_initial_call_depth(initial_call_depth);
     backend.lifecycle().sync_database_policy(evm);
 }
 
-/// Returns whether `current` and `next` build the same execution config: the same spec and every
-/// field of their runtime [`Version`](evm2::Version), so only the block differs.
+/// Returns whether `current` and `next` build the same execution config: the same spec, initial
+/// call depth and every field of their runtime [`Version`](evm2::Version), so only the block
+/// differs.
 fn same_execution_config<FEN: FoundryEvmNetwork>(
     current: &EvmEnvFor<FEN>,
     next: &EvmEnvFor<FEN>,
@@ -1174,11 +1176,11 @@ fn same_execution_config<FEN: FoundryEvmNetwork>(
         features,
         chain_id,
         tx_gas_limit_cap,
+        tx_total_gas_cap,
         memory_limit,
         max_code_size,
         max_initcode_size,
         max_blobs_per_tx,
-        initial_call_depth,
         _non_exhaustive: (),
     } = next.version;
     let version = &current.version;
@@ -1187,11 +1189,12 @@ fn same_execution_config<FEN: FoundryEvmNetwork>(
         && version.features == features
         && version.chain_id == chain_id
         && version.tx_gas_limit_cap == tx_gas_limit_cap
+        && version.tx_total_gas_cap == tx_total_gas_cap
         && version.memory_limit == memory_limit
         && version.max_code_size == max_code_size
         && version.max_initcode_size == max_initcode_size
         && version.max_blobs_per_tx == max_blobs_per_tx
-        && version.initial_call_depth == initial_call_depth
+        && current.initial_call_depth == next.initial_call_depth
 }
 
 #[cfg(feature = "monad")]

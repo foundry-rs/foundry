@@ -159,16 +159,20 @@ impl PrecompileProvider<BaseEvmTypes> for EthPrecompiles {
     ) -> Option<PrecompileResult> {
         let target = message.call_target;
         if target == CELO_TRANSFER_ADDRESS {
-            return self.celo.then(|| celo_transfer(evm, &message.input, gas));
+            // The transfer writes state through `evm`, so copy the input out first.
+            return self.celo.then(|| {
+                let input = evm.message_input(message).to_vec();
+                celo_transfer(evm, &input, gas)
+            });
         }
         if target == BSC_P256_ADDRESS
             && let Some(p256) = self.p256
         {
             return p256.map(|osaka| {
                 if osaka {
-                    evm2::precompiles::secp256r1::run_osaka(&message.input, gas)
+                    evm2::precompiles::secp256r1::run_osaka(evm.message_input(message), gas)
                 } else {
-                    evm2::precompiles::secp256r1::run(&message.input, gas)
+                    evm2::precompiles::secp256r1::run(evm.message_input(message), gas)
                 }
             });
         }
