@@ -177,7 +177,10 @@ impl SymbolicExecutor {
             const DEPTH_REASON: &str =
                 "call didn't revert at a lower depth than cheatcode call depth";
             match outcome.status {
-                CallStatus::Success if executor.internal_expect_revert => {
+                // Like Forge's `create_end`, a CREATE always settles the expectation.
+                CallStatus::Success
+                    if executor.internal_expect_revert && !outcome.state.frame.is_constructor =>
+                {
                     // The reverter history belongs to the expectation, which the child reset.
                     parent.expected_revert = Some(expected);
                     parent.first_failed_callee = outcome.state.first_failed_callee;
@@ -188,7 +191,7 @@ impl SymbolicExecutor {
                     });
                 }
                 CallStatus::Success => {
-                    let reason = if expected.matched_any() {
+                    let reason = if expected.matched_any() || executor.internal_expect_revert {
                         "next call did not revert as expected"
                     } else {
                         DEPTH_REASON
