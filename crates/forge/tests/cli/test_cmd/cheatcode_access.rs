@@ -194,6 +194,22 @@ contract NestedConstructorReader is EnvReader {
     }
 }
 
+contract RecursiveConstructorReader is EnvReader {
+    constructor(uint256 mode) {
+        for (uint256 childMode; childMode < 3; childMode++) {
+            try vm.deployCode{gas: 1_000_000}("CheatcodeAccess.t.sol:NestedConstructorReader", abi.encode(childMode)) returns (address child) {
+                require(childMode == 0, "nested constructor did not fail");
+                require(EnvReader(child).read() == 7, "recursive child runtime access lost");
+            } catch {
+                require(childMode != 0, "recursive child creation failed");
+            }
+            require(readDefault() == 7, "constructor access lost after recursive execution");
+        }
+        require(mode != 1, "expected recursive constructor revert");
+        if (mode == 2) assembly { invalid() }
+    }
+}
+
 contract EnvFactory {
     function create(bool salted, bool readInConstructor, bytes32 salt) external returns (address) {
         if (readInConstructor) {
@@ -420,7 +436,7 @@ contract CheatcodeAccessCompatibilityTest is AccessFixture {
 
     function testForkDeployCodeRetainsAccessAfterNestedExecution() public {
         for (uint256 mode; mode < 3; mode++) {
-            try vm.deployCode{gas: 1_000_000}("CheatcodeAccess.t.sol:NestedConstructorReader", abi.encode(mode)) returns (address child) {
+            try vm.deployCode{gas: 5_000_000}("CheatcodeAccess.t.sol:RecursiveConstructorReader", abi.encode(mode)) returns (address child) {
                 require(mode == 0, "nested constructor did not fail");
                 require(EnvReader(child).read() == 7, "nested child runtime access lost");
             } catch {
