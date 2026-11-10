@@ -1143,6 +1143,16 @@ contract SymbolicSaturatingMul {
             assert(SaturatingMath.saturatingMul(x, y) == 0);
         }
     }
+
+    // Division on narrow operands runs at their width in the solver.
+    function checkNarrowDivision(uint8 x, uint8 d) public pure {
+        require(d != 0);
+        uint256 z;
+        assembly {
+            z := div(x, d)
+        }
+        assert(z == x / d);
+    }
 }
 "#,
     );
@@ -1162,6 +1172,16 @@ contract SymbolicSaturatingMul {
 
     let output = cmd
         .forge_fuse()
+        .args(["test", "--symbolic", "--json", "--match-test", "checkNarrowDivision"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkNarrowDivision(uint8,uint8)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+
+    let output = cmd
+        .forge_fuse()
         .args([
             "test",
             "--symbolic",
@@ -1177,6 +1197,42 @@ contract SymbolicSaturatingMul {
     let result = json_test_result(&output, "checkWrongOverflowResult(uint256,uint256)");
     assert_eq!(result["symbolic"]["status"], "fail_counterexample");
     assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+}
+
+#[forgetest_init]
+fn symbolic_shares_nested_narrow_divisors(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_shares_nested_narrow_divisors");
+
+    let steps = "q := add(1, div(x, q))\n".repeat(12);
+    let source = format!(
+        r#"
+contract SymbolicNestedDivisors {{
+    function checkNestedDivisors(uint8 x, uint8 d) public pure {{
+        uint256 q;
+        assembly {{
+            q := add(d, 1)
+            {steps}
+            q := div(x, q)
+        }}
+        assert(q <= x);
+    }}
+}}
+"#
+    );
+    prj.add_test("SymbolicNestedDivisors.t.sol", &source);
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "checkNestedDivisors"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkNestedDivisors(uint8,uint8)");
+    assert_eq!(result["symbolic"]["status"], "pass", "{result}");
+    let max_query_bytes = result["symbolic"]["solver"]["stats"]["smt_max_query_bytes"]
+        .as_u64()
+        .expect("SMT query size");
+    assert!(max_query_bytes > 0 && max_query_bytes < 100_000, "{result}");
 }
 
 #[forgetest_init]

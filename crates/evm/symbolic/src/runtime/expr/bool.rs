@@ -781,38 +781,6 @@ impl SymBoolExpr {
             ControlFlow::Continue(())
         });
     }
-
-    pub(crate) fn smt(&self, cx: &SymCx) -> String {
-        let mut smt = String::new();
-        self.write_smt(cx, &mut smt);
-        smt
-    }
-
-    pub(in crate::runtime::expr) fn write_smt(&self, cx: &SymCx, out: &mut String) {
-        match self.kind() {
-            SymBoolExprKind::Const(value) => out.push_str(if *value { "true" } else { "false" }),
-            SymBoolExprKind::Not(value) => {
-                out.push_str("(not ");
-                value.write_smt(cx, out);
-                out.push(')');
-            }
-            SymBoolExprKind::And(values) => {
-                out.push_str("(and");
-                for value in values.iter() {
-                    out.push(' ');
-                    value.write_smt(cx, out);
-                }
-                out.push(')');
-            }
-            SymBoolExprKind::Cmp(op, left, right) => {
-                let _ = write!(out, "({} ", op.smt());
-                left.write_smt(cx, out);
-                out.push(' ');
-                right.write_smt(cx, out);
-                out.push(')');
-            }
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

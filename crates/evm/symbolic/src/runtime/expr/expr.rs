@@ -2098,42 +2098,6 @@ impl SymExpr {
         folded.words.insert(self, expr.clone());
         expr
     }
-
-    pub(in crate::runtime::expr) fn write_smt(&self, cx: &SymCx, out: &mut String) {
-        match self.kind() {
-            SymExprKind::Const(value) => {
-                let _ = write!(out, "(_ bv{value} 256)");
-            }
-            SymExprKind::Var(symbol)
-            | SymExprKind::GasLeft(symbol)
-            | SymExprKind::Keccak { name: symbol, .. }
-            | SymExprKind::Hash { name: symbol, .. } => out.push_str(cx.symbol_name(*symbol)),
-            SymExprKind::Not(value) => {
-                out.push_str("(bvnot ");
-                value.write_smt(cx, out);
-                out.push(')');
-            }
-            SymExprKind::BinOp(op, left, right) => {
-                let _ = write!(out, "({} ", op.smt());
-                left.write_smt(cx, out);
-                out.push(' ');
-                right.write_smt(cx, out);
-                out.push(')');
-            }
-            SymExprKind::TernOp(op, left, right, modulus) => {
-                write_smt_wide_modular_arithmetic(cx, out, op.smt(), left, right, modulus);
-            }
-            SymExprKind::Ite(cond, left, right) => {
-                out.push_str("(ite ");
-                cond.write_smt(cx, out);
-                out.push(' ');
-                left.write_smt(cx, out);
-                out.push(' ');
-                right.write_smt(cx, out);
-                out.push(')');
-            }
-        }
-    }
 }
 
 // Branchless expression rewrites are optional. Bound both the distinct DAG nodes inspected while
@@ -2232,31 +2196,6 @@ impl UnfoldedNodeCounter {
         self.bool_nodes.insert(expr.clone(), nodes);
         Some(nodes)
     }
-}
-
-fn write_smt_wide_modular_arithmetic(
-    cx: &SymCx,
-    out: &mut String,
-    op: &'static str,
-    left: &SymExpr,
-    right: &SymExpr,
-    modulus: &SymExpr,
-) {
-    // if modulus == 0:
-    //   0
-    // else:
-    //   low_256((zext(left) op zext(right)) urem zext(modulus))
-    out.push_str("(ite (= ");
-    modulus.write_smt(cx, out);
-    out.push_str(" (_ bv0 256)) (_ bv0 256) ((_ extract 255 0) (bvurem (");
-    out.push_str(op);
-    out.push_str(" ((_ zero_extend 256) ");
-    left.write_smt(cx, out);
-    out.push_str(") ((_ zero_extend 256) ");
-    right.write_smt(cx, out);
-    out.push_str(")) ((_ zero_extend 256) ");
-    modulus.write_smt(cx, out);
-    out.push_str("))))");
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
