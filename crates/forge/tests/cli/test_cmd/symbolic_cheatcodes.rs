@@ -2257,6 +2257,10 @@ contract SymbolicRevertKeepsCheatcodes is Test {
         revert("boom");
     }
 
+    function setGasPrice(uint256 p) external {
+        vm.txGasPrice(p);
+    }
+
     // Concretely the warp outlives the revert, so any t >= DEADLINE breaks this.
     function checkWarpSurvivesRevertingCall(uint256 t) public {
         try this.warpThenRevert(t) {} catch {}
@@ -2274,6 +2278,14 @@ contract SymbolicRevertKeepsCheatcodes is Test {
         try this.gasPriceThenRevert(p) {} catch {}
         assert(tx.gasprice < DEADLINE);
     }
+
+    // Concretely `vm.txGasPrice` rejects a price above uint64.max, so the helper reverts before
+    // it changes the price.
+    function checkRejectedGasPriceDoesNotSurvive(uint256 p) public {
+        vm.assume(p == uint256(type(uint64).max) + 1);
+        try this.setGasPrice(p) {} catch {}
+        assert(tx.gasprice == p);
+    }
 }
 "#,
     );
@@ -2287,11 +2299,12 @@ contract SymbolicRevertKeepsCheatcodes is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 3 tests for test/SymbolicRevertKeepsCheatcodes.t.sol:SymbolicRevertKeepsCheatcodes
+Ran 4 tests for test/SymbolicRevertKeepsCheatcodes.t.sol:SymbolicRevertKeepsCheatcodes
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xcd02017c00000000000000000000000000000000000000000000000000000000000003e8 args=[1000]] checkGasPriceSurvivesRevertingCall(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x9389e44d0000000000000000000000000000000000000000000000000000000000000000 args=[0x0000000000000000000000000000000000000000]] checkMockSurvivesRevertingCall(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x5a97aeab0000000000000000000000000000000000000000000000010000000000000000 args=[18446744073709551616 [1.844e19]]] checkRejectedGasPriceDoesNotSurvive(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xe9b7d25400000000000000000000000000000000000000000000000000000000000003e8 args=[1000]] checkWarpSurvivesRevertingCall(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
