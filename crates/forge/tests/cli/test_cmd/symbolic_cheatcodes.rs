@@ -294,8 +294,8 @@ contract SymbolicPrankSender is Test {
 ...
 Ran 11 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
 [PASS] checkCreateConsumesPrank() ([METRICS])
-[PASS] checkDeployCodeConsumesPrank() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCreateConsumesStartPrank() ([METRICS])
+[PASS] checkDeployCodeConsumesPrank() ([METRICS])
 [FAIL: vm.prank: cannot override an ongoing prank with a single vm.prank; use vm.startPrank to override the current prank; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkPrankRejectsOngoingStartPrankOverride() ([METRICS])
 [FAIL: vm.prank: cannot overwrite a prank until it is applied at least once; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkPrankRejectsUnusedPrankOverwrite() ([METRICS])
 [PASS] checkSymbolicPrank(address) ([METRICS])
