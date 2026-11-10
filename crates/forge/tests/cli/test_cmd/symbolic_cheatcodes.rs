@@ -1727,7 +1727,13 @@ import "forge-std/Test.sol";
 /// forge-config: default.evm_version = "shanghai"
 
 contract Killable {
+    uint256 public value = 3;
+
     receive() external payable {}
+
+    function set(uint256 newValue) external {
+        value = newValue;
+    }
 
     function die(address payable beneficiary) external {
         selfdestruct(beneficiary);
@@ -1753,6 +1759,14 @@ contract SymbolicSelfdestruct is Test {
         assert(address(killable).codehash == bytes32(0));
         assert(vm.getNonce(address(killable)) == 1);
     }
+
+    // The storage is deleted, so the slot must not read the stale value from `setUp`.
+    function checkSelfdestructKeepsStorage(uint8 value) public {
+        vm.assume(value != 3);
+        killable.set(value);
+        killable.die(beneficiary);
+        assert(uint256(vm.load(address(killable), 0)) == 3);
+    }
 }
 "#,
     );
@@ -1765,12 +1779,13 @@ contract SymbolicSelfdestruct is Test {
         "--match-test",
         "checkSelfdestruct",
     ]))
-    .success()
+    .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicSelfdestruct.t.sol:SymbolicSelfdestruct
+Ran 2 tests for test/SymbolicSelfdestruct.t.sol:SymbolicSelfdestruct
 [PASS] checkSelfdestruct(uint256) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSelfdestructKeepsStorage(uint8) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
