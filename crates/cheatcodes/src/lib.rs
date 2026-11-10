@@ -72,6 +72,7 @@ mod state;
 pub use state::CheatcodesCore;
 
 mod string;
+pub use string::parse_value;
 
 mod tempo;
 

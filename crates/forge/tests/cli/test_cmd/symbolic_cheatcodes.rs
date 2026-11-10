@@ -1007,10 +1007,21 @@ contract SymbolicEnvCryptoConsole is Test {
         assertEq(vm.parseBytes32(vm.toString(bytes32(uint256(0x12)))), bytes32(uint256(0x12)));
         assertTrue(vm.parseBool(vm.toString(true)));
         assertEq(vm.toString(address(0xa0Ee7A142d267C1f36714E4a8F75612F20a79720)), "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720");
-        (bool ok,) = address(vm).call(abi.encodeWithSelector(Vm.parseUint.selector, "1_000"));
+        assertTrue(vm.parseBool("tRuE"));
+        (bool ok,) = address(vm).call(abi.encodeCall(vm.parseUint, ("1_000")));
         assertFalse(ok);
-        (ok,) = address(vm).call(abi.encodeWithSelector(Vm.parseInt.selector, "0x"));
+        (ok,) = address(vm).call(abi.encodeCall(vm.parseInt, ("0x")));
         assertFalse(ok);
+        bytes memory data;
+        (ok, data) = address(vm).call(abi.encodeCall(vm.parseUint, ("ff")));
+        assertFalse(ok);
+        assertEq(
+            data,
+            abi.encodeWithSignature(
+                "CheatcodeError(string)",
+                "vm.parseUint: failed parsing \"ff\" as type `uint256`: missing hex prefix (\"0x\") for hex string"
+            )
+        );
     }
 
     function checkStringUtilities() public {

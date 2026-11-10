@@ -1920,15 +1920,19 @@ impl SymbolicExecutor {
                     value = std::env::var(value)
                         .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
                 }
-                let value = match parse_env_value(&value, &ty) {
-                    Ok(value) => value,
-                    Err(error) if from_env => return Err(error),
-                    Err(_) => {
-                        let name = message.trim_start_matches("symbolic ");
-                        return Ok(CheatcodeOutcome::Revert(error_string_return_data(
-                            &mut self.cx,
-                            &format!("{name}: failed parsing {value:?} as type `{ty}`"),
-                        )));
+                let value = if from_env {
+                    parse_env_value(&value, &ty)?
+                } else {
+                    // Forge's parser accepts the same inputs and reports the same error.
+                    match parse_value(&value, &ty) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            let name = message.trim_start_matches("symbolic ");
+                            return Ok(CheatcodeOutcome::Revert(error_string_return_data(
+                                &mut self.cx,
+                                &format!("{name}: {error}"),
+                            )));
+                        }
                     }
                 };
                 Ok(match value.as_word() {
