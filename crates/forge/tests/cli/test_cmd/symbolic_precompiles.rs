@@ -198,7 +198,9 @@ fn symbolic_ecrecover_return_data_conformance(prj: _, cmd: _) {
     prj.add_test(
         "EcrecoverReturnData.t.sol",
         r#"
-contract EcrecoverReturnData {
+import "forge-std/Test.sol";
+
+contract EcrecoverReturnData is Test {
     function checkInvalidRecoveryId(bytes32 digest, bytes32 r, bytes32 s) public view {
         bytes memory input = abi.encode(digest, uint256(29), r, s);
         bool ok;
@@ -231,10 +233,19 @@ contract EcrecoverReturnData {
         assert(ecrecover(digest, 28, r, bytes32(0)) == address(0));
     }
 
-    function testFuzzConformance(bytes32 digest, uint8 v, bytes32 r, bytes32 s) public view {
+    function checkRedirectedEcrecover() public {
+        bytes memory input = abi.encode(bytes32(0), uint256(27), bytes32(0), bytes32(0));
+        vm.mockFunction(address(4), address(1), input);
+        (bool ok, bytes memory output) = address(4).staticcall(input);
+        assertTrue(ok);
+        assertEq(output, bytes(""));
+    }
+
+    function testFuzzConformance(bytes32 digest, uint8 v, bytes32 r, bytes32 s) public {
         checkInvalidRecoveryId(digest, r, s);
         checkRecoveryOutput(digest, v, r, s);
         checkZeroScalarRecoversNothing(digest, r, s);
+        checkRedirectedEcrecover();
     }
 }
 "#,
@@ -253,6 +264,7 @@ contract EcrecoverReturnData {
 ...
 [PASS] checkInvalidRecoveryId(bytes32,bytes32,bytes32) ([METRICS])
 [PASS] checkRecoveryOutput(bytes32,uint8,bytes32,bytes32) ([METRICS])
+[PASS] checkRedirectedEcrecover() ([METRICS])
 [PASS] checkZeroScalarRecoversNothing(bytes32,bytes32,bytes32) ([METRICS])
 ...
 "#]]);

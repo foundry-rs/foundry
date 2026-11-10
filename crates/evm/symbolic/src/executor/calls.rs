@@ -1068,6 +1068,7 @@ impl SymbolicExecutor {
                         worklist,
                         kind,
                         to,
+                        code_address,
                         call_caller,
                         value,
                         out_offset,
@@ -1403,6 +1404,7 @@ impl SymbolicExecutor {
         worklist: &mut VecDeque<PathState>,
         kind: CallKind,
         to: Address,
+        code_address: Address,
         call_caller: Address,
         value: SymExpr,
         out_offset: SymExpr,
@@ -1421,7 +1423,8 @@ impl SymbolicExecutor {
         if malformed_sat && well_formed_sat {
             let mut recovering = state.clone();
             recovering.constraints = well_formed_constraints;
-            let outcome = execute_symbolic_precompile(&mut self.cx, to, input, input_len, spec_id)?;
+            let outcome =
+                execute_symbolic_precompile(&mut self.cx, code_address, input, input_len, spec_id)?;
             match self.apply_precompile_outcome(
                 executor,
                 &mut recovering,
@@ -1455,7 +1458,8 @@ impl SymbolicExecutor {
         }
         state.constraints =
             if malformed_sat { malformed_constraints } else { well_formed_constraints };
-        let outcome = execute_symbolic_precompile(&mut self.cx, to, input, input_len, spec_id)?;
+        let outcome =
+            execute_symbolic_precompile(&mut self.cx, code_address, input, input_len, spec_id)?;
         self.apply_precompile_outcome(
             executor,
             state,
