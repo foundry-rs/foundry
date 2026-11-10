@@ -831,7 +831,11 @@ impl SymbolicExecutor {
         out_offset: SymExpr,
         out_size: BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
-        if to == CHEATCODE_ADDRESS || to == SYMBOLIC_VM_COMPAT_ADDRESS {
+        // Like Forge, only a CALL or STATICCALL reaches a cheatcode. A DELEGATECALL or CALLCODE
+        // runs the cheatcode account's one-byte code instead.
+        if matches!(kind, CallKind::Call | CallKind::StaticCall)
+            && (to == CHEATCODE_ADDRESS || to == SYMBOLIC_VM_COMPAT_ADDRESS)
+        {
             if !state.constrained_word(&mut self.cx, &value).is_some_and(|value| value.is_zero()) {
                 return Err(SymbolicError::Unsupported("value-bearing cheatcode CALL"));
             }
