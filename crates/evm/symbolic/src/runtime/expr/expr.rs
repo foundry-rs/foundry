@@ -2373,14 +2373,7 @@ pub(crate) fn create2_address_word(
             Ok((SymExpr::constant(cx, address_word(address)), address))
         }
         (None, Ok(initcode)) => {
-            let initcode_hash = keccak256(&initcode);
-            let word = symbolic_create2_address_word(
-                cx,
-                state,
-                format!("address:{creator:?}"),
-                salt,
-                format!("hash:{initcode_hash:?}"),
-            );
+            let word = create2_hash_address_word(cx, creator, salt, keccak256(&initcode));
             let address = state.world.symbolic_address_slot(word.clone());
             Ok((word, address))
         }
@@ -2417,6 +2410,9 @@ pub(crate) fn compute_create2_address_word(
         let init_code_hash = B256::from(init_code_hash);
         let address = deployer.create2(B256::from(salt), init_code_hash);
         return Ok(SymExpr::constant(cx, address_word(address)));
+    }
+    if let (Some(deployer), Some(init_code_hash)) = (deployer_concrete, init_code_hash_concrete) {
+        return Ok(create2_hash_address_word(cx, deployer, salt, B256::from(init_code_hash)));
     }
 
     let deployer_identity = deployer_identity(deployer_concrete, &deployer);
@@ -2485,6 +2481,26 @@ pub(crate) fn symbolic_create2_address_word(
     let word = SymExpr::get_var(cx, name);
     state.constraints.push(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &word, U256::ONE << 160));
     word
+}
+
+/// Builds `keccak256(0xff ++ deployer ++ salt ++ init_code_hash)` cut to an address.
+///
+/// The bytes match `abi.encodePacked` of the same values, so a test that predicts the address
+/// hashes the same preimage and the Keccak equality rewrite relates both.
+fn create2_hash_address_word(
+    cx: &mut SymCx,
+    deployer: Address,
+    salt: SymExpr,
+    init_code_hash: B256,
+) -> SymExpr {
+    let mut bytes = Vec::with_capacity(85);
+    bytes.push(SymExpr::constant(cx, U256::from(0xff)));
+    bytes.extend(deployer.iter().map(|byte| SymExpr::constant(cx, U256::from(*byte))));
+    bytes.extend((0..32).map(|index| byte_expr(cx, index, &salt)));
+    bytes.extend(init_code_hash.iter().map(|byte| SymExpr::constant(cx, U256::from(*byte))));
+    let hash = keccak_word(cx, bytes);
+    let mask = SymExpr::constant(cx, (U256::ONE << 160) - U256::ONE);
+    SymExpr::binop(cx, SymBinOp::And, hash, mask)
 }
 
 /// Identifies a deployer in a stable address symbol name.
