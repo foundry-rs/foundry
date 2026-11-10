@@ -1,4 +1,5 @@
 use crate::iter::IterDelimited;
+use inline_config::InlineConfigItem;
 use solar::parse::{
     ast::{CommentKind, Span},
     interface::{BytePos, CharPos, SourceMap, source_map::SourceFile},
@@ -10,9 +11,6 @@ mod comment;
 pub use comment::{Comment, CommentStyle};
 
 pub mod inline_config;
-
-pub const DISABLE_START: &str = "forgefmt: disable-start";
-pub const DISABLE_END: &str = "forgefmt: disable-end";
 
 pub struct Comments {
     comments: std::collections::VecDeque<Comment>,
@@ -177,12 +175,14 @@ impl<'ast> CommentGatherer<'ast> {
         while let Some(mut current) = cursor.next() {
             if current.kind == CommentKind::Line
                 && (current.style.is_trailing() || current.style.is_isolated())
+                && current.format_directives().next().is_none()
             {
                 let mut ref_line =
                     self.sf.lookup_line(self.sf.relative_position(current.span.hi())).unwrap();
                 while let Some(next_comment) = cursor.peek() {
                     if !next_comment.style.is_isolated()
                         || next_comment.kind != CommentKind::Line
+                        || next_comment.format_directives().next().is_some()
                         || ref_line + 1
                             != self
                                 .sf
@@ -215,15 +215,6 @@ impl<'ast> CommentGatherer<'ast> {
         let token_range = self.pos..self.pos + token.len as usize;
         let span = self.make_span(token_range.clone());
         let token_text = &self.text[token_range];
-
-        // Keep track of disabled blocks, ignoring unmatched ends.
-        if token_text.trim_start().contains(DISABLE_START) {
-            self.disabled_block_depth += 1;
-        } else if token_text.trim_start().contains(DISABLE_END)
-            && self.disabled_block_depth > self.min_disabled_block_depth
-        {
-            self.disabled_block_depth -= 1;
-        }
 
         #[allow(clippy::collapsible_match)]
         match token.kind {
@@ -259,6 +250,9 @@ impl<'ast> CommentGatherer<'ast> {
                     (true, false) => CommentStyle::Trailing,
                 };
                 let kind = CommentKind::Block;
+                let mut comment =
+                    Comment { is_doc, kind, style, lines: vec![token_text.into()], span };
+                let disabled = self.update_disabled_block_depth(&comment);
 
                 // Measure the opening column, expanding tabs for non-doc comments.
                 let pos_in_file = self.start_bpos + BytePos(self.pos as u32);
@@ -285,13 +279,13 @@ impl<'ast> CommentGatherer<'ast> {
                     })
                 };
 
-                let lines = self.split_block_comment_into_lines(token_text, is_doc, col);
-                self.comments.push(Comment { is_doc, kind, style, lines, span })
+                if !disabled {
+                    comment.lines = self.split_block_comment_into_lines(token_text, is_doc, col);
+                }
+                self.comments.push(comment)
             }
             TokenKind::LineComment { is_doc } => {
-                let line =
-                    if self.disabled_block_depth != 0 { token_text } else { token_text.trim_end() };
-                self.comments.push(Comment {
+                let mut comment = Comment {
                     is_doc,
                     kind: CommentKind::Line,
                     style: if self.code_to_the_left {
@@ -299,9 +293,14 @@ impl<'ast> CommentGatherer<'ast> {
                     } else {
                         CommentStyle::Isolated
                     },
-                    lines: vec![line.into()],
+                    lines: vec![token_text.into()],
                     span,
-                });
+                };
+                self.update_disabled_block_depth(&comment);
+                if self.disabled_block_depth == 0 {
+                    comment.lines[0].truncate(token_text.trim_end().len());
+                }
+                self.comments.push(comment);
             }
             _ => {
                 self.code_to_the_left = true;
@@ -381,6 +380,26 @@ impl<'ast> CommentGatherer<'ast> {
             }
         }
         res
+    }
+
+    /// Tracks disabled blocks and returns whether the comment overlaps a disabled block.
+    fn update_disabled_block_depth(&mut self, comment: &Comment) -> bool {
+        let mut disabled = self.disabled_block_depth != 0;
+        for item in comment.format_directives() {
+            match item {
+                Ok(InlineConfigItem::DisableStart(())) => {
+                    self.disabled_block_depth += 1;
+                    disabled = true;
+                }
+                Ok(InlineConfigItem::DisableEnd(()))
+                    if self.disabled_block_depth > self.min_disabled_block_depth =>
+                {
+                    self.disabled_block_depth -= 1;
+                }
+                _ => {}
+            }
+        }
+        disabled
     }
 }
 

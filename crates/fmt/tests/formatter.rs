@@ -612,6 +612,85 @@ contract Enabled {}
     );
 }
 
+#[test]
+fn disable_directive_whitespace_preserves_doc_comments() {
+    for start_space in ["", " ", "  ", "\t"] {
+        for end_space in ["", " ", "  ", "\t"] {
+            let source = format!(
+                "// forgefmt:{start_space}disable-start\ncontract  A {{}}\n// forgefmt:{end_space}disable-end\n/**@notice format me*/\ncontract  B {{}}\n"
+            );
+            let expected = format!(
+                "// forgefmt:{start_space}disable-start\ncontract  A {{}}\n// forgefmt:{end_space}disable-end\n/**\n * @notice format me\n */\ncontract B {{}}\n"
+            );
+
+            for wrap_comments in [false, true] {
+                let config = Arc::new(FormatterConfig { wrap_comments, ..Default::default() });
+                assert_data_eq!(format(&source, Path::new("test.sol"), config), expected.clone());
+            }
+        }
+    }
+}
+
+#[test]
+fn block_disable_directives_preserve_doc_comments() {
+    for disabled in [
+        "// forgefmt: disable-start\ncontract  A {}\n/**forgefmt:disable-end*/\n",
+        "/**forgefmt:disable-start*/\ncontract  A {}\n/**forgefmt:disable-end*/\n",
+        "/*forgefmt:disable-start*/\ncontract  A {}\n/*forgefmt:disable-end*/\n",
+        "/**forgefmt:disable-start\nforgefmt:disable-end*/\n",
+        "/*forgefmt:disable-start\nforgefmt:disable-end*/\n",
+    ] {
+        let source = format!("{disabled}/**@notice format me*/\ncontract  B {{}}\n");
+        let expected = format!("{disabled}/**\n * @notice format me\n */\ncontract B {{}}\n");
+        for wrap_comments in [false, true] {
+            let config = Arc::new(FormatterConfig { wrap_comments, ..Default::default() });
+            assert_data_eq!(format(&source, Path::new("test.sol"), config), expected.clone());
+        }
+    }
+}
+
+#[test]
+fn disable_directives_between_comments_preserve_doc_comments() {
+    let disabled = "// before\n// forgefmt:disable-start\n// inside\ncontract  A {}\n// inside\n// forgefmt:disable-end\n// after\n";
+    let source = format!("{disabled}/**@notice format me*/\ncontract  B {{}}\n");
+    let expected = format!("{disabled}/**\n * @notice format me\n */\ncontract B {{}}\n");
+    for wrap_comments in [false, true] {
+        let config = Arc::new(FormatterConfig { wrap_comments, ..Default::default() });
+        assert_data_eq!(format(&source, Path::new("test.sol"), config), expected.clone());
+    }
+}
+
+#[test]
+fn directive_like_text_preserves_doc_comments() {
+    for prefix in [
+        "// mention forgefmt: disable-start\n",
+        "// forgefmt: disable-start-invalid\n",
+        "/* mention forgefmt: disable-start */\n",
+        "contract A {\n    string constant TEXT = \"forgefmt: disable-start\";\n}\n\n",
+    ] {
+        let source = format!("{prefix}/**@notice format me*/\ncontract  B {{}}\n");
+        let expected = format!("{prefix}/**\n * @notice format me\n */\ncontract B {{}}\n");
+        for wrap_comments in [false, true] {
+            let config = Arc::new(FormatterConfig { wrap_comments, ..Default::default() });
+            assert_data_eq!(format(&source, Path::new("test.sol"), config), expected.clone());
+        }
+    }
+}
+
+#[test]
+fn doc_style_conversion_preserves_disable_directives() {
+    let source = "/// @notice Before\n/// forgefmt: disable-start\ncontract  A {}\n/// forgefmt: disable-end\n/// @notice After\ncontract  B {}\n";
+    let expected = "/**\n * @notice Before\n */\n/// forgefmt: disable-start\ncontract  A {}\n/// forgefmt: disable-end\n/**\n * @notice After\n */\ncontract B {}\n";
+    for wrap_comments in [true, false] {
+        let config = Arc::new(FormatterConfig {
+            wrap_comments,
+            docs_style: DocCommentStyle::Block,
+            ..Default::default()
+        });
+        assert_data_eq!(format(source, Path::new("test.sol"), config), expected);
+    }
+}
+
 fn tests_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata")
 }

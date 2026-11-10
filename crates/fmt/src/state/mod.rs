@@ -703,11 +703,13 @@ impl<'sess> State<'sess, '_> {
             if self.config.docs_style == foundry_config::fmt::DocCommentStyle::Block
                 && cmnt.is_doc
                 && cmnt.kind == ast::CommentKind::Line
+                && cmnt.format_directives().next().is_none()
             {
                 let mut ref_line = self.source_line(cmnt.span.hi());
                 while let Some(next_cmnt) = self.peek_comment() {
                     if !next_cmnt.is_doc
                         || next_cmnt.kind != ast::CommentKind::Line
+                        || next_cmnt.format_directives().next().is_some()
                         || ref_line + 1 != self.source_line(next_cmnt.span.lo())
                     {
                         break;

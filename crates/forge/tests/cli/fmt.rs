@@ -551,3 +551,68 @@ contract B {}
 "#]],
     );
 }
+
+#[forgetest]
+fn fmt_compact_disable_end_preserves_doc_comments(prj: _, cmd: _) {
+    for (source, expected) in [
+        (
+            r#"// forgefmt: disable-start
+contract  A {}
+// forgefmt:disable-end
+/**@notice format me*/
+contract  B {}
+"#,
+            str![[r#"
+// forgefmt: disable-start
+contract  A {}
+// forgefmt:disable-end
+/**
+ * @notice format me
+ */
+contract B {}
+
+"#]],
+        ),
+        (
+            r#"// forgefmt: disable-start
+contract  A {}
+// forgefmt:disable-end
+/**@notice format me*/
+contract  B {}
+/* stop */
+contract  C {}
+"#,
+            str![[r#"
+// forgefmt: disable-start
+contract  A {}
+// forgefmt:disable-end
+/**
+ * @notice format me
+ */
+contract B {}
+
+/* stop */
+contract C {}
+
+"#]],
+        ),
+    ] {
+        for wrap_comments in [false, true] {
+            prj.update_config(|config| config.fmt.wrap_comments = wrap_comments);
+            prj.add_raw_source("Test.sol", source);
+
+            cmd.forge_fuse()
+                .args(["fmt", "src/Test.sol"])
+                .assert_success()
+                .stdout_eq("")
+                .stderr_eq(str![[r#"
+Formatted [..]/src/Test.sol
+
+"#]]);
+            assert_data_eq!(
+                std::fs::read_to_string(prj.root().join("src/Test.sol")).unwrap(),
+                expected.clone(),
+            );
+        }
+    }
+}
