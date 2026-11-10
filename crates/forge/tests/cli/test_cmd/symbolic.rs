@@ -1200,6 +1200,42 @@ contract SymbolicSaturatingMul {
 }
 
 #[forgetest_init]
+fn symbolic_shares_nested_narrow_divisors(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_shares_nested_narrow_divisors");
+
+    let steps = "q := add(1, div(x, q))\n".repeat(12);
+    let source = format!(
+        r#"
+contract SymbolicNestedDivisors {{
+    function checkNestedDivisors(uint8 x, uint8 d) public pure {{
+        uint256 q;
+        assembly {{
+            q := add(d, 1)
+            {steps}
+            q := div(x, q)
+        }}
+        assert(q <= x);
+    }}
+}}
+"#
+    );
+    prj.add_test("SymbolicNestedDivisors.t.sol", &source);
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "checkNestedDivisors"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkNestedDivisors(uint8,uint8)");
+    assert_eq!(result["symbolic"]["status"], "pass", "{result}");
+    let max_query_bytes = result["symbolic"]["solver"]["stats"]["smt_max_query_bytes"]
+        .as_u64()
+        .expect("SMT query size");
+    assert!(max_query_bytes > 0 && max_query_bytes < 100_000, "{result}");
+}
+
+#[forgetest_init]
 fn symbolic_proves_p256_normalization(prj: _, cmd: _) {
     if !z3_available() {
         let _ =

@@ -14,9 +14,8 @@ pub(super) fn write_smt_assertions(
         return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
     }
 
-    let plan = SmtCsePlan::new(constraints);
-    let narrow_divisions = narrow_division_widths(constraints);
-    let writer = SmtCseWriter { cx, plan: &plan, narrow_divisions: &narrow_divisions };
+    let plan = SmtCsePlan::new(constraints, narrow_division_widths(constraints));
+    let writer = SmtCseWriter { cx, plan: &plan };
     // define binding_0 = term_0
     // ...
     // define binding_n = term_n
@@ -51,14 +50,16 @@ struct SmtCsePlan {
     expr_visits: HashMap<SymExpr, SmtCseVisit>,
     bool_visits: HashMap<SymBoolExpr, SmtCseVisit>,
     bindings: Vec<SmtBinding>,
+    narrow_divisions: HashMap<SymExpr, usize>,
 }
 
 impl SmtCsePlan {
-    fn new(constraints: &[SymBoolExpr]) -> Self {
+    fn new(constraints: &[SymBoolExpr], narrow_divisions: HashMap<SymExpr, usize>) -> Self {
         let mut plan = Self {
             expr_visits: HashMap::default(),
             bool_visits: HashMap::default(),
             bindings: Vec::new(),
+            narrow_divisions,
         };
         for constraint in constraints {
             plan.count_bool(constraint);
@@ -82,9 +83,13 @@ impl SmtCsePlan {
             | SymExprKind::Keccak { .. }
             | SymExprKind::Hash { .. } => {}
             SymExprKind::Not(value) => self.count_expr(value),
-            SymExprKind::BinOp(_, left, right) => {
+            SymExprKind::BinOp(op, left, right) => {
                 self.count_expr(left);
                 self.count_expr(right);
+                // Narrow unsigned division emits the divisor again for its zero case.
+                if *op == SymBinOp::UDiv && self.narrow_divisions.contains_key(expr) {
+                    self.count_expr(right);
+                }
             }
             SymExprKind::TernOp(_, left, right, modulus) => {
                 self.count_expr(modulus);
@@ -244,8 +249,6 @@ impl SmtBinding {
 struct SmtCseWriter<'a> {
     cx: &'a SymCx,
     plan: &'a SmtCsePlan,
-    /// Divisions whose operands the constraints bound below `2^width`.
-    narrow_divisions: &'a HashMap<SymExpr, usize>,
 }
 
 impl SmtCseWriter<'_> {
@@ -277,7 +280,7 @@ impl SmtCseWriter<'_> {
                 out.push(')');
             }
             SymExprKind::BinOp(op, left, right) => {
-                if let Some(width) = self.narrow_divisions.get(expr) {
+                if let Some(width) = self.plan.narrow_divisions.get(expr) {
                     self.write_narrow_division(out, *op, left, right, *width);
                     return;
                 }
