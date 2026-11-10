@@ -1139,9 +1139,12 @@ impl SymbolicExecutor {
                 CheatcodeOutcome::Choices(choices) => {
                     let mut choices = choices.into_iter();
                     let (constraints, return_data) = choices.next().expect("nonempty choices");
+                    // Only `svm.createCalldata` returns choices, and replay answers it on each
+                    // path with that path's own return data.
                     for (choice_constraints, choice_return_data) in choices {
                         let mut choice = state.clone();
                         choice.constraints.extend(choice_constraints);
+                        choice.svm_returns.push(choice_return_data.clone());
                         complete_cheatcode_call(
                             &mut self.cx,
                             &mut choice,
@@ -1152,6 +1155,7 @@ impl SymbolicExecutor {
                         worklist.push_back(choice);
                     }
                     state.constraints.extend(constraints);
+                    state.svm_returns.push(return_data.clone());
                     return_data
                 }
             };

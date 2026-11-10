@@ -223,7 +223,7 @@ contract SymbolicConformanceHalmosFeatureMatrix is Test {
     .stdout_eq(str![[r#"
 ...
 Ran 6 tests for test/SymbolicConformanceHalmosFeatureMatrix.t.sol:SymbolicConformanceHalmosFeatureMatrix
-[FAIL: EvmError: Revert; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMatrixCreateCalldataDispatch() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMatrixCreateCalldataDispatch() ([METRICS])
 [PASS] checkMatrixDynamicAbi(bytes,string,(bytes,string,uint256[])) ([METRICS])
 [PASS] checkMatrixEmptyUnknownTarget(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkMatrixErc20SupplyAccounting(uint256,address) ([METRICS])
@@ -598,7 +598,7 @@ contract SymbolicConformanceHalmosElection is Test {
     .stdout_eq(str![[r#"
 ...
 Ran 1 test for test/SymbolicConformanceHalmosElection.t.sol:SymbolicConformanceHalmosElection
-[FAIL: EvmError: Revert; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCannotVoteTwiceWithAlternateSignature(uint256,address) ([METRICS])
+[FAIL: assertion failed: 2 != 1; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCannotVoteTwiceWithAlternateSignature(uint256,address) ([METRICS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]])

@@ -1227,20 +1227,21 @@ contract OneSelectorTarget {
 }
 
 contract BackdoorToken {
-    mapping(address => uint256) public balanceOf;
+    address public immutable holder;
+    uint256 public holderBalance = 100;
 
-    constructor(address holder) {
-        balanceOf[holder] = 100;
+    constructor(address holder_) {
+        holder = holder_;
     }
 
     function transfer(address to, uint256 amount) external {
-        balanceOf[msg.sender] -= amount;
-        balanceOf[to] += amount;
+        require(msg.sender == holder && to != address(0));
+        holderBalance -= amount;
     }
 
-    function backdoor(address from, address to, uint256 amount) external {
-        balanceOf[from] -= amount;
-        balanceOf[to] += amount;
+    function backdoor(address to, uint256 amount) external {
+        require(to != address(0));
+        holderBalance -= amount;
     }
 }
 
@@ -1292,9 +1293,9 @@ contract SymbolicSvmCreateCalldata {
     }
 
     function checkNoBackdoor(bytes memory data) internal {
-        uint256 balance = token.balanceOf(HOLDER);
+        uint256 balance = token.holderBalance();
         (bool ok,) = address(token).call(data);
-        assert(!ok || token.balanceOf(HOLDER) >= balance);
+        assert(!ok || token.holderBalance() >= balance);
     }
 
     function selectorOf(bytes memory data) internal pure returns (bytes4 selector) {
@@ -1319,10 +1320,10 @@ contract SymbolicSvmCreateCalldata {
         str![[r#"
 ...
 Ran 6 tests for test/SymbolicSvmCreateCalldata.t.sol:SymbolicSvmCreateCalldata
-[FAIL: EvmError: Revert; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmCreateCalldataAddressNoBackdoor() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmCreateCalldataAddressNoBackdoor() ([METRICS])
 [PASS] checkSvmCreateCalldataDispatch() ([METRICS])
-[FAIL: EvmError: Revert; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmCreateCalldataFallbackNoBackdoor() ([METRICS])
-[FAIL: EvmError: Revert; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmCreateCalldataNoBackdoor() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmCreateCalldataFallbackNoBackdoor() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmCreateCalldataNoBackdoor() ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic svm.createCalldata unknown contract] checkSvmCreateCalldataUnknownContract() ([METRICS])
 [PASS] checkSvmCreateCalldataViewFunctions() ([METRICS])
 Suite result: FAILED. 2 passed; 4 failed; 0 skipped; [ELAPSED]
