@@ -181,7 +181,7 @@ impl SymbolicExecutor {
                     return Ok(StepOutcome::Forked);
                 }
             }
-            let concrete_value = state.constrained_word(&mut self.cx, &value);
+            let concrete_value = self.transfer_value(state, kind, &value);
             if !state.expected_calls.is_empty() || !state.call_mocks.is_empty() {
                 let pre_call_state =
                     pre_call_state.as_ref().expect("call mocks require pre-call state");
@@ -421,6 +421,20 @@ impl SymbolicExecutor {
         Ok(self
             .select_call_mock(state, callee, value, calldata)?
             .is_some_and(|(idx, _)| state.call_mocks[idx].answers()))
+    }
+
+    /// Returns the value that `vm.mockCall` and `vm.expectCall` value filters match. Like Forge's
+    /// `CallInputs::transfer_value`, a DELEGATECALL has none.
+    fn transfer_value(
+        &mut self,
+        state: &PathState,
+        kind: CallKind,
+        value: &SymExpr,
+    ) -> Option<U256> {
+        if matches!(kind, CallKind::DelegateCall) {
+            return None;
+        }
+        state.constrained_word(&mut self.cx, value)
     }
 
     pub(super) fn branch_symbolic_match_condition_if_needed(
@@ -1063,7 +1077,7 @@ impl SymbolicExecutor {
         // `vm.expectCall` against that address, so resolve the redirect before observing.
         let code_address = self.function_mock_target(state, to, &call_input)?.unwrap_or(to);
         if !state.expected_calls.is_empty() {
-            let concrete_value = state.constrained_word(&mut self.cx, &value);
+            let concrete_value = self.transfer_value(state, kind, &value);
             if !self.observe_expected_call(
                 state,
                 code_address,
@@ -1107,7 +1121,7 @@ impl SymbolicExecutor {
             }
         }
         if !state.call_mocks.is_empty() {
-            let concrete_value = state.constrained_word(&mut self.cx, &value);
+            let concrete_value = self.transfer_value(state, kind, &value);
             if let Some(mock) =
                 self.take_call_mock(state, code_address, concrete_value, &call_input)?
             {
@@ -1787,7 +1801,7 @@ impl SymbolicExecutor {
 
             // Decide mock matches before executing either the mocked or real call.
             for mut branch in
-                self.split_symbolic_target_candidate(branch, to, &value, &gas, &call_input)?
+                self.split_symbolic_target_candidate(branch, kind, to, &value, &gas, &call_input)?
             {
                 let mut branch_worklist = VecDeque::new();
                 match self.call_concrete_target(
@@ -1830,6 +1844,7 @@ impl SymbolicExecutor {
     fn split_symbolic_target_candidate(
         &mut self,
         branch: PathState,
+        kind: CallKind,
         to: Address,
         value: &SymExpr,
         gas: &SymExpr,
@@ -1859,7 +1874,7 @@ impl SymbolicExecutor {
             }
 
             for branch in value_branches {
-                let concrete_value = branch.constrained_word(&mut self.cx, value);
+                let concrete_value = self.transfer_value(&branch, kind, value);
                 let mut match_branches = vec![branch];
                 let conditions = self.call_match_conditions(
                     &match_branches[0],

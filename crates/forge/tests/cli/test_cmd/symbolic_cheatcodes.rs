@@ -5096,6 +5096,17 @@ contract SymbolicPinnedCallValue is Test {
         assertEq(data.length, 32);
         assertEq(abi.decode(data, (uint256)), 44);
     }
+
+    // Like Forge, a DELEGATECALL has no value, so value-filtered mocks and expectations skip it.
+    function checkDelegateCallHasNoValue() public {
+        bytes memory data = abi.encodeWithSelector(PinnedValueTarget.ping.selector, uint256(3));
+        vm.mockCall(address(target), uint256(0), data, abi.encode(uint256(44)));
+        vm.expectCall(address(target), uint256(0), data, 0);
+
+        (bool ok, bytes memory ret) = address(target).delegatecall(data);
+        assertTrue(ok);
+        assertEq(abi.decode(ret, (uint256)), 3);
+    }
 }
 "#,
     );
@@ -5137,6 +5148,21 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     .stdout_lossy();
 
     assert!(!stdout.contains("symbolic mocked call value"), "{stdout}");
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkDelegateCallHasNoValue",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicPinnedCallValue.t.sol:SymbolicPinnedCallValue
+[PASS] checkDelegateCallHasNoValue() ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
     let stdout = assert_symbolic_witness(prj.forge_command().args([
         "test",
