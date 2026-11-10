@@ -485,12 +485,9 @@ impl SymbolicExecutor {
             }
             opcode::PUSH1..=opcode::PUSH32 => {
                 let n = (op - opcode::PUSH1 + 1) as usize;
-                let end = state.pc.saturating_add(n);
-                if end > code.len() {
-                    return Err(SymbolicError::InvalidBytecode("truncated PUSH data"));
-                }
+                // Data cut off by the end of the code is zero-padded, and the frame then stops.
                 let value = code.push_data_word(&mut self.cx, state.pc, n);
-                state.pc = end;
+                state.pc = state.pc.saturating_add(n);
                 state.stack.push(value)?;
             }
             opcode::DUP1..=opcode::DUP16 => {

@@ -33,11 +33,37 @@ contract SymbolicInvalidInitcode {
         assert(returnSize == 0);
         assert(marker == 19);
     }
+
+    // Runtime code `0x60` is a PUSH1 whose data byte is cut off: the EVM zero-pads it and stops.
+    function checkTruncatedPushRuntimeStops() public {
+        address created;
+        assembly ("memory-safe") {
+            mstore(0, hex"60605f5360015ff3")
+            created := create(0, 0, 8)
+        }
+        assert(created != address(0));
+        (bool ok,) = created.call("");
+        assert(ok);
+    }
 }
 "#,
     );
 
-    cmd.args(["test", "--symbolic", "--match-test", "checkInvalidInitcode"]).assert_success();
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicInvalidInitcode",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicInvalidInitcode.t.sol:SymbolicInvalidInitcode
+[PASS] checkInvalidInitcode() ([METRICS])
+[PASS] checkTruncatedPushRuntimeStops() ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
