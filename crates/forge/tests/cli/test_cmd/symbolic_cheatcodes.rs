@@ -407,10 +407,13 @@ import "forge-std/Test.sol";
 contract SymbolicExtcodeSize is Test {
     function checkSymbolicCodeLength(address who) public {
         address coded = address(0xC0DE);
-        vm.assume(who == coded || who == address(0xDEAD) || who == address(vm));
+        // Forge gives the cheatcode address the one-byte code 0x00, but leaves the symbolic-VM
+        // compatibility address empty, also once it holds ETH.
+        address compat = 0xF3993A62377BCd56AE39D773740A5390411E8BC9;
+        vm.assume(who == coded || who == address(0xDEAD) || who == address(vm) || who == compat);
         vm.etch(coded, hex"60006000");
+        vm.deal(compat, 1);
 
-        // Forge gives the cheatcode address the one-byte code 0x00.
         uint256 expected = who == coded ? 4 : who == address(vm) ? 1 : 0;
         assertEq(who.code.length, expected);
     }
@@ -470,12 +473,14 @@ import "forge-std/Test.sol";
 contract SymbolicExtcodeHash is Test {
     function checkSymbolicCodeHash(address who) public {
         address coded = address(0xC0DE);
-        vm.assume(who == coded || who == address(0xDEAD) || who == address(vm));
+        address compat = 0xF3993A62377BCd56AE39D773740A5390411E8BC9;
+        vm.assume(who == coded || who == address(0xDEAD) || who == address(vm) || who == compat);
         vm.etch(coded, hex"60006000");
+        vm.deal(compat, 1);
 
         bytes32 expected = who == coded
             ? keccak256(hex"60006000")
-            : who == address(vm) ? keccak256(hex"00") : bytes32(0);
+            : who == address(vm) ? keccak256(hex"00") : who == compat ? keccak256("") : bytes32(0);
         assertEq(who.codehash, expected);
     }
 
@@ -655,6 +660,15 @@ contract SymbolicSetupAccounts is Test {
         assertFalse(ok);
     }
 
+    // Forge runs the compatibility account's code, so a symbolic target must not reach a
+    // symbolic-VM operation there.
+    function checkCompatibilityAliasSymbolicVmCall(address target) public {
+        vm.assume(target == 0xF3993A62377BCd56AE39D773740A5390411E8BC9 || target == address(reverter));
+        (bool ok, bytes memory data) =
+            target.call(abi.encodeWithSignature("createUint256(string)", "x"));
+        assert(!ok || data.length != 0);
+    }
+
     function checkBalance(address target) public view {
         vm.assume(target == address(a) || target == address(b));
         assert(target.balance == 0);
@@ -749,7 +763,7 @@ contract SymbolicSetupAccounts is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 17 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
+Ran 18 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkBalance(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeBalance(address) ([METRICS])
 [FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeCallKeepsExpectRevert(address) ([METRICS])
@@ -760,6 +774,7 @@ Ran 17 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeHash(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeLength(address) ([METRICS])
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCompatibilityAlias(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic cheatcode CALL target] checkCompatibilityAliasSymbolicVmCall(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCompatibilityEtchedCode() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkHighLevelCall(address,bool) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupEmptyMock() ([METRICS])
@@ -767,7 +782,7 @@ Ran 17 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupPrank() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupRecordedLogs() ([METRICS])
 [FAIL: unknown cheatcode with selector 0x5c36b186; you may have a mismatch between the `Vm` interface (likely in `forge-std`) and the `forge` version; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnconstrainedHighLevelCall(address) ([METRICS])
-Suite result: FAILED. 0 passed; 17 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 18 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

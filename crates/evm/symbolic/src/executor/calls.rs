@@ -1,8 +1,8 @@
 use super::*;
 use alloy_primitives::{Log, LogData};
 use alloy_sol_types::{Revert, SolError, SolType, sol_data};
-use foundry_evm::inspectors::cheatcodes::unmatched_emit_message;
 use foundry_cheatcodes_spec::Vm::VmCalls;
+use foundry_evm::inspectors::cheatcodes::unmatched_emit_message;
 
 impl SymbolicExecutor {
     pub(super) fn call(
@@ -1926,6 +1926,21 @@ impl SymbolicExecutor {
             branch.constraints.push(constraint);
             if !self.is_sat_with_state(&branch, &branch.constraints)? {
                 continue;
+            }
+            // Forge treats the compatibility address as an ordinary account, so only a call that
+            // names it concretely reaches the symbolic-VM operations.
+            if to == SYMBOLIC_VM_COMPAT_ADDRESS
+                && matches!(kind, CallKind::Call | CallKind::StaticCall)
+                && call_input.len() >= 4
+            {
+                let selector = call_input
+                    .slice_concrete(&mut self.cx, 0, 4)
+                    .concrete_bytes(&mut self.cx, "symbolic compatibility selector")?;
+                if let Ok(selector) = <[u8; 4]>::try_from(selector.as_slice())
+                    && SymbolicVmCheatcode::from_selector(selector).is_some()
+                {
+                    return Err(SymbolicError::Unsupported("symbolic cheatcode CALL target"));
+                }
             }
 
             // Decide mock matches before executing either the mocked or real call.

@@ -2466,23 +2466,13 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
-        let address_expr = address_expr.address_operand(cx);
-        if let Some(address) = self.resolve_address(&address_expr) {
-            return Ok(self.balance_word_for_address(cx, executor, address));
-        }
-
-        let expr = address_expr;
-        let representative = expr.representative_symbolic_address();
-        let mut result = self.balance_word_for_address(cx, executor, representative);
-        let candidates = self
-            .candidate_addresses(executor, |world, address| world.balances.contains_key(&address));
-        for address in candidates {
-            let balance = self.balance_word_for_address(cx, executor, address);
-            let condition = self.symbolic_address_condition(cx, &expr, address);
-            result = SymExpr::ite(cx, condition, balance, result);
-        }
-
-        Ok(result)
+        self.select_symbolic_account(
+            cx,
+            executor,
+            address_expr,
+            |world, address| world.balances.contains_key(&address),
+            |world, cx, address| Ok(world.balance_word_for_address(cx, executor, address)),
+        )
     }
 
     pub(crate) fn set_balance_word(&mut self, address: Address, value: SymExpr) {
@@ -2679,7 +2669,7 @@ impl SymbolicWorld {
         {
             Arc::make_mut(&mut self.state).existing_accounts.insert(address);
         }
-        if (address == CHEATCODE_ADDRESS || address == SYMBOLIC_VM_COMPAT_ADDRESS)
+        if address == CHEATCODE_ADDRESS
             && account.as_ref().is_none_or(|account| account.code.is_none())
         {
             let code = SymCode::concrete(cx, vec![0]);
@@ -2722,7 +2712,15 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
-        let address_expr = address_expr.address_operand(cx);
+        // Like halmos, a query that names the empty compatibility address sees one byte of code,
+        // so Solidity's code-size check lets calls to it through. Forge leaves it empty, so a
+        // symbolic address that may denote it does not.
+        if address_expr.clone().address_operand(cx).as_const()
+            == Some(address_word(SYMBOLIC_VM_COMPAT_ADDRESS))
+            && self.extcode(cx, executor, SYMBOLIC_VM_COMPAT_ADDRESS)?.is_empty()
+        {
+            return Ok(SymExpr::constant(cx, U256::ONE));
+        }
         self.select_symbolic_account(
             cx,
             executor,
@@ -2741,7 +2739,6 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
-        let address_expr = address_expr.address_operand(cx);
         self.select_symbolic_account(
             cx,
             executor,
@@ -2805,8 +2802,9 @@ impl SymbolicWorld {
         )
     }
 
-    /// Selects `value_for` over the accounts a symbolic address may denote: its representative
+    /// Selects `value_for` over the accounts an address operand may denote: its representative
     /// account, then every candidate account under the condition that the address matches it.
+    /// Like the EVM, only the low 160 bits of the operand count.
     fn select_symbolic_account(
         &mut self,
         cx: &mut SymCx,
@@ -2815,6 +2813,7 @@ impl SymbolicWorld {
         has_state: impl Fn(&Self, Address) -> bool,
         mut value_for: impl FnMut(&mut Self, &mut SymCx, Address) -> Result<SymExpr, SymbolicError>,
     ) -> Result<SymExpr, SymbolicError> {
+        let address_expr = address_expr.address_operand(cx);
         if let Some(address) = self.resolve_address(&address_expr) {
             return value_for(self, cx, address);
         }
@@ -2854,8 +2853,8 @@ impl SymbolicWorld {
     /// Returns the accounts a symbolic address may alias, in address order.
     ///
     /// Includes accounts that exist only in the backend, such as contracts deployed in `setUp`,
-    /// which the world caches only once touched, and the cheatcode addresses, which have code
-    /// and can hold balances. A representative account only carries the state written through
+    /// which the world caches only once touched, and the cheatcode address, which has code and
+    /// can hold balances. A representative account only carries the state written through
     /// its expression, so it is a candidate only where `has_state` holds; elsewhere the
     /// expression may denote a real account whose state must show through.
     fn candidate_addresses(
@@ -2871,7 +2870,7 @@ impl SymbolicWorld {
             .chain(&executor.account_addresses)
             .chain(self.storage.iter().map(|write| &write.address))
             .copied()
-            .chain([CHEATCODE_ADDRESS, SYMBOLIC_VM_COMPAT_ADDRESS])
+            .chain([CHEATCODE_ADDRESS])
             .filter(|address| {
                 self.symbolic_word_for_address(*address).is_none() || has_state(self, *address)
             })

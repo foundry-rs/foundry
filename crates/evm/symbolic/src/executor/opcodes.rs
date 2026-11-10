@@ -935,12 +935,7 @@ impl SymbolicExecutor {
                 let key = state.stack.pop()?;
                 state.record_sload(state.storage_address, key.clone());
                 if let Some(slot) = key.as_const()
-                    && !self.folded_slots.resolve_nested(
-                        &mut self.cx,
-                        state.storage_address,
-                        slot,
-                        self.deadline,
-                    )
+                    && !self.folded_slots.resolve_nested(&mut self.cx, slot, self.deadline)
                 {
                     self.defer_incomplete("folded mapping slot search incomplete");
                 }
@@ -983,12 +978,7 @@ impl SymbolicExecutor {
                 let key = state.stack.peek(0)?.clone();
                 state.stack.peek(1)?;
                 if let Some(slot) = key.as_const()
-                    && !self.folded_slots.resolve_nested(
-                        &mut self.cx,
-                        state.storage_address,
-                        slot,
-                        self.deadline,
-                    )
+                    && !self.folded_slots.resolve_nested(&mut self.cx, slot, self.deadline)
                 {
                     self.defer_incomplete("folded mapping slot search incomplete");
                 }

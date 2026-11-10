@@ -686,9 +686,11 @@ contract SymbolicZeroInit {
     assert_eq!(result["symbolic"]["bounds"]["storage_layout"], "zero_init");
     let result = json_test_result(&output, "checkUnwrittenIsZero(uint256)");
     assert_eq!(result["symbolic"]["status"], "pass");
-    for test in
-        ["checkOwnMapping(uint256)", "checkOtherContractMapping(uint256)", "checkRepeatedRead(uint256)"]
-    {
+    for test in [
+        "checkOwnMapping(uint256)",
+        "checkOtherContractMapping(uint256)",
+        "checkRepeatedRead(uint256)",
+    ] {
         let result = json_test_result(&output, test);
         assert_eq!(result["status"], "Failure", "{test}");
         assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{test}");

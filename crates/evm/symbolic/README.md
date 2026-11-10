@@ -748,6 +748,12 @@ interface Svm {
 }
 ```
 
+Only a call that names the helper address concretely reaches these helpers, and
+`EXTCODESIZE` of that address reports one byte so Solidity's code-size check
+passes. Forge itself leaves the address empty, so a symbolic address that may
+denote it sees an ordinary account, and a symbolic call that may reach a helper
+selector there reports incomplete.
+
 Forge also treats several `vm.random*` cheatcodes as symbolic value creators when
 running symbolically. Dynamic byte and string creators use the same dynamic ABI
 bounds as function arguments.
