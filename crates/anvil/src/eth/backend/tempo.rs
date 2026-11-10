@@ -117,9 +117,9 @@ fn overlay_changes(
 /// Additionally, mints fee tokens to the provided test accounts so they can
 /// send transactions in Tempo mode.
 ///
-/// Installing genesis code sets nonce 1 for ordinary contracts, native precompiles and fee tokens,
-/// matching the pre-migration code installer. Reinitializing an existing genesis preserves nonces
-/// except for FeeManager, whose code is always installed.
+/// Installing genesis code sets nonce 1 for ordinary contracts, native precompiles and fee tokens.
+/// Reinitializing an existing genesis preserves nonces except for FeeManager, whose code is always
+/// installed.
 pub fn initialize_tempo_precompiles(
     db: &mut dyn Db,
     env: &EvmEnv,
