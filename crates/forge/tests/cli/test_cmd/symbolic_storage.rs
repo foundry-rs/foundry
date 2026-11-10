@@ -637,8 +637,9 @@ Suite result: FAILED. 1 passed; 6 failed; 0 skipped; [ELAPSED]
 
 // A symbolic Keccak compared with a hash computed during the run, or with a symbolic Keccak over a
 // different input length, is decided by its input instead of a free alias. The optimizer folds the
-// slots of `balances[KEY]` and `nested[KEY][1]` into constants; the storage layout and the source
-// literals give them their preimages, so a write through a symbolic key still reaches them.
+// slot of `balances[KEY]` into a constant, while the nested slot is read as a literal. The storage
+// layout and source literals give them their preimages, so a write through a symbolic key still
+// reaches them. An earlier read of the same slot in another contract must not suppress discovery.
 #[forgetest_init]
 fn symbolic_keccak_known_preimage_bases_do_not_alias(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_keccak_known_preimage_bases_do_not_alias");
@@ -655,10 +656,12 @@ contract SymbolicKeccakPreimage {
     mapping(address => uint256[]) deposits;
     mapping(address => mapping(uint256 => uint256)) nested;
     mapping(uint256 => mapping(uint256 => uint256)) unused;
+    SlotProbe probe;
 
     constructor() {
         holders.push(address(1));
         holders.push(address(2));
+        probe = new SlotProbe();
     }
 
     function checkArrayElementSurvivesMappingWrite(address who, uint256 amount, uint256 i) public {
@@ -690,8 +693,11 @@ contract SymbolicKeccakPreimage {
     }
 
     function checkFoldedNestedConstantKeySlotAliases(address who, uint256 id) public {
+        probe.read(0xd0df686d7e7bdf37c4531b2248e7a13dec2c5efe7dfac93b24540db3e627eff6);
         nested[who][id] = 3;
-        assert(nested[KEY][1] == 0);
+        uint256 folded;
+        assembly { folded := sload(0xd0df686d7e7bdf37c4531b2248e7a13dec2c5efe7dfac93b24540db3e627eff6) }
+        assert(folded == 0);
     }
 
     // Thousands of integer constants and an unused nested mapping: the nested key product is
@@ -701,6 +707,12 @@ contract SymbolicKeccakPreimage {
 MANY_CONSTANTS
         }
         assert(x == x);
+    }
+}
+
+contract SlotProbe {
+    function read(bytes32 slot) external view returns (uint256 value) {
+        assembly { value := sload(slot) }
     }
 }
 "#

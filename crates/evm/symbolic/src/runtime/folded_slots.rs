@@ -20,8 +20,8 @@ use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
 #[derive(Default)]
 pub(crate) struct FoldedSlots {
     contracts: HashMap<Address, (Arc<StorageLayout>, Vec<U256>)>,
-    /// Constant slots already searched for a nested preimage.
-    searched: HashSet<U256>,
+    /// Contract slots already searched for a nested preimage.
+    searched: HashSet<(Address, U256)>,
 }
 
 impl FoldedSlots {
@@ -93,7 +93,7 @@ impl FoldedSlots {
         deadline: Option<Instant>,
     ) {
         let max_offset = U256::ONE << STORAGE_LAYOUT_OFFSET_BITS;
-        if slot < max_offset || !self.searched.insert(slot) {
+        if slot < max_offset || self.searched.contains(&(address, slot)) {
             return;
         }
         let Some((layout, keys)) = self.contracts.get(&address) else { return };
@@ -121,6 +121,7 @@ impl FoldedSlots {
                 return;
             }
         }
+        self.searched.insert((address, slot));
     }
 }
 
