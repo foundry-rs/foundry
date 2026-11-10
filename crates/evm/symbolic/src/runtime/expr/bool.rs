@@ -1004,7 +1004,7 @@ mod tests {
         let mut a = SymExpr::var(&mut cx, "a");
         let mut b = SymExpr::var(&mut cx, "b");
         let original_equality = SymBoolExpr::eq(&mut cx, a.clone(), b.clone());
-        for _ in 0..16 {
+        for _ in 0..24 {
             let a_bytes = a.into_byte_exprs(&mut cx);
             let b_bytes = b.into_byte_exprs(&mut cx);
             a = keccak_word(&mut cx, [a_bytes.clone(), a_bytes].concat());
