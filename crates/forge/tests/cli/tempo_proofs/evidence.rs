@@ -3,7 +3,7 @@
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_network::{AnyTransactionReceipt, ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_provider::{
     Provider,
     ext::{AnvilApi, DebugApi},
@@ -25,9 +25,9 @@ pub(super) struct Identity {
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
-struct Record {
-    height: u64,
-    evidence: Value,
+pub(super) struct Record {
+    pub(super) height: u64,
+    pub(super) evidence: Value,
 }
 
 pub(super) async fn collect(
@@ -70,7 +70,11 @@ pub(super) async fn collect(
     })
 }
 
-async fn record(provider: &RetryProvider, height: u64, account: Option<Address>) -> Record {
+pub(super) async fn record(
+    provider: &RetryProvider,
+    height: u64,
+    account: Option<Address>,
+) -> Record {
     let finalization = provider
         .client()
         .request::<_, TempoFinalization>(
@@ -80,6 +84,7 @@ async fn record(provider: &RetryProvider, height: u64, account: Option<Address>)
         .await
         .unwrap();
     let raw_header = provider.debug_get_raw_header(BlockId::number(height)).await.unwrap();
+    assert_eq!(keccak256(&raw_header), finalization.digest);
     let block = provider.get_block_by_number(height.into()).await.unwrap().unwrap();
     assert_eq!(block.header.hash, finalization.digest);
     let mut cursor = finalization.certificate.as_ref();
@@ -139,7 +144,7 @@ async fn mine(provider: &RetryProvider) {
     provider.anvil_mine(Some(1), None).await.unwrap();
 }
 
-fn write(account: Address, value: u64) -> TransactionRequest {
+pub(super) fn write(account: Address, value: u64) -> TransactionRequest {
     let setter = Function::parse("set(uint256)").unwrap();
     let input = setter.abi_encode_input(&[DynSolValue::Uint(U256::from(value), 256)]).unwrap();
     TransactionRequest::default().to(account).with_input(input)

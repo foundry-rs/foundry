@@ -1,4 +1,4 @@
-use alloy_primitives::{U256, keccak256};
+use alloy_primitives::{Address, U256, address, keccak256};
 use foundry_test_utils::{
     TestCommand, forgetest_init, snapbox::cmd::OutputAssert, str, util::OutputExt,
 };
@@ -1422,6 +1422,67 @@ contract ComparisonCorpusTest is Test {
     );
 
     cmd.args(["test", "--mc", "ComparisonCorpusTest", "--fuzz-seed", "0x574"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: assertion failed]
+...
+"#]]);
+}
+
+// solc compiles `if (a == b)` to `SUB` + `JUMPI`, without an `EQ` opcode.
+#[forgetest_init]
+fn invariant_corpus_reuses_sub_equality_hints(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 100;
+        config.invariant.depth = 1;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.dictionary.dictionary_weight = 0;
+        config.invariant.dictionary.include_storage = false;
+        config.invariant.dictionary.include_push_bytes = false;
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_random_sequence_weight = 0;
+        config.invariant.corpus.mutation_weights = foundry_config::FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 1,
+        };
+    });
+    prj.add_test(
+        "SubEqualityCorpusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract SubEqualityCorpusHandler {
+    bool public reached;
+
+    function compare(uint256 value) external {
+        uint256 magic = uint256(keccak256(abi.encode(address(this)))) % (1 << 40);
+        if (value == magic) reached = true;
+    }
+}
+
+contract SubEqualityCorpusTest is Test {
+    SubEqualityCorpusHandler handler;
+
+    function setUp() public {
+        handler = new SubEqualityCorpusHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_equality_is_reached() public view {
+        assertFalse(handler.reached());
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "SubEqualityCorpusTest", "--fuzz-seed", "0x574"])
         .assert_failure()
         .stdout_eq(str![[r#"
 ...
@@ -3496,6 +3557,85 @@ Ran 1 test for test/CorpusPolicyTest.t.sol:CorpusPolicyTest
 ╰--------------------+----------+-------+---------+----------╯
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#
+    ]]);
+}
+
+// Corpus entries that share a prefix which creates a dynamic target must all replay: the shared
+// prefix is executed once and its created target stays registered for every entry under it.
+#[forgetest_init]
+fn invariant_corpus_replays_shared_dynamic_target_prefix(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 8;
+        config.invariant.depth = 5;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    prj.add_test(
+        "DynamicCorpusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Child {
+    uint256 public calls;
+
+    function f() external {
+        calls++;
+    }
+
+    function g() external {
+        calls++;
+    }
+}
+
+contract Factory {
+    Child public child;
+
+    function create() external {
+        child = new Child();
+    }
+}
+
+contract DynamicCorpusTest is Test {
+    Factory factory;
+
+    function setUp() public {
+        factory = new Factory();
+    }
+
+    function invariant_dynamic_targets() public view {}
+}
+   "#,
+    );
+
+    // `setUp` deploys the factory from the test contract, and `create()` deploys the child from
+    // the factory; both use the first nonce.
+    let factory = address!("0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496").create(1);
+    let child = factory.create(1);
+    let tx = |target: Address, selector: &str| {
+        format!(
+            r#"{{"sender":"0x0000000000000000000000000000000000010000","target":"{target}","calldata":"{selector}","value":"0x0"}}"#
+        )
+    };
+    let create = tx(factory, "0xefc81a8c");
+    let corpus = prj.root().join("invariant_corpus").join("DynamicCorpusTest");
+    std::fs::create_dir_all(&corpus).unwrap();
+    for (id, call) in [(1, "0x26121ff0"), (2, "0xe2179b8e")] {
+        std::fs::write(
+            corpus.join(format!("00000000-0000-0000-0000-00000000000{id}-1.json")),
+            format!("[{create},{}]", tx(child, call)),
+        )
+        .unwrap();
+    }
+    assert_eq!(std::fs::read_dir(&corpus).unwrap().count(), 2);
+
+    assert_invariant(cmd.args(["test", "--mc", "DynamicCorpusTest"])).success().stdout_eq(str![[
+        r#"
+...
+[PASS] invariant_dynamic_targets() ([RUNS])
 ...
 "#
     ]]);
