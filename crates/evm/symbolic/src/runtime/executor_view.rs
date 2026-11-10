@@ -33,8 +33,10 @@ impl<FEN: FoundryEvmNetwork> AcceptedState for Backend<FEN> {
             .cache
             .as_ref()
             .and_then(|cache| cache.storage.get(&address))
-            .map(|storage| storage.slots.iter().map(|(slot, value)| (*slot, *value)).collect())
-            .unwrap_or_else(Vec::new);
+            .map(|storage| {
+                storage.slots.iter().map(|(slot, value)| (*slot, *value)).collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         slots.sort_unstable();
         slots
     }
