@@ -426,6 +426,17 @@ contract SymbolicAdvancedPrecompileInput is Test {
         assert(modexp(x, 2, 7) != modexp(7 - x, 2, 7));
     }
 }
+
+/// forge-config: default.evm_version = "osaka"
+contract SymbolicModexpOsakaLimit {
+    // EIP-7823: from Osaka, an input longer than 1024 bytes makes the call fail.
+    function checkSymbolicModexpLengthLimit(uint256 base) public view {
+        (bool ok,) = address(5).staticcall(
+            abi.encodePacked(uint256(32), uint256(32), uint256(1025), base, uint256(1), new bytes(1025))
+        );
+        assert(!ok);
+    }
+}
 "#,
     );
 
@@ -456,6 +467,19 @@ Suite result: FAILED. 8 passed; 1 failed; 0 skipped; [ELAPSED]
 
     assert!(!stdout.contains("symbolic precompile input"), "{stdout}");
     assert!(!stdout.contains("symbolic precompile length header"), "{stdout}");
+
+    assert_symbolic_witness(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicModexpOsakaLimit",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+[PASS] checkSymbolicModexpLengthLimit(uint256) ([METRICS])
+...
+"#]]);
 }
 
 #[forgetest_init]

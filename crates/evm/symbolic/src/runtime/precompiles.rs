@@ -310,7 +310,7 @@ pub(crate) fn symbolic_modexp_precompile(
         });
     if spec_id.enables(SpecId::OSAKA) {
         // EIP-7823 rejects any length above 1024 bytes.
-        let limit = 1024;
+        let limit = MODEXP_INPUT_SIZE_LIMIT as u64;
         if min_base_len > limit || min_exp_len > limit || min_mod_len > limit {
             return Ok(None);
         }
