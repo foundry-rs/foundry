@@ -471,7 +471,6 @@ impl SymbolicExecutor {
                 let outcome = self.step(
                     executor,
                     code,
-                    code.jump_table(),
                     &mut state,
                     &mut *worklist,
                     completed_paths,

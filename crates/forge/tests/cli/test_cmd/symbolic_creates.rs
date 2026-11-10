@@ -45,6 +45,17 @@ contract SymbolicInvalidInitcode {
         (bool ok,) = created.call("");
         assert(ok);
     }
+
+    // PUSH1 4; JUMP; op; JUMPDEST; STOP. A PUSH1 `op` turns the JUMPDEST into push data, so the
+    // jump table of the initcode depends on the symbolic byte.
+    function checkSymbolicInitcodeJumpTable(bytes1 op) public {
+        bytes memory initcode = abi.encodePacked(hex"600456", op, hex"5b00");
+        address created;
+        assembly ("memory-safe") {
+            created := create(0, add(initcode, 0x20), mload(initcode))
+        }
+        assert(created != address(0));
+    }
 }
 "#,
     );
@@ -61,7 +72,15 @@ contract SymbolicInvalidInitcode {
 Ran 2 tests for test/SymbolicInvalidInitcode.t.sol:SymbolicInvalidInitcode
 [PASS] checkInvalidInitcode() ([METRICS])
 [PASS] checkTruncatedPushRuntimeStops() ([METRICS])
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+    cmd.args(["test", "--symbolic", "--match-test", "checkInvalidInitcode"]).assert_success();
+
+    cmd.forge_fuse();
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkSymbolicInitcodeJumpTable"]))
+        .failure()
+        .stdout_eq(str![[r#"
+Ran 1 test for test/SymbolicInvalidInitcode.t.sol:SymbolicInvalidInitcode
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic bytecode jump table] checkSymbolicInitcodeJumpTable(bytes1) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
