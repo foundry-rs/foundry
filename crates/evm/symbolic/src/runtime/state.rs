@@ -2610,58 +2610,6 @@ impl SymbolicWorld {
         }
     }
 
-    pub(crate) fn account_exists(
-        &mut self,
-        cx: &mut SymCx,
-        executor: &ExecutorView<'_>,
-        address: Address,
-    ) -> Result<bool, SymbolicError> {
-        if address == CHEATCODE_ADDRESS || address == SYMBOLIC_VM_COMPAT_ADDRESS {
-            return Ok(true);
-        }
-        if self.destroyed_accounts.contains(&address) {
-            return Ok(false);
-        }
-        if self.existing_accounts.contains(&address) {
-            return Ok(true);
-        }
-        if self
-            .balances
-            .get(&address)
-            .is_some_and(|balance| !balance.as_const().is_some_and(|value| value.is_zero()))
-            || self.nonces.get(&address).is_some_and(|nonce| *nonce != 0)
-            || self.code_cache.get(&address).is_some_and(|code| !code.is_empty())
-        {
-            Arc::make_mut(&mut self.state).existing_accounts.insert(address);
-            return Ok(true);
-        }
-
-        let Some(account) = executor
-            .backend
-            .basic(address)
-            .map_err(|err| SymbolicError::Backend(err.to_string()))?
-        else {
-            return Ok(false);
-        };
-
-        if account.nonce != 0 || !account.balance.is_zero() {
-            Arc::make_mut(&mut self.state).existing_accounts.insert(address);
-            return Ok(true);
-        }
-
-        if let Some(code) = account.code.as_ref()
-            && !code.is_empty()
-        {
-            let code = SymCode::from_bytecode(cx, code);
-            let state = Arc::make_mut(&mut self.state);
-            state.code_cache.insert(address, code);
-            state.existing_accounts.insert(address);
-            return Ok(true);
-        }
-
-        Ok(false)
-    }
-
     pub(crate) fn extcode(
         &mut self,
         cx: &mut SymCx,
@@ -2702,13 +2650,20 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
         address: Address,
     ) -> Result<SymExpr, SymbolicError> {
-        if self.account_exists(cx, executor, address)? {
-            let code = self.extcode(cx, executor, address)?;
-            let bytes = code.read_byte_exprs(cx, 0, code.len());
-            Ok(keccak_word(cx, bytes))
-        } else {
-            Ok(SymExpr::zero(cx))
+        if self.destroyed_accounts.contains(&address) {
+            return Ok(SymExpr::zero(cx));
         }
+        let code = self.extcode(cx, executor, address)?;
+        let bytes = code.read_byte_exprs(cx, 0, code.len());
+        let hash = keccak_word(cx, bytes);
+        if !code.is_empty() || self.nonce(executor, address)? != 0 {
+            return Ok(hash);
+        }
+        // EIP-161: without code or a nonce, the account exists only while it has a balance.
+        let balance = self.balance_word_for_address(cx, executor, address);
+        let empty = SymBoolExpr::eq_word_const(cx, &balance, U256::ZERO);
+        let zero = SymExpr::zero(cx);
+        Ok(SymExpr::ite(cx, empty, zero, hash))
     }
 
     pub(crate) fn extcode_size_word(
