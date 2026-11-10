@@ -654,10 +654,10 @@ contract SymbolicKeccakPreimage {
     mapping(address => uint256) balances;
     address[] holders;
     mapping(address => uint256[]) deposits;
-    mapping(string => uint256) names;
     mapping(address => mapping(uint256 => uint256)) nested;
     mapping(uint256 => mapping(uint256 => uint256)) unused;
     SlotProbe probe;
+    mapping(string => uint256) names;
 
     constructor() {
         holders.push(address(1));

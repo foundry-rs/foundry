@@ -722,6 +722,7 @@ contract SymbolicSetupAccounts is Test {
     }
 
     function checkCheatcodeDelegateCall(address target) public {
+        vm.stopPrank();
         vm.assume(target == address(vm) || target == address(reverter));
         (bool ok,) = target.delegatecall(abi.encodeWithSignature("ping()"));
         assert(!ok);

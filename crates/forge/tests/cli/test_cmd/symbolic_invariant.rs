@@ -1928,7 +1928,7 @@ contract SymbolicConsumedPrankInvariant is Test {
 Failing tests:
 Encountered 2 failing tests in test/SymbolicSetupMappingStorageInvariant.t.sol:SymbolicSetupMappingStorageInvariant
 [FAIL: assertion failed: 3 != 10]
-	[Sequence] (original: 1, shrunk: 1)
+	[Sequence] (original: [..], shrunk: 1)
 		[SENDER] [SENDER] calldata=pull(uint8) [ARGS]
  invariant_balanceStaysInitialized() ([METRICS])
 [FAIL: panic: assertion failed (0x01)]
