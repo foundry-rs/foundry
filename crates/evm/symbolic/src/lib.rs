@@ -26,6 +26,7 @@ use evm2::{
         secp256k1, secp256r1,
     },
 };
+use foundry_cheatcodes::decode_cheatcode_call;
 use foundry_cheatcodes_spec::{SymbolicVm, Vm};
 use foundry_common::FoundryTransactionBuilder;
 use foundry_config::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};

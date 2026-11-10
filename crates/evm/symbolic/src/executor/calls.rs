@@ -1577,7 +1577,7 @@ impl SymbolicExecutor {
             })
             .collect::<Vec<_>>();
         // The cheatcode addresses have code, so an unconstrained target may alias them. They are
-        // not call candidates: Forge reverts a call to them with an unknown selector.
+        // not call candidates: Forge fails a call to them that its cheatcode decoder rejects.
         let cheatcode_constraints =
             [CHEATCODE_ADDRESS, SYMBOLIC_VM_COMPAT_ADDRESS].map(|address| {
                 let address = SymExpr::constant(&mut self.cx, address_word(address));
@@ -1690,32 +1690,32 @@ impl SymbolicExecutor {
         let is_cheatcode = SymBoolExpr::or(&mut self.cx, cheatcode_constraints.to_vec());
         cheatcode_branch.constraints.push(is_cheatcode);
         if self.is_sat_with_state(&cheatcode_branch, &cheatcode_branch.constraints)? {
-            let selector = call_input
-                .slice_concrete(&mut self.cx, 0, 4)
-                .concrete_bytes(&mut self.cx, "symbolic cheatcode selector")?;
-            if let Ok(selector) = <[u8; 4]>::try_from(selector)
+            // The decoder error only depends on the selector, except for shorter calldata.
+            let input = if call_input.len() < 4 {
+                call_input.clone()
+            } else {
+                call_input.slice_concrete(&mut self.cx, 0, 4)
+            };
+            let input = input.concrete_bytes(&mut self.cx, "symbolic cheatcode selector")?;
+            if let Ok(selector) = <[u8; 4]>::try_from(input.as_slice())
                 && VmCalls::signature_by_selector(selector).is_some()
             {
                 return Err(SymbolicError::Unsupported("symbolic cheatcode CALL target"));
             }
-            let return_data = SymReturnData::empty(&mut self.cx);
-            match self.finish_codeless_call(
-                executor,
+            let Err(error) = decode_cheatcode_call(&input) else {
+                return Err(SymbolicError::Unsupported("symbolic cheatcode CALL target"));
+            };
+            // Like Forge, a cheatcode call leaves `vm.expectRevert` and `vm.assumeNoRevert`
+            // pending.
+            let return_data = error_string_return_data(&mut self.cx, &error.to_string());
+            revert_cheatcode_call(
+                &mut self.cx,
                 &mut cheatcode_branch,
-                kind,
-                CallStatus::Revert,
-                return_data,
-                CHEATCODE_ADDRESS,
                 out_offset.clone(),
                 &out_size,
-            )? {
-                StepOutcome::Continue => parents.push_back(cheatcode_branch),
-                StepOutcome::AssumeRejected => {}
-                outcome => {
-                    *state = cheatcode_branch;
-                    return Ok(outcome);
-                }
-            }
+                return_data,
+            )?;
+            parents.push_back(cheatcode_branch);
         }
 
         for (to, constraint) in candidates.into_iter().zip(candidate_constraints) {
