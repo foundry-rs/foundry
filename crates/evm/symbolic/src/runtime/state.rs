@@ -2455,11 +2455,9 @@ impl SymbolicWorld {
         let expr = address_expr;
         let representative = expr.representative_symbolic_address();
         let mut result = self.balance_word_for_address(cx, executor, representative);
-        // Cheatcode accounts can hold balances even though they are not code candidates.
-        let cheatcode_addresses = [CHEATCODE_ADDRESS, SYMBOLIC_VM_COMPAT_ADDRESS];
         let candidates = self
             .candidate_addresses(executor, |world, address| world.balances.contains_key(&address));
-        for address in candidates.into_iter().chain(cheatcode_addresses) {
+        for address in candidates {
             let balance = self.balance_word_for_address(cx, executor, address);
             let condition = self.symbolic_address_condition(cx, &expr, address);
             result = SymExpr::ite(cx, condition, balance, result);
@@ -2645,9 +2643,6 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
         address: Address,
     ) -> Result<SymCode, SymbolicError> {
-        if address == CHEATCODE_ADDRESS || address == SYMBOLIC_VM_COMPAT_ADDRESS {
-            return Ok(SymCode::concrete(cx, vec![0]));
-        }
         if self.destroyed_accounts.contains(&address) {
             return Ok(SymCode::empty(cx));
         }
@@ -2664,6 +2659,13 @@ impl SymbolicWorld {
                 || account.code.as_ref().is_some_and(|code| !code.is_empty()))
         {
             Arc::make_mut(&mut self.state).existing_accounts.insert(address);
+        }
+        if (address == CHEATCODE_ADDRESS || address == SYMBOLIC_VM_COMPAT_ADDRESS)
+            && account.as_ref().is_none_or(|account| account.code.is_none())
+        {
+            let code = SymCode::concrete(cx, vec![0]);
+            Arc::make_mut(&mut self.state).code_cache.insert(address, code.clone());
+            return Ok(code);
         }
         let bytecode = account.as_ref().and_then(|account| account.code.as_ref());
         let code = bytecode
@@ -2817,7 +2819,10 @@ impl SymbolicWorld {
         let candidates = self
             .candidate_addresses(executor, |world, address| world.written_code.contains(&address));
         for address in candidates {
-            if is_precompile_for_spec(address, executor.spec_id) {
+            if is_precompile_for_spec(address, executor.spec_id)
+                || address == CHEATCODE_ADDRESS
+                || address == SYMBOLIC_VM_COMPAT_ADDRESS
+            {
                 continue;
             }
             if !self.extcode(cx, executor, address)?.is_empty() {
@@ -2830,10 +2835,10 @@ impl SymbolicWorld {
     /// Returns the accounts a symbolic address may alias, in address order.
     ///
     /// Includes accounts that exist only in the backend, such as contracts deployed in `setUp`,
-    /// which the world caches only once touched. A representative account only carries the state
-    /// written through its expression, so it is a candidate only where `has_state` holds;
-    /// elsewhere the expression may denote a real account whose state must show through.
-    /// Cheatcode addresses are excluded.
+    /// which the world caches only once touched, and the cheatcode addresses, which have code
+    /// and can hold balances. A representative account only carries the state written through
+    /// its expression, so it is a candidate only where `has_state` holds; elsewhere the
+    /// expression may denote a real account whose state must show through.
     fn candidate_addresses(
         &self,
         executor: &ExecutorView<'_>,
@@ -2847,11 +2852,9 @@ impl SymbolicWorld {
             .chain(&executor.account_addresses)
             .chain(self.storage.iter().map(|write| &write.address))
             .copied()
+            .chain([CHEATCODE_ADDRESS, SYMBOLIC_VM_COMPAT_ADDRESS])
             .filter(|address| {
-                *address != CHEATCODE_ADDRESS
-                    && *address != SYMBOLIC_VM_COMPAT_ADDRESS
-                    && (self.symbolic_word_for_address(*address).is_none()
-                        || has_state(self, *address))
+                self.symbolic_word_for_address(*address).is_none() || has_state(self, *address)
             })
             .collect::<Vec<_>>();
         addresses.sort_unstable();

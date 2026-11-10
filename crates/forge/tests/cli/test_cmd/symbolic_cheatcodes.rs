@@ -407,10 +407,11 @@ import "forge-std/Test.sol";
 contract SymbolicExtcodeSize is Test {
     function checkSymbolicCodeLength(address who) public {
         address coded = address(0xC0DE);
-        vm.assume(who == coded || who == address(0xDEAD));
+        vm.assume(who == coded || who == address(0xDEAD) || who == address(vm));
         vm.etch(coded, hex"60006000");
 
-        uint256 expected = who == coded ? 4 : 0;
+        // Forge gives the cheatcode address the one-byte code 0x00.
+        uint256 expected = who == coded ? 4 : who == address(vm) ? 1 : 0;
         assertEq(who.code.length, expected);
     }
 
@@ -469,10 +470,12 @@ import "forge-std/Test.sol";
 contract SymbolicExtcodeHash is Test {
     function checkSymbolicCodeHash(address who) public {
         address coded = address(0xC0DE);
-        vm.assume(who == coded || who == address(0xDEAD));
+        vm.assume(who == coded || who == address(0xDEAD) || who == address(vm));
         vm.etch(coded, hex"60006000");
 
-        bytes32 expected = who == coded ? keccak256(hex"60006000") : bytes32(0);
+        bytes32 expected = who == coded
+            ? keccak256(hex"60006000")
+            : who == address(vm) ? keccak256(hex"00") : bytes32(0);
         assertEq(who.codehash, expected);
     }
 
@@ -603,13 +606,21 @@ contract Pinger {
     }
 }
 
+contract RevertingPinger {
+    function ping() external pure {
+        revert("ping");
+    }
+}
+
 contract SymbolicSetupAccounts is Test {
     Pinger a;
     Pinger b;
+    RevertingPinger reverter;
 
     function setUp() public {
         a = new Pinger();
         b = new Pinger();
+        reverter = new RevertingPinger();
         vm.deal(address(a), 1 ether);
         vm.deal(address(b), 1 ether);
         vm.mockCall(address(a), abi.encodeWithSelector(Pinger.price.selector), abi.encode(uint256(5)));
@@ -675,9 +686,47 @@ contract SymbolicSetupAccounts is Test {
         assert(false);
     }
 
+    // The first counterexample is the cheatcode address: its unknown-selector error bubbles up.
     function checkUnconstrainedHighLevelCall(address target) public {
         Pinger(target).ping();
         assert(false);
+    }
+
+    // Forge fails an unknown-selector call to the cheatcode address with its decoder error.
+    function checkCheatcodeCallRevertData(address target) public {
+        vm.assume(target == address(vm) || target == address(a));
+        (, bytes memory data) = target.call(abi.encodeWithSignature("ping()"));
+        assert(data.length == 0);
+    }
+
+    // A cheatcode call leaves `vm.expectRevert` pending, so the later successful call fails.
+    function checkCheatcodeCallKeepsExpectRevert(address target) public {
+        vm.assume(target == address(vm) || target == address(reverter));
+        vm.expectRevert();
+        target.call(abi.encodeWithSignature("ping()"));
+        a.ping();
+    }
+
+    function checkCompatibilityEtchedCode() public {
+        address compat = address(0xF3993A62377BCd56AE39D773740A5390411E8BC9);
+        vm.etch(compat, hex"60006000fd");
+        (bool ok,) = compat.call(hex"5c36b186");
+        assert(ok);
+    }
+
+    function checkCheatcodeDelegateCall(address target) public {
+        vm.assume(target == address(vm) || target == address(reverter));
+        (bool ok,) = target.delegatecall(abi.encodeWithSignature("ping()"));
+        assert(!ok);
+    }
+
+    function checkCheatcodeCallcode(address target) public {
+        vm.assume(target == address(vm) || target == address(reverter));
+        bool ok;
+        assembly {
+            ok := callcode(gas(), target, 0, 0, 0, 0, 0)
+        }
+        assert(!ok);
     }
 }
 "#,
@@ -692,19 +741,24 @@ contract SymbolicSetupAccounts is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 11 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
+Ran 16 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkBalance(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeBalance(address) ([METRICS])
+[FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeCallKeepsExpectRevert(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeCallRevertData(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeCallcode(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeDelegateCall(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeCopy(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeHash(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeLength(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCompatibilityEtchedCode() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkHighLevelCall(address,bool) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupEmptyMock() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupMock() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupPrank() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupRecordedLogs() ([METRICS])
-[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnconstrainedHighLevelCall(address) ([METRICS])
-Suite result: FAILED. 0 passed; 11 failed; 0 skipped; [ELAPSED]
+[FAIL: unknown cheatcode with selector 0x5c36b186; you may have a mismatch between the `Vm` interface (likely in `forge-std`) and the `forge` version; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnconstrainedHighLevelCall(address) ([METRICS])
+Suite result: FAILED. 0 passed; 16 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
