@@ -2114,13 +2114,59 @@ contract SymbolicPreparedEnvironment is Test {
 "#,
     );
 
-    assert_symbolic(cmd.args([
+    prj.add_test(
+        "SymbolicEnvironmentArgumentChecks.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+// Arguments Forge's cheatcodes reject, with a symbolic and with constant values.
+contract SymbolicEnvironmentArgumentChecks is Test {
+    function checkChainIdRejectsLargeValue(uint256 chainId) public {
+        vm.chainId(chainId);
+    }
+
+    function checkFeeRejectsLargeValue() public {
+        vm.fee(uint256(1) << 64);
+    }
+
+    function checkTxGasPriceRejectsLargeValue() public {
+        vm.txGasPrice(uint256(1) << 64);
+    }
+
+    function checkBlobBaseFeeRejectsLargeValue() public {
+        vm.blobBaseFee(uint256(1) << 128);
+    }
+
+    function checkSetBlockhashRejectsLargeBlockNumber() public {
+        vm.setBlockhash(uint256(1) << 64, bytes32(uint256(1)));
+    }
+
+    function checkDifficultyRejectedAfterParis() public {
+        vm.difficulty(1);
+    }
+
+    function checkComputeCreateAddressRejectsLargeNonce(uint256 nonce) public view {
+        try vm.computeCreateAddress(address(this), nonce) returns (address) {} catch { assert(false); }
+    }
+
+    function checkStoreRejectsPrecompile() public {
+        vm.store(address(1), bytes32(0), bytes32(uint256(1)));
+    }
+
+    function checkEtchRejectsPrecompile() public {
+        vm.etch(address(4), hex"00");
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
         "--match-test",
-        "^(checkBlockEnvironment|checkPreparedEnvironment|checkSnapshotRestoresEnvironment)\\(",
+        "^(checkBlockEnvironment|checkPreparedEnvironment|checkSnapshotRestoresEnvironment|check[A-Za-z]*Rejects[A-Za-z]*|checkDifficultyRejectedAfterParis)\\(",
     ]))
-    .success()
+    .failure()
     .stdout_eq(
         str![[r#"
 ...
@@ -2128,6 +2174,18 @@ Ran 2 tests for test/SymbolicBlockEnvironment.t.sol:SymbolicBlockEnvironment
 [PASS] checkBlockEnvironment(uint256) ([METRICS])
 [PASS] checkSnapshotRestoresEnvironment(uint256) ([METRICS])
 Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 9 tests for test/SymbolicEnvironmentArgumentChecks.t.sol:SymbolicEnvironmentArgumentChecks
+[FAIL: vm.blobBaseFee: blob base fee must be less than 2^128; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkBlobBaseFeeRejectsLargeValue() ([METRICS])
+[FAIL: vm.chainId: chain ID must be less than 2^64; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkChainIdRejectsLargeValue(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkComputeCreateAddressRejectsLargeNonce(uint256) ([METRICS])
+[FAIL: vm.difficulty: `difficulty` is not supported after the Paris hard fork, use `prevrandao` instead; see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkDifficultyRejectedAfterParis() ([METRICS])
+[FAIL: vm.etch: cannot use precompile 0x0000000000000000000000000000000000000004 as an argument; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkEtchRejectsPrecompile() ([METRICS])
+[FAIL: vm.fee: base fee must be less than 2^64; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkFeeRejectsLargeValue() ([METRICS])
+[FAIL: vm.setBlockhash: blockNumber must be less than 2^64; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetBlockhashRejectsLargeBlockNumber() ([METRICS])
+[FAIL: vm.store: cannot use precompile 0x0000000000000000000000000000000000000001 as an argument; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkStoreRejectsPrecompile() ([METRICS])
+[FAIL: vm.txGasPrice: gas price must be less than 2^64; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkTxGasPriceRejectsLargeValue() ([METRICS])
+Suite result: FAILED. 0 passed; 9 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test for test/SymbolicPreparedEnvironment.t.sol:SymbolicPreparedEnvironment
 [PASS] checkPreparedEnvironment(uint256) ([METRICS])

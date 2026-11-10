@@ -1395,6 +1395,12 @@ impl SymbolicExecutor {
             storeCall::SELECTOR => {
                 let target =
                     read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
+                if is_precompile_for_spec(target, executor.spec_id) {
+                    return Ok(CheatcodeOutcome::Revert(error_string_return_data(
+                        &mut self.cx,
+                        &format!("vm.store: cannot use precompile {target} as an argument"),
+                    )));
+                }
                 let slot = state.memory.load_word(&mut self.cx, in_offset + 36)?;
                 let value = state.memory.load_word(&mut self.cx, in_offset + 68)?;
                 let failed_slot = SymExpr::constant(&mut self.cx, GLOBAL_FAIL_SLOT);
@@ -1448,6 +1454,12 @@ impl SymbolicExecutor {
             etchCall::SELECTOR => {
                 let target =
                     read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
+                if is_precompile_for_spec(target, executor.spec_id) {
+                    return Ok(CheatcodeOutcome::Revert(error_string_return_data(
+                        &mut self.cx,
+                        &format!("vm.etch: cannot use precompile {target} as an argument"),
+                    )));
+                }
                 let code = read_abi_symbolic_dynamic_byte_exprs_arg(
                     &mut self.cx,
                     state,
@@ -1794,6 +1806,13 @@ impl SymbolicExecutor {
             }
             getChainIdCall::SELECTOR => {
                 Ok(CheatcodeOutcome::Continue(vec![state.block.chain_id.clone()]))
+            }
+            difficultyCall::SELECTOR if executor.spec_id >= SpecId::MERGE => {
+                Ok(CheatcodeOutcome::Revert(error_string_return_data(
+                    &mut self.cx,
+                    "vm.difficulty: `difficulty` is not supported after the Paris hard fork, use \
+                     `prevrandao` instead; see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399",
+                )))
             }
             difficultyCall::SELECTOR => {
                 state.block.difficulty = state.memory.load_word(&mut self.cx, in_offset + 4)?;
