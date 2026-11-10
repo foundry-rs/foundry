@@ -1775,6 +1775,10 @@ contract SymbolicCodeHash is Test {
         assert(target.codehash == bytes32(0));
         assert(address(0xCAFE).codehash == bytes32(0));
         assert(address(vm).codehash == keccak256(abi.encodePacked(address(vm))));
+
+        // `vm.etch` replaces the code hash of the cheatcode account too.
+        vm.etch(address(vm), hex"6000");
+        assert(address(vm).codehash == keccak256(hex"6000"));
     }
 }
 "#,

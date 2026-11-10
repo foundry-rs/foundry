@@ -2689,8 +2689,10 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
         address: Address,
     ) -> Result<SymExpr, SymbolicError> {
-        // Cheatcode accounts keep Forge's fixed code hash, not the hash of their stub code.
+        // Cheatcode accounts keep Forge's fixed code hash, not the hash of their stub code,
+        // until `vm.etch` or a self-destruct writes their code.
         if (address == CHEATCODE_ADDRESS || address == SYMBOLIC_VM_COMPAT_ADDRESS)
+            && !self.written_code.contains(&address)
             && let Some(account) = executor
                 .backend
                 .basic(address)
