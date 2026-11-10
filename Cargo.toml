@@ -364,13 +364,13 @@ evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "445ffd5db1fca4884cdbff
 evm2-inspectors = { git = "https://github.com/alloy-rs/evm2", rev = "445ffd5db1fca4884cdbff7f89b59edebf4142ce", features = [
     "serde",
 ] }
-# Tempo `main` at `405b773` (tempoxyz/tempo#9086), using upstream reth and evm2.
-tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "405b773789f98b7042fb2a8bc20979da04b72617", default-features = false }
-tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "405b773789f98b7042fb2a8bc20979da04b72617", default-features = false, features = [
+# Tempo `main` at `e178401` (tempoxyz/tempo#9141), using upstream reth and evm2.
+tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "e1784015779f9aaec0520455c4fa8fb40781d31f", default-features = false }
+tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "e1784015779f9aaec0520455c4fa8fb40781d31f", default-features = false, features = [
     "serde",
     "std",
 ] }
-tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "405b773789f98b7042fb2a8bc20979da04b72617", default-features = false }
+tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "e1784015779f9aaec0520455c4fa8fb40781d31f", default-features = false }
 # Op, Base and Monad evm2 type families, on foundry-rs/evm2-networks main.
 op-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "ea2b6fbdbc77427464f0307b5a0f67789b7cd3ef", default-features = false }
 base-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "ea2b6fbdbc77427464f0307b5a0f67789b7cd3ef", default-features = false }
@@ -424,9 +424,6 @@ op-alloy-consensus = "2.0.0"
 op-alloy-network = "2.0.0"
 op-alloy-rpc-types = "2.0.0"
 op-alloy-flz = "0.13.1"
-
-# revm
-revm = { version = "43.0.2", default-features = false }
 
 ## cli
 anstream = "1.0"
@@ -543,12 +540,12 @@ mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "fa51e6ae93197aadc16cb
     "reqwest-rustls-tls",
     "ws",
 ] }
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "405b773789f98b7042fb2a8bc20979da04b72617", default-features = false, features = [
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "e1784015779f9aaec0520455c4fa8fb40781d31f", default-features = false, features = [
     "serde",
 ] }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "405b773789f98b7042fb2a8bc20979da04b72617", default-features = false }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "405b773789f98b7042fb2a8bc20979da04b72617" }
-tempo-dkg-onchain-artifacts = { git = "https://github.com/tempoxyz/tempo", rev = "405b773789f98b7042fb2a8bc20979da04b72617", default-features = false }
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "e1784015779f9aaec0520455c4fa8fb40781d31f", default-features = false }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "e1784015779f9aaec0520455c4fa8fb40781d31f" }
+tempo-dkg-onchain-artifacts = { git = "https://github.com/tempoxyz/tempo", rev = "e1784015779f9aaec0520455c4fa8fb40781d31f", default-features = false }
 
 # Tempo consensus certificate primitives.
 commonware-codec = { version = "=2026.10.0", default-features = false }

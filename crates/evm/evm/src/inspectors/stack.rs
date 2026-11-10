@@ -468,8 +468,10 @@ pub struct InspectorStackInner {
     env_handoff_ended: bool,
     /// Accounts the running top-level transaction created, directly or through isolated calls.
     tx_created: AddressSet,
-    /// Existing accounts the running `executeTransaction` transaction self-destructed, captured
-    /// when its root frame ends, before the transaction destroys them.
+    /// Accounts the running nested transaction, from `executeTransaction` or an isolated call,
+    /// self-destructed, including the ones it created. Captured when its root frame ends, before
+    /// the transaction destroys them. An isolated call that replaces the running state, such as by
+    /// switching forks, still destroys them at once.
     executed_destructs: Option<AddressMap<DestructedAccount>>,
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
@@ -1423,6 +1425,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         } else {
             Vec::new()
         };
+        // The accounts the call self-destructs keep their state until the running transaction ends,
+        // unless the call replaces the running state, such as by switching forks.
+        let outer_destructs = self.inner.executed_destructs.replace(AddressMap::default());
         child.set_inspector(InspectorStackRefMut {
             cheatcodes: self.cheatcodes.as_deref_mut(),
             inner: &mut *self.inner,
@@ -1431,6 +1436,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let executed = child.transact(&tx).map(|executed| executed.detach());
         // SAFETY: The nested EVM runs over the lifecycle's owned databases.
         let mut child = unsafe { release_inspector(child) };
+        let destructed = mem::replace(&mut self.inner.executed_destructs, outer_destructs);
         self.inner.isolated_source_fork = previous_source_fork;
         if !persistent_warmth.is_empty() {
             backend.backend_mut().restore_persistent_warmth(persistent_warmth);
@@ -1475,7 +1481,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             executed
                 .pending_state
                 .account_changes()
-                .filter(|change| change.created && change.current.is_some())
+                // A created account the call self-destructed is kept until the running
+                // transaction ends.
+                .filter(|change| {
+                    change.created && (change.current.is_some() || change.selfdestructed)
+                })
                 .map(|change| change.address),
         );
 
@@ -1544,12 +1554,18 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 warm_nested(evm.state_mut(), &executed.pending_state, warm, &cold).is_ok()
             })
         } else {
-            let merged = merge_pending_changes(evm.state_mut(), &executed.pending_state)
-                .and_then(|()| {
-                    let warm = nested_warmth(child.state_mut(), &executed.pending_state);
-                    warm_nested(evm.state_mut(), &executed.pending_state, warm, &cold)
-                })
-                .is_ok();
+            let merged = merge_pending_changes(
+                evm.state_mut(),
+                &executed.pending_state,
+                destructed.unwrap_or_default(),
+                |_| true,
+                None,
+            )
+            .and_then(|()| {
+                let warm = nested_warmth(child.state_mut(), &executed.pending_state);
+                warm_nested(evm.state_mut(), &executed.pending_state, warm, &cold)
+            })
+            .is_ok();
             // Keep cheatcode block changes and network extension state from the nested EVM.
             evm.set_block(*child.block());
             evm.ext_mut().replace_while_executing(child.ext().clone());
@@ -1613,8 +1629,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
     }
 
-    /// Captures the accounts an `executeTransaction` transaction self-destructed when its root
-    /// frame ends, before the transaction destroys them. See [`destructed_accounts`].
+    /// Captures the accounts a nested transaction self-destructed, including the ones it created,
+    /// when its root frame ends, before the transaction destroys them. See
+    /// [`destructed_accounts`].
     fn capture_executed_destructs(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
         if let Some(destructs) = &mut self.inner.executed_destructs {
             match destructed_accounts(interp.host().state_mut()) {
