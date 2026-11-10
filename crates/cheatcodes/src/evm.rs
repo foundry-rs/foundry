@@ -2111,13 +2111,17 @@ pub(crate) fn append_storage_access(
         // Three cases to consider:
         // 1. If there hasn't been a context switch since the start of this context, then add the
         //    storage access to the current context record.
-        // 2. If there's an existing Resume record, then add the storage access to it.
+        // 2. If there's an existing Resume record for this context, then add the storage access to
+        //    it. A deeper Resume record belongs to a subcall that already returned.
         // 3. Otherwise, create a new Resume record based on the current context.
         if last.len() == 1 {
             last.first_mut().unwrap().storageAccesses.push(storage_access);
         } else {
+            let depth = last.first().unwrap().depth;
             let last_record = last.last_mut().unwrap();
-            if last_record.kind as u8 == crate::Vm::AccountAccessKind::Resume as u8 {
+            if last_record.kind as u8 == crate::Vm::AccountAccessKind::Resume as u8
+                && last_record.depth == depth
+            {
                 last_record.storageAccesses.push(storage_access);
             } else {
                 let entry = last.first().unwrap();
