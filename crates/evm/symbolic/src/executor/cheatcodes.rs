@@ -593,6 +593,7 @@ impl SymbolicExecutor {
     /// Reverts a cheatcode call whose arguments Forge rejects. A check on symbolic arguments
     /// forks the path: the reverting branch completes here and the valid branch continues into
     /// the cheatcode.
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn branch_cheatcode_argument_check_if_needed(
         &mut self,
         state: &mut PathState,
