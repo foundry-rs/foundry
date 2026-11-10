@@ -1088,7 +1088,32 @@ impl SymbolicExecutor {
                     constrained_bytes_at(&mut self.cx, state, &bytes, 0, len)
                 });
             let outcome = match pinned_input {
-                Some(pinned) => execute_precompile(&mut self.cx, code_address, &pinned, spec_id)?,
+                Some(pinned) => {
+                    let outcome = execute_precompile(&mut self.cx, code_address, &pinned, spec_id)?;
+                    // An earlier call over the same symbolic input keeps its opaque term, so tie
+                    // that term to the digest: repeated-call equality must survive the guard that
+                    // pinned the input.
+                    if let Some(concrete) = &outcome
+                        && let Ok(Some(symbolic)) = execute_symbolic_precompile(
+                            &mut self.cx,
+                            code_address,
+                            input,
+                            input_len,
+                            spec_id,
+                        )
+                        && symbolic.len_word == concrete.len_word
+                    {
+                        for idx in 0..concrete.len() {
+                            let modeled = symbolic.bytes.byte(&mut self.cx, idx);
+                            let actual = concrete.bytes.byte(&mut self.cx, idx);
+                            let equal = SymBoolExpr::eq(&mut self.cx, modeled, actual);
+                            if equal.as_const() != Some(true) {
+                                state.constraints.push(equal);
+                            }
+                        }
+                    }
+                    outcome
+                }
                 None => execute_symbolic_precompile(
                     &mut self.cx,
                     code_address,

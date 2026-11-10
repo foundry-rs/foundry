@@ -174,6 +174,16 @@ contract SymbolicPrecompileInput {
             );
         }
     }
+
+    // The first call stays an opaque term; the guard pins the second one to a digest.
+    function checkPinnedHashMatchesEarlierCall(uint256 a) public pure {
+        bytes32 first = sha256(abi.encode(a));
+        bytes20 firstRipemd = ripemd160(abi.encode(a));
+        if (a == 1) {
+            assert(first == sha256(abi.encode(a)));
+            assert(firstRipemd == ripemd160(abi.encode(a)));
+        }
+    }
 }
 "#,
     );
@@ -187,11 +197,12 @@ contract SymbolicPrecompileInput {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 3 tests for test/SymbolicPrecompileInput.t.sol:SymbolicPrecompileInput
+Ran 4 tests for test/SymbolicPrecompileInput.t.sol:SymbolicPrecompileInput
 [PASS] checkPinnedHashInput(uint256) ([METRICS])
+[PASS] checkPinnedHashMatchesEarlierCall(uint256) ([METRICS])
 [PASS] checkSymbolicEcrecoverDeterminism(bytes32,uint8,bytes32,bytes32) ([METRICS])
 [PASS] checkSymbolicHashDeterminism(bytes) ([METRICS])
-Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
