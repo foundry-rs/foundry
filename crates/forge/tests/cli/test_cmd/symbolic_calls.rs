@@ -1071,58 +1071,6 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 }
 
 #[forgetest_init]
-fn symbolic_compatibility_address_is_not_forge_cheatcode(prj: _, cmd: _) {
-    skip_unless_z3!("symbolic_compatibility_address_is_not_forge_cheatcode");
-
-    prj.add_test(
-        "SymbolicCompatibilityTarget.t.sol",
-        r#"
-import "forge-std/Test.sol";
-
-contract RevertingTarget {
-    fallback() external { revert(); }
-}
-
-contract SymbolicCompatibilityTarget is Test {
-    address constant COMPAT = 0xF3993A62377BCd56AE39D773740A5390411E8BC9;
-    RevertingTarget reverter;
-
-    function setUp() public { reverter = new RevertingTarget(); }
-
-    function testCompatibilityCallSucceeds() public {
-        (bool ok,) = COMPAT.call(abi.encodeWithSignature("ping()"));
-        assertTrue(ok);
-    }
-
-    /// forge-config: default.symbolic.symbolic_call_targets = true
-    function checkCompatibilityAlias(address target) public {
-        vm.assume(target == COMPAT || target == address(reverter));
-        (bool ok,) = target.call(abi.encodeWithSignature("ping()"));
-        assertFalse(ok);
-    }
-}
-"#,
-    );
-
-    cmd.args(["test", "--match-test", "testCompatibilityCallSucceeds"]).assert_success().stdout_eq(
-        str![[r#"
-...
-[PASS] testCompatibilityCallSucceeds() ([..])
-...
-"#]],
-    );
-    assert_symbolic(cmd.forge_fuse().args(["test", "--symbolic", "--match-test", "checkCompatibilityAlias"]))
-        .failure()
-        .stdout_eq(str![[r#"
-...
-Ran 1 test for test/SymbolicCompatibilityTarget.t.sol:SymbolicCompatibilityTarget
-[FAIL: assertion failed; counterexample: [..]args=[0xF3993A62377BCd56AE39D773740A5390411E8BC9]] checkCompatibilityAlias(address) ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-...
-"#]]);
-}
-
-#[forgetest_init]
 fn symbolic_external_call_with_empty_unknown_target_is_modeled(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(

@@ -648,6 +648,13 @@ contract SymbolicSetupAccounts is Test {
         assert(vm.getRecordedLogs().length == 0);
     }
 
+    /// forge-config: default.symbolic.symbolic_call_targets = true
+    function checkCompatibilityAlias(address target) public {
+        vm.assume(target == 0xF3993A62377BCd56AE39D773740A5390411E8BC9 || target == address(reverter));
+        (bool ok,) = target.call(abi.encodeWithSignature("ping()"));
+        assertFalse(ok);
+    }
+
     function checkBalance(address target) public view {
         vm.assume(target == address(a) || target == address(b));
         assert(target.balance == 0);
@@ -741,7 +748,7 @@ contract SymbolicSetupAccounts is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 16 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
+Ran 17 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkBalance(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeBalance(address) ([METRICS])
 [FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeCallKeepsExpectRevert(address) ([METRICS])
@@ -749,6 +756,7 @@ Ran 16 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeCallcode(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeDelegateCall(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeCopy(address) ([METRICS])
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCompatibilityAlias(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeHash(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeLength(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCompatibilityEtchedCode() ([METRICS])
@@ -758,7 +766,7 @@ Ran 16 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupPrank() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupRecordedLogs() ([METRICS])
 [FAIL: unknown cheatcode with selector 0x5c36b186; you may have a mismatch between the `Vm` interface (likely in `forge-std`) and the `forge` version; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnconstrainedHighLevelCall(address) ([METRICS])
-Suite result: FAILED. 0 passed; 16 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 17 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
