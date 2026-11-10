@@ -734,7 +734,7 @@ impl SymbolicExecutor {
     pub(super) fn take_loop_jump(
         &self,
         state: &mut PathState,
-        jumpdests: &JumpTable,
+        code: &SymCode,
         source_pc: usize,
         dest: usize,
     ) -> bool {
@@ -750,7 +750,7 @@ impl SymbolicExecutor {
             .stack
             .iter()
             .filter_map(|word| word.as_const().and_then(|word| usize::try_from(word).ok()))
-            .filter(|pc| jumpdests.is_valid(*pc))
+            .filter(|pc| code.is_valid_jumpdest(*pc).is_ok_and(|valid| valid))
             .collect();
         let count = state.loop_jumps.entry((dest, return_pcs)).or_default();
         if *count >= bound {

@@ -1105,7 +1105,7 @@ impl SymbolicExecutor {
                     state.return_data = SymReturnData::empty(&mut self.cx);
                     return Ok(StepOutcome::ExceptionalHalt);
                 };
-                if !self.take_loop_jump(state, jumpdests, state.pc, dest) {
+                if !self.take_loop_jump(state, code, state.pc, dest) {
                     return Ok(StepOutcome::AssumeRejected);
                 }
                 state.pc = dest;
@@ -1125,7 +1125,7 @@ impl SymbolicExecutor {
                             state.return_data = SymReturnData::empty(&mut self.cx);
                             return Ok(StepOutcome::ExceptionalHalt);
                         };
-                        if !self.take_loop_jump(state, jumpdests, state.pc, dest) {
+                        if !self.take_loop_jump(state, code, state.pc, dest) {
                             return Ok(StepOutcome::AssumeRejected);
                         }
                         state.pc = dest;
@@ -1172,7 +1172,7 @@ impl SymbolicExecutor {
                         false_state.pc = fallthrough;
 
                         let true_pending =
-                            self.take_loop_jump(&mut true_state, jumpdests, fallthrough, dest);
+                            self.take_loop_jump(&mut true_state, code, fallthrough, dest);
                         if true_pending {
                             true_state.defer_feasibility_check();
                         }
