@@ -2716,6 +2716,15 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
         address: Address,
     ) -> Result<SymExpr, SymbolicError> {
+        // Cheatcode accounts keep Forge's fixed code hash, not the hash of their stub code.
+        if (address == CHEATCODE_ADDRESS || address == SYMBOLIC_VM_COMPAT_ADDRESS)
+            && let Some(account) = executor
+                .backend
+                .basic(address)
+                .map_err(|err| SymbolicError::Backend(err.to_string()))?
+        {
+            return Ok(SymExpr::constant(cx, account.code_hash.into()));
+        }
         if self.destroyed_accounts.contains(&address) {
             return Ok(SymExpr::zero(cx));
         }

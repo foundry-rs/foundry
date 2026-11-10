@@ -475,7 +475,7 @@ contract SymbolicExtcodeHash is Test {
 
         bytes32 expected = who == coded
             ? keccak256(hex"60006000")
-            : who == address(vm) ? keccak256(hex"00") : bytes32(0);
+            : who == address(vm) ? keccak256(abi.encodePacked(address(vm))) : bytes32(0);
         assertEq(who.codehash, expected);
     }
 
@@ -1674,6 +1674,7 @@ contract SymbolicCodeHash is Test {
         assert(target.code.length == 0);
         assert(target.codehash == bytes32(0));
         assert(address(0xCAFE).codehash == bytes32(0));
+        assert(address(vm).codehash == keccak256(abi.encodePacked(address(vm))));
     }
 }
 "#,
