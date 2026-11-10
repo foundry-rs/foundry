@@ -6600,7 +6600,6 @@ dependencies = [
  "op-alloy-rpc-types",
  "op-evm2",
  "parking_lot 0.12.5",
- "revm 43.0.3",
  "serde",
  "serde_json",
  "tempo-alloy 1.16.0",
