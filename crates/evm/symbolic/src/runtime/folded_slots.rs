@@ -3,12 +3,14 @@
 //! With the optimizer on, solc folds the slot of a mapping entry at a constant key,
 //! `keccak256(abi.encode(key, slot))`, into one `PUSH32`. The engine treats a constant slot as a
 //! hash only when it knows a preimage, so the folded slot would otherwise count as a fixed slot
-//! that a write through a symbolic key never reaches. Before a run, the mapping roots in the
-//! storage layout of each deployed contract are hashed with every candidate key: the source
-//! literals and the contract's `PUSH` immediates. The nested level of a nested mapping is a
-//! product over the keys, so it is searched only when the run accesses a large constant slot that
-//! the contract's code pushes, and only the match is recorded. A registered preimage is a real one,
-//! so this adds no unsoundness; constants that no candidate produces, such as ERC-1967 and ERC-7201
+//! that a write through a symbolic key never reaches. A mapping entry that `setUp` wrote is such a
+//! constant slot in the backend, and a read through a symbolic key only selects it with a known
+//! preimage. Before a run, the mapping roots in the storage layout of each deployed contract are
+//! hashed with every candidate key: the source literals, the addresses of the backend's accounts,
+//! and the contract's `PUSH` immediates. The nested level of a nested mapping is a product over
+//! the keys, so it is searched only when the run accesses a large constant slot that the
+//! contract's code pushes, and only the match is recorded. A registered preimage is a real one, so
+//! this adds no unsoundness; constants that no candidate produces, such as ERC-1967 and ERC-7201
 //! roots, stay fixed slots.
 
 use super::*;
@@ -43,7 +45,7 @@ impl FoldedSlots {
     ) -> Self {
         let mut folded = Self::default();
         let Some(known_contracts) = executor.known_contracts else { return folded };
-        let literals = executor
+        let mut candidates = executor
             .literals
             .map(|literals| {
                 literals
@@ -55,6 +57,8 @@ impl FoldedSlots {
                     .collect::<HashSet<U256>>()
             })
             .unwrap_or_default();
+        // `setUp` often keys entries by deployed accounts, such as the test contract.
+        candidates.extend(executor.account_addresses.iter().map(|&address| address_word(address)));
         for &address in &executor.account_addresses {
             if let Ok(Some(account)) = executor.backend.basic(address)
                 && let Some(code) = &account.code
@@ -64,7 +68,7 @@ impl FoldedSlots {
                 && let Some(layout) = &contract.storage_layout
             {
                 let constants = push_immediates(code.original_byte_slice()).collect::<HashSet<_>>();
-                let mut keys = literals.clone();
+                let mut keys = candidates.clone();
                 keys.extend(constants.iter().copied());
                 let mut keys = keys.into_iter().collect::<Vec<_>>();
                 keys.sort_unstable();
