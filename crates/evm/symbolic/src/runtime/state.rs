@@ -1015,6 +1015,7 @@ impl PathState {
         } else {
             match self.prank.persistent_caller.clone() {
                 Some((caller, caller_word)) => {
+                    self.prank.persistent_used = true;
                     (caller, caller_word, self.prank.persistent_origin.clone())
                 }
                 None => {
@@ -1838,6 +1839,8 @@ pub(crate) struct SymbolicPrank {
     next_origin: Option<(Address, SymExpr)>,
     persistent_caller: Option<(Address, SymExpr)>,
     persistent_origin: Option<(Address, SymExpr)>,
+    /// Whether a call used the `vm.startPrank` caller.
+    persistent_used: bool,
 }
 
 impl SymbolicPrank {
@@ -1857,6 +1860,23 @@ impl SymbolicPrank {
     ) {
         self.persistent_caller = Some(caller);
         self.persistent_origin = origin;
+        self.persistent_used = false;
+    }
+
+    /// Returns Forge's error for a `vm.prank` or `vm.startPrank` (`persistent`) that would
+    /// replace the active prank.
+    pub(crate) const fn overwrite_error(&self, persistent: bool) -> Option<&'static str> {
+        if self.next_caller.is_some() || (self.persistent_caller.is_some() && !self.persistent_used)
+        {
+            Some("cannot overwrite a prank until it is applied at least once")
+        } else if self.persistent_caller.is_some() && !persistent {
+            Some(
+                "cannot override an ongoing prank with a single vm.prank; use vm.startPrank to \
+                 override the current prank",
+            )
+        } else {
+            None
+        }
     }
 
     pub(crate) const fn has_active(&self) -> bool {
