@@ -59,6 +59,7 @@ mod consts;
 mod executor;
 mod runtime;
 
+pub use consts::SYMBOLIC_VM_COMPAT_ADDRESS;
 pub(crate) use consts::*;
 pub use runtime::{ExecutorView, SymbolicBranchTarget, SymbolicError, SymbolicRunInput};
 
@@ -154,6 +155,8 @@ pub enum SymbolicRunResult {
         args: Vec<DynSolValue>,
         /// ABI-encoded calldata for the failing invocation.
         calldata: Bytes,
+        /// Return data of each `svm.*` helper call on the failing path, in call order.
+        svm_returns: Vec<Bytes>,
         /// Execution counters collected before the counterexample was returned.
         stats: SymbolicStats,
     },
@@ -175,6 +178,9 @@ pub struct SymbolicConcreteInput {
     pub args: Vec<DynSolValue>,
     /// ABI-encoded calldata for replay.
     pub calldata: Bytes,
+    /// Return data of each `svm.*` helper call on the path, in call order, which replay must
+    /// answer these calls with.
+    pub svm_returns: Vec<Bytes>,
 }
 
 /// Result of best-effort symbolic exploration toward one branch target.

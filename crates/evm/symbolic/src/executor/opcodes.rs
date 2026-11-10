@@ -216,6 +216,7 @@ impl SymbolicExecutor {
             parent.constraints = std::mem::take(&mut outcome.state.constraints);
             parent.witness_preferences = std::mem::take(&mut outcome.state.witness_preferences);
             parent.next_symbol = outcome.state.next_symbol;
+            parent.svm_returns = std::mem::take(&mut outcome.state.svm_returns);
             parent.storage_load_hooks = std::mem::take(&mut outcome.state.storage_load_hooks);
             parent.storage_store_hooks = std::mem::take(&mut outcome.state.storage_store_hooks);
             parent.mapping_storage_store_hooks =

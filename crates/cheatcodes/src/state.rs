@@ -1,7 +1,7 @@
 //! Cheatcode state shared by both execution engines.
 
 use crate::{
-    CheatcodeAnalysis, CheatsConfig, ExpectedCallTracker, Wallets,
+    CheatcodeAnalysis, CheatsConfig, Error, ExpectedCallTracker, Wallets,
     evm::mock::{MockCallDataContext, MockCallReturnData},
     inspector::ArbitraryStorage,
 };
@@ -146,6 +146,30 @@ impl CheatcodesCore {
     /// Used by `setArbitraryStorage` cheatcode to track addresses with arbitrary storage.
     pub fn arbitrary_storage(&mut self) -> &mut ArbitraryStorage {
         self.arbitrary_storage.get_or_insert_with(ArbitraryStorage::default)
+    }
+
+    /// Answers the calls to `callee` with `returns` in order, and reverts every later call.
+    pub fn mock_call_sequence(&mut self, callee: Address, returns: &[Bytes]) {
+        // A mock repeats its last return, so two reverting ends show if a call reached the first.
+        let end = MockCallReturnData {
+            reverts: true,
+            data: Error::encode("mocked call sequence has no more returns"),
+        };
+        let queue = returns
+            .iter()
+            .map(|data| MockCallReturnData { reverts: false, data: data.clone() })
+            .chain([end.clone(), end])
+            .collect();
+        self.mocked_calls.entry(callee).or_default().insert(MockCallDataContext::default(), queue);
+    }
+
+    /// Returns whether a call to `callee` ran past the returns of [`Self::mock_call_sequence`],
+    /// or the sequence was cleared.
+    pub fn mock_call_sequence_exhausted(&self, callee: Address) -> bool {
+        self.mocked_calls
+            .get(&callee)
+            .and_then(|mocks| mocks.get(&MockCallDataContext::default()))
+            .is_none_or(|queue| queue.len() < 2)
     }
 }
 
