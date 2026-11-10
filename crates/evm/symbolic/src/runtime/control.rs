@@ -29,6 +29,11 @@ pub(crate) enum CheatcodeOutcome {
     Continue(Vec<SymExpr>),
     ContinueData(SymReturnData),
     Revert(SymReturnData),
-    Fork { passing: Box<PathState>, failing: Box<Self> },
+    /// A failed assertion that may also pass: `passing` continues as a successful call, and the
+    /// current path fails the assertion, reverting with `revert` or setting the fail slot.
+    Fork {
+        passing: Box<PathState>,
+        revert: Option<SymReturnData>,
+    },
     Failure,
 }

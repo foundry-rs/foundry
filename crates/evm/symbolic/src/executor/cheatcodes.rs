@@ -18,7 +18,12 @@ impl SymbolicExecutor {
     ) -> Result<CheatcodeOutcome, SymbolicError> {
         let fail = pass.clone().not(&mut self.cx);
         match fail.as_const() {
-            Some(true) => return Ok(self.fail_assertion(executor, state, selector, args_offset)),
+            Some(true) => {
+                return Ok(match self.fail_assertion(executor, state, selector, args_offset) {
+                    Some(revert) => CheatcodeOutcome::Revert(revert),
+                    None => CheatcodeOutcome::Continue(Vec::new()),
+                });
+            }
             Some(false) => return Ok(CheatcodeOutcome::Continue(Vec::new())),
             None => {}
         }
@@ -26,31 +31,30 @@ impl SymbolicExecutor {
         let mut fail_constraints = state.constraints.clone();
         fail_constraints.push(fail);
         if self.is_sat_with_state(state, &fail_constraints)? {
+            // A caller can catch the failure, so the passing branch continues too. Its
+            // feasibility is checked when it is popped from the worklist.
             let mut passing = state.clone();
             passing.constraints.push(pass);
-            let passing_sat = self.is_sat_with_state(state, &passing.constraints)?;
+            passing.defer_feasibility_check();
             state.constraints = fail_constraints;
-            let failing = self.fail_assertion(executor, state, selector, args_offset);
-            return Ok(if passing_sat {
-                CheatcodeOutcome::Fork { passing: Box::new(passing), failing: Box::new(failing) }
-            } else {
-                failing
-            });
+            let revert = self.fail_assertion(executor, state, selector, args_offset);
+            return Ok(CheatcodeOutcome::Fork { passing: Box::new(passing), revert });
         }
 
         state.constraints.push(pass);
         Ok(CheatcodeOutcome::Continue(Vec::new()))
     }
 
-    /// Like Forge, a failed assertion reverts the cheatcode call, or sets the global fail slot
-    /// when `assertions_revert` is off. The test checks that slot when it ends.
+    /// Like Forge, a failed assertion reverts the cheatcode call with the returned data, or sets
+    /// the global fail slot when `assertions_revert` is off. The test checks that slot when it
+    /// ends.
     fn fail_assertion(
         &mut self,
         executor: &ExecutorView<'_>,
         state: &mut PathState,
         selector: [u8; 4],
         args_offset: Option<usize>,
-    ) -> CheatcodeOutcome {
+    ) -> Option<SymReturnData> {
         state.assertion_failed = true;
         if executor.assertions_revert {
             let message = match selector {
@@ -77,12 +81,12 @@ impl SymbolicExecutor {
                 self.defer_incomplete("symbolic assertion revert payload");
                 ASSERTION_FAILED_PREFIX.to_owned()
             };
-            return CheatcodeOutcome::Revert(error_string_return_data(&mut self.cx, &message));
+            return Some(error_string_return_data(&mut self.cx, &message));
         }
         let failed_slot = SymExpr::constant(&mut self.cx, GLOBAL_FAIL_SLOT);
         let one = SymExpr::one(&mut self.cx);
         state.world.sstore(CHEATCODE_ADDRESS, failed_slot, one);
-        CheatcodeOutcome::Continue(Vec::new())
+        None
     }
 
     /// Returns whether the path can end with the global fail slot set, keeping that case.
@@ -771,11 +775,15 @@ impl SymbolicExecutor {
     ) -> Result<CheatcodeOutcome, SymbolicError> {
         // Like Forge, a codeless callee gets the one-byte code `0x00`, so Solidity's extcodesize
         // check before a high-level call passes.
-        if let Some(address) = state.constrained_word(&mut self.cx, &callee).map(word_to_address)
-            && state.world.extcode(&mut self.cx, executor, address)?.is_empty()
-        {
-            let code = SymCode::concrete(&mut self.cx, vec![0]);
-            state.world.install_code(address, code);
+        match state.constrained_word(&mut self.cx, &callee).map(word_to_address) {
+            Some(address) => {
+                if state.world.extcode(&mut self.cx, executor, address)?.is_empty() {
+                    let code = SymCode::concrete(&mut self.cx, vec![0]);
+                    state.world.install_code(address, code);
+                }
+            }
+            // A symbolic callee may be codeless, and that check would prune a path Forge runs.
+            None => self.defer_incomplete("symbolic vm.mockCall callee"),
         }
         // Replace identical definitions in place to preserve mock precedence.
         if let Some(existing) = state.call_mocks.iter_mut().find(|mock| {

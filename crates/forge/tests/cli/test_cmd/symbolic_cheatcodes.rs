@@ -914,6 +914,18 @@ contract SymbolicVmAssert is Test {
             assert(keccak256(data) != keccak256(expected));
         }
     }
+
+    // A failed assertion fails the test even when the test then reverts.
+    function checkCaughtAssertThenRevert(uint256 x) public {
+        try vm.assertTrue(x != 7) {} catch {}
+        require(x != 7);
+    }
+
+    /// forge-config: default.assertions_revert = false
+    function checkSoftAssertThenRevert(uint256 x) public {
+        vm.assertTrue(x != 7);
+        require(x != 7);
+    }
 }
 
 contract SymbolicCaughtAssertionHandler is Test {
@@ -942,14 +954,16 @@ contract SymbolicCaughtAssertionInvariant is Test {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 6 tests for test/SymbolicVmAssert.t.sol:SymbolicVmAssert
+Ran 8 tests for test/SymbolicVmAssert.t.sol:SymbolicVmAssert
+[FAIL: EvmError: Revert; counterexample: 		[SENDER] [SENDER] calldata=0x91c2e0250000000000000000000000000000000000000000000000000000000000000007 args=[7]] checkCaughtAssertThenRevert(uint256) ([METRICS])
 [PASS] checkCaughtFailSlotStore(uint256) ([METRICS])
 [PASS] checkCaughtVmAssert(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x[..] args=[]] checkCustomPayload() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x[..] args=[[..]]] checkPassingBranchSurvives(uint256) ([METRICS])
+[FAIL: EvmError: Revert; counterexample: 		[SENDER] [SENDER] calldata=0xc20c2adc0000000000000000000000000000000000000000000000000000000000000007 args=[7]] checkSoftAssertThenRevert(uint256) ([METRICS])
 [FAIL: assertion failed: 42 == 42; counterexample: 		[SENDER] [SENDER] calldata=0xdaaeb166000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkVmAssert(uint256) ([METRICS])
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] calldata=0x8dbe55f80000000000000000000000000000000000000000000000000000000000000025 args=[37]] checkVmAssertAfterSymbolicAlloc(uint8) ([METRICS])
-Suite result: FAILED. 2 passed; 4 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 2 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
         .get_output()
@@ -4475,6 +4489,16 @@ contract SymbolicEmitter {
         emit Seen(who, id, value);
     }
 
+    // Emits `Seen(0xB0B, 7, 9)` with a data size of `size` bytes, then a mismatching log.
+    function fireSizedThenOther(uint8 size) external {
+        bytes memory data = abi.encode(uint256(9));
+        bytes32 topic = Seen.selector;
+        assembly {
+            log3(add(data, 32), size, topic, 0xB0B, 7)
+        }
+        emit Other(1);
+    }
+
     function fireAfterOther(address who, uint256 id, uint256 value) external {
         emit Other(1);
         emit Seen(who, id, value);
@@ -4520,14 +4544,15 @@ contract SymbolicExpectEmit is Test {
         emitter.fire(address(0xB0B), 7, 9);
     }
 
-    // Like Forge, the caught failure carries the mismatch message without an error selector.
-    function checkExpectEmitFailureHasForgeMessage(uint256) public {
+    // A log of symbolic size may meet the expectation, so a caught failure cannot prove the test.
+    // The caught failure also defers incomplete, so the reported reason pins the log size check.
+    function checkExpectEmitSymbolicLogSize(uint8 size) public {
         vm.expectEmit(true, true, false, true, address(emitter));
         emit Seen(address(0xB0B), 7, 9);
-        (bool ok, bytes memory data) = address(emitter).call(abi.encodeCall(emitter.fireOther, ()));
-        assertFalse(ok);
+        try emitter.fireSizedThenOther(size) {
+            assert(false);
+        } catch {}
         emitter.fire(address(0xB0B), 7, 9);
-        assertEq(data, abi.encode("Other != expected Seen"));
     }
 
     function checkExpectEmitCountOverloads(uint256) public {
@@ -4551,7 +4576,7 @@ contract SymbolicExpectEmit is Test {
 "#,
     );
 
-    let stdout = assert_symbolic_witness(cmd.args([
+    assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
         "--match-test",
@@ -4564,16 +4589,12 @@ Ran 6 tests for test/SymbolicExpectEmit.t.sol:SymbolicExpectEmit
 [PASS] checkExpectEmit(uint256) ([METRICS])
 [PASS] checkExpectEmitCountOverloads(uint256) ([METRICS])
 [FAIL: Other != expected Seen; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitFailsAtEndOfMismatchedCall(uint256) ([METRICS])
-[PASS] checkExpectEmitFailureHasForgeMessage(uint256) ([METRICS])
 [PASS] checkExpectEmitSkipsEarlierLogs(uint256) ([METRICS])
 [PASS] checkExpectEmitSymbolicEmitter(address) ([METRICS])
-Suite result: FAILED. 5 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit with symbolic log size] checkExpectEmitSymbolicLogSize(uint8) ([METRICS])
+Suite result: FAILED. 4 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
-"#]])
-    .get_output()
-    .stdout_lossy();
-
-    assert!(!stdout.contains("symbolic vm.expectEmit"), "{stdout}");
+"#]]);
 }
 
 #[forgetest_init]
@@ -8548,7 +8569,8 @@ contract SymbolicRecordAndEmitCount {
         store.setA(value);
     }
 
-    // Like Forge, the failed call keeps the expectation, so a later call can meet it.
+    // Like Forge, the failed call keeps the expectation, so a later call can meet it. The caught
+    // failure message is a placeholder, so the symbolic run is incomplete; the `test` run passes.
     function checkExpectEmitCaughtFailureKeepsExpectation(uint256 value) public {
         vm.expectEmit();
         emit Set(value);
@@ -8628,7 +8650,7 @@ contract SymbolicRecordAndEmitCount {
 Ran 22 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCount
 [PASS] checkExpectEmitAnonymousMatches(uint256) ([METRICS])
 [FAIL: use vm.expectEmitAnonymous to match anonymous events; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitAnonymousTemplate(uint256) ([METRICS])
-[PASS] checkExpectEmitCaughtFailureKeepsExpectation(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit failure message] checkExpectEmitCaughtFailureKeepsExpectation(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitFailureHasNoErrorSelector(uint256) ([METRICS])
 [FAIL: log != expected log; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitInLaterCall(uint256) ([METRICS])
 [FAIL: Set indexed topic count mismatch: expected 1, got 0; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitRequiresSameTopicCount(uint256) ([METRICS])
@@ -8648,7 +8670,7 @@ Ran 22 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCoun
 [PASS] checkExpectNoEmitUnderExpectRevert(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit with a pending expectation] checkQueuedExpectEmitFailsClosed(uint256) ([METRICS])
 [PASS] checkStopRecordKeepsAndPausesAccesses(uint256) ([METRICS])
-Suite result: FAILED. 10 passed; 12 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 9 passed; 13 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

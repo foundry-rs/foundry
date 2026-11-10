@@ -53,7 +53,6 @@ mod evm;
 pub use evm::{RecordAccess, prank::Prank};
 
 mod expected_emit;
-pub use expected_emit::unmatched_emit_message;
 
 mod external_storage;
 

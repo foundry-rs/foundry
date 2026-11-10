@@ -1,7 +1,5 @@
 use super::*;
-use alloy_primitives::{Log, LogData};
 use alloy_sol_types::{Revert, SolError, SolType, sol_data};
-use foundry_evm::inspectors::cheatcodes::unmatched_emit_message;
 
 impl SymbolicExecutor {
     pub(super) fn call(
@@ -650,7 +648,7 @@ impl SymbolicExecutor {
         // expectation when the revert reaches the top frame.
         if unmet_expected_emit {
             success = false;
-            return_data = self.unmet_expected_emit_return_data(executor, state);
+            return_data = self.unmet_expected_emit_return_data();
         }
         state.return_data = return_data;
         state.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;
@@ -762,12 +760,15 @@ impl SymbolicExecutor {
                         "symbolic vm.expectEmit count 0 with symbolic log size",
                     ));
                 }
-                None => SymBoolExpr::constant(&mut self.cx, false),
+                None => {
+                    // The log may still match, so its mismatch path alone cannot prove the test.
+                    self.defer_incomplete("symbolic vm.expectEmit with symbolic log size");
+                    SymBoolExpr::constant(&mut self.cx, false)
+                }
             };
             let (match_constraints, match_sat) =
                 self.constraints_with_condition(state, condition.clone())?;
             if !match_sat {
-                expected.record_mismatch(&log);
                 state.expected_emit = Some(expected);
                 state.record_log(log);
                 return Ok(StepOutcome::Continue);
@@ -776,9 +777,7 @@ impl SymbolicExecutor {
             if let Some(constraints) = self.constraints_for_condition(state, mismatch)? {
                 let mut mismatch_state = state.clone();
                 mismatch_state.constraints = constraints;
-                let mut pending = expected.clone();
-                pending.record_mismatch(&log);
-                mismatch_state.expected_emit = Some(pending);
+                mismatch_state.expected_emit = Some(expected.clone());
                 mismatch_state.record_log(log.clone());
                 worklist.push_back(mismatch_state);
             }
@@ -809,57 +808,13 @@ impl SymbolicExecutor {
     }
 
     /// Return data of a call that failed the pending `vm.expectEmit`: an ABI-encoded string
-    /// without an error selector, like Forge's `UnmetEmit`. When the last mismatching log is
-    /// fixed on this path, the string is the message Forge builds from it. A symbolic message
-    /// uses a placeholder and defers incomplete, so a caller that inspects it cannot prove a
+    /// without an error selector, like Forge's `UnmetEmit`. Forge's message depends on the logs,
+    /// so a placeholder stands in and defers incomplete: a caller that inspects it cannot prove a
     /// path, while an uncaught failure still gives a counterexample.
-    fn unmet_expected_emit_return_data(
-        &mut self,
-        executor: &ExecutorView<'_>,
-        state: &mut PathState,
-    ) -> SymReturnData {
-        let expected = state.expected_emit.as_ref().expect("an unmet expectation failed the call");
-        let message = match (expected.template(), expected.mismatch()) {
-            (Some(template), Some(actual)) => {
-                self.concrete_mismatch_message(executor, state, expected, template, actual)
-            }
-            _ => Some("log != expected log".to_string()),
-        };
-        let message = message.unwrap_or_else(|| {
-            self.defer_incomplete("symbolic expectEmit mismatch message");
-            "log != expected log".to_string()
-        });
-        SymReturnData::from_concrete_bytes(&mut self.cx, sol_data::String::abi_encode(&message))
-    }
-
-    /// Builds Forge's message for `actual` not matching `template`, when the values it reads are
-    /// fixed on this path.
-    fn concrete_mismatch_message(
-        &mut self,
-        executor: &ExecutorView<'_>,
-        state: &PathState,
-        expected: &ExpectedEmit,
-        template: &SymbolicLog,
-        actual: &SymbolicLog,
-    ) -> Option<String> {
-        let checks = expected.checks();
-        let anonymous = expected.is_anonymous();
-        let template_topics = state.concrete_log_topics(&mut self.cx, template)?;
-        let actual_topics = state.concrete_log_topics(&mut self.cx, actual)?;
-        let template_data = state.concrete_log_data(&mut self.cx, template)?;
-        let actual_data = state.concrete_log_data(&mut self.cx, actual)?;
-        let expected_emitter = match expected.emitter() {
-            Some(emitter) => Some(word_to_address(state.constrained_word(&mut self.cx, emitter)?)),
-            None => None,
-        };
-        Some(unmatched_emit_message(
-            || executor.signatures,
-            checks,
-            &LogData::new_unchecked(template_topics, template_data),
-            expected_emitter,
-            anonymous,
-            &Log::new_unchecked(actual.emitter(), actual_topics, actual_data),
-        ))
+    fn unmet_expected_emit_return_data(&mut self) -> SymReturnData {
+        self.defer_incomplete("symbolic vm.expectEmit failure message");
+        let message = sol_data::String::abi_encode("log != expected log");
+        SymReturnData::from_concrete_bytes(&mut self.cx, message)
     }
 
     /// Reverts the current frame with a `vm.expectEmit` failure, as Forge does for the emitting
@@ -972,12 +927,12 @@ impl SymbolicExecutor {
             }
 
             if to == CHEATCODE_ADDRESS
-                && let Some(concrete_in_offset) = concrete_in_offset
                 && let Some(outcome) = self.branch_assume_cheatcode_if_needed(
                     state,
                     worklist,
                     selector,
                     concrete_in_offset,
+                    symbolic_offset_input.as_ref(),
                     out_offset.clone(),
                     &out_size,
                 )?
@@ -1077,24 +1032,6 @@ impl SymbolicExecutor {
             } else {
                 Err(SymbolicError::Unsupported("symbolic cheatcode address"))
             };
-            let outcome = match outcome {
-                Ok(CheatcodeOutcome::Fork { mut passing, failing }) => {
-                    if let Some(memory) = &caller_memory {
-                        passing.memory = memory.clone();
-                    }
-                    let empty = SymReturnData::empty(&mut self.cx);
-                    complete_cheatcode_call(
-                        &mut self.cx,
-                        &mut passing,
-                        out_offset.clone(),
-                        &out_size,
-                        empty,
-                    )?;
-                    worklist.push_back(*passing);
-                    Ok(*failing)
-                }
-                outcome => outcome,
-            };
             if let Some(memory) = caller_memory {
                 state.memory = memory;
             }
@@ -1106,7 +1043,26 @@ impl SymbolicExecutor {
                     return Ok(StepOutcome::Continue);
                 }
                 CheatcodeOutcome::Failure => return Ok(StepOutcome::Failure),
-                CheatcodeOutcome::Fork { .. } => unreachable!("assertion fork is unwrapped"),
+                CheatcodeOutcome::Fork { mut passing, revert } => {
+                    // The cheatcode only read memory, so the passing branch gets the caller's.
+                    passing.memory = state.memory.clone();
+                    let empty = SymReturnData::empty(&mut self.cx);
+                    complete_cheatcode_call(
+                        &mut self.cx,
+                        &mut passing,
+                        out_offset.clone(),
+                        &out_size,
+                        empty,
+                    )?;
+                    worklist.push_back(*passing);
+                    match revert {
+                        Some(ret) => {
+                            revert_cheatcode_call(&mut self.cx, state, out_offset, &out_size, ret)?;
+                            return Ok(StepOutcome::Continue);
+                        }
+                        None => SymReturnData::from_words(&mut self.cx, Vec::new()),
+                    }
+                }
             };
 
             state.return_data = return_data;
@@ -1386,7 +1342,7 @@ impl SymbolicExecutor {
                 }
                 JoinedCallOutcome::ExceptionalHalt(mut parent) => {
                     parent.return_data = if parent.check_expected_emit_after_call(kind) {
-                        self.unmet_expected_emit_return_data(executor, &mut parent)
+                        self.unmet_expected_emit_return_data()
                     } else {
                         SymReturnData::empty(&mut self.cx)
                     };
@@ -1412,9 +1368,7 @@ impl SymbolicExecutor {
                         && parent.check_expected_emit_after_call(kind);
                     parent.return_data = match unmet_expected_revert {
                         Some(reason) => error_string_return_data(&mut self.cx, reason),
-                        None if unmet_expected_emit => {
-                            self.unmet_expected_emit_return_data(executor, &mut parent)
-                        }
+                        None if unmet_expected_emit => self.unmet_expected_emit_return_data(),
                         None => child.frame.return_data,
                     };
                     parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;

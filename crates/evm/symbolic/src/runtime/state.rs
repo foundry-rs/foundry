@@ -1120,23 +1120,6 @@ impl PathState {
         true
     }
 
-    /// Returns the topics of `log` when each is fixed on this path.
-    pub(crate) fn concrete_log_topics(
-        &self,
-        cx: &mut SymCx,
-        log: &SymbolicLog,
-    ) -> Option<Vec<B256>> {
-        log.topics.iter().map(|topic| self.constrained_word(cx, topic).map(B256::from)).collect()
-    }
-
-    /// Returns the data of `log` when its length and bytes are fixed on this path.
-    pub(crate) fn concrete_log_data(&self, cx: &mut SymCx, log: &SymbolicLog) -> Option<Bytes> {
-        let len = usize::try_from(self.constrained_word(cx, &log.data_len)?).ok()?;
-        let mut bytes = log.data.concrete_bytes(cx, "symbolic log data").ok()?;
-        bytes.truncate(len);
-        Some(bytes.into())
-    }
-
     pub(crate) fn expectations_satisfied(&self) -> bool {
         self.expected_revert.is_none()
             && self.expected_emit.as_ref().is_none_or(ExpectedEmit::is_forbidden)
@@ -1253,10 +1236,6 @@ impl SymbolicLog {
 
     pub(crate) fn has_topics(&self) -> bool {
         !self.topics.is_empty()
-    }
-
-    pub(crate) const fn emitter(&self) -> Address {
-        self.emitter
     }
 }
 
@@ -1696,9 +1675,6 @@ pub(crate) struct ExpectedEmit {
     depth: usize,
     /// Whether a call ended with the expectation unmet, which failed that call.
     failed: bool,
-    /// The last log checked against the template that did not match, which shapes the failure
-    /// message like Forge's `mismatch_error`.
-    mismatch: Option<SymbolicLog>,
 }
 
 impl ExpectedEmit {
@@ -1709,43 +1685,12 @@ impl ExpectedEmit {
         anonymous: bool,
         depth: usize,
     ) -> Self {
-        Self {
-            checks,
-            emitter,
-            remaining,
-            template: None,
-            anonymous,
-            depth,
-            failed: false,
-            mismatch: None,
-        }
+        Self { checks, emitter, remaining, template: None, anonymous, depth, failed: false }
     }
 
     /// Returns whether a call ended with this expectation unmet.
     pub(crate) const fn failed(&self) -> bool {
         self.failed
-    }
-
-    /// Records a log that was checked against the template and did not match. Like Forge, a
-    /// `count = 0` expectation records none.
-    pub(crate) fn record_mismatch(&mut self, log: &SymbolicLog) {
-        if !self.is_forbidden() {
-            self.mismatch = Some(log.clone());
-        }
-    }
-
-    pub(crate) const fn mismatch(&self) -> Option<&SymbolicLog> {
-        self.mismatch.as_ref()
-    }
-
-    pub(crate) const fn emitter(&self) -> Option<&SymExpr> {
-        self.emitter.as_ref()
-    }
-
-    /// Returns the checks in Forge's `[topic0, topic1, topic2, topic3, data]` order.
-    pub(crate) const fn checks(&self) -> [bool; 5] {
-        let [t0, t1, t2, t3] = self.checks.topics;
-        [t0, t1, t2, t3, self.checks.data]
     }
 
     /// Returns whether this expectation forbids logs matching its template (`count = 0`).

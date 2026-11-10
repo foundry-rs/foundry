@@ -28,12 +28,14 @@ impl SymbolicExecutor {
     /// Forks `vm.assume` and `vm.skip` as Forge runs them: the accepted branch continues, and the
     /// rejected branch reverts the cheatcode call, so a caller can catch the revert and the run
     /// is discarded only when it reaches the test frame.
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn branch_assume_cheatcode_if_needed(
         &mut self,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         selector: [u8; 4],
-        in_offset: usize,
+        in_offset: Option<usize>,
+        symbolic_offset_input: Option<&SymBytes>,
         out_offset: SymExpr,
         out_size: &BoundedCopySize,
     ) -> Result<Option<StepOutcome>, SymbolicError> {
@@ -41,7 +43,17 @@ impl SymbolicExecutor {
         if !skip && (selector != assumeCall::SELECTOR || state.invariant_predicate) {
             return Ok(None);
         }
-        let cond = state.memory.load_word(&mut self.cx, in_offset + 4)?;
+        // An input at a symbolic offset is decoded from a scratch memory that holds it at 0.
+        let scratch = symbolic_offset_input.map(|input| {
+            let mut scratch = SymMemory::default();
+            scratch.store_bytes(&mut self.cx, 0, input.clone());
+            scratch
+        });
+        let (memory, in_offset) = match &scratch {
+            Some(scratch) => (scratch, 0),
+            None => (&state.memory, in_offset.expect("cheatcode input offset is concrete")),
+        };
+        let cond = memory.load_word(&mut self.cx, in_offset + 4)?;
         let cond = cond.nonzero_bool(&mut self.cx);
         let accepted = if skip { cond.not(&mut self.cx) } else { cond };
         let revert_data = if !skip {
@@ -51,7 +63,7 @@ impl SymbolicExecutor {
             if selector == skip_1Call::SELECTOR {
                 let reason = read_abi_string_arg(
                     &mut self.cx,
-                    &state.memory,
+                    memory,
                     in_offset + 4,
                     1,
                     "symbolic vm.skip reason",
@@ -297,7 +309,13 @@ impl SymbolicExecutor {
             let mut reverted = state.clone();
             reverted.constraints = out_of_range_constraints;
             let revert = self.bound_revert_data(&reverted, &value, min_word, max_word, signed);
-            revert_cheatcode_call(&mut self.cx, &mut reverted, out_offset.clone(), out_size, revert)?;
+            revert_cheatcode_call(
+                &mut self.cx,
+                &mut reverted,
+                out_offset.clone(),
+                out_size,
+                revert,
+            )?;
             worklist.push_back(reverted);
         }
 

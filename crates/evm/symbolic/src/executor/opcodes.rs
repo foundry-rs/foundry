@@ -1567,6 +1567,11 @@ impl SymbolicExecutor {
         {
             return Ok(StepOutcome::AssumeRejected);
         }
+        // Like Forge, a test that reverts after a failed assertion fails, even when the assertion
+        // was caught or only set the fail slot.
+        if state.root_calldata.is_some() && state.assertion_failed {
+            return Ok(StepOutcome::Failure);
+        }
         // In `check*`/`prove*` tests, a `CheatcodeError` that reaches the top frame, such as an
         // unmet `vm.expectRevert`, is a failure. Invariant handlers treat it as a revert.
         // Match its selector independently of the memory address and the rest of the payload.
