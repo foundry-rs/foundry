@@ -50,6 +50,14 @@ impl SymbolicExecutor {
         // CREATE consumes the pending prank, so a later prank can replace it.
         let inherited_prank = state.callers();
         let (creator, creator_word, pranked_origin) = state.prank_for_next_call();
+        // The nonce and balance of a symbolic pranked creator would ignore the accounts it can
+        // alias.
+        if creator != state.address
+            && state.constrained_word(&mut self.cx, &creator_word).map(word_to_address)
+                != Some(creator)
+        {
+            return Err(SymbolicError::Unsupported("symbolic CREATE prank"));
+        }
 
         // A create beyond the call depth limit fails before it increments the creator's
         // nonce or transfers value. Concrete Forge settles a pending revert cheatcode against
@@ -85,16 +93,13 @@ impl SymbolicExecutor {
         let nonce = state.world.nonce(executor, creator)?;
         let (created_word, created) = match kind {
             CreateKind::Create => {
-                let nonce = SymExpr::constant(&mut self.cx, U256::from(nonce));
-                let word =
-                    compute_create_address_word(&mut self.cx, state, creator_word.clone(), nonce)?;
-                let address = state.address_or_symbolic_slot(&mut self.cx, word.clone());
-                (word, address)
+                let address = creator.create(nonce);
+                (SymExpr::constant(&mut self.cx, address_word(address)), address)
             }
             CreateKind::Create2 => create2_address_word(
                 &mut self.cx,
                 state,
-                &creator_word,
+                creator,
                 salt.expect("CREATE2 salt exists"),
                 &initcode,
             )?,

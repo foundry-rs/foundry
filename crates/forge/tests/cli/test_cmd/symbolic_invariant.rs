@@ -1896,6 +1896,42 @@ contract SymbolicStoppedPrankInvariant is Test {
     }
 }
 
+contract RevertingPrankingHandler {
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    SenderReporter reporter;
+    bool public violated;
+
+    constructor(SenderReporter reporter_) {
+        reporter = reporter_;
+    }
+
+    function arm() external {
+        VM.startPrank(address(0x777));
+        revert("boom");
+    }
+
+    function query() external {
+        if (reporter.who() == address(0x777)) violated = true;
+    }
+}
+
+contract SymbolicRevertedPrankInvariant is Test {
+    RevertingPrankingHandler handler;
+
+    function setUp() public {
+        handler = new RevertingPrankingHandler(new SenderReporter());
+        targetContract(address(handler));
+    }
+
+    // Concretely cheatcode state is not journaled, so a prank set by a reverted handler call
+    // stays with the handler. No fuzz runs, so only the symbolic phase can find it.
+    /// forge-config: default.symbolic.invariant_depth = 2
+    /// forge-config: default.invariant.runs = 0
+    function invariant_revertedPrankStaysWithHandler() public view {
+        assert(!handler.violated());
+    }
+}
+
 contract SymbolicConsumedPrankInvariant is Test {
     OneShotPrankingHandler handler;
 
@@ -2010,6 +2046,31 @@ Encountered 1 failing test in test/SymbolicHandlerPrankInvariant.t.sol:SymbolicS
 		[SENDER] [SENDER] calldata=stop() [ARGS]
 		[SENDER] [SENDER] calldata=query() [ARGS]
  invariant_stoppedPrankStaysStopped() ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_revertedPrankStaysWithHandler",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/SymbolicHandlerPrankInvariant.t.sol:SymbolicRevertedPrankInvariant
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 2, shrunk: 2)
+		[SENDER] [SENDER] calldata=arm() [ARGS]
+		[SENDER] [SENDER] calldata=query() [ARGS]
+ invariant_revertedPrankStaysWithHandler() ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
