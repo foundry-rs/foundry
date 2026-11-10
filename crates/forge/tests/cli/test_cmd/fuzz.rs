@@ -4829,6 +4829,36 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 }
 
+// Tests that a timed fuzz test is skipped instead of passed when its timeout expires before any
+// run.
+#[forgetest_init]
+fn test_fuzz_timeout_before_any_run(prj: _, cmd: _) {
+    prj.add_test(
+        "Contract.t.sol",
+        r#"
+contract FuzzTimeoutBeforeRunTest {
+    /// forge-config: default.fuzz.timeout = 0
+    function test_fuzz_fails(uint256 a) public pure {
+        require(a == 1, "fails for almost every input");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Contract.t.sol:FuzzTimeoutBeforeRunTest
+[SKIP: timeout reached before any run] test_fuzz_fails(uint256) (runs: 0, [AVG_GAS])
+Suite result: ok. 0 passed; 0 failed; 1 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
+
+"#]]);
+}
+
 #[forgetest_init]
 fn test_fuzz_fail_on_revert(prj: _, cmd: _) {
     prj.update_config(|config| {

@@ -195,6 +195,13 @@ impl SharedFuzzState {
             && self.total_runs.load(Ordering::Relaxed) < planned_runs
     }
 
+    /// Returns `true` if the timeout expired before any input was run or rejected.
+    fn timed_out_before_any_run(&self) -> bool {
+        self.timed_out.load(Ordering::Relaxed)
+            && self.total_runs.load(Ordering::Relaxed) == 0
+            && self.total_rejects.load(Ordering::Relaxed) == 0
+    }
+
     /// Returns true if the worker was able to claim the failure, false if failure was set by
     /// another worker
     fn try_claim_failure(&self, worker_id: usize) -> bool {
@@ -697,6 +704,9 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             if shared_state.interrupted(planned_runs) {
                 result.skipped = true;
                 result.reason = Some("interrupted".to_string());
+            } else if shared_state.timed_out_before_any_run() {
+                result.skipped = true;
+                result.reason = Some("timeout reached before any run".to_string());
             }
             result.traces = last_run_worker.traces.last().cloned();
             result.debug_bytecodes.clone_from(&last_run_worker.debug_bytecodes);

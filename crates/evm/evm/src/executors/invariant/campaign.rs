@@ -75,6 +75,8 @@ pub struct InvariantWorkerPlan {
 pub struct InvariantCampaignState {
     started_at: Instant,
     timed: bool,
+    /// Whether any worker executed a generated call, including in a partial run.
+    call_executed: AtomicBool,
     total_runs: AtomicU32,
     total_txs: AtomicU64,
     total_gas: AtomicU64,
@@ -99,6 +101,7 @@ impl InvariantCampaignState {
         Self {
             started_at,
             timed: timeout.is_some(),
+            call_executed: AtomicBool::new(false),
             total_runs: AtomicU32::new(0),
             total_txs: AtomicU64::new(0),
             total_gas: AtomicU64::new(0),
@@ -125,6 +128,21 @@ impl InvariantCampaignState {
     pub fn record_call(&self, gas_used: u64) {
         self.total_txs.fetch_add(1, Ordering::Relaxed);
         self.total_gas.fetch_add(gas_used, Ordering::Relaxed);
+    }
+
+    pub fn record_call_executed(&self) {
+        // Load first so the hot path does not keep writing the shared cache line.
+        if !self.call_executed.load(Ordering::Relaxed) {
+            self.call_executed.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Returns whether a timed campaign stopped before any worker completed a run or executed a
+    /// generated call.
+    pub fn timed_out_before_any_call(&self) -> bool {
+        self.timed
+            && self.total_runs.load(Ordering::Relaxed) == 0
+            && !self.call_executed.load(Ordering::Relaxed)
     }
 
     pub fn throughput_totals(&self) -> (u64, u64) {

@@ -56,8 +56,9 @@ pub struct InvariantFuzzTestResult {
     pub optimization_best_value: Option<I256>,
     /// For optimization mode: the call sequence that produced the best value.
     pub optimization_best_sequence: Vec<BasicTxDetails>,
-    /// Whether fail-fast or Ctrl-C stopped the campaign before its timeout or planned runs.
-    pub interrupted: bool,
+    /// Why an otherwise successful campaign is reported as skipped: fail-fast or Ctrl-C stopped
+    /// it before its timeout or planned runs, or its timeout expired before any call.
+    pub skip_reason: Option<&'static str>,
     /// Counters for the optional live symbolic worker.
     pub symbolic_live: Option<LiveInvariantStats>,
 }
@@ -103,7 +104,7 @@ impl InvariantFuzzTestResult {
             fork_block_number,
             optimization_best_value,
             optimization_best_sequence,
-            interrupted: false,
+            skip_reason: None,
             symbolic_live: None,
         }
     }

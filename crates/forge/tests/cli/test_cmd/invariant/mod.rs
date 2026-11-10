@@ -414,6 +414,92 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 }
 
+// Tests that a timed campaign still checks the initial state, and is skipped instead of passed
+// when its timeout expires before any call.
+#[forgetest_init]
+fn should_not_pass_timed_campaign_without_calls(prj: _, cmd: _) {
+    prj.add_test(
+        "TimeoutBeforeCallTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Counter {
+    uint256 public count;
+
+    function increment() public {
+        count++;
+    }
+}
+
+contract BrokenInitialStateTest is Test {
+    Counter counter;
+
+    function setUp() public {
+        counter = new Counter();
+        counter.increment();
+    }
+
+    /// forge-config: default.invariant.timeout = 0
+    function invariant_initial_state() public view {
+        // Runs long enough for the campaign deadline to be polled during the initial check.
+        uint256 sum;
+        for (uint256 i; i < 100; ++i) {
+            sum += counter.count();
+        }
+        require(sum == 0, "initial state broken");
+    }
+}
+
+contract NoCallTest is Test {
+    Counter counter;
+
+    function setUp() public {
+        counter = new Counter();
+    }
+
+    /// forge-config: default.invariant.timeout = 0
+    function invariant_no_call() public view {
+        require(counter.count() == 0, "counter changed");
+    }
+}
+     "#,
+    );
+
+    cmd.args(["test", "--mc", "BrokenInitialStateTest"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/TimeoutBeforeCallTest.t.sol:BrokenInitialStateTest
+[FAIL: initial state broken] invariant_initial_state() (runs: 0, calls: 0, reverts: 0)
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/TimeoutBeforeCallTest.t.sol:BrokenInitialStateTest
+[FAIL: initial state broken] invariant_initial_state() (runs: 0, calls: 0, reverts: 0)
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+...
+"#]]);
+
+    cmd.forge_fuse().args(["test", "--mc", "NoCallTest"]).assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/TimeoutBeforeCallTest.t.sol:NoCallTest
+[SKIP: timeout reached before any call] invariant_no_call() (runs: 0, calls: 0, reverts: 0)
+Suite result: ok. 0 passed; 0 failed; 1 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
+
+"#]]);
+}
+
 // Tests that selector hits are uniformly distributed
 // <https://github.com/foundry-rs/foundry/issues/2986>
 #[forgetest_init]
