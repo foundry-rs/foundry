@@ -2693,12 +2693,28 @@ contract SymbolicCheatcodeInputSize is Test {
         assertTrue(condition);
     }
 
-    // Forge fails to decode calldata shorter than the ABI arguments, so the call returns false.
+    // Forge fails to decode calldata shorter than the ABI arguments or with an unknown selector,
+    // so the call returns false with the decoder's error.
     function checkShortCheatcodeCallFails() public {
-        (bool ok,) = address(vm).call(abi.encodePacked(Vm.deal.selector, uint256(uint160(address(0xB0B)))));
+        (bool ok, bytes memory data) = address(vm).call(abi.encodePacked(vm.deal.selector, uint256(uint160(address(0xB0B)))));
         assertFalse(ok);
-        (ok,) = address(vm).call(abi.encodePacked(Vm.assume.selector, uint8(1)));
+        assertEq(
+            data,
+            abi.encodeWithSignature(
+                "CheatcodeError(string)", "ABI decoding failed: buffer overrun while deserializing"
+            )
+        );
+        (ok,) = address(vm).call(abi.encodePacked(vm.assume.selector, uint8(1)));
         assertFalse(ok);
+        (ok, data) = address(vm).call(hex"deadbeef");
+        assertFalse(ok);
+        assertEq(
+            data,
+            abi.encodeWithSignature(
+                "CheatcodeError(string)",
+                "unknown cheatcode with selector 0xdeadbeef; you may have a mismatch between the `Vm` interface (likely in `forge-std`) and the `forge` version"
+            )
+        );
     }
 }
 "#,

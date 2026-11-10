@@ -408,8 +408,9 @@ pub(crate) fn complete_cheatcode_call(
     Ok(())
 }
 
-/// Returns `return_data` from a failed cheatcode call, which Forge reports as the reverter.
-pub(crate) fn fail_cheatcode_call(
+/// Completes a cheatcode call that reverts with `return_data`, which can be the reverter of a
+/// pending `vm.expectRevert`.
+pub(crate) fn revert_cheatcode_call(
     cx: &mut SymCx,
     state: &mut PathState,
     out_offset: SymExpr,

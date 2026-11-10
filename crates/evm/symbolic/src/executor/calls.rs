@@ -841,10 +841,10 @@ impl SymbolicExecutor {
                 && let Some(concrete_in_offset) = concrete_in_offset
                 && let Ok(input) =
                     state.memory.read_concrete(&mut self.cx, concrete_in_offset, in_size)
-                && let Err(error) = Vm::VmCalls::abi_decode(&input)
+                && let Err(error) = decode_cheatcode_call(&input)
             {
                 let return_data = error_string_return_data(&mut self.cx, &error.to_string());
-                fail_cheatcode_call(&mut self.cx, state, out_offset, &out_size, return_data)?;
+                revert_cheatcode_call(&mut self.cx, state, out_offset, &out_size, return_data)?;
                 return Ok(StepOutcome::Continue);
             }
             if in_size < 4 {
@@ -945,7 +945,7 @@ impl SymbolicExecutor {
                     CheatcodeOutcome::Continue(ret) => SymReturnData::from_words(&mut self.cx, ret),
                     CheatcodeOutcome::ContinueData(ret) => ret,
                     CheatcodeOutcome::Revert(ret) => {
-                        fail_cheatcode_call(&mut self.cx, state, out_offset, &out_size, ret)?;
+                        revert_cheatcode_call(&mut self.cx, state, out_offset, &out_size, ret)?;
                         return Ok(StepOutcome::Continue);
                     }
                     CheatcodeOutcome::AssumeRejected => return Ok(StepOutcome::AssumeRejected),
