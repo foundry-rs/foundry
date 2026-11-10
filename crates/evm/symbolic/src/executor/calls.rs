@@ -939,6 +939,7 @@ impl SymbolicExecutor {
             if to == CHEATCODE_ADDRESS
                 && let Some(concrete_in_offset) = concrete_in_offset
                 && let Some(outcome) = self.branch_cheatcode_argument_check_if_needed(
+                    executor,
                     state,
                     worklist,
                     selector,

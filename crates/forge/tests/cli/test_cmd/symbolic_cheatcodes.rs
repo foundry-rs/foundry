@@ -263,6 +263,17 @@ contract SymbolicPrankSender is Test {
         assertEq(created.origin(), address(0xB));
     }
 
+    // EIP-2681: the pranked creator's nonce is at its limit, so the create fails.
+    function checkDeployCodeAtMaxNonce() public {
+        vm.setNonceUnsafe(address(0xA), type(uint64).max);
+        vm.prank(address(0xA));
+        try vm.deployCode("SymbolicPrankSender.t.sol:CreatedBySender") returns (address) {
+            assert(false);
+        } catch (bytes memory err) {
+            assertEq(err.length, 0);
+        }
+    }
+
     function checkCreateConsumesPrank() public {
         vm.prank(address(0xA));
         new SenderTarget();
@@ -290,9 +301,10 @@ contract SymbolicPrankSender is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 12 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
+Ran 13 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
 [PASS] checkCreateConsumesPrank() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCreateConsumesStartPrank() ([METRICS])
+[PASS] checkDeployCodeAtMaxNonce() ([METRICS])
 [PASS] checkDeployCodeConsumesPrank() ([METRICS])
 [PASS] checkPrankCreate() ([METRICS])
 [FAIL: vm.prank: cannot override an ongoing prank with a single vm.prank; use vm.startPrank to override the current prank; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkPrankRejectsOngoingStartPrankOverride() ([METRICS])
@@ -303,7 +315,7 @@ Ran 12 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
 [PASS] checkSymbolicPrankOrigin(address,address) ([METRICS])
 [PASS] checkSymbolicStartPrank(address) ([METRICS])
 [PASS] checkSymbolicStartPrankOrigin(address,address) ([METRICS])
-Suite result: FAILED. 8 passed; 4 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 9 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -2140,6 +2152,51 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]
         .unordered(),
     );
+}
+
+// Pre-Cancun, Forge rejects `blobBaseFee` before it checks the value's range.
+#[forgetest_init]
+fn symbolic_blob_base_fee_checks_hard_fork_first(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_blob_base_fee_checks_hard_fork_first");
+
+    prj.add_test(
+        "SymbolicPreCancunBlobBaseFee.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicPreCancunBlobBaseFee is Test {
+    function checkPreCancunBlobBaseFee() public {
+        (bool ok, bytes memory data) =
+            address(vm).call(abi.encodeCall(vm.blobBaseFee, (type(uint256).max)));
+        assertFalse(ok);
+        assertEq(
+            data,
+            abi.encodeWithSignature(
+                "CheatcodeError(string)",
+                "vm.blobBaseFee: `blobBaseFee` is not supported before the Cancun hard fork; see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
+            )
+        );
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--evm-version",
+        "shanghai",
+        "--match-test",
+        "checkPreCancunBlobBaseFee",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicPreCancunBlobBaseFee.t.sol:SymbolicPreCancunBlobBaseFee
+[PASS] checkPreCancunBlobBaseFee() ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
