@@ -179,9 +179,11 @@ contract SymbolicPrecompileInput {
     function checkPinnedHashMatchesEarlierCall(uint256 a) public pure {
         bytes32 first = sha256(abi.encode(a));
         bytes20 firstRipemd = ripemd160(abi.encode(a));
+        address firstSigner = ecrecover(bytes32(a), 27, bytes32(a), bytes32(a));
         if (a == 1) {
             assert(first == sha256(abi.encode(a)));
             assert(firstRipemd == ripemd160(abi.encode(a)));
+            assert(firstSigner == ecrecover(bytes32(a), 27, bytes32(a), bytes32(a)));
         }
     }
 }

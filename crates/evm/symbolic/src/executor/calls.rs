@@ -1085,15 +1085,18 @@ impl SymbolicExecutor {
                 .filter(|len| *len <= input.len())
                 .and_then(|len| {
                     let bytes = input.materialize(&mut self.cx);
+                    let symbolic = bytes[..len].iter().any(|byte| byte.as_const().is_none());
                     constrained_bytes_at(&mut self.cx, state, &bytes, 0, len)
+                        .map(|pinned| (pinned, symbolic))
                 });
             let outcome = match pinned_input {
-                Some(pinned) => {
+                Some((pinned, symbolic_input)) => {
                     let outcome = execute_precompile(&mut self.cx, code_address, &pinned, spec_id)?;
                     // An earlier call over the same symbolic input keeps its opaque term, so tie
-                    // that term to the digest: repeated-call equality must survive the guard that
-                    // pinned the input.
-                    if let Some(concrete) = &outcome
+                    // that term to the result: repeated-call equality must survive the guard that
+                    // pinned the input. A constant input has no such term.
+                    if symbolic_input
+                        && let Some(concrete) = &outcome
                         && let Ok(Some(symbolic)) = execute_symbolic_precompile(
                             &mut self.cx,
                             code_address,
@@ -1101,16 +1104,21 @@ impl SymbolicExecutor {
                             input_len,
                             spec_id,
                         )
-                        && symbolic.len_word == concrete.len_word
                     {
+                        let len_eq = SymBoolExpr::eq(
+                            &mut self.cx,
+                            symbolic.len_word.clone(),
+                            concrete.len_word.clone(),
+                        );
+                        let mut ties = vec![len_eq];
                         for idx in 0..concrete.len() {
                             let modeled = symbolic.bytes.byte(&mut self.cx, idx);
                             let actual = concrete.bytes.byte(&mut self.cx, idx);
-                            let equal = SymBoolExpr::eq(&mut self.cx, modeled, actual);
-                            if equal.as_const() != Some(true) {
-                                state.constraints.push(equal);
-                            }
+                            ties.push(SymBoolExpr::eq(&mut self.cx, modeled, actual));
                         }
+                        state.constraints.extend(
+                            ties.into_iter().filter(|equal| equal.as_const() != Some(true)),
+                        );
                     }
                     outcome
                 }
