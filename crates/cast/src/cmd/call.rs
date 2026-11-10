@@ -639,6 +639,7 @@ impl CallArgs {
             }
 
             let create2_deployer = evm_opts.create2_deployer;
+            let fork_prefetch = evm_opts.fork_prefetch;
             let mut fork = TracingExecutor::<FEN>::get_fork(&mut config, evm_opts).await?;
             // Modify settings usually set in eth_call while keeping execution gas bounded.
             fork.evm_env.set_feature(EvmFeatures::BLOCK_GAS_LIMIT_CHECK, false);
@@ -671,6 +672,7 @@ impl CallArgs {
                 create2_deployer,
                 state_overrides,
             )?;
+            executor.inspector_mut().fork_prefetch(fork_prefetch);
 
             let value = tx.value().unwrap_or_default();
             let input = tx.input().cloned().unwrap_or_default();

@@ -348,6 +348,7 @@ impl NodeArgs {
             .fork_request_retries(self.evm.fork_request_retries)
             .fork_retry_backoff(self.evm.fork_retry_backoff.map(Duration::from_millis))
             .fork_compute_units_per_second(compute_units_per_second)
+            .with_fork_prefetch(self.evm.fork_prefetch)
             .with_fork_urls(self.evm.fork_url.into_iter().map(|f| f.url).collect())
             .with_base_fee(self.evm.block_base_fee_per_gas)
             .disable_min_priority_fee(self.evm.disable_min_priority_fee)
@@ -651,6 +652,15 @@ pub struct AnvilEvmArgs {
         help_heading = "Fork config"
     )]
     pub compute_units_per_second: Option<u64>,
+
+    /// Prefetches the remote state of calls and transactions on the fork.
+    ///
+    /// Each call is simulated on the endpoint with `eth_createAccessList` and the accounts and
+    /// storage slots it touches are fetched in batches before the EVM reads them, so a cold call
+    /// costs a few round trips instead of one per slot. The simulations and batch requests count
+    /// against the endpoint's rate limit; a failed batch turns prefetching off.
+    #[arg(long, requires = "fork_url", help_heading = "Fork config")]
+    pub fork_prefetch: bool,
 
     /// Disables rate limiting for this node's provider.
     ///

@@ -12,8 +12,7 @@
 //! [`crate::backend::Backend`] layers RPC forks and Foundry's cheatcode policy on top of the
 //! lifecycle.
 
-use alloy_consensus::{SignableTransaction, Signed, transaction::SignerRecoverable};
-use alloy_eips::Typed2718;
+use alloy_consensus::{SignableTransaction, Signed, Transaction, transaction::SignerRecoverable};
 use alloy_network::Network;
 use alloy_primitives::Signature;
 use alloy_rlp::Decodable;
@@ -110,7 +109,7 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
     type Types: FoundryExecutionHooks
         + EvmTypesHost<
             SpecId: ExecutionSpec + Default + Debug + PartialEq + Send + Sync + Unpin,
-            Tx: Typed2718 + Clone + Debug + Send + Sync,
+            Tx: Transaction + Clone + Debug + Send + Sync,
             BlockEnvExt: Copy + Debug + Default + Send + Sync + 'static,
             EvmExt: FoundryEvmExt<<Self::Types as EvmTypesHost>::Tx>,
             TxResultExt: FoundryTxResultExt,

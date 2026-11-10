@@ -840,6 +840,12 @@ pub trait MaybeForkedDatabase {
     fn maybe_flush_cache(&self) -> Result<(), String>;
 
     fn maybe_inner(&self) -> Result<&BlockchainDb, String>;
+
+    /// Prefetches the remote state a call is about to read on a fork, see
+    /// [`ForkedDatabase::prefetch_call`](super::mem::fork_db::ForkedDatabase::prefetch_call).
+    /// Does nothing on a database without a fork.
+    fn maybe_prefetch_call(&self, _caller: Address, _target: Address, _value: U256, _input: Bytes) {
+    }
 }
 
 /// Anvil's mutable state database.

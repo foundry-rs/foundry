@@ -6,10 +6,19 @@
 //! read again at the new block through the fork backend, so the cache stays exact for that block.
 //! The cache file keeps only the keys the EVM then reads, so a wrong prediction only costs an RPC
 //! request and does not carry over to the next block.
+//!
+//! A call into fork contracts is predicted more precisely by simulating it on the fork's endpoint
+//! with `eth_createAccessList`, see [`prefetch_call`].
 
 use super::Fork;
+use crate::constants::CHEATCODE_ADDRESS;
 use alloy_network::Network;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{
+    Address, B256, Bytes, U256,
+    map::{B256HashMap, B256Map},
+};
+use alloy_rpc_types::{TransactionRequest, state::StateOverride};
+use evm2::{AccountInfo, bytecode::Bytecode, evm::Cache};
 use foundry_config::Config;
 use foundry_fork_db::{
     ForkBlockEnv, SharedBackend,
@@ -33,6 +42,13 @@ const MAX_CONCURRENT_REQUESTS: usize = 32;
 /// Largest number of accounts and slots to prefetch. Older cache files can hold the union of many
 /// runs; past this size, a prefetch can cost more requests than it saves.
 const MAX_KEYS: usize = 4096;
+
+/// Runtime code that returns one zero word, standing in for the cheatcode contract in a
+/// simulation on the fork's endpoint: `PUSH1 0x20 PUSH1 0x00 RETURN`.
+const CHEATCODE_STUB: Bytes = Bytes::from_static(&[0x60, 0x20, 0x60, 0x00, 0xf3]);
+
+/// Largest local state, in storage slots, sent as overrides with a simulated call.
+const MAX_OVERRIDE_SLOTS: usize = 8192;
 
 enum Key {
     Account(Address),
@@ -142,9 +158,118 @@ fn keys(db: &MemDb) -> Vec<Key> {
         .collect()
 }
 
+/// Collects the state of a fork that differs from its endpoint as overrides for a simulation on
+/// the endpoint, see [`SharedBackend::prefetch_access_list`].
+///
+/// The owner of the local state adds each account and its storage. Accounts and slots equal to
+/// what the fork loaded from the endpoint are left out, so the overrides hold contracts deployed
+/// locally, such as the test contract, and local changes to remote accounts, such as balances
+/// and storage set with cheatcodes. The cheatcode contract gets a stub that returns one zero
+/// word, so the simulation runs past most cheatcode calls.
+pub struct StateOverrideBuilder<'a> {
+    remote: &'a MemDb,
+    overrides: StateOverride,
+    slots: usize,
+}
+
+impl<'a> StateOverrideBuilder<'a> {
+    /// Starts overrides against `remote`, the state the fork loaded from its endpoint.
+    pub fn new(remote: &'a MemDb) -> Self {
+        Self { remote, overrides: StateOverride::default(), slots: 0 }
+    }
+
+    /// Adds the fields of `info` that differ from the remote account. The code comes from `info`
+    /// or, by its hash, from `contracts`.
+    pub fn account(&mut self, address: Address, info: &AccountInfo, contracts: &B256Map<Bytecode>) {
+        let remote_accounts = self.remote.accounts.read();
+        let remote = remote_accounts.get(&address);
+        let code = remote.is_none_or(|remote| remote.code_hash != info.code_hash).then(|| {
+            let code = info.code.as_ref().or_else(|| contracts.get(&info.code_hash));
+            code.map(Bytecode::original_bytes).unwrap_or_default()
+        });
+        let balance = remote.is_none_or(|remote| remote.balance != info.balance);
+        let nonce = remote.is_none_or(|remote| remote.nonce != info.nonce);
+        if code.is_some() || balance || nonce {
+            let account = self.overrides.entry(address).or_default();
+            account.code = code;
+            account.balance = balance.then_some(info.balance);
+            account.nonce = nonce.then_some(info.nonce);
+        }
+    }
+
+    /// Adds the slots of `address` that differ from the remote. If the storage was `cleared`,
+    /// `slots` replace the whole remote storage. Returns `None` when the local state is too
+    /// large to send.
+    pub fn storage<'s>(
+        &mut self,
+        address: Address,
+        slots: impl IntoIterator<Item = (&'s U256, &'s U256)>,
+        cleared: bool,
+    ) -> Option<()> {
+        let remote_storage = self.remote.storage.read();
+        let remote = remote_storage.get(&address).filter(|_| !cleared);
+        let slots = slots
+            .into_iter()
+            .filter(|&(slot, value)| remote.and_then(|remote| remote.get(slot)) != Some(value))
+            .map(|(slot, value)| (B256::from(*slot), B256::from(*value)))
+            .collect::<B256HashMap<_>>();
+        self.slots += slots.len();
+        if self.slots > MAX_OVERRIDE_SLOTS {
+            return None;
+        }
+        if cleared {
+            self.overrides.entry(address).or_default().state = Some(slots);
+        } else if !slots.is_empty() {
+            self.overrides.entry(address).or_default().state_diff = Some(slots);
+        }
+        Some(())
+    }
+
+    /// Returns the overrides, with the cheatcode stub.
+    pub fn build(mut self) -> StateOverride {
+        self.overrides.entry(CHEATCODE_ADDRESS).or_default().code = Some(CHEATCODE_STUB);
+        self.overrides
+    }
+}
+
+/// Returns the accepted state of a fork context that differs from the endpoint as overrides, see
+/// [`StateOverrideBuilder`]. Returns `None` when the local state is too large to send.
+pub fn state_override(remote: &MemDb, local: &Cache) -> Option<StateOverride> {
+    let mut overrides = StateOverrideBuilder::new(remote);
+    for (address, info) in &local.accounts {
+        // An absent account keeps its remote state; the simulation only predicts reads.
+        if let Some(info) = info {
+            overrides.account(*address, info, &local.contracts);
+        }
+    }
+    for (address, storage) in &local.storage {
+        overrides.storage(*address, &storage.slots, storage.wiped)?;
+    }
+    Some(overrides.build())
+}
+
+/// Simulates a call on the fork's endpoint and prefetches the state it touches, see
+/// [`SharedBackend::prefetch_access_list`]. Calls to precompiles are skipped.
+pub fn prefetch_call<N: Network, B: ForkBlockEnv>(
+    backend: &SharedBackend<N, B>,
+    caller: Address,
+    target: Address,
+    value: U256,
+    input: Bytes,
+    overrides: Option<StateOverride>,
+) {
+    if target <= Address::with_last_byte(0xff) {
+        return;
+    }
+    let tx = TransactionRequest::default().from(caller).to(target).value(value).input(input.into());
+    backend.prefetch_access_list(tx, overrides);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_rpc_types::state::AccountOverride;
+    use foundry_fork_db::cache::AccountInfo as RemoteAccountInfo;
 
     #[test]
     fn picks_newest_cache_file_below_block() {
@@ -158,5 +283,53 @@ mod tests {
         assert_eq!(previous_cache_file(&dir, 125), Some(dir.join("110")));
         assert_eq!(previous_cache_file(&dir, 90), None);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn overrides_hold_only_local_state() {
+        let (remote_account, local_contract) = (Address::with_last_byte(1), Address::random());
+        let remote = MemDb::default();
+        remote.accounts.write().insert(
+            remote_account,
+            RemoteAccountInfo { balance: U256::from(1), ..Default::default() },
+        );
+        remote
+            .storage
+            .write()
+            .insert(remote_account, [(U256::from(1), U256::from(1))].into_iter().collect());
+
+        // The remote account keeps its storage but gets a new balance and slot; a contract exists
+        // only locally.
+        let mut local = Cache::default();
+        let code = Bytecode::new_raw(Bytes::from_static(&[0x00]));
+        local
+            .accounts
+            .insert(remote_account, Some(AccountInfo::default().with_balance(U256::from(2))));
+        local.accounts.insert(local_contract, Some(AccountInfo::default().with_code(code)));
+        let slots = &mut local.storage.entry(remote_account).or_default().slots;
+        slots.extend([(U256::from(1), U256::from(1)), (U256::from(2), U256::from(2))]);
+
+        let overrides = state_override(&remote, &local).unwrap();
+        let remote_override = AccountOverride {
+            balance: Some(U256::from(2)),
+            state_diff: Some(
+                [(B256::from(U256::from(2)), B256::from(U256::from(2)))].into_iter().collect(),
+            ),
+            ..Default::default()
+        };
+        assert_eq!(overrides[&remote_account], remote_override);
+        let local_override = &overrides[&local_contract];
+        assert_eq!(local_override.code, Some(Bytes::from_static(&[0x00])));
+        assert_eq!((local_override.balance, local_override.nonce), (Some(U256::ZERO), Some(0)));
+        assert_eq!(overrides[&CHEATCODE_ADDRESS].code, Some(CHEATCODE_STUB));
+        assert_eq!(overrides.len(), 3);
+    }
+
+    #[test]
+    fn overrides_stop_at_slot_limit() {
+        let mut local = Cache::default();
+        let slots = &mut local.storage.entry(Address::random()).or_default().slots;
+        slots.extend((0..=MAX_OVERRIDE_SLOTS).map(|slot| (U256::from(slot), U256::from(1))));
+        assert_eq!(state_override(&MemDb::default(), &local), None);
     }
 }

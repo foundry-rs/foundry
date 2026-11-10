@@ -26,6 +26,7 @@ mod brutalize;
 mod core;
 mod exact_fork;
 mod fork_bal;
+mod fork_prefetch;
 mod fork_state_by_number;
 mod fuzz;
 mod halts;

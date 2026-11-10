@@ -4,8 +4,9 @@
 //! snapshots and cheatcode policy live in [`ForkRegistry`](super::ForkRegistry) and
 //! [`ExecutionLifecycle`](super::ExecutionLifecycle), not here.
 
+use crate::fork::prefetch;
 use alloy_network::Network;
-use alloy_primitives::{Address, B256, U256, map::B256Map};
+use alloy_primitives::{Address, B256, Bytes, U256, map::B256Map};
 use evm2::{
     DatabaseError,
     bytecode::Bytecode,
@@ -43,6 +44,23 @@ pub trait FoundryDatabase: DynDatabase {
     /// Sets whether the execution reading this database applies EIP-161, under which empty
     /// accounts do not exist.
     fn set_eip161(&self, _eip161: bool) {}
+
+    /// Prefetches the remote state a call is about to read, if this database reads a remote
+    /// fork, see [`prefetch::prefetch_call`].
+    ///
+    /// `local` is the accepted state over this database. With `overrides`, the part of it that
+    /// differs from the remote goes along as overrides; without, a call into an account that
+    /// exists only locally is skipped, since the endpoint cannot simulate it.
+    fn prefetch_call(
+        &self,
+        _caller: Address,
+        _target: Address,
+        _value: U256,
+        _input: Bytes,
+        _local: Option<&Cache>,
+        _overrides: bool,
+    ) {
+    }
 }
 
 impl FoundryDatabase for EmptyDB {}
@@ -81,6 +99,18 @@ impl FoundryDatabase for Box<dyn BackingDb> {
 
     fn set_eip161(&self, eip161: bool) {
         (**self).set_eip161(eip161);
+    }
+
+    fn prefetch_call(
+        &self,
+        caller: Address,
+        target: Address,
+        value: U256,
+        input: Bytes,
+        local: Option<&Cache>,
+        overrides: bool,
+    ) {
+        (**self).prefetch_call(caller, target, value, input, local, overrides);
     }
 }
 
@@ -214,6 +244,35 @@ impl<N: Network, B: ForkBlockEnv> FoundryDatabase for ForkDb<SharedBackend<N, B>
     fn set_eip161(&self, eip161: bool) {
         self.eip161.store(eip161, Ordering::Relaxed);
     }
+
+    fn prefetch_call(
+        &self,
+        caller: Address,
+        target: Address,
+        value: U256,
+        input: Bytes,
+        local: Option<&Cache>,
+        overrides: bool,
+    ) {
+        let remote = self.db.data();
+        let overrides = if overrides {
+            match local {
+                Some(local) => prefetch::state_override(&remote, local),
+                None => Some(prefetch::StateOverrideBuilder::new(&remote).build()),
+            }
+        } else {
+            None
+        };
+        // An account the context holds but never loaded from the endpoint was created locally,
+        // so the endpoint can only simulate a call into it with the local state as overrides.
+        if overrides.is_none()
+            && local.is_some_and(|local| local.accounts.contains_key(&target))
+            && !remote.accounts.read().contains_key(&target)
+        {
+            return;
+        }
+        prefetch::prefetch_call(&self.db, caller, target, value, input, overrides);
+    }
 }
 
 /// Returns `account`, which a database reports as an existing empty account when it does not hold
@@ -321,5 +380,17 @@ impl FoundryDatabase for AcceptedView {
 
     fn set_eip161(&self, eip161: bool) {
         self.backing.set_eip161(eip161);
+    }
+
+    fn prefetch_call(
+        &self,
+        caller: Address,
+        target: Address,
+        value: U256,
+        input: Bytes,
+        local: Option<&Cache>,
+        overrides: bool,
+    ) {
+        self.backing.prefetch_call(caller, target, value, input, local, overrides);
     }
 }
