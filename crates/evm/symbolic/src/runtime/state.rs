@@ -37,7 +37,8 @@ pub(crate) struct PathState {
     branch_target: Option<SymbolicBranchTarget>,
     branch_target_reached: bool,
     needs_feasibility_check: bool,
-    pub(crate) loop_jumps: HashMap<usize, u32>,
+    /// Backward jumps taken per destination and return addresses on the stack.
+    pub(crate) loop_jumps: HashMap<(usize, Vec<usize>), u32>,
     pub(crate) expected_revert: Option<ExpectedRevert>,
     /// Account of the first call, or reverting CREATE, that failed in or below this frame since
     /// it was entered or since its last `vm.expectRevert`, which Forge reports as the reverter.
