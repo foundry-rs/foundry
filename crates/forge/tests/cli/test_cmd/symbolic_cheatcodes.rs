@@ -2833,7 +2833,7 @@ Ran 12 tests for test/SymbolicRevertKeepsCheatcodes.t.sol:SymbolicRevertKeepsChe
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xd07dbb64 args=[]] checkInternalModeInheritsReverterTracking() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x6807c02f args=[]] checkInternalModeKeepsPendingExpectRevert() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x9389e44d0000000000000000000000000000000000000000000000000000000000000000 args=[0x0000000000000000000000000000000000000000]] checkMockSurvivesRevertingCall(address) ([METRICS])
-[FAIL: [..]] checkNestedExpectEmitFailureSurvives() ([METRICS])
+[FAIL: expected an emit, but no logs were emitted afterwards. you might have mismatched events or not enough events were emitted; counterexample: 		[SENDER] [SENDER] calldata=0x9a8c6248 args=[]] checkNestedExpectEmitFailureSurvives() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x507454da args=[]] checkPartiallyMetExpectRevertReason() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x5a97aeab0000000000000000000000000000000000000000000000010000000000000000 args=[18446744073709551616 [1.844e19]]] checkRejectedGasPriceDoesNotSurvive(uint256) ([METRICS])
 [PASS] checkTruncatedTxGasPriceIsNotRangeChecked() ([METRICS])
