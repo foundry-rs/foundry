@@ -767,6 +767,20 @@ fn directive_doc_groups_are_separate_from_regular_comments() {
     }
 }
 
+#[test]
+fn doc_style_conversion_keeps_adjacent_regular_comments() {
+    let source = "contract A {\n    /// @notice a\n    // regular note\n    function f() external {}\n\n    // regular note\n    /// @notice b\n    function g() external {}\n\n    /// @notice c\n    //\n    function h() external {}\n}\n";
+    let expected = "contract A {\n    /**\n     * @notice a\n     */\n    // regular note\n    function f() external {}\n\n    // regular note\n    /**\n     * @notice b\n     */\n    function g() external {}\n\n    /**\n     * @notice c\n     */\n    //\n    function h() external {}\n}\n";
+    for wrap_comments in [false, true] {
+        let config = Arc::new(FormatterConfig {
+            wrap_comments,
+            docs_style: DocCommentStyle::Block,
+            ..Default::default()
+        });
+        assert_data_eq!(format(source, Path::new("test.sol"), config), expected);
+    }
+}
+
 fn tests_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata")
 }
