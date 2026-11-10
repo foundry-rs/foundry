@@ -225,9 +225,16 @@ contract EcrecoverReturnData {
         }
     }
 
+    // A signature with `r = 0` or `s = 0` never recovers.
+    function checkZeroScalarRecoversNothing(bytes32 digest, bytes32 r, bytes32 s) public pure {
+        assert(ecrecover(digest, 27, bytes32(0), s) == address(0));
+        assert(ecrecover(digest, 28, r, bytes32(0)) == address(0));
+    }
+
     function testFuzzConformance(bytes32 digest, uint8 v, bytes32 r, bytes32 s) public view {
         checkInvalidRecoveryId(digest, r, s);
         checkRecoveryOutput(digest, v, r, s);
+        checkZeroScalarRecoversNothing(digest, r, s);
     }
 }
 "#,
@@ -246,6 +253,7 @@ contract EcrecoverReturnData {
 ...
 [PASS] checkInvalidRecoveryId(bytes32,bytes32,bytes32) ([METRICS])
 [PASS] checkRecoveryOutput(bytes32,uint8,bytes32,bytes32) ([METRICS])
+[PASS] checkZeroScalarRecoversNothing(bytes32,bytes32,bytes32) ([METRICS])
 ...
 "#]]);
 }

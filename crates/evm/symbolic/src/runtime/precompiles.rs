@@ -1,5 +1,9 @@
 use super::*;
 
+/// Order of the secp256k1 curve, the exclusive bound of a valid signature scalar.
+const SECP256K1_ORDER: U256 =
+    U256::from_be_bytes(hex!("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141"));
+
 pub(crate) fn precompile_number(address: Address) -> Option<u8> {
     let bytes = address.as_slice();
     if bytes[..PRECOMPILE_ADDRESS_LEADING_ZEROS].iter().any(|byte| *byte != 0) {
@@ -104,6 +108,19 @@ pub(crate) fn execute_symbolic_precompile(
             let v27 = SymBoolExpr::eq_word_const(cx, &v, U256::from(27));
             let v28 = SymBoolExpr::eq_word_const(cx, &v, U256::from(28));
             let valid_v = SymBoolExpr::or(cx, vec![v27, v28]);
+            // `r` and `s` must be in `[1, n)`; the precompile returns no data otherwise.
+            let mut valid = vec![valid_v];
+            for offset in [64, 96] {
+                let scalar = input.word_at(cx, offset);
+                valid.push(SymBoolExpr::cmp_word_const(
+                    cx,
+                    SymCmpOp::Ult,
+                    &scalar,
+                    SECP256K1_ORDER,
+                ));
+                valid.push(scalar.nonzero_bool(cx));
+            }
+            let valid_v = SymBoolExpr::and(cx, valid);
             if valid_v.as_const() == Some(false) {
                 return Ok(Some(SymReturnData::empty(cx)));
             }
