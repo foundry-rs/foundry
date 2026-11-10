@@ -1461,6 +1461,17 @@ contract SymbolicLoopBound {
             assert(y != 9);
         }
     }
+
+    function down(uint256 n) internal pure returns (uint256) {
+        if (n == 0) return 0;
+        return down(n - 1);
+    }
+
+    // A recursive call pushes the same return address again, so the bound still applies.
+    /// forge-config: default.symbolic.loop = 2
+    function checkLoopBoundLimitsRecursion(uint256 n) public pure {
+        assert(down(n) == 0);
+    }
 }
 "#,
     );
@@ -1474,10 +1485,11 @@ contract SymbolicLoopBound {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicLoopBound.t.sol:SymbolicLoopBound
+Ran 3 tests for test/SymbolicLoopBound.t.sol:SymbolicLoopBound
 [PASS] checkLoopBound(uint8) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkLoopBoundIgnoresInternalCalls(uint256,bool) ([METRICS])
-Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+[PASS] checkLoopBoundLimitsRecursion(uint256) ([METRICS])
+Suite result: FAILED. 2 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()

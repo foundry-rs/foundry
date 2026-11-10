@@ -35,18 +35,10 @@ pub(crate) fn is_precompile_for_spec(address: Address, spec_id: SpecId) -> bool 
     active_precompiles(spec_id).as_map().contains(&address)
 }
 
-/// Returns the gas a call gives a precompile in a transaction with `gas_limit` gas.
-///
-/// A call forwards its gas operand, at most 63/64 of the gas left (EIP-150), plus the value
-/// transfer stipend when it sends value. A symbolic operand counts as the most it can forward.
-pub(crate) fn precompile_call_gas(
-    gas_limit: u64,
-    gas_operand: Option<U256>,
-    sends_value: bool,
-) -> u64 {
-    let max_forwarded = gas_limit - gas_limit / 64;
-    let forwarded =
-        gas_operand.map_or(max_forwarded, |gas| gas.saturating_to::<u64>().min(max_forwarded));
+/// Returns the most gas a `gasleft()` call gives a precompile in a transaction with `gas_limit`
+/// gas: 63/64 of the gas left (EIP-150), plus the value transfer stipend when it sends value.
+pub(crate) fn precompile_call_gas(gas_limit: u64, sends_value: bool) -> u64 {
+    let forwarded = gas_limit - gas_limit / 64;
     if sends_value { forwarded.saturating_add(CALL_STIPEND.into()) } else { forwarded }
 }
 
@@ -105,14 +97,9 @@ pub(crate) fn execute_symbolic_precompile(
     input_len: SymExpr,
     spec_id: SpecId,
     gas: u64,
-    modexp_lengths: Option<ModexpLengthRanges>,
 ) -> Result<Option<SymReturnData>, SymbolicError> {
     match precompile_number_for_spec(address, spec_id) {
         Some(1) => {
-            // ECRECOVER costs 3000 gas for any input.
-            if gas < 3_000 {
-                return Ok(None);
-            }
             // ECRECOVER ignores trailing bytes and pads short input with zeros.
             let input = SymBytes::sized(cx, input, input_len, 128);
             if let Ok(input) = input.concrete_bytes(cx, "symbolic ecrecover input") {
@@ -139,98 +126,31 @@ pub(crate) fn execute_symbolic_precompile(
             Ok(Some(SymReturnData { len_word: len, bytes }))
         }
         Some(2) => {
-            // SHA256 costs 60 gas plus 12 per word.
-            if !linear_precompile_gas_fits(&input, &input_len, gas, 60, 12)? {
-                return Ok(None);
-            }
             let input = input.materialize(cx);
             let word = symbolic_hash_word_with_len(cx, "sha256", input, input_len);
             let bytes = word.into_byte_exprs(cx);
             Ok(Some(SymReturnData::from_byte_exprs(cx, bytes)))
         }
         Some(3) => {
-            // RIPEMD160 costs 600 gas plus 120 per word.
-            if !linear_precompile_gas_fits(&input, &input_len, gas, 600, 120)? {
-                return Ok(None);
-            }
             let input = input.materialize(cx);
             let word = symbolic_hash_word_with_len(cx, "ripemd160", input, input_len);
             let mut bytes = vec![SymExpr::zero(cx); 12];
             bytes.extend((12..32).map(|idx| byte_word(cx, U256::from(idx), word.clone())));
             Ok(Some(SymReturnData::from_byte_exprs(cx, bytes)))
         }
-        Some(4) => {
-            // Identity costs 15 gas plus 3 per word.
-            if !linear_precompile_gas_fits(&input, &input_len, gas, 15, 3)? {
-                return Ok(None);
-            }
-            Ok(Some(SymReturnData { len_word: input_len, bytes: input }))
-        }
-        Some(5) => symbolic_modexp_precompile(cx, &input, input_len, spec_id, gas, modexp_lengths),
-        Some(6) => {
-            let input_len = input_len.as_usize_or("symbolic precompile input")?;
-            if input_len > input.len() {
-                return Err(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"));
-            }
-            if (0..input_len).any(|idx| input.byte(cx, idx).as_const().is_none()) {
-                return Err(SymbolicError::Unsupported(
-                    "symbolic bn254 precompile validity not modeled",
-                ));
-            }
-            // BN254 addition costs 150 gas from Istanbul (EIP-1108) and 500 before.
-            let cost = if spec_id.enables(SpecId::ISTANBUL) { 150 } else { 500 };
-            if cost > gas {
-                return Ok(None);
-            }
-            Ok(Some(symbolic_fixed_len_precompile_output(cx, "bn254_add", &input, input_len, 64)))
-        }
-        Some(7) => {
-            let input_len = input_len.as_usize_or("symbolic precompile input")?;
-            if input_len > input.len() {
-                return Err(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"));
-            }
-            if (0..input_len).any(|idx| input.byte(cx, idx).as_const().is_none()) {
-                return Err(SymbolicError::Unsupported(
-                    "symbolic bn254 precompile validity not modeled",
-                ));
-            }
-            // BN254 multiplication costs 6000 gas from Istanbul (EIP-1108) and 40000 before.
-            let cost = if spec_id.enables(SpecId::ISTANBUL) { 6_000 } else { 40_000 };
-            if cost > gas {
-                return Ok(None);
-            }
-            Ok(Some(symbolic_fixed_len_precompile_output(cx, "bn254_mul", &input, input_len, 64)))
+        Some(4) => Ok(Some(SymReturnData { len_word: input_len, bytes: input })),
+        Some(5) => symbolic_modexp_precompile(cx, &input, input_len, spec_id, gas),
+        // Constant BN254 input runs the precompile before this; symbolic input may be an invalid
+        // point, which the model cannot tell.
+        Some(6 | 7) => {
+            Err(SymbolicError::Unsupported("symbolic bn254 precompile validity not modeled"))
         }
         Some(8) => {
             let input_len = input_len.as_usize_or("symbolic precompile input")?;
             if input_len % 192 != 0 {
                 return Ok(None);
             }
-            if input_len > input.len() {
-                return Err(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"));
-            }
-            if (0..input_len).any(|idx| input.byte(cx, idx).as_const().is_none()) {
-                return Err(SymbolicError::Unsupported(
-                    "symbolic bn254 precompile validity not modeled",
-                ));
-            }
-            // BN254 pairing costs 45000 gas plus 34000 per pair from Istanbul (EIP-1108), and
-            // 100000 plus 80000 per pair before.
-            let (base, per_pair) = if spec_id.enables(SpecId::ISTANBUL) {
-                (45_000, 34_000)
-            } else {
-                (100_000, 80_000)
-            };
-            if (input_len / 192) as u64 * per_pair + base > gas {
-                return Ok(None);
-            }
-            Ok(Some(symbolic_fixed_len_precompile_output(
-                cx,
-                "bn254_pairing",
-                &input,
-                input_len,
-                32,
-            )))
+            Err(SymbolicError::Unsupported("symbolic bn254 precompile validity not modeled"))
         }
         Some(9) => {
             let input_len = input_len.as_usize_or("symbolic precompile input")?;
@@ -290,19 +210,12 @@ pub(crate) fn ecrecover_signature_well_formed(cx: &mut SymCx, input: &SymBytes) 
     SymBoolExpr::and(cx, valid)
 }
 
-/// Opaque term algorithm of the modexp precompile, whose outputs may collide.
-pub(crate) const MODEXP_ALGORITHM: &str = "modexp";
-
-/// The smallest and largest values of the modexp base, exponent and modulus length headers.
-pub(crate) type ModexpLengthRanges = [(u64, u64); 3];
-
 pub(crate) fn symbolic_modexp_precompile(
     cx: &mut SymCx,
     input: &SymBytes,
     input_len: SymExpr,
     spec_id: SpecId,
     gas: u64,
-    lengths: Option<ModexpLengthRanges>,
 ) -> Result<Option<SymReturnData>, SymbolicError> {
     let input_len = input_len.as_usize_or("symbolic precompile input")?;
     if input_len > input.len() {
@@ -310,10 +223,11 @@ pub(crate) fn symbolic_modexp_precompile(
     }
 
     // The cost depends on the lengths and the exponent's leading word, read as evm2 does. Each
-    // is bounded by its range, and the cost grows with each of them.
+    // is bounded by the range of its bytes, and the cost grows with each of them.
     let [(min_base_len, max_base_len), (min_exp_len, max_exp_len), (min_mod_len, max_mod_len)] =
-        lengths.unwrap_or_else(|| {
-            [0, 32, 64].map(|offset| precompile_word_byte_range(cx, input, input_len, offset))
+        [0, 32, 64].map(|offset| {
+            let (min, max) = symbolic_input_word_range(cx, input, input_len, offset, 32);
+            (min.saturating_to::<u64>(), max.saturating_to::<u64>())
         });
     if spec_id.enables(SpecId::OSAKA) {
         // EIP-7823 rejects any length above 1024 bytes.
@@ -363,13 +277,7 @@ pub(crate) fn symbolic_modexp_precompile(
         .ok()
         .filter(|modulus_len| *modulus_len <= 4096)
         .ok_or(SymbolicError::Unsupported("symbolic modexp output length"))?;
-    Ok(Some(symbolic_fixed_len_precompile_output(
-        cx,
-        MODEXP_ALGORITHM,
-        input,
-        input_len,
-        modulus_len,
-    )))
+    Ok(Some(symbolic_fixed_len_precompile_output(cx, "modexp", input, input_len, modulus_len)))
 }
 
 /// Returns the gas the modexp precompile for `spec_id` charges for these lengths and leading
@@ -415,30 +323,6 @@ fn modexp_gas(spec_id: SpecId, base_len: u64, exp_len: u64, mod_len: u64, exp_hi
     gas.saturating_to::<u64>().max(min_price)
 }
 
-/// Returns whether a precompile that costs `base` plus `per_word` for each 32-byte word of input
-/// fits in `gas`.
-///
-/// A symbolic input length lies between zero and the length of `input`. The precompile is
-/// unsupported when whether it fits depends on that length.
-fn linear_precompile_gas_fits(
-    input: &SymBytes,
-    input_len: &SymExpr,
-    gas: u64,
-    base: u64,
-    per_word: u64,
-) -> Result<bool, SymbolicError> {
-    let (min_len, max_len) = match input_len.as_const() {
-        Some(len) => {
-            let len = usize::try_from(len).unwrap_or(usize::MAX);
-            (len, len)
-        }
-        None => (0, input.len()),
-    };
-    let cost = |len: usize| (len as u64).div_ceil(32).saturating_mul(per_word).saturating_add(base);
-    precompile_gas_fits(gas, cost(min_len), cost(max_len))
-        .ok_or(SymbolicError::Unsupported("symbolic precompile input length gas"))
-}
-
 /// Returns whether a precompile whose cost lies between `min_cost` and `max_cost` fits in
 /// `gas`, or `None` when that depends on symbolic input.
 const fn precompile_gas_fits(gas: u64, min_cost: u64, max_cost: u64) -> Option<bool> {
@@ -467,18 +351,6 @@ fn symbolic_input_word_range(
         max = (max << 8) | byte.unwrap_or(U256::from(0xff));
     }
     (min, max)
-}
-
-/// Returns the smallest and largest values, saturated to `u64`, of the input word at `offset`,
-/// taking each symbolic byte as `0x00` and `0xff`.
-pub(crate) fn precompile_word_byte_range(
-    cx: &mut SymCx,
-    input: &SymBytes,
-    input_len: usize,
-    offset: usize,
-) -> (u64, u64) {
-    let (min, max) = symbolic_input_word_range(cx, input, input_len, offset, 32);
-    (min.saturating_to(), max.saturating_to())
 }
 
 pub(crate) fn symbolic_fixed_len_precompile_output(

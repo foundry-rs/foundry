@@ -426,6 +426,7 @@ impl PathState {
 
     pub(crate) fn take_noncommitting_check_state(&mut self, check: &mut Self) {
         self.constraints = std::mem::take(&mut check.constraints);
+        self.witness_preferences = std::mem::take(&mut check.witness_preferences);
         self.next_symbol = self.next_symbol.max(check.next_symbol);
         self.world.merge_replay_metadata_from(&check.world);
         self.storage_load_hooks = std::mem::take(&mut check.storage_load_hooks);
