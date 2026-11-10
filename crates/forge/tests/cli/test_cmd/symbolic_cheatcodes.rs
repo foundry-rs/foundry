@@ -481,7 +481,23 @@ fn symbolic_account_queries_see_setup_accounts(prj: _, cmd: _) {
 import "forge-std/Test.sol";
 
 contract Pinger {
-    function ping() external {}
+    event Pinged();
+
+    function ping() external {
+        emit Pinged();
+    }
+
+    function price() external pure returns (uint256) {
+        return 1;
+    }
+
+    function value(uint256) external pure returns (uint256) {
+        return 42;
+    }
+
+    function sender() external view returns (address) {
+        return msg.sender;
+    }
 }
 
 contract SymbolicSetupAccounts is Test {
@@ -493,6 +509,29 @@ contract SymbolicSetupAccounts is Test {
         b = new Pinger();
         vm.deal(address(a), 1 ether);
         vm.deal(address(b), 1 ether);
+        vm.mockCall(address(a), abi.encodeWithSelector(Pinger.price.selector), abi.encode(uint256(5)));
+        vm.mockCall(address(b), abi.encodeWithSelector(Pinger.value.selector), abi.encode(uint256(5)));
+        vm.mockCalls(address(b), abi.encodeWithSelector(Pinger.value.selector, uint256(7)), new bytes[](0));
+        vm.recordLogs();
+        a.ping();
+        vm.startPrank(address(0xABC));
+    }
+
+    function checkSetupMock() public view {
+        assert(a.price() != 5);
+    }
+
+    function checkSetupPrank() public view {
+        assert(a.sender() != address(0xABC));
+    }
+
+    // The most specific mock wins, and its empty return queue runs the real callee.
+    function checkSetupEmptyMock() public view {
+        assert(b.value(7) == 5);
+    }
+
+    function checkSetupRecordedLogs() public {
+        assert(vm.getRecordedLogs().length == 0);
     }
 
     function checkBalance(address target) public view {
@@ -550,15 +589,19 @@ contract SymbolicSetupAccounts is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 7 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
+Ran 11 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkBalance(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeBalance(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeCopy(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeHash(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeLength(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkHighLevelCall(address,bool) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupEmptyMock() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupMock() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupPrank() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupRecordedLogs() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnconstrainedHighLevelCall(address) ([METRICS])
-Suite result: FAILED. 0 passed; 7 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 11 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

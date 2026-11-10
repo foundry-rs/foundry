@@ -19,6 +19,9 @@ pub(crate) struct PathState {
     pub(crate) frame: CallFrame,
     pub(crate) world: SymbolicWorld,
     pub(crate) prank: SymbolicPrank,
+    /// Pranks of other root frames of an invariant sequence, which Forge scopes to the contract
+    /// that set them.
+    pub(crate) root_pranks: HashMap<Address, SymbolicPrank>,
     pub(crate) constraints: Vec<SymBoolExpr>,
     pub(crate) next_symbol: usize,
     pub(crate) recorded_logs: Option<Vec<SymbolicLog>>,
@@ -100,6 +103,7 @@ impl PathState {
             frame,
             world: SymbolicWorld::default(),
             prank: SymbolicPrank::default(),
+            root_pranks: HashMap::default(),
             constraints: Vec::new(),
             next_symbol: 0,
             recorded_logs: None,
@@ -133,7 +137,12 @@ impl PathState {
         }
     }
 
-    pub(crate) fn apply_executor_env(&mut self, cx: &mut SymCx, executor: &ExecutorView<'_>) {
+    /// Applies the executor's environment and the cheatcode state `setUp` left behind.
+    pub(crate) fn apply_executor_env(
+        &mut self,
+        cx: &mut SymCx,
+        executor: &ExecutorView<'_>,
+    ) -> Result<(), SymbolicError> {
         self.block = SymbolicBlock::from_executor(cx, executor);
         self.gas_price = SymExpr::constant(cx, U256::from(executor.gas_price));
         for &(target, overwrite) in &executor.arbitrary_storage_targets {
@@ -146,6 +155,92 @@ impl PathState {
         self.storage_store_hooks.extend(executor.storage_store_hooks.iter().copied());
         self.mapping_storage_store_hooks
             .extend(executor.mapping_storage_store_hooks.iter().copied());
+        self.persistent_accounts.extend(executor.persistent_accounts.iter().copied());
+
+        // Forge applies a `setUp` prank from the test frame, which is depth 1 in the inspector.
+        for prank in &executor.pranks {
+            if prank.depth != 1 || prank.delegate_call {
+                return Err(SymbolicError::Unsupported("symbolic prank inherited from setUp"));
+            }
+            let caller = (prank.new_caller, SymExpr::constant(cx, address_word(prank.new_caller)));
+            let origin = prank
+                .new_origin
+                .map(|origin| (origin, SymExpr::constant(cx, address_word(origin))));
+            if prank.single_call {
+                self.prank.set_next(caller, origin);
+            } else {
+                self.prank.set_persistent(caller, origin);
+            }
+        }
+        if let Some(accesses) = executor.accesses
+            && (executor.recording_accesses || !accesses.reads.is_empty())
+        {
+            let slots = |cx: &mut SymCx, slots: &HashMap<Address, Vec<U256>>| {
+                slots
+                    .iter()
+                    .map(|(address, slots)| {
+                        (*address, slots.iter().map(|slot| SymExpr::constant(cx, *slot)).collect())
+                    })
+                    .collect()
+            };
+            self.access_record = Some(AccessRecord {
+                reads: slots(cx, &accesses.reads),
+                writes: slots(cx, &accesses.writes),
+                stopped: !executor.recording_accesses,
+            });
+        }
+        let Some(cheats) = executor.cheatcodes else { return Ok(()) };
+        let mut mocked_calls = cheats.mocked_calls.iter().collect::<Vec<_>>();
+        mocked_calls.sort_by_key(|(callee, _)| **callee);
+        for (callee, mocks) in mocked_calls {
+            let callee = SymExpr::constant(cx, address_word(*callee));
+            for (mock, returns) in mocks {
+                let data = SymBytes::concrete(cx, mock.calldata.to_vec());
+                let reverts = returns.front().is_some_and(|data| data.reverts);
+                let returns = returns
+                    .iter()
+                    .map(|data| SymReturnData::from_concrete_bytes(cx, data.data.to_vec()))
+                    .collect();
+                self.call_mocks.push(CallMock::new(
+                    callee.clone(),
+                    mock.value,
+                    data,
+                    returns,
+                    reverts,
+                ));
+            }
+        }
+        for (callee, mocks) in &cheats.mocked_functions {
+            let callee = SymExpr::constant(cx, address_word(*callee));
+            for (data, target) in mocks {
+                let data = SymBytes::concrete(cx, data.to_vec());
+                self.function_mocks.push(FunctionMock::new(callee.clone(), *target, data));
+            }
+        }
+        if let Some(logs) = &cheats.recorded_logs {
+            let logs = logs
+                .iter()
+                .map(|log| {
+                    let topics = log
+                        .topics
+                        .iter()
+                        .map(|topic| SymExpr::constant(cx, (*topic).into()))
+                        .collect();
+                    let data_len = SymExpr::constant(cx, U256::from(log.data.len()));
+                    let data = SymBytes::concrete(cx, log.data.to_vec());
+                    SymbolicLog::new(topics, data_len, data, log.emitter)
+                })
+                .collect();
+            self.recorded_logs = Some(logs);
+        }
+        if let Some(wallets) = &cheats.wallets {
+            let wallets = wallets
+                .signers()
+                .map_err(|_| SymbolicError::Unsupported("symbolic wallets inherited from setUp"))?;
+            self.wallets.extend(wallets);
+        }
+        self.labels.extend(cheats.labels.iter().map(|(address, label)| (*address, label.clone())));
+        Ok(())
     }
 
     pub(crate) fn child(&self, frame: CallFrame) -> Self {
@@ -1438,6 +1533,12 @@ impl CallMock {
 
     pub(crate) fn specificity(&self) -> (usize, bool) {
         (self.data.len(), self.value.is_some())
+    }
+
+    /// Returns whether the mock answers the call; Forge runs the real callee when the selected
+    /// mock's return queue is empty.
+    pub(crate) const fn answers(&self) -> bool {
+        !self.returns.is_empty()
     }
 
     pub(crate) fn match_condition(

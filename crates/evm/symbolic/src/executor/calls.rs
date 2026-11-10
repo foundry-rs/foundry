@@ -364,9 +364,26 @@ impl SymbolicExecutor {
         value: Option<U256>,
         calldata: &SymBytes,
     ) -> Result<Option<CallMockOutcome>, SymbolicError> {
-        if state.call_mocks.is_empty() {
+        let Some((idx, constraints)) = self.select_call_mock(state, callee, value, calldata)?
+        else {
+            return Ok(None);
+        };
+        state.constraints = constraints;
+        if !state.call_mocks[idx].answers() {
             return Ok(None);
         }
+        Ok(Some(state.call_mocks[idx].next_outcome(&mut self.cx)))
+    }
+
+    /// Selects the most specific `vm.mockCall` matching this call, with the constraints of the
+    /// match, before deciding whether it answers the call, as Forge does.
+    fn select_call_mock(
+        &mut self,
+        state: &PathState,
+        callee: Address,
+        value: Option<U256>,
+        calldata: &SymBytes,
+    ) -> Result<Option<(usize, Vec<SymBoolExpr>)>, SymbolicError> {
         let mut best = None;
         for idx in 0..state.call_mocks.len() {
             let Some(constraints) = self.call_mock_match_constraints(
@@ -388,11 +405,7 @@ impl SymbolicExecutor {
                 best = Some((idx, specificity, constraints));
             }
         }
-        let Some((idx, _, constraints)) = best else {
-            return Ok(None);
-        };
-        state.constraints = constraints;
-        Ok(Some(state.call_mocks[idx].next_outcome(&mut self.cx)))
+        Ok(best.map(|(idx, _, constraints)| (idx, constraints)))
     }
 
     /// Returns whether a `vm.mockCall` answers this call.
@@ -403,16 +416,10 @@ impl SymbolicExecutor {
         value: &SymExpr,
         calldata: &SymBytes,
     ) -> Result<bool, SymbolicError> {
-        if state.call_mocks.is_empty() {
-            return Ok(false);
-        }
         let value = state.constrained_word(&mut self.cx, value);
-        for mock in &state.call_mocks {
-            if self.call_mock_match_constraints(state, mock, callee, value, calldata)?.is_some() {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        Ok(self
+            .select_call_mock(state, callee, value, calldata)?
+            .is_some_and(|(idx, _)| state.call_mocks[idx].answers()))
     }
 
     pub(super) fn branch_symbolic_match_condition_if_needed(
