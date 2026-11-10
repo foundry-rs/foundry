@@ -877,18 +877,39 @@ contract SymbolicVmAssert is Test {
         new bytes(n);
         vm.assertTrue(n != 37);
     }
+
+    // Forge's argument checks still apply to an input at a symbolic offset.
+    function checkChainIdAfterSymbolicAlloc(uint8 n) public {
+        new bytes(n);
+        vm.chainId(uint256(1) << 64);
+    }
+
+    // Forge cannot decode an input this short, so its missing argument must not read as zero.
+    function checkShortCallAfterSymbolicAlloc(uint8 n, address who) public {
+        new bytes(n);
+        bytes memory data = abi.encodePacked(vm.deal.selector, uint256(uint160(who)));
+        address target = address(vm);
+        bool ok;
+        assembly {
+            ok := call(gas(), target, 0, add(data, 32), 36, 0, 0)
+        }
+        assertTrue(ok);
+    }
 }
 "#,
     );
 
-    let stdout = assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkVmAssert"]))
+    let stdout =
+        assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicVmAssert"]))
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicVmAssert.t.sol:SymbolicVmAssert
+Ran 4 tests for test/SymbolicVmAssert.t.sol:SymbolicVmAssert
+[FAIL: vm.chainId: chain ID must be less than 2^64; counterexample: 		[SENDER] [SENDER] calldata=0x304d83d50000000000000000000000000000000000000000000000000000000000000000 args=[0]] checkChainIdAfterSymbolicAlloc(uint8) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: short cheatcode CALL] checkShortCallAfterSymbolicAlloc(uint8,address) ([METRICS])
 [FAIL: assertion failed: 42 == 42; counterexample: 		[SENDER] [SENDER] calldata=0xdaaeb166000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkVmAssert(uint256) ([METRICS])
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] calldata=0x8dbe55f80000000000000000000000000000000000000000000000000000000000000025 args=[37]] checkVmAssertAfterSymbolicAlloc(uint8) ([METRICS])
-Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
         .get_output()
@@ -5630,8 +5651,21 @@ interface SymbolicVmCompat {
 }
 
 contract CallerReader {
+    SymbolicVmCompat constant COMPAT = SymbolicVmCompat(address(uint160(uint256(keccak256("hevm cheat code")))));
+    SymbolicVmCompat.CallerMode public constructedMode;
+
+    constructor() {
+        (constructedMode,,) = COMPAT.readCallers();
+    }
+
     function read() external returns (SymbolicVmCompat.CallerMode, address, address) {
-        return SymbolicVmCompat(address(uint160(uint256(keccak256("hevm cheat code"))))).readCallers();
+        return COMPAT.readCallers();
+    }
+
+    // Like Forge, `vm.stopPrank` in a callee ends only the callee's prank.
+    function readAfterStopPrank() external returns (SymbolicVmCompat.CallerMode, address, address) {
+        Vm(address(COMPAT)).stopPrank();
+        return COMPAT.readCallers();
     }
 }
 
@@ -5681,6 +5715,11 @@ contract SymbolicBoundSkip is Test {
         assertEq(uint256(mode), uint256(SymbolicVmCompat.CallerMode.Prank));
         assertEq(sender, address(0xB0B));
         assertEq(origin, address(0xA11CE));
+        vm.prank(address(0xB0B));
+        (mode,,) = reader.readAfterStopPrank();
+        assertEq(uint256(mode), uint256(SymbolicVmCompat.CallerMode.Prank));
+        vm.prank(address(0xB0B));
+        assertEq(uint256(new CallerReader().constructedMode()), uint256(SymbolicVmCompat.CallerMode.Prank));
 
         vm.startPrank(address(0xCAFE));
         (mode, sender,) = compat.readCallers();
@@ -5812,10 +5851,12 @@ contract SymbolicBoundInvalid is Test {
         try vm.bound(uint256(11), 0, 10) returns (uint256) {
             assert(false);
         } catch (bytes memory data) {
-            bytes memory expected = abi.encodeWithSignature(
-                "CheatcodeError(string)", "vm.bound: cannot bound 11 in [0, 10] range"
+            assertEq(
+                data,
+                abi.encodeWithSignature(
+                    "CheatcodeError(string)", "vm.bound: cannot bound 11 in [0, 10] range"
+                )
             );
-            assert(keccak256(data) != keccak256(expected));
         }
     }
 
@@ -5844,13 +5885,13 @@ contract SymbolicBoundInvalid is Test {
     .stdout_eq(str![[r#"
 ...
 Ran 6 tests for test/SymbolicBoundInvalid.t.sol:SymbolicBoundInvalid
-[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCaughtBoundPayload() ([METRICS])
+[PASS] checkCaughtBoundPayload() ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.bound revert payload] checkCaughtOutOfRangeBound(uint256) ([METRICS])
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkConstantBoundReachesInnerValues() ([METRICS])
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkConstantSignedBoundReachesInnerValues() ([METRICS])
 [FAIL: vm.bound: cannot bound 0 in [3, -3] range; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkInvalidSignedBound(int256) ([METRICS])
 [FAIL: vm.bound: cannot bound 0 in [12, 10] range; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkInvalidUnsignedBound(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 1 passed; 5 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()

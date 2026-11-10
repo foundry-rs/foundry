@@ -1,5 +1,5 @@
 use super::*;
-use alloy_sol_types::{Revert, SolError};
+use foundry_common::ErrorExt;
 
 impl SymbolicExecutor {
     pub(super) fn call(
@@ -848,12 +848,11 @@ impl SymbolicExecutor {
                 Some(in_offset.as_usize_or("symbolic cheatcode CALL input offset")?)
             };
             // Forge fails a cheatcode call whose calldata its ABI decoder rejects.
-            if to == CHEATCODE_ADDRESS
-                && !has_symbolic_in_size
-                && let Some(concrete_in_offset) = concrete_in_offset
-                && let Ok(input) =
-                    state.memory.read_concrete(&mut self.cx, concrete_in_offset, in_size)
-                && let Err(error) = decode_cheatcode_call(&input)
+            let concrete_input = concrete_in_offset
+                .filter(|_| to == CHEATCODE_ADDRESS && !has_symbolic_in_size)
+                .and_then(|offset| state.memory.read_concrete(&mut self.cx, offset, in_size).ok());
+            if let Some(input) = &concrete_input
+                && let Err(error) = decode_cheatcode_call(input)
             {
                 let return_data = error_string_return_data(&mut self.cx, &error.to_string());
                 revert_cheatcode_call(&mut self.cx, state, out_offset, &out_size, return_data)?;
@@ -893,15 +892,14 @@ impl SymbolicExecutor {
             };
             let full_word_array_assertion =
                 to == CHEATCODE_ADDRESS && is_full_word_array_assertion(selector);
+            let min_size = if to == CHEATCODE_ADDRESS {
+                foundry_cheatcode_min_input_size(selector)
+            } else {
+                symbolic_vm_cheatcode_min_input_size(selector)
+            };
             if has_symbolic_in_size {
-                let min_size = if to == CHEATCODE_ADDRESS {
-                    foundry_cheatcode_min_input_size(selector)
-                } else if to == SYMBOLIC_VM_COMPAT_ADDRESS {
-                    symbolic_vm_cheatcode_min_input_size(selector)
-                } else {
-                    None
-                }
-                .ok_or(SymbolicError::Unsupported("symbolic cheatcode CALL input size"))?;
+                let min_size = min_size
+                    .ok_or(SymbolicError::Unsupported("symbolic cheatcode CALL input size"))?;
                 if min_size > in_size {
                     return Err(SymbolicError::Unsupported("symbolic cheatcode CALL input size"));
                 }
@@ -911,7 +909,28 @@ impl SymbolicExecutor {
                 {
                     return Ok(StepOutcome::AssumeRejected);
                 }
+            } else if concrete_input.is_none() && !full_word_array_assertion {
+                // The decoder needs concrete bytes at a concrete offset. Without it, never read
+                // arguments past the input, which Forge rejects as too short to decode, and at a
+                // symbolic offset only accept an input known to hold every argument.
+                if min_size.is_some_and(|min_size| in_size < min_size) {
+                    return Err(SymbolicError::Unsupported("short cheatcode CALL"));
+                }
+                if has_symbolic_input_offset && min_size.is_none() {
+                    return Err(SymbolicError::Unsupported("symbolic cheatcode CALL input offset"));
+                }
             }
+
+            // The handlers decode the input from memory at a concrete offset. The callee cannot
+            // see the caller's memory, so an input read at a symbolic offset is decoded from a
+            // scratch memory that holds it at offset 0; the array assertions read the offset.
+            let scratch_input =
+                symbolic_offset_input.filter(|_| !full_word_array_assertion).map(|input| {
+                    let mut scratch = SymMemory::default();
+                    scratch.store_bytes(&mut self.cx, 0, input);
+                    scratch
+                });
+            let input_offset = if scratch_input.is_some() { Some(0) } else { concrete_in_offset };
 
             if to == CHEATCODE_ADDRESS
                 && let Some(concrete_in_offset) = concrete_in_offset
@@ -958,13 +977,13 @@ impl SymbolicExecutor {
             }
 
             if to == CHEATCODE_ADDRESS
-                && let Some(concrete_in_offset) = concrete_in_offset
+                && let Some(input_offset) = input_offset
                 && let Some(outcome) = self.branch_cheatcode_argument_check_if_needed(
                     state,
                     worklist,
                     selector,
-                    concrete_in_offset,
-                    in_size,
+                    scratch_input.as_ref(),
+                    input_offset,
                     &out_offset,
                     &out_size,
                 )?
@@ -972,15 +991,8 @@ impl SymbolicExecutor {
                 return Ok(outcome);
             }
 
-            // The handlers decode the input from memory at a concrete offset. The callee cannot
-            // see the caller's memory, so an input read at a symbolic offset is decoded from a
-            // scratch memory that holds it at offset 0; the array assertions read the offset.
             let caller_memory =
-                symbolic_offset_input.filter(|_| !full_word_array_assertion).map(|input| {
-                    let mut scratch = SymMemory::default();
-                    scratch.store_bytes(&mut self.cx, 0, input);
-                    std::mem::replace(&mut state.memory, scratch)
-                });
+                scratch_input.map(|scratch| std::mem::replace(&mut state.memory, scratch));
             let (in_offset, concrete_in_offset) = if caller_memory.is_some() {
                 (SymExpr::zero(&mut self.cx), Some(0))
             } else {
@@ -1041,8 +1053,10 @@ impl SymbolicExecutor {
             state.return_data = match &error {
                 Some(error) => {
                     state.first_failed_callee.get_or_insert(HARDHAT_CONSOLE_ADDRESS);
-                    let revert = Revert::from(error.to_string()).abi_encode();
-                    SymReturnData::from_concrete_bytes(&mut self.cx, revert)
+                    SymReturnData::from_concrete_bytes(
+                        &mut self.cx,
+                        error.abi_encode_revert().into(),
+                    )
                 }
                 None => SymReturnData::empty(&mut self.cx),
             };

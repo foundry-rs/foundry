@@ -299,6 +299,7 @@ impl SymbolicExecutor {
         }
 
         // Like Forge, the CREATE applies and consumes a pending prank.
+        let inherited_prank = state.callers();
         let (creator, creator_word, pranked_origin) = state.prank_for_next_call();
         if creator_word.as_const().is_none() {
             return Err(SymbolicError::Unsupported("symbolic vm.deployCode prank"));
@@ -332,6 +333,7 @@ impl SymbolicExecutor {
         // Isolation runs a `deployCode` from the test frame as its own transaction.
         let isolated = state.starts_isolated_transaction(executor);
         let mut child = state.child(frame);
+        child.prank.inherited = inherited_prank;
         // Forge runs the constructor in a nested EVM, so its call depth starts over even
         // without isolation.
         child.call_depth_base = child.call_depth;
@@ -600,25 +602,21 @@ impl SymbolicExecutor {
         Ok(accesses_return_data(&mut self.cx, Some(&record), Address::ZERO))
     }
 
-    /// Reverts a cheatcode call whose arguments Forge rejects. A check on symbolic arguments
-    /// forks the path: the reverting branch completes here and the valid branch continues into
-    /// the cheatcode.
+    /// Reverts a cheatcode call whose arguments Forge rejects, reading its input from `input`
+    /// or, without one, the caller's memory. A check on symbolic arguments forks the path: the
+    /// reverting branch completes here and the valid branch continues into the cheatcode.
     #[expect(clippy::too_many_arguments)]
     pub(super) fn branch_cheatcode_argument_check_if_needed(
         &mut self,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         selector: [u8; 4],
+        input: Option<&SymMemory>,
         in_offset: usize,
-        in_size: usize,
         out_offset: &SymExpr,
         out_size: &BoundedCopySize,
     ) -> Result<Option<StepOutcome>, SymbolicError> {
-        // The check reads ABI words of the input. Forge rejects a shorter input as an ABI
-        // decoding error, so never validate memory past the input.
-        if foundry_cheatcode_min_input_size(selector).is_some_and(|min_size| in_size < min_size) {
-            return Err(SymbolicError::Unsupported("short cheatcode CALL"));
-        }
+        let memory = input.unwrap_or(&state.memory);
         let args_offset = in_offset + 4;
         let above = |cx: &mut SymCx, memory: &SymMemory, index: usize, max: U256| {
             let word = read_abi_word_arg(cx, memory, args_offset, index)?;
@@ -627,32 +625,32 @@ impl SymbolicExecutor {
         let u64_max = U256::from(u64::MAX);
         let (invalid, message) = match selector {
             chainIdCall::SELECTOR => (
-                above(&mut self.cx, &state.memory, 0, u64_max)?,
+                above(&mut self.cx, memory, 0, u64_max)?,
                 "vm.chainId: chain ID must be less than 2^64",
             ),
             feeCall::SELECTOR => (
-                above(&mut self.cx, &state.memory, 0, u64_max)?,
+                above(&mut self.cx, memory, 0, u64_max)?,
                 "vm.fee: base fee must be less than 2^64",
             ),
             txGasPriceCall::SELECTOR => (
-                above(&mut self.cx, &state.memory, 0, u64_max)?,
+                above(&mut self.cx, memory, 0, u64_max)?,
                 "vm.txGasPrice: gas price must be less than 2^64",
             ),
             blobBaseFeeCall::SELECTOR => (
-                above(&mut self.cx, &state.memory, 0, U256::from(u128::MAX))?,
+                above(&mut self.cx, memory, 0, U256::from(u128::MAX))?,
                 "vm.blobBaseFee: blob base fee must be less than 2^128",
             ),
             setBlockhashCall::SELECTOR => (
-                above(&mut self.cx, &state.memory, 0, u64_max)?,
+                above(&mut self.cx, memory, 0, u64_max)?,
                 "vm.setBlockhash: blockNumber must be less than 2^64",
             ),
             computeCreateAddressCall::SELECTOR => (
-                above(&mut self.cx, &state.memory, 1, u64_max)?,
+                above(&mut self.cx, memory, 1, u64_max)?,
                 "vm.computeCreateAddress: nonce must be less than 2^64",
             ),
             randomUint_1Call::SELECTOR => {
-                let min = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
-                let max = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                let min = read_abi_word_arg(&mut self.cx, memory, args_offset, 0)?;
+                let max = read_abi_word_arg(&mut self.cx, memory, args_offset, 1)?;
                 (
                     SymBoolExpr::cmp_word_expr(&mut self.cx, SymCmpOp::Ugt, &min, max),
                     "vm.randomUint: min must be less than or equal to max",
@@ -661,29 +659,15 @@ impl SymbolicExecutor {
             _ => return Ok(None),
         };
 
-        let (invalid_constraints, invalid_sat) =
-            self.constraints_with_condition(state, invalid.clone())?;
-        if !invalid_sat {
-            return Ok(None);
-        }
-        let return_data = error_string_return_data(&mut self.cx, message);
-        let valid = invalid.not(&mut self.cx);
-        if let Some(valid_constraints) = self.constraints_for_condition(state, valid)? {
-            let mut revert_state = state.clone();
-            revert_state.constraints = invalid_constraints;
-            revert_cheatcode_call(
-                &mut self.cx,
-                &mut revert_state,
-                out_offset.clone(),
-                out_size,
-                return_data,
-            )?;
-            worklist.push_back(revert_state);
-            state.constraints = valid_constraints;
-            return Ok(None);
-        }
-        revert_cheatcode_call(&mut self.cx, state, out_offset.clone(), out_size, return_data)?;
-        Ok(Some(StepOutcome::Continue))
+        let reverted = self.fork_cheatcode_revert(
+            state,
+            worklist,
+            invalid,
+            out_offset,
+            out_size,
+            |this, _| error_string_return_data(&mut this.cx, message),
+        )?;
+        Ok(reverted.then_some(StepOutcome::Continue))
     }
 
     pub(super) fn add_call_mock(
@@ -1241,7 +1225,7 @@ impl SymbolicExecutor {
                 if state.call_depth == 0 {
                     state.root_pranks.clear();
                 }
-                state.prank = SymbolicPrank::default();
+                state.prank.stop();
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             readCallersCall::SELECTOR => {
@@ -2688,5 +2672,43 @@ impl SymbolicExecutor {
                 Ok(SymReturnData::from_words(&mut self.cx, vec![id]))
             }
         }
+    }
+
+    /// Forks off the paths where `invalid` holds, on which the cheatcode call reverts with
+    /// `revert_data`. Returns whether every path reverts, in which case `state` is the reverted
+    /// path; otherwise `state` continues where `invalid` does not hold.
+    pub(super) fn fork_cheatcode_revert(
+        &mut self,
+        state: &mut PathState,
+        worklist: &mut VecDeque<PathState>,
+        invalid: SymBoolExpr,
+        out_offset: &SymExpr,
+        out_size: &BoundedCopySize,
+        revert_data: impl FnOnce(&mut Self, &PathState) -> SymReturnData,
+    ) -> Result<bool, SymbolicError> {
+        let (invalid_constraints, invalid_sat) =
+            self.constraints_with_condition(state, invalid.clone())?;
+        if !invalid_sat {
+            return Ok(false);
+        }
+        let valid = invalid.not(&mut self.cx);
+        if let Some(valid_constraints) = self.constraints_for_condition(state, valid)? {
+            let mut revert_state = state.clone();
+            revert_state.constraints = invalid_constraints;
+            let return_data = revert_data(self, &revert_state);
+            revert_cheatcode_call(
+                &mut self.cx,
+                &mut revert_state,
+                out_offset.clone(),
+                out_size,
+                return_data,
+            )?;
+            worklist.push_back(revert_state);
+            state.constraints = valid_constraints;
+            return Ok(false);
+        }
+        let return_data = revert_data(self, state);
+        revert_cheatcode_call(&mut self.cx, state, out_offset.clone(), out_size, return_data)?;
+        Ok(true)
     }
 }
