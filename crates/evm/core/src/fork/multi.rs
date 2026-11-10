@@ -909,6 +909,7 @@ mod tests {
     use alloy_provider::{Provider, ProviderBuilder, mock::Asserter};
     use alloy_rpc_types::{Block, TransactionRequest};
     use alloy_serde::WithOtherFields;
+    use foundry_common::provider::get_http_provider;
     use foundry_fork_db::AccountFetchPolicy;
     use foundry_test_utils::rpc::{
         spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_recording_method,
@@ -1425,10 +1426,6 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn can_read_write_cache() {
-        use alloy_chains::NamedChain;
-        use foundry_common::provider::get_http_provider;
-        use foundry_config::Config;
-
         let endpoint = &*foundry_test_utils::rpc::next_http_rpc_endpoint();
         let provider = get_http_provider(endpoint);
 
@@ -1448,7 +1445,7 @@ mod tests {
         let source_id = fork.source_id();
         let (evm_env, _) = backend.env(&evm_opts).await.unwrap();
 
-        // some rng contract from etherscan
+        // some rng contract from etherscan.
         let address = alloy_primitives::address!("0x63091244180ae240c87d1f528f5f269134cb07b3");
 
         let num_slots = 5;

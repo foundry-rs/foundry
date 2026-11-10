@@ -511,7 +511,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
 
         // record any changes made to the block's environment during setup
         self.evm_env_mut().block = res.evm_env.block;
-        // and also the spec and chain ID, which can be set manually
+        // and also the spec and chain ID, which can be set manually.
         if res.evm_env.spec != self.spec_id() {
             self.set_spec_id(res.evm_env.spec);
         }
@@ -1437,7 +1437,7 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// observations for setup dictionary guidance, not additional execution state changes.
     /// Populated only when setup storage collection is enabled for a committing call.
     pub suspended_storage: Vec<(Option<U256>, Address, U256)>,
-    /// The environment after the call
+    /// The environment after the call.
     pub evm_env: EvmEnvFor<FEN>,
     /// The cheatcode states after execution
     pub cheatcodes: Option<Box<Cheatcodes<FEN>>>,
