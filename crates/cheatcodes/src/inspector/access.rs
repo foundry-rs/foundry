@@ -12,19 +12,17 @@ pub(super) struct FrameAccess {
 impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// Gives an independent nested execution its own frame identities.
     pub fn with_fresh_frame_access<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        let frames =
-            std::mem::replace(&mut self.frame_access, std::mem::take(&mut self.frame_access_spare));
+        let frames = std::mem::take(&mut self.frame_access);
         let result = f(self);
-        self.restore_frame_access(frames);
+        self.frame_access = frames;
         result
     }
 
     /// Preserves the suspended caller when inherited execution aborts before frame cleanup.
     pub fn with_nested_frame_access<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        let mut frames = std::mem::take(&mut self.frame_access_spare);
-        frames.clone_from(&self.frame_access);
+        let frames = self.frame_access.clone();
         let result = f(self);
-        self.restore_frame_access(frames);
+        self.frame_access = frames;
         result
     }
 
@@ -98,15 +96,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     || db.has_cheatcode_access(&frame.code)
             })
     }
-
-    fn restore_frame_access(&mut self, frames: Vec<FrameAccess>) {
-        let mut spare = std::mem::replace(&mut self.frame_access, frames);
-        spare.clear();
-        // A recursive execution may already have returned another buffer.
-        if spare.capacity() > self.frame_access_spare.capacity() {
-            self.frame_access_spare = spare;
-        }
-    }
 }
 
 #[cfg(test)]
@@ -126,16 +115,12 @@ mod tests {
     }
 
     #[test]
-    fn nested_frame_access_restores_cleared_parent_and_reuses_buffers() {
+    fn nested_frame_access_restores_cleared_parent() {
         for inherited in [false, true] {
             let mut cheats = Cheatcodes::default();
             cheats.frame_access.push(frame(1));
-            cheats.frame_access_spare = Vec::with_capacity(8);
             let parent = identities(&cheats.frame_access);
-            let active = cheats.frame_access.as_ptr();
-            let spare = cheats.frame_access_spare.as_ptr();
             let clear = |cheats: &mut Cheatcodes| {
-                assert_eq!(cheats.frame_access.as_ptr(), if inherited { active } else { spare });
                 cheats.frame_access.clear();
                 Err::<(), _>("expected nested failure")
             };
@@ -146,9 +131,6 @@ mod tests {
             };
             assert_eq!(result, Err("expected nested failure"));
             assert_eq!(identities(&cheats.frame_access), parent);
-            assert_eq!(cheats.frame_access.as_ptr(), if inherited { spare } else { active });
-            assert_eq!(cheats.frame_access_spare.as_ptr(), if inherited { active } else { spare });
-            assert!(cheats.frame_access_spare.is_empty());
         }
     }
 
@@ -181,7 +163,6 @@ mod tests {
                 };
                 assert_eq!(result, Err("expected inner failure"));
                 assert_eq!(identities(&cheats.frame_access), suspended);
-                assert!(cheats.frame_access_spare.is_empty());
                 cheats.frame_access.clear();
             };
             if inherited {
@@ -190,7 +171,6 @@ mod tests {
                 cheats.with_fresh_frame_access(nested);
             }
             assert_eq!(identities(&cheats.frame_access), parent);
-            assert!(cheats.frame_access_spare.is_empty());
         }
     }
 }

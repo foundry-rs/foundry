@@ -860,9 +860,6 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 
     /// Context and effective code identities of the initialized execution frames.
     frame_access: Vec<access::FrameAccess>,
-
-    /// Empty frame buffer reused by nested executions and their snapshots.
-    frame_access_spare: Vec<access::FrameAccess>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -936,7 +933,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             capture_isolated_snapshot_restore: false,
             deploy_code_depth: None,
             frame_access: Default::default(),
-            frame_access_spare: Default::default(),
         }
     }
 
