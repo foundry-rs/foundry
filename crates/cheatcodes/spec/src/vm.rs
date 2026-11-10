@@ -531,6 +531,14 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function getStorageSlots(address target, string calldata variableName) external view returns (uint256[] memory slots);
 
+    /// Returns the storage location of the specified variable: its base slot, the byte offset of
+    /// the value within that slot, and its size in bytes, as given by the storage layout.
+    ///
+    /// Works for every storage encoding. For mappings and dynamic arrays the returned slot is the
+    /// base slot used to derive the location of their entries.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getStorageSlot(address target, string calldata variableName) external view returns (uint256 slot, uint256 offset, uint256 numberOfBytes);
+
     /// Returns an array of `StorageAccess` from current `vm.stateStateDiffRecording` session
     #[cheatcode(group = Evm, safety = Safe)]
     function getStorageAccesses() external view returns (StorageAccess[] memory storageAccesses);

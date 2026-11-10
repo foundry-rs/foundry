@@ -7093,6 +7093,26 @@
     },
     {
       "func": {
+        "id": "getStorageSlot",
+        "description": "Returns the storage location of the specified variable: its base slot, the byte offset of\nthe value within that slot, and its size in bytes, as given by the storage layout.\nWorks for every storage encoding. For mappings and dynamic arrays the returned slot is the\nbase slot used to derive the location of their entries.",
+        "declaration": "function getStorageSlot(address target, string calldata variableName) external view returns (uint256 slot, uint256 offset, uint256 numberOfBytes);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getStorageSlot(address,string)",
+        "selector": "0xcc4ee90a",
+        "selectorBytes": [
+          204,
+          78,
+          233,
+          10
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getStorageSlots",
         "description": "Returns an array of storage slots occupied by the specified variable.",
         "declaration": "function getStorageSlots(address target, string calldata variableName) external view returns (uint256[] memory slots);",

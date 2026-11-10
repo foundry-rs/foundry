@@ -1292,6 +1292,29 @@ impl Cheatcode for getStorageSlotsCall {
     }
 }
 
+impl Cheatcode for getStorageSlotCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { target, variableName } = self;
+
+        let (storage, storage_type) = find_storage_variable(ccx, *target, variableName)?;
+
+        let slot = U256::from_str(&storage.slot).map_err(|_| {
+            fmt_err!("invalid slot {} format for variable {variableName}", storage.slot)
+        })?;
+        let offset = u64::try_from(storage.offset).map(U256::from).map_err(|_| {
+            fmt_err!("invalid offset {} for variable {variableName}", storage.offset)
+        })?;
+        let number_of_bytes = U256::from_str(&storage_type.number_of_bytes).map_err(|_| {
+            fmt_err!(
+                "invalid number_of_bytes {} for variable {variableName}",
+                storage_type.number_of_bytes
+            )
+        })?;
+
+        Ok((slot, offset, number_of_bytes).abi_encode_params())
+    }
+}
+
 /// Finds a variable by its (case-insensitive) label in the storage layout of the contract at
 /// `target`, returning its storage entry and type.
 fn find_storage_variable<FEN: FoundryEvmNetwork>(
