@@ -648,6 +648,7 @@ contract SymbolicKeccakPreimage {
     mapping(address => uint256) balances;
     address[] holders;
     mapping(address => uint256[]) deposits;
+    mapping(string => uint256) names;
 
     constructor() {
         holders.push(address(1));
@@ -693,6 +694,13 @@ contract SymbolicKeccakPreimage {
         balances[who] = 39;
         assert(balances[who] != 39);
     }
+
+    // The literal key hashes a 34-byte preimage that must still alias the symbolic-key write.
+    /// forge-config: default.symbolic.default_bytes_lengths = [2]
+    function checkStringKeyAliasesLiteralRead(string memory k) public {
+        names[k] = 5;
+        assert(names["ab"] != 5);
+    }
 }
 "#,
     );
@@ -701,15 +709,15 @@ contract SymbolicKeccakPreimage {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 5 tests for test/SymbolicKeccakPreimage.t.sol:SymbolicKeccakPreimage
+Ran 7 tests for test/SymbolicKeccakPreimage.t.sol:SymbolicKeccakPreimage
 [PASS] checkArrayElementSurvivesMappingWrite(address,uint256,uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [..]] checkKeccakPlusOffsetCanCollide(uint256,uint256) ([METRICS])
 [PASS] checkKeccakPlusOffsetDiffers(uint256,uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x4df8b26f000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkKnownKeccakPreimage(uint256) ([METRICS])
 [PASS] checkNestedArraySurvivesMappingWrite(address,address,uint256,uint256) ([METRICS])
-Suite result: FAILED. 3 passed; 2 failed; 0 skipped; [ELAPSED]
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[0x0000000000000000000000000000000000000004]] checkPinnedKeyAliasesSymbolicWrite(address) ([METRICS])
-Suite result: FAILED. 2 passed; 2 failed; 0 skipped; [ELAPSED]
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=["ab"]] checkStringKeyAliasesLiteralRead(string) ([METRICS])
+Suite result: FAILED. 3 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
