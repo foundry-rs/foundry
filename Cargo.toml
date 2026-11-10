@@ -425,9 +425,6 @@ op-alloy-network = "2.0.0"
 op-alloy-rpc-types = "2.0.0"
 op-alloy-flz = "0.13.1"
 
-# revm
-revm = { version = "43.0.2", default-features = false }
-
 ## cli
 anstream = "1.0"
 anstyle = "1.0"
