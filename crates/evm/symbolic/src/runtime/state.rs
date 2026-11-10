@@ -1,6 +1,6 @@
 use super::*;
 use alloy_sol_types::{Revert, SolError};
-use foundry_evm::revm::context_interface::cfg::gas::CALL_STIPEND;
+use evm2::interpreter::gas::CALL_STIPEND;
 
 const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
 
@@ -8,7 +8,7 @@ const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
 pub(crate) struct PathState {
     pub(crate) depth: usize,
     pub(crate) call_depth: usize,
-    /// The `call_depth` of the frame that revm counts as depth 0 for the call depth limit: the
+    /// The `call_depth` of the frame that the EVM counts as depth 0 for the call depth limit: the
     /// first frame of the current transaction or of a `vm.deployCode` constructor.
     pub(crate) call_depth_base: usize,
     pub(crate) origin: Address,
@@ -170,7 +170,7 @@ impl PathState {
 
     /// Returns whether a CALL or CREATE issued by this frame exceeds the call depth limit.
     pub(crate) const fn at_call_depth_limit(&self) -> bool {
-        self.call_depth - self.call_depth_base >= CALL_STACK_LIMIT as usize
+        self.call_depth - self.call_depth_base >= CALL_DEPTH_LIMIT as usize
     }
 
     pub(crate) fn storage_hook_child(&self, frame: CallFrame) -> Self {
@@ -1321,8 +1321,8 @@ impl ExpectedCall {
     ) -> Self {
         let (gas, min_gas) = if value.is_some_and(|value| !value.is_zero()) {
             (
-                gas.map(|gas| gas.saturating_add(CALL_STIPEND)),
-                min_gas.map(|gas| gas.saturating_add(CALL_STIPEND)),
+                gas.map(|gas| gas.saturating_add(CALL_STIPEND.into())),
+                min_gas.map(|gas| gas.saturating_add(CALL_STIPEND.into())),
             )
         } else {
             (gas, min_gas)
@@ -2011,14 +2011,14 @@ impl SymbolicWorld {
         if let Some(key) = concrete_key {
             return executor
                 .backend
-                .storage_ref(address, key)
+                .storage(address, key)
                 .map(|value| SymExpr::constant(cx, value))
                 .map_err(|err| SymbolicError::Backend(err.to_string()));
         }
         if let Some(key) = key.as_const() {
             executor
                 .backend
-                .storage_ref(address, key)
+                .storage(address, key)
                 .map(|value| SymExpr::constant(cx, value))
                 .map_err(|err| SymbolicError::Backend(err.to_string()))
         } else if self.zero_init_symbolic_storage {
@@ -2050,7 +2050,7 @@ impl SymbolicWorld {
             if preserve_nonzero_slot {
                 let concrete = executor
                     .backend
-                    .storage_ref(address, slot)
+                    .storage(address, slot)
                     .map_err(|err| SymbolicError::Backend(err.to_string()))?;
                 if !concrete.is_zero() {
                     return Ok(Some(SymExpr::constant(cx, concrete)));
@@ -2149,7 +2149,7 @@ impl SymbolicWorld {
     pub(crate) fn backend_balance(&self, executor: &ExecutorView<'_>, address: Address) -> U256 {
         executor
             .backend
-            .basic_ref(address)
+            .basic(address)
             .ok()
             .flatten()
             .map(|account| account.balance)
@@ -2206,6 +2206,8 @@ impl SymbolicWorld {
         }
     }
 
+    /// Moves `value` from `from` to `to`, saturating the recipient's balance at `U256::MAX` when
+    /// `saturate` is set and wrapping it otherwise.
     pub(crate) fn transfer(
         &mut self,
         cx: &mut SymCx,
@@ -2213,6 +2215,7 @@ impl SymbolicWorld {
         from: Address,
         to: Address,
         value: SymExpr,
+        saturate: bool,
     ) {
         if from == to || value.as_const().is_some_and(|value| value.is_zero()) {
             return;
@@ -2220,7 +2223,11 @@ impl SymbolicWorld {
         let from_balance = self.balance_word_for_address(cx, executor, from);
         let to_balance = self.balance_word_for_address(cx, executor, to);
         let from_balance = SymExpr::binop(cx, SymBinOp::Sub, from_balance, value.clone());
-        let to_balance = SymExpr::binop(cx, SymBinOp::Add, to_balance, value);
+        let to_balance = if saturate {
+            SymMemory::saturating_add_word(cx, to_balance, value)
+        } else {
+            SymExpr::binop(cx, SymBinOp::Add, to_balance, value)
+        };
         self.set_balance_word(from, from_balance);
         self.set_balance_word(to, to_balance);
     }
@@ -2238,7 +2245,7 @@ impl SymbolicWorld {
         }
         executor
             .backend
-            .basic_ref(address)
+            .basic(address)
             .map_err(|err| SymbolicError::Backend(err.to_string()))
             .map(|account| account.map(|account| account.nonce).unwrap_or_default())
     }
@@ -2293,7 +2300,7 @@ impl SymbolicWorld {
         if beneficiary != address && !balance.as_const().is_some_and(|value| value.is_zero()) {
             let beneficiary_balance = self.balance_word_for_address(cx, executor, beneficiary);
             let beneficiary_balance =
-                SymExpr::binop(cx, SymBinOp::Add, beneficiary_balance, balance);
+                SymMemory::saturating_add_word(cx, beneficiary_balance, balance);
             self.set_balance_word(beneficiary, beneficiary_balance);
         }
         let nonce = if self.nonces.contains_key(&address) {
@@ -2332,7 +2339,7 @@ impl SymbolicWorld {
             // Symbolic balances are treated as possibly non-zero, matching transfer's
             // account-existence approximation.
             let beneficiary_balance =
-                SymExpr::binop(cx, SymBinOp::Add, beneficiary_balance, balance);
+                SymMemory::saturating_add_word(cx, beneficiary_balance, balance);
             self.set_balance_word(beneficiary, beneficiary_balance);
             let zero = SymExpr::zero(cx);
             Arc::make_mut(&mut self.state).balances.insert(address, zero);
@@ -2367,7 +2374,7 @@ impl SymbolicWorld {
 
         let Some(account) = executor
             .backend
-            .basic_ref(address)
+            .basic(address)
             .map_err(|err| SymbolicError::Backend(err.to_string()))?
         else {
             return Ok(false);
@@ -2408,7 +2415,7 @@ impl SymbolicWorld {
         }
         let account = executor
             .backend
-            .basic_ref(address)
+            .basic(address)
             .map_err(|err| SymbolicError::Backend(err.to_string()))?;
         if let Some(account) = account.as_ref()
             && (account.nonce != 0
@@ -2611,10 +2618,10 @@ impl SymbolicBlock {
             timestamp: SymExpr::constant(cx, block.timestamp),
             number: SymExpr::constant(cx, block.number),
             difficulty: SymExpr::constant(cx, block.difficulty),
-            gaslimit: SymExpr::constant(cx, U256::from(block.gas_limit)),
-            basefee: SymExpr::constant(cx, U256::from(block.basefee)),
-            blob_basefee: SymExpr::constant(cx, U256::from(block.blob_basefee)),
-            slot_num: SymExpr::constant(cx, U256::from(block.slot_num)),
+            gaslimit: SymExpr::constant(cx, block.gas_limit),
+            basefee: SymExpr::constant(cx, block.basefee),
+            blob_basefee: SymExpr::constant(cx, block.blob_basefee),
+            slot_num: SymExpr::constant(cx, block.slot_num),
             block_hashes: HashMap::default(),
             blob_hashes: executor.blob_hashes.clone(),
         }
@@ -2645,12 +2652,9 @@ impl SymbolicBlock {
         if let Some(hash) = self.block_hashes.get(&block_number) {
             return Ok(hash.clone());
         }
-        let Ok(block_number) = u64::try_from(block_number) else {
-            return Ok(SymExpr::zero(cx));
-        };
         let hash = executor
             .backend
-            .block_hash_ref(block_number)
+            .block_hash(block_number)
             .map_err(|err| SymbolicError::Backend(err.to_string()))?;
         Ok(SymExpr::constant(cx, U256::from_be_slice(hash.as_slice())))
     }

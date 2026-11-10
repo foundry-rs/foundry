@@ -362,7 +362,7 @@ impl SymbolicExecutor {
         let account = input
             .executor
             .backend
-            .basic_ref(input.target)
+            .basic(input.target)
             .map_err(|err| SymbolicError::Backend(err.to_string()))?
             .ok_or(SymbolicError::MissingAccount(input.target))?;
         let bytecode = account.code.ok_or(SymbolicError::MissingCode(input.target))?;
@@ -618,26 +618,24 @@ impl SymbolicExecutor {
         initial_state.world.set_storage_layout(self.config.storage_layout);
         let initial = SequencePath { state: initial_state, steps: Vec::new() };
 
-        if symbolic_invariant_should_check(0, input.depth, input.check_interval) {
-            for outcome in self.execute_invariant_check(
-                &input.executor,
-                &initial.state,
-                input.invariant_address,
-                input.sender,
-                input.invariant,
-                after_invariant_for(0),
-                &mut completed_paths,
-            )? {
-                if outcome.failed {
-                    let (sequence, storage) =
-                        self.materialize_sequence(&initial.steps, &outcome.state)?;
-                    return Ok(SymbolicInvariantRunResult::Counterexample {
-                        kind: SymbolicInvariantCounterexampleKind::Predicate,
-                        sequence,
-                        storage,
-                        stats: self.stats_with_paths(completed_paths),
-                    });
-                }
+        // Like Forge, check the state right after `setUp` before any sequence call.
+        for outcome in self.execute_invariant_check(
+            &input.executor,
+            &initial.state,
+            input.invariant_address,
+            input.invariant,
+            after_invariant_for(0),
+            &mut completed_paths,
+        )? {
+            if outcome.failed {
+                let (sequence, storage) =
+                    self.materialize_sequence(&initial.steps, &outcome.state)?;
+                return Ok(SymbolicInvariantRunResult::Counterexample {
+                    kind: SymbolicInvariantCounterexampleKind::Predicate,
+                    sequence,
+                    storage,
+                    stats: self.stats_with_paths(completed_paths),
+                });
             }
         }
 
@@ -732,7 +730,6 @@ impl SymbolicExecutor {
                                         &input.executor,
                                         &post_state,
                                         input.invariant_address,
-                                        input.sender,
                                         input.invariant,
                                         after_invariant_for(steps.len()),
                                         &mut completed_paths,
@@ -823,7 +820,5 @@ const fn symbolic_invariant_should_check(
     check_interval: u32,
 ) -> bool {
     sequence_len == depth
-        || (check_interval != 0
-            && sequence_len != 0
-            && sequence_len.is_multiple_of(check_interval as usize))
+        || (check_interval != 0 && sequence_len.is_multiple_of(check_interval as usize))
 }

@@ -1424,7 +1424,7 @@ impl SymbolicExecutor {
             CallKind::CallCode => state.address,
             CallKind::DelegateCall | CallKind::StaticCall => return,
         };
-        state.world.transfer(&mut self.cx, executor, from, to, value);
+        state.world.transfer(&mut self.cx, executor, from, to, value, true);
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -1444,77 +1444,49 @@ impl SymbolicExecutor {
             return Ok(None);
         }
 
-        // Like revm's `transfer_loaded`, a short sender balance is an `OutOfFunds` revert, and a
-        // recipient balance overflow is an `OverflowPayment` halt.
+        // A sender balance below `value` fails the call with an `OutOfFunds` revert.
         let balance = state.balance(&mut self.cx, executor, from);
-        let can_pay = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, balance, value.clone());
-        let mut failures = vec![(can_pay.clone().not(&mut self.cx), CallStatus::Revert)];
-        let can_transfer = if from == to {
-            can_pay
-        } else {
-            let balance = state.balance(&mut self.cx, executor, to);
-            let sum = SymExpr::binop(&mut self.cx, SymBinOp::Add, balance.clone(), value);
-            let no_overflow = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, sum, balance);
-            let overflow = no_overflow.clone().not(&mut self.cx);
-            let overflow = SymBoolExpr::and(&mut self.cx, vec![can_pay.clone(), overflow]);
-            failures.push((overflow, CallStatus::ExceptionalHalt));
-            SymBoolExpr::and(&mut self.cx, vec![can_pay, no_overflow])
-        };
+        let can_transfer = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, balance, value);
         if can_transfer.as_const() == Some(true) {
             return Ok(None);
         }
 
+        let cannot_transfer = can_transfer.clone().not(&mut self.cx);
         let success_constraints = self.constraints_for_condition(state, can_transfer)?;
-        let mut feasible_failures = Vec::new();
-        for (condition, status) in failures {
-            if let Some(constraints) = self.constraints_for_condition(state, condition)? {
-                feasible_failures.push((constraints, status));
-            }
-        }
-        // Without a feasible transfer, the last feasible failure continues on this path.
-        let last_failure =
-            if success_constraints.is_none() { feasible_failures.pop() } else { None };
-        for (constraints, status) in feasible_failures {
-            let mut failure = state.clone();
-            failure.constraints = constraints;
-            let return_data = SymReturnData::empty(&mut self.cx);
-            match self.finish_codeless_call(
-                executor,
-                &mut failure,
-                kind,
-                status,
-                return_data,
-                to,
-                out_offset.clone(),
-                out_size,
-            )? {
-                StepOutcome::Continue => worklist.push_back(failure),
-                outcome => {
-                    *state = failure;
-                    return Ok(Some(outcome));
-                }
-            }
-        }
-        if let Some(constraints) = success_constraints {
+        let Some(failure_constraints) = self.constraints_for_condition(state, cannot_transfer)?
+        else {
+            let Some(constraints) = success_constraints else {
+                return Ok(Some(StepOutcome::AssumeRejected));
+            };
             state.constraints = constraints;
             return Ok(None);
-        }
-        let Some((constraints, status)) = last_failure else {
-            return Ok(Some(StepOutcome::AssumeRejected));
         };
-        state.constraints = constraints;
+        let mut failure = state.clone();
+        failure.constraints = failure_constraints;
         let return_data = SymReturnData::empty(&mut self.cx);
-        self.finish_codeless_call(
+        let outcome = self.finish_codeless_call(
             executor,
-            state,
+            &mut failure,
             kind,
-            status,
+            CallStatus::Revert,
             return_data,
             to,
             out_offset,
             out_size,
-        )
-        .map(Some)
+        )?;
+        match success_constraints {
+            Some(constraints) if matches!(outcome, StepOutcome::Continue) => {
+                worklist.push_back(failure);
+                state.constraints = constraints;
+                Ok(None)
+            }
+            // Without a feasible transfer, or when the failure ends execution, the failure
+            // continues on this path.
+            _ => {
+                *state = failure;
+                Ok(Some(outcome))
+            }
+        }
     }
 
     pub(super) fn prepare_create_value_transfer(
@@ -1587,7 +1559,7 @@ impl SymbolicExecutor {
         out_size: BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
         let mut candidates = state.world.symbolic_call_targets(&mut self.cx, executor)?;
-        candidates.extend(active_precompiles(executor.spec_id).addresses().copied());
+        candidates.extend(active_precompiles(executor.spec_id).as_map().addresses());
         candidates.sort();
         candidates.dedup();
         if candidates.is_empty() {
@@ -1669,6 +1641,7 @@ impl SymbolicExecutor {
                         call_caller,
                         transfer_to,
                         value.clone(),
+                        true,
                     );
                 }
             }
@@ -1955,6 +1928,15 @@ const KZG_PROOF_OFFSET: usize = 144;
 const KZG_BLS_MODULUS: [u8; 32] =
     hex!("73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001");
 
+/// Versioned hash version for KZG commitments.
+const KZG_VERSIONED_HASH_VERSION: u8 = 0x01;
+
+/// `U256(FIELD_ELEMENTS_PER_BLOB).to_be_bytes() ++ BLS_MODULUS.to_bytes32()`.
+const KZG_RETURN_VALUE: [u8; 64] = hex!(
+    "0000000000000000000000000000000000000000000000000000000000001000"
+    "73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001"
+);
+
 const KZG_SUCCESS_INPUT: [u8; KZG_POINT_EVALUATION_INPUT_LEN] = hex!(
     "01e798154708fe7789429634053cbf9f99b619f9f084048927333fce637f549b"
     "73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000000"
@@ -1969,7 +1951,7 @@ const KZG_ONE_COMMITMENT: [u8; 48] = [0x01; 48];
 const KZG_RESIDUAL_REASON: &str = "symbolic KZG point-evaluation precompile residual not modeled";
 
 fn kzg_success_return_data(cx: &mut SymCx) -> SymReturnData {
-    SymReturnData::from_concrete_bytes(cx, kzg_point_evaluation::RETURN_VALUE.to_vec())
+    SymReturnData::from_concrete_bytes(cx, KZG_RETURN_VALUE.to_vec())
 }
 
 fn kzg_constrained_outcome(
@@ -1989,12 +1971,12 @@ fn kzg_constrained_outcome(
     }
 
     if let Some(input) = constrained_bytes_at(cx, state, input, 0, input_len) {
-        return execute_precompile(cx, kzg_point_evaluation::ADDRESS, &input, SpecId::CANCUN)
+        return execute_precompile(cx, Address::with_last_byte(10), &input, SpecId::CANCUN)
             .map(Some);
     }
 
     if constrained_byte(cx, state, &input[0])
-        .is_some_and(|version| version != kzg_point_evaluation::VERSIONED_HASH_VERSION_KZG)
+        .is_some_and(|version| version != KZG_VERSIONED_HASH_VERSION)
     {
         return Ok(Some(None));
     }
@@ -2010,7 +1992,7 @@ fn kzg_constrained_outcome(
     }
 
     if let Some(commitment) = constrained_bytes_at(cx, state, input, KZG_COMMITMENT_OFFSET, 48) {
-        let expected_hash = kzg_point_evaluation::kzg_to_versioned_hash(&commitment);
+        let expected_hash = kzg_to_versioned_hash(&commitment);
         for (idx, expected) in expected_hash.into_iter().enumerate() {
             if constrained_byte(cx, state, &input[idx]).is_some_and(|actual| actual != expected) {
                 return Ok(Some(None));
@@ -2039,8 +2021,7 @@ fn kzg_failure_witness_condition(
 ) -> SymBoolExpr {
     let len_192 = expr_eq_condition(cx, input_len, KZG_POINT_EVALUATION_INPUT_LEN);
     let len_ne_192 = expr_ne_condition(cx, input_len, KZG_POINT_EVALUATION_INPUT_LEN);
-    let bad_version =
-        byte_ne_condition(cx, input, 0, kzg_point_evaluation::VERSIONED_HASH_VERSION_KZG);
+    let bad_version = byte_ne_condition(cx, input, 0, KZG_VERSIONED_HASH_VERSION);
     let bad_z = bytes_eq_condition(cx, input, KZG_Z_OFFSET, &KZG_BLS_MODULUS);
     let bad_y = bytes_eq_condition(cx, input, KZG_Y_OFFSET, &KZG_BLS_MODULUS);
     let bad_proof = bytes_eq_condition(cx, input, KZG_PROOF_OFFSET, &KZG_INVALID_PROOF);
@@ -2053,7 +2034,7 @@ fn kzg_failure_witness_condition(
     ];
 
     if let Some(commitment) = constrained_bytes_at(cx, state, input, KZG_COMMITMENT_OFFSET, 48) {
-        let expected_hash = kzg_point_evaluation::kzg_to_versioned_hash(&commitment);
+        let expected_hash = kzg_to_versioned_hash(&commitment);
         let mismatch = kzg_versioned_hash_mismatch_condition(cx, input, &expected_hash);
         conditions.push(SymBoolExpr::and(cx, vec![len_192.clone(), mismatch]));
     }
@@ -2065,7 +2046,7 @@ fn kzg_failure_witness_condition(
     conditions.push(SymBoolExpr::and(cx, vec![len_192.clone(), commitment_eq, hash_byte_mismatch]));
 
     for commitment in [&KZG_ZERO_COMMITMENT, &KZG_ONE_COMMITMENT] {
-        let expected_hash = kzg_point_evaluation::kzg_to_versioned_hash(commitment);
+        let expected_hash = kzg_to_versioned_hash(commitment);
         let commitment_eq = bytes_eq_condition(cx, input, KZG_COMMITMENT_OFFSET, commitment);
         let mismatch = kzg_versioned_hash_mismatch_condition(cx, input, &expected_hash);
         conditions.push(SymBoolExpr::and(cx, vec![len_192.clone(), commitment_eq, mismatch]));
@@ -2167,4 +2148,11 @@ fn ensure_expr_not_gasleft(expr: &SymExpr) -> Result<(), SymbolicError> {
     } else {
         Ok(())
     }
+}
+
+/// Returns `KZG_VERSIONED_HASH_VERSION ++ sha256(commitment)[1..]`.
+fn kzg_to_versioned_hash(commitment: &[u8]) -> [u8; 32] {
+    let mut hash = evm2::precompiles::crypto().sha256(commitment);
+    hash[0] = KZG_VERSIONED_HASH_VERSION;
+    hash
 }

@@ -1,5 +1,6 @@
 //! Support for generating the state root for memdb storage
 
+use crate::eth::backend::db::{AccountInfo, AccountState, DbAccount};
 use alloy_primitives::{
     B256, Bytes, U256, keccak256,
     map::{AddressMap, B256Map, HashSet, U256Map},
@@ -9,10 +10,7 @@ use alloy_trie::{
     EMPTY_ROOT_HASH, HashBuilder, Nibbles, TrieMask,
     nodes::{BranchNodeRef, ExtensionNodeRef, LeafNodeRef, RlpNode},
 };
-use revm::{
-    database::{AccountState, DbAccount},
-    state::{Account, AccountInfo},
-};
+use evm2::evm::BlockStateAccumulator;
 use std::{array, mem};
 
 /// Incrementally maintains the state trie used for block headers.
@@ -37,15 +35,16 @@ struct DirtyAccount {
 
 impl StateRootCache {
     /// Records changes that will be committed to the database.
-    pub fn record_changes(&mut self, changes: &AddressMap<Account>) {
-        for (address, account) in changes {
-            if !account.is_touched() {
-                continue;
-            }
-
-            let dirty = self.dirty.entry(*address).or_default();
-            dirty.reset_storage |= account.is_created() || account.is_selfdestructed();
-            dirty.storage.extend(account.changed_storage_slots().map(|(slot, _)| *slot));
+    pub fn record_changes(&mut self, changes: &BlockStateAccumulator) {
+        for (address, delta) in changes.accounts() {
+            let dirty = self.dirty.entry(address).or_default();
+            dirty.reset_storage |= delta.original.is_none() || delta.current.is_none();
+        }
+        for address in changes.storage_wipes() {
+            self.dirty.entry(address).or_default().reset_storage = true;
+        }
+        for (key, _) in changes.storage() {
+            self.dirty.entry(key.address()).or_default().storage.insert(key.key());
         }
     }
 
@@ -562,7 +561,7 @@ pub fn trie_account_rlp(info: &AccountInfo, storage: &U256Map<U256>) -> Vec<u8> 
 /// Returns the RLP for this account with an already computed storage root.
 fn trie_account_rlp_with_storage_root(info: &AccountInfo, storage_root: B256) -> Vec<u8> {
     let mut out: Vec<u8> = Vec::new();
-    let list: [&dyn Encodable; 4] = [&info.nonce, &info.balance, &storage_root, &info.code_hash()];
+    let list: [&dyn Encodable; 4] = [&info.nonce, &info.balance, &storage_root, &info.code_hash];
 
     alloy_rlp::encode_list::<_, dyn Encodable>(&list, &mut out);
 

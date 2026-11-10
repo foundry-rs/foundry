@@ -20,10 +20,11 @@ async fn fork_cheatcode_access_compatibility(prj: _, cmd: _) {
         cmd.env("FOUNDRY_ISOLATE", isolate.to_string());
         cmd.assert_success().stdout_eq(str![[r#"
 ...
-Ran 12 tests for test/CheatcodeAccess.t.sol:CheatcodeAccessCompatibilityTest
+Ran 13 tests for test/CheatcodeAccess.t.sol:CheatcodeAccessCompatibilityTest
 [PASS] testForkAuthorizationIsReadAtCheatcodeUse() ([GAS])
 [PASS] testForkCallbacksRetainChildAccess() ([GAS])
 [PASS] testForkConstructorsAndLocalLibrariesRetainAccess() ([GAS])
+[PASS] testForkConstructorsRetainAccessWithCallerOverrides() ([GAS])
 [PASS] testForkDelegatedConstructorsCannotUseCheatcodes() ([GAS])
 [PASS] testForkDelegatedCreationDoesNotAuthorizeChildren() ([GAS])
 [PASS] testForkDeployCodeCannotAuthorizeUntrustedChildren() ([GAS])
@@ -33,9 +34,9 @@ Ran 12 tests for test/CheatcodeAccess.t.sol:CheatcodeAccessCompatibilityTest
 [PASS] testForkExplicitFactoryAuthorizationAllowsChildren() ([GAS])
 [PASS] testForkGenericFactoryCannotAuthorizeUntrustedChildren() ([GAS])
 [PASS] testForkParentAccessRestoredAfterDelegation() ([GAS])
-Suite result: ok. 12 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 13 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 12 tests passed, 0 failed, 0 skipped (12 total tests)
+Ran 1 test suite [ELAPSED]: 13 tests passed, 0 failed, 0 skipped (13 total tests)
 
 "#]]);
     }
@@ -107,6 +108,9 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 const CHEATCODE_ACCESS_COMPATIBILITY: &str = r#"
 interface Vm {
+    function prank(address sender) external;
+    function startBroadcast(address sender) external;
+    function stopBroadcast() external;
     function allowCheatcodes(address account) external;
     function createSelectFork(string calldata url) external returns (uint256);
     function envString(string calldata name) external view returns (string memory);
@@ -396,6 +400,20 @@ contract CheatcodeAccessCompatibilityTest is AccessFixture {
             if (mode == 0) expectDenied(ok, output, child);
             else expectValue(ok, output);
         }
+    }
+
+    function testForkConstructorsRetainAccessWithCallerOverrides() public {
+        vm.prank(address(0xbeef));
+        ConstructorReader pranked = new ConstructorReader();
+        require(pranked.constructorValue() == 7, "pranked constructor access lost");
+        require(pranked.read() == 7, "pranked child access lost");
+
+        vm.startBroadcast(address(0xcafe));
+        ConstructorReader broadcasted = new ConstructorReader();
+        vm.stopBroadcast();
+        require(broadcasted.constructorValue() == 7, "broadcast constructor access lost");
+        require(broadcasted.read() == 7, "broadcast child access lost");
+        require(readDefault() == 7, "parent access lost after caller overrides");
     }
 
     function testForkExplicitAuthorizationAllowsDirectAndDelegatedCalls() public {

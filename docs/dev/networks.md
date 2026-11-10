@@ -1,7 +1,7 @@
 # Custom EVM integrations
 
 Foundry supports execution families whose transaction types, hardforks, precompiles, or state differ
-from Ethereum. An integration crosses Foundry, Alloy, and REVM, so it must define ownership at each
+from Ethereum. An integration crosses Foundry, Alloy, and evm2, so it must define ownership at each
 layer and preserve that contract across Forge, Cast, Anvil, Chisel, scripts, cheatcodes, and traces.
 
 ## Mental model
@@ -72,8 +72,12 @@ network's execution semantics.
 | Layer | Owns |
 | --- | --- |
 | Alloy `Network` | RPC transaction requests, envelopes, receipts, and response types |
-| Alloy `EvmFactory` and Foundry's `FoundryEvmFactory` adapter | Spec, block and transaction environments, halt reasons, precompiles, and construction of the concrete EVM context |
-| REVM context and journal | Execution-time state mutation, checkpoints, commits, and reverts |
+| `FoundryEvmNetwork` | Association of an Alloy network with a compatible execution factory; no behavior |
+| `FoundryEvmFactory` and its evm2 type family | Spec, block and transaction environments, transaction registry, results, precompiles, and network extension state |
+| `FoundryTxConversion` on the evm2 type family | Conversion from native Alloy requests, signed envelopes, and RPC transactions into execution transactions |
+| `FoundryExecutionHooks` on the evm2 type family | Synchronization of derived running-transaction state around Foundry's out-of-band state changes, independently of factory configuration |
+| evm2 `State` | Execution-time state mutation, journaling, warmth, checkpoints, commits, and reverts |
+| `ExecutionLifecycle` | Accepted state of inactive forks, persistent accounts, snapshots, and nested transactions |
 | `NetworkConfigs` and hardfork types | Pre-dispatch selection, chain and endpoint inference, feature configuration, and hardfork validation |
 | Foundry tools | CLI/config plumbing, one authoritative dispatch per execution entry point, and tool-specific workflows and user-visible behavior |
 
@@ -114,8 +118,9 @@ state. Then implement the integration in layers.
    known-chain inference, endpoint metadata, compatibility with fork sources, and legacy aliases if
    required.
 3. Add the concrete `FoundryEvmNetwork` and `FoundryEvmFactory` adapter under
-   `crates/evm/core/src/evm/`. Keep conversions between RPC types and execution types at this
-   boundary.
+   `crates/evm/core/src/evm/`. Implement `FoundryTxConversion` and `FoundryExecutionHooks` on the
+   evm2 type family. Keep conversions between RPC types and execution types at this boundary;
+   running-state hooks must use the supplied EVM, not a reconstructed factory.
 4. Thread the associated spec, block, transaction, halt, context, and journal types through typed
    execution code. Keep custom-family state and algorithms in concrete implementations instead of
    adding optional custom state to the generic backend. Avoid converting back to Ethereum types in
@@ -142,13 +147,13 @@ identify a Tempo revision.
 
 `vm.setEvmVersion` selects execution rules using the active network's version mappings; it does
 not change the Solidity compiler target. Existing Ethereum aliases and native Tempo revision names
-remain accepted. On Tempo, runtime changes do not rebuild instructions or precompiles; configure
-`hardfork = "tempo:T7"` (or the required revision) before execution to select a different revision.
+remain accepted. Calls and creates started after a runtime change run with the selected version's
+instructions, gas schedule and precompiles, while the running frame keeps its own; configure
+`hardfork = "tempo:T7"` (or the required revision) to select a revision for whole transactions.
 
-Execution-time gas refreshes pass through the selected `FoundryEvmFactory`. The default delegates
-to the existing context/configuration behavior, preserving downstream `FoundryCfg` implementations
-and its blanket implementation for `CfgEnv<SPEC>`. Tempo overrides the factory method to use its
-own gas parameters instead of Ethereum prices derived from its instruction-set baseline.
+The runtime version, including its gas parameters, and the execution config come from the selected
+`FoundryEvmFactory`. Tempo's factory supplies its own gas parameters instead of Ethereum prices
+derived from its instruction-set baseline.
 
 ## State lifecycle
 
@@ -170,22 +175,20 @@ or journal boundary. Do not rely on cloning the ordinary account database to pre
 another component. Do not add optional custom-family state to a generic context or return generic
 "context update" signals when only one concrete family can use them.
 
-Both cheatcode inspector adapters use
-[`with_inherited_evm`](../../crates/evm/core/src/evm/mod.rs) to pair inherited context setup
-with successful write-back. Inspector assembly stays with the adapter, and EVM factories retain
-construction ownership. This shared operation still uses the existing Monad journal bridge; it
-is not a replacement for the deferred native journal, snapshot, and fork lifecycle migrations.
-
-Isolated calls and `executeTransaction` share account-state preparation and settlement through
-[`prepare_child_state` and `merge_child_state`](../../crates/evm/core/src/evm/mod.rs).
-Their transaction context, environment restoration, and native journal handling remain distinct:
-an isolated call belongs to its enclosing transaction, while `executeTransaction` runs a fresh one.
+Isolated calls, `vm.executeTransaction`, and `vm.transact` run as nested transactions on an EVM
+that [`ExecutionLifecycle::nested_evm`](../../crates/evm/core/src/evm/lifecycle.rs) builds from
+the running transaction's state, with network extension state derived from the running EVM. Their
+transaction context remains distinct: an isolated call belongs to its enclosing transaction and
+continues its derived state (`FoundryEvmExt::set_preserve_transaction_state`), while
+`executeTransaction` runs a fresh one.
 
 Historical replay retains the RPC envelope's system classification after transaction conversion.
-The default nested replay behavior deliberately skips system envelopes unsupported by the selected
-execution family without mutating state. A family that supports protocol system envelopes must
-override that behavior in its concrete nested EVM and test canonical execution, foreign-envelope
-skips, malformed envelopes, and rollback after failed protocol prestate.
+Replay deliberately skips system envelopes unsupported by the selected execution family without
+mutating state. A family that supports protocol system envelopes implements
+`FoundryEvmExt::is_protocol_transaction` and `set_protocol_replay`; only trusted historical
+execution (block prefix and target replay, Anvil forced and mined replays) enables the latter,
+per transaction, and pool admission never does. Test canonical execution, foreign-envelope skips,
+malformed envelopes, and rollback after failed protocol prestate.
 
 ## Tool coverage
 

@@ -49,6 +49,20 @@ contract HaltingConstructor {
     }
 }
 
+contract LargeRuntimeContract {
+    function a(uint256 x) external pure returns (uint256) {
+        return x * 3 + 1;
+    }
+
+    function b(uint256 x, uint256 y) external pure returns (uint256) {
+        return x / (y + 1) + x % (y + 2);
+    }
+
+    function c(bytes calldata data) external pure returns (bytes32) {
+        return keccak256(data);
+    }
+}
+
 contract GasleftConstructor {
     uint256 public gasAtStart;
 
@@ -187,8 +201,31 @@ contract DeployCodeTest is Test {
         } catch {}
     }
 
+    // A constructor whose returned code cannot be deposited reverts with that code.
+    function testDeployCodeDepositOutOfGas() public {
+        try this.deployLargeRuntimeContract{gas: 60000}() {
+            revert("expected out of gas");
+        } catch (bytes memory reason) {
+            assertEq(reason, type(LargeRuntimeContract).runtimeCode);
+        }
+    }
+
+    // An isolated `deployCode` runs its create as the root of a nested transaction, whose failed
+    // code deposit returns no data.
+    function testDirectDeployCodeDepositOutOfGas() public {
+        (bool success, bytes memory reason) = address(vm).call{gas: 60000}(
+            abi.encodeWithSignature("deployCode(string)", "cheats/DeployCode.t.sol:LargeRuntimeContract")
+        );
+        assertTrue(!success);
+        assertEq(reason, vm.isIsolateMode() ? bytes("") : type(LargeRuntimeContract).runtimeCode);
+    }
+
     function deployTestContract() external {
         vm.deployCode("cheats/DeployCode.t.sol:TestContract");
+    }
+
+    function deployLargeRuntimeContract() external {
+        vm.deployCode("cheats/DeployCode.t.sol:LargeRuntimeContract");
     }
 
     function testDeployCodeForwardsNativeCreateGas() public {

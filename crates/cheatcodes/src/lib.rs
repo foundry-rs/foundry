@@ -16,24 +16,22 @@ pub extern crate foundry_cheatcodes_spec as spec;
 extern crate tracing;
 
 use alloy_primitives::{Address, B256, U256};
+use evm2::interpreter::GasTracker;
 use foundry_evm_core::{
-    FoundryTransaction,
-    backend::{DatabaseExt, LocalForkId},
-    env::FoundryContextExt,
-    evm::{FoundryContextFor, FoundryEvmNetwork, SpecFor},
+    backend::{Backend, CowBackend, LocalForkId},
+    evm::{
+        BlockEnvFor, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork,
+        SpecFor, evm_env,
+    },
     fork::CreateFork,
-};
-use revm::{
-    context::{Block, Cfg, ContextTr, JournalTr, Transaction},
-    interpreter::Gas,
 };
 
 pub use Vm::ForgeContext;
 pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
-pub use foundry_evm_core::evm::NestedEvmClosureFor;
 pub use inspector::{
     BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor,
+    StorageHook, message_result, revert_frame,
 };
 pub use spec::{CheatcodeDef, Vm};
 
@@ -125,153 +123,211 @@ pub(crate) trait Cheatcode: CheatcodeDef {
     }
 }
 
+/// Backend access of the cheatcode inspector while an execution runs.
+///
+/// Implemented for [`Backend`] and [`CowBackend`], so fuzzed calls keep their lazy copy-on-write
+/// clone: read-only cheatcodes never clone the backend.
+pub trait CheatcodesBackend<FEN: FoundryEvmNetwork> {
+    /// Returns the backend for reading.
+    fn backend(&self) -> &Backend<FEN>;
+
+    /// Returns the backend for modification.
+    fn backend_mut(&mut self) -> &mut Backend<FEN>;
+}
+
+impl<FEN: FoundryEvmNetwork> CheatcodesBackend<FEN> for Backend<FEN> {
+    fn backend(&self) -> &Self {
+        self
+    }
+
+    fn backend_mut(&mut self) -> &mut Self {
+        self
+    }
+}
+
+impl<FEN: FoundryEvmNetwork> CheatcodesBackend<FEN> for CowBackend<'_, FEN> {
+    fn backend(&self) -> &Backend<FEN> {
+        self
+    }
+
+    fn backend_mut(&mut self) -> &mut Backend<FEN> {
+        self
+    }
+}
+
 /// The cheatcode context.
-pub struct CheatsCtxt<'a, 'db, FEN: FoundryEvmNetwork> {
+pub struct CheatsCtxt<'a, 'evm, FEN: FoundryEvmNetwork> {
     /// The cheatcodes inspector state.
     pub(crate) state: &'a mut Cheatcodes<FEN>,
-    /// The EVM context.
-    pub(crate) ecx: &'a mut FoundryContextFor<'db, FEN>,
+    /// The running EVM.
+    pub(crate) evm: &'a mut FoundryEvmFor<'evm, FEN>,
+    /// The backend the EVM runs over.
+    pub(crate) backend: &'a mut dyn CheatcodesBackend<FEN>,
     /// The original `msg.sender`.
     pub(crate) caller: Address,
     /// Gas of the current cheatcode call, returned to the caller.
-    pub(crate) gas: &'a mut Gas,
+    pub(crate) gas: &'a mut GasTracker,
     /// Whether the current cheatcode call is static.
     pub(crate) is_static: bool,
+    /// Call depth of the frame calling the cheatcode.
+    pub(crate) depth: usize,
 }
 
-impl<FEN: FoundryEvmNetwork> CheatsCtxt<'_, '_, FEN> {
+impl<'evm, FEN: FoundryEvmNetwork> CheatsCtxt<'_, 'evm, FEN> {
     pub(crate) fn ensure_not_precompile(&self, address: &Address) -> Result<()> {
         if self.is_precompile(address) { Err(precompile_error(address)) } else { Ok(()) }
     }
 
+    /// Returns whether `address` is one of the EVM's registered precompiles.
+    ///
+    /// Checks the provider's registered addresses rather than `PrecompileProvider::contains`:
+    /// networks such as Tempo also dispatch storage-backed system contracts as precompiles, and
+    /// cheatcodes like `vm.store` must keep working on their state.
     pub(crate) fn is_precompile(&self, address: &Address) -> bool {
-        self.ecx.journal().precompile_addresses().contains(address)
+        self.evm.precompiles().addresses().contains(address)
+    }
+
+    /// Returns the backend.
+    #[inline]
+    pub(crate) fn db(&self) -> &Backend<FEN> {
+        self.backend.backend()
+    }
+
+    /// Returns the backend for modification.
+    #[inline]
+    pub(crate) fn db_mut(&mut self) -> &mut Backend<FEN> {
+        self.backend.backend_mut()
+    }
+
+    /// Returns the running EVM and the backend for modification.
+    #[inline]
+    pub(crate) fn evm_db_mut(&mut self) -> (&mut FoundryEvmFor<'evm, FEN>, &mut Backend<FEN>) {
+        (&mut *self.evm, self.backend.backend_mut())
     }
 
     /// Returns the current call depth.
     #[inline]
-    pub(crate) fn depth(&self) -> usize {
-        self.ecx.journal().depth()
+    pub(crate) const fn depth(&self) -> usize {
+        self.depth
     }
 
-    /// Returns the active hardfork.
+    /// Returns the depth of the frame that called the cheatcode, whose scope its writes join.
+    #[inline]
+    pub(crate) const fn caller_depth(&self) -> usize {
+        self.depth.saturating_sub(1)
+    }
+
+    /// Returns the active hardfork: the one the calls and creates started next run with.
+    ///
+    /// Cheatcode calls run on the running EVM, which keeps its spec while a change requested by
+    /// `vm.setEvmVersion` or deferred by an in-flight operation applies to new frames.
     #[inline]
     pub(crate) fn spec(&self) -> SpecFor<FEN> {
-        self.ecx.cfg().spec()
+        self.state
+            .execution_evm_version
+            .or_else(|| self.db().lifecycle().pending_env().map(|env| env.spec))
+            .unwrap_or_else(|| self.evm.config_spec_id())
+    }
+
+    /// Returns the running environment with [`Self::spec`], for transactions a cheatcode executes
+    /// with the requested spec.
+    pub(crate) fn evm_env(&self) -> EvmEnvFor<FEN> {
+        let env = evm_env(self.evm);
+        let spec = self.spec();
+        if spec == env.spec {
+            return env;
+        }
+        EvmFactoryFor::<FEN>::default().env_with_spec(env, spec)
     }
 
     /// Returns the chain ID.
     #[inline]
     pub(crate) fn chain_id(&self) -> u64 {
-        self.ecx.cfg().chain_id()
-    }
-
-    /// Returns the maximum initcode size.
-    #[inline]
-    pub(crate) fn max_initcode_size(&self) -> usize {
-        self.ecx.cfg().max_initcode_size()
-    }
-
-    /// Returns the configured contract code size limit, if any.
-    #[inline]
-    pub(crate) fn limit_contract_code_size(&self) -> Option<usize> {
-        self.ecx.cfg_env().limit_contract_code_size
+        self.state
+            .env_overrides
+            .get(self.active_fork_id())
+            .and_then(|overrides| overrides.chain_id)
+            .unwrap_or(self.evm.version().chain_id)
     }
 
     /// Returns the block number.
     #[inline]
-    pub(crate) fn block_number(&self) -> U256 {
-        self.ecx.block().number()
+    pub(crate) const fn block_number(&self) -> U256 {
+        self.evm.block().number
     }
 
     /// Returns the block timestamp.
     #[inline]
-    pub(crate) fn timestamp(&self) -> U256 {
-        self.ecx.block().timestamp()
+    pub(crate) const fn timestamp(&self) -> U256 {
+        self.evm.block().timestamp
     }
 
     /// Returns the block base fee.
     #[inline]
     pub(crate) fn basefee(&self) -> u64 {
-        self.ecx.block().basefee()
+        self.evm.block().basefee.saturating_to()
     }
 
     /// Returns the block slot number.
     #[inline]
     pub(crate) fn slot_num(&self) -> u64 {
-        self.ecx.block().slot_num()
+        self.evm.block().slot_num.saturating_to()
     }
 
-    /// Returns the block blob gas price (`block.blobbasefee`), if any.
+    /// Updates the block environment of the running EVM.
     #[inline]
-    pub(crate) fn blob_gasprice(&self) -> Option<u128> {
-        self.ecx.block().blob_gasprice()
+    pub(crate) fn update_block(&mut self, f: impl FnOnce(&mut BlockEnvFor<FEN>)) {
+        let mut block = *self.evm.block();
+        f(&mut block);
+        self.evm.set_block(block);
     }
 
-    /// Returns the transaction caller (`tx.origin`).
+    /// Returns the transaction origin (`tx.origin`), including prank and broadcast overrides.
     #[inline]
     pub(crate) fn tx_caller(&self) -> Address {
-        self.ecx.tx().caller()
-    }
-
-    /// Returns the transaction gas price.
-    #[inline]
-    pub(crate) fn tx_gas_price(&self) -> u128 {
-        self.ecx.tx().gas_price()
-    }
-
-    /// Returns the transaction type.
-    #[inline]
-    pub(crate) fn tx_type(&self) -> u8 {
-        self.ecx.tx().tx_type()
+        self.state.origin_override.unwrap_or(self.evm.tx_env().origin)
     }
 
     /// Returns the transaction blob versioned hashes.
     #[inline]
-    pub(crate) fn tx_blob_hashes(&self) -> &[B256] {
-        self.ecx.tx().blob_versioned_hashes()
-    }
-
-    /// Returns the transaction fee token, if any.
-    #[inline]
-    pub(crate) fn tx_fee_token(&self) -> Option<Address> {
-        self.ecx.tx().fee_token()
+    pub(crate) fn tx_blob_hashes(&self) -> Vec<B256> {
+        self.evm.tx_env().blob_hashes.iter().map(|hash| B256::from(*hash)).collect()
     }
 
     /// Returns the active fork ID, if any.
     #[inline]
     pub(crate) fn active_fork_id(&self) -> Option<LocalForkId> {
-        self.ecx.db().active_fork_id()
+        self.db().active_fork_id()
     }
 
     /// Returns the active fork URL, if any.
     #[inline]
     pub(crate) fn active_fork_url(&self) -> Option<String> {
-        self.ecx.db().active_fork_url()
+        self.db().active_fork_url()
     }
 
     /// Returns the active fork block number, if any.
     #[inline]
     pub(crate) fn active_fork_block_number(&self) -> Option<u64> {
-        self.ecx.db().active_fork_block_number()
+        self.db().active_fork_block_number()
     }
 
     /// Returns the active fork options, if any.
     #[inline]
     pub(crate) fn active_fork_options(&self) -> Option<CreateFork> {
-        self.ecx.db().active_fork_options()
+        self.db().active_fork_options()
     }
 
     /// Returns whether a fork is active.
     #[inline]
     pub(crate) fn is_forked_mode(&self) -> bool {
-        self.ecx.db().is_forked_mode()
+        self.db().is_forked_mode()
     }
 
     /// Returns whether `account` persists across forks.
     #[inline]
     pub(crate) fn is_persistent(&self, account: &Address) -> bool {
-        self.ecx.db().is_persistent(account)
+        self.db().is_persistent(account)
     }
 }
 

@@ -4,7 +4,7 @@ use super::*;
 
 #[derive(Clone, Debug)]
 pub(super) struct FrameAccess {
-    depth: usize,
+    depth: u16,
     context: Address,
     code: Address,
 }
@@ -26,42 +26,32 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         result
     }
 
-    pub(super) fn enter_frame_access(
-        &mut self,
-        interpreter: &Interpreter,
-        ecx: &FoundryContextFor<'_, FEN>,
-    ) {
-        let depth = ecx.journal().depth();
+    pub(super) fn enter_frame_access(&mut self, interp: &InterpreterFor<'_, '_, FEN>) {
+        let message = interp.message();
+        let depth = message.depth;
         while self.frame_access.last().is_some_and(|frame| frame.depth >= depth) {
             self.frame_access.pop();
         }
-        let context = interpreter.input.target_address;
+        let context = message.destination;
         // Constructors execute initcode supplied by the creator, under the newly granted address.
-        // revm resolves delegated bytecode but retains the EOA as bytecode_address. The account's
-        // code is already loaded, so resolving the designator here does not warm another account.
-        let code = interpreter.input.bytecode_address.map_or(context, |address| {
-            ecx.journal()
-                .evm_state()
-                .get(&address)
-                .and_then(|account| account.info.code.as_ref())
-                .and_then(|code| code.eip7702_address())
-                .unwrap_or(address)
-        });
+        // The message already identifies the resolved code for delegated EIP-7702 execution.
+        let code = if message.kind.is_create() { context } else { message.code_address };
         self.frame_access.push(FrameAccess { depth, context, code });
     }
 
-    pub(super) fn leave_frame_access(&mut self, depth: usize) {
-        while self.frame_access.last().is_some_and(|frame| frame.depth > depth) {
+    /// Removes the ended frame and any descendants left behind by aborted nested execution.
+    pub fn leave_frame_access(&mut self, depth: u16) {
+        while self.frame_access.last().is_some_and(|frame| frame.depth >= depth) {
             self.frame_access.pop();
         }
     }
 
     pub(super) fn ensure_cheatcode_access(
         &self,
-        ecx: &FoundryContextFor<'_, FEN>,
+        backend: &dyn CheatcodesBackend<FEN>,
         caller: Address,
     ) -> Result<()> {
-        let db = ecx.db();
+        let db = backend.backend();
         if !db.is_forked_mode() {
             return Ok(());
         }
@@ -77,8 +67,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         Ok(())
     }
 
-    pub(super) fn can_inherit_cheatcode_access(&self, ecx: &FoundryContextFor<'_, FEN>) -> bool {
-        let db = ecx.db();
+    pub(super) fn can_inherit_cheatcode_access(
+        &self,
+        backend: &dyn CheatcodesBackend<FEN>,
+    ) -> bool {
+        let db = backend.backend();
         if !db.is_forked_mode() {
             return true;
         }
@@ -102,7 +95,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 mod tests {
     use super::*;
 
-    fn frame(depth: usize) -> FrameAccess {
+    fn frame(depth: u16) -> FrameAccess {
         FrameAccess {
             depth,
             context: Address::with_last_byte(depth as u8),
@@ -110,7 +103,7 @@ mod tests {
         }
     }
 
-    fn identities(frames: &[FrameAccess]) -> Vec<(usize, Address, Address)> {
+    fn identities(frames: &[FrameAccess]) -> Vec<(u16, Address, Address)> {
         frames.iter().map(|frame| (frame.depth, frame.context, frame.code)).collect()
     }
 
@@ -154,5 +147,18 @@ mod tests {
             assert_eq!(result, Err("expected inner failure"));
             assert_eq!(identities(&cheats.frame_access), parent);
         }
+    }
+
+    #[test]
+    fn ended_frame_access_discards_descendants_and_preserves_parent() {
+        let mut cheats = Cheatcodes::default();
+        cheats.frame_access = (0..=3).map(frame).collect();
+
+        cheats.leave_frame_access(2);
+        assert_eq!(identities(&cheats.frame_access), identities(&[frame(0), frame(1)]));
+        cheats.leave_frame_access(1);
+        assert_eq!(identities(&cheats.frame_access), identities(&[frame(0)]));
+        cheats.leave_frame_access(0);
+        assert!(cheats.frame_access.is_empty());
     }
 }
