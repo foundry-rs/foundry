@@ -964,9 +964,17 @@ contract SymbolicEnvCryptoConsole is Test {
         assertTrue(s != bytes32(0));
 
         console2.log("symbolic", x);
-        // Forge's console inspector rejects a call it cannot decode.
-        (bool ok,) = address(0x000000000000000000636F6e736F6c652e6c6f67).call("");
+        // Forge's console inspector rejects a call it cannot decode, but only sees calls whose
+        // destination is the console address.
+        address consoleAddress = 0x000000000000000000636F6e736F6c652e6c6f67;
+        (bool ok,) = consoleAddress.call("");
         assertFalse(ok);
+        (ok,) = consoleAddress.delegatecall("");
+        assertTrue(ok);
+        assembly {
+            ok := callcode(gas(), consoleAddress, 0, 0, 0, 0, 0)
+        }
+        assertTrue(ok);
     }
 
     function checkKeyUtilities() public {

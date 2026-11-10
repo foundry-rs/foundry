@@ -961,12 +961,18 @@ impl SymbolicExecutor {
         }
 
         if to == HARDHAT_CONSOLE_ADDRESS {
-            // Forge's console inspector reverts a call it cannot decode.
-            let input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset);
-            let error = input
-                .concrete_bytes(&mut self.cx, "symbolic console input")
-                .ok()
-                .and_then(|input| console::hh::ConsoleCalls::abi_decode(&input).err());
+            // Forge's console inspector reverts a call it cannot decode. It only sees calls whose
+            // destination is the console address, so DELEGATECALL and CALLCODE run the console's
+            // empty code instead.
+            let error = if matches!(kind, CallKind::Call | CallKind::StaticCall) {
+                in_size
+                    .read_from_memory(&mut self.cx, &state.memory, in_offset)
+                    .concrete_bytes(&mut self.cx, "symbolic console input")
+                    .ok()
+                    .and_then(|input| console::hh::ConsoleCalls::abi_decode(&input).err())
+            } else {
+                None
+            };
             state.return_data = match &error {
                 Some(error) => {
                     state.first_failed_callee.get_or_insert(HARDHAT_CONSOLE_ADDRESS);
