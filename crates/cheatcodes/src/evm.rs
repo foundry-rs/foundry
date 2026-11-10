@@ -301,13 +301,14 @@ struct StorageWriters {
     /// Whether a later write happened on a different chain or fork.
     mixed_contexts: bool,
     /// Code address whose layout describes the latest write to each slot: the account itself, or
-    /// the implementation that wrote through a delegatecall.
-    slots: B256Map<Address>,
+    /// the implementation that wrote through a delegatecall. Unknown when a library's caller
+    /// was not recorded.
+    slots: B256Map<Option<Address>>,
 }
 
 impl StorageWriters {
     /// Records a write to `slot` executed by the code at `writer`.
-    fn record(&mut self, context: (u64, U256), slot: B256, writer: Address) {
+    fn record(&mut self, context: (u64, U256), slot: B256, writer: Option<Address>) {
         if *self.context.get_or_insert(context) != context {
             self.mixed_contexts = true;
         }
@@ -2318,14 +2319,17 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
 ) -> BTreeMap<Address, AccountStateDiffs> {
     let mut state_diffs: BTreeMap<Address, AccountStateDiffs> = BTreeMap::default();
+    let current_context = (ccx.chain_id(), ccx.active_fork_id().unwrap_or_default());
 
     // A delegatecall into a library writes with its caller's layout. Identify libraries from their
-    // artifacts; unidentified code is treated as an implementation with its own layout.
+    // artifacts in the current context; other code retains its recorded address.
     let delegated_code = ccx
         .state
         .recorded_account_diffs()
         .filter(|access| {
             matches!(access.kind, AccountAccessKind::DelegateCall | AccountAccessKind::CallCode)
+                && (access.chainInfo.chainId.to::<u64>(), access.chainInfo.forkId)
+                    == current_context
         })
         .map(|access| access.account)
         .collect::<AddressSet>();
@@ -2340,13 +2344,19 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
     // the code whose layout describes it.
     let mut addresses_to_lookup = AddressSet::default();
     let mut writers = AddressMap::<StorageWriters>::default();
-    // Open call frames, innermost last, with the code whose layout describes each one's writes.
-    let mut frames = Vec::<(u64, Address)>::new();
-    for account_access in ccx.state.recorded_account_diffs() {
+    // Open call frames, innermost last, with their recorded context and layout writer.
+    let mut frames = Vec::<(u64, (u64, U256), Option<Address>)>::new();
+    for account_access in ccx.state.recorded_account_diffs_with_boundaries() {
+        let Some(account_access) = account_access else {
+            frames.clear();
+            continue;
+        };
         let depth = account_access.depth;
+        let context =
+            (account_access.chainInfo.chainId.to::<u64>(), account_access.chainInfo.forkId);
         match account_access.kind {
             AccountAccessKind::Resume => {
-                while frames.last().is_some_and(|&(frame_depth, _)| frame_depth > depth) {
+                while frames.last().is_some_and(|&(frame_depth, _, _)| frame_depth > depth) {
                     frames.pop();
                 }
             }
@@ -2355,16 +2365,23 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
             | AccountAccessKind::Create
             | AccountAccessKind::DelegateCall
             | AccountAccessKind::CallCode => {
-                while frames.last().is_some_and(|&(frame_depth, _)| frame_depth >= depth) {
+                while frames.last().is_some_and(|&(frame_depth, _, _)| frame_depth >= depth) {
                     frames.pop();
                 }
                 let code = account_access.account;
-                let writer = if libraries.contains(&code) {
-                    frames.last().map_or(account_access.accessor, |&(_, writer)| writer)
+                let writer = if context == current_context && libraries.contains(&code) {
+                    // Recording can start inside a call, leaving its code identity unknown.
+                    // The delegatecall's accessor is msg.sender, not the executing caller.
+                    frames
+                        .last()
+                        .filter(|&&(frame_depth, frame_context, _)| {
+                            frame_depth + 1 == depth && frame_context == context
+                        })
+                        .and_then(|&(_, _, writer)| writer)
                 } else {
-                    code
+                    Some(code)
                 };
-                frames.push((depth, writer));
+                frames.push((depth, context, writer));
             }
             _ => {}
         }
@@ -2373,16 +2390,14 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
             || account_access.oldBalance != account_access.newBalance
         {
             addresses_to_lookup.insert(account_access.account);
-            let context =
-                (account_access.chainInfo.chainId.to::<u64>(), account_access.chainInfo.forkId);
-            let writer = frames.last().map(|&(_, writer)| writer);
+            let writer = frames.last().and_then(|&(_, _, writer)| writer);
             for storage_access in &account_access.storageAccesses {
                 if storage_access.isWrite && !storage_access.reverted {
                     addresses_to_lookup.insert(storage_access.account);
                     writers.entry(storage_access.account).or_default().record(
                         context,
                         storage_access.slot,
-                        writer.unwrap_or(storage_access.account),
+                        writer,
                     );
                 }
             }
@@ -2408,7 +2423,6 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
     // journal that recorded the writes; otherwise fetch the exact code on the chain where they
     // occurred, if enabled. This remains correct for historical forks and upgraded proxies.
     let decode_external_storage = ccx.state.core.config.decode_external_storage;
-    let current_context = (ccx.chain_id(), ccx.active_fork_id().unwrap_or_default());
     // Storage owner and delegated writer to the writer's layout.
     let mut delegated_layouts = HashMap::<(Address, Address), _>::default();
     let mut external_requests = BTreeMap::<u64, AddressSet>::new();
@@ -2428,7 +2442,7 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
             storage_layouts.remove(&storage_address);
         }
 
-        for writer in writers.slots.values().copied().collect::<AddressSet>() {
+        for writer in writers.slots.values().flatten().copied().collect::<AddressSet>() {
             if writer == storage_address {
                 if storage_layouts.contains_key(&storage_address) {
                     continue;
@@ -2534,10 +2548,11 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
                         .get(&storage_access.account)
                         .and_then(|writers| writers.slots.get(&storage_access.slot))
                     {
-                        Some(&writer) if writer != storage_access.account => {
+                        Some(&Some(writer)) if writer != storage_access.account => {
                             delegated_layouts.get(&(storage_access.account, writer))
                         }
-                        _ => storage_layouts.get(&storage_access.account),
+                        Some(Some(_)) => storage_layouts.get(&storage_access.account),
+                        _ => None,
                     };
                     // Update state diff. Do not overwrite the initial value if already set.
                     let entry = match account_diff.state_diff.entry(storage_access.slot) {

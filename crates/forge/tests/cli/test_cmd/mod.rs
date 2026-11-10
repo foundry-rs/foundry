@@ -878,6 +878,192 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 }
 
+// Library attribution must not guess a missing caller or use code from another chain context.
+#[forgetest_init]
+fn state_diff_library_writer_context(prj: _, cmd: _) {
+    prj.add_test(
+        "LibraryWriter.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
+
+library WriterLib {
+    struct Stats { uint256 amount; }
+    function set(Stats storage stats) external { stats.amount = 42; }
+}
+
+contract LibraryWriter {
+    WriterLib.Stats public stats;
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function recordAndSet() external returns (string memory) {
+        vm.startStateDiffRecording();
+        // Clear pending runner accesses so the enclosing frame is absent.
+        vm.startStateDiffRecording();
+        WriterLib.set(stats);
+        return vm.getStateDiffJson();
+    }
+
+    function set() external { WriterLib.set(stats); }
+
+    function switchContextAndSet() external returns (string memory) {
+        vm.chainId(2);
+        vm.etch(address(0x2000), type(Caller).runtimeCode);
+        WriterLib.set(stats);
+        return vm.getStateDiffJson();
+    }
+}
+
+contract Caller {
+    uint256 public decoy;
+    function run(address target) external returns (string memory) {
+        return LibraryWriter(target).recordAndSet();
+    }
+}
+
+contract Proxy {
+    uint256 public proxyDecoy;
+    fallback() external {
+        (bool ok, bytes memory result) = address(0x2000).delegatecall(msg.data);
+        require(ok);
+        assembly { return(add(result, 32), mload(result)) }
+    }
+}
+
+contract DirectWriter {
+    uint256 public actual;
+    function set() external { actual = 42; }
+}
+
+contract PrefixWriterTest {
+    WriterLib.Stats public stats;
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function test_completedPrefix() public {
+        vm.etch(0x4e59b44847b379578588920cA78FbF26c0B4956C, type(Caller).runtimeCode);
+        vm.startStateDiffRecording();
+        WriterLib.set(stats);
+        string memory slot = string.concat(
+            ".", vm.toLowercase(vm.toString(address(this))), ".stateDiff.", vm.toString(bytes32(0))
+        );
+        string memory diff = vm.getStateDiffJson();
+        require(vm.parseJsonKeys(diff, slot).length == 2, "unrecorded parent must stay raw");
+        require(vm.parseJsonBytes32(diff, string.concat(slot, ".newValue")) == bytes32(uint256(42)));
+    }
+}
+
+contract LibraryWriterTest is Test {
+    string constant SLOT = ".0x0000000000000000000000000000000000001000.stateDiff.0x0000000000000000000000000000000000000000000000000000000000000000";
+
+    function assertRaw(string memory diff) internal pure {
+        assertEq(vm.parseJsonKeys(diff, SLOT).length, 2);
+        assertEq(vm.parseJsonBytes32(diff, string.concat(SLOT, ".newValue")), bytes32(uint256(42)));
+        assertEq(vm.parseJsonBytes32(diff, string.concat(SLOT, ".previousValue")), bytes32(0));
+    }
+
+    function test_missingParentDirect() public {
+        vm.etch(address(0x1000), type(LibraryWriter).runtimeCode);
+        assertRaw(new Caller().run(address(0x1000)));
+    }
+
+    function test_missingParentDelegated() public {
+        vm.etch(address(0x1000), type(Proxy).runtimeCode);
+        vm.etch(address(0x2000), type(LibraryWriter).runtimeCode);
+        assertRaw(new Caller().run(address(0x1000)));
+    }
+
+    function test_recordedParent() public {
+        vm.etch(address(0x1000), type(LibraryWriter).runtimeCode);
+        vm.startStateDiffRecording();
+        vm.startStateDiffRecording();
+        LibraryWriter(address(0x1000)).set();
+        assertEq(vm.parseJsonString(vm.getStateDiffJson(), string.concat(SLOT, ".label")), "stats");
+    }
+
+    function test_parentContextChanged() public {
+        vm.etch(address(0x1000), type(Proxy).runtimeCode);
+        vm.etch(address(0x2000), type(LibraryWriter).runtimeCode);
+        vm.chainId(1);
+        vm.startStateDiffRecording();
+        vm.startStateDiffRecording();
+        assertRaw(LibraryWriter(address(0x1000)).switchContextAndSet());
+    }
+
+    function checkPriorContext(bool replaceCode) internal {
+        vm.etch(address(0x1000), type(Proxy).runtimeCode);
+        vm.etch(address(0x2000), type(DirectWriter).runtimeCode);
+        vm.chainId(1);
+        vm.startStateDiffRecording();
+        vm.startStateDiffRecording();
+        DirectWriter(address(0x1000)).set();
+        vm.chainId(2);
+        if (replaceCode) vm.etch(address(0x2000), type(WriterLib).runtimeCode);
+        string memory diff = vm.getStateDiffJson();
+        assertEq(vm.parseJsonString(diff, string.concat(SLOT, ".label")), "actual");
+        assertEq(vm.parseJsonBytes32(diff, string.concat(SLOT, ".newValue")), bytes32(uint256(42)));
+    }
+
+    function test_priorContextChangedCode() public { checkPriorContext(true); }
+    function test_priorContextControl() public { checkPriorContext(false); }
+}
+"#,
+    );
+
+    let solc = foundry_compilers::compilers::solc::Solc::find_svm_installed_version(
+        &SOLC_VERSION.parse().unwrap(),
+    )
+    .unwrap()
+    .unwrap();
+    prj.update_config(|config| config.solc = Some(foundry_config::SolcReq::Local(solc.solc)));
+
+    // Resolve external layouts without network access or modifying the user's cache.
+    let home = tempfile::tempdir().unwrap();
+    let cache = home.path().join(".foundry/cache/etherscan/mainnet/storage_layouts");
+    std::fs::create_dir_all(&cache).unwrap();
+    for (address, label) in [(0x1000, "proxyDecoy"), (0x2000, "actual")] {
+        let layout = serde_json::json!({
+            "version": 3,
+            "contractName": "CachedWriter",
+            "storageLayout": {
+                "storage": [{
+                    "astId": 1, "contract": "CachedWriter", "label": label,
+                    "offset": 0, "slot": "0", "type": "t_uint256"
+                }],
+                "types": {
+                    "t_uint256": { "encoding": "inplace", "label": "uint256", "numberOfBytes": "32" }
+                }
+            }
+        });
+        std::fs::write(
+            cache.join(format!("0x{address:040x}.json")),
+            serde_json::to_vec(&layout).unwrap(),
+        )
+        .unwrap();
+    }
+
+    for via_ir in [false, true] {
+        cmd.forge_fuse();
+        cmd.env("HOME", home.path());
+        cmd.env("USERPROFILE", home.path());
+        cmd.args([
+            "test",
+            "--mc",
+            "LibraryWriterTest|PrefixWriterTest",
+            "--decode-external-storage",
+            "--extra-output",
+            "storageLayout",
+        ]);
+        if via_ir {
+            cmd.arg("--via-ir");
+        }
+        cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 2 test suites [ELAPSED]: 7 tests passed, 0 failed, 0 skipped (7 total tests)
+...
+"#]]);
+    }
+}
+
 // tests that a warning is displayed if there are tests but none match a non-empty filter
 #[forgetest]
 fn suggest_when_no_tests_match(prj: _, cmd: _) {

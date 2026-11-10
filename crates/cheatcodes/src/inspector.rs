@@ -901,10 +901,20 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
     /// Returns completed and active account accesses in execution order.
     pub fn recorded_account_diffs(&self) -> impl Iterator<Item = &AccountAccess> {
+        self.recorded_account_diffs_with_boundaries().flatten()
+    }
+
+    /// Returns account accesses with a `None` boundary between completed runner accesses and the
+    /// active recording. Call frames must not be inherited across this boundary.
+    pub(crate) fn recorded_account_diffs_with_boundaries(
+        &self,
+    ) -> impl Iterator<Item = Option<&AccountAccess>> {
         self.recorded_account_diffs_prefix
             .iter()
             .flat_map(|prefix| prefix.iter())
-            .chain(self.recorded_account_diffs_stack.iter().flatten().flatten())
+            .map(Some)
+            .chain(std::iter::once(None))
+            .chain(self.recorded_account_diffs_stack.iter().flatten().flatten().map(Some))
     }
 
     /// Takes completed account accesses from the active user recording session.
