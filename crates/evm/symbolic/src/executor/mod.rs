@@ -1,6 +1,6 @@
 use super::{abi::*, runtime::*, *};
 use foundry_evm::{
-    constants::MAGIC_ASSUME,
+    constants::{MAGIC_ASSUME, MAGIC_SKIP},
     inspectors::cheatcodes::{DUMMY_CALL_OUTPUT, DUMMY_CREATE_ADDRESS},
 };
 
@@ -389,6 +389,9 @@ impl SymbolicExecutor {
                 let op = match op {
                     CallPathOpcode::Execute(op) => op,
                     CallPathOpcode::Halt => {
+                        if !self.completed_path_is_feasible(&mut state, StepOutcome::Halt)? {
+                            break;
+                        }
                         if *completed_paths >= path_limit {
                             return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
                         }
@@ -404,7 +407,7 @@ impl SymbolicExecutor {
 
                 let _step_span = matches!(kind, CallPathKind::Sequence)
                     .then(|| trace_span!("symbolic_step", pc = state.pc, op).entered());
-                match self.step(
+                let outcome = self.step(
                     executor,
                     code,
                     code.jump_table(),
@@ -412,7 +415,11 @@ impl SymbolicExecutor {
                     &mut *worklist,
                     completed_paths,
                     op,
-                )? {
+                )?;
+                if !self.completed_path_is_feasible(&mut state, outcome)? {
+                    break;
+                }
+                match outcome {
                     StepOutcome::Continue => {}
                     StepOutcome::Halt => {
                         if *completed_paths >= path_limit {

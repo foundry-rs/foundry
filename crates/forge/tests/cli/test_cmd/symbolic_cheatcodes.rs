@@ -3059,8 +3059,8 @@ contract SymbolicCheatcodeInputSize is Test {
             ok := call(gas(), cheatcode, 0, add(data, 32), size, 0, 0)
         }
 
-        assert(ok);
-        assertTrue(condition);
+        // A rejected assumption reverts the cheatcode call, as in Forge.
+        assertEq(ok, condition);
     }
 
     // Forge fails to decode calldata shorter than the ABI arguments or with an unknown selector,

@@ -936,6 +936,20 @@ impl SymbolicExecutor {
 
             if to == CHEATCODE_ADDRESS
                 && let Some(concrete_in_offset) = concrete_in_offset
+                && let Some(outcome) = self.branch_assume_cheatcode_if_needed(
+                    state,
+                    worklist,
+                    selector,
+                    concrete_in_offset,
+                    out_offset.clone(),
+                    &out_size,
+                )?
+            {
+                return Ok(outcome);
+            }
+
+            if to == CHEATCODE_ADDRESS
+                && let Some(concrete_in_offset) = concrete_in_offset
                 && let Some(outcome) = self.branch_accesses_cheatcode_if_needed(
                     state,
                     worklist,
@@ -1036,7 +1050,6 @@ impl SymbolicExecutor {
                     revert_cheatcode_call(&mut self.cx, state, out_offset, &out_size, ret)?;
                     return Ok(StepOutcome::Continue);
                 }
-                CheatcodeOutcome::AssumeRejected => return Ok(StepOutcome::AssumeRejected),
                 CheatcodeOutcome::Failure => return Ok(StepOutcome::Failure),
             };
 
