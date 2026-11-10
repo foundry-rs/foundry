@@ -2513,11 +2513,27 @@ import "forge-std/Test.sol";
 
 /// forge-config: default.evm_version = "cancun"
 
+contract SelfdestructTarget {
+    function die(address payable beneficiary) external {
+        selfdestruct(beneficiary);
+    }
+}
+
 contract SymbolicSelfdestructCancun is Test {
     function checkSelfdestructCancun(uint256) public {
         selfdestruct(payable(address(this)));
 
         assert(false);
+    }
+
+    // The target is created in this transaction, so SELFDESTRUCT takes the legacy path. The
+    // beneficiary may already hold ETH, so its balance is not modeled for a symbolic address.
+    function checkSelfdestructSymbolicBeneficiary(address payable beneficiary) public {
+        SelfdestructTarget target = new SelfdestructTarget();
+        vm.deal(address(target), 7);
+        target.die(beneficiary);
+
+        assert(beneficiary.balance == 7);
     }
 }
 "#,
@@ -2526,15 +2542,16 @@ contract SymbolicSelfdestructCancun is Test {
     let stdout = assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
-        "--match-test",
-        "checkSelfdestructCancun",
+        "--match-contract",
+        "SymbolicSelfdestructCancun",
     ]))
-    .success()
+    .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicSelfdestructCancun.t.sol:SymbolicSelfdestructCancun
+Ran 2 tests for test/SymbolicSelfdestructCancun.t.sol:SymbolicSelfdestructCancun
 [PASS] checkSelfdestructCancun(uint256) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic SELFDESTRUCT beneficiary] checkSelfdestructSymbolicBeneficiary(address) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
