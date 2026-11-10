@@ -1,4 +1,5 @@
 use foundry_cheatcodes_spec::Vm::*;
+use foundry_common::version::SEMVER_VERSION;
 use foundry_evm::{
     core::backend::GLOBAL_FAIL_SLOT, inspectors::cheatcodes::current_execution_context,
 };
@@ -1888,7 +1889,7 @@ impl SymbolicExecutor {
                 Err(SymbolicError::Unsupported("symbolic vm.getEvmVersion not modeled"))
             }
             getFoundryVersionCall::SELECTOR => Ok(CheatcodeOutcome::ContinueData(
-                abi_concrete_bytes_return(&mut self.cx, env!("CARGO_PKG_VERSION").as_bytes()),
+                abi_concrete_bytes_return(&mut self.cx, SEMVER_VERSION.as_bytes()),
             )),
             projectRootCall::SELECTOR => {
                 self.stateless_retry_safe = false;

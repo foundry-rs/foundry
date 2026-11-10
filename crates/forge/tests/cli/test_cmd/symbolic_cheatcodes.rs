@@ -1059,6 +1059,17 @@ import "forge-std/Test.sol";
 import "forge-std/console2.sol";
 
 contract SymbolicEnvCryptoConsole is Test {
+    bytes32 foundryVersionHash;
+
+    function setUp() public {
+        foundryVersionHash = keccak256(bytes(vm.getFoundryVersion()));
+    }
+
+    // Like Forge, the version includes its build metadata.
+    function checkFoundryVersion() public view {
+        assertEq(keccak256(bytes(vm.getFoundryVersion())), foundryVersionHash);
+    }
+
     function checkEnvCryptoConsole(uint256 x) public {
         assertTrue(vm.envExists("FOUNDRY_SYMBOLIC_ENV_PRESENT"));
         assertEq(vm.envUint("FOUNDRY_SYMBOLIC_ENV_UINT"), 42);
@@ -1168,13 +1179,14 @@ contract SymbolicEnvCryptoConsole is Test {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 5 tests for test/SymbolicEnvCryptoConsole.t.sol:SymbolicEnvCryptoConsole
+Ran 6 tests for test/SymbolicEnvCryptoConsole.t.sol:SymbolicEnvCryptoConsole
 [PASS] checkBase64Utilities() ([METRICS])
 [PASS] checkEnvCryptoConsole(uint256) ([METRICS])
+[PASS] checkFoundryVersion() ([METRICS])
 [PASS] checkKeyUtilities() ([METRICS])
 [PASS] checkParseToStringUtilities() ([METRICS])
 [PASS] checkStringUtilities() ([METRICS])
-Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 6 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
