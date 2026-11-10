@@ -2749,16 +2749,19 @@ impl SymbolicBlock {
         }
     }
 
+    /// Stores a block hash as `vm.setBlockhash` does, returning `false` for a block after the
+    /// current one, which the cheatcode rejects. `block_hash` applies the BLOCKHASH window.
     pub(crate) fn set_block_hash(
         &mut self,
         block_number: U256,
         block_hash: SymExpr,
-    ) -> Result<(), SymbolicError> {
+    ) -> Result<bool, SymbolicError> {
         let current = self.number.as_const_or("symbolic vm.setBlockhash current number")?;
-        if block_number < current && current - block_number <= U256::from(256) {
-            self.block_hashes.insert(block_number, block_hash);
+        if block_number > current {
+            return Ok(false);
         }
-        Ok(())
+        self.block_hashes.insert(block_number, block_hash);
+        Ok(true)
     }
 
     pub(crate) fn block_hash(

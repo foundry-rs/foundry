@@ -1866,6 +1866,24 @@ contract SymbolicBlockhash is Test {
         assertEq(blockhash(299), previousHash);
         assertEq(blockhash(300), bytes32(0));
         assertEq(blockhash(43), bytes32(0));
+
+        // Like Forge, the BLOCKHASH window applies when reading, not when setting.
+        vm.roll(301);
+        assertEq(blockhash(300), bytes32(uint256(0xdead)));
+        vm.roll(299);
+        assertEq(blockhash(43), bytes32(uint256(0xbeef)));
+
+        (bool ok, bytes memory data) = address(vm).call(
+            abi.encodeWithSignature("setBlockhash(uint256,bytes32)", 300, previousHash)
+        );
+        assertFalse(ok);
+        assertEq(
+            data,
+            abi.encodeWithSignature(
+                "CheatcodeError(string)",
+                "vm.setBlockhash: block number must be less than or equal to the current block number"
+            )
+        );
     }
 }
 "#,

@@ -1644,7 +1644,12 @@ impl SymbolicExecutor {
                     "symbolic vm.setBlockhash block number",
                 )?;
                 let block_hash = state.memory.load_word(&mut self.cx, in_offset + 36)?;
-                state.block.set_block_hash(block_number, block_hash)?;
+                if !state.block.set_block_hash(block_number, block_hash)? {
+                    return Ok(CheatcodeOutcome::Revert(error_string_return_data(
+                        &mut self.cx,
+                        "vm.setBlockhash: block number must be less than or equal to the current block number",
+                    )));
+                }
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             prevrandao_0Call::SELECTOR | prevrandao_1Call::SELECTOR => {
