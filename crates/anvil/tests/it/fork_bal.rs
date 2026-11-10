@@ -242,6 +242,7 @@ async fn fork_bal_preserves_genesis_funding_and_loaded_state_overrides() {
                 nonce: 3,
                 balance: U256::from(40),
                 code: bytes!("00"),
+                extension: Default::default(),
                 storage: [(B256::ZERO, B256::with_last_byte(50))].into(),
             },
         )]

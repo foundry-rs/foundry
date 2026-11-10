@@ -76,7 +76,7 @@ alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
 alloy-rpc-types = { workspace = true, features = ["anvil", "debug", "trace", "txpool"] }
 alloy-rpc-types-beacon.workspace = true
-alloy-rpc-types-eth.workspace = true
+alloy-rpc-types-eth = { workspace = true, features = ["account-ext"] }
 alloy-rpc-types-mev.workspace = true
 alloy-serde.workspace = true
 alloy-provider = { workspace = true, features = [
@@ -89,7 +89,7 @@ alloy-provider = { workspace = true, features = [
 alloy-transport.workspace = true
 alloy-chains.workspace = true
 alloy-genesis.workspace = true
-alloy-trie = { workspace = true, features = ["std"] }
+alloy-trie = { workspace = true, features = ["account-ext", "std"] }
 op-alloy-consensus = { workspace = true, features = ["serde"], optional = true }
 op-alloy-rpc-types = { workspace = true, optional = true }
 

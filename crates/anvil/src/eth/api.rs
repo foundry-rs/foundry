@@ -2843,7 +2843,12 @@ impl EthApi<FoundryNetwork> {
                 let code = fork.get_code(address, number).map_err(BlockchainError::from);
                 let nonce = fork.get_nonce(address, number).map_err(BlockchainError::from);
                 let (balance, code, nonce) = try_join!(balance, code, nonce)?;
-                return Ok(alloy_rpc_types::eth::AccountInfo { balance, nonce, code });
+                return Ok(alloy_rpc_types::eth::AccountInfo {
+                    balance,
+                    nonce,
+                    code,
+                    ..Default::default()
+                });
             }
         }
 

@@ -11,7 +11,7 @@ use alloy_eips::{
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{AnyNetwork, AnyRpcBlock};
 use alloy_primitives::{
-    B256, U256, keccak256,
+    B256, Bytes, U256, keccak256,
     map::{AddressHashMap, U256Map},
 };
 use alloy_provider::Provider;
@@ -134,6 +134,9 @@ fn cache_bal_accounts(accounts: &mut AddressHashMap<AccountInfo>, bal: &BlockAcc
                 nonce,
                 code_hash: keccak256(&code.new_code),
                 code: Some(code.new_code.clone()),
+                // BALs carry no account extension; only Ethereum sources, which have none, are
+                // eligible.
+                extension: Bytes::new(),
             });
         }
     }
