@@ -5,6 +5,7 @@ use alloy_primitives::{Address, B256, Bytes, U256, address};
 use alloy_provider::Provider;
 use anvil::{EthereumHardfork, NodeConfig, spawn};
 use foundry_common::LIBRARY_DEPLOYER;
+use foundry_compilers::artifacts::ConfigurableContractArtifact;
 use foundry_config::{CompilationRestrictions, SettingsOverrides, filter::GlobMatcher};
 use foundry_test_utils::{
     TestCommand,
@@ -915,7 +916,8 @@ contract LibraryWriter {
 }
 
 contract Caller {
-    uint256 public decoy;
+    uint256 public actual;
+    function set() external { actual = 42; }
     function run(address target) external returns (string memory) {
         return LibraryWriter(target).recordAndSet();
     }
@@ -928,11 +930,6 @@ contract Proxy {
         require(ok);
         assembly { return(add(result, 32), mload(result)) }
     }
-}
-
-contract DirectWriter {
-    uint256 public actual;
-    function set() external { actual = 42; }
 }
 
 contract PrefixWriterTest {
@@ -991,11 +988,11 @@ contract LibraryWriterTest is Test {
 
     function checkPriorContext(bool replaceCode) internal {
         vm.etch(address(0x1000), type(Proxy).runtimeCode);
-        vm.etch(address(0x2000), type(DirectWriter).runtimeCode);
+        vm.etch(address(0x2000), type(Caller).runtimeCode);
         vm.chainId(1);
         vm.startStateDiffRecording();
         vm.startStateDiffRecording();
-        DirectWriter(address(0x1000)).set();
+        Caller(address(0x1000)).set();
         vm.chainId(2);
         if (replaceCode) vm.etch(address(0x2000), type(WriterLib).runtimeCode);
         string memory diff = vm.getStateDiffJson();
@@ -1015,30 +1012,24 @@ contract LibraryWriterTest is Test {
     .unwrap()
     .unwrap();
     prj.update_config(|config| config.solc = Some(foundry_config::SolcReq::Local(solc.solc)));
+    cmd.args(["build", "--extra-output", "storageLayout"]).assert_success();
 
     // Resolve external layouts without network access or modifying the user's cache.
     let home = tempfile::tempdir().unwrap();
     let cache = home.path().join(".foundry/cache/etherscan/mainnet/storage_layouts");
     std::fs::create_dir_all(&cache).unwrap();
-    for (address, label) in [(0x1000, "proxyDecoy"), (0x2000, "actual")] {
-        let layout = serde_json::json!({
-            "version": 3,
-            "contractName": "CachedWriter",
-            "storageLayout": {
-                "storage": [{
-                    "astId": 1, "contract": "CachedWriter", "label": label,
-                    "offset": 0, "slot": "0", "type": "t_uint256"
-                }],
-                "types": {
-                    "t_uint256": { "encoding": "inplace", "label": "uint256", "numberOfBytes": "32" }
-                }
-            }
-        });
-        std::fs::write(
-            cache.join(format!("0x{address:040x}.json")),
-            serde_json::to_vec(&layout).unwrap(),
+    for (address, contract) in [(0x1000, "Proxy"), (0x2000, "Caller")] {
+        let artifact = foundry_common::fs::read_json_file::<ConfigurableContractArtifact>(
+            &prj.artifacts().join(format!("LibraryWriter.t.sol/{contract}.json")),
         )
         .unwrap();
+        let layout = serde_json::json!({
+            "version": 3,
+            "contractName": contract,
+            "storageLayout": artifact.storage_layout.unwrap(),
+        });
+        foundry_common::fs::write_json_file(&cache.join(format!("0x{address:040x}.json")), &layout)
+            .unwrap();
     }
 
     for via_ir in [false, true] {
