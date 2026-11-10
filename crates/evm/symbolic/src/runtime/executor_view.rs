@@ -1,7 +1,9 @@
 use super::*;
 use evm2::evm::{AccountInfo, DbResult};
+use foundry_common::contracts::ContractsByArtifact;
 use foundry_evm::{
     core::backend::Backend,
+    fuzz::strategies::LiteralsDictionary,
     inspectors::cheatcodes::{CheatcodesCore, Prank, RecordAccess},
 };
 
@@ -84,6 +86,10 @@ pub struct ExecutorView<'a> {
     pub(crate) pranks: Vec<Prank>,
     pub(crate) accesses: Option<&'a RecordAccess>,
     pub(crate) recording_accesses: bool,
+    /// Project artifacts, used to find the storage layouts of deployed contracts.
+    pub(crate) known_contracts: Option<&'a ContractsByArtifact>,
+    /// Source literals, used as candidate keys of constant-folded mapping slots.
+    pub(crate) literals: Option<&'a LiteralsDictionary>,
 }
 
 /// Block environment values exposed to symbolic execution.
@@ -211,6 +217,20 @@ impl<'a> ExecutorView<'a> {
             pranks: cheats.into_iter().flat_map(|cheats| cheats.pranks.values().copied()).collect(),
             accesses: cheats.map(|cheats| &cheats.accesses),
             recording_accesses: cheats.is_some_and(|cheats| cheats.recording_accesses),
+            known_contracts: None,
+            literals: None,
         }
+    }
+
+    /// Attaches the project artifacts and source literals that register the constant-folded
+    /// mapping slots of deployed contracts before a run.
+    pub const fn with_project(
+        mut self,
+        known_contracts: &'a ContractsByArtifact,
+        literals: &'a LiteralsDictionary,
+    ) -> Self {
+        self.known_contracts = Some(known_contracts);
+        self.literals = Some(literals);
+        self
     }
 }

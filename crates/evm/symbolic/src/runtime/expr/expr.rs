@@ -7,7 +7,7 @@ const MAX_CONSTANT_DIFFERENCE_VISITS: usize = 256;
 // Storage layout keys `keccak(..) + offset` are assumed not to alias fixed slots or other hash
 // bases only while the offset stays below `2^64`, the bound Solidity's `push` enforces on
 // dynamic array lengths.
-const STORAGE_LAYOUT_OFFSET_BITS: usize = 64;
+pub(crate) const STORAGE_LAYOUT_OFFSET_BITS: usize = 64;
 
 impl SymExpr {
     pub(crate) fn select_storage_write(
