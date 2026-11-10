@@ -313,6 +313,12 @@ impl SymbolicExecutor {
         let initcode = SymCode::concrete(&mut self.cx, initcode);
 
         let nonce = state.world.nonce(executor, creator)?;
+        // EIP-2681: the create fails at a `u64::MAX` creator nonce, so the cheatcode reverts.
+        if nonce == u64::MAX {
+            let return_data = SymReturnData::empty(&mut self.cx);
+            revert_cheatcode_call(&mut self.cx, state, out_offset, out_size, return_data)?;
+            return Ok(StepOutcome::Continue);
+        }
         let created = creator.create(nonce);
         let created_word = SymExpr::constant(&mut self.cx, address_word(created));
 
@@ -611,6 +617,7 @@ impl SymbolicExecutor {
     #[expect(clippy::too_many_arguments)]
     pub(super) fn branch_cheatcode_argument_check_if_needed(
         &mut self,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         selector: [u8; 4],
@@ -638,6 +645,8 @@ impl SymbolicExecutor {
                 txGasPriceCall::SELECTOR => {
                     (0, u64_max, "vm.txGasPrice: gas price must be less than 2^64")
                 }
+                // Like Forge, the hard fork check comes first, in the cheatcode.
+                blobBaseFeeCall::SELECTOR if executor.spec_id < SpecId::CANCUN => return Ok(None),
                 blobBaseFeeCall::SELECTOR => (
                     0,
                     U256::from(u128::MAX),
@@ -1777,6 +1786,13 @@ impl SymbolicExecutor {
             feeCall::SELECTOR => {
                 state.block.basefee = state.memory.load_word(&mut self.cx, in_offset + 4)?;
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
+            }
+            blobBaseFeeCall::SELECTOR if executor.spec_id < SpecId::CANCUN => {
+                Ok(CheatcodeOutcome::Revert(error_string_return_data(
+                    &mut self.cx,
+                    "vm.blobBaseFee: `blobBaseFee` is not supported before the Cancun hard fork; \
+                     see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844",
+                )))
             }
             blobBaseFeeCall::SELECTOR => {
                 state.block.blob_basefee = state.memory.load_word(&mut self.cx, in_offset + 4)?;
