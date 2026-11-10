@@ -346,12 +346,7 @@ impl SymbolicExecutor {
         steps: &[SequenceStepTemplate],
         state: &PathState,
     ) -> Result<(Vec<SymbolicInvariantStep>, Vec<SymbolicStorageAssignment>), SymbolicError> {
-        let replayable_storage = state.world.replay_storage_symbols();
-        let model = self.solver.model_with_replayable_storage(
-            &mut self.cx,
-            &state.constraints,
-            &replayable_storage,
-        )?;
+        let model = self.witness_model(state)?;
         let sequence = steps
             .iter()
             .map(|step| {

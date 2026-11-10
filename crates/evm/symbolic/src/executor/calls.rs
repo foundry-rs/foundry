@@ -726,6 +726,7 @@ impl SymbolicExecutor {
     pub(super) fn take_loop_jump(
         &self,
         state: &mut PathState,
+        code: &SymCode,
         source_pc: usize,
         dest: usize,
     ) -> bool {
@@ -735,7 +736,21 @@ impl SymbolicExecutor {
         if dest >= source_pc {
             return true;
         }
-        let count = state.loop_jumps.entry(dest).or_default();
+        // Key the back-edge by the return addresses on the stack, so an internal function called
+        // from different sites does not count as one loop. Each address counts once, so the return
+        // address a recursive call pushes again keeps the key and recursion stays bounded.
+        let mut return_pcs = Vec::new();
+        for pc in state
+            .stack
+            .iter()
+            .filter_map(|word| word.as_const().and_then(|word| usize::try_from(word).ok()))
+            .filter(|pc| code.is_valid_jumpdest(*pc).is_ok_and(|valid| valid))
+        {
+            if !return_pcs.contains(&pc) {
+                return_pcs.push(pc);
+            }
+        }
+        let count = state.loop_jumps.entry((dest, return_pcs)).or_default();
         if *count >= bound {
             return false;
         }
@@ -1276,8 +1291,74 @@ impl SymbolicExecutor {
                     input_len,
                 );
             }
-            let outcome =
-                execute_symbolic_precompile(&mut self.cx, code_address, input, input_len, spec_id)?;
+            let gas = self.precompile_gas(executor, state, kind, &value);
+            // A path can pin a symbolic input to one value, as `if (a == 1)` does before
+            // `sha256(abi.encode(a))`: run the precompile on that value so the result is exact
+            // and a counterexample replays, instead of an opaque term over the pinned bytes.
+            let pinned_input = input_len
+                .as_const()
+                .and_then(|len| usize::try_from(len).ok())
+                .filter(|len| *len <= input.len())
+                .and_then(|len| {
+                    let bytes = input.materialize(&mut self.cx);
+                    let symbolic = bytes[..len].iter().any(|byte| byte.as_const().is_none());
+                    constrained_bytes_at(&mut self.cx, state, &bytes, 0, len)
+                        .map(|pinned| (pinned, symbolic))
+                });
+            let outcome = match &pinned_input {
+                Some((pinned, _)) => {
+                    execute_precompile(&mut self.cx, code_address, pinned, spec_id, gas)?
+                }
+                None => execute_symbolic_precompile(
+                    &mut self.cx,
+                    code_address,
+                    input.clone(),
+                    input_len.clone(),
+                    spec_id,
+                    gas,
+                )?,
+            };
+            // A malformed signature returns no data, which replay reproduces exactly, while a
+            // well-formed one keeps the opaque recovery model. Prefer a malformed witness.
+            if pinned_input.is_none()
+                && precompile_number_for_spec(code_address, spec_id) == Some(1)
+            {
+                let sized = SymBytes::sized(&mut self.cx, input.clone(), input_len.clone(), 128);
+                let malformed =
+                    ecrecover_signature_well_formed(&mut self.cx, &sized).not(&mut self.cx);
+                if malformed.as_const().is_none() {
+                    state.witness_preferences.push(malformed);
+                }
+            }
+            // An earlier call over the same symbolic input keeps its opaque term, so tie that term
+            // to the result: repeated-call equality must survive the guard that pinned the input.
+            // A constant input has no such term.
+            if let Some((_, true)) = &pinned_input
+                && let Some(concrete) = &outcome
+                && let Ok(Some(symbolic)) = execute_symbolic_precompile(
+                    &mut self.cx,
+                    code_address,
+                    input,
+                    input_len,
+                    spec_id,
+                    gas,
+                )
+            {
+                let len_eq = SymBoolExpr::eq(
+                    &mut self.cx,
+                    symbolic.len_word.clone(),
+                    concrete.len_word.clone(),
+                );
+                let mut ties = vec![len_eq];
+                for offset in (0..concrete.len()).step_by(32) {
+                    let modeled = symbolic.bytes.word_at(&mut self.cx, offset);
+                    let actual = concrete.bytes.word_at(&mut self.cx, offset);
+                    ties.push(SymBoolExpr::eq(&mut self.cx, modeled, actual));
+                }
+                state
+                    .constraints
+                    .extend(ties.into_iter().filter(|equal| equal.as_const() != Some(true)));
+            }
             return self.apply_precompile_outcome(
                 executor,
                 state,
@@ -1476,7 +1557,10 @@ impl SymbolicExecutor {
         input: Vec<SymExpr>,
         input_len: SymExpr,
     ) -> Result<StepOutcome, SymbolicError> {
-        if let Some(outcome) = kzg_constrained_outcome(&mut self.cx, state, &input, &input_len)? {
+        let gas = self.precompile_gas(executor, state, kind, &value);
+        if let Some(outcome) =
+            kzg_constrained_outcome(&mut self.cx, state, &input, &input_len, gas)?
+        {
             return self.apply_precompile_outcome(
                 executor,
                 state,
@@ -1576,6 +1660,20 @@ impl SymbolicExecutor {
             }
             (false, false) => Err(SymbolicError::Unsupported(KZG_RESIDUAL_REASON)),
         }
+    }
+
+    /// Returns the gas a `gasleft()` call gives a precompile, with the value transfer stipend when
+    /// the call may send value.
+    fn precompile_gas(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        state: &PathState,
+        kind: CallKind,
+        value: &SymExpr,
+    ) -> u64 {
+        let sends_value = matches!(kind, CallKind::Call | CallKind::CallCode)
+            && state.constrained_word(&mut self.cx, value).is_none_or(|value| !value.is_zero());
+        precompile_call_gas(executor.gas_limit, sends_value)
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -2222,6 +2320,7 @@ fn kzg_constrained_outcome(
     state: &PathState,
     input: &[SymExpr],
     input_len: &SymExpr,
+    gas: u64,
 ) -> Result<Option<Option<SymReturnData>>, SymbolicError> {
     let Some(input_len) = state.constrained_usize(cx, input_len) else {
         return Ok(None);
@@ -2234,7 +2333,7 @@ fn kzg_constrained_outcome(
     }
 
     if let Some(input) = constrained_bytes_at(cx, state, input, 0, input_len) {
-        return execute_precompile(cx, Address::with_last_byte(10), &input, SpecId::CANCUN)
+        return execute_precompile(cx, Address::with_last_byte(10), &input, SpecId::CANCUN, gas)
             .map(Some);
     }
 

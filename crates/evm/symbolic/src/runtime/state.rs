@@ -24,6 +24,8 @@ pub(crate) struct PathState {
     /// that set them.
     pub(crate) root_pranks: HashMap<Address, SymbolicPrank>,
     pub(crate) constraints: Vec<SymBoolExpr>,
+    /// Conditions a counterexample model meets when it can, so that replay reproduces it.
+    pub(crate) witness_preferences: Vec<SymBoolExpr>,
     pub(crate) next_symbol: usize,
     pub(crate) recorded_logs: Option<Vec<SymbolicLog>>,
     /// Bumped by `recordLogs` and `getRecordedLogs*` so open frame checkpoints know the buffer
@@ -37,7 +39,8 @@ pub(crate) struct PathState {
     branch_target: Option<SymbolicBranchTarget>,
     branch_target_reached: bool,
     needs_feasibility_check: bool,
-    pub(crate) loop_jumps: HashMap<usize, u32>,
+    /// Backward jumps taken per destination and return addresses on the stack.
+    pub(crate) loop_jumps: HashMap<(usize, Vec<usize>), u32>,
     pub(crate) expected_revert: Option<ExpectedRevert>,
     /// Account of the first call, or reverting CREATE, that failed in or below this frame since
     /// it was entered or since its last `vm.expectRevert`, which Forge reports as the reverter.
@@ -111,6 +114,7 @@ impl PathState {
             prank: SymbolicPrank::default(),
             root_pranks: HashMap::default(),
             constraints: Vec::new(),
+            witness_preferences: Vec::new(),
             next_symbol: 0,
             recorded_logs: None,
             recorded_logs_generation: 0,
@@ -422,6 +426,7 @@ impl PathState {
 
     pub(crate) fn take_noncommitting_check_state(&mut self, check: &mut Self) {
         self.constraints = std::mem::take(&mut check.constraints);
+        self.witness_preferences = std::mem::take(&mut check.witness_preferences);
         self.next_symbol = self.next_symbol.max(check.next_symbol);
         self.world.merge_replay_metadata_from(&check.world);
         self.storage_load_hooks = std::mem::take(&mut check.storage_load_hooks);
@@ -431,6 +436,7 @@ impl PathState {
 
     pub(crate) fn take_call_outcome_state(&mut self, child: &mut Self) {
         self.constraints = std::mem::take(&mut child.constraints);
+        self.witness_preferences = std::mem::take(&mut child.witness_preferences);
         self.next_symbol = child.next_symbol;
         self.inherit_branch_target_progress(child);
         self.storage_load_hooks = std::mem::take(&mut child.storage_load_hooks);
@@ -857,6 +863,12 @@ impl PathState {
     pub(crate) fn exp_word(&mut self, cx: &mut SymCx) -> Result<(), SymbolicError> {
         let base = self.stack.pop()?;
         let exponent = self.stack.pop()?;
+        // A base the path pins to one value, such as by `require(b == 3)`, is a constant here.
+        let base = if let Some(value) = self.constrained_word(cx, &base) {
+            SymExpr::constant(cx, value)
+        } else {
+            base
+        };
         let result = if let Some(exponent) = self.constrained_word(cx, &exponent) {
             if let Some(base_value) = base.as_const() {
                 SymExpr::constant(cx, base_value.wrapping_pow(exponent))

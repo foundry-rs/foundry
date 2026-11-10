@@ -214,6 +214,7 @@ impl SymbolicExecutor {
         for mut outcome in outcomes {
             let mut parent = state.clone();
             parent.constraints = std::mem::take(&mut outcome.state.constraints);
+            parent.witness_preferences = std::mem::take(&mut outcome.state.witness_preferences);
             parent.next_symbol = outcome.state.next_symbol;
             parent.storage_load_hooks = std::mem::take(&mut outcome.state.storage_load_hooks);
             parent.storage_store_hooks = std::mem::take(&mut outcome.state.storage_store_hooks);
@@ -1095,7 +1096,7 @@ impl SymbolicExecutor {
                     state.return_data = SymReturnData::empty(&mut self.cx);
                     return Ok(StepOutcome::ExceptionalHalt);
                 };
-                if !self.take_loop_jump(state, state.pc, dest) {
+                if !self.take_loop_jump(state, code, state.pc, dest) {
                     return Ok(StepOutcome::AssumeRejected);
                 }
                 state.pc = dest;
@@ -1115,7 +1116,7 @@ impl SymbolicExecutor {
                             state.return_data = SymReturnData::empty(&mut self.cx);
                             return Ok(StepOutcome::ExceptionalHalt);
                         };
-                        if !self.take_loop_jump(state, state.pc, dest) {
+                        if !self.take_loop_jump(state, code, state.pc, dest) {
                             return Ok(StepOutcome::AssumeRejected);
                         }
                         state.pc = dest;
@@ -1161,7 +1162,8 @@ impl SymbolicExecutor {
                         false_state.set_corpus_seed_models(false_seed_models);
                         false_state.pc = fallthrough;
 
-                        let true_pending = self.take_loop_jump(&mut true_state, fallthrough, dest);
+                        let true_pending =
+                            self.take_loop_jump(&mut true_state, code, fallthrough, dest);
                         if true_pending {
                             true_state.defer_feasibility_check();
                         }

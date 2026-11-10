@@ -39,6 +39,10 @@ impl SymStack {
     pub(crate) const fn len(&self) -> usize {
         self.0.len()
     }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &SymExpr> {
+        self.0.iter()
+    }
 }
 
 #[derive(Clone, Debug)]
