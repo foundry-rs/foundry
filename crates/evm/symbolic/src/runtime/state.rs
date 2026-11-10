@@ -448,6 +448,7 @@ impl PathState {
         let recorded_logs_len = self.recorded_logs.as_ref().map_or(0, Vec::len);
         let recorded_logs_generation = self.recorded_logs_generation;
         self.take_noncommitting_check_state(&mut reverted);
+        self.world.take_snapshots_from(&mut reverted.world);
         self.block = reverted.block;
         self.recorded_logs = reverted.recorded_logs;
         self.recorded_logs_generation = reverted.recorded_logs_generation;
@@ -2093,6 +2094,13 @@ impl SymbolicWorld {
 
     pub(crate) fn delete_snapshots(&mut self) {
         self.snapshots.clear();
+    }
+
+    /// Takes `other`'s snapshot registry; like Forge's backend, a failed call keeps the snapshots
+    /// it took or deleted.
+    pub(crate) fn take_snapshots_from(&mut self, other: &mut Self) {
+        self.snapshots = std::mem::take(&mut other.snapshots);
+        self.next_snapshot_id = other.next_snapshot_id;
     }
 
     pub(crate) fn storage_base(
