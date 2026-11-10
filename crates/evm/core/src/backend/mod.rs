@@ -32,7 +32,7 @@ use crate::{
         TransactionRequestFor, TxFor, TxResultFor, TypesFor, block_txs, evm_env, full_transactions,
         merge_untracked_nested_changes,
     },
-    fork::{CreateFork, Fork as RemoteFork, ForkId, ForkResult, MultiFork},
+    fork::{BlockEnv, CreateFork, Fork as RemoteFork, ForkId, ForkResult, MultiFork},
     opts::{EvmOpts, ExecutionSpecContext},
     utils::{
         apply_chain_and_block_specific_env_changes_for_chain,
@@ -94,7 +94,7 @@ mod tests;
 pub type LocalForkId = U256;
 
 /// Backing database of an RPC fork: the shared fork cache, read by evm2.
-pub type RpcForkDb = ForkDb<SharedBackend<AnyNetwork, revm::context::BlockEnv>>;
+pub type RpcForkDb = ForkDb<SharedBackend<AnyNetwork, BlockEnv>>;
 
 /// All accounts that will have persistent storage across fork swaps.
 const DEFAULT_PERSISTENT_ACCOUNTS: [Address; 3] =
@@ -1342,7 +1342,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// Returns the position and block cursor at the end of `remote`'s pinned block.
     fn block_end_cursor(
         &self,
-        backend: &SharedBackend<AnyNetwork, revm::context::BlockEnv>,
+        backend: &SharedBackend<AnyNetwork, BlockEnv>,
         remote: &RemoteFork,
         env: &EvmEnvFor<FEN>,
     ) -> eyre::Result<(ForkPosition, ChainFor<FEN>)> {
@@ -1411,10 +1411,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             .ok_or_else(|| eyre::eyre!("fork `{id}` is not backed by an RPC endpoint"))
     }
 
-    fn shared_backend(
-        &self,
-        id: LocalForkId,
-    ) -> eyre::Result<SharedBackend<AnyNetwork, revm::context::BlockEnv>> {
+    fn shared_backend(&self, id: LocalForkId) -> eyre::Result<SharedBackend<AnyNetwork, BlockEnv>> {
         let fork_id = self.fork_info(id)?.id.clone();
         self.forks
             .get_fork(fork_id.clone())?
@@ -1579,7 +1576,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
 /// Returns the transactions of `block` and its two ancestors, fetched through `backend`.
 fn block_context<FEN: FoundryEvmNetwork>(
-    backend: &SharedBackend<AnyNetwork, revm::context::BlockEnv>,
+    backend: &SharedBackend<AnyNetwork, BlockEnv>,
     block: &AnyRpcBlock,
 ) -> eyre::Result<BlockContext<FEN>> {
     let parent = parent_block(backend, block)?;
@@ -1615,7 +1612,7 @@ fn block_cursor<FEN: FoundryEvmNetwork>(
 
 /// Fetches the parent of `block`, or `None` for genesis.
 fn parent_block(
-    backend: &SharedBackend<AnyNetwork, revm::context::BlockEnv>,
+    backend: &SharedBackend<AnyNetwork, BlockEnv>,
     block: &AnyRpcBlock,
 ) -> eyre::Result<Option<AnyRpcBlock>> {
     let parent_hash = block.header.parent_hash();

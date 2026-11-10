@@ -2112,15 +2112,31 @@ contract SymbolicEmptyDomain is Test {
         assert(x >= 5);
     }
 
-    // The rejected branch of a repeated assumption is infeasible.
+    // The rejected branch of a repeated assumption is infeasible: it neither fails nor passes.
     function checkCaughtRepeatedAssumption(uint256 x) public {
         vm.assume(x != 5);
-        try vm.assume(x != 5) {} catch { assert(false); }
+        try vm.assume(x != 5) { vm.assume(false); } catch { assert(false); }
     }
 
-    function checkCaughtRejectedAssumption(uint256 x) public {
+    // An infeasible caught rejection never runs, so it cannot make the proof incomplete.
+    function checkInfeasibleCaughtRejection(uint256 x) public {
         vm.assume(x != 5);
-        try vm.assume(x != 5) { vm.assume(false); } catch {}
+        try vm.assume(x != 5) {} catch {
+            vm.assertEq(uint256(1), uint256(2));
+        }
+    }
+
+    // The allocation makes the cheatcode input offset symbolic.
+    function checkAssumeAfterSymbolicAlloc(uint8 n) public {
+        new bytes(n);
+        vm.assume(n != 37);
+        assert(n != 37);
+    }
+
+    function checkSkipAfterSymbolicAlloc(uint8 n) public {
+        new bytes(n);
+        vm.skip(n == 37);
+        assert(n != 37);
     }
 }
 "#,
@@ -2135,13 +2151,15 @@ contract SymbolicEmptyDomain is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 10 tests for test/SymbolicEmptyDomain.t.sol:SymbolicEmptyDomain
+Ran 12 tests for test/SymbolicEmptyDomain.t.sol:SymbolicEmptyDomain
+[PASS] checkAssumeAfterSymbolicAlloc(uint8) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeCaught(uint256) ([METRICS])
-[FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkCaughtRejectedAssumption(uint256) ([METRICS])
-[PASS] checkCaughtRepeatedAssumption(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkCaughtRepeatedAssumption(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkConstantAssumption() ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkContradictoryAssumptions(uint256) ([METRICS])
+[PASS] checkInfeasibleCaughtRejection(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (RevertAll): all symbolic paths reverted] checkRejectedAndReverted(bool) ([METRICS])
+[PASS] checkSkipAfterSymbolicAlloc(uint8) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSkipCaught(uint256) ([METRICS])
 [FAIL: vm.skip: `skip` can only be used at test level; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSkipNested(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkSkipped() ([METRICS])

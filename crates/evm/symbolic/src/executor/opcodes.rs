@@ -459,6 +459,22 @@ impl SymbolicExecutor {
         completed_paths: &mut usize,
         op: u8,
     ) -> Result<StepOutcome, SymbolicError> {
+        // A path that kept running without a feasibility check, such as a caught `vm.assume`
+        // rejection, is checked before it calls out or logs: a callee, cheatcodes in particular,
+        // or a pending `vm.expectEmit` can record limitations for the whole run.
+        if matches!(
+            op,
+            opcode::CALL
+                | opcode::CALLCODE
+                | opcode::DELEGATECALL
+                | opcode::STATICCALL
+                | opcode::CREATE
+                | opcode::CREATE2
+                | opcode::LOG0..=opcode::LOG4
+        ) && !self.deferred_path_is_feasible(state)?
+        {
+            return Ok(StepOutcome::AssumeRejected);
+        }
         state.pc += 1;
 
         if executor.spec_id < opcode_activation(op) {
@@ -1573,6 +1589,11 @@ impl SymbolicExecutor {
                 .is_ok_and(|data| data == MAGIC_ASSUME || data.starts_with(MAGIC_SKIP))
         {
             return Ok(StepOutcome::AssumeRejected);
+        }
+        // Like Forge, a test that reverts after a failed assertion fails, even when the assertion
+        // was caught or only set the fail slot.
+        if state.root_calldata.is_some() && state.assertion_failed {
+            return Ok(StepOutcome::Failure);
         }
         // In `check*`/`prove*` tests, a `CheatcodeError` that reaches the top frame, such as an
         // unmet `vm.expectRevert`, is a failure. Invariant handlers treat it as a revert.
