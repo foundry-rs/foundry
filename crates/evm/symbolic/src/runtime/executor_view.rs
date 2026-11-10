@@ -66,15 +66,11 @@ pub struct ExecutorView<'a> {
     pub(crate) active_fork_id: Option<U256>,
     /// Addresses cached by the active context, including committed-session reads.
     pub(crate) account_addresses: Vec<Address>,
-    /// Accounts the backend marks persistent across fork switches, which `vm.isPersistent` sees.
-    pub(crate) persistent_accounts: Vec<Address>,
     pub(crate) block: ExecutorBlock,
     pub(crate) gas_price: u128,
     pub(crate) isolate: bool,
     /// Whether `vm.expectRevert` may be satisfied by an internal call below the next call.
     pub(crate) internal_expect_revert: bool,
-    /// The concrete executor's event decoder for `vm.expectEmit` failure messages.
-    pub(crate) signatures: Option<&'a SignaturesIdentifier>,
     /// Whether a failed assertion cheatcode reverts its call instead of setting the fail slot.
     pub(crate) assertions_revert: bool,
     pub(crate) blob_hashes: Vec<B256>,
@@ -93,6 +89,8 @@ pub struct ExecutorView<'a> {
     /// Source literals, used as candidate keys of constant-folded mapping slots.
     pub(crate) literals: Option<&'a LiteralsDictionary>,
     pub(crate) expects_safe_memory: bool,
+    /// Accounts the backend marks persistent across fork switches, which `vm.isPersistent` sees.
+    pub(crate) persistent_accounts: Vec<Address>,
 }
 
 /// Block environment values exposed to symbolic execution.
@@ -143,7 +141,6 @@ impl<'a> ExecutorView<'a> {
             max_code_size: evm_env.version.max_code_size,
             active_fork_id: backend.active_fork_id(),
             account_addresses,
-            persistent_accounts: backend.lifecycle().forks().persistent_accounts().collect(),
             block: ExecutorBlock {
                 coinbase: block.beneficiary,
                 timestamp: block.timestamp,
@@ -165,7 +162,6 @@ impl<'a> ExecutorView<'a> {
             isolate: cheats.is_some_and(|cheats| cheats.core.config.isolate),
             internal_expect_revert: cheats
                 .is_some_and(|cheats| cheats.core.config.internal_expect_revert),
-            signatures: cheats.and_then(|cheats| cheats.signatures_identifier()),
             assertions_revert: cheats.is_none_or(|cheats| cheats.core.config.assertions_revert),
             blob_hashes: overrides
                 .and_then(|overrides| overrides.blob_hashes.clone())
@@ -224,6 +220,7 @@ impl<'a> ExecutorView<'a> {
             known_contracts: None,
             literals: None,
             expects_safe_memory: cheats.is_some_and(|cheats| !cheats.allowed_mem_writes.is_empty()),
+            persistent_accounts: backend.lifecycle().forks().persistent_accounts().collect(),
         }
     }
 

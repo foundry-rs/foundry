@@ -3701,7 +3701,6 @@ const fn cheatcode_signature(cheat: &spec::Cheatcode<'static>) -> &'static str {
     cheat.func.signature
 }
 
-/// Dispatches the cheatcode call to the appropriate function.
 /// Decodes a cheatcode call, reporting an unknown selector as a `Vm` interface mismatch.
 pub fn decode_cheatcode_call(input: &[u8]) -> alloy_sol_types::Result<Vm::VmCalls> {
     Vm::VmCalls::abi_decode(input).map_err(|e| {
@@ -3717,6 +3716,7 @@ pub fn decode_cheatcode_call(input: &[u8]) -> alloy_sol_types::Result<Vm::VmCall
     })
 }
 
+/// Dispatches the cheatcode call to the appropriate function.
 fn apply_dispatch<FEN: FoundryEvmNetwork>(
     calls: &Vm::VmCalls,
     ccx: &mut CheatsCtxt<'_, '_, FEN>,

@@ -26,7 +26,6 @@ use evm2::{
         secp256k1, secp256r1,
     },
 };
-use foundry_cheatcodes::{decode_cheatcode_call, parse_value};
 use foundry_cheatcodes_spec::{SymbolicVm, Vm};
 use foundry_common::FoundryTransactionBuilder;
 use foundry_config::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
@@ -34,7 +33,7 @@ use foundry_evm::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
     core::{abi::console, evm::FoundryEvmNetwork},
     executors::Executor,
-    traces::identifier::SignaturesIdentifier,
+    inspectors::cheatcodes::{decode_cheatcode_call, parse_value},
 };
 use serde::{Deserialize, Serialize};
 use std::{

@@ -134,17 +134,10 @@ impl SymBoolExpr {
                     (
                         SymExprKind::BinOp(SymBinOp::Add, left_value, left_offset),
                         SymExprKind::BinOp(SymBinOp::Add, right_value, right_offset),
-                    ) if let (Some(left_offset), Some(right_offset)) =
-                        (left_offset.as_const(), right_offset.as_const()) =>
-                    {
-                        // `a + c1 == b + c2 => a == b + (c2 - c1)`, so a common offset on two
-                        // hashes still reaches the Keccak rewrite below.
-                        let right = SymExpr::add_const(
-                            cx,
-                            right_value.clone(),
-                            right_offset.wrapping_sub(left_offset),
-                        );
-                        Self::eq(cx, left_value.clone(), right)
+                    ) if left_offset == right_offset && left_offset.as_const().is_some() => {
+                        // `a + c == b + c => a == b`, so a common offset on two hashes still
+                        // reaches the Keccak rewrite below.
+                        Self::eq(cx, left_value.clone(), right_value.clone())
                     }
                     (
                         SymExprKind::Keccak { len: left_len, .. },

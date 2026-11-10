@@ -157,7 +157,6 @@ impl PathState {
     ) -> Result<(), SymbolicError> {
         self.block = SymbolicBlock::from_executor(cx, executor);
         self.gas_price = SymExpr::constant(cx, U256::from(executor.gas_price));
-        self.persistent_accounts.extend(executor.persistent_accounts.iter().copied());
         for &(target, overwrite) in &executor.arbitrary_storage_targets {
             self.world.enable_arbitrary_storage(target, overwrite);
         }
@@ -173,6 +172,7 @@ impl PathState {
                 "symbolic vm.expectSafeMemory inherited from setUp",
             ));
         }
+        self.persistent_accounts.extend(executor.persistent_accounts.iter().copied());
 
         // Forge applies a `setUp` prank from the test frame, which is depth 1 in the inspector.
         for prank in &executor.pranks {
@@ -193,6 +193,8 @@ impl PathState {
                 slot.set_next(caller, origin);
             } else {
                 slot.set_persistent(caller, origin);
+                // A `startPrank` that `setUp` already applied can be replaced.
+                slot.persistent_used = prank.used;
             }
         }
         if let Some(accesses) = executor.accesses
@@ -474,20 +476,24 @@ impl PathState {
             std::mem::take(&mut child.mapping_hook_keccak_preimages);
         self.recorded_logs = child.recorded_logs.take();
         self.recorded_logs_generation = child.recorded_logs_generation;
-        self.access_record = child.access_record.take();
         self.assertion_failed |= child.assertion_failed;
-        // Inspector state survives child reverts and exceptional halts.
-        self.block = child.block.clone();
-        self.gas_price = child.gas_price.clone();
-        self.wallets = std::mem::take(&mut child.wallets);
-        self.labels = std::mem::take(&mut child.labels);
-        self.persistent_accounts = std::mem::take(&mut child.persistent_accounts);
         self.expected_emit = child.expected_emit.clone();
-        self.expected_calls = std::mem::take(&mut child.expected_calls);
-        self.expected_creates = std::mem::take(&mut child.expected_creates);
-        self.call_mocks = std::mem::take(&mut child.call_mocks);
-        self.function_mocks = std::mem::take(&mut child.function_mocks);
+        self.take_inspector_state(child);
         self.persistent_writes = std::mem::take(&mut child.persistent_writes);
+    }
+
+    /// Takes the cheatcode state of `other`, which survives reverts and exceptional halts.
+    fn take_inspector_state(&mut self, other: &mut Self) {
+        self.access_record = other.access_record.take();
+        self.block = other.block.clone();
+        self.gas_price = other.gas_price.clone();
+        self.wallets = std::mem::take(&mut other.wallets);
+        self.labels = std::mem::take(&mut other.labels);
+        self.persistent_accounts = std::mem::take(&mut other.persistent_accounts);
+        self.expected_calls = std::mem::take(&mut other.expected_calls);
+        self.expected_creates = std::mem::take(&mut other.expected_creates);
+        self.call_mocks = std::mem::take(&mut other.call_mocks);
+        self.function_mocks = std::mem::take(&mut other.function_mocks);
     }
 
     /// Drops logs recorded by a failed call that started with `len` logs in `generation`.
@@ -503,26 +509,24 @@ impl PathState {
         let recorded_logs_len = self.recorded_logs.as_ref().map_or(0, Vec::len);
         let recorded_logs_generation = self.recorded_logs_generation;
         self.take_noncommitting_check_state(&mut reverted);
+        self.take_inspector_state(&mut reverted);
         self.world.take_snapshots_from(&mut reverted.world);
-        self.block = reverted.block;
-        self.gas_price = reverted.gas_price;
-        self.wallets = reverted.wallets;
-        self.labels = reverted.labels;
-        self.persistent_accounts = reverted.persistent_accounts;
         self.recorded_logs = reverted.recorded_logs;
         self.recorded_logs_generation = reverted.recorded_logs_generation;
         self.discard_failed_call_logs(recorded_logs_len, recorded_logs_generation);
-        self.access_record = reverted.access_record;
         self.expected_revert = reverted.expected_revert;
         self.first_failed_callee = reverted.first_failed_callee;
         self.first_reverted_callee = reverted.first_reverted_callee;
         self.assertion_failed = reverted.assertion_failed;
         self.assume_no_revert_next_call = reverted.assume_no_revert_next_call;
         self.expected_emit = reverted.expected_emit;
-        self.expected_calls = reverted.expected_calls;
-        self.expected_creates = reverted.expected_creates;
-        self.call_mocks = reverted.call_mocks;
-        self.function_mocks = reverted.function_mocks;
+        // Like Forge's pranks, the root frames' pranks survive the revert. `self.prank` is
+        // already parked in `reverted.root_pranks` under this frame's address.
+        self.root_pranks = reverted.root_pranks;
+        if reverted.prank.has_active() {
+            self.root_pranks.insert(reverted.frame.address, reverted.prank);
+        }
+        self.prank = self.root_pranks.remove(&self.frame.address).unwrap_or_default();
     }
 
     /// Returns `true` if the path can be materialized into a replayable corpus seed.
@@ -1151,23 +1155,6 @@ impl PathState {
         true
     }
 
-    /// Returns the topics of `log` when each is fixed on this path.
-    pub(crate) fn concrete_log_topics(
-        &self,
-        cx: &mut SymCx,
-        log: &SymbolicLog,
-    ) -> Option<Vec<B256>> {
-        log.topics.iter().map(|topic| self.constrained_word(cx, topic).map(B256::from)).collect()
-    }
-
-    /// Returns the data of `log` when its length and bytes are fixed on this path.
-    pub(crate) fn concrete_log_data(&self, cx: &mut SymCx, log: &SymbolicLog) -> Option<Bytes> {
-        let len = usize::try_from(self.constrained_word(cx, &log.data_len)?).ok()?;
-        let mut bytes = log.data.concrete_bytes(cx, "symbolic log data").ok()?;
-        bytes.truncate(len);
-        Some(bytes.into())
-    }
-
     pub(crate) fn expectations_satisfied(&self) -> bool {
         self.expected_revert.is_none()
             && self.expected_emit.as_ref().is_none_or(ExpectedEmit::is_forbidden)
@@ -1284,10 +1271,6 @@ impl SymbolicLog {
 
     pub(crate) fn has_topics(&self) -> bool {
         !self.topics.is_empty()
-    }
-
-    pub(crate) const fn emitter(&self) -> Address {
-        self.emitter
     }
 }
 
@@ -1727,9 +1710,6 @@ pub(crate) struct ExpectedEmit {
     depth: usize,
     /// Whether a call ended with the expectation unmet, which failed that call.
     failed: bool,
-    /// The last log checked against the template that did not match, which shapes the failure
-    /// message like Forge's `mismatch_error`.
-    mismatch: Option<SymbolicLog>,
 }
 
 impl ExpectedEmit {
@@ -1740,43 +1720,12 @@ impl ExpectedEmit {
         anonymous: bool,
         depth: usize,
     ) -> Self {
-        Self {
-            checks,
-            emitter,
-            remaining,
-            template: None,
-            anonymous,
-            depth,
-            failed: false,
-            mismatch: None,
-        }
+        Self { checks, emitter, remaining, template: None, anonymous, depth, failed: false }
     }
 
     /// Returns whether a call ended with this expectation unmet.
     pub(crate) const fn failed(&self) -> bool {
         self.failed
-    }
-
-    /// Records a log that was checked against the template and did not match. Like Forge, a
-    /// `count = 0` expectation records none.
-    pub(crate) fn record_mismatch(&mut self, log: &SymbolicLog) {
-        if !self.is_forbidden() {
-            self.mismatch = Some(log.clone());
-        }
-    }
-
-    pub(crate) const fn mismatch(&self) -> Option<&SymbolicLog> {
-        self.mismatch.as_ref()
-    }
-
-    pub(crate) const fn emitter(&self) -> Option<&SymExpr> {
-        self.emitter.as_ref()
-    }
-
-    /// Returns the checks in Forge's `[topic0, topic1, topic2, topic3, data]` order.
-    pub(crate) const fn checks(&self) -> [bool; 5] {
-        let [t0, t1, t2, t3] = self.checks.topics;
-        [t0, t1, t2, t3, self.checks.data]
     }
 
     /// Returns whether this expectation forbids logs matching its template (`count = 0`).
@@ -2004,6 +1953,11 @@ impl SymbolicPrank {
         } else {
             None
         }
+    }
+
+    /// Ends this frame's prank. Like Forge, a caller frame's prank stays visible.
+    pub(crate) fn stop(&mut self) {
+        *self = Self { inherited: self.inherited.take(), ..Self::default() };
     }
 
     pub(crate) const fn has_active(&self) -> bool {
@@ -2526,23 +2480,13 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
-        let address_expr = address_expr.address_operand(cx);
-        if let Some(address) = self.resolve_address(&address_expr) {
-            return Ok(self.balance_word_for_address(cx, executor, address));
-        }
-
-        let expr = address_expr;
-        let representative = expr.representative_symbolic_address();
-        let mut result = self.balance_word_for_address(cx, executor, representative);
-        let candidates = self
-            .candidate_addresses(executor, |world, address| world.balances.contains_key(&address));
-        for address in candidates {
-            let balance = self.balance_word_for_address(cx, executor, address);
-            let condition = self.symbolic_address_condition(cx, &expr, address);
-            result = SymExpr::ite(cx, condition, balance, result);
-        }
-
-        Ok(result)
+        self.select_symbolic_account(
+            cx,
+            executor,
+            address_expr,
+            |world, address| world.balances.contains_key(&address),
+            |world, cx, address| Ok(world.balance_word_for_address(cx, executor, address)),
+        )
     }
 
     pub(crate) fn set_balance_word(&mut self, address: Address, value: SymExpr) {
@@ -2724,7 +2668,7 @@ impl SymbolicWorld {
         {
             Arc::make_mut(&mut self.state).existing_accounts.insert(address);
         }
-        if (address == CHEATCODE_ADDRESS || address == SYMBOLIC_VM_COMPAT_ADDRESS)
+        if address == CHEATCODE_ADDRESS
             && account.as_ref().is_none_or(|account| account.code.is_none())
         {
             let code = SymCode::concrete(cx, vec![0]);
@@ -2776,7 +2720,15 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
-        let address_expr = address_expr.address_operand(cx);
+        // Like halmos, a query that names the empty compatibility address sees one byte of code,
+        // so Solidity's code-size check lets calls to it through. Forge leaves it empty, so a
+        // symbolic address that may denote it does not.
+        if address_expr.clone().address_operand(cx).as_const()
+            == Some(address_word(SYMBOLIC_VM_COMPAT_ADDRESS))
+            && self.extcode(cx, executor, SYMBOLIC_VM_COMPAT_ADDRESS)?.is_empty()
+        {
+            return Ok(SymExpr::constant(cx, U256::ONE));
+        }
         self.select_symbolic_account(
             cx,
             executor,
@@ -2795,7 +2747,6 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
-        let address_expr = address_expr.address_operand(cx);
         self.select_symbolic_account(
             cx,
             executor,
@@ -2859,8 +2810,9 @@ impl SymbolicWorld {
         )
     }
 
-    /// Selects `value_for` over the accounts a symbolic address may denote: its representative
+    /// Selects `value_for` over the accounts an address operand may denote: its representative
     /// account, then every candidate account under the condition that the address matches it.
+    /// Like the EVM, only the low 160 bits of the operand count.
     fn select_symbolic_account(
         &mut self,
         cx: &mut SymCx,
@@ -2869,6 +2821,7 @@ impl SymbolicWorld {
         has_state: impl Fn(&Self, Address) -> bool,
         mut value_for: impl FnMut(&mut Self, &mut SymCx, Address) -> Result<SymExpr, SymbolicError>,
     ) -> Result<SymExpr, SymbolicError> {
+        let address_expr = address_expr.address_operand(cx);
         if let Some(address) = self.resolve_address(&address_expr) {
             return value_for(self, cx, address);
         }
@@ -2913,8 +2866,8 @@ impl SymbolicWorld {
     /// Returns the accounts a symbolic address may alias, in address order.
     ///
     /// Includes accounts that exist only in the backend, such as contracts deployed in `setUp`,
-    /// which the world caches only once touched, and the cheatcode addresses, which have code
-    /// and can hold balances. A representative account only carries the state written through
+    /// which the world caches only once touched, and the cheatcode address, which has code and
+    /// can hold balances. A representative account only carries the state written through
     /// its expression, so it is a candidate only where `has_state` holds; elsewhere the
     /// expression may denote a real account whose state must show through.
     fn candidate_addresses(
@@ -2930,7 +2883,7 @@ impl SymbolicWorld {
             .chain(&executor.account_addresses)
             .chain(self.storage.iter().map(|write| &write.address))
             .copied()
-            .chain([CHEATCODE_ADDRESS, SYMBOLIC_VM_COMPAT_ADDRESS])
+            .chain([CHEATCODE_ADDRESS])
             .filter(|address| {
                 self.symbolic_word_for_address(*address).is_none() || has_state(self, *address)
             })
