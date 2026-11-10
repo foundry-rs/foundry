@@ -1,6 +1,10 @@
 use super::*;
 use evm2::interpreter::gas::CALL_STIPEND;
 
+/// Order of the secp256k1 curve, the exclusive bound of a valid signature scalar.
+const SECP256K1_ORDER: U256 =
+    U256::from_be_bytes(hex!("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141"));
+
 pub(crate) fn precompile_number(address: Address) -> Option<u8> {
     let bytes = address.as_slice();
     if bytes[..PRECOMPILE_ADDRESS_LEADING_ZEROS].iter().any(|byte| *byte != 0) {
@@ -114,10 +118,7 @@ pub(crate) fn execute_symbolic_precompile(
             if let Ok(input) = input.concrete_bytes(cx, "symbolic ecrecover input") {
                 return execute_precompile(cx, address, &input, spec_id, gas);
             }
-            let v = input.word_at(cx, 32);
-            let v27 = SymBoolExpr::eq_word_const(cx, &v, U256::from(27));
-            let v28 = SymBoolExpr::eq_word_const(cx, &v, U256::from(28));
-            let valid_v = SymBoolExpr::or(cx, vec![v27, v28]);
+            let valid_v = ecrecover_signature_well_formed(cx, &input);
             if valid_v.as_const() == Some(false) {
                 return Ok(Some(SymReturnData::empty(cx)));
             }
@@ -272,6 +273,21 @@ pub(crate) fn execute_symbolic_precompile(
             execute_precompile(cx, address, &input, spec_id, gas)
         }
     }
+}
+
+/// Returns whether a 128-byte ECRECOVER input is a well-formed signature: `v` is 27 or 28 and `r`
+/// and `s` are in `[1, n)`. The precompile returns no data otherwise.
+pub(crate) fn ecrecover_signature_well_formed(cx: &mut SymCx, input: &SymBytes) -> SymBoolExpr {
+    let v = input.word_at(cx, 32);
+    let v27 = SymBoolExpr::eq_word_const(cx, &v, U256::from(27));
+    let v28 = SymBoolExpr::eq_word_const(cx, &v, U256::from(28));
+    let mut valid = vec![SymBoolExpr::or(cx, vec![v27, v28])];
+    for offset in [64, 96] {
+        let scalar = input.word_at(cx, offset);
+        valid.push(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &scalar, SECP256K1_ORDER));
+        valid.push(scalar.nonzero_bool(cx));
+    }
+    SymBoolExpr::and(cx, valid)
 }
 
 /// Opaque term algorithm of the modexp precompile, whose outputs may collide.
