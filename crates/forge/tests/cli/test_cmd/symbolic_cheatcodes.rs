@@ -628,7 +628,12 @@ contract SymbolicSetupAccounts is Test {
         vm.mockCalls(address(b), abi.encodeWithSelector(Pinger.value.selector, uint256(7)), new bytes[](0));
         vm.recordLogs();
         a.ping();
+        vm.expectCall(address(b), abi.encodeCall(Pinger.price, ()), 0);
         vm.startPrank(address(0xABC));
+    }
+
+    function checkSetupExpectCall(bool call) public view {
+        if (call) b.price();
     }
 
     function checkSetupMock() public view {
@@ -749,7 +754,7 @@ contract SymbolicSetupAccounts is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 17 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
+Ran 18 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkBalance(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeBalance(address) ([METRICS])
 [FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeCallKeepsExpectRevert(address) ([METRICS])
@@ -763,11 +768,12 @@ Ran 17 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCompatibilityEtchedCode() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkHighLevelCall(address,bool) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupEmptyMock() ([METRICS])
+[FAIL: expected call to [..] with data 0xa035b1fe to be called 0 times, but was called 1 time; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupExpectCall(bool) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupMock() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupPrank() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupRecordedLogs() ([METRICS])
 [FAIL: unknown cheatcode with selector 0x5c36b186; you may have a mismatch between the `Vm` interface (likely in `forge-std`) and the `forge` version; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnconstrainedHighLevelCall(address) ([METRICS])
-Suite result: FAILED. 0 passed; 17 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 18 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

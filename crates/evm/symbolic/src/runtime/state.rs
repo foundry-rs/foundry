@@ -1,7 +1,7 @@
 use super::*;
 use alloy_sol_types::{Revert, SolError};
 use evm2::interpreter::gas::CALL_STIPEND;
-use foundry_evm::core::backend::GLOBAL_FAIL_SLOT;
+use foundry_evm::{core::backend::GLOBAL_FAIL_SLOT, inspectors::cheatcodes::ExpectedCallType};
 
 const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
 
@@ -168,6 +168,11 @@ impl PathState {
         self.storage_store_hooks.extend(executor.storage_store_hooks.iter().copied());
         self.mapping_storage_store_hooks
             .extend(executor.mapping_storage_store_hooks.iter().copied());
+        if executor.expects_safe_memory {
+            return Err(SymbolicError::Unsupported(
+                "symbolic vm.expectSafeMemory inherited from setUp",
+            ));
+        }
 
         // Forge applies a `setUp` prank from the test frame, which is depth 1 in the inspector.
         for prank in &executor.pranks {
@@ -250,6 +255,29 @@ impl PathState {
                 })
                 .collect();
             self.recorded_logs = Some(logs);
+        }
+        let mut expected_calls = cheats
+            .expected_calls
+            .iter()
+            .flat_map(|(callee, calls)| calls.iter().map(move |(key, call)| (callee, key, call)))
+            .collect::<Vec<_>>();
+        expected_calls.sort_by(|a, b| (a.0, &a.1.0).cmp(&(b.0, &b.1.0)));
+        for (callee, (data, scheme), (expected, observed)) in expected_calls {
+            if scheme.is_some() {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic vm.expectCall scheme inherited from setUp",
+                ));
+            }
+            self.expected_calls.push(ExpectedCall {
+                callee: SymExpr::constant(cx, address_word(*callee)),
+                value: expected.value,
+                gas: expected.gas,
+                min_gas: expected.min_gas,
+                data: SymBytes::concrete(cx, data.to_vec()),
+                expected: expected.count,
+                observed: *observed,
+                exact: expected.call_type == ExpectedCallType::Count,
+            });
         }
         if let Some(wallets) = &cheats.wallets {
             let wallets = wallets
