@@ -14,7 +14,7 @@ use alloy_signer_local::{
     PrivateKeySigner,
     coins_bip39::{English, Wordlist},
 };
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{SolCall, SolInterface};
 use base64::prelude::*;
 use evm2::{
     EvmFeatures, SpecId,
@@ -32,7 +32,7 @@ use foundry_common::FoundryTransactionBuilder;
 use foundry_config::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
 use foundry_evm::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
-    core::evm::FoundryEvmNetwork,
+    core::{abi::console, evm::FoundryEvmNetwork},
     executors::Executor,
 };
 use serde::{Deserialize, Serialize};
