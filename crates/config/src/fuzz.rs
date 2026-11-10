@@ -158,8 +158,9 @@ pub struct FuzzCorpusConfig {
     /// control-flow edge, with dense IDs starting at 1. When enabled, the EVM executes that
     /// opcode, which records a hit for the edge and costs no gas (it also refunds its `PUSH`),
     /// and these hits replace the inspector's EVM edges as the corpus guidance signal.
-    /// Comparison-operand capture is unchanged. Instrumented artifacts only run with this on:
-    /// on any other EVM `0xC0` is an undefined opcode.
+    /// Comparison operands then come from the compiler's `CMPLOG` (`0xC1`) probes instead of the
+    /// cmp-log inspector. Instrumented artifacts only run with this on: on any other EVM `0xC0`
+    /// and `0xC1` are undefined opcodes.
     pub instrumented_edges: bool,
     /// Percent chance of generating fresh transaction input instead of continuing from corpus
     /// input during coverage-guided campaigns.

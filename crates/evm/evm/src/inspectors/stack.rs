@@ -355,14 +355,6 @@ pub struct InspectorData<FEN: FoundryEvmNetwork> {
     pub reverter: Option<Address>,
 }
 
-/// The tracer and the revert diagnostics that annotate its traces, taken from an
-/// [`InspectorStack`] with [`InspectorStack::take_tracing`].
-#[derive(Debug, Default)]
-pub struct TracingInspectors {
-    tracer: Option<Box<TracingInspector>>,
-    revert_diag: Option<Box<RevertDiagnostic>>,
-}
-
 /// Contains data about the state of outer/main EVM which created and invoked the inner EVM context.
 /// Used to adjust EVM state while in inner context.
 ///
@@ -531,11 +523,6 @@ pub struct InspectorStackInner {
     early_exit_test_gate: Option<EarlyExitTestGate>,
     static_step_dispatch: OpcodeStepDispatch,
     has_static_step_end_inspectors: bool,
-    /// Whether the fuzzer records mapping hashes in `step_end`.
-    has_fuzzer_step_end: bool,
-    /// Whether the tracer records steps. Its `step` and `step_end` otherwise only enforce a
-    /// recording byte limit, which Foundry never sets, so they are skipped.
-    tracer_steps: bool,
 }
 
 /// Struct keeping mutable references to both parts of [InspectorStack] and implementing
@@ -663,12 +650,6 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
     }
 
     fn tracing_inspector(&mut self) -> Option<&mut TracingInspector> {
-        // The caller may turn on step recording, so step the tracer from now on.
-        if self.tracer.is_some() {
-            self.tracer_steps = true;
-            self.static_step_dispatch = OpcodeStepDispatch::General;
-            self.has_static_step_end_inspectors = true;
-        }
         self.tracer.as_deref_mut()
     }
 }
@@ -967,23 +948,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         } else {
             self.debug_recorder = None;
         }
-        self.refresh_static_opcode_dispatch();
-    }
-
-    /// Takes the tracer with its revert diagnostics, to run with other trace requirements and
-    /// put back with [`Self::restore_tracing`].
-    pub fn take_tracing(&mut self) -> TracingInspectors {
-        let taken =
-            TracingInspectors { tracer: self.tracer.take(), revert_diag: self.revert_diag.take() };
-        self.refresh_static_opcode_dispatch();
-        taken
-    }
-
-    /// Puts back the tracer and revert diagnostics taken with [`Self::take_tracing`], replacing
-    /// the current ones.
-    pub fn restore_tracing(&mut self, tracing: TracingInspectors) {
-        self.tracer = tracing.tracer;
-        self.revert_diag = tracing.revert_diag;
         self.refresh_static_opcode_dispatch();
     }
 
@@ -1559,11 +1523,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 .recv_timeout(std::time::Duration::from_secs(1));
         }
 
-        // Cancellation is polled every 64 steps, and the campaign deadline every 256.
         if let Some(cancellation) = &self.inner.execution_cancellation {
-            let counter = self.inner.cancellation_poll_counter.wrapping_add(1);
-            self.inner.cancellation_poll_counter = counter;
-            if counter.is_multiple_of(64) && cancellation.should_stop(counter == 0) {
+            let poll_deadline = self.inner.cancellation_poll_counter == 0;
+            self.inner.cancellation_poll_counter =
+                self.inner.cancellation_poll_counter.wrapping_add(1);
+            if cancellation.should_stop(poll_deadline) {
                 self.inner.execution_cancelled = true;
                 interpreter.halt(InstructionResult::Stop);
                 return;
@@ -1578,8 +1542,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 }
             }
             OpcodeStepDispatch::General => {
-                let tracer_steps = self.tracer_steps;
-                // Instruction hooks replace these while instrumented edges are collected.
+                // Instruction hooks replace the fuzzer's steps while instrumented edges are
+                // collected.
                 let instrumented = self.inner.instrumented_edges;
                 if !storage_hook_active {
                     call_inspectors!(
@@ -1596,9 +1560,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                     [
                         // These are sorted in definition order.
                         &mut self.printer,
-                        self.inner.revert_diag.as_mut().filter(|_| !instrumented),
+                        &mut self.revert_diag,
                         &mut self.script_execution_inspector,
-                        self.inner.tracer.as_mut().filter(|_| tracer_steps),
+                        &mut self.tracer,
                         &mut self.debug_recorder,
                     ],
                     |inspector| (**inspector).step(interpreter, ecx),
@@ -1635,23 +1599,21 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
         if self.has_static_step_end_inspectors {
-            let tracer_steps = self.tracer_steps;
-            let revert_diag_steps = self.inner.revert_diag_steps();
             call_inspectors!(
                 [
                     // These are sorted in definition order.
                     &mut self.chisel_state,
                     &mut self.printer,
-                    self.inner.revert_diag.as_mut().filter(|_| revert_diag_steps),
-                    self.inner.tracer.as_mut().filter(|_| tracer_steps),
+                    &mut self.revert_diag,
+                    &mut self.tracer,
                     &mut self.debug_recorder,
                 ],
                 |inspector| (**inspector).step_end(interpreter, ecx),
             );
         }
 
-        if self.has_fuzzer_step_end
-            && let Some(fuzzer) = &mut self.fuzzer
+        if let Some(fuzzer) = &mut self.fuzzer
+            && fuzzer.mapping_slots.is_some()
         {
             fuzzer.step_end(interpreter, ecx);
         }
@@ -2461,7 +2423,7 @@ impl<FEN: FoundryEvmNetwork> InspectorExt for InspectorStackRefMut<'_, FEN> {
     }
 
     fn poll_plain_frame(&mut self, interpreter: &mut Interpreter) {
-        // `step` polls cancellation every 64 instructions; the plain loop polls when a frame
+        // `step` polls cancellation on every instruction; the plain loop polls when a frame
         // starts or resumes, and every `PLAIN_POLL_INTERVAL` instructions.
         if let Some(cancellation) = &self.inner.execution_cancellation
             && cancellation.should_stop(true)
@@ -2652,63 +2614,46 @@ impl InspectorStackInner {
         }
     }
 
-    /// Whether the revert diagnostic inspector runs on each instruction.
-    ///
-    /// While instrumented edges are collected, it does not: its diagnostics only annotate printed
-    /// traces, which a fuzz campaign records for gas reports, and a failure is replayed with full
-    /// tracing before it is shown. The campaign then needs no per-instruction callback at all.
-    const fn revert_diag_steps(&self) -> bool {
-        self.revert_diag.is_some() && !self.instrumented_edges
-    }
-
     /// Whether no inspector of the stack needs a callback for each instruction.
     const fn needs_no_steps(&self) -> bool {
-        #[cfg(test)]
-        if self.early_exit_test_gate.is_some() {
-            return false;
-        }
         matches!(self.static_step_dispatch, OpcodeStepDispatch::None)
             && !self.has_static_step_end_inspectors
-            && !self.has_fuzzer_step_end
     }
 
     #[inline]
-    fn refresh_static_opcode_dispatch(&mut self) {
+    const fn refresh_static_opcode_dispatch(&mut self) {
         self.refresh_static_step_dispatch();
         self.refresh_static_step_end_dispatch();
     }
 
     #[inline]
-    fn refresh_static_step_dispatch(&mut self) {
-        // Everything the fuzzer collects comes from instruction and frame hooks while instrumented
-        // edges are on.
-        let fuzzer_steps = self.fuzzer.is_some() && !self.instrumented_edges;
-        self.has_fuzzer_step_end = !self.instrumented_edges
-            && self.fuzzer.as_deref().is_some_and(|fuzzer| fuzzer.mapping_slots.is_some());
-        self.tracer_steps =
-            self.tracer.as_deref().is_some_and(|tracer| tracer.config().record_steps);
+    const fn refresh_static_step_dispatch(&mut self) {
         self.static_step_dispatch = if self.edge_coverage.is_none()
             && self.line_coverage.is_none()
             && self.printer.is_none()
-            && !self.revert_diag_steps()
+            && self.revert_diag.is_none()
             && self.script_execution_inspector.is_none()
-            && !self.tracer.as_deref().is_some_and(|tracer| tracer.config().record_steps)
+            && self.tracer.is_none()
             && self.debug_recorder.is_none()
         {
-            if fuzzer_steps { OpcodeStepDispatch::FuzzerOnly } else { OpcodeStepDispatch::None }
+            // Everything the fuzzer collects comes from instruction and frame hooks while
+            // instrumented edges are on.
+            if self.fuzzer.is_some() && !self.instrumented_edges {
+                OpcodeStepDispatch::FuzzerOnly
+            } else {
+                OpcodeStepDispatch::None
+            }
         } else {
             OpcodeStepDispatch::General
         };
     }
 
     #[inline]
-    fn refresh_static_step_end_dispatch(&mut self) {
-        self.tracer_steps =
-            self.tracer.as_deref().is_some_and(|tracer| tracer.config().record_steps);
+    const fn refresh_static_step_end_dispatch(&mut self) {
         self.has_static_step_end_inspectors = self.chisel_state.is_some()
             || self.printer.is_some()
-            || self.revert_diag_steps()
-            || self.tracer_steps
+            || self.revert_diag.is_some()
+            || self.tracer.is_some()
             || self.debug_recorder.is_some();
     }
 
@@ -2826,35 +2771,13 @@ mod tests {
         assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
         assert!(!stack.inner.has_static_step_end_inspectors);
 
-        // Call traces come with revert diagnostics, which inspect opcodes; the tracer only needs
-        // steps when it records them.
         stack.tracing_requirements(TraceRequirements::none().with_calls(true));
         assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::General);
         assert!(stack.inner.has_static_step_end_inspectors);
-        assert!(!stack.inner.tracer_steps);
-
-        // A cheatcode that reaches the tracer may start recording steps.
-        let _ = CheatcodesExecutor::<EthEvmNetwork>::tracing_inspector(&mut stack.inner);
-        assert!(stack.inner.tracer_steps);
-
-        stack.tracing_requirements(TraceRequirements::none().with_debug(true));
-        assert!(stack.inner.tracer_steps);
-
-        // Tracing taken around a differently traced call comes back with its diagnostics, and
-        // the opcode dispatch follows.
-        let mut untraced = InspectorStack::<EthEvmNetwork>::new();
-        let tracing = untraced.take_tracing();
-        untraced.tracing_requirements(TraceRequirements::none().with_calls(true));
-        assert_eq!(untraced.inner.static_step_dispatch, OpcodeStepDispatch::General);
-        untraced.restore_tracing(tracing);
-        assert!(untraced.tracer.is_none() && untraced.revert_diag.is_none());
-        assert_eq!(untraced.inner.static_step_dispatch, OpcodeStepDispatch::None);
-        assert!(!untraced.inner.has_static_step_end_inspectors);
 
         stack.tracing_requirements(TraceRequirements::none());
         assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
         assert!(!stack.inner.has_static_step_end_inspectors);
-        assert!(!stack.inner.tracer_steps);
 
         stack.set_chisel(0);
         assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
@@ -2887,12 +2810,11 @@ mod tests {
         stack.set_fuzzer(Fuzzer::new(16, None));
         assert!(stack.evm_hooks().frame_stacks && !stack.evm_hooks().mapping_slots);
         assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
-        assert!(!stack.inner.has_fuzzer_step_end && !stack.inner.has_static_step_end_inspectors);
+        assert!(!stack.inner.has_static_step_end_inspectors);
         assert!(stack.inner.needs_no_steps());
         stack.set_fuzzer(Fuzzer::new(16, Some(Default::default())));
         assert!(stack.evm_hooks().mapping_slots);
         assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
-        assert!(!stack.inner.has_fuzzer_step_end);
         assert!(stack.inner.needs_no_steps());
 
         // Predicate checks stop collecting but still execute instrumented code.
@@ -2915,7 +2837,7 @@ mod tests {
         assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::General);
         assert!(!stack.inner.needs_no_steps());
         stack.set_fuzzer(Fuzzer::new(16, Some(Default::default())));
-        assert!(stack.inner.has_fuzzer_step_end && !stack.evm_hooks().mapping_slots);
+        assert!(!stack.evm_hooks().mapping_slots);
     }
 
     #[test]

@@ -23,7 +23,7 @@ mod script;
 pub use script::ScriptExecutionInspector;
 
 mod stack;
-pub use stack::{InspectorData, InspectorStack, InspectorStackBuilder, TracingInspectors};
+pub use stack::{InspectorData, InspectorStack, InspectorStackBuilder};
 
 mod edge_cov;
 pub(crate) use edge_cov::MAX_EDGE_COUNT;

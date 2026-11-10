@@ -28,7 +28,7 @@
 //! With no inspector left that needs `step`, Ethereum frames then run on the interpreter's plain
 //! loop (see [`InspectorExt::run_frame_plain`](crate::InspectorExt::run_frame_plain)).
 
-use alloy_primitives::{Address, B256, U256, map::HashMap};
+use alloy_primitives::{Address, B256, U256};
 use revm::{
     bytecode::opcode,
     handler::instructions::EthInstructions,
@@ -108,72 +108,6 @@ pub struct CmpOperands {
     pub opcode: u8,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct CmpSiteKey {
-    address: Address,
-    pc: usize,
-    opcode: u8,
-}
-
-impl CmpSiteKey {
-    const fn new(cmp: &CmpOperands) -> Self {
-        Self { address: cmp.address, pc: cmp.pc, opcode: cmp.opcode }
-    }
-}
-
-/// Comparison operand log of one call, capped per site and in sites.
-#[derive(Clone, Debug, Default)]
-pub struct CmpLog {
-    log: Vec<CmpOperands>,
-    site_counts: HashMap<CmpSiteKey, u8>,
-}
-
-impl CmpLog {
-    /// An empty log with room for one observation per site.
-    pub fn with_capacity() -> Self {
-        Self { log: Vec::with_capacity(MAX_CMP_LOG_SITES), site_counts: HashMap::default() }
-    }
-
-    /// Records `cmp` unless its site already has [`MAX_CMP_OBSERVATIONS_PER_SITE`]
-    /// observations, or it is a new site once [`MAX_CMP_LOG_SITES`] sites are tracked.
-    #[inline]
-    pub fn record(&mut self, cmp: CmpOperands) {
-        let site = CmpSiteKey::new(&cmp);
-        if let Some(count) = self.site_counts.get_mut(&site) {
-            if *count >= MAX_CMP_OBSERVATIONS_PER_SITE {
-                return;
-            }
-            *count += 1;
-            self.log.push(cmp);
-        } else if self.site_counts.len() < MAX_CMP_LOG_SITES {
-            self.site_counts.insert(site, 1);
-            self.log.push(cmp);
-        }
-    }
-
-    /// The recorded observations, in execution order.
-    pub fn as_slice(&self) -> &[CmpOperands] {
-        &self.log
-    }
-
-    /// Clears the log and its site counts.
-    pub fn clear(&mut self) {
-        self.log.clear();
-        self.site_counts.clear();
-    }
-
-    /// Takes the recorded observations and clears the log.
-    pub fn take(&mut self) -> Vec<CmpOperands> {
-        self.site_counts.clear();
-        std::mem::take(&mut self.log)
-    }
-
-    /// Consumes the log, returning its observations.
-    pub fn into_vec(self) -> Vec<CmpOperands> {
-        self.log
-    }
-}
-
 /// Per-thread hit map for the current call.
 #[derive(Debug, Default)]
 struct EdgeHits {
@@ -227,8 +161,8 @@ impl EdgeHits {
     }
 }
 
-/// Comparison operand log of one call for compiler-instrumented sites, capped as [`CmpLog`] caps
-/// it, but counted in a table indexed by the dense site ID.
+/// Comparison operand log of one call for compiler-instrumented sites, capped as the cmp-log
+/// inspector caps it, but counted in a table indexed by the dense site ID.
 ///
 /// Sites are those of the bytecode, so copies of one contract at several addresses share their
 /// caps; each observation still records the address it ran at.
