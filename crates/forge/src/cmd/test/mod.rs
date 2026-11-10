@@ -1241,10 +1241,14 @@ impl TestArgs {
                 None => config.cache_path.join(AUTO_FUZZ_FAILURE_DIR).join(AUTO_CORPUS_DIR),
             });
         }
+        // The debugger labels slots from the layout, and symbolic execution learns the mapping
+        // roots behind constant-folded slots from it.
+        if (self.debug || config.symbolic.enabled)
+            && !config.extra_output.contains(&ContractOutputSelection::StorageLayout)
+        {
+            config.extra_output.push(ContractOutputSelection::StorageLayout);
+        }
         if self.debug {
-            if !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
-                config.extra_output.push(ContractOutputSelection::StorageLayout);
-            }
             // Full build infos keep the sources the compiler saw, which dynamic test linking
             // rewrites in test files.
             if let Err(error) = config.enable_debug_build_info() {

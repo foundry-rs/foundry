@@ -517,6 +517,8 @@ pub(super) struct ConstraintContext {
     exact_values: HashMap<SymExpr, U256>,
     conflicting_exact_values: HashSet<SymExpr>,
     non_wrapping_products: HashSet<(SymExpr, SymExpr)>,
+    /// Conjuncts of the context, which decide `ite` conditions they assert or deny.
+    facts: HashSet<SymBoolExpr>,
 }
 
 #[derive(Clone, Copy)]
@@ -591,6 +593,7 @@ impl ConstraintContext {
     ) -> Self {
         let mut context = Self::default();
         for constraint in constraints.clone() {
+            mark_conjuncts(constraint, &mut context.facts);
             context.record_exact_value_constraint(constraint);
             context.record_upper_bound_constraint(constraint);
             context.record_lower_bound_constraint(constraint);
@@ -813,7 +816,13 @@ impl ConstraintContext {
             return SymExpr::constant(cx, value);
         }
         if let SymExprKind::Ite(condition, then_value, else_value) = expr.kind() {
-            if let Some(value) = self.bounded_bool_value(condition) {
+            if let Some(value) = self.bounded_bool_value(condition).or_else(|| {
+                if self.facts.contains(condition) {
+                    Some(true)
+                } else {
+                    self.facts.contains(&condition.clone().not(cx)).then_some(false)
+                }
+            }) {
                 return if value { then_value.clone() } else { else_value.clone() };
             }
             if let Some(condition) = self.normalize_signed_add_comparison(cx, condition) {

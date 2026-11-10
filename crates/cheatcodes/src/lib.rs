@@ -79,7 +79,7 @@ mod tempo;
 
 mod test;
 pub use test::{
-    expect::ExpectedCallTracker,
+    expect::{ExpectedCallTracker, ExpectedCallType},
     revert_handlers::{DUMMY_CALL_OUTPUT, DUMMY_CREATE_ADDRESS},
 };
 

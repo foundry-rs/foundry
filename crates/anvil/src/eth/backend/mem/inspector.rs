@@ -378,7 +378,7 @@ impl<T: EvmTypes> Inspector<T> for AnvilInspector {
         }
         if let Some(collector) = &mut self.log_collector
             && message.destination == HARDHAT_CONSOLE_ADDRESS
-            && let Err(err) = collector.hardhat_log(&message.input)
+            && let Err(err) = collector.hardhat_log(message.input.as_bytes(interp.memory()))
         {
             return Some(MessageResult::<T> {
                 stop: InstrStop::Revert,

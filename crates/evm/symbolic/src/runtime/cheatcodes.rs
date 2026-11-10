@@ -531,13 +531,24 @@ pub(crate) fn read_abi_address_or_symbolic_slot_arg(
     Ok(state.address_or_symbolic_slot(cx, word))
 }
 
+/// Reads an address argument as a word, pinned to its constant when path constraints force one.
+pub(crate) fn read_abi_address_word_arg(
+    cx: &mut SymCx,
+    state: &PathState,
+    args_offset: usize,
+    index: usize,
+) -> Result<SymExpr, SymbolicError> {
+    let word = read_abi_word_arg(cx, &state.memory, args_offset, index)?;
+    Ok(state.constrained_word(cx, &word).map_or(word, |value| SymExpr::constant(cx, value)))
+}
+
 pub(crate) fn read_abi_address_word_or_symbolic_slot_arg(
     cx: &mut SymCx,
     state: &mut PathState,
     args_offset: usize,
     index: usize,
 ) -> Result<(Address, SymExpr), SymbolicError> {
-    let word = read_abi_word_arg(cx, &state.memory, args_offset, index)?;
+    let word = read_abi_word_arg(cx, &state.memory, args_offset, index)?.address_operand(cx);
     let address = state.address_or_symbolic_slot(cx, word.clone());
     Ok((address, word))
 }

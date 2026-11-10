@@ -468,15 +468,8 @@ impl SymbolicExecutor {
 
                 let _step_span = matches!(kind, CallPathKind::Sequence)
                     .then(|| trace_span!("symbolic_step", pc = state.pc, op).entered());
-                let outcome = self.step(
-                    executor,
-                    code,
-                    code.jump_table(),
-                    &mut state,
-                    &mut *worklist,
-                    completed_paths,
-                    op,
-                )?;
+                let outcome =
+                    self.step(executor, code, &mut state, &mut *worklist, completed_paths, op)?;
                 if !self.completed_path_is_feasible(&mut state, outcome)? {
                     break;
                 }

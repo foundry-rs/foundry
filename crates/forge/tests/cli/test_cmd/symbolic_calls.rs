@@ -1390,11 +1390,45 @@ contract SymbolicCheatcodeDelegateCall {
 "#,
     );
 
+    prj.add_test(
+        "SymbolicDirtyCallTarget.t.sol",
+        r#"
+contract DirtyTargetProbe {
+    fallback() external {
+        assembly {
+            mstore(0, address())
+            return(0, 32)
+        }
+    }
+}
+
+contract SymbolicDirtyCallTarget {
+    DirtyTargetProbe probe;
+
+    function setUp() public {
+        probe = new DirtyTargetProbe();
+    }
+
+    // The callee's ADDRESS is the low 160 bits of a dirty CALL target word.
+    function checkDirtyCallTarget() public view {
+        uint256 clean = uint256(uint160(address(probe)));
+        uint256 dirty = clean | (uint256(0xdead) << 160);
+        uint256 seen;
+        assembly {
+            if iszero(staticcall(gas(), dirty, 0, 0, 0, 32)) { revert(0, 0) }
+            seen := mload(0)
+        }
+        assert(seen == clean);
+    }
+}
+"#,
+    );
+
     assert_symbolic(cmd.args([
         "test",
         "--symbolic",
         "--match-test",
-        "^(checkStatic|checkStaticCallValue|checkDelegate|checkCheatcodeDelegateCall)\\(",
+        "^(checkStatic|checkStaticCallValue|checkDelegate|checkCheatcodeDelegateCall|checkDirtyCallTarget)\\(",
     ]))
     .success()
     .stdout_eq(
@@ -1414,6 +1448,10 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test for test/SymbolicCheatcodeDelegateCall.t.sol:SymbolicCheatcodeDelegateCall
 [PASS] checkCheatcodeDelegateCall(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicDirtyCallTarget.t.sol:SymbolicDirtyCallTarget
+[PASS] checkDirtyCallTarget() ([METRICS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]

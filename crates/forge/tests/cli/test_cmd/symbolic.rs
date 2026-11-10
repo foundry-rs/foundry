@@ -620,8 +620,48 @@ fn symbolic_cli_accepts_zero_init_storage_layout(prj: _, cmd: _) {
     prj.add_test(
         "SymbolicZeroInit.t.sol",
         r#"
+contract SetupMapping {
+    mapping(uint256 => uint256) public m;
+
+    function set() external {
+        m[1] = 5;
+    }
+}
+
 contract SymbolicZeroInit {
+    mapping(uint256 => uint256) own;
+    SetupMapping other;
+
+    function setUp() public {
+        own[1] = 5;
+        other = new SetupMapping();
+        other.set();
+    }
+
     function checkNoop(uint256) public pure {}
+
+    // Unwritten symbolic keys read zero.
+    function checkUnwrittenIsZero(uint256 k) public view {
+        if (k != 1) assert(own[k] == 0 && other.m(k) == 0);
+    }
+
+    // Mapping entries written in setUp stay visible to a symbolic key once the run has
+    // computed the entry's slot hash, so k = 1 breaks these.
+    function checkOwnMapping(uint256 k) public view {
+        require(own[1] == 5);
+        assert(own[k] != 5);
+    }
+
+    function checkOtherContractMapping(uint256 k) public view {
+        require(other.m(1) == 5);
+        assert(other.m(k) != 5);
+    }
+
+    function checkRepeatedRead(uint256 k) public view {
+        uint256 before = own[k];
+        require(own[1] == 5);
+        if (own[k] == before) assert(k != 1);
+    }
 }
 "#,
     );
@@ -633,10 +673,10 @@ contract SymbolicZeroInit {
             "--symbolic-storage-layout",
             "zero_init",
             "--json",
-            "--match-test",
-            "checkNoop",
+            "--match-contract",
+            "SymbolicZeroInit",
         ])
-        .assert_success()
+        .assert_failure()
         .get_output()
         .stdout
         .clone();
@@ -644,6 +684,18 @@ contract SymbolicZeroInit {
     let result = json_test_result(&output, "checkNoop(uint256)");
     assert_eq!(result["symbolic"]["status"], "pass");
     assert_eq!(result["symbolic"]["bounds"]["storage_layout"], "zero_init");
+    let result = json_test_result(&output, "checkUnwrittenIsZero(uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+    for test in [
+        "checkOwnMapping(uint256)",
+        "checkOtherContractMapping(uint256)",
+        "checkRepeatedRead(uint256)",
+    ] {
+        let result = json_test_result(&output, test);
+        assert_eq!(result["status"], "Failure", "{test}");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{test}");
+        assert_eq!(result["counterexample"]["Single"]["args"], "1", "{test}");
+    }
 }
 
 #[forgetest_init]
@@ -1397,22 +1449,51 @@ contract SymbolicLoopBound {
         }
         assert(i <= 2);
     }
+
+    // Internal helper calls are not loop iterations: four checked additions stay in bound.
+    /// forge-config: default.symbolic.loop = 2
+    function checkLoopBoundIgnoresInternalCalls(uint256 x, bool b) public pure {
+        if (b) {
+            uint256 y = x + 1;
+            y = y + 1;
+            y = y + 1;
+            y = y + 1;
+            assert(y != 9);
+        }
+    }
+
+    function down(uint256 n) internal pure returns (uint256) {
+        if (n == 0) return 0;
+        return down(n - 1);
+    }
+
+    // A recursive call pushes the same return address again, so the bound still applies.
+    /// forge-config: default.symbolic.loop = 2
+    function checkLoopBoundLimitsRecursion(uint256 n) public pure {
+        assert(down(n) == 0);
+    }
 }
 "#,
     );
 
-    let stdout =
-        assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkLoopBound"]))
-            .success()
-            .stdout_eq(str![[r#"
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicLoopBound",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicLoopBound.t.sol:SymbolicLoopBound
+Ran 3 tests for test/SymbolicLoopBound.t.sol:SymbolicLoopBound
 [PASS] checkLoopBound(uint8) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkLoopBoundIgnoresInternalCalls(uint256,bool) ([METRICS])
+[PASS] checkLoopBoundLimitsRecursion(uint256) ([METRICS])
+Suite result: FAILED. 2 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
-            .get_output()
-            .stdout_lossy();
+    .get_output()
+    .stdout_lossy();
 
     assert!(!stdout.contains("symbolic depth limit exceeded"), "{stdout}");
 }
@@ -2533,11 +2614,27 @@ import "forge-std/Test.sol";
 
 /// forge-config: default.evm_version = "cancun"
 
+contract SelfdestructTarget {
+    function die(address payable beneficiary) external {
+        selfdestruct(beneficiary);
+    }
+}
+
 contract SymbolicSelfdestructCancun is Test {
     function checkSelfdestructCancun(uint256) public {
         selfdestruct(payable(address(this)));
 
         assert(false);
+    }
+
+    // The target is created in this transaction, so SELFDESTRUCT takes the legacy path. The
+    // beneficiary may already hold ETH, so its balance is not modeled for a symbolic address.
+    function checkSelfdestructSymbolicBeneficiary(address payable beneficiary) public {
+        SelfdestructTarget target = new SelfdestructTarget();
+        vm.deal(address(target), 7);
+        target.die(beneficiary);
+
+        assert(beneficiary.balance == 7);
     }
 }
 "#,
@@ -2546,15 +2643,16 @@ contract SymbolicSelfdestructCancun is Test {
     let stdout = assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
-        "--match-test",
-        "checkSelfdestructCancun",
+        "--match-contract",
+        "SymbolicSelfdestructCancun",
     ]))
-    .success()
+    .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicSelfdestructCancun.t.sol:SymbolicSelfdestructCancun
+Ran 2 tests for test/SymbolicSelfdestructCancun.t.sol:SymbolicSelfdestructCancun
 [PASS] checkSelfdestructCancun(uint256) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic SELFDESTRUCT beneficiary] checkSelfdestructSymbolicBeneficiary(address) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -7557,6 +7655,19 @@ contract RoundedProductTest {
         require(bps <= 10000);
         assert(uint256(amount) * bps / 10000 <= amount);
     }
+
+    mapping(address => uint256) balances;
+
+    function checkTransferConservation(address from, address to, uint256 amount) external {
+        uint256 fromBefore = balances[from];
+        uint256 toBefore = balances[to];
+        require(fromBefore >= amount);
+        balances[from] = fromBefore - amount;
+        balances[to] += amount;
+        unchecked {
+            assert(balances[from] + balances[to] == fromBefore + toBefore);
+        }
+    }
 }
 "#,
     );
@@ -7568,7 +7679,7 @@ contract RoundedProductTest {
             "--symbolic-timeout",
             "30",
             "--match-test",
-            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|NarrowFloorError|BasisPointsFee)",
+            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|NarrowFloorError|BasisPointsFee|TransferConservation)",
         ])
         .assert_success();
         let output = cmd
