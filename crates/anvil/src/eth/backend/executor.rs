@@ -616,7 +616,7 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
                 continue;
             }
 
-            // Gas limit checks
+            // Gas limit checks.
             let cumulative_gas = self.receipts.last().map(|r| r.cumulative_gas_used()).unwrap_or(0);
             let max_block_gas = cumulative_gas.saturating_add(pending.transaction.gas_limit());
             if !gas_config.disable_block_gas_limit && max_block_gas > gas_limit {
@@ -625,7 +625,7 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
                 continue;
             }
 
-            // Osaka EIP-7825 tx gas limit cap check
+            // Osaka EIP-7825 tx gas limit cap check.
             if let Some(tx_gas_limit_cap) = gas_config.enforced_tx_gas_limit_cap
                 && pending.transaction.gas_limit() > tx_gas_limit_cap
             {
@@ -643,7 +643,7 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
                 continue;
             }
 
-            // Validate
+            // Validate.
             if let Err(err) = validator(pool_tx, &account) {
                 warn!(target: "backend", "Skipping invalid tx execution [{:?}] {}", pool_tx.hash(), err);
                 invalid.push(pool_tx.clone());
@@ -766,8 +766,7 @@ pub(crate) const fn block_blob_gas_limit(
     if optimism_jovian { block_gas_limit } else { max_blob_gas_per_block }
 }
 
-/// Formats an exceptional halt for system call errors in `HaltReason` debug form, such as
-/// `OutOfGas(Basic)`.
+/// Formats an exceptional halt for system call errors, such as `OutOfGas(Basic)`.
 fn halt_reason_debug(stop: InstrStop) -> String {
     let out_of_gas = match stop {
         InstrStop::OutOfGas => "Basic",

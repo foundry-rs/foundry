@@ -1,8 +1,8 @@
 //! Anvil's state databases.
 //!
-//! Anvil stores state in its own account model ([`DbAccount`]
-//! in a [`Cache`]) over an optional remote fork. Execution reads it through [`EvmDb`], an evm2
-//! [`DynDatabase`] adapter, and writes back the accumulated changes with [`Db::commit`].
+//! Anvil stores state in its own account model ([`DbAccount`] in a [`Cache`]) over an optional
+//! remote fork. Execution reads it through [`EvmDb`], an evm2 [`DynDatabase`] adapter, and writes
+//! back the accumulated changes with [`Db::commit`].
 
 use crate::{eth::error::BlockchainError, mem::storage::MinedTransaction};
 use alloy_consensus::BlockBody;
@@ -724,7 +724,7 @@ impl FoundryDatabase for EvmDb<'_> {
     }
 }
 
-/// Helper trait get access to the full state data of the database
+/// Helper trait to get access to the full state data of the database.
 pub trait MaybeFullDatabase: DatabaseRef {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         None
@@ -757,7 +757,7 @@ pub trait MaybeFullDatabase: DatabaseRef {
     /// This clones all the states and returns a new `StateSnapshot`.
     fn read_as_state_snapshot(&self) -> StateSnapshot;
 
-    /// Clears the entire database
+    /// Clears the entire database.
     fn clear(&mut self);
 
     /// Reverses `clear_into_snapshot` by initializing the db's state with the state snapshot.
@@ -828,7 +828,7 @@ impl<T: MaybeFullDatabase + ?Sized> MaybeFullDatabase for Box<T> {
     }
 }
 
-/// Helper trait to reset the DB if it's forked
+/// Helper trait to reset the DB if it's forked.
 pub trait MaybeForkedDatabase {
     fn maybe_reset(&mut self, _urls: Vec<String>, block_number: BlockId) -> Result<(), String>;
 
@@ -907,7 +907,7 @@ pub trait Db: MaybeFullDatabase + MaybeForkedDatabase + Send + Sync {
                 AccountInfo::new(
                     account.balance,
                     nonce,
-                    // set automatically from the code
+                    // set automatically from the code.
                     KECCAK256_EMPTY,
                     (!account.code.is_empty()).then(|| Bytecode::new_raw(account.code)),
                 ),

@@ -1445,7 +1445,7 @@ mod tests {
         let source_id = fork.source_id();
         let (evm_env, _) = backend.env(&evm_opts).await.unwrap();
 
-        // some rng contract from etherscan
+        // some rng contract from etherscan.
         let address = alloy_primitives::address!("0x63091244180ae240c87d1f528f5f269134cb07b3");
 
         let num_slots = 5;
