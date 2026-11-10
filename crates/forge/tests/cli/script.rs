@@ -26,7 +26,7 @@ use foundry_test_utils::{
         spawn_rpc_proxy_rejecting_method_after_when_enabled,
     },
     snapbox::IntoData,
-    util::{OTHER_SOLC_VERSION, SOLC_VERSION, TestCommand, TestProject},
+    util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION, TestCommand, TestProject},
 };
 use regex::Regex;
 use revm::bytecode::opcode;
@@ -9920,6 +9920,123 @@ Deployed contracts (chain 31337):
                 .args(["--resume", flag])
                 .assert_success()
                 .stderr_eq(str![""]);
+        }
+    }
+}
+
+// A local proxy cannot grant forked code cheatcode access, and a rejected call must not interrupt
+// the script's intended broadcast.
+#[forgetest]
+async fn fork_script_rejects_delegated_cheatcodes_before_broadcast(prj: _, cmd: _) {
+    prj.add_script(
+        "AccessBoundary.s.sol",
+        r#"
+interface Vm {
+    function envOr(string calldata name, uint256 defaultValue) external view returns (uint256);
+    function startBroadcast() external;
+    function stopBroadcast() external;
+}
+
+contract UnintendedDeployment {
+    uint256 public value = 99;
+}
+
+contract RemoteBroadcaster {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function broadcastDeployment() external {
+        vm.startBroadcast();
+        new UnintendedDeployment();
+        vm.stopBroadcast();
+    }
+}
+
+contract LocalProxy {
+    function probe(address target) external returns (bool, bytes memory) {
+        return target.delegatecall(abi.encodeCall(RemoteBroadcaster.broadcastDeployment, ()));
+    }
+}
+
+contract IntendedDeployment {
+    uint256 public value = 42;
+}
+
+contract AccessBoundaryScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant TARGET = address(0x1234);
+
+    function run() external {
+        LocalProxy proxy = new LocalProxy();
+        (bool success, bytes memory output) = proxy.probe(TARGET);
+        require(!success, "delegated code unexpectedly authorized");
+        bytes memory expected = abi.encodeWithSignature(
+            "CheatcodeError(string)",
+            "cheatcodes are not enabled for 0x0000000000000000000000000000000000001234; see `vm.allowCheatcodes(address)`"
+        );
+        require(keccak256(output) == keccak256(expected), "unexpected authorization error");
+        require(vm.envOr("FOUNDRY_ACCESS_REGRESSION_UNUSED", uint256(7)) == 7, "parent access lost");
+
+        vm.startBroadcast();
+        new IntendedDeployment();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["inspect", "script/AccessBoundary.s.sol:RemoteBroadcaster", "deployedBytecode"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let code = output.trim().parse::<Bytes>().unwrap();
+
+    for broadcast in [false, true] {
+        let (api, handle) = spawn(NodeConfig::test()).await;
+        api.anvil_set_code(address!("0000000000000000000000000000000000001234"), code.clone())
+            .await
+            .unwrap();
+        let sender = handle.dev_accounts().next().unwrap();
+        cmd.forge_fuse().args([
+            "script",
+            "AccessBoundaryScript",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--sender",
+            &sender.to_string(),
+            "--unlocked",
+        ]);
+        cmd.unset_env("FOUNDRY_ACCESS_REGRESSION_UNUSED");
+        if broadcast {
+            cmd.arg("--broadcast");
+        }
+        cmd.assert_success().stdout_eq(str![[r#"
+...
+Script ran successfully.
+...
+"#]]);
+
+        let sequence = if broadcast {
+            foundry_common::fs::read_json_file(
+                &prj.root().join("broadcast/AccessBoundary.s.sol/31337/run-latest.json"),
+            )
+            .unwrap()
+        } else {
+            latest_dry_run_sequence(prj.root())
+        };
+        assert_eq!(sequence.transactions.len(), 1);
+        assert_eq!(sequence.receipts.len(), usize::from(broadcast));
+
+        let provider = handle.http_provider();
+        assert_eq!(provider.get_transaction_count(sender).await.unwrap(), u64::from(broadcast));
+        if broadcast {
+            assert!(sequence.receipts[0].status());
+            assert_eq!(
+                provider.get_storage_at(sender.create(0), U256::ZERO).await.unwrap(),
+                U256::from(42),
+            );
+        } else {
+            assert!(provider.get_code_at(sender.create(0)).await.unwrap().is_empty());
         }
     }
 }

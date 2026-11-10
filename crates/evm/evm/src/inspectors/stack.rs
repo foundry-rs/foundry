@@ -535,8 +535,10 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
             .then(|| cheats.pending_isolated_snapshot_journal.clone());
         let capture_snapshot_restore = cheats.capture_isolated_snapshot_restore;
         self.synthetic_create_depth = (ecx.journal().depth() == 1).then_some(2);
-        let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        let result = with_inherited_evm::<FEN::EvmFactory, _>(ecx, &mut inspector, f);
+        let result = cheats.with_nested_frame_access(|cheats| {
+            let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
+            with_inherited_evm::<FEN::EvmFactory, _>(ecx, &mut inspector, f)
+        });
         self.synthetic_create_depth = previous;
         // Drop redirects left behind if nested execution aborted before their frames ended.
         self.pending_create2_redirects.truncate(create2_redirects);
@@ -1347,7 +1349,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // These belong to the outer EVM's frame lifecycle and must be restored after.
         let saved_create2_redirects = std::mem::take(&mut inner.pending_create2_redirects);
 
-        let out = f(InspectorStackRefMut { cheatcodes: cheatcodes.as_mut(), inner: &mut inner });
+        let out = if let Some(cheats) = cheatcodes.as_mut() {
+            cheats.with_fresh_frame_access(|cheats| {
+                f(InspectorStackRefMut { cheatcodes: Some(cheats), inner: &mut inner })
+            })
+        } else {
+            f(InspectorStackRefMut { cheatcodes: None, inner: &mut inner })
+        };
 
         if let Some(cheats) = self.cheatcodes.as_deref_mut() {
             *cheats = cheatcodes.unwrap();
@@ -1776,10 +1784,13 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
     fn frame_end(
         &mut self,
         ecx: &mut FoundryContextFor<'_, FEN>,
-        _frame_input: &FrameInput,
+        frame_input: &FrameInput,
         frame_result: &mut FrameResult,
     ) {
         let depth = ecx.journal().depth();
+        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+            cheats.frame_end(ecx, frame_input, frame_result);
+        }
         self.finish_create2_redirect(depth, frame_result);
         if self.cheatcodes.as_deref().is_some_and(|cheats| cheats.track_isolated_snapshots) {
             self.finish_isolated_snapshot_frame(ecx);
@@ -2478,20 +2489,22 @@ impl InspectorStackInner {
         cheats: &mut Cheatcodes<FEN>,
         f: impl FnOnce(&mut Self, &mut Cheatcodes<FEN>) -> R,
     ) -> R {
-        let tracking = std::mem::replace(&mut cheats.track_isolated_snapshots, true);
-        let isolation = std::mem::replace(&mut cheats.in_isolation_context, false);
-        let capture = std::mem::replace(&mut cheats.capture_isolated_snapshot_restore, true);
-        let restores = std::mem::take(&mut cheats.isolated_snapshot_restores);
-        let pending = cheats.pending_isolated_snapshot_journal.take();
-        let frames = std::mem::take(&mut self.isolated_frame_checkpoints);
-        let result = f(self, cheats);
-        self.isolated_frame_checkpoints = frames;
-        cheats.pending_isolated_snapshot_journal = pending;
-        cheats.isolated_snapshot_restores = restores;
-        cheats.capture_isolated_snapshot_restore = capture;
-        cheats.in_isolation_context = isolation;
-        cheats.track_isolated_snapshots = tracking;
-        result
+        cheats.with_fresh_frame_access(|cheats| {
+            let tracking = std::mem::replace(&mut cheats.track_isolated_snapshots, true);
+            let isolation = std::mem::replace(&mut cheats.in_isolation_context, false);
+            let capture = std::mem::replace(&mut cheats.capture_isolated_snapshot_restore, true);
+            let restores = std::mem::take(&mut cheats.isolated_snapshot_restores);
+            let pending = cheats.pending_isolated_snapshot_journal.take();
+            let frames = std::mem::take(&mut self.isolated_frame_checkpoints);
+            let result = f(self, cheats);
+            self.isolated_frame_checkpoints = frames;
+            cheats.pending_isolated_snapshot_journal = pending;
+            cheats.isolated_snapshot_restores = restores;
+            cheats.capture_isolated_snapshot_restore = capture;
+            cheats.in_isolation_context = isolation;
+            cheats.track_isolated_snapshots = tracking;
+            result
+        })
     }
 }
 

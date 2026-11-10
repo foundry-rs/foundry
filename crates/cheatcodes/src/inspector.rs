@@ -81,6 +81,8 @@ mod utils;
 pub mod analysis;
 pub use analysis::CheatcodeAnalysis;
 
+mod access;
+
 /// Helper trait for running nested EVM operations from inside cheatcode implementations.
 pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
     /// Runs a closure with a nested EVM built from the current context.
@@ -174,7 +176,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         ecx: &mut FoundryContextFor<'_, FEN>,
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<(), EVMError<DatabaseError>> {
-        with_inherited_evm::<FEN::EvmFactory, _>(ecx, cheats, f)
+        cheats.with_nested_frame_access(|cheats| {
+            with_inherited_evm::<FEN::EvmFactory, _>(ecx, cheats, f)
+        })
     }
 
     fn with_fresh_nested_evm(
@@ -184,15 +188,17 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         chain_context: ChainFor<FEN>,
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>> {
-        let depth = ecx.journal().depth();
-        let evm_env = ecx.evm_clone();
-        let (db, _) = ecx.db_journal_inner_mut();
-        let mut evm =
-            FEN::EvmFactory::default().create_nested_evm_with_inspector(db, evm_env, cheats);
-        evm.journal_inner_mut().depth = depth;
-        *evm.chain_mut() = chain_context;
-        f(&mut *evm)?;
-        Ok(evm.to_evm_env())
+        cheats.with_fresh_frame_access(|cheats| {
+            let depth = ecx.journal().depth();
+            let evm_env = ecx.evm_clone();
+            let (db, _) = ecx.db_journal_inner_mut();
+            let mut evm =
+                FEN::EvmFactory::default().create_nested_evm_with_inspector(db, evm_env, cheats);
+            evm.journal_inner_mut().depth = depth;
+            *evm.chain_mut() = chain_context;
+            f(&mut *evm)?;
+            Ok(evm.to_evm_env())
+        })
     }
 
     fn transact_on_db(
@@ -205,7 +211,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         let evm_env = ecx.evm_clone();
         let outer_tx_env = ecx.tx_clone();
         let (db, inner) = ecx.db_journal_inner_mut();
-        db.transact(fork_id, transaction, evm_env, &outer_tx_env, inner, cheats)
+        cheats.with_fresh_frame_access(|cheats| {
+            db.transact(fork_id, transaction, evm_env, &outer_tx_env, inner, cheats)
+        })
     }
 
     fn transact_from_tx_on_db(
@@ -216,7 +224,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
     ) -> eyre::Result<()> {
         let evm_env = ecx.evm_clone();
         let (db, inner) = ecx.db_journal_inner_mut();
-        db.transact_from_tx(tx, evm_env, inner, cheats)
+        cheats.with_fresh_frame_access(|cheats| db.transact_from_tx(tx, evm_env, inner, cheats))
     }
 
     fn console_log(&mut self, _msg: &str) {}
@@ -849,6 +857,9 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 
     /// Depth of the in-flight `deployCode` call, whose create frame runs one level deeper.
     pub deploy_code_depth: Option<usize>,
+
+    /// Context and effective code identities of the initialized execution frames.
+    frame_access: Vec<access::FrameAccess>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -921,6 +932,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             isolated_snapshot_restores: Vec::new(),
             capture_isolated_snapshot_restore: false,
             deploy_code_depth: None,
+            frame_access: Default::default(),
         }
     }
 
@@ -1208,7 +1220,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         // ensure the caller is allowed to execute cheatcodes,
         // but only if the backend is in forking mode
-        ecx.db_mut().ensure_cheatcode_access_forking_mode(&caller)?;
+        self.ensure_cheatcode_access(ecx, caller)?;
 
         apply_dispatch(
             &decoded,
@@ -1230,7 +1242,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         // ensure the caller is allowed to execute cheatcodes,
         // but only if the backend is in forking mode
-        ecx.db_mut().ensure_cheatcode_access_forking_mode(&caller)?;
+        self.ensure_cheatcode_access(ecx, caller)?;
 
         crate::monad::apply_monad_cheatcode(
             &mut CheatsCtxt { state: self, ecx, gas, caller, is_static: call.is_static },
@@ -1249,7 +1261,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         caller: Address,
         created_address: Address,
     ) {
-        if ecx.journal().depth() <= 1 || ecx.db().has_cheatcode_access(&caller) {
+        if (ecx.journal().depth() <= 1 || ecx.db().has_cheatcode_access(&caller))
+            && self.can_inherit_cheatcode_access(ecx)
+        {
             ecx.db_mut().allow_cheatcode_access(created_address);
         }
     }
@@ -1276,6 +1290,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
     /// Called at the start of a root frame to clear the records of the previous transaction.
     pub fn on_root_frame_start(&mut self) {
+        self.frame_access.clear();
         self.clear_storage_hook_mapping_slots();
         // Deals belong to earlier root transactions and must not be rolled back if this one fails.
         self.eth_deals.clear();
@@ -2027,6 +2042,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         interpreter: &mut Interpreter,
         ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
+        self.enter_frame_access(interpreter, ecx);
+
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.
         if let Some(block) = self.block.take() {
@@ -2045,6 +2062,15 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         if let Some(expected) = &mut self.expected_revert {
             expected.max_depth = max(ecx.journal().depth(), expected.max_depth);
         }
+    }
+
+    fn frame_end(
+        &mut self,
+        ecx: &mut FoundryContextFor<'_, FEN>,
+        _input: &FrameInput,
+        _result: &mut FrameResult,
+    ) {
+        self.leave_frame_access(ecx.journal().depth());
     }
 
     fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryContextFor<'_, FEN>) {
