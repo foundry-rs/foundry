@@ -297,7 +297,13 @@ impl SymbolicExecutor {
             let mut reverted = state.clone();
             reverted.constraints = out_of_range_constraints;
             let revert = self.bound_revert_data(&reverted, &value, min_word, max_word, signed);
-            revert_cheatcode_call(&mut self.cx, &mut reverted, out_offset.clone(), out_size, revert)?;
+            revert_cheatcode_call(
+                &mut self.cx,
+                &mut reverted,
+                out_offset.clone(),
+                out_size,
+                revert,
+            )?;
             worklist.push_back(reverted);
         }
 

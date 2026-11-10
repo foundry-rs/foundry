@@ -596,6 +596,30 @@ impl SymbolicExecutor {
         Ok(Some(input))
     }
 
+    /// Returns a model for `state`, meeting its witness preferences when it can.
+    pub(super) fn witness_model(
+        &mut self,
+        state: &PathState,
+    ) -> Result<SymbolicModel, SymbolicError> {
+        let replayable_storage = state.world.replay_storage_symbols();
+        if !state.witness_preferences.is_empty() {
+            let mut constraints = state.constraints.clone();
+            constraints.extend(state.witness_preferences.iter().cloned());
+            if let Ok(model) = self.solver.model_with_replayable_storage(
+                &mut self.cx,
+                &constraints,
+                &replayable_storage,
+            ) {
+                return Ok(model);
+            }
+        }
+        self.solver.model_with_replayable_storage(
+            &mut self.cx,
+            &state.constraints,
+            &replayable_storage,
+        )
+    }
+
     /// Materializes the root call input for `state` from a solver model.
     fn materialize_root_input(
         &mut self,
@@ -606,12 +630,7 @@ impl SymbolicExecutor {
             .root_calldata
             .as_ref()
             .ok_or(SymbolicError::Unsupported("missing root symbolic calldata"))?;
-        let replayable_storage = state.world.replay_storage_symbols();
-        let model = self.solver.model_with_replayable_storage(
-            &mut self.cx,
-            &state.constraints,
-            &replayable_storage,
-        )?;
+        let model = self.witness_model(state)?;
         let args = calldata.model_to_args(&mut self.cx, &model)?;
         let calldata_bytes = Bytes::from(function.abi_encode_input(&args)?);
         Ok(SymbolicConcreteInput { args, calldata: calldata_bytes })

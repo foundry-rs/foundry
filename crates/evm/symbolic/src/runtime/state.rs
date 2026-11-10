@@ -24,6 +24,8 @@ pub(crate) struct PathState {
     /// that set them.
     pub(crate) root_pranks: HashMap<Address, SymbolicPrank>,
     pub(crate) constraints: Vec<SymBoolExpr>,
+    /// Conditions a counterexample model meets when it can, so that replay reproduces it.
+    pub(crate) witness_preferences: Vec<SymBoolExpr>,
     pub(crate) next_symbol: usize,
     pub(crate) recorded_logs: Option<Vec<SymbolicLog>>,
     /// Bumped by `recordLogs` and `getRecordedLogs*` so open frame checkpoints know the buffer
@@ -112,6 +114,7 @@ impl PathState {
             prank: SymbolicPrank::default(),
             root_pranks: HashMap::default(),
             constraints: Vec::new(),
+            witness_preferences: Vec::new(),
             next_symbol: 0,
             recorded_logs: None,
             recorded_logs_generation: 0,
@@ -432,6 +435,7 @@ impl PathState {
 
     pub(crate) fn take_call_outcome_state(&mut self, child: &mut Self) {
         self.constraints = std::mem::take(&mut child.constraints);
+        self.witness_preferences = std::mem::take(&mut child.witness_preferences);
         self.next_symbol = child.next_symbol;
         self.inherit_branch_target_progress(child);
         self.storage_load_hooks = std::mem::take(&mut child.storage_load_hooks);

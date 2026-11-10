@@ -1,8 +1,8 @@
 use super::*;
 use alloy_primitives::{Log, LogData};
 use alloy_sol_types::{Revert, SolError, SolType, sol_data};
-use foundry_evm::inspectors::cheatcodes::unmatched_emit_message;
 use foundry_cheatcodes_spec::Vm::VmCalls;
+use foundry_evm::inspectors::cheatcodes::unmatched_emit_message;
 
 impl SymbolicExecutor {
     pub(super) fn call(
@@ -1335,12 +1335,17 @@ impl SymbolicExecutor {
                     "precompile gas with a symbolic call value",
                 ));
             }
-            if pinned_input.is_none() && precompile_number_for_spec(code_address, spec_id) == Some(1)
+            // A malformed signature returns no data, which replay reproduces exactly, while a
+            // well-formed one keeps the opaque recovery model. Prefer a malformed witness.
+            if pinned_input.is_none()
+                && precompile_number_for_spec(code_address, spec_id) == Some(1)
             {
-                return self.execute_ecrecover_precompile_call(
-                    executor, state, worklist, kind, to, call_caller, value, out_offset, &out_size,
-                    input, input_len, outcome,
-                );
+                let sized = SymBytes::sized(&mut self.cx, input.clone(), input_len.clone(), 128);
+                let malformed =
+                    ecrecover_signature_well_formed(&mut self.cx, &sized).not(&mut self.cx);
+                if malformed.as_const().is_none() {
+                    state.witness_preferences.push(malformed);
+                }
             }
             // An earlier call over the same symbolic input keeps its opaque term, so tie that term
             // to the result: repeated-call equality must survive the guard that pinned the input.
@@ -1357,15 +1362,20 @@ impl SymbolicExecutor {
                     modexp_lengths,
                 )
             {
-                let len_eq =
-                    SymBoolExpr::eq(&mut self.cx, symbolic.len_word.clone(), concrete.len_word.clone());
+                let len_eq = SymBoolExpr::eq(
+                    &mut self.cx,
+                    symbolic.len_word.clone(),
+                    concrete.len_word.clone(),
+                );
                 let mut ties = vec![len_eq];
                 for idx in 0..concrete.len() {
                     let modeled = symbolic.bytes.byte(&mut self.cx, idx);
                     let actual = concrete.bytes.byte(&mut self.cx, idx);
                     ties.push(SymBoolExpr::eq(&mut self.cx, modeled, actual));
                 }
-                state.constraints.extend(ties.into_iter().filter(|equal| equal.as_const() != Some(true)));
+                state
+                    .constraints
+                    .extend(ties.into_iter().filter(|equal| equal.as_const() != Some(true)));
             }
             return self.apply_precompile_outcome(
                 executor,
@@ -1770,88 +1780,6 @@ impl SymbolicExecutor {
             *range = (min, max);
         }
         Ok(Some(ranges))
-    }
-
-    /// Forks a symbolic ECRECOVER call on whether the signature is well-formed.
-    ///
-    /// A malformed signature returns no data, which concrete replay reproduces exactly, so that
-    /// path continues first and its counterexamples replay. The well-formed path keeps the opaque
-    /// recovery model, whose failures depend on curve facts the solver does not know.
-    #[expect(clippy::too_many_arguments)]
-    fn execute_ecrecover_precompile_call(
-        &mut self,
-        executor: &ExecutorView<'_>,
-        state: &mut PathState,
-        worklist: &mut VecDeque<PathState>,
-        kind: CallKind,
-        to: Address,
-        call_caller: Address,
-        value: SymExpr,
-        out_offset: SymExpr,
-        out_size: &BoundedCopySize,
-        input: SymBytes,
-        input_len: SymExpr,
-        outcome: Option<SymReturnData>,
-    ) -> Result<StepOutcome, SymbolicError> {
-        let sized = SymBytes::sized(&mut self.cx, input, input_len, 128);
-        let well_formed = ecrecover_signature_well_formed(&mut self.cx, &sized);
-        let malformed = well_formed.clone().not(&mut self.cx);
-        let (malformed_constraints, malformed_sat) =
-            self.constraints_with_condition(state, malformed)?;
-        let (well_formed_constraints, well_formed_sat) =
-            self.constraints_with_condition(state, well_formed)?;
-        // A malformed signature returns no data, unless the precompile call itself fails.
-        let malformed_outcome = outcome.as_ref().map(|_| SymReturnData::empty(&mut self.cx));
-        if malformed_sat && well_formed_sat {
-            let mut recovering = state.clone();
-            recovering.constraints = well_formed_constraints;
-            match self.apply_precompile_outcome(
-                executor,
-                &mut recovering,
-                kind,
-                to,
-                call_caller,
-                value.clone(),
-                out_offset.clone(),
-                out_size,
-                outcome,
-            )? {
-                StepOutcome::Continue => worklist.push_back(recovering),
-                outcome => {
-                    *state = recovering;
-                    return Ok(outcome);
-                }
-            }
-            state.constraints = malformed_constraints;
-            return self.apply_precompile_outcome(
-                executor,
-                state,
-                kind,
-                to,
-                call_caller,
-                value,
-                out_offset,
-                out_size,
-                malformed_outcome,
-            );
-        }
-        let (constraints, outcome) = if malformed_sat {
-            (malformed_constraints, malformed_outcome)
-        } else {
-            (well_formed_constraints, outcome)
-        };
-        state.constraints = constraints;
-        self.apply_precompile_outcome(
-            executor,
-            state,
-            kind,
-            to,
-            call_caller,
-            value,
-            out_offset,
-            out_size,
-            outcome,
-        )
     }
 
     #[expect(clippy::too_many_arguments)]

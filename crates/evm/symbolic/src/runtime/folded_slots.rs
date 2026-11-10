@@ -260,4 +260,3 @@ fn record_preimage_bytes(cx: &mut SymCx, hash: U256, bytes: &[u8; 64]) {
     let preimage = bytes.iter().map(|&byte| SymExpr::constant(cx, U256::from(byte))).collect();
     cx.record_concrete_keccak_preimage(hash, preimage);
 }
-
