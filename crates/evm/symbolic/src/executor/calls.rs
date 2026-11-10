@@ -825,7 +825,27 @@ impl SymbolicExecutor {
         out_offset: SymExpr,
         out_size: BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
-        if to == CHEATCODE_ADDRESS || to == SYMBOLIC_VM_COMPAT_ADDRESS {
+        let compatibility_cheatcode = if to == SYMBOLIC_VM_COMPAT_ADDRESS {
+            let (_, max_input_size, _) = in_size.parts(&mut self.cx);
+            if max_input_size < 4 {
+                false
+            } else if let Some(offset) = in_offset.as_const() {
+                let offset = usize::try_from(offset).map_err(|_| {
+                    SymbolicError::Unsupported("symbolic compatibility CALL input offset")
+                })?;
+                let selector = state.memory.read_concrete(&mut self.cx, offset, 4)?;
+                let selector: [u8; 4] = selector
+                    .try_into()
+                    .map_err(|_| SymbolicError::Unsupported("symbolic compatibility selector"))?;
+                SymbolicVmCheatcode::from_selector(selector).is_some()
+            } else {
+                // The existing symbolic-offset path checks whether the selector is pinned.
+                true
+            }
+        } else {
+            false
+        };
+        if to == CHEATCODE_ADDRESS || compatibility_cheatcode {
             if !state.constrained_word(&mut self.cx, &value).is_some_and(|value| value.is_zero()) {
                 return Err(SymbolicError::Unsupported("value-bearing cheatcode CALL"));
             }
@@ -1560,14 +1580,10 @@ impl SymbolicExecutor {
         out_size: BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
         let mut candidates = state.world.symbolic_call_targets(&mut self.cx, executor)?;
+        candidates.push(SYMBOLIC_VM_COMPAT_ADDRESS);
         candidates.extend(active_precompiles(executor.spec_id).as_map().addresses());
         candidates.sort();
         candidates.dedup();
-        if candidates.is_empty() {
-            return Err(SymbolicError::Unsupported(
-                "symbolic CALL target has no known contract candidates",
-            ));
-        }
 
         let candidate_constraints = candidates
             .iter()
@@ -1576,18 +1592,15 @@ impl SymbolicExecutor {
                 SymBoolExpr::eq(&mut self.cx, target.clone(), address)
             })
             .collect::<Vec<_>>();
-        // The cheatcode addresses have code, so an unconstrained target may alias them. They are
-        // not call candidates: Forge fails a call to them that its cheatcode decoder rejects.
-        let cheatcode_constraints =
-            [CHEATCODE_ADDRESS, SYMBOLIC_VM_COMPAT_ADDRESS].map(|address| {
-                let address = SymExpr::constant(&mut self.cx, address_word(address));
-                SymBoolExpr::eq(&mut self.cx, target.clone(), address)
-            });
+        // Only the real cheatcode address uses Forge's decoder. The compatibility address is an
+        // ordinary call target unless its selector names a symbolic-VM operation.
+        let cheatcode_address = SymExpr::constant(&mut self.cx, address_word(CHEATCODE_ADDRESS));
+        let cheatcode_condition = SymBoolExpr::eq(&mut self.cx, target.clone(), cheatcode_address);
         let mut outside_constraints = state.constraints.clone();
         outside_constraints.extend(
             candidate_constraints
                 .iter()
-                .chain(&cheatcode_constraints)
+                .chain([&cheatcode_condition])
                 .cloned()
                 .map(|condition| condition.not(&mut self.cx)),
         );
@@ -1687,8 +1700,7 @@ impl SymbolicExecutor {
 
         let call_input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset.clone());
         let mut cheatcode_branch = state.clone();
-        let is_cheatcode = SymBoolExpr::or(&mut self.cx, cheatcode_constraints.to_vec());
-        cheatcode_branch.constraints.push(is_cheatcode);
+        cheatcode_branch.constraints.push(cheatcode_condition);
         if self.is_sat_with_state(&cheatcode_branch, &cheatcode_branch.constraints)? {
             // The decoder error only depends on the selector, except for shorter calldata.
             let input = if call_input.len() < 4 {
