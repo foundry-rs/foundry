@@ -31,7 +31,7 @@ pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
 pub use inspector::{
     BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor,
-    StorageHook, message_result, revert_frame,
+    StorageHook, decode_cheatcode_call, message_result, revert_frame,
 };
 pub use spec::{CheatcodeDef, Vm};
 

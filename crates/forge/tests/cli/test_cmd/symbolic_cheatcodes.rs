@@ -3048,6 +3048,30 @@ contract SymbolicCheatcodeInputSize is Test {
         assert(ok);
         assertTrue(condition);
     }
+
+    // Forge fails to decode calldata shorter than the ABI arguments or with an unknown selector,
+    // so the call returns false with the decoder's error.
+    function checkShortCheatcodeCallFails() public {
+        (bool ok, bytes memory data) = address(vm).call(abi.encodePacked(vm.deal.selector, uint256(uint160(address(0xB0B)))));
+        assertFalse(ok);
+        assertEq(
+            data,
+            abi.encodeWithSignature(
+                "CheatcodeError(string)", "ABI decoding failed: buffer overrun while deserializing"
+            )
+        );
+        (ok,) = address(vm).call(abi.encodePacked(vm.assume.selector, uint8(1)));
+        assertFalse(ok);
+        (ok, data) = address(vm).call(hex"deadbeef");
+        assertFalse(ok);
+        assertEq(
+            data,
+            abi.encodeWithSignature(
+                "CheatcodeError(string)",
+                "unknown cheatcode with selector 0xdeadbeef; you may have a mismatch between the `Vm` interface (likely in `forge-std`) and the `forge` version"
+            )
+        );
+    }
 }
 "#,
     );
@@ -3055,15 +3079,16 @@ contract SymbolicCheatcodeInputSize is Test {
     let stdout = assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
-        "--match-test",
-        "checkLowLevelAssumeSize",
+        "--match-contract",
+        "SymbolicCheatcodeInputSize",
     ]))
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicCheatcodeInputSize.t.sol:SymbolicCheatcodeInputSize
+Ran 2 tests for test/SymbolicCheatcodeInputSize.t.sol:SymbolicCheatcodeInputSize
 [PASS] checkLowLevelAssumeSize(uint256,bool) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+[PASS] checkShortCheatcodeCallFails() ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
