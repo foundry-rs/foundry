@@ -1,11 +1,9 @@
 //! evm2 execution for every network family Anvil runs.
 //!
-//! Anvil keeps one network-agnostic environment ([`EvmEnv`]) and
-//! one transaction type ([`FoundryTxEnvelope`]). Right
-//! before execution they are converted into the selected family's evm2 environment and transaction
-//! through [`AnvilEvmNetwork`], so execution, mining and
-//! tracing code is written once, generically, and dispatched once per call with
-//! `with_evm_network!`.
+//! Anvil keeps one network-agnostic environment ([`EvmEnv`]) and one transaction type
+//! ([`FoundryTxEnvelope`]). Right before execution they are converted into the selected family's
+//! evm2 environment and transaction through [`AnvilEvmNetwork`], so execution, mining and tracing
+//! code is written once, generically, and dispatched once per call with `with_evm_network!`.
 
 use crate::{
     PrecompileFactory,
