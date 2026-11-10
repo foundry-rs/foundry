@@ -12,7 +12,9 @@ use alloy_genesis::{ChainConfig, Genesis};
 use alloy_network::{
     AnyNetwork, EthereumWallet, ReceiptResponse, TransactionBuilder, TxSignerSync,
 };
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256, fixed_bytes, keccak256};
+use alloy_primitives::{
+    Address, B256, Bytes, TxKind, U256, address, b256, bytes, fixed_bytes, keccak256,
+};
 use alloy_provider::{Provider, ext::TxPoolApi};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, TransactionRequest,
@@ -39,7 +41,7 @@ use foundry_common::{
     provider::redact_url,
     version::{COMMIT_SHA, SEMVER_VERSION},
 };
-use foundry_evm::hardfork::EthereumHardfork;
+use foundry_evm_hardforks::EthereumHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::{FoundryTxEnvelope, FoundryTxReceipt};
 use futures::{FutureExt, StreamExt};
@@ -567,6 +569,85 @@ async fn test_can_set_storage_bsc_fork() {
 
     let balance = busd_contract.balanceOf(Address::ZERO).call().await.unwrap();
     assert_eq!(balance, U256::from(12345u64));
+}
+
+// Storage set on an empty account survives until the account is created.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_storage_on_empty_account_kept_until_creation() {
+    // Shanghai still deletes accounts on `SELFDESTRUCT`.
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Shanghai.into()))).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let one = B256::with_last_byte(1);
+    let send = async |tx: TransactionRequest| {
+        let tx = WithOtherFields::new(tx.from(from));
+        let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+        assert!(receipt.status());
+    };
+
+    // A value transfer keeps the storage.
+    let funded = Address::random();
+    api.anvil_set_storage_at(funded, U256::ZERO, one).await.unwrap();
+    send(TransactionRequest::default().to(funded).value(U256::ONE)).await;
+    assert_eq!(api.storage_at(funded, U256::ZERO, None).await.unwrap(), one);
+
+    // A contract created at a funded address discards its storage. The factory deploys its
+    // calldata with `CREATE2` and salt zero, and the init code deploys `STOP`.
+    let factory = Address::random();
+    api.anvil_set_code(factory, bytes!("365f5f375f365f5ff500")).await.unwrap();
+    let init_code = bytes!("6001600c60003960016000f300");
+    let created = factory.create2(B256::ZERO, keccak256(&init_code));
+    api.anvil_set_storage_at(created, U256::ZERO, one).await.unwrap();
+    api.anvil_set_balance(created, U256::ONE).await.unwrap();
+    send(TransactionRequest::default().to(factory).input(init_code.into()).gas_limit(100_000))
+        .await;
+    assert_eq!(api.get_code(created, None).await.unwrap(), bytes!("00"));
+    assert_eq!(api.storage_at(created, U256::ZERO, None).await.unwrap(), B256::ZERO);
+
+    // A contract created and destroyed in the same transaction also discards the storage. The
+    // init code runs `SELFDESTRUCT(CALLER)`.
+    let init_code = bytes!("33ff");
+    let destroyed = factory.create2(B256::ZERO, keccak256(&init_code));
+    api.anvil_set_storage_at(destroyed, U256::ZERO, one).await.unwrap();
+    send(TransactionRequest::default().to(factory).input(init_code.into()).gas_limit(100_000))
+        .await;
+    assert_eq!(api.get_code(destroyed, None).await.unwrap(), bytes!(""));
+    assert_eq!(api.storage_at(destroyed, U256::ZERO, None).await.unwrap(), B256::ZERO);
+
+    // A contract created in one transaction and destroyed by a later one in the same block also
+    // discards the storage. The init code deploys `SELFDESTRUCT(CALLER)`.
+    let init_code = bytes!("6002600c60003960026000f333ff");
+    let destroyed = factory.create2(B256::ZERO, keccak256(&init_code));
+    api.anvil_set_storage_at(destroyed, U256::ZERO, one).await.unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
+    let create = TransactionRequest::default().to(factory).input(init_code.into()).nonce(nonce);
+    let destroy = TransactionRequest::default().to(destroyed).nonce(nonce + 1);
+    let mut receipts = Vec::new();
+    for tx in [create, destroy] {
+        let tx = WithOtherFields::new(tx.from(from).gas_limit(100_000));
+        receipts.push(provider.send_transaction(tx).await.unwrap());
+    }
+    api.mine_one().await.unwrap();
+    for receipt in receipts {
+        let receipt = receipt.get_receipt().await.unwrap();
+        assert!(receipt.status());
+        assert_eq!(receipt.block_number, Some(api.backend.best_number()));
+    }
+    api.anvil_set_auto_mine(true).await.unwrap();
+    assert_eq!(api.get_code(destroyed, None).await.unwrap(), bytes!(""));
+    assert_eq!(api.storage_at(destroyed, U256::ZERO, None).await.unwrap(), B256::ZERO);
+
+    // A value transfer revives a deleted account without its storage. `SELFDESTRUCT(CALLER)`
+    // deletes the account.
+    let deleted = Address::random();
+    api.anvil_set_code(deleted, bytes!("33ff")).await.unwrap();
+    api.anvil_set_storage_at(deleted, U256::ZERO, one).await.unwrap();
+    send(TransactionRequest::default().to(deleted)).await;
+    send(TransactionRequest::default().to(deleted).value(U256::ONE)).await;
+    assert_eq!(api.balance(deleted, None).await.unwrap(), U256::ONE);
+    assert_eq!(api.storage_at(deleted, U256::ZERO, None).await.unwrap(), B256::ZERO);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1452,8 +1533,14 @@ async fn manual_mining_rpcs_preserve_controls_on_failure() {
                 )
                 .await
         };
-        let error = result.unwrap_err().to_string();
-        assert!(error.contains("execution reverted"), "{method}: {error}");
+        let error = result.unwrap_err();
+        let error = error.as_error_resp().unwrap();
+        assert_eq!(error.code, -32603, "{method}");
+        assert_eq!(
+            error.message,
+            "failed to apply withdrawal requests contract call: execution reverted: 0x",
+            "{method}"
+        );
         assert_eq!(api.backend.best_number(), 0, "{method}");
 
         api.anvil_set_code(withdrawals, Bytes::new()).await.unwrap();
@@ -1468,6 +1555,27 @@ async fn manual_mining_rpcs_preserve_controls_on_failure() {
         assert_ne!(following.header.mix_hash, Some(prevrandao), "{method}");
         assert_eq!(following.header.timestamp, next_timestamp + 1, "{method}");
     }
+}
+
+// A halting request system call fails mining with its halt reason.
+#[tokio::test(flavor = "multi_thread")]
+async fn halting_request_system_call_fails_mining() {
+    let config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(config).await;
+    // The withdrawal requests contract loops until it runs out of gas.
+    let withdrawals = address!("0x00000961ef480eb55e80d19ad83579a64c007002");
+    api.anvil_set_code(withdrawals, Bytes::from_static(&[0x5b, 0x5f, 0x56])).await.unwrap();
+
+    let result =
+        handle.http_provider().raw_request::<_, serde_json::Value>("evm_mine".into(), ()).await;
+    let error = result.unwrap_err();
+    let error = error.as_error_resp().unwrap();
+    assert_eq!(error.code, -32603);
+    assert_eq!(
+        error.message,
+        "failed to apply withdrawal requests contract call: execution halted: OutOfGas(Basic)"
+    );
+    assert_eq!(api.backend.best_number(), 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2206,7 +2314,7 @@ async fn can_get_node_info_tempo_t1() {
 #[cfg(feature = "monad")]
 async fn can_get_node_info_monad() {
     let config = NodeConfig::test_monad()
-        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadEight.into()));
+        .with_hardfork(Some(foundry_evm_hardforks::MonadHardfork::MonadEight.into()));
     let (api, handle) = spawn(config).await;
 
     let node_info = api.anvil_node_info().await.unwrap();
@@ -2382,6 +2490,9 @@ async fn test_rollback_and_reorg_respect_genesis_block_number() {
     let (api, _handle) = spawn(NodeConfig::test().with_genesis_block_number(Some(100u64))).await;
     api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
     assert_eq!(api.backend.best_number(), 102);
+
+    let err = api.debug_execution_witness(BlockNumberOrTag::Number(100)).await.unwrap_err();
+    assert_eq!(err.to_string(), "genesis block has no parent state to build a witness from");
 
     // Depth 3 would go below genesis.
     let err = api.anvil_rollback(Some(3)).await.unwrap_err();

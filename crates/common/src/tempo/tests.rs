@@ -709,7 +709,7 @@ fn browser_key_authorization_accepts_root_signature() {
     )
     .unwrap();
 
-    assert_eq!(signed.authorization, requested);
+    assert_eq!(signed.authorization(), &requested);
 }
 
 #[test]
