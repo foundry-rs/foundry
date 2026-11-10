@@ -1746,7 +1746,7 @@ fn parse_model_values(
 /// A model S-expression: solvers print each value as `(define-fun <name> () <sort> <term>)`.
 enum ModelSexp<'a> {
     Atom(&'a str),
-    List(Vec<ModelSexp<'a>>),
+    List(Vec<Self>),
 }
 
 impl<'a> ModelSexp<'a> {
