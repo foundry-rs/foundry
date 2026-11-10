@@ -954,13 +954,13 @@ impl PathState {
     }
 
     pub(crate) fn fresh_bounded_uint(&mut self, cx: &mut SymCx, bits: U256) -> SymExpr {
+        // Like Forge, a zero-bit integer is `0`.
+        if bits.is_zero() {
+            return SymExpr::zero(cx);
+        }
         let value = self.fresh_word(cx, "symbolic");
         if bits < U256::from(256) {
-            let upper = if bits.is_zero() {
-                U256::ZERO
-            } else {
-                U256::ONE << usize::try_from(bits).expect("checked bit width")
-            };
+            let upper = U256::ONE << usize::try_from(bits).expect("checked bit width");
             self.constraints.push(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &value, upper));
         }
         value

@@ -650,6 +650,14 @@ impl SymbolicExecutor {
                 above(&mut self.cx, &state.memory, 1, u64_max)?,
                 "vm.computeCreateAddress: nonce must be less than 2^64",
             ),
+            randomUint_1Call::SELECTOR => {
+                let min = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                let max = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                (
+                    SymBoolExpr::cmp_word_expr(&mut self.cx, SymCmpOp::Ugt, &min, max),
+                    "vm.randomUint: min must be less than or equal to max",
+                )
+            }
             _ => return Ok(None),
         };
 
