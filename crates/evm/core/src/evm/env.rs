@@ -101,6 +101,8 @@ pub fn carry_execution_policy(
     let enabled = current.features & FOUNDRY_POLICY_FEATURES & !current_default.features;
     next.features = (next.features & !disabled) | enabled;
     next.chain_id = current.chain_id;
+    // A nested transaction's root, such as a `vm.transact` replay, keeps its depth.
+    next.initial_call_depth = current.initial_call_depth;
     macro_rules! carry_overridden {
         ($($field:ident),*) => {$(
             if current.$field != current_default.$field {
