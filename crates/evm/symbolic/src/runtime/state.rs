@@ -1,6 +1,7 @@
 use super::*;
 use alloy_sol_types::{Revert, SolError};
 use evm2::interpreter::gas::CALL_STIPEND;
+use foundry_evm::core::backend::GLOBAL_FAIL_SLOT;
 
 const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
 
@@ -44,6 +45,8 @@ pub(crate) struct PathState {
     /// Account of the first call that reverted in or below this frame since it was entered,
     /// which Forge reports as the `vm.assumeNoRevert` reverter.
     pub(crate) first_reverted_callee: Option<Address>,
+    /// Assertion cheatcodes set this even when their revert is caught by the handler.
+    pub(crate) assertion_failed: bool,
     pub(crate) assume_no_revert_next_call: Option<AssumeNoRevert>,
     pub(crate) expected_emit: Option<ExpectedEmit>,
     pub(crate) expected_calls: Vec<ExpectedCall>,
@@ -122,6 +125,7 @@ impl PathState {
             expected_revert: None,
             first_failed_callee: None,
             first_reverted_callee: None,
+            assertion_failed: false,
             assume_no_revert_next_call: None,
             expected_emit: None,
             expected_calls: Vec::new(),
@@ -437,6 +441,7 @@ impl PathState {
         self.recorded_logs = child.recorded_logs.take();
         self.recorded_logs_generation = child.recorded_logs_generation;
         self.access_record = child.access_record.take();
+        self.assertion_failed |= child.assertion_failed;
         // Inspector state survives child reverts and exceptional halts.
         self.block = child.block.clone();
         self.gas_price = child.gas_price.clone();
@@ -477,6 +482,7 @@ impl PathState {
         self.expected_revert = reverted.expected_revert;
         self.first_failed_callee = reverted.first_failed_callee;
         self.first_reverted_callee = reverted.first_reverted_callee;
+        self.assertion_failed = reverted.assertion_failed;
         self.assume_no_revert_next_call = reverted.assume_no_revert_next_call;
         self.expected_emit = reverted.expected_emit;
         self.expected_calls = reverted.expected_calls;
@@ -2082,6 +2088,21 @@ impl SymbolicWorld {
 
     pub(crate) fn sstore(&mut self, address: Address, key: SymExpr, value: SymExpr) {
         Arc::make_mut(&mut self.state).storage.push(StorageWrite::new(address, key, value));
+    }
+
+    /// Reads the global fail slot: Forge bookkeeping, so arbitrary storage never makes it up.
+    pub(crate) fn global_fail_slot(
+        &self,
+        cx: &mut SymCx,
+        executor: &ExecutorView<'_>,
+    ) -> Result<SymExpr, SymbolicError> {
+        let base = executor
+            .backend
+            .storage(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
+            .map(|value| SymExpr::constant(cx, value))
+            .map_err(|err| SymbolicError::Backend(err.to_string()))?;
+        let key = SymExpr::constant(cx, GLOBAL_FAIL_SLOT);
+        Ok(StorageWrite::select_from(cx, &self.storage, CHEATCODE_ADDRESS, key, base))
     }
 
     pub(crate) fn tload(&self, cx: &mut SymCx, address: Address, key: SymExpr) -> SymExpr {

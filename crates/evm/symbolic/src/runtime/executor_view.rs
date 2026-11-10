@@ -53,6 +53,8 @@ pub struct ExecutorView<'a> {
     pub(crate) internal_expect_revert: bool,
     /// The concrete executor's event decoder for `vm.expectEmit` failure messages.
     pub(crate) signatures: Option<&'a SignaturesIdentifier>,
+    /// Whether a failed assertion cheatcode reverts its call instead of setting the fail slot.
+    pub(crate) assertions_revert: bool,
     pub(crate) blob_hashes: Vec<B256>,
     pub(crate) arbitrary_storage_targets: Vec<(Address, bool)>,
     pub(crate) arbitrary_storage_copies: Vec<(Address, Address)>,
@@ -136,6 +138,7 @@ impl<'a> ExecutorView<'a> {
             internal_expect_revert: cheats
                 .is_some_and(|cheats| cheats.core.config.internal_expect_revert),
             signatures: cheats.and_then(|cheats| cheats.signatures_identifier()),
+            assertions_revert: cheats.is_none_or(|cheats| cheats.core.config.assertions_revert),
             blob_hashes: overrides
                 .and_then(|overrides| overrides.blob_hashes.clone())
                 .unwrap_or_else(|| tx.blob_versioned_hashes().unwrap_or_default().to_vec()),

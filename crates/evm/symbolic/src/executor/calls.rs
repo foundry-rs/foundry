@@ -1074,6 +1074,24 @@ impl SymbolicExecutor {
             } else {
                 Err(SymbolicError::Unsupported("symbolic cheatcode address"))
             };
+            let outcome = match outcome {
+                Ok(CheatcodeOutcome::Fork { mut passing, failing }) => {
+                    if let Some(memory) = &caller_memory {
+                        passing.memory = memory.clone();
+                    }
+                    let empty = SymReturnData::empty(&mut self.cx);
+                    complete_cheatcode_call(
+                        &mut self.cx,
+                        &mut passing,
+                        out_offset.clone(),
+                        &out_size,
+                        empty,
+                    )?;
+                    worklist.push_back(*passing);
+                    Ok(*failing)
+                }
+                outcome => outcome,
+            };
             if let Some(memory) = caller_memory {
                 state.memory = memory;
             }
@@ -1085,6 +1103,7 @@ impl SymbolicExecutor {
                     return Ok(StepOutcome::Continue);
                 }
                 CheatcodeOutcome::Failure => return Ok(StepOutcome::Failure),
+                CheatcodeOutcome::Fork { .. } => unreachable!("assertion fork is unwrapped"),
             };
 
             state.return_data = return_data;

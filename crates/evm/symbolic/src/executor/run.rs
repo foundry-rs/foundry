@@ -481,6 +481,15 @@ impl SymbolicExecutor {
                 if !self.completed_path_is_feasible(&mut state, outcome)? {
                     break;
                 }
+                let outcome = match outcome {
+                    // Like Forge, a test that ends with the global fail slot set has failed.
+                    StepOutcome::Halt
+                        if self.global_fail_slot_set(&input.executor, &mut state)? =>
+                    {
+                        StepOutcome::Failure
+                    }
+                    outcome => outcome,
+                };
                 match outcome {
                     StepOutcome::Continue => {}
                     StepOutcome::AssumeRejected | StepOutcome::Forked => break,
