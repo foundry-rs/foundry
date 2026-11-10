@@ -7,18 +7,10 @@ async fn fork_cheatcode_access_compatibility(prj: _, cmd: _) {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     prj.add_test("CheatcodeAccess.t.sol", CHEATCODE_ACCESS_COMPATIBILITY);
     for isolate in [false, true] {
-        cmd.forge_fuse().args([
-            "test",
-            "--fork-url",
-            &handle.http_endpoint(),
-            "--evm-version",
-            "prague",
-            "--match-contract",
-            "CheatcodeAccessCompatibilityTest",
-        ]);
-        cmd.unset_env("FOUNDRY_ACCESS_REGRESSION_UNUSED");
-        cmd.env("FOUNDRY_ISOLATE", isolate.to_string());
-        cmd.assert_success().stdout_eq(str![[r#"
+        for (contract, expected) in [
+            (
+                "CheatcodeAccessCompatibilityTest",
+                str![[r#"
 ...
 Ran 13 tests for test/CheatcodeAccess.t.sol:CheatcodeAccessCompatibilityTest
 [PASS] testForkAuthorizationIsReadAtCheatcodeUse() ([GAS])
@@ -38,7 +30,34 @@ Suite result: ok. 13 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 13 tests passed, 0 failed, 0 skipped (13 total tests)
 
-"#]]);
+"#]],
+            ),
+            (
+                "CheatcodeAccessRootDelegationTest",
+                str![[r#"
+...
+Ran 1 test for test/CheatcodeAccess.t.sol:CheatcodeAccessRootDelegationTest
+[PASS] testForkRootDelegationCannotAuthorizeFactoryChildren() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]],
+            ),
+        ] {
+            cmd.forge_fuse().args([
+                "test",
+                "--fork-url",
+                &handle.http_endpoint(),
+                "--evm-version",
+                "prague",
+                "--match-contract",
+                contract,
+            ]);
+            cmd.unset_env("FOUNDRY_ACCESS_REGRESSION_UNUSED");
+            cmd.env("FOUNDRY_ISOLATE", isolate.to_string());
+            cmd.assert_success().stdout_eq(expected);
+        }
     }
 }
 
@@ -78,34 +97,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 }
 
-#[forgetest]
-async fn fork_cheatcode_access_root_delegation(prj: _, cmd: _) {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    prj.add_test("CheatcodeAccess.t.sol", CHEATCODE_ACCESS_COMPATIBILITY);
-    for isolate in [false, true] {
-        cmd.forge_fuse().args([
-            "test",
-            "--fork-url",
-            &handle.http_endpoint(),
-            "--evm-version",
-            "prague",
-            "--match-contract",
-            "CheatcodeAccessRootDelegationTest",
-        ]);
-        cmd.unset_env("FOUNDRY_ACCESS_REGRESSION_UNUSED");
-        cmd.env("FOUNDRY_ISOLATE", isolate.to_string());
-        cmd.assert_success().stdout_eq(str![[r#"
-...
-Ran 1 test for test/CheatcodeAccess.t.sol:CheatcodeAccessRootDelegationTest
-[PASS] testForkRootDelegationCannotAuthorizeFactoryChildren() ([GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-
-"#]]);
-    }
-}
-
 const CHEATCODE_ACCESS_COMPATIBILITY: &str = r#"
 interface Vm {
     function prank(address sender) external;
@@ -137,6 +128,14 @@ abstract contract UsesVm {
 
     function readDefault() internal view returns (uint256) {
         return vm.envOr("FOUNDRY_ACCESS_REGRESSION_UNUSED", uint256(7));
+    }
+
+    function denialHash(address account) internal pure returns (bytes32) {
+        string memory reason = string.concat(
+            "cheatcodes are not enabled for ", vm.toString(account),
+            "; see `vm.allowCheatcodes(address)`"
+        );
+        return keccak256(abi.encodeWithSignature("CheatcodeError(string)", reason));
     }
 }
 
@@ -254,14 +253,7 @@ abstract contract AccessFixture is UsesVm {
 
     function expectDenied(bool ok, bytes memory output, address account) internal pure {
         require(!ok, "cheatcode access unexpectedly allowed");
-        bytes memory expected = abi.encodeWithSignature(
-            "CheatcodeError(string)",
-            string.concat(
-                "cheatcodes are not enabled for ", vm.toString(account),
-                "; see `vm.allowCheatcodes(address)`"
-            )
-        );
-        require(keccak256(output) == keccak256(expected), "unexpected authorization error");
+        require(keccak256(output) == denialHash(account), "unexpected authorization error");
     }
 
     function expectValue(bool ok, bytes memory output) internal pure {
@@ -559,13 +551,7 @@ contract CheatcodeAccessRootDelegationTest is RootDelegatedFactoryAccess {
             vm.computeCreate2Address(bytes32(uint256(1)), keccak256(type(EnvReader).creationCode), address(factory))
         ];
         for (uint256 mode; mode < children.length; mode++) {
-            expectedErrors[mode] = keccak256(abi.encodeWithSignature(
-                "CheatcodeError(string)",
-                string.concat(
-                    "cheatcodes are not enabled for ", vm.toString(children[mode]),
-                    "; see `vm.allowCheatcodes(address)`"
-                )
-            ));
+            expectedErrors[mode] = denialHash(children[mode]);
         }
         address implementation = address(0x1234);
         vm.etch(implementation, type(RootDelegatedFactoryAccess).runtimeCode);

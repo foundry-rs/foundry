@@ -2,7 +2,7 @@
 
 use super::*;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct FrameAccess {
     depth: u16,
     context: Address,
@@ -103,27 +103,23 @@ mod tests {
         }
     }
 
-    fn identities(frames: &[FrameAccess]) -> Vec<(u16, Address, Address)> {
-        frames.iter().map(|frame| (frame.depth, frame.context, frame.code)).collect()
-    }
-
     #[test]
     fn mixed_nested_frame_access_preserves_each_suspended_parent() {
         for inherited in [false, true] {
             let mut cheats = Cheatcodes::default();
             cheats.frame_access.push(frame(1));
-            let parent = identities(&cheats.frame_access);
+            let parent = cheats.frame_access.clone();
             let nested = |cheats: &mut Cheatcodes| {
                 if !inherited {
                     assert!(cheats.frame_access.is_empty());
                 }
                 cheats.frame_access.push(frame(2));
-                let suspended = identities(&cheats.frame_access);
+                let suspended = cheats.frame_access.clone();
                 let clear = |cheats: &mut Cheatcodes| {
                     if inherited {
                         assert!(cheats.frame_access.is_empty());
                     } else {
-                        assert_eq!(identities(&cheats.frame_access), suspended);
+                        assert_eq!(cheats.frame_access, suspended);
                     }
                     cheats.frame_access.clear();
                     cheats.frame_access.push(frame(3));
@@ -135,7 +131,7 @@ mod tests {
                     cheats.with_nested_frame_access(clear)
                 };
                 assert_eq!(result, Err("expected inner failure"));
-                assert_eq!(identities(&cheats.frame_access), suspended);
+                assert_eq!(cheats.frame_access, suspended);
                 cheats.frame_access.clear();
                 result
             };
@@ -145,19 +141,21 @@ mod tests {
                 cheats.with_fresh_frame_access(nested)
             };
             assert_eq!(result, Err("expected inner failure"));
-            assert_eq!(identities(&cheats.frame_access), parent);
+            assert_eq!(cheats.frame_access, parent);
         }
     }
 
     #[test]
     fn ended_frame_access_discards_descendants_and_preserves_parent() {
-        let mut cheats = Cheatcodes::default();
-        cheats.frame_access = (0..=3).map(frame).collect();
+        let mut cheats = Cheatcodes::<EthEvmNetwork> {
+            frame_access: (0..=3).map(frame).collect(),
+            ..Default::default()
+        };
 
         cheats.leave_frame_access(2);
-        assert_eq!(identities(&cheats.frame_access), identities(&[frame(0), frame(1)]));
+        assert_eq!(cheats.frame_access, [frame(0), frame(1)]);
         cheats.leave_frame_access(1);
-        assert_eq!(identities(&cheats.frame_access), identities(&[frame(0)]));
+        assert_eq!(cheats.frame_access, [frame(0)]);
         cheats.leave_frame_access(0);
         assert!(cheats.frame_access.is_empty());
     }
