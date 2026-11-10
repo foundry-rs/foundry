@@ -194,7 +194,7 @@ impl<N: Network> ClientFork<N> {
         account_fetch_policy_for_source(
             config.chain_id,
             config.endpoint_identity.network_profile.unwrap_or_default(),
-        ) == AccountFetchPolicy::RequireAccountInfo
+        ) != AccountFetchPolicy::Auto
     }
 
     /// Returns the execution chain ID exposed by the forked node.

@@ -1838,7 +1838,8 @@ async fn t14_tempo_tx(
     }
 }
 
-/// Returns the approval of every owner of `config` over `tx` for the configurable `account`.
+/// Returns the approval of every owner of `config` whose key is in `owners` over `tx` for the
+/// configurable `account`.
 async fn configurable_account_signature(
     account: Address,
     config: &ConfigurableAccountConfig,
@@ -1848,18 +1849,35 @@ async fn configurable_account_signature(
     let digest = configurable_account_digest(tx.signature_hash(), account, config.version);
     let mut signatures = Vec::new();
     for owner in &config.owners {
-        let key = owners.iter().find(|key| key.address() == owner.owner).unwrap();
-        signatures.push(PrimitiveSignature::Secp256k1(key.sign_hash(&digest).await.unwrap()));
+        if let Some(key) = owners.iter().find(|key| key.address() == owner.owner) {
+            signatures.push(PrimitiveSignature::Secp256k1(key.sign_hash(&digest).await.unwrap()));
+        }
     }
     TempoSignature::ConfigurableAccount(
         ConfigurableAccountSignature::try_new(account, config.clone(), signatures).unwrap(),
     )
 }
 
-/// `cast run` forks a T14 node at the parent of the `0x05` transaction that registers a
-/// configurable account, replays the block up to it, and reproduces the status and gas the node
-/// charged. No public
-/// Tempo network schedules T14 yet, so the node is a local Anvil T14 node.
+/// Returns `config`'s owners as `IConfigurableAccount` encodes them.
+fn abi_owners(
+    config: &ConfigurableAccountConfig,
+) -> Vec<IConfigurableAccount::ConfigurableAccountOwner> {
+    config
+        .owners
+        .iter()
+        .map(|owner| IConfigurableAccount::ConfigurableAccountOwner {
+            owner: owner.owner,
+            weight: owner.weight,
+        })
+        .collect()
+}
+
+/// `cast run` forks a T14 node at the parent of each `0x05` transaction of a configurable account,
+/// replays the block up to it, and reproduces the status and gas the node charged: the
+/// transaction that registers the account, its `updateConfig`, and a later transaction that the
+/// updated owners authorize. The last two read the configuration commitment, which the account
+/// extension stores, from the fork. No public Tempo network schedules T14 yet, so the node is a
+/// local Anvil T14 node.
 #[casttest]
 async fn tempo_t14_configurable_account_run_fork_replay_matches_node(cmd: _) {
     let (api, handle) =
@@ -1927,10 +1945,65 @@ async fn tempo_t14_configurable_account_run_fork_replay_matches_node(cmd: _) {
     assert_eq!(registered.block_number, primitive.block_number);
     assert_eq!(registered.transaction_index, Some(1));
 
-    // Replay forks at the parent block, where the account is still unregistered. Accounts that
-    // registered before the fork block cannot be replayed yet: the fork database does not carry
-    // the account extension that holds their configuration commitment.
-    let hashes = [(registration, true)];
+    // The registered account rotates its owners to threshold one over keys `0x22..22` and
+    // `0x44..44`, then key `0x44..44` alone authorizes a transaction, each in a later block.
+    let keys =
+        [0x22, 0x44].map(|byte| PrivateKeySigner::from_bytes(&B256::repeat_byte(byte)).unwrap());
+    let mut rotated = ConfigurableAccountConfig {
+        salt: config.salt,
+        version: 1,
+        threshold: 1,
+        owners: keys
+            .iter()
+            .map(|key| ConfigurableAccountOwner { owner: key.address(), weight: 1 })
+            .collect(),
+    };
+    rotated.owners.sort_by_key(|owner| owner.owner);
+    let update = IConfigurableAccount::updateConfigCall {
+        current: IConfigurableAccount::ConfigurableAccountConfig {
+            salt: config.salt,
+            version: config.version,
+            threshold: config.threshold,
+            owners: abi_owners(&config),
+        },
+        threshold: rotated.threshold,
+        owners: abi_owners(&rotated),
+    };
+    let tx = t14_tempo_tx(
+        &provider,
+        1,
+        vec![call(CONFIGURABLE_ACCOUNT_ADDRESS, update.abi_encode()), call(target, vec![])],
+    )
+    .await;
+    let signature = configurable_account_signature(account, &config, &owners, &tx).await;
+    let update = provider
+        .send_raw_transaction(&TempoTxEnvelope::AA(tx.into_signed(signature)).encoded_2718())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap()
+        .transaction_hash();
+    let get_commitment = IConfigurableAccount::getConfigCommitmentCall { account }.abi_encode();
+    let tx = t14_tempo_tx(
+        &provider,
+        2,
+        vec![call(CONFIGURABLE_ACCOUNT_ADDRESS, get_commitment), call(target, vec![])],
+    )
+    .await;
+    let signature = configurable_account_signature(account, &rotated, &keys[1..], &tx).await;
+    let rotated_tx = provider
+        .send_raw_transaction(&TempoTxEnvelope::AA(tx.into_signed(signature)).encoded_2718())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap()
+        .transaction_hash();
+
+    // Replay forks at each transaction's parent block. The account is unregistered at the
+    // registration's parent and registered with its commitment at the others'.
+    let hashes = [(registration, true), (update, true), (rotated_tx, true)];
     for (hash, succeeds) in hashes {
         let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
         assert_eq!(receipt.status(), succeeds, "{receipt:?}");
