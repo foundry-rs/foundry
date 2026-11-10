@@ -17,24 +17,17 @@ fn record_candidate_limitation(
 }
 
 impl SymbolicExecutor {
-    #[expect(clippy::too_many_arguments)]
     pub(super) fn execute_invariant_check(
         &mut self,
         executor: &ExecutorView<'_>,
         state: &PathState,
         invariant_address: Address,
-        sender: Address,
         invariant: &Function,
         after_invariant: Option<&Function>,
         completed_paths: &mut usize,
     ) -> Result<Vec<InvariantCheckOutcome>, SymbolicError> {
-        let mut call = self.prepare_invariant_call(
-            executor,
-            state.clone(),
-            invariant_address,
-            sender,
-            invariant,
-        )?;
+        let mut call =
+            self.prepare_invariant_call(executor, state.clone(), invariant_address, invariant)?;
 
         let mut checked = Vec::new();
         while let Some(mut outcome) =
@@ -58,7 +51,6 @@ impl SymbolicExecutor {
                 executor,
                 after_state,
                 invariant_address,
-                sender,
                 after_invariant,
             )?;
             while let Some(after_outcome) =
@@ -80,18 +72,19 @@ impl SymbolicExecutor {
         executor: &ExecutorView<'_>,
         mut state: PathState,
         invariant_address: Address,
-        sender: Address,
         invariant: &Function,
     ) -> Result<SequenceCall, SymbolicError> {
         state.invariant_predicate = true;
         let calldata = SymbolicCalldata::selector_only(&mut self.cx, invariant)?;
         let call_data = calldata.call_data(&mut self.cx);
         let constraints = calldata.into_constraints();
+        // Forge calls invariant predicates and `afterInvariant` from `CALLER`, whatever sender
+        // the test configures.
         self.prepare_sequence_call(
             executor,
             state,
             invariant_address,
-            sender,
+            CALLER,
             invariant,
             call_data,
             constraints,
@@ -176,7 +169,6 @@ impl SymbolicExecutor {
                         &input.executor,
                         handler_state.clone(),
                         input.invariant_address,
-                        CALLER,
                         invariant,
                     ) {
                         Ok(call) => call,
@@ -220,7 +212,6 @@ impl SymbolicExecutor {
                             &input.executor,
                             after_state,
                             input.invariant_address,
-                            CALLER,
                             after_invariant,
                         ) {
                             Ok(call) => call,
