@@ -579,13 +579,11 @@ impl SymbolicExecutor {
         out_size: &BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
         let mut success = status == CallStatus::Success;
-        // Like Forge, a call that does not revert ends a `count = 0` `vm.expectEmit` unless
+        // Like Forge, a call that does not revert checks a pending `vm.expectEmit` unless
         // `vm.expectRevert` handles it.
-        if !matches!(status, CallStatus::Revert)
+        let unmet_expected_emit = !matches!(status, CallStatus::Revert)
             && (state.expected_revert.is_none() || (success && executor.internal_expect_revert))
-        {
-            state.end_expected_emit_after_call(kind);
-        }
+            && state.check_expected_emit_after_call(kind);
         let assumption = state.assume_no_revert_next_call.take();
         let assumed_revert = status == CallStatus::Revert && assumption.is_some();
         if let Some(assumption) = &assumption
@@ -621,6 +619,12 @@ impl SymbolicExecutor {
             // Like Forge, a failure not consumed here can be the reverter of a pending
             // `vm.expectRevert`.
             state.first_failed_callee.get_or_insert(reverter);
+        }
+        // Like Forge, the failure is a bare string; `classify_revert` reads it from the pending
+        // expectation when the revert reaches the top frame.
+        if unmet_expected_emit {
+            success = false;
+            return_data = unmet_expected_emit_return_data(&mut self.cx);
         }
         state.return_data = return_data;
         state.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;
@@ -1292,8 +1296,11 @@ impl SymbolicExecutor {
                     return Ok(StepOutcome::Failure);
                 }
                 JoinedCallOutcome::ExceptionalHalt(mut parent) => {
-                    parent.end_expected_emit_after_call(kind);
-                    parent.return_data = SymReturnData::empty(&mut self.cx);
+                    parent.return_data = if parent.check_expected_emit_after_call(kind) {
+                        unmet_expected_emit_return_data(&mut self.cx)
+                    } else {
+                        SymReturnData::empty(&mut self.cx)
+                    };
                     parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;
                     parents.push_back(parent);
@@ -1313,20 +1320,23 @@ impl SymbolicExecutor {
                         parent.world.restore_transient_storage(&original_world);
                     }
                     parent.expected_emit = child.expected_emit;
-                    if !unmet_expected_revert {
-                        parent.end_expected_emit_after_call(kind);
-                    }
+                    let unmet_expected_emit =
+                        !unmet_expected_revert && parent.check_expected_emit_after_call(kind);
                     parent.return_data = if unmet_expected_revert {
                         error_string_return_data(
                             &mut self.cx,
                             "next call did not revert as expected",
                         )
+                    } else if unmet_expected_emit {
+                        unmet_expected_emit_return_data(&mut self.cx)
                     } else {
                         child.frame.return_data
                     };
                     parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
-                    let success =
-                        SymExpr::constant(&mut self.cx, U256::from(!unmet_expected_revert));
+                    let success = SymExpr::constant(
+                        &mut self.cx,
+                        U256::from(!unmet_expected_revert && !unmet_expected_emit),
+                    );
                     parent.stack.push(success)?;
                     parents.push_back(parent);
                 }

@@ -7923,8 +7923,9 @@ contract SymbolicMappingStorageHooksSymbolicSize is Test {
 }
 
 // Like Forge, `vm.stopRecord` pauses recording but keeps the accesses for `vm.accesses`,
-// `vm.expectEmit(emitter, 0)` reverts the frame that emits a matching log, and a log without
-// topics cannot fill the template of a non-anonymous `vm.expectEmit`.
+// `vm.expectEmit(emitter, 0)` reverts the frame that emits a matching log, a log without
+// topics cannot fill the template of a non-anonymous `vm.expectEmit`, and the next non-static
+// call must emit a pending `vm.expectEmit` or fail with `log != expected log`.
 #[forgetest_init]
 fn symbolic_stop_record_and_expect_emit_count_zero_match_forge(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_stop_record_and_expect_emit_count_zero_match_forge");
@@ -8142,6 +8143,32 @@ contract SymbolicRecordAndEmitCount {
         store.emitAnon(value);
     }
 
+    function checkExpectEmitInLaterCall(uint256 value) public {
+        vm.expectEmit();
+        emit Set(value);
+        store.noop();
+        store.setA(value);
+    }
+
+    // Like Forge, the failed call keeps the expectation, so a later call can meet it.
+    function checkExpectEmitCaughtFailureKeepsExpectation(uint256 value) public {
+        vm.expectEmit();
+        emit Set(value);
+        (bool success,) = address(store).call(abi.encodeCall(Store.noop, ()));
+        assert(!success);
+        store.setA(value);
+    }
+
+    // Like Forge, the failure is an ABI-encoded string without an error selector.
+    function checkExpectEmitFailureHasNoErrorSelector(uint256 value) public {
+        vm.expectEmit();
+        emit Set(value);
+        (bool success, bytes memory data) = address(store).call(abi.encodeCall(Store.noop, ()));
+        assert(!success);
+        store.setA(value);
+        assert(bytes4(data) == bytes4(keccak256("CheatcodeError(string)")));
+    }
+
     function testStopRecordKeepsAndPausesAccesses() public {
         checkStopRecordKeepsAndPausesAccesses(1);
     }
@@ -8177,6 +8204,10 @@ contract SymbolicRecordAndEmitCount {
     function testExpectEmitAnonymousMatches() public {
         checkExpectEmitAnonymousMatches(1);
     }
+
+    function testExpectEmitCaughtFailureKeepsExpectation() public {
+        checkExpectEmitCaughtFailureKeepsExpectation(1);
+    }
 }
 "#,
     );
@@ -8196,9 +8227,12 @@ contract SymbolicRecordAndEmitCount {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 19 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCount
+Ran 22 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCount
 [PASS] checkExpectEmitAnonymousMatches(uint256) ([METRICS])
 [FAIL: use vm.expectEmitAnonymous to match anonymous events; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitAnonymousTemplate(uint256) ([METRICS])
+[PASS] checkExpectEmitCaughtFailureKeepsExpectation(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitFailureHasNoErrorSelector(uint256) ([METRICS])
+[FAIL: log != expected log; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitInLaterCall(uint256) ([METRICS])
 [FAIL: Set indexed topic count mismatch: expected 1, got 0; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitRequiresSameTopicCount(uint256) ([METRICS])
 [PASS] checkExpectNoEmitAllowsOtherEvent(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit count 0 across a failed call] checkExpectNoEmitAnonymousInRevertedCall(uint256) ([METRICS])
@@ -8216,7 +8250,7 @@ Ran 19 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCoun
 [PASS] checkExpectNoEmitUnderExpectRevert(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit with a pending expectation] checkQueuedExpectEmitFailsClosed(uint256) ([METRICS])
 [PASS] checkStopRecordKeepsAndPausesAccesses(uint256) ([METRICS])
-Suite result: FAILED. 9 passed; 10 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 10 passed; 12 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

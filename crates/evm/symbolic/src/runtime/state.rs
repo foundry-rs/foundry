@@ -1085,20 +1085,26 @@ impl PathState {
         }
     }
 
-    /// Ends a `count = 0` `vm.expectEmit` declared in this frame after a call from it returns
-    /// without reverting.
+    /// Checks a `vm.expectEmit` declared in this frame after a call from it returns without
+    /// reverting, and returns whether the call fails it.
     ///
-    /// Like Forge's `call_end`, static calls keep it. Callers skip calls that `vm.expectRevert`
-    /// handles, which also keep it.
-    pub(crate) fn end_expected_emit_after_call(&mut self, kind: CallKind) {
-        if !self.is_static
-            && !matches!(kind, CallKind::StaticCall)
-            && self.expected_emit.as_ref().is_some_and(|expected| {
-                expected.is_forbidden() && expected.depth == self.call_depth
-            })
-        {
-            self.expected_emit = None;
+    /// Like Forge's `call_end`, the call fails a `count >= 1` expectation it did not meet, which
+    /// stays pending, and ends a `count = 0` one. Static calls keep it. Callers skip calls that
+    /// `vm.expectRevert` handles, which also keep it.
+    pub(crate) fn check_expected_emit_after_call(&mut self, kind: CallKind) -> bool {
+        if self.is_static || matches!(kind, CallKind::StaticCall) {
+            return false;
         }
+        let Some(expected) = &mut self.expected_emit else { return false };
+        if expected.depth != self.call_depth {
+            return false;
+        }
+        if expected.is_forbidden() {
+            self.expected_emit = None;
+            return false;
+        }
+        expected.failed = true;
+        true
     }
 
     pub(crate) fn expectations_satisfied(&self) -> bool {
@@ -1654,6 +1660,8 @@ pub(crate) struct ExpectedEmit {
     anonymous: bool,
     /// Call depth of the frame that declared the expectation.
     depth: usize,
+    /// Whether a call ended with the expectation unmet, which failed that call.
+    failed: bool,
 }
 
 impl ExpectedEmit {
@@ -1664,7 +1672,12 @@ impl ExpectedEmit {
         anonymous: bool,
         depth: usize,
     ) -> Self {
-        Self { checks, emitter, remaining, template: None, anonymous, depth }
+        Self { checks, emitter, remaining, template: None, anonymous, depth, failed: false }
+    }
+
+    /// Returns whether a call ended with this expectation unmet.
+    pub(crate) const fn failed(&self) -> bool {
+        self.failed
     }
 
     /// Returns whether this expectation forbids logs matching its template (`count = 0`).
