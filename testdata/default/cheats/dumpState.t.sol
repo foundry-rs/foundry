@@ -323,7 +323,7 @@ contract DumpStateLoadedAccountsTest is Test {
         assertEq(vm.getNonce(absent), 0);
         vm.deal(modified, 23);
 
-        // Like REVM's journal, the dump has every account the transaction loaded.
+        // The dump has every account the transaction loaded.
         vm.dumpState(path);
         string memory json = vm.readFile(path);
         assertEq(vm.parseJsonKeys(json, "").length, 2);
