@@ -608,7 +608,27 @@ impl ConstraintContext {
                 break;
             }
         }
+        context.propagate_masked_upper_bounds();
         context
+    }
+
+    /// Transfers `x & low_mask <= k` to `x` once another bound proves `x` fits the mask, so the
+    /// bound survives dropping the mask from `x`.
+    fn propagate_masked_upper_bounds(&mut self) {
+        let transferred = self
+            .upper_bounds
+            .iter()
+            .filter_map(|(masked, bound)| {
+                let SymExprKind::BinOp(SymBinOp::And, value, mask) = masked.kind() else {
+                    return None;
+                };
+                let bits = mask_low_bits(mask.as_const()?)?;
+                (self.upper_bounds.get(value)?.bit_len() <= bits).then(|| (value.clone(), *bound))
+            })
+            .collect::<Vec<_>>();
+        for (value, bound) in transferred {
+            self.record_upper_bound(value, bound);
+        }
     }
 
     /// Conservatively identifies every conjunct that path facts may rewrite.
@@ -642,7 +662,12 @@ impl ConstraintContext {
         };
         root_candidate
             || expr.contains_udiv()
-            || expr.visit_bool(|word| matches!(word.kind(), SymExprKind::Ite(_, _, _)))
+            || expr.visit_bool(|word| {
+                matches!(
+                    word.kind(),
+                    SymExprKind::Ite(_, _, _) | SymExprKind::BinOp(SymBinOp::URem, _, _)
+                )
+            })
     }
 
     fn normalize_bool(
@@ -667,6 +692,9 @@ impl ConstraintContext {
             return normalized;
         }
         if let Some(value) = self.rounding_comparison_value(&expr) {
+            return SymBoolExpr::constant(cx, value);
+        }
+        if let Some(value) = self.division_comparison_value(&expr) {
             return SymBoolExpr::constant(cx, value);
         }
         if let SymBoolExprKind::Not(value) = expr.kind()
@@ -763,6 +791,9 @@ impl ConstraintContext {
         }
         match expr.kind() {
             SymExprKind::Ite(_, _, _) => true,
+            SymExprKind::BinOp(SymBinOp::And, _, mask) => {
+                mask.as_const().and_then(mask_low_bits).is_some()
+            }
             SymExprKind::BinOp(SymBinOp::Or, left, right) => {
                 left.as_const() == Some(U256::ONE) || right.as_const() == Some(U256::ONE)
             }
@@ -790,6 +821,13 @@ impl ConstraintContext {
             }
         }
         if let Some(value) = self.quotient_of_rounded_product(&expr) {
+            return value.clone();
+        }
+        if let SymExprKind::BinOp(SymBinOp::And, value, mask) = expr.kind()
+            && let Some(bits) = mask.as_const().and_then(mask_low_bits)
+            && self.unsigned_bits(value) <= bits
+        {
+            // `x & low_mask => x` when the current context proves `x` fits the mask.
             return value.clone();
         }
         if let SymExprKind::BinOp(SymBinOp::And, value, mask) = expr.kind()
@@ -2147,12 +2185,28 @@ impl ConstraintContext {
                 .max(self.unsigned_bits_cached(right, bit_widths, remaining)?)
                 .saturating_add(1)
                 .min(256),
-            SymExprKind::BinOp(SymBinOp::Mul, left, right) => self
-                .unsigned_bits_cached(left, bit_widths, remaining)?
-                .saturating_add(self.unsigned_bits_cached(right, bit_widths, remaining)?)
-                .min(256),
+            SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
+                match rounded_product_operands(left, right) {
+                    // `(a / d) * d <= a`, so the rounded product fits the dividend.
+                    Some((dividend, _)) => {
+                        self.unsigned_bits_cached(dividend, bit_widths, remaining)?
+                    }
+                    None => self
+                        .unsigned_bits_cached(left, bit_widths, remaining)?
+                        .saturating_add(self.unsigned_bits_cached(right, bit_widths, remaining)?)
+                        .min(256),
+                }
+            }
             SymExprKind::BinOp(SymBinOp::UDiv, left, _) => {
                 self.unsigned_bits_cached(left, bit_widths, remaining)?
+            }
+            // `a % d <= a`, and `a % d < d` for a nonzero constant `d`.
+            SymExprKind::BinOp(SymBinOp::URem, left, right) => {
+                let bits = self.unsigned_bits_cached(left, bit_widths, remaining)?;
+                match right.as_const() {
+                    Some(divisor) if !divisor.is_zero() => bits.min(divisor.bit_len()),
+                    _ => bits,
+                }
             }
             SymExprKind::Ite(_, left, right) => self
                 .unsigned_bits_cached(left, bit_widths, remaining)?
