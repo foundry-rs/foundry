@@ -6730,3 +6730,93 @@ contract FuzzMetricsTest is Test {
 ...
 "#]]);
 }
+
+// Cmp mutations solve `balance == value`, where the balance is the input plus a large balance
+// read from another contract.
+#[forgetest_init]
+fn fuzz_cmp_solves_balance_offset(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.fuzz.runs = 1000;
+        config.fuzz.seed = Some(U256::ONE);
+        config.fuzz.corpus.corpus_dir = Some(prj.root().join("corpus"));
+    });
+    prj.add_test(
+        "FuzzCmpBalance.t.sol",
+        r#"
+contract Token {
+    mapping(address => uint256) public balanceOf;
+
+    constructor(address holder, address bob) {
+        balanceOf[holder] = type(uint256).max - 1e24;
+        balanceOf[bob] = 1e24;
+    }
+
+    function transfer(address to, uint256 amount) external {
+        unchecked {
+            balanceOf[msg.sender] -= amount;
+            balanceOf[to] += amount;
+        }
+    }
+}
+
+contract FuzzCmpBalance {
+    address constant BOB = address(0xB0B);
+    Token token;
+
+    function setUp() public {
+        token = new Token(address(this), BOB);
+    }
+
+    function testFuzz_balance(uint256 amount) public {
+        token.transfer(BOB, amount);
+        uint256 bobBalance = token.balanceOf(BOB);
+        uint256 value = uint256(keccak256(abi.encode(address(this))));
+        bool hit;
+        assembly {
+            hit := eq(bobBalance, value)
+        }
+        require(!hit, "hit");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "FuzzCmpBalance", "-j1"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/FuzzCmpBalance.t.sol:FuzzCmpBalance
+[FAIL: hit; counterexample: [..]] testFuzz_balance(uint256) (runs: [..], [AVG_GAS])
+...
+"#]]);
+}
+
+// Cmp mutations solve `value - x == 7`, where the input enters the comparison negated.
+#[forgetest_init]
+fn fuzz_cmp_solves_negated_operand(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.fuzz.runs = 1000;
+        config.fuzz.seed = Some(U256::ONE);
+        config.fuzz.corpus.corpus_dir = Some(prj.root().join("corpus"));
+    });
+    prj.add_test(
+        "FuzzCmpNegated.t.sol",
+        r#"
+contract FuzzCmpNegated {
+    function testFuzz_negated(uint256 x) public view {
+        uint256 value = uint256(keccak256(abi.encode(address(this))));
+        bool hit;
+        assembly {
+            hit := eq(sub(value, x), 7)
+        }
+        require(!hit, "hit");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "FuzzCmpNegated", "-j1"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/FuzzCmpNegated.t.sol:FuzzCmpNegated
+[FAIL: hit; counterexample: [..]] testFuzz_negated(uint256) (runs: [..], [AVG_GAS])
+...
+"#]]);
+}

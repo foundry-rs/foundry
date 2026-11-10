@@ -43,6 +43,7 @@ use std::{
 };
 
 mod frontier;
+mod input_to_state;
 mod types;
 pub use frontier::FuzzBranchFrontier;
 use frontier::FuzzBranchFrontierArtifact;
@@ -50,6 +51,7 @@ pub(super) use frontier::{
     FuzzFrontierRecorder, StatefulFuzzBranchFrontierArtifact, comparison_result, merge_frontiers,
     write_frontier_artifact,
 };
+pub(super) use input_to_state::input_to_state_patches;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
 
 /// Corpus syncs across workers every `SYNC_INTERVAL` runs.
@@ -477,9 +479,11 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
 
     /// Granular and single-step function that runs only one fuzz and returns either a `CaseOutcome`
     /// or a `CounterExampleOutcome`
+    #[expect(clippy::too_many_arguments)]
     fn single_fuzz(
         &self,
         executor: &mut Executor<FEN>,
+        func: &Function,
         address: Address,
         mut tx: BasicTxDetails,
         coverage_metrics: &mut WorkerCorpus,
@@ -530,13 +534,13 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         // Handle `vm.assume` before recording coverage or persisting the input.
         if kind == CampaignCallKind::AssumptionRejected {
             // Account for the attempted corpus mutation without retaining or crediting the input.
-            coverage_metrics.process_inputs(&[], &[], false, None);
+            coverage_metrics.process_inputs(&[], &[], &[], false, None);
             return Err(TestCaseError::reject(FuzzError::AssumeReject));
         }
 
         if call.skip_reason().is_some() {
             // Account for the attempted corpus mutation without retaining or crediting the input.
-            coverage_metrics.process_inputs(&[], &[], false, None);
+            coverage_metrics.process_inputs(&[], &[], &[], false, None);
         } else {
             let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
             // `new_coverage` is only meaningful when edge coverage is collected; otherwise
@@ -550,9 +554,15 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 &cmp_values,
                 frontier_new_coverage,
             );
+            let patches = if new_coverage && self.config.corpus.mutates_evm_comparisons() {
+                input_to_state_patches(state.0, &tx, func, &cmp_values)
+            } else {
+                Vec::new()
+            };
             coverage_metrics.process_inputs(
                 std::slice::from_ref(&tx),
                 &[cmp_values],
+                &[patches],
                 new_coverage,
                 None,
             );
@@ -952,6 +962,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             let case_input = input.clone();
             match self.single_fuzz(
                 &mut executor,
+                func,
                 address,
                 input,
                 &mut corpus,

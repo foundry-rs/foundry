@@ -40,7 +40,8 @@ use super::corpus_io::{
 use crate::{
     executors::{
         Executor, RawCallResult,
-        campaign::{CampaignCallKind, execute_invariant_replay_tx},
+        campaign::{CampaignCallKind, execute_invariant_replay_tx_with},
+        fuzz::input_to_state_patches,
         invariant::execute_tx,
     },
     inspectors::{CmpOperands, EdgeIndexMap},
@@ -68,7 +69,9 @@ use foundry_evm_fuzz::{
         ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, SenderFilters,
         TargetedContracts,
     },
-    sequence::{ComparisonHint, CorpusEntryView, SequenceGenerator, SequencePlan},
+    sequence::{
+        CmpHints, ComparisonHint, CorpusEntryView, SequenceGenerator, SequencePlan, WordPatch,
+    },
 };
 use proptest::test_runner::TestRunner;
 use serde::{Deserialize, Serialize};
@@ -114,10 +117,10 @@ struct CorpusEntry {
     // Corpus call sequence.
     #[serde(skip_serializing)]
     tx_seq: Vec<BasicTxDetails>,
-    // Per-call EVM comparison operands observed while executing this corpus entry.
-    // Parallel to `tx_seq`. Empty inner vec means "no cmp data for this call".
+    // Per-call cmp mutation hints observed while executing this corpus entry.
+    // Parallel to `tx_seq`. Empty hints mean "no cmp data for this call".
     #[serde(skip_serializing)]
-    cmp_seq: Vec<Vec<ComparisonHint>>,
+    cmp_seq: Vec<CmpHints>,
     // Whether this corpus is favored, i.e. producing new finds more often than
     // `FAVORABILITY_THRESHOLD`.
     is_favored: bool,
@@ -136,11 +139,7 @@ impl CorpusEntry {
     }
 
     /// Creates a corpus entry with the given UUID and per-call cmp operand log.
-    pub fn new_with_cmp(
-        tx_seq: Vec<BasicTxDetails>,
-        cmp_seq: Vec<Vec<ComparisonHint>>,
-        uuid: Uuid,
-    ) -> Self {
+    pub fn new_with_cmp(tx_seq: Vec<BasicTxDetails>, cmp_seq: Vec<CmpHints>, uuid: Uuid) -> Self {
         Self {
             uuid,
             total_mutations: 0,
@@ -309,7 +308,7 @@ struct ReplayOutcome {
     new_coverage: bool,
     /// Whether replay hit a first-time edge (advances the per-worker "time since new edge" timer).
     new_edge: bool,
-    cmp_seq: Vec<Vec<ComparisonHint>>,
+    cmp_seq: Vec<CmpHints>,
     failed_replays: usize,
 }
 
@@ -337,6 +336,15 @@ pub(crate) struct ReplayTarget<'a> {
     pub(crate) dynamic: Option<&'a DynamicTargetCtx<'a>>,
     /// Current invariant sender policy; persisted transactions from other senders are rejected.
     pub(crate) senders: Option<&'a SenderFilters>,
+}
+
+/// How a corpus sequence is replayed.
+#[derive(Clone, Copy)]
+struct ReplayOptions {
+    trace_sync: bool,
+    reject_unmatched_function: bool,
+    /// Whether to measure cmp word patches for each call.
+    solve_patches: bool,
 }
 
 struct ReplayCoverage<'a> {
@@ -465,6 +473,7 @@ impl WorkerCorpusSeed {
                     executor,
                     target,
                     coverage,
+                    false,
                 )?;
             seed.failed_replays += failed_replays;
             if new_edge {
@@ -520,7 +529,13 @@ impl WorkerCorpusSeed {
             metrics: Some(&mut seed.metrics),
         };
         let sequences = entries.iter().map(|(_, tx_seq)| tx_seq.as_slice()).collect::<Vec<_>>();
-        let outcomes = replay_corpus_sequences(&sequences, executor, target, coverage)?;
+        let outcomes = replay_corpus_sequences(
+            &sequences,
+            executor,
+            target,
+            coverage,
+            config.mutates_evm_comparisons(),
+        )?;
         for ((entry, tx_seq), outcome) in entries.into_iter().zip(outcomes) {
             let ReplayOutcome { keep_entry, new_edge, cmp_seq, failed_replays, .. } = outcome;
             seed.failed_replays += failed_replays;
@@ -790,9 +805,16 @@ fn replay_corpus_sequence<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     target: ReplayTarget<'_>,
     coverage: ReplayCoverage<'_>,
+    solve_patches: bool,
 ) -> Result<ReplayOutcome> {
     let mut executor = executor.clone();
-    replay_corpus_sequence_with_executor(tx_seq, &mut executor, target, coverage, false, true)
+    replay_corpus_sequence_with_executor(
+        tx_seq,
+        &mut executor,
+        target,
+        coverage,
+        ReplayOptions { trace_sync: false, reject_unmatched_function: true, solve_patches },
+    )
 }
 
 fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
@@ -800,9 +822,9 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
     executor: &mut Executor<FEN>,
     target: ReplayTarget<'_>,
     mut coverage: ReplayCoverage<'_>,
-    trace_sync: bool,
-    reject_unmatched_function: bool,
+    options: ReplayOptions,
 ) -> Result<ReplayOutcome> {
+    let ReplayOptions { trace_sync, reject_unmatched_function, solve_patches } = options;
     let mut cmp_seq = Vec::with_capacity(tx_seq.len());
     let mut failed_replays = 0;
     let mut new_coverage_for_entry = false;
@@ -816,25 +838,9 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
             target.fuzzed_contracts,
             target.senders,
         ) {
-            let (kind, mut call_result) = if target.fuzzed_contracts.is_some() {
-                execute_invariant_replay_tx(executor, tx)?
-            } else {
-                (CampaignCallKind::Accepted, execute_tx(executor, tx)?)
-            };
-            cmp_seq.push(ComparisonHint::applicable(
-                &tx.call_details.calldata,
-                call_result
-                    .evm_cmp_values
-                    .take()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|cmp| ComparisonHint { lhs: cmp.op1, rhs: cmp.op2 }),
-            ));
-            let (new_coverage, is_edge) = call_result.merge_all_coverage(
-                coverage.history_map,
-                coverage.edge_indices,
-                coverage.sancov_history_map,
-            );
+            let ReplayedCall { kind, result: call_result, new_coverage, new_edge: is_edge, cmp } =
+                replay_call(executor, tx, target, &mut coverage, solve_patches)?;
+            cmp_seq.push(cmp);
             if new_coverage {
                 new_coverage_for_entry = true;
                 new_edge_for_entry |= is_edge;
@@ -861,7 +867,7 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
                 );
             }
         } else {
-            cmp_seq.push(Vec::new());
+            cmp_seq.push(CmpHints::default());
             failed_replays += 1;
 
             // The campaign executes loaded sequences verbatim, so a persisted sequence with any
@@ -896,11 +902,76 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
 /// entry. The sequences are merged into a prefix tree that is replayed depth first, and the state
 /// is cloned where sequences diverge. The outcomes are in input order and match replaying each
 /// sequence on its own clone of `executor`, except that coverage is merged in tree order.
+/// A replayed call with what it added to the corpus.
+struct ReplayedCall<FEN: FoundryEvmNetwork> {
+    kind: CampaignCallKind,
+    result: RawCallResult<FEN>,
+    new_coverage: bool,
+    new_edge: bool,
+    cmp: CmpHints,
+}
+
+/// Replays `tx` and measures its cmp hints.
+///
+/// Coverage is merged before the call is committed, so patches are measured only for calls that
+/// add coverage, on the state the call ran on. They are not persisted.
+fn replay_call<FEN: FoundryEvmNetwork>(
+    executor: &mut Executor<FEN>,
+    tx: &BasicTxDetails,
+    target: ReplayTarget<'_>,
+    coverage: &mut ReplayCoverage<'_>,
+    solve_patches: bool,
+) -> Result<ReplayedCall<FEN>> {
+    let mut merge_and_solve = |executor: &Executor<FEN>, result: &mut RawCallResult<FEN>| {
+        let (new_coverage, new_edge) = result.merge_all_coverage(
+            coverage.history_map,
+            coverage.edge_indices,
+            coverage.sancov_history_map,
+        );
+        let function = if new_coverage && solve_patches {
+            match target.fuzzed_contracts {
+                Some(contracts) => contracts.targets().fuzzed_artifacts(tx).1.cloned(),
+                None => target.stateless.map(|stateless| stateless.function.clone()),
+            }
+        } else {
+            None
+        };
+        let patches = function.map_or_else(Vec::new, |function| {
+            input_to_state_patches(
+                executor,
+                tx,
+                &function,
+                result.evm_cmp_values.as_deref().unwrap_or_default(),
+            )
+        });
+        (new_coverage, new_edge, patches)
+    };
+    let (kind, mut result, (new_coverage, new_edge, patches)) = if target.fuzzed_contracts.is_some()
+    {
+        execute_invariant_replay_tx_with(executor, tx, merge_and_solve)?
+    } else {
+        let mut result = execute_tx(executor, tx)?;
+        let merged = merge_and_solve(executor, &mut result);
+        (CampaignCallKind::Accepted, result, merged)
+    };
+    let operands = ComparisonHint::applicable(
+        &tx.call_details.calldata,
+        result
+            .evm_cmp_values
+            .take()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|cmp| ComparisonHint { lhs: cmp.op1, rhs: cmp.op2 }),
+    );
+    Ok(ReplayedCall { kind, result, new_coverage, new_edge, cmp: CmpHints { operands, patches } })
+}
+
 fn replay_corpus_sequences<FEN: FoundryEvmNetwork>(
     sequences: &[&[BasicTxDetails]],
     executor: &Executor<FEN>,
     target: ReplayTarget<'_>,
-    coverage: ReplayCoverage<'_>,
+    mut coverage: ReplayCoverage<'_>,
+    solve_patches: bool,
 ) -> Result<Vec<ReplayOutcome>> {
     /// A call in the prefix tree; node 0 is the empty prefix.
     #[derive(Default)]
@@ -911,10 +982,9 @@ fn replay_corpus_sequences<FEN: FoundryEvmNetwork>(
         replayed: bool,
         new_coverage: bool,
         new_edge: bool,
-        cmp: Vec<ComparisonHint>,
+        cmp: CmpHints,
     }
 
-    let ReplayCoverage { history_map, edge_indices, sancov_history_map, mut metrics } = coverage;
     let mut nodes = vec![Node::default()];
     let mut ends = Vec::with_capacity(sequences.len());
     for sequence in sequences {
@@ -956,23 +1026,9 @@ fn replay_corpus_sequences<FEN: FoundryEvmNetwork>(
             continue;
         }
 
-        let (kind, mut call_result) = if target.fuzzed_contracts.is_some() {
-            execute_invariant_replay_tx(&mut executor, tx)?
-        } else {
-            (CampaignCallKind::Accepted, execute_tx(&mut executor, tx)?)
-        };
-        let cmp = ComparisonHint::applicable(
-            &tx.call_details.calldata,
-            call_result
-                .evm_cmp_values
-                .take()
-                .unwrap_or_default()
-                .into_iter()
-                .map(|cmp| ComparisonHint { lhs: cmp.op1, rhs: cmp.op2 }),
-        );
-        let (new_coverage, new_edge) =
-            call_result.merge_all_coverage(history_map, edge_indices, sancov_history_map);
-        if new_coverage && let Some(metrics) = metrics.as_deref_mut() {
+        let ReplayedCall { kind, result: call_result, new_coverage, new_edge, cmp } =
+            replay_call(&mut executor, tx, target, &mut coverage, solve_patches)?;
+        if new_coverage && let Some(metrics) = coverage.metrics.as_deref_mut() {
             metrics.update_seen(new_edge);
         }
         if kind == CampaignCallKind::Accepted {
@@ -1021,7 +1077,7 @@ fn replay_corpus_sequences<FEN: FoundryEvmNetwork>(
                     // selectors, or senders drops the entry.
                     outcome.keep_entry = false;
                     outcome.failed_replays = 1;
-                    outcome.cmp_seq.push(Vec::new());
+                    outcome.cmp_seq.push(CmpHints::default());
                     break;
                 }
                 outcome.new_coverage |= node.new_coverage;
@@ -1148,12 +1204,14 @@ impl WorkerCorpus {
         &mut self,
         inputs: &[BasicTxDetails],
         cmp_seq: &[Vec<CmpOperands>],
+        patch_seq: &[Vec<WordPatch>],
         new_coverage: bool,
         optimization: Option<(I256, Vec<BasicTxDetails>)>,
     ) {
         self.process_inputs_inner(
             inputs,
             cmp_seq,
+            patch_seq,
             new_coverage,
             optimization,
             CorpusInsertionMode::Live,
@@ -1170,12 +1228,14 @@ impl WorkerCorpus {
         &mut self,
         inputs: &[BasicTxDetails],
         cmp_seq: &[Vec<CmpOperands>],
+        patch_seq: &[Vec<WordPatch>],
         new_coverage: bool,
         optimization: Option<(I256, Vec<BasicTxDetails>)>,
     ) {
         self.process_inputs_inner(
             inputs,
             cmp_seq,
+            patch_seq,
             new_coverage,
             optimization,
             CorpusInsertionMode::Live,
@@ -1183,10 +1243,12 @@ impl WorkerCorpus {
         );
     }
 
+    #[expect(clippy::too_many_arguments)]
     fn process_inputs_inner(
         &mut self,
         inputs: &[BasicTxDetails],
         cmp_seq: &[Vec<CmpOperands>],
+        patch_seq: &[Vec<WordPatch>],
         new_coverage: bool,
         optimization: Option<(I256, Vec<BasicTxDetails>)>,
         insertion_mode: CorpusInsertionMode,
@@ -1242,22 +1304,27 @@ impl WorkerCorpus {
         //
         // `inputs` can be empty when every call was discarded/popped but new coverage was
         // still recorded; there's nothing to persist, so skip without inserting an entry.
-        let corpus_inputs = if improved_optimization && (!new_coverage || inputs.is_empty()) {
-            self.optimization_best_sequence.clone()
-        } else {
-            inputs.to_vec()
-        };
+        let stores_best = improved_optimization && (!new_coverage || inputs.is_empty());
+        let corpus_inputs =
+            if stores_best { self.optimization_best_sequence.clone() } else { inputs.to_vec() };
         if corpus_inputs.is_empty() {
             return;
         }
         let corpus_cmp_seq = cmp_seq
             .iter()
             .zip(&corpus_inputs)
-            .map(|(values, tx)| {
-                ComparisonHint::applicable(
+            .enumerate()
+            .map(|(index, (values, tx))| CmpHints {
+                operands: ComparisonHint::applicable(
                     &tx.call_details.calldata,
                     values.iter().map(|cmp| ComparisonHint { lhs: cmp.op1, rhs: cmp.op2 }),
-                )
+                ),
+                // Patches are offsets into `inputs`, so they do not fit the best sequence.
+                patches: if stores_best {
+                    Vec::new()
+                } else {
+                    patch_seq.get(index).cloned().unwrap_or_default()
+                },
             })
             .collect();
         let corpus = CorpusEntry::new_with_cmp(corpus_inputs, corpus_cmp_seq, Uuid::new_v4());
@@ -1620,8 +1687,11 @@ impl WorkerCorpus {
                     &mut replay_executor,
                     target,
                     coverage,
-                    true,
-                    false,
+                    ReplayOptions {
+                        trace_sync: true,
+                        reject_unmatched_function: false,
+                        solve_patches: self.config.mutates_evm_comparisons(),
+                    },
                 )?;
 
             let sync_path = &entry.path;
@@ -2363,8 +2433,11 @@ mod tests {
                     sancov_history_map: &mut sancov_history_map,
                     metrics: None,
                 },
-                false,
-                true,
+                ReplayOptions {
+                    trace_sync: false,
+                    reject_unmatched_function: true,
+                    solve_patches: false,
+                },
             )
             .unwrap();
             assert!(outcome.keep_entry);
@@ -2762,7 +2835,7 @@ mod tests {
         let worker_subdir = corpus_root.join("worker1");
         let mut manager = empty_worker_corpus(1, corpus_root);
 
-        manager.process_inputs_for_campaign(&[basic_tx()], &[], true, None);
+        manager.process_inputs_for_campaign(&[basic_tx()], &[], &[], true, None);
 
         assert_eq!(manager.in_memory_corpus.len(), 1);
         assert_eq!(manager.metrics.corpus_count, 1);
@@ -2820,14 +2893,14 @@ mod tests {
         let worker_subdir = corpus_root.join("worker1");
         let mut manager = empty_worker_corpus(1, corpus_root);
 
-        manager.process_inputs_for_campaign(&[], &[], true, None);
+        manager.process_inputs_for_campaign(&[], &[], &[], true, None);
 
         assert_eq!(manager.in_memory_corpus.len(), 0);
         assert_eq!(manager.metrics.corpus_count, 0);
         assert_eq!(read_corpus_dir(&worker_subdir.join(CORPUS_DIR)).count(), 0);
 
         // Live processing path must also tolerate the empty sequence.
-        manager.process_inputs(&[], &[], true, None);
+        manager.process_inputs(&[], &[], &[], true, None);
         assert_eq!(manager.in_memory_corpus.len(), 0);
         assert_eq!(read_corpus_dir(&worker_subdir.join(CORPUS_DIR)).count(), 0);
     }
@@ -2839,6 +2912,7 @@ mod tests {
         let sequence = vec![basic_tx()];
         manager.process_inputs_for_campaign(
             &sequence,
+            &[],
             &[],
             false,
             Some((I256::try_from(7).unwrap(), sequence.clone())),
@@ -2951,6 +3025,7 @@ mod tests {
         manager.process_inputs_for_campaign(
             &worse_sequence,
             &[],
+            &[],
             false,
             Some((I256::try_from(50).unwrap(), worse_sequence.clone())),
         );
@@ -2958,6 +3033,7 @@ mod tests {
         let better_sequence = vec![basic_tx()];
         manager.process_inputs_for_campaign(
             &better_sequence,
+            &[],
             &[],
             false,
             Some((I256::try_from(150).unwrap(), better_sequence.clone())),
@@ -3088,7 +3164,10 @@ mod tests {
             .map(|_| {
                 CorpusEntry::new_with_cmp(
                     vec![basic_tx()],
-                    vec![vec![ComparisonHint { lhs: cmp.op1, rhs: cmp.op2 }]],
+                    vec![CmpHints {
+                        operands: vec![ComparisonHint { lhs: cmp.op1, rhs: cmp.op2 }],
+                        patches: Vec::new(),
+                    }],
                     Uuid::new_v4(),
                 )
             })
@@ -3453,7 +3532,7 @@ mod tests {
 
         // Mark this as the currently mutated corpus and process a run with new coverage.
         manager.current_mutated_index = Some(0);
-        manager.process_inputs(&[basic_tx()], &[], true, None);
+        manager.process_inputs(&[basic_tx()], &[], &[], true, None);
 
         let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
         assert!(corpus.is_favored, "expected favored to be true when ratio > threshold");
@@ -3475,7 +3554,7 @@ mod tests {
 
         // Next run does NOT produce coverage → only total_mutations increments, ratio drops.
         manager.current_mutated_index = Some(0);
-        manager.process_inputs(&[basic_tx()], &[], false, None);
+        manager.process_inputs(&[basic_tx()], &[], &[], false, None);
 
         let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
         assert!(!corpus.is_favored, "expected favored to be false when ratio < threshold");
@@ -3495,7 +3574,7 @@ mod tests {
         corpus.is_favored = false;
 
         manager.current_mutated_index = Some(0);
-        manager.process_inputs(&[basic_tx()], &[], true, None);
+        manager.process_inputs(&[basic_tx()], &[], &[], true, None);
 
         let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
         assert!(
@@ -3760,6 +3839,7 @@ mod tests {
                 sancov_history_map: &mut tree_sancov,
                 metrics: None,
             },
+            false,
         )
         .unwrap();
 
@@ -3776,6 +3856,7 @@ mod tests {
                     sancov_history_map: &mut sancov,
                     metrics: None,
                 },
+                false,
             )
             .unwrap();
             assert_eq!(tree.keep_entry, outcome.keep_entry);

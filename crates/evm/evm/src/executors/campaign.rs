@@ -195,6 +195,17 @@ pub(super) fn execute_invariant_replay_tx<FEN: FoundryEvmNetwork>(
     executor: &mut Executor<FEN>,
     tx: &BasicTxDetails,
 ) -> Result<(CampaignCallKind, RawCallResult<FEN>)> {
+    execute_invariant_replay_tx_with(executor, tx, |_, _| ())
+        .map(|(kind, result, ())| (kind, result))
+}
+
+/// Like [`execute_invariant_replay_tx`], and runs `inspect` on the call result before the call is
+/// committed, so the executor still holds the state the call ran on.
+pub(super) fn execute_invariant_replay_tx_with<FEN: FoundryEvmNetwork, T>(
+    executor: &mut Executor<FEN>,
+    tx: &BasicTxDetails,
+    inspect: impl FnOnce(&Executor<FEN>, &mut RawCallResult<FEN>) -> T,
+) -> Result<(CampaignCallKind, RawCallResult<FEN>, T)> {
     let block_snapshot = BlockSnapshot::for_delayed_call(executor, tx);
     let mut result = execute_invariant_tx(executor, &mut tx.clone())?;
     if result.execution_cancelled {
@@ -203,8 +214,9 @@ pub(super) fn execute_invariant_replay_tx<FEN: FoundryEvmNetwork>(
         }
         return Err(eyre!("invariant replay call was cancelled"));
     }
+    let inspected = inspect(executor, &mut result);
     let kind = transition_invariant_call(executor, &mut result, block_snapshot);
-    Ok((kind, result))
+    Ok((kind, result, inspected))
 }
 
 pub(super) fn execute_invariant_tx<FEN: FoundryEvmNetwork>(

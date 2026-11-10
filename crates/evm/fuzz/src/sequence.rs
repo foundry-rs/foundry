@@ -12,6 +12,7 @@ use alloy_json_abi::Function;
 use alloy_primitives::{U256, map::HashSet};
 use eyre::{Result, eyre};
 use foundry_config::{FuzzCorpusConfig, FuzzCorpusMutationWeights};
+use itertools::Either;
 use proptest::test_runner::TestRunner;
 use rand::{
     Rng,
@@ -22,14 +23,11 @@ use rand::{
 #[derive(Clone, Copy)]
 pub struct CorpusEntryView<'a> {
     transactions: &'a [BasicTxDetails],
-    comparisons: &'a [Vec<ComparisonHint>],
+    comparisons: &'a [CmpHints],
 }
 
 impl<'a> CorpusEntryView<'a> {
-    pub fn new(
-        transactions: &'a [BasicTxDetails],
-        comparisons: &'a [Vec<ComparisonHint>],
-    ) -> Result<Self> {
+    pub fn new(transactions: &'a [BasicTxDetails], comparisons: &'a [CmpHints]) -> Result<Self> {
         if transactions.is_empty() {
             return Err(eyre!("corpus entry has no transactions"));
         }
@@ -294,7 +292,8 @@ impl SequenceGenerator {
         let index = runner.rng().random_range(0..corpus_len);
         let entry = entry_at(index)?;
         let mut tx = entry.transactions[0].clone();
-        let hints = entry.comparisons.first().map_or(&[][..], Vec::as_slice);
+        let no_hints = CmpHints::default();
+        let hints = entry.comparisons.first().unwrap_or(&no_hints);
         match self.arg_mutations.as_ref().map(|d| d.sample(runner.rng()) == 1) {
             Some(true)
                 if !SequenceMutator::cmp_mutate(
@@ -520,6 +519,47 @@ impl ComparisonHint {
     }
 }
 
+/// An argument word that flips an observed comparison, measured by running the call again with
+/// that word shifted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct WordPatch {
+    /// Byte offset of the word in the calldata, counting the selector.
+    pub offset: usize,
+    /// The word to write.
+    pub word: U256,
+}
+
+impl WordPatch {
+    /// Returns `calldata` with the word written, or `None` if the word is out of range or
+    /// already there.
+    fn apply(self, calldata: &[u8]) -> Option<Vec<u8>> {
+        let word = self.word.to_be_bytes::<32>();
+        let current = calldata.get(self.offset..self.offset.checked_add(32)?)?;
+        if self.offset < SELECTOR_LEN || current == word {
+            return None;
+        }
+        let mut mutated = calldata.to_vec();
+        mutated[self.offset..self.offset + 32].copy_from_slice(&word);
+        Some(mutated)
+    }
+}
+
+/// Cmp mutation inputs recorded for one transaction.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CmpHints {
+    /// Observed comparisons whose operands occur in the calldata.
+    pub operands: Vec<ComparisonHint>,
+    /// Argument words measured to flip a comparison.
+    pub patches: Vec<WordPatch>,
+}
+
+impl CmpHints {
+    /// Returns whether there is nothing for a cmp mutation to apply.
+    pub const fn is_empty(&self) -> bool {
+        self.operands.is_empty() && self.patches.is_empty()
+    }
+}
+
 /// Pure mutations shared by stateless and invariant sequence producers.
 struct SequenceMutator;
 
@@ -634,10 +674,14 @@ impl SequenceMutator {
         Ok(())
     }
 
+    /// Applies one patch or operand replacement from `hints` and keeps the first whose calldata
+    /// decodes.
+    ///
+    /// Patches are measured solutions, so they are tried before the operands half of the time.
     fn cmp_mutate(
         tx: &mut BasicTxDetails,
         function: &Function,
-        hints: &[ComparisonHint],
+        hints: &CmpHints,
         runner: &mut TestRunner,
         fixtures: &FuzzFixtures,
     ) -> Result<bool> {
@@ -645,23 +689,40 @@ impl SequenceMutator {
             return Ok(false);
         }
         let config = AbiDecoderConfig::new().validate_words(true);
-        let start = runner.rng().random_range(0..hints.len());
-        for offset in 0..hints.len() {
-            if let Some(calldata) = cmp_mutated_calldata(
-                tx.call_details.calldata.as_ref(),
-                hints[(start + offset) % hints.len()],
-                runner,
-            ) && let Ok(inputs) = function.abi_decode_input_with_config(&calldata[4..], config)
+        let patches_first =
+            hints.operands.is_empty() || (!hints.patches.is_empty() && runner.rng().random());
+        let patch_order = rotated_indices(hints.patches.len(), runner);
+        let operand_order = rotated_indices(hints.operands.len(), runner);
+
+        let original = tx.call_details.calldata.clone();
+        let from_patches = patch_order.map(|index| hints.patches[index].apply(&original));
+        let from_operands = operand_order
+            .map(|index| cmp_mutated_calldata(&original, hints.operands[index], runner));
+        let candidates = if patches_first {
+            Either::Left(from_patches.chain(from_operands))
+        } else {
+            Either::Right(from_operands.chain(from_patches))
+        };
+
+        for calldata in candidates.flatten() {
+            if let Ok(inputs) = function.abi_decode_input_with_config(&calldata[4..], config)
                 && inputs.iter().zip(&function.inputs).all(|(value, input)| {
                     constrain_enum_value(value.clone(), input, fixtures) == *value
                 })
             {
+                trace!(target: "corpus", "applied cmp mutation");
                 tx.call_details.calldata = calldata.into();
                 return Ok(true);
             }
         }
         Ok(false)
     }
+}
+
+/// Returns the indices `0..len` starting at a random one and wrapping around.
+fn rotated_indices(len: usize, runner: &mut TestRunner) -> impl Iterator<Item = usize> + use<> {
+    let start = if len == 0 { 0 } else { runner.rng().random_range(0..len) };
+    (0..len).map(move |offset| (start + offset) % len)
 }
 
 /// Operand widths, in bytes, that cmp mutations try to replace.
@@ -694,7 +755,7 @@ fn cmp_mutated_calldata(
 }
 
 /// Length of the function selector that cmp mutations never rewrite.
-const SELECTOR_LEN: usize = 4;
+pub const SELECTOR_LEN: usize = 4;
 
 /// Returns whether `pattern` can be searched for in `calldata` arguments.
 fn is_replaceable_operand(calldata: &[u8], pattern: &[u8]) -> bool {
@@ -823,6 +884,10 @@ mod tests {
         FuzzCorpusConfig { corpus_dir: Some(PathBuf::from("corpus")), ..Default::default() }
     }
 
+    fn operand_hints(operands: impl IntoIterator<Item = ComparisonHint>) -> CmpHints {
+        CmpHints { operands: operands.into_iter().collect(), patches: Vec::new() }
+    }
+
     #[test]
     fn prefix_and_suffix_handle_sequence_edges() {
         let sequence = vec![tx(1), tx(2), tx(3)];
@@ -894,7 +959,7 @@ mod tests {
             SequenceMutator::cmp_mutate(
                 &mut input,
                 &function,
-                &[ComparisonHint { lhs: U256::from(7), rhs: U256::from(42) }],
+                &operand_hints([ComparisonHint { lhs: U256::from(7), rhs: U256::from(42) }]),
                 &mut runner,
                 &FuzzFixtures::default(),
             )
@@ -903,6 +968,59 @@ mod tests {
         let decoded = function.abi_decode_input(&input.call_details.calldata[4..]).unwrap();
         assert_eq!(decoded[0].as_uint().unwrap().0, U256::from(42));
         assert_eq!((input.warp, input.roll, input.sender, input.call_details.value), metadata);
+    }
+
+    #[test]
+    fn cmp_mutation_writes_word_patch() {
+        let function = Function::parse("testCmp(uint256,uint256)").unwrap();
+        let mut input = tx(7);
+        input.call_details.calldata = function
+            .abi_encode_input(&[
+                DynSolValue::Uint(U256::from(1), 256),
+                DynSolValue::Uint(U256::from(5), 256),
+            ])
+            .unwrap()
+            .into();
+        let word = U256::MAX - U256::from(1_000_000u64);
+        let hints =
+            CmpHints { operands: Vec::new(), patches: vec![WordPatch { offset: 36, word }] };
+
+        assert!(
+            SequenceMutator::cmp_mutate(
+                &mut input,
+                &function,
+                &hints,
+                &mut TestRunner::default(),
+                &FuzzFixtures::default(),
+            )
+            .unwrap()
+        );
+        let decoded = function.abi_decode_input(&input.call_details.calldata[4..]).unwrap();
+        assert_eq!(decoded[0].as_uint().unwrap().0, U256::from(1));
+        assert_eq!(decoded[1].as_uint().unwrap().0, word);
+    }
+
+    #[test]
+    fn cmp_mutation_skips_word_patch_that_changes_nothing_or_does_not_decode() {
+        let function = Function::parse("testCmp(uint8)").unwrap();
+        let original = function.abi_encode_input(&[DynSolValue::Uint(U256::from(7), 8)]).unwrap();
+        for word in [U256::from(7), U256::from(0x100)] {
+            let mut input = tx(7);
+            input.call_details.calldata = original.clone().into();
+            let hints =
+                CmpHints { operands: Vec::new(), patches: vec![WordPatch { offset: 4, word }] };
+            assert!(
+                !SequenceMutator::cmp_mutate(
+                    &mut input,
+                    &function,
+                    &hints,
+                    &mut TestRunner::default(),
+                    &FuzzFixtures::default(),
+                )
+                .unwrap()
+            );
+            assert_eq!(input.call_details.calldata.as_ref(), original);
+        }
     }
 
     #[test]
@@ -953,7 +1071,7 @@ mod tests {
                     !SequenceMutator::cmp_mutate(
                         &mut input,
                         &function,
-                        &[ComparisonHint { lhs, rhs }],
+                        &operand_hints([ComparisonHint { lhs, rhs }]),
                         &mut runner,
                         &FuzzFixtures::default(),
                     )
@@ -1016,7 +1134,7 @@ mod tests {
                 SequenceMutator::cmp_mutate(
                     &mut input,
                     &function,
-                    &[ComparisonHint { lhs, rhs }],
+                    &operand_hints([ComparisonHint { lhs, rhs }]),
                     &mut runner,
                     &FuzzFixtures::default(),
                 )
@@ -1240,7 +1358,7 @@ mod tests {
     fn malformed_corpus_views_are_rejected_without_panicking() {
         assert!(CorpusEntryView::new(&[], &[]).is_err());
         let sequence = [tx(1)];
-        let comparisons = [Vec::new(), Vec::new()];
+        let comparisons = [CmpHints::default(), CmpHints::default()];
         assert!(CorpusEntryView::new(&sequence, &comparisons).is_err());
 
         let generator = SequenceGenerator::stateless(
@@ -1308,7 +1426,7 @@ mod tests {
             let mutated = SequenceMutator::cmp_mutate(
                 &mut input,
                 &function,
-                &[hint],
+                &operand_hints([hint]),
                 &mut TestRunner::default(),
                 &FuzzFixtures::default(),
             )

@@ -199,10 +199,14 @@ impl FuzzCorpusConfig {
     /// Frontier capture still records EVM comparison sites because those artifacts target
     /// Solidity bytecode branches, not the active coverage guidance source.
     pub fn collect_evm_cmp_log(&self) -> bool {
-        self.capture_branch_frontiers()
-            || (!self.sancov_edges
-                && self.corpus_dir.is_some()
-                && self.mutation_weights.effective().mutation_weight_cmp > 0)
+        self.capture_branch_frontiers() || self.mutates_evm_comparisons()
+    }
+
+    /// Whether corpus mutations use EVM comparison operands.
+    pub fn mutates_evm_comparisons(&self) -> bool {
+        !self.sancov_edges
+            && self.corpus_dir.is_some()
+            && self.mutation_weights.effective().mutation_weight_cmp > 0
     }
 
     /// Whether fuzz branch frontier artifacts should be captured.

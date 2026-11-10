@@ -11,7 +11,7 @@ use crate::{
         },
         fuzz::{
             FuzzBranchFrontier, FuzzFrontierRecorder, StatefulFuzzBranchFrontierArtifact,
-            merge_frontiers, write_frontier_artifact,
+            input_to_state_patches, merge_frontiers, write_frontier_artifact,
         },
         worker_seed,
     },
@@ -50,6 +50,7 @@ use foundry_evm_fuzz::{
         ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, RandomCallGenerator,
         SenderFilters, TargetedContract, TargetedContracts,
     },
+    sequence::WordPatch,
     strategies::{EvmFuzzState, FuzzState, TxGenerator, override_call_strat},
 };
 use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
@@ -631,6 +632,8 @@ struct InvariantTestRun<FEN: FoundryEvmNetwork> {
     inputs: Vec<BasicTxDetails>,
     // Per-call EVM comparison operands (parallel to `inputs`), captured for I2S corpus mutation.
     cmp_seq: Vec<Vec<crate::inspectors::CmpOperands>>,
+    // Per-call argument words measured to flip a comparison (parallel to `cmp_seq`).
+    patch_seq: Vec<Vec<WordPatch>>,
     // Current invariant run executor.
     executor: Executor<FEN>,
     // Invariant run stat reports (eg. gas usage).
@@ -659,6 +662,7 @@ struct InvariantTestRun<FEN: FoundryEvmNetwork> {
 struct RecordedCallSequence {
     inputs: Vec<BasicTxDetails>,
     cmp_seq: Vec<Vec<crate::inspectors::CmpOperands>>,
+    patch_seq: Vec<Vec<WordPatch>>,
 }
 
 /// Immutable state selected once for a logical invariant campaign and cloned into each worker.
@@ -686,9 +690,12 @@ impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
         inputs.push(first_input);
         let mut cmp_seq = Vec::with_capacity(prefix.len() + depth);
         cmp_seq.resize_with(prefix.len(), Vec::new);
+        let mut patch_seq = Vec::with_capacity(prefix.len() + depth);
+        patch_seq.resize_with(prefix.len(), Vec::new);
         Self {
             inputs,
             cmp_seq,
+            patch_seq,
             executor,
             fuzz_runs: Vec::with_capacity(depth),
             created_contracts: vec![],
@@ -714,6 +721,8 @@ impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
         self.inputs.shrink_to_fit();
         self.cmp_seq.clear();
         self.cmp_seq.shrink_to_fit();
+        self.patch_seq.clear();
+        self.patch_seq.shrink_to_fit();
     }
 }
 
@@ -1134,6 +1143,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             .then(|| RecordedCallSequence {
                 inputs: start.prefix.to_vec(),
                 cmp_seq: vec![Vec::new(); start.prefix.len()],
+                patch_seq: vec![Vec::new(); start.prefix.len()],
             });
 
             // Create current invariant run data.
@@ -1159,6 +1169,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
 
             let mut call_cmp_values = Vec::new();
+            let mut call_patches = Vec::new();
             let mut call_new_coverage = false;
             let mut run_reverts = 0u64;
             let mut coverage_prefix_len = 0;
@@ -1208,6 +1219,26 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 .then(|| error::snapshot_edge_fingerprint(call_result))
                                 .flatten();
                             call_new_coverage = corpus_manager.merge_edge_coverage(call_result);
+                            // The call is not committed yet, so its shifted runs see the same
+                            // pre-state.
+                            call_patches = Vec::new();
+                            if call_new_coverage
+                                && collect_corpus_cmp
+                                && config.corpus.mutates_evm_comparisons()
+                                && let Some(function) = invariant_test
+                                    .targeted_contracts
+                                    .targets()
+                                    .fuzzed_artifacts(current_tx)
+                                    .1
+                                    .cloned()
+                            {
+                                call_patches = input_to_state_patches(
+                                    &current_run.executor,
+                                    current_tx,
+                                    &function,
+                                    &call_cmp_values,
+                                );
+                            }
                             if call_new_coverage {
                                 current_run.new_coverage = true;
                             }
@@ -1251,6 +1282,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 {
                                     history.inputs.push(tx.clone());
                                     history.cmp_seq.push(call_cmp_values.clone());
+                                    history.patch_seq.push(call_patches.clone());
                                 } else {
                                     frontier_run = None;
                                     current_run
@@ -1276,16 +1308,23 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                         corpus_run
                                             .cmp_seq
                                             .push(std::mem::take(&mut call_cmp_values));
+                                        corpus_run
+                                            .patch_seq
+                                            .push(std::mem::take(&mut call_patches));
                                     }
                                 } else if result.reverted && !preserve_revert && call_new_coverage {
                                     let mut cmp_seq = std::mem::take(&mut current_run.cmp_seq);
                                     cmp_seq.push(std::mem::take(&mut call_cmp_values));
+                                    let mut patch_seq = std::mem::take(&mut current_run.patch_seq);
+                                    patch_seq.push(std::mem::take(&mut call_patches));
                                     corpus_run = Some(RecordedCallSequence {
                                         inputs: current_run.inputs.clone(),
                                         cmp_seq,
+                                        patch_seq,
                                     });
                                 } else if !result.reverted || preserve_revert {
                                     current_run.cmp_seq.push(std::mem::take(&mut call_cmp_values));
+                                    current_run.patch_seq.push(std::mem::take(&mut call_patches));
                                 }
                                 if call_new_coverage {
                                     coverage_prefix_len = corpus_run
@@ -1550,14 +1589,19 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             let mut corpus_cmp_seq = corpus_run
                 .as_ref()
                 .map_or(current_run.cmp_seq.as_slice(), |history| history.cmp_seq.as_slice());
+            let mut corpus_patch_seq = corpus_run
+                .as_ref()
+                .map_or(current_run.patch_seq.as_slice(), |history| history.patch_seq.as_slice());
             if current_run.new_coverage && !invariant_contract.is_optimization() {
                 corpus_inputs = &corpus_inputs[..coverage_prefix_len];
                 corpus_cmp_seq = &corpus_cmp_seq[..coverage_prefix_len];
+                corpus_patch_seq = &corpus_patch_seq[..coverage_prefix_len];
             }
             if worker_count > 1 {
                 corpus_manager.process_inputs_for_campaign(
                     corpus_inputs,
                     corpus_cmp_seq,
+                    corpus_patch_seq,
                     current_run.new_coverage,
                     optimization,
                 );
@@ -1565,6 +1609,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 corpus_manager.process_inputs(
                     corpus_inputs,
                     corpus_cmp_seq,
+                    corpus_patch_seq,
                     current_run.new_coverage,
                     optimization,
                 );
