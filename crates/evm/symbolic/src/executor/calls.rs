@@ -650,7 +650,7 @@ impl SymbolicExecutor {
         // expectation when the revert reaches the top frame.
         if unmet_expected_emit {
             success = false;
-            return_data = self.unmet_expected_emit_return_data(executor, state)?;
+            return_data = self.unmet_expected_emit_return_data(executor, state);
         }
         state.return_data = return_data;
         state.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;
@@ -810,13 +810,14 @@ impl SymbolicExecutor {
 
     /// Return data of a call that failed the pending `vm.expectEmit`: an ABI-encoded string
     /// without an error selector, like Forge's `UnmetEmit`. When the last mismatching log is
-    /// fixed on this path, the string is the message Forge builds from it. Symbolic messages
-    /// report incomplete rather than inventing bytes that the caller could inspect.
+    /// fixed on this path, the string is the message Forge builds from it. A symbolic message
+    /// uses a placeholder and defers incomplete, so a caller that inspects it cannot prove a
+    /// path, while an uncaught failure still gives a counterexample.
     fn unmet_expected_emit_return_data(
         &mut self,
         executor: &ExecutorView<'_>,
         state: &mut PathState,
-    ) -> Result<SymReturnData, SymbolicError> {
+    ) -> SymReturnData {
         let expected = state.expected_emit.as_ref().expect("an unmet expectation failed the call");
         let message = match (expected.template(), expected.mismatch()) {
             (Some(template), Some(actual)) => {
@@ -824,9 +825,11 @@ impl SymbolicExecutor {
             }
             _ => Some("log != expected log".to_string()),
         };
-        let message =
-            message.ok_or(SymbolicError::Unsupported("symbolic expectEmit mismatch message"))?;
-        Ok(SymReturnData::from_concrete_bytes(&mut self.cx, sol_data::String::abi_encode(&message)))
+        let message = message.unwrap_or_else(|| {
+            self.defer_incomplete("symbolic expectEmit mismatch message");
+            "log != expected log".to_string()
+        });
+        SymReturnData::from_concrete_bytes(&mut self.cx, sol_data::String::abi_encode(&message))
     }
 
     /// Builds Forge's message for `actual` not matching `template`, when the values it reads are
@@ -1383,7 +1386,7 @@ impl SymbolicExecutor {
                 }
                 JoinedCallOutcome::ExceptionalHalt(mut parent) => {
                     parent.return_data = if parent.check_expected_emit_after_call(kind) {
-                        self.unmet_expected_emit_return_data(executor, &mut parent)?
+                        self.unmet_expected_emit_return_data(executor, &mut parent)
                     } else {
                         SymReturnData::empty(&mut self.cx)
                     };
@@ -1410,7 +1413,7 @@ impl SymbolicExecutor {
                     parent.return_data = match unmet_expected_revert {
                         Some(reason) => error_string_return_data(&mut self.cx, reason),
                         None if unmet_expected_emit => {
-                            self.unmet_expected_emit_return_data(executor, &mut parent)?
+                            self.unmet_expected_emit_return_data(executor, &mut parent)
                         }
                         None => child.frame.return_data,
                     };

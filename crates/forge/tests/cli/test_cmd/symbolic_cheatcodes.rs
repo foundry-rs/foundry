@@ -4621,7 +4621,7 @@ contract SymbolicExpectEmitMismatch is Test {
 ...
 Ran 2 tests for test/SymbolicExpectEmitMismatch.t.sol:SymbolicExpectEmitMismatch
 [FAIL: Seen param mismatch at id: expected=7, got=8; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMismatchedExpectEmit(uint256) ([METRICS])
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic expectEmit mismatch message] checkMismatchedExpectEmitSymbolicEmitter(address) ([METRICS])
+[FAIL: log emitter mismatch: expected=0xffffffffffffffffffffffffffffffffffffffff, got=0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMismatchedExpectEmitSymbolicEmitter(address) ([METRICS])
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
@@ -4636,7 +4636,7 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
     .stdout_eq(str![[r#"
 ...
 Ran 1 test for test/SymbolicExpectEmitMismatch.t.sol:SymbolicExpectEmitMismatch
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic expectEmit mismatch message] checkMismatchedExpectEmitSymbolicEmitter(address) ([METRICS])
+[FAIL: log emitter mismatch: expected=0xffffffffffffffffffffffffffffffffffffffff, got=0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMismatchedExpectEmitSymbolicEmitter(address) ([METRICS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
@@ -8619,7 +8619,7 @@ Ran 22 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCoun
 [PASS] checkExpectEmitCaughtFailureKeepsExpectation(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitFailureHasNoErrorSelector(uint256) ([METRICS])
 [FAIL: log != expected log; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitInLaterCall(uint256) ([METRICS])
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic expectEmit mismatch message] checkExpectEmitRequiresSameTopicCount(uint256) ([METRICS])
+[FAIL: Set indexed topic count mismatch: expected 1, got 0; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitRequiresSameTopicCount(uint256) ([METRICS])
 [PASS] checkExpectNoEmitAllowsOtherEvent(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit count 0 across a failed call] checkExpectNoEmitAnonymousInRevertedCall(uint256) ([METRICS])
 [FAIL: use vm.expectEmitAnonymous to match anonymous events; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectNoEmitAnonymousTemplate(uint256) ([METRICS])
