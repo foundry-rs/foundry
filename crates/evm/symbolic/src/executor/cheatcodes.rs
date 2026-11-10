@@ -297,17 +297,22 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Revert);
         }
 
+        // Like Forge, the CREATE applies and consumes a pending prank.
+        let (creator, creator_word, pranked_origin) = state.prank_for_next_call();
+        if creator_word.as_const().is_none() {
+            return Err(SymbolicError::Unsupported("symbolic vm.deployCode prank"));
+        }
         self.stateless_retry_safe = false;
         let mut initcode = artifact_code(&artifact, false)?;
         initcode.extend_from_slice(&constructor_args);
         let initcode = SymCode::concrete(&mut self.cx, initcode);
 
-        let nonce = state.world.nonce(executor, state.address)?;
-        let created = state.address.create(nonce);
+        let nonce = state.world.nonce(executor, creator)?;
+        let created = creator.create(nonce);
         let created_word = SymExpr::constant(&mut self.cx, address_word(created));
 
         let mut failure_world = state.world.clone();
-        failure_world.increment_nonce(executor, state.address)?;
+        failure_world.increment_nonce(executor, creator)?;
         if failure_world.has_code_or_nonce(&mut self.cx, executor, created)? {
             state.world = failure_world;
             let zero = SymExpr::zero(&mut self.cx);
@@ -320,9 +325,9 @@ impl SymbolicExecutor {
         let calldata = SymBytes::empty(&mut self.cx);
         let calldata = SymCalldata::from_bytes(&mut self.cx, calldata);
         let mut frame =
-            CallFrame::new(&mut self.cx, created, created, state.address, zero, false, calldata);
+            CallFrame::new(&mut self.cx, created, created, creator, zero, false, calldata);
         frame.address_word = created_word.clone();
-        frame.caller_word = state.address_word.clone();
+        frame.caller_word = creator_word;
         // Isolation runs a `deployCode` from the test frame as its own transaction.
         let isolated = state.starts_isolated_transaction(executor);
         let mut child = state.child(frame);
@@ -332,6 +337,10 @@ impl SymbolicExecutor {
         child.world = failure_world.clone();
         if isolated {
             child.world.clear_transient_storage();
+        }
+        if let Some((origin, origin_word)) = pranked_origin {
+            child.origin = origin;
+            child.origin_word = origin_word;
         }
         child.world.mark_current_transaction_created(created);
         child.persistent_writes.push(PersistentWrite::Created(created));
@@ -397,7 +406,7 @@ impl SymbolicExecutor {
                     parent.expected_emit = child.expected_emit;
                     self.observe_expected_create(
                         &mut parent,
-                        state.address,
+                        creator,
                         CreateKind::Create,
                         &child.frame.return_data,
                     )?;

@@ -256,6 +256,15 @@ contract SymbolicPrankSender is Test {
         vm.prank(address(0xB));
     }
 
+    function checkDeployCodeConsumesPrank() public {
+        vm.prank(address(0xA), address(0xB));
+        CreatedBySender created =
+            CreatedBySender(vm.deployCode("SymbolicPrankSender.t.sol:CreatedBySender"));
+        vm.prank(address(0xC));
+        assertEq(created.creator(), address(0xA));
+        assertEq(created.origin(), address(0xB));
+    }
+
     function checkCreateConsumesPrank() public {
         vm.prank(address(0xA));
         new SenderTarget();
@@ -283,8 +292,9 @@ contract SymbolicPrankSender is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 10 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
+Ran 11 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
 [PASS] checkCreateConsumesPrank() ([METRICS])
+[PASS] checkDeployCodeConsumesPrank() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCreateConsumesStartPrank() ([METRICS])
 [FAIL: vm.prank: cannot override an ongoing prank with a single vm.prank; use vm.startPrank to override the current prank; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkPrankRejectsOngoingStartPrankOverride() ([METRICS])
 [FAIL: vm.prank: cannot overwrite a prank until it is applied at least once; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkPrankRejectsUnusedPrankOverwrite() ([METRICS])
@@ -294,7 +304,7 @@ Ran 10 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
 [PASS] checkSymbolicStartPrank(address) ([METRICS])
 [PASS] checkSymbolicStartPrankCreate2(address,address) ([METRICS])
 [PASS] checkSymbolicStartPrankOrigin(address,address) ([METRICS])
-Suite result: FAILED. 7 passed; 3 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 8 passed; 3 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
