@@ -541,16 +541,24 @@ fn return_expression_comment_is_idempotent() {
 }
 
 #[test]
-fn unmatched_disable_end_preserves_doc_comments() {
+fn unmatched_disable_end_preserves_comments_and_nested_blocks() {
     let source = r#"// forgefmt: disable-end
 // forgefmt: disable-end
-/**@notice First contract.*/
-contract A {}
+/**@notice Before disabled blocks.*/
+contract  Before {}
+// forgefmt: disable-start
+contract  OuterDisabled {}
+// forgefmt: disable-start
+contract  InnerDisabled {}
+// forgefmt: disable-end
+contract  StillDisabled {}
+// forgefmt: disable-end
+// forgefmt: disable-end
 /* Another comment. */
 /**
- * @notice Second contract.
+ * @notice After disabled blocks.
  */
-contract B {}
+contract  After {}
 "#;
 
     for wrap_comments in [false, true] {
@@ -561,55 +569,27 @@ contract B {}
 // forgefmt: disable-end
 // forgefmt: disable-end
 /**
- * @notice First contract.
+ * @notice Before disabled blocks.
  */
-contract A {}
+contract Before {}
 
+// forgefmt: disable-start
+contract  OuterDisabled {}
+// forgefmt: disable-start
+contract  InnerDisabled {}
+// forgefmt: disable-end
+contract  StillDisabled {}
+// forgefmt: disable-end
+// forgefmt: disable-end
 /* Another comment. */
 /**
- * @notice Second contract.
+ * @notice After disabled blocks.
  */
-contract B {}
+contract After {}
 
 "#]]
         );
     }
-}
-
-#[test]
-fn unmatched_disable_end_preserves_nested_disabled_blocks() {
-    let source = r#"// forgefmt: disable-end
-// forgefmt: disable-start
-contract  OuterDisabled {}
-// forgefmt: disable-start
-contract  InnerDisabled {}
-// forgefmt: disable-end
-contract  StillDisabled {}
-// forgefmt: disable-end
-// forgefmt: disable-end
-/**@notice Enabled documentation.*/
-contract  Enabled {}
-"#;
-
-    assert_data_eq!(
-        format(source, Path::new("test.sol"), Arc::new(FormatterConfig::default())),
-        str![[r#"
-// forgefmt: disable-end
-// forgefmt: disable-start
-contract  OuterDisabled {}
-// forgefmt: disable-start
-contract  InnerDisabled {}
-// forgefmt: disable-end
-contract  StillDisabled {}
-// forgefmt: disable-end
-// forgefmt: disable-end
-/**
- * @notice Enabled documentation.
- */
-contract Enabled {}
-
-"#]]
-    );
 }
 
 #[test]

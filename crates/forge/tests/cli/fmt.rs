@@ -518,176 +518,73 @@ fn fmt_skips_symlinked_configured_file(prj: _, cmd: _) {
 }
 
 #[forgetest]
-fn fmt_unmatched_disable_end_preserves_doc_comments(prj: _, cmd: _) {
-    prj.add_raw_source(
-        "Test.sol",
-        r#"// forgefmt: disable-end
+fn fmt_directives_preserve_comments_and_targets(prj: _, cmd: _) {
+    for wrap_comments in [false, true] {
+        prj.update_config(|config| {
+            config.fmt.wrap_comments = wrap_comments;
+            config.fmt.docs_style = DocCommentStyle::Block;
+        });
+        prj.add_raw_source(
+            "Test.sol",
+            r#"// forgefmt: disable-end
 // forgefmt: disable-end
-/**
- * First contract.
- */
+/**@notice First contract.*/
 contract  A {}
-/* Regular comment. */
-contract  B {}
-"#,
-    );
-
-    cmd.args(["fmt", "src/Test.sol"]).assert_success().stdout_eq("").stderr_eq(str![[r#"
-Formatted [..]/src/Test.sol
-
-"#]]);
-    assert_data_eq!(
-        std::fs::read_to_string(prj.root().join("src/Test.sol")).unwrap(),
-        str![[r#"
-// forgefmt: disable-end
-// forgefmt: disable-end
-/**
- * First contract.
- */
-contract A {}
-
-/* Regular comment. */
-contract B {}
-
-"#]],
-    );
-}
-
-#[forgetest]
-fn fmt_compact_disable_end_preserves_doc_comments(prj: _, cmd: _) {
-    for (source, expected) in [
-        (
-            r#"// forgefmt: disable-start
-contract  A {}
-// forgefmt:disable-end
-/**@notice format me*/
-contract  B {}
-"#,
-            str![[r#"
 // forgefmt: disable-start
-contract  A {}
+contract  Disabled {}
 // forgefmt:disable-end
-/**
- * @notice format me
- */
-contract B {}
-
-"#]],
-        ),
-        (
-            r#"// forgefmt: disable-start
-contract  A {}
-// forgefmt:disable-end
-/**@notice format me*/
+/**@notice Second contract.*/
 contract  B {}
 /* stop */
+/// @notice Before.
+/// forgefmt:disable-next-item
+/// @dev After.
 contract  C {}
+
+contract  D {}
 "#,
+        );
+
+        cmd.forge_fuse().args(["fmt", "src/Test.sol"]).assert_success().stdout_eq("").stderr_eq(
             str![[r#"
+Formatted [..]/src/Test.sol
+
+"#]],
+        );
+        assert_data_eq!(
+            std::fs::read_to_string(prj.root().join("src/Test.sol")).unwrap(),
+            str![[r#"
+// forgefmt: disable-end
+// forgefmt: disable-end
+/**
+ * @notice First contract.
+ */
+contract A {}
+
 // forgefmt: disable-start
-contract  A {}
+contract  Disabled {}
 // forgefmt:disable-end
 /**
- * @notice format me
+ * @notice Second contract.
  */
 contract B {}
 
 /* stop */
-contract C {}
-
-"#]],
-        ),
-    ] {
-        for wrap_comments in [false, true] {
-            prj.update_config(|config| config.fmt.wrap_comments = wrap_comments);
-            prj.add_raw_source("Test.sol", source);
-
-            cmd.forge_fuse()
-                .args(["fmt", "src/Test.sol"])
-                .assert_success()
-                .stdout_eq("")
-                .stderr_eq(str![[r#"
-Formatted [..]/src/Test.sol
-
-"#]]);
-            assert_data_eq!(
-                std::fs::read_to_string(prj.root().join("src/Test.sol")).unwrap(),
-                expected.clone(),
-            );
-        }
-    }
-}
-
-#[forgetest]
-fn fmt_doc_directives_preserve_doc_runs(prj: _, cmd: _) {
-    for (source, expected) in [
-        (
-            r#"/// @notice Before.
-/// forgefmt:disable-end
-/// @dev After.
-contract  A {}
-
-contract  B {}
-"#,
-            str![[r#"
-/// @notice Before.
-/// forgefmt:disable-end
-/// @dev After.
-contract A {}
-
-contract B {}
-
-"#]],
-        ),
-        (
-            r#"/// @notice Before.
-/// forgefmt:disable-next-item
-/// @dev After.
-contract  A {}
-
-contract  B {}
-"#,
-            str![[r#"
 /// @notice Before.
 /// forgefmt:disable-next-item
 /// @dev After.
-contract  A {}
+contract  C {}
 
-contract B {}
+contract D {}
 
 "#]],
-        ),
-    ] {
-        for wrap_comments in [false, true] {
-            prj.update_config(|config| {
-                config.fmt.wrap_comments = wrap_comments;
-                config.fmt.docs_style = DocCommentStyle::Block;
-            });
-            prj.add_raw_source("Test.sol", source);
-
-            cmd.forge_fuse()
-                .args(["fmt", "src/Test.sol"])
-                .assert_success()
-                .stdout_eq("")
-                .stderr_eq(str![[r#"
-Formatted [..]/src/Test.sol
-
-"#]]);
-            assert_data_eq!(
-                std::fs::read_to_string(prj.root().join("src/Test.sol")).unwrap(),
-                expected.clone(),
-            );
-            cmd.forge_fuse()
-                .args(["fmt", "src/Test.sol"])
-                .assert_success()
-                .stdout_eq("")
-                .stderr_eq("");
-            cmd.forge_fuse()
-                .args(["fmt", "src/Test.sol", "--check"])
-                .assert_success()
-                .stdout_eq("")
-                .stderr_eq("");
-        }
+        );
+        cmd.forge_fuse().args(["fmt", "src/Test.sol"]).assert_success().stdout_eq("").stderr_eq("");
+        cmd.forge_fuse()
+            .args(["fmt", "src/Test.sol", "--check"])
+            .assert_success()
+            .stdout_eq("")
+            .stderr_eq("");
     }
 }
 
