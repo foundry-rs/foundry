@@ -1,5 +1,7 @@
 use super::*;
-use alloy_sol_types::{Revert, SolError};
+use alloy_primitives::{Log, LogData};
+use alloy_sol_types::{Revert, SolError, SolType, sol_data};
+use foundry_evm::inspectors::cheatcodes::unmatched_emit_message;
 
 impl SymbolicExecutor {
     pub(super) fn call(
@@ -643,7 +645,7 @@ impl SymbolicExecutor {
         // expectation when the revert reaches the top frame.
         if unmet_expected_emit {
             success = false;
-            return_data = unmet_expected_emit_return_data(&mut self.cx);
+            return_data = self.unmet_expected_emit_return_data(executor, state)?;
         }
         state.return_data = return_data;
         state.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;
@@ -746,37 +748,40 @@ impl SymbolicExecutor {
         };
 
         if let Some(template) = expected.template().cloned() {
-            if expected.is_forbidden() {
-                // Like Forge, a log matching a `count = 0` expectation reverts the emitting frame.
-                let Some(condition) = expected.match_condition(&mut self.cx, &template, &log)
-                else {
+            // Like Forge, a log that does not match keeps the expectation pending for a later
+            // log, so a feasible mismatch continues on its own path.
+            let condition = match expected.match_condition(&mut self.cx, &template, &log) {
+                Some(condition) => condition,
+                None if expected.is_forbidden() => {
                     return Err(SymbolicError::Unsupported(
                         "symbolic vm.expectEmit count 0 with symbolic log size",
                     ));
-                };
-                let (match_constraints, match_sat) =
-                    self.constraints_with_condition(state, condition.clone())?;
-                if !match_sat {
-                    state.expected_emit = Some(expected);
-                    state.record_log(log);
-                    return Ok(StepOutcome::Continue);
                 }
-                let mismatch = condition.not(&mut self.cx);
-                if let Some(constraints) = self.constraints_for_condition(state, mismatch)? {
-                    let mut mismatch_state = state.clone();
-                    mismatch_state.constraints = constraints;
-                    mismatch_state.expected_emit = Some(expected.clone());
-                    mismatch_state.record_log(log);
-                    worklist.push_back(mismatch_state);
-                }
-                state.constraints = match_constraints;
-                state.expected_emit = Some(expected);
-                return self.revert_expect_emit(state, "log emitted but expected 0 times");
-            }
-            if !self.expected_emit_matches(state, &expected, &template, &log)? {
+                None => SymBoolExpr::constant(&mut self.cx, false),
+            };
+            let (match_constraints, match_sat) =
+                self.constraints_with_condition(state, condition.clone())?;
+            if !match_sat {
+                expected.record_mismatch(&log);
                 state.expected_emit = Some(expected);
                 state.record_log(log);
-                return Ok(StepOutcome::Failure);
+                return Ok(StepOutcome::Continue);
+            }
+            let mismatch = condition.not(&mut self.cx);
+            if let Some(constraints) = self.constraints_for_condition(state, mismatch)? {
+                let mut mismatch_state = state.clone();
+                mismatch_state.constraints = constraints;
+                let mut pending = expected.clone();
+                pending.record_mismatch(&log);
+                mismatch_state.expected_emit = Some(pending);
+                mismatch_state.record_log(log.clone());
+                worklist.push_back(mismatch_state);
+            }
+            state.constraints = match_constraints;
+            if expected.is_forbidden() {
+                // Like Forge, a log matching a `count = 0` expectation reverts the emitting frame.
+                state.expected_emit = Some(expected);
+                return self.revert_expect_emit(state, "log emitted but expected 0 times");
             }
             if !expected.consume_one() {
                 state.expected_emit = Some(expected);
@@ -798,6 +803,57 @@ impl SymbolicExecutor {
         Ok(StepOutcome::Continue)
     }
 
+    /// Return data of a call that failed the pending `vm.expectEmit`: an ABI-encoded string
+    /// without an error selector, like Forge's `UnmetEmit`. When the last mismatching log is
+    /// fixed on this path, the string is the message Forge builds from it. Symbolic messages
+    /// report incomplete rather than inventing bytes that the caller could inspect.
+    fn unmet_expected_emit_return_data(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        state: &mut PathState,
+    ) -> Result<SymReturnData, SymbolicError> {
+        let expected = state.expected_emit.as_ref().expect("an unmet expectation failed the call");
+        let message = match (expected.template(), expected.mismatch()) {
+            (Some(template), Some(actual)) => {
+                self.concrete_mismatch_message(executor, state, expected, template, actual)
+            }
+            _ => Some("log != expected log".to_string()),
+        };
+        let message =
+            message.ok_or(SymbolicError::Unsupported("symbolic expectEmit mismatch message"))?;
+        Ok(SymReturnData::from_concrete_bytes(&mut self.cx, sol_data::String::abi_encode(&message)))
+    }
+
+    /// Builds Forge's message for `actual` not matching `template`, when the values it reads are
+    /// fixed on this path.
+    fn concrete_mismatch_message(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        state: &PathState,
+        expected: &ExpectedEmit,
+        template: &SymbolicLog,
+        actual: &SymbolicLog,
+    ) -> Option<String> {
+        let checks = expected.checks();
+        let anonymous = expected.is_anonymous();
+        let template_topics = state.concrete_log_topics(&mut self.cx, template)?;
+        let actual_topics = state.concrete_log_topics(&mut self.cx, actual)?;
+        let template_data = state.concrete_log_data(&mut self.cx, template)?;
+        let actual_data = state.concrete_log_data(&mut self.cx, actual)?;
+        let expected_emitter = match expected.emitter() {
+            Some(emitter) => Some(word_to_address(state.constrained_word(&mut self.cx, emitter)?)),
+            None => None,
+        };
+        Some(unmatched_emit_message(
+            || executor.signatures,
+            checks,
+            &LogData::new_unchecked(template_topics, template_data),
+            expected_emitter,
+            anonymous,
+            &Log::new_unchecked(actual.emitter(), actual_topics, actual_data),
+        ))
+    }
+
     /// Reverts the current frame with a `vm.expectEmit` failure, as Forge does for the emitting
     /// frame.
     fn revert_expect_emit(
@@ -807,35 +863,6 @@ impl SymbolicExecutor {
     ) -> Result<StepOutcome, SymbolicError> {
         state.return_data = error_string_return_data(&mut self.cx, reason);
         self.classify_revert(state)
-    }
-
-    /// Returns whether `expected_emit_matches` holds.
-    pub(super) fn expected_emit_matches(
-        &mut self,
-        state: &mut PathState,
-        expected: &ExpectedEmit,
-        template: &SymbolicLog,
-        actual: &SymbolicLog,
-    ) -> Result<bool, SymbolicError> {
-        let Some(condition) = expected.match_condition(&mut self.cx, template, actual) else {
-            return Ok(false);
-        };
-        let (match_constraints, match_sat) =
-            self.constraints_with_condition(state, condition.clone())?;
-        if !match_sat {
-            return Ok(false);
-        }
-
-        let mismatch_condition = condition.not(&mut self.cx);
-        let (mismatch_constraints, mismatch_sat) =
-            self.constraints_with_condition(state, mismatch_condition)?;
-        if mismatch_sat {
-            state.constraints = mismatch_constraints;
-            return Ok(false);
-        }
-
-        state.constraints = match_constraints;
-        Ok(true)
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -1332,7 +1359,7 @@ impl SymbolicExecutor {
                 }
                 JoinedCallOutcome::ExceptionalHalt(mut parent) => {
                     parent.return_data = if parent.check_expected_emit_after_call(kind) {
-                        unmet_expected_emit_return_data(&mut self.cx)
+                        self.unmet_expected_emit_return_data(executor, &mut parent)?
                     } else {
                         SymReturnData::empty(&mut self.cx)
                     };
@@ -1359,7 +1386,7 @@ impl SymbolicExecutor {
                     parent.return_data = match unmet_expected_revert {
                         Some(reason) => error_string_return_data(&mut self.cx, reason),
                         None if unmet_expected_emit => {
-                            unmet_expected_emit_return_data(&mut self.cx)
+                            self.unmet_expected_emit_return_data(executor, &mut parent)?
                         }
                         None => child.frame.return_data,
                     };

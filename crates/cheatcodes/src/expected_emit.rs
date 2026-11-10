@@ -546,6 +546,29 @@ impl UnmetEmit {
     }
 }
 
+/// Formats the failure of an unmet expectation whose last checked log was `actual`, as
+/// `UnmetEmit::Unmatched` encodes it: the log mismatch against `expected`, or the emitter
+/// mismatch when the log itself matched.
+pub fn unmatched_emit_message<'a>(
+    identifier: impl FnOnce() -> Option<&'a SignaturesIdentifier>,
+    checks: [bool; 5],
+    expected: &RawLog,
+    expected_emitter: Option<Address>,
+    anonymous: bool,
+    actual: &Log,
+) -> String {
+    let mismatch = if !checks_topics_and_data(checks, expected, &actual.data) {
+        EmitMismatch::Log { actual: actual.data.clone() }
+    } else if let Some(expected_emitter) =
+        expected_emitter.filter(|emitter| *emitter != actual.address)
+    {
+        EmitMismatch::Emitter { expected: expected_emitter, actual: actual.address }
+    } else {
+        return "log != expected log".to_string();
+    };
+    mismatch.to_error_msg(identifier, checks, Some(expected), anonymous)
+}
+
 /// Checks the entire tracker when a non-static call ends at any tracked expectation's `depth`.
 ///
 /// Clears the tracker only if all expectations are satisfied; otherwise leaves it untouched.

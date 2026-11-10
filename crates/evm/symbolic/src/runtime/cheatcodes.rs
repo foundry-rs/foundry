@@ -308,12 +308,6 @@ pub(crate) fn error_string_return_data(cx: &mut SymCx, reason: &str) -> SymRetur
     SymReturnData::from_concrete_bytes(cx, bytes)
 }
 
-/// Return data of a call that fails a pending `vm.expectEmit`. Like Forge's `UnmetEmit`, it is an
-/// ABI-encoded string without an error selector.
-pub(crate) fn unmet_expected_emit_return_data(cx: &mut SymCx) -> SymReturnData {
-    SymReturnData::from_concrete_bytes(cx, sol_data::String::abi_encode("log != expected log"))
-}
-
 pub(crate) fn recorded_logs_return_data(cx: &mut SymCx, logs: Vec<SymbolicLog>) -> SymReturnData {
     let value = SymbolicAbiValue::Array {
         elements: logs
