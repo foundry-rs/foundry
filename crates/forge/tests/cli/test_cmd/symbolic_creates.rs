@@ -60,27 +60,15 @@ contract SymbolicInvalidInitcode {
 "#,
     );
 
-    assert_symbolic(cmd.args([
-        "test",
-        "--symbolic",
-        "--match-contract",
-        "SymbolicInvalidInitcode",
-    ]))
-    .success()
-    .stdout_eq(str![[r#"
-...
-Ran 2 tests for test/SymbolicInvalidInitcode.t.sol:SymbolicInvalidInitcode
-[PASS] checkInvalidInitcode() ([METRICS])
-[PASS] checkTruncatedPushRuntimeStops() ([METRICS])
-    cmd.args(["test", "--symbolic", "--match-test", "checkInvalidInitcode"]).assert_success();
-
-    cmd.forge_fuse();
-    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkSymbolicInitcodeJumpTable"]))
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicInvalidInitcode"]))
         .failure()
         .stdout_eq(str![[r#"
-Ran 1 test for test/SymbolicInvalidInitcode.t.sol:SymbolicInvalidInitcode
+...
+Ran 3 tests for test/SymbolicInvalidInitcode.t.sol:SymbolicInvalidInitcode
+[PASS] checkInvalidInitcode() ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic bytecode jump table] checkSymbolicInitcodeJumpTable(bytes1) ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+[PASS] checkTruncatedPushRuntimeStops() ([METRICS])
+Suite result: FAILED. 2 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
