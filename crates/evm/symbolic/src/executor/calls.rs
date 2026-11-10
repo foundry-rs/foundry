@@ -1300,32 +1300,65 @@ impl SymbolicExecutor {
             } else {
                 None
             };
-            let outcome = execute_symbolic_precompile(
-                &mut self.cx,
-                code_address,
-                input.clone(),
-                input_len.clone(),
-                spec_id,
-                gas,
-                modexp_lengths,
-            )?;
+            // A path can pin a symbolic input to one value, as `if (a == 1)` does before
+            // `sha256(abi.encode(a))`: run the precompile on that value so the result is exact
+            // and a counterexample replays, instead of an opaque term over the pinned bytes.
+            let pinned_input = input_len
+                .as_const()
+                .and_then(|len| usize::try_from(len).ok())
+                .filter(|len| *len <= input.len())
+                .and_then(|len| {
+                    let bytes = input.materialize(&mut self.cx);
+                    let symbolic = bytes[..len].iter().any(|byte| byte.as_const().is_none());
+                    constrained_bytes_at(&mut self.cx, state, &bytes, 0, len)
+                        .map(|pinned| (pinned, symbolic))
+                });
+            let run = |cx: &mut SymCx, gas: u64| match &pinned_input {
+                Some((pinned, _)) => execute_precompile(cx, code_address, pinned, spec_id, gas),
+                None => execute_symbolic_precompile(
+                    cx,
+                    code_address,
+                    input.clone(),
+                    input_len.clone(),
+                    spec_id,
+                    gas,
+                    modexp_lengths,
+                ),
+            };
+            let outcome = run(&mut self.cx, gas)?;
             // A precompile that fails without the stipend may still succeed with it.
             if outcome.is_none()
                 && let Some(stipend_gas) = stipend_gas
-                && execute_symbolic_precompile(
+                && run(&mut self.cx, stipend_gas)?.is_some()
+            {
+                return Err(SymbolicError::Unsupported(
+                    "precompile gas with a symbolic call value",
+                ));
+            }
+            // An earlier call over the same symbolic input keeps its opaque term, so tie that term
+            // to the result: repeated-call equality must survive the guard that pinned the input.
+            // A constant input has no such term.
+            if let Some((_, true)) = &pinned_input
+                && let Some(concrete) = &outcome
+                && let Ok(Some(symbolic)) = execute_symbolic_precompile(
                     &mut self.cx,
                     code_address,
                     input,
                     input_len,
                     spec_id,
-                    stipend_gas,
+                    gas,
                     modexp_lengths,
-                )?
-                .is_some()
+                )
             {
-                return Err(SymbolicError::Unsupported(
-                    "precompile gas with a symbolic call value",
-                ));
+                let len_eq =
+                    SymBoolExpr::eq(&mut self.cx, symbolic.len_word.clone(), concrete.len_word.clone());
+                let mut ties = vec![len_eq];
+                for idx in 0..concrete.len() {
+                    let modeled = symbolic.bytes.byte(&mut self.cx, idx);
+                    let actual = concrete.bytes.byte(&mut self.cx, idx);
+                    ties.push(SymBoolExpr::eq(&mut self.cx, modeled, actual));
+                }
+                state.constraints.extend(ties.into_iter().filter(|equal| equal.as_const() != Some(true)));
             }
             return self.apply_precompile_outcome(
                 executor,
