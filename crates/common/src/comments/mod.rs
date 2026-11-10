@@ -317,11 +317,6 @@ impl<'ast> CommentGatherer<'ast> {
         is_doc: bool,
         col: CharPos,
     ) -> Vec<String> {
-        // if formatting is disabled, return as is
-        if self.disabled_block_depth != 0 {
-            return vec![text.into()];
-        }
-
         let mut res: Vec<String> = vec![];
         let mut lines = text.lines();
         if let Some(line) = lines.next() {
