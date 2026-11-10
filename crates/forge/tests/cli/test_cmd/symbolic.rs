@@ -1214,7 +1214,9 @@ contract SymbolicNestedDivisors {{
             {steps}
             q := div(x, q)
         }}
-        assert(q <= x);
+        // A divisor of one keeps `x`, and any larger divisor at least halves it. The normalizer
+        // does not decide this, so the property reaches the SMT solver.
+        assert(q == x || q <= x / 2);
     }}
 }}
 "#
