@@ -1352,23 +1352,19 @@ impl SymbolicExecutor {
                     if isolated {
                         parent.world.restore_transient_storage(&original_world);
                     }
-                    parent.expected_emit = child.expected_emit;
-                    let unmet_expected_emit =
-                        !unmet_expected_revert && parent.check_expected_emit_after_call(kind);
-                    parent.return_data = if unmet_expected_revert {
-                        error_string_return_data(
-                            &mut self.cx,
-                            "next call did not revert as expected",
-                        )
-                    } else if unmet_expected_emit {
-                        unmet_expected_emit_return_data(&mut self.cx)
-                    } else {
-                        child.frame.return_data
+                    let unmet_expected_emit = unmet_expected_revert.is_none()
+                        && parent.check_expected_emit_after_call(kind);
+                    parent.return_data = match unmet_expected_revert {
+                        Some(reason) => error_string_return_data(&mut self.cx, reason),
+                        None if unmet_expected_emit => {
+                            unmet_expected_emit_return_data(&mut self.cx)
+                        }
+                        None => child.frame.return_data,
                     };
                     parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
                     let success = SymExpr::constant(
                         &mut self.cx,
-                        U256::from(!unmet_expected_revert && !unmet_expected_emit),
+                        U256::from(unmet_expected_revert.is_none() && !unmet_expected_emit),
                     );
                     parent.stack.push(success)?;
                     parents.push_back(parent);

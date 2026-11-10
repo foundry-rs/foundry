@@ -378,7 +378,7 @@ impl SymbolicExecutor {
                 None,
             )? {
                 JoinedCallOutcome::Failure(parent)
-                | JoinedCallOutcome::Success { parent, unmet_expected_revert: true, .. } => {
+                | JoinedCallOutcome::Success { parent, unmet_expected_revert: Some(_), .. } => {
                     *state = parent;
                     return Ok(StepOutcome::Failure);
                 }
@@ -405,7 +405,6 @@ impl SymbolicExecutor {
                     if isolated {
                         parent.world.restore_transient_storage(&failure_world);
                     }
-                    parent.expected_emit = child.expected_emit;
                     self.observe_expected_create(
                         &mut parent,
                         creator,

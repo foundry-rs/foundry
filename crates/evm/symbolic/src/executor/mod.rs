@@ -28,11 +28,12 @@ enum CallStatus {
 
 enum JoinedCallOutcome {
     ExpectedRevert(PathState),
-    /// A successful call; `unmet_expected_revert` means the caller must see it as a revert.
+    /// A successful call; `unmet_expected_revert` is the reason the caller must see as a revert
+    /// instead.
     Success {
         parent: PathState,
         child: PathState,
-        unmet_expected_revert: bool,
+        unmet_expected_revert: Option<&'static str>,
     },
     Revert {
         parent: PathState,
@@ -167,6 +168,46 @@ impl SymbolicExecutor {
         parent.first_reverted_callee =
             parent.first_reverted_callee.or(outcome.state.first_reverted_callee);
         parent.take_call_outcome_state(&mut outcome.state);
+        // Like Forge's `call_end`, a frame that ends with its own `vm.expectRevert` still pending
+        // reverts. If a deeper revert already matched a counted expectation, Forge's depth check
+        // passed and the reason is the unmet one. A frame that returned keeps its state, like a
+        // call that succeeds under the caller's `vm.expectRevert`; in internal expect-revert mode
+        // it returns and leaves the expectation pending for the caller.
+        if let Some(expected) = outcome.state.expected_revert.take() {
+            const DEPTH_REASON: &str =
+                "call didn't revert at a lower depth than cheatcode call depth";
+            match outcome.status {
+                CallStatus::Success if executor.internal_expect_revert => {
+                    // The reverter history belongs to the expectation, which the child reset.
+                    parent.expected_revert = Some(expected);
+                    parent.first_failed_callee = outcome.state.first_failed_callee;
+                    return Ok(JoinedCallOutcome::Success {
+                        parent,
+                        child: outcome.state,
+                        unmet_expected_revert: None,
+                    });
+                }
+                CallStatus::Success => {
+                    let reason = if expected.matched_any() {
+                        "next call did not revert as expected"
+                    } else {
+                        DEPTH_REASON
+                    };
+                    return Ok(JoinedCallOutcome::Success {
+                        parent,
+                        child: outcome.state,
+                        unmet_expected_revert: Some(reason),
+                    });
+                }
+                CallStatus::Revert
+                    if !executor.internal_expect_revert && !expected.matched_any() =>
+                {
+                    outcome.state.frame.return_data =
+                        error_string_return_data(&mut self.cx, DEPTH_REASON);
+                }
+                CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {}
+            }
+        }
         if !matches!(outcome.status, CallStatus::Success) {
             parent.discard_failed_call_logs(
                 state.recorded_logs.as_ref().map_or(0, Vec::len),
@@ -228,7 +269,7 @@ impl SymbolicExecutor {
                 return Ok(JoinedCallOutcome::Success {
                     parent,
                     child: outcome.state,
-                    unmet_expected_revert: true,
+                    unmet_expected_revert: Some("next call did not revert as expected"),
                 });
             }
             match outcome.status {
@@ -257,7 +298,7 @@ impl SymbolicExecutor {
             CallStatus::Success => JoinedCallOutcome::Success {
                 parent,
                 child: outcome.state,
-                unmet_expected_revert: false,
+                unmet_expected_revert: None,
             },
             CallStatus::Revert => JoinedCallOutcome::Revert { parent, child: outcome.state },
             CallStatus::ExceptionalHalt => JoinedCallOutcome::ExceptionalHalt(parent),

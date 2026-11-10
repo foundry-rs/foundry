@@ -443,6 +443,7 @@ impl PathState {
         self.wallets = std::mem::take(&mut child.wallets);
         self.labels = std::mem::take(&mut child.labels);
         self.persistent_accounts = std::mem::take(&mut child.persistent_accounts);
+        self.expected_emit = child.expected_emit.clone();
         self.expected_calls = std::mem::take(&mut child.expected_calls);
         self.expected_creates = std::mem::take(&mut child.expected_creates);
         self.call_mocks = std::mem::take(&mut child.call_mocks);

@@ -2566,17 +2566,52 @@ contract Token {
     }
 }
 
+contract Boomer {
+    function boom() external pure {
+        revert("boom");
+    }
+}
+
 contract SymbolicRevertKeepsCheatcodes is Test {
+    event Emitted(uint256 value);
+
     uint256 constant DEADLINE = 1000;
     Token token;
+    Boomer a;
+    Boomer b;
 
     function setUp() public {
         token = new Token();
+        a = new Boomer();
+        b = new Boomer();
     }
 
     function warpThenRevert(uint256 t) external {
         vm.warp(t);
         revert("boom");
+    }
+
+    function expectEmitThenRevert() external {
+        vm.expectEmit();
+        emit Emitted(1);
+        revert("boom");
+    }
+
+    function expectRevertThenReturn() external {
+        vm.expectRevert();
+    }
+
+    function boom() external pure {
+        revert("boom");
+    }
+
+    function expectTwoRevertsThenReturn() external {
+        vm.expectRevert(uint64(2));
+        this.boom();
+    }
+
+    function expectReverterThenReturn(address reverter) external {
+        vm.expectRevert(reverter);
     }
 
     function mockThenRevert(address user) external {
@@ -2634,6 +2669,51 @@ contract SymbolicRevertKeepsCheatcodes is Test {
         }
         assertFalse(ok);
     }
+
+    // Concretely the pending emit expectation outlives the revert and fails the test.
+    function checkExpectEmitSurvivesRevertingCall() public {
+        try this.expectEmitThenRevert() {} catch {}
+    }
+
+    // Concretely a callee that returns with its own pending expectRevert reverts.
+    function checkExpectRevertPendingInCalleeReverts() public {
+        this.expectRevertThenReturn();
+    }
+
+    // In internal expect-revert mode the callee returns and its expectation stays pending, so
+    // the next revert is swallowed and the final assertion fails.
+    /// forge-config: default.allow_internal_expect_revert = true
+    function checkInternalModeKeepsPendingExpectRevert() public {
+        (bool ok,) = address(this).call(abi.encodeCall(this.expectRevertThenReturn, ()));
+        if (ok) {
+            (bool swallowed,) = address(this).call(abi.encodeCall(this.boom, ()));
+            assert(swallowed);
+            assert(false);
+        }
+    }
+
+    // The inherited expectation carries the callee's reverter history, so the earlier revert of
+    // `a` does not match an expectation for `a` that `b`'s revert must satisfy.
+    /// forge-config: default.allow_internal_expect_revert = true
+    function checkInternalModeInheritsReverterTracking() public {
+        (bool aOk,) = address(a).call(abi.encodeCall(Boomer.boom, ()));
+        assert(!aOk);
+        this.expectReverterThenReturn(address(a));
+        (bool bOk,) = address(b).call(abi.encodeCall(Boomer.boom, ()));
+        if (!bOk) assert(false);
+    }
+
+    // A deeper revert matched one of two expected reverts, so the callee fails with the unmet
+    // reason, not the depth one.
+    function checkPartiallyMetExpectRevertReason() public {
+        (bool ok, bytes memory data) =
+            address(this).call(abi.encodeCall(this.expectTwoRevertsThenReturn, ()));
+        bytes memory unmet =
+            abi.encodeWithSignature("CheatcodeError(string)", "next call did not revert as expected");
+        if (ok || keccak256(data) == keccak256(unmet)) {
+            assert(false);
+        }
+    }
 }
 "#,
     );
@@ -2647,13 +2727,18 @@ contract SymbolicRevertKeepsCheatcodes is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 5 tests for test/SymbolicRevertKeepsCheatcodes.t.sol:SymbolicRevertKeepsCheatcodes
+Ran 10 tests for test/SymbolicRevertKeepsCheatcodes.t.sol:SymbolicRevertKeepsCheatcodes
+[FAIL: expected an emit, but no logs were emitted afterwards. you might have mismatched events or not enough events were emitted; counterexample: 		[SENDER] [SENDER] calldata=0x3e65ad21 args=[]] checkExpectEmitSurvivesRevertingCall() ([METRICS])
+[FAIL: call didn't revert at a lower depth than cheatcode call depth; counterexample: 		[SENDER] [SENDER] calldata=0xea358207 args=[]] checkExpectRevertPendingInCalleeReverts() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xcd02017c00000000000000000000000000000000000000000000000000000000000003e8 args=[1000]] checkGasPriceSurvivesRevertingCall(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xd07dbb64 args=[]] checkInternalModeInheritsReverterTracking() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x6807c02f args=[]] checkInternalModeKeepsPendingExpectRevert() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x9389e44d0000000000000000000000000000000000000000000000000000000000000000 args=[0x0000000000000000000000000000000000000000]] checkMockSurvivesRevertingCall(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x507454da args=[]] checkPartiallyMetExpectRevertReason() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x5a97aeab0000000000000000000000000000000000000000000000010000000000000000 args=[18446744073709551616 [1.844e19]]] checkRejectedGasPriceDoesNotSurvive(uint256) ([METRICS])
 [PASS] checkTruncatedTxGasPriceIsNotRangeChecked() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xe9b7d25400000000000000000000000000000000000000000000000000000000000003e8 args=[1000]] checkWarpSurvivesRevertingCall(uint256) ([METRICS])
-Suite result: FAILED. 1 passed; 4 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 1 passed; 9 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
