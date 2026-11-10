@@ -52,6 +52,7 @@ pub use env::{current_execution_context, set_execution_context};
 mod evm;
 
 mod expected_emit;
+pub use expected_emit::unmatched_emit_message;
 
 mod external_storage;
 

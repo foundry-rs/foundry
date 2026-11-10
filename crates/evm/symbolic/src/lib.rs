@@ -33,6 +33,7 @@ use foundry_evm::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
     core::evm::FoundryEvmNetwork,
     executors::Executor,
+    traces::identifier::SignaturesIdentifier,
 };
 use serde::{Deserialize, Serialize};
 use std::{

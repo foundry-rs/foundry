@@ -3940,13 +3940,14 @@ contract SymbolicExpectEmit is Test {
         emitter.fire(address(0xB0B), 7, 9);
     }
 
-    function checkExpectEmitFailureHasNoErrorSelector(uint256) public {
+    // Like Forge, the caught failure carries the mismatch message without an error selector.
+    function checkExpectEmitFailureHasForgeMessage(uint256) public {
         vm.expectEmit(true, true, false, true, address(emitter));
         emit Seen(address(0xB0B), 7, 9);
         (bool ok, bytes memory data) = address(emitter).call(abi.encodeCall(emitter.fireOther, ()));
         assertFalse(ok);
         emitter.fire(address(0xB0B), 7, 9);
-        assertEq(bytes4(data), bytes4(keccak256("CheatcodeError(string)")));
+        assertEq(data, abi.encode("Other != expected Seen"));
     }
 
     function checkExpectEmitCountOverloads(uint256) public {
@@ -3983,10 +3984,10 @@ Ran 6 tests for test/SymbolicExpectEmit.t.sol:SymbolicExpectEmit
 [PASS] checkExpectEmit(uint256) ([METRICS])
 [PASS] checkExpectEmitCountOverloads(uint256) ([METRICS])
 [FAIL: Other != expected Seen; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitFailsAtEndOfMismatchedCall(uint256) ([METRICS])
-[FAIL: assertion failed: 0x0000000000000000000000000000000000000000000000000000000000000000 != 0xeeaa9e6f00000000000000000000000000000000000000000000000000000000; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitFailureHasNoErrorSelector(uint256) ([METRICS])
+[PASS] checkExpectEmitFailureHasForgeMessage(uint256) ([METRICS])
 [PASS] checkExpectEmitSkipsEarlierLogs(uint256) ([METRICS])
 [PASS] checkExpectEmitSymbolicEmitter(address) ([METRICS])
-Suite result: FAILED. 4 passed; 2 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 5 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -4052,7 +4053,7 @@ contract SymbolicExpectEmitMismatch is Test {
 ...
 Ran 2 tests for test/SymbolicExpectEmitMismatch.t.sol:SymbolicExpectEmitMismatch
 [FAIL: Seen param mismatch at id: expected=7, got=8; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMismatchedExpectEmit(uint256) ([METRICS])
-[FAIL: log emitter mismatch: expected=0xffffffffffffffffffffffffffffffffffffffff, got=0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMismatchedExpectEmitSymbolicEmitter(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic expectEmit mismatch message] checkMismatchedExpectEmitSymbolicEmitter(address) ([METRICS])
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
@@ -4067,7 +4068,7 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
     .stdout_eq(str![[r#"
 ...
 Ran 1 test for test/SymbolicExpectEmitMismatch.t.sol:SymbolicExpectEmitMismatch
-[FAIL: log emitter mismatch: expected=0xffffffffffffffffffffffffffffffffffffffff, got=0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMismatchedExpectEmitSymbolicEmitter(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic expectEmit mismatch message] checkMismatchedExpectEmitSymbolicEmitter(address) ([METRICS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
@@ -7776,7 +7777,7 @@ contract SymbolicRecordAndEmitCount {
 Ran 19 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCount
 [PASS] checkExpectEmitAnonymousMatches(uint256) ([METRICS])
 [FAIL: use vm.expectEmitAnonymous to match anonymous events; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitAnonymousTemplate(uint256) ([METRICS])
-[FAIL: Set indexed topic count mismatch: expected 1, got 0; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitRequiresSameTopicCount(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic expectEmit mismatch message] checkExpectEmitRequiresSameTopicCount(uint256) ([METRICS])
 [PASS] checkExpectNoEmitAllowsOtherEvent(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit count 0 across a failed call] checkExpectNoEmitAnonymousInRevertedCall(uint256) ([METRICS])
 [FAIL: use vm.expectEmitAnonymous to match anonymous events; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectNoEmitAnonymousTemplate(uint256) ([METRICS])
