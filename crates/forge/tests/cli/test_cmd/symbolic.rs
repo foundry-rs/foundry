@@ -620,8 +620,42 @@ fn symbolic_cli_accepts_zero_init_storage_layout(prj: _, cmd: _) {
     prj.add_test(
         "SymbolicZeroInit.t.sol",
         r#"
+contract SetupMapping {
+    mapping(uint256 => uint256) public m;
+
+    function set() external {
+        m[1] = 5;
+    }
+}
+
 contract SymbolicZeroInit {
+    mapping(uint256 => uint256) own;
+    SetupMapping other;
+
+    function setUp() public {
+        own[1] = 5;
+        other = new SetupMapping();
+        other.set();
+    }
+
     function checkNoop(uint256) public pure {}
+
+    // Unwritten symbolic keys read zero.
+    function checkUnwrittenIsZero(uint256 k) public view {
+        if (k != 1) assert(own[k] == 0 && other.m(k) == 0);
+    }
+
+    // Mapping entries written in setUp stay visible to a symbolic key once the run has
+    // computed the entry's slot hash, so k = 1 breaks these.
+    function checkOwnMapping(uint256 k) public view {
+        require(own[1] == 5);
+        assert(own[k] != 5);
+    }
+
+    function checkOtherContractMapping(uint256 k) public view {
+        require(other.m(1) == 5);
+        assert(other.m(k) != 5);
+    }
 }
 "#,
     );
@@ -633,10 +667,10 @@ contract SymbolicZeroInit {
             "--symbolic-storage-layout",
             "zero_init",
             "--json",
-            "--match-test",
-            "checkNoop",
+            "--match-contract",
+            "SymbolicZeroInit",
         ])
-        .assert_success()
+        .assert_failure()
         .get_output()
         .stdout
         .clone();
@@ -644,6 +678,14 @@ contract SymbolicZeroInit {
     let result = json_test_result(&output, "checkNoop(uint256)");
     assert_eq!(result["symbolic"]["status"], "pass");
     assert_eq!(result["symbolic"]["bounds"]["storage_layout"], "zero_init");
+    let result = json_test_result(&output, "checkUnwrittenIsZero(uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+    for test in ["checkOwnMapping(uint256)", "checkOtherContractMapping(uint256)"] {
+        let result = json_test_result(&output, test);
+        assert_eq!(result["status"], "Failure", "{test}");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{test}");
+        assert_eq!(result["counterexample"]["Single"]["args"], "1", "{test}");
+    }
 }
 
 #[forgetest_init]

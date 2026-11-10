@@ -13,6 +13,9 @@ pub(crate) trait AcceptedState {
     /// Returns a storage slot.
     fn storage(&self, address: Address, slot: U256) -> DbResult<U256>;
 
+    /// Returns the cached storage slots of an account, with their values, in slot order.
+    fn storage_slots(&self, address: Address) -> Vec<(U256, U256)>;
+
     /// Returns a block hash.
     fn block_hash(&self, number: U256) -> DbResult<B256>;
 }
@@ -24,6 +27,21 @@ impl<FEN: FoundryEvmNetwork> AcceptedState for Backend<FEN> {
 
     fn storage(&self, address: Address, slot: U256) -> DbResult<U256> {
         Self::storage(self, address, slot)
+    }
+
+    fn storage_slots(&self, address: Address) -> Vec<(U256, U256)> {
+        let mut slots = self
+            .lifecycle()
+            .active()
+            .cache
+            .as_ref()
+            .and_then(|cache| cache.storage.get(&address))
+            .map(|storage| {
+                storage.slots.iter().map(|(slot, value)| (*slot, *value)).collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        slots.sort_unstable();
+        slots
     }
 
     fn block_hash(&self, number: U256) -> DbResult<B256> {
