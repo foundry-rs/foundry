@@ -1537,13 +1537,14 @@ impl SymbolicExecutor {
         &mut self,
         state: &mut PathState,
     ) -> Result<StepOutcome, SymbolicError> {
-        // Like Forge, a frame that reverts while its own `vm.assumeNoRevert` is still pending,
-        // such as after a reverting CREATE, turns a matching revert into `FOUNDRY::ASSUME`.
-        if let Some(assumption) = state.assume_no_revert_next_call.take()
+        // Forge consumes this assumption in call_end, not create_end. A constructor must leave
+        // both its revert bytes and any pending assumption for the caller to handle.
+        if !state.frame.is_constructor
+            && let Some(assumption) = state.assume_no_revert_next_call.take()
             && self.assume_no_revert_matches(
                 state,
                 &assumption,
-                state.address,
+                assumption.reverted_by.unwrap_or(state.address),
                 &state.return_data,
             )?
         {
