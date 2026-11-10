@@ -283,6 +283,9 @@ pub(crate) fn execute_symbolic_precompile(
     }
 }
 
+/// Opaque term algorithm of the modexp precompile, whose outputs may collide.
+pub(crate) const MODEXP_ALGORITHM: &str = "modexp";
+
 /// The smallest and largest values of the modexp base, exponent and modulus length headers.
 pub(crate) type ModexpLengthRanges = [(u64, u64); 3];
 
@@ -353,7 +356,7 @@ pub(crate) fn symbolic_modexp_precompile(
         .ok()
         .filter(|modulus_len| *modulus_len <= 4096)
         .ok_or(SymbolicError::Unsupported("symbolic modexp output length"))?;
-    Ok(Some(symbolic_fixed_len_precompile_output(cx, "modexp", input, input_len, modulus_len)))
+    Ok(Some(symbolic_fixed_len_precompile_output(cx, MODEXP_ALGORITHM, input, input_len, modulus_len)))
 }
 
 /// Returns the gas the modexp precompile for `spec_id` charges for these lengths and leading

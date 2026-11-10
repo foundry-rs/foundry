@@ -179,9 +179,11 @@ impl SymBoolExpr {
                             algorithm: right_algorithm, bytes: right_bytes, ..
                         },
                     ) if left_algorithm == right_algorithm
+                        && *left_algorithm != MODEXP_ALGORITHM
                         && left_bytes.len() == right_bytes.len() =>
                     {
-                        // `hash(a) == hash(b) => bytes(a) == bytes(b)`.
+                        // `hash(a) == hash(b) => bytes(a) == bytes(b)` for collision-resistant
+                        // hashes; modexp is not injective, so its outputs compare as words.
                         let conditions = left_bytes
                             .iter()
                             .cloned()

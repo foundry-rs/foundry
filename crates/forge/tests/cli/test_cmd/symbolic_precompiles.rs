@@ -412,6 +412,19 @@ contract SymbolicAdvancedPrecompileInput is Test {
         );
         assert(!ok);
     }
+
+    function modexp(uint256 b, uint256 e, uint256 m) internal view returns (uint256 r) {
+        bytes memory input = abi.encode(uint256(32), uint256(32), uint256(32), b, e, m);
+        (bool ok, bytes memory out) = address(5).staticcall(input);
+        require(ok);
+        r = abi.decode(out, (uint256));
+    }
+
+    // modexp is not injective: x^2 == (7 - x)^2 mod 7 for every x.
+    function checkModexpOutputsMayCollide(uint256 x) public view {
+        require(x > 0 && x < 7);
+        assert(modexp(x, 2, 7) != modexp(7 - x, 2, 7));
+    }
 }
 "#,
     );
@@ -422,19 +435,20 @@ contract SymbolicAdvancedPrecompileInput is Test {
         "--match-contract",
         "SymbolicAdvancedPrecompileInput",
     ]))
-    .success()
+    .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 8 tests for test/SymbolicAdvancedPrecompileInput.t.sol:SymbolicAdvancedPrecompileInput
+Ran 9 tests for test/SymbolicAdvancedPrecompileInput.t.sol:SymbolicAdvancedPrecompileInput
 [PASS] checkBlake2fOutOfGas(uint256) ([METRICS])
 [PASS] checkModexpGasOperand(uint256) ([METRICS])
 [PASS] checkModexpHugeExponentLength() ([METRICS])
 [PASS] checkModexpOutOfGas(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkModexpOutputsMayCollide(uint256) ([METRICS])
 [PASS] checkModexpSymbolicLengthFits(uint256) ([METRICS])
 [PASS] checkModexpSymbolicLengthOutOfGas(uint256) ([METRICS])
 [PASS] checkSymbolicBlake2f(bytes1) ([METRICS])
 [PASS] checkSymbolicModexp(bytes1) ([METRICS])
-Suite result: ok. 8 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 8 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
