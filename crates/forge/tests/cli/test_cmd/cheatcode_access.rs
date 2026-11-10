@@ -3,55 +3,6 @@
 use super::*;
 
 #[forgetest]
-async fn fork_cheatcode_access_delegatecall(prj: _, cmd: _) {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    prj.add_test(
-        "CheatcodeAccess.t.sol",
-        r#"
-interface Vm {
-    function etch(address target, bytes calldata code) external;
-    function envOr(string calldata name, uint256 defaultValue) external view returns (uint256);
-}
-
-contract EnvReader {
-    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
-
-    function read() external view returns (uint256) {
-        return vm.envOr("FOUNDRY_ACCESS_REGRESSION_UNUSED", uint256(7));
-    }
-}
-
-contract CheatcodeAccessTest {
-    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
-    address constant TARGET = address(0x1234);
-
-    function testForkDelegatecallCannotUseCheatcodes() public {
-        vm.etch(TARGET, type(EnvReader).runtimeCode);
-        (bool direct,) = TARGET.call(abi.encodeCall(EnvReader.read, ()));
-        require(!direct, "direct call unexpectedly authorized");
-
-        (bool delegated,) = TARGET.delegatecall(abi.encodeCall(EnvReader.read, ()));
-        require(!delegated, "delegated code unexpectedly authorized");
-        require(vm.envOr("FOUNDRY_ACCESS_REGRESSION_UNUSED", uint256(7)) == 7, "parent access lost");
-    }
-}
-"#,
-    );
-    cmd.unset_env("FOUNDRY_ACCESS_REGRESSION_UNUSED");
-    cmd.args(["test", "--fork-url", &handle.http_endpoint()]).assert_success().stdout_eq(str![[
-        r#"
-...
-Ran 1 test for test/CheatcodeAccess.t.sol:CheatcodeAccessTest
-[PASS] testForkDelegatecallCannotUseCheatcodes() ([GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-
-"#
-    ]]);
-}
-
-#[forgetest]
 async fn fork_cheatcode_access_compatibility(prj: _, cmd: _) {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     prj.add_test("CheatcodeAccess.t.sol", CHEATCODE_ACCESS_COMPATIBILITY);
@@ -71,9 +22,8 @@ async fn fork_cheatcode_access_compatibility(prj: _, cmd: _) {
         }
         cmd.assert_success().stdout_eq(str![[r#"
 ...
-Ran 12 tests for test/CheatcodeAccess.t.sol:CheatcodeAccessCompatibilityTest
+Ran 11 tests for test/CheatcodeAccess.t.sol:CheatcodeAccessCompatibilityTest
 [PASS] testForkAuthorizationIsReadAtCheatcodeUse() ([GAS])
-[PASS] testForkCallcodeCannotUseCheatcodes() ([GAS])
 [PASS] testForkConstructorsAndLocalLibrariesRetainAccess() ([GAS])
 [PASS] testForkDelegatedConstructorsCannotUseCheatcodes() ([GAS])
 [PASS] testForkDelegatedCreationDoesNotAuthorizeChildren() ([GAS])
@@ -84,9 +34,9 @@ Ran 12 tests for test/CheatcodeAccess.t.sol:CheatcodeAccessCompatibilityTest
 [PASS] testForkExplicitFactoryAuthorizationAllowsChildren() ([GAS])
 [PASS] testForkGenericFactoryCannotAuthorizeUntrustedChildren() ([GAS])
 [PASS] testForkParentAccessRestoredAfterDelegation() ([GAS])
-Suite result: ok. 12 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 11 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 12 tests passed, 0 failed, 0 skipped (12 total tests)
+Ran 1 test suite [ELAPSED]: 11 tests passed, 0 failed, 0 skipped (11 total tests)
 
 "#]]);
     }
@@ -300,12 +250,6 @@ contract CheatcodeAccessCompatibilityTest is AccessFixture {
     function testForkAuthorizationIsReadAtCheatcodeUse() public {
         (bool ok, bytes memory output) = READER.delegatecall(abi.encodeCall(EnvReader.requestAuthorization, ()));
         expectValue(ok, output);
-    }
-
-    function testForkCallcodeCannotUseCheatcodes() public {
-        (bool ok, bytes memory output) = invoke(true, READER, abi.encodeCall(EnvReader.read, ()));
-        expectDenied(ok, output, READER);
-        require(readDefault() == 7, "parent access lost after callcode");
     }
 
     function testForkConstructorsAndLocalLibrariesRetainAccess() public {

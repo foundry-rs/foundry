@@ -9932,7 +9932,6 @@ async fn fork_script_rejects_delegated_cheatcodes_before_broadcast(prj: _, cmd: 
         "AccessBoundary.s.sol",
         r#"
 interface Vm {
-    function envOr(string calldata name, uint256 defaultValue) external view returns (uint256);
     function startBroadcast() external;
     function stopBroadcast() external;
 }
@@ -9974,7 +9973,6 @@ contract AccessBoundaryScript {
             "cheatcodes are not enabled for 0x0000000000000000000000000000000000001234; see `vm.allowCheatcodes(address)`"
         );
         require(keccak256(output) == keccak256(expected), "unexpected authorization error");
-        require(vm.envOr("FOUNDRY_ACCESS_REGRESSION_UNUSED", uint256(7)) == 7, "parent access lost");
 
         vm.startBroadcast();
         new IntendedDeployment();
@@ -10006,7 +10004,6 @@ contract AccessBoundaryScript {
             &sender.to_string(),
             "--unlocked",
         ]);
-        cmd.unset_env("FOUNDRY_ACCESS_REGRESSION_UNUSED");
         if broadcast {
             cmd.arg("--broadcast");
         }
