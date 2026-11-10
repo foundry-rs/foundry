@@ -22,8 +22,9 @@ async fn fork_cheatcode_access_compatibility(prj: _, cmd: _) {
         }
         cmd.assert_success().stdout_eq(str![[r#"
 ...
-Ran 11 tests for test/CheatcodeAccess.t.sol:CheatcodeAccessCompatibilityTest
+Ran 12 tests for test/CheatcodeAccess.t.sol:CheatcodeAccessCompatibilityTest
 [PASS] testForkAuthorizationIsReadAtCheatcodeUse() ([GAS])
+[PASS] testForkCallbacksRetainChildAccess() ([GAS])
 [PASS] testForkConstructorsAndLocalLibrariesRetainAccess() ([GAS])
 [PASS] testForkDelegatedConstructorsCannotUseCheatcodes() ([GAS])
 [PASS] testForkDelegatedCreationDoesNotAuthorizeChildren() ([GAS])
@@ -34,9 +35,9 @@ Ran 11 tests for test/CheatcodeAccess.t.sol:CheatcodeAccessCompatibilityTest
 [PASS] testForkExplicitFactoryAuthorizationAllowsChildren() ([GAS])
 [PASS] testForkGenericFactoryCannotAuthorizeUntrustedChildren() ([GAS])
 [PASS] testForkParentAccessRestoredAfterDelegation() ([GAS])
-Suite result: ok. 11 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 12 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 11 tests passed, 0 failed, 0 skipped (11 total tests)
+Ran 1 test suite [ELAPSED]: 12 tests passed, 0 failed, 0 skipped (12 total tests)
 
 "#]]);
     }
@@ -95,6 +96,10 @@ interface Vm {
 
 interface Authorizer {
     function authorizeReader() external;
+}
+
+interface CallbackCreator {
+    function createCallbackReader(uint256 mode) external returns (address);
 }
 
 abstract contract UsesVm {
@@ -191,6 +196,22 @@ library EnvLibrary {
     }
 }
 
+contract CallbackPool {
+    function callback(uint256 mode) external returns (address) {
+        return CallbackCreator(msg.sender).createCallbackReader(mode);
+    }
+}
+
+contract CallbackPoolProxy {
+    function callback(uint256 mode) external returns (address) {
+        (bool ok, bytes memory output) = address(0xA003).delegatecall(
+            abi.encodeCall(CallbackPool.callback, (mode))
+        );
+        require(ok, "pool proxy callback failed");
+        return abi.decode(output, (address));
+    }
+}
+
 abstract contract AccessFixture is UsesVm {
     address constant READER = address(0x1234);
     address constant FACTORY = address(0x5678);
@@ -238,6 +259,7 @@ abstract contract AccessFixture is UsesVm {
 
 contract CheatcodeAccessCompatibilityTest is AccessFixture {
     uint256 public constructorValue;
+    address callbackPool;
 
     constructor() {
         constructorValue = readDefault();
@@ -247,9 +269,43 @@ contract CheatcodeAccessCompatibilityTest is AccessFixture {
         vm.allowCheatcodes(READER);
     }
 
+    function createCallbackReader(uint256 mode) external returns (address) {
+        require(msg.sender == callbackPool, "unexpected callback sender");
+        require(readDefault() == 7, "callback access lost");
+        bytes32 salt = keccak256(abi.encode(msg.sender, mode));
+        EnvReader reader;
+        if (mode >= 2) {
+            ConstructorReader constructed = mode % 2 == 1
+                ? new ConstructorReader{salt: salt}()
+                : new ConstructorReader();
+            require(constructed.constructorValue() == 7, "callback constructor access lost");
+            reader = constructed;
+        } else {
+            reader = mode % 2 == 1 ? new EnvReader{salt: salt}() : new EnvReader();
+        }
+        require(reader.read() == 7, "callback child runtime access lost");
+        return address(reader);
+    }
+
     function testForkAuthorizationIsReadAtCheatcodeUse() public {
         (bool ok, bytes memory output) = READER.delegatecall(abi.encodeCall(EnvReader.requestAuthorization, ()));
         expectValue(ok, output);
+    }
+
+    function testForkCallbacksRetainChildAccess() public {
+        address implementation = address(0xA003);
+        vm.etch(implementation, type(CallbackPool).runtimeCode);
+        vm.etch(address(0xA001), type(CallbackPool).runtimeCode);
+        vm.etch(address(0xA002), type(CallbackPoolProxy).runtimeCode);
+        vm.etch(address(0xA004), abi.encodePacked(hex"ef0100", implementation));
+        address[3] memory pools = [address(0xA001), address(0xA002), address(0xA004)];
+        for (uint256 i; i < pools.length; i++) {
+            callbackPool = pools[i];
+            for (uint256 mode; mode < 4; mode++) {
+                address child = CallbackPool(callbackPool).callback(mode);
+                require(EnvReader(child).read() == 7, "returned callback child access lost");
+            }
+        }
     }
 
     function testForkConstructorsAndLocalLibrariesRetainAccess() public {
@@ -269,6 +325,9 @@ contract CheatcodeAccessCompatibilityTest is AccessFixture {
             expectDenied(ok, output, child);
             require(readDefault() == 7, "parent access lost after create");
         }
+        address directChild = EnvFactory(FACTORY).create(false, false, bytes32(0));
+        (bool directOk, bytes memory directOutput) = directChild.call(abi.encodeCall(EnvReader.read, ()));
+        expectDenied(directOk, directOutput, directChild);
     }
 
     function testForkDelegatedConstructorsCannotUseCheatcodes() public {
@@ -297,6 +356,20 @@ contract CheatcodeAccessCompatibilityTest is AccessFixture {
         (ok, output) = otherDelegator.call(abi.encodeCall(EnvReader.read, ()));
         expectDenied(ok, output, otherDelegator);
         require(readDefault() == 7, "parent access lost after delegation designator");
+
+        EnvFactory localFactory = new EnvFactory();
+        vm.etch(DELEGATOR, abi.encodePacked(hex"ef0100", FACTORY));
+        for (uint256 mode; mode < 2; mode++) {
+            if (mode == 1) vm.allowCheatcodes(FACTORY);
+            (ok, output) = DELEGATOR.call(abi.encodeCall(
+                EnvFactory.createThrough, (localFactory, true, bytes32(mode))
+            ));
+            require(ok, "delegated factory creation failed");
+            address child = abi.decode(output, (address));
+            (ok, output) = child.call(abi.encodeCall(EnvReader.read, ()));
+            if (mode == 0) expectDenied(ok, output, child);
+            else expectValue(ok, output);
+        }
     }
 
     function testForkExplicitAuthorizationAllowsDirectAndDelegatedCalls() public {

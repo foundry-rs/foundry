@@ -80,12 +80,22 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     }
 
     pub(super) fn can_inherit_cheatcode_access(&self, ecx: &FoundryContextFor<'_, FEN>) -> bool {
-        // A generic factory must not turn an untrusted ancestor's initcode into privileged code.
         let db = ecx.db();
-        !db.is_forked_mode()
-            || self.frame_access.iter().all(|frame| {
-                db.has_cheatcode_access(&frame.context)
-                    && (frame.code == frame.context || db.has_cheatcode_access(&frame.code))
+        if !db.is_forked_mode() {
+            return true;
+        }
+        let Some((creator, ancestors)) = self.frame_access.split_last() else {
+            return true;
+        };
+
+        // Trusted callbacks may grant children access despite untrusted callers. Untrusted code
+        // borrowing an authorized context must not gain access through an authorized factory.
+        db.has_cheatcode_access(&creator.context)
+            && (creator.code == creator.context || db.has_cheatcode_access(&creator.code))
+            && ancestors.iter().all(|frame| {
+                frame.code == frame.context
+                    || !db.has_cheatcode_access(&frame.context)
+                    || db.has_cheatcode_access(&frame.code)
             })
     }
 
