@@ -1797,6 +1797,45 @@ contract StoppingHandler {
     }
 }
 
+contract OneShotPrankingHandler {
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    SenderReporter reporter;
+    bool armed;
+    bool queried;
+    bool public violated;
+
+    constructor(SenderReporter reporter_) {
+        reporter = reporter_;
+    }
+
+    function arm() external {
+        if (!armed) {
+            armed = true;
+            VM.prank(address(0x777));
+        }
+    }
+
+    function query() external {
+        if (armed && !queried) {
+            queried = true;
+            violated = reporter.who() != address(0x777);
+        }
+    }
+}
+
+contract CallingHandler {
+    SenderReporter reporter;
+    address public lastSender;
+
+    constructor(SenderReporter reporter_) {
+        reporter = reporter_;
+    }
+
+    function ping() external {
+        lastSender = reporter.who();
+    }
+}
+
 contract SymbolicRepeatHandlerPrankInvariant is Test {
     RepeatPrankingHandler handler;
 
@@ -1829,6 +1868,24 @@ contract SymbolicStoppedPrankInvariant is Test {
     /// forge-config: default.invariant.runs = 0
     function invariant_stoppedPrankStaysStopped() public view {
         assert(!starter.violated());
+    }
+}
+
+contract SymbolicConsumedPrankInvariant is Test {
+    OneShotPrankingHandler handler;
+
+    function setUp() public {
+        SenderReporter reporter = new SenderReporter();
+        handler = new OneShotPrankingHandler(reporter);
+        targetContract(address(handler));
+        targetContract(address(new CallingHandler(reporter)));
+    }
+
+    // A root call from another handler consumes an unused one-shot prank.
+    /// forge-config: default.symbolic.invariant_depth = 3
+    /// forge-config: default.invariant.runs = 0
+    function invariant_oneShotPrankEndsAfterOtherHandlerCalls() public view {
+        assert(!handler.violated());
     }
 }
 "#,
@@ -1924,6 +1981,32 @@ Encountered 1 failing test in test/SymbolicHandlerPrankInvariant.t.sol:SymbolicS
 		[SENDER] [SENDER] calldata=stop() [ARGS]
 		[SENDER] [SENDER] calldata=query() [ARGS]
  invariant_stoppedPrankStaysStopped() ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_oneShotPrankEndsAfterOtherHandlerCalls",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/SymbolicHandlerPrankInvariant.t.sol:SymbolicConsumedPrankInvariant
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 3, shrunk: 3)
+		[SENDER] [SENDER] calldata=arm() [ARGS]
+		[SENDER] [SENDER] calldata=ping() [ARGS]
+		[SENDER] [SENDER] calldata=query() [ARGS]
+ invariant_oneShotPrankEndsAfterOtherHandlerCalls() ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
