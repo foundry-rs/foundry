@@ -6099,6 +6099,7 @@ interface SymbolicVm {
     }
 
     function assume(bool condition) external pure;
+    function assumeNoRevert() external pure;
     function assumeNoRevert(PotentialRevert calldata potentialRevert) external pure;
     function assumeNoRevert(PotentialRevert[] calldata potentialReverts) external pure;
 }
@@ -6134,6 +6135,25 @@ contract SymbolicAssumeNoRevertOtherTarget {
 
     function callOther(SymbolicAssumeNoRevertFilterTarget target) external view {
         target.anyExpected(7);
+    }
+}
+
+contract SymbolicAssumeNoRevertCatchingCreate {
+    constructor(SymbolicAssumeNoRevertFilterTarget target) {
+        try target.onlyExpected(7) {} catch {}
+    }
+}
+
+contract SymbolicAssumeNoRevertPendingCreate {
+    constructor() {
+        SymbolicVm(address(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D)).assumeNoRevert();
+        revert Expected(7);
+    }
+}
+
+contract SymbolicAssumeNoRevertInCall {
+    function set() external {
+        SymbolicVm(address(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D)).assumeNoRevert();
     }
 }
 
@@ -6261,6 +6281,28 @@ contract SymbolicAssumeNoRevertFilters is Test {
     function checkAssumeNoRevertCalleeFilterSkipsNestedRevert(uint256) public {
         filterNestedRevert(address(other));
     }
+
+    function checkFirstReverterSurvivesCreate(uint256 x) public {
+        symbolicVm.assumeNoRevert(SymbolicVm.PotentialRevert({
+            reverter: address(this),
+            partialMatch: true,
+            revertData: abi.encodeWithSignature("Panic(uint256)", uint256(1))
+        }));
+        new SymbolicAssumeNoRevertCatchingCreate(target);
+        if (x == 7) assert(false);
+    }
+
+    function checkConstructorAssumptionRemainsPending() public {
+        try new SymbolicAssumeNoRevertPendingCreate() {} catch (bytes memory data) {
+            target.onlyExpected(0);
+            assertTrue(keccak256(data) == keccak256(abi.encodeWithSelector(Expected.selector, uint256(7))));
+        }
+    }
+
+    function checkChildAssumptionClears(uint256 x) public {
+        new SymbolicAssumeNoRevertInCall().set();
+        if (x == 7) assert(false);
+    }
 }
 
 contract SymbolicAssumeNoRevertHandler {
@@ -6341,6 +6383,23 @@ Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
     for reason in ["symbolic vm.assumeNoRevert", "symbolic Foundry cheatcode"] {
         assert!(!stdout.contains(reason), "{stdout}");
     }
+
+    assert_symbolic_witness(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^check(FirstReverterSurvivesCreate|ConstructorAssumptionRemainsPending|ChildAssumptionClears)\\(",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/SymbolicAssumeNoRevertFilters.t.sol:SymbolicAssumeNoRevertFilters
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkChildAssumptionClears(uint256) ([METRICS])
+[PASS] checkConstructorAssumptionRemainsPending() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkFirstReverterSurvivesCreate(uint256) ([METRICS])
+Suite result: FAILED. 1 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
     // Like Forge, an invariant predicate that reverts with `FOUNDRY::ASSUME` is broken, and an
     // ambiguous symbolic match is reported as incomplete instead of being narrowed.

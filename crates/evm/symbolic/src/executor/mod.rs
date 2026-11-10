@@ -208,6 +208,19 @@ impl SymbolicExecutor {
                 CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {}
             }
         }
+        if let Some(assumption) = &mut parent.assume_no_revert_next_call {
+            // CREATE leaves the assumption pending, but nested CALL reverts still establish its
+            // first reverter. The CREATE revert itself is not a call_end event.
+            assumption.reverted_by = assumption.reverted_by.or(outcome.state.first_reverted_callee);
+        }
+        if outcome.state.frame.is_constructor
+            && let Some(child_assumption) = outcome.state.assume_no_revert_next_call.take()
+        {
+            if parent.assume_no_revert_next_call.is_some() || assume_no_revert.is_some() {
+                return Err(SymbolicError::Unsupported("symbolic vm.assumeNoRevert overlap"));
+            }
+            parent.assume_no_revert_next_call = Some(child_assumption);
+        }
         if !matches!(outcome.status, CallStatus::Success) {
             parent.discard_failed_call_logs(
                 state.recorded_logs.as_ref().map_or(0, Vec::len),
@@ -245,7 +258,10 @@ impl SymbolicExecutor {
         if let Some(assumption) = assume_no_revert
             && matches!(outcome.status, CallStatus::Revert)
         {
-            let reverter = outcome.state.first_reverted_callee.unwrap_or(outcome.state.address);
+            let reverter = assumption
+                .reverted_by
+                .or(outcome.state.first_reverted_callee)
+                .unwrap_or(outcome.state.address);
             if self.assume_no_revert_matches(
                 &parent,
                 assumption,

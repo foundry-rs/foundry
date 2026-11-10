@@ -124,6 +124,7 @@ impl SymbolicExecutor {
             CallFrame::new(&mut self.cx, created, created, creator, value.clone(), false, calldata);
         frame.address_word = created_word.clone();
         frame.caller_word = creator_word;
+        frame.is_constructor = true;
         // Isolation runs a CREATE, but not a CREATE2, as its own transaction.
         let isolated =
             matches!(kind, CreateKind::Create) && state.starts_isolated_transaction(executor);

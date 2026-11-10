@@ -609,7 +609,12 @@ impl SymbolicExecutor {
         }
         if let Some(assumption) = &assumption
             && assumed_revert
-            && self.assume_no_revert_matches(state, assumption, reverter, &return_data)?
+            && self.assume_no_revert_matches(
+                state,
+                assumption,
+                assumption.reverted_by.unwrap_or(reverter),
+                &return_data,
+            )?
         {
             return_data = SymReturnData::from_concrete_bytes(&mut self.cx, MAGIC_ASSUME.to_vec());
         }
@@ -663,7 +668,7 @@ impl SymbolicExecutor {
         reverter: Address,
         return_data: &SymReturnData,
     ) -> Result<bool, SymbolicError> {
-        let AssumeNoRevert::Filtered(filters) = assumption else {
+        let Some(filters) = &assumption.filters else {
             return Ok(true);
         };
 

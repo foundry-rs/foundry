@@ -1408,9 +1408,9 @@ pub(crate) enum ExpectedRevertData {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum AssumeNoRevert {
-    Any,
-    Filtered(Vec<ExpectedRevert>),
+pub(crate) struct AssumeNoRevert {
+    pub(crate) filters: Option<Vec<ExpectedRevert>>,
+    pub(crate) reverted_by: Option<Address>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1885,6 +1885,7 @@ pub(crate) struct CallFrame {
     pub(crate) caller_word: SymExpr,
     pub(crate) callvalue: SymExpr,
     pub(crate) is_static: bool,
+    pub(crate) is_constructor: bool,
     pub(crate) calldata: SymCalldata,
     pub(crate) stack: SymStack,
     pub(crate) memory: SymMemory,
@@ -1910,6 +1911,7 @@ impl CallFrame {
             caller_word: SymExpr::constant(cx, address_word(caller)),
             callvalue,
             is_static,
+            is_constructor: false,
             calldata,
             stack: SymStack::default(),
             memory: SymMemory::default(),

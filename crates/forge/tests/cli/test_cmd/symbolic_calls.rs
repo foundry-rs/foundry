@@ -145,12 +145,26 @@ contract InvalidAssumeNoRevertChild {
     }
 }
 
+contract RevertingConstructorChild {
+    constructor(uint256 x) {
+        require(x != 5);
+    }
+}
+
 contract SymbolicAssumeNoRevertInvalidChild is Test {
     function checkAssumeNoRevertInvalidChild() public {
         InvalidAssumeNoRevertChild child = new InvalidAssumeNoRevertChild();
         vm.assumeNoRevert();
         (bool success,) = address(child).call("");
         assertTrue(success);
+    }
+
+    // A CREATE leaves the assumption pending, so the catch branch's revert rejects the input.
+    function checkAssumeNoRevertSkipsRevertingCreate(uint256 x) public {
+        vm.assumeNoRevert();
+        try new RevertingConstructorChild(x) {} catch {
+            assert(false);
+        }
     }
 }
 "#,
@@ -159,15 +173,16 @@ contract SymbolicAssumeNoRevertInvalidChild is Test {
     assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
-        "--match-test",
-        "checkAssumeNoRevertInvalidChild",
+        "--match-contract",
+        "SymbolicAssumeNoRevertInvalidChild",
     ]))
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicAssumeNoRevertInvalidChild.t.sol:SymbolicAssumeNoRevertInvalidChild
+Ran 2 tests for test/SymbolicAssumeNoRevertInvalidChild.t.sol:SymbolicAssumeNoRevertInvalidChild
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertInvalidChild() ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+[PASS] checkAssumeNoRevertSkipsRevertingCreate(uint256) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

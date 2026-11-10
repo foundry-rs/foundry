@@ -330,6 +330,7 @@ impl SymbolicExecutor {
             CallFrame::new(&mut self.cx, created, created, creator, zero, false, calldata);
         frame.address_word = created_word.clone();
         frame.caller_word = creator_word;
+        frame.is_constructor = true;
         // Isolation runs a `deployCode` from the test frame as its own transaction.
         let isolated = state.starts_isolated_transaction(executor);
         let mut child = state.child(frame);
@@ -760,8 +761,8 @@ impl SymbolicExecutor {
                 if state.assume_no_revert_next_call.is_some() {
                     return Err(SymbolicError::Unsupported("symbolic vm.assumeNoRevert overlap"));
                 }
-                let filter = if selector == assumeNoRevert_0Call::SELECTOR {
-                    AssumeNoRevert::Any
+                let filters = if selector == assumeNoRevert_0Call::SELECTOR {
+                    None
                 } else {
                     let single = selector == assumeNoRevert_1Call::SELECTOR;
                     let mut values =
@@ -769,13 +770,14 @@ impl SymbolicExecutor {
                     let value = values
                         .pop()
                         .ok_or(SymbolicError::Unsupported("symbolic vm.assumeNoRevert decode"))?;
-                    AssumeNoRevert::Filtered(if single {
+                    Some(if single {
                         vec![dyn_potential_revert(&mut self.cx, &value)?]
                     } else {
                         dyn_potential_reverts(&mut self.cx, &value)?
                     })
                 };
-                state.assume_no_revert_next_call = Some(filter);
+                state.assume_no_revert_next_call =
+                    Some(AssumeNoRevert { filters, reverted_by: None });
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             recordLogsCall::SELECTOR => {

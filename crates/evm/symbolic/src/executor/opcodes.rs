@@ -1539,6 +1539,20 @@ impl SymbolicExecutor {
         &mut self,
         state: &mut PathState,
     ) -> Result<StepOutcome, SymbolicError> {
+        // Forge consumes this assumption in call_end, not create_end. A constructor must leave
+        // both its revert bytes and any pending assumption for the caller to handle.
+        if !state.frame.is_constructor
+            && let Some(assumption) = state.assume_no_revert_next_call.take()
+            && self.assume_no_revert_matches(
+                state,
+                &assumption,
+                assumption.reverted_by.unwrap_or(state.address),
+                &state.return_data,
+            )?
+        {
+            state.return_data =
+                SymReturnData::from_concrete_bytes(&mut self.cx, MAGIC_ASSUME.to_vec());
+        }
         if state.call_depth != 0 {
             return Ok(StepOutcome::Revert);
         }
