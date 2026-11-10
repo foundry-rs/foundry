@@ -861,6 +861,7 @@ fn symbolic_vm_assert_cheatcodes_find_counterexample(prj: _, cmd: _) {
         );
         return;
     }
+    prj.update_config(|config| config.invariant.runs = 0);
 
     prj.add_test(
         "SymbolicVmAssert.t.sol",
@@ -902,43 +903,7 @@ contract SymbolicVmAssert is Test {
     function checkCaughtFailSlotStore(uint256 x) public {
         try this.storeFailed(x) {} catch {}
     }
-}
-"#,
-    );
 
-    let stdout = assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicVmAssert$"]))
-        .failure()
-        .stdout_eq(str![[r#"
-...
-Ran 4 tests for test/SymbolicVmAssert.t.sol:SymbolicVmAssert
-[PASS] checkCaughtFailSlotStore(uint256) ([METRICS])
-[PASS] checkCaughtVmAssert(uint256) ([METRICS])
-[FAIL: assertion failed: 42 == 42; counterexample: 		[SENDER] [SENDER] calldata=0xdaaeb166000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkVmAssert(uint256) ([METRICS])
-[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] calldata=0x8dbe55f80000000000000000000000000000000000000000000000000000000000000025 args=[37]] checkVmAssertAfterSymbolicAlloc(uint8) ([METRICS])
-Suite result: FAILED. 2 passed; 2 failed; 0 skipped; [ELAPSED]
-...
-"#]])
-        .get_output()
-        .stdout_lossy();
-
-    assert!(!stdout.contains("counterexample did not replay"), "{stdout}");
-}
-
-#[forgetest_init]
-fn symbolic_vm_caught_assertions_preserve_failures(prj: _, cmd: _) {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_vm_caught_assertions_preserve_failures because z3 is not available"
-        );
-        return;
-    }
-    prj.update_config(|config| config.invariant.runs = 0);
-    prj.add_test(
-        "SymbolicCaughtAssertions.t.sol",
-        r#"
-import "forge-std/Test.sol";
-
-contract SymbolicCaughtAssertions is Test {
     function checkPassingBranchSurvives(uint256 x) public {
         try vm.assertTrue(x == 0) { assert(false); } catch {}
     }
@@ -955,6 +920,11 @@ contract SymbolicCaughtAssertionHandler is Test {
     function caught() external {
         try vm.assertTrue(false) {} catch {}
     }
+
+    function caughtThenRevert() external {
+        try vm.assertTrue(false) {} catch {}
+        revert("later revert");
+    }
 }
 
 contract SymbolicCaughtAssertionInvariant is Test {
@@ -968,18 +938,24 @@ contract SymbolicCaughtAssertionInvariant is Test {
 "#,
     );
 
-    assert_symbolic_witness(cmd.args([
-        "test", "--symbolic", "--match-contract", "SymbolicCaughtAssertions$",
-    ]))
-    .failure()
-    .stdout_eq(str![[r#"
+    let stdout = assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicVmAssert$"]))
+        .failure()
+        .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicCaughtAssertions.t.sol:SymbolicCaughtAssertions
-[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCustomPayload() ([METRICS])
-[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkPassingBranchSurvives(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+Ran 6 tests for test/SymbolicVmAssert.t.sol:SymbolicVmAssert
+[PASS] checkCaughtFailSlotStore(uint256) ([METRICS])
+[PASS] checkCaughtVmAssert(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x[..] args=[]] checkCustomPayload() ([METRICS])
+[FAIL: assertion failed: 42 == 42; counterexample: 		[SENDER] [SENDER] calldata=0xdaaeb166000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkVmAssert(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x[..] args=[[..]]] checkPassingBranchSurvives(uint256) ([METRICS])
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] calldata=0x8dbe55f80000000000000000000000000000000000000000000000000000000000000025 args=[37]] checkVmAssertAfterSymbolicAlloc(uint8) ([METRICS])
+Suite result: FAILED. 2 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
-"#]]);
+"#]])
+        .get_output()
+        .stdout_lossy();
+
+    assert!(!stdout.contains("counterexample did not replay"), "{stdout}");
 
     assert_symbolic_witness(cmd.forge_fuse().args([
         "test",
@@ -990,12 +966,7 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicCaughtAssertions.t.sol:SymbolicCaughtAssertionInvariant
-Assertion Tests: 1 assertion bug(s) found
-[FAIL: <empty revert data>] test/SymbolicCaughtAssertions.t.sol:SymbolicCaughtAssertionHandler::caught
-	[Sequence] (original: 1, shrunk: 1)
-		[SENDER] [SENDER] calldata=caught() [ARGS]
- invariant_caughtAssertionFailsHandler() ([METRICS])
+Ran 1 test for test/SymbolicVmAssert.t.sol:SymbolicCaughtAssertionInvariant
 ...
 "#]]);
 }

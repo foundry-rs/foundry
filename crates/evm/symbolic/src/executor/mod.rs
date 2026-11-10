@@ -493,7 +493,8 @@ impl SymbolicExecutor {
                             return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
                         }
                         *completed_paths += 1;
-                        outcomes.push(CallOutcome { status: CallStatus::Revert, state });
+                        let status = Self::failed_call_status(kind, &state, CallStatus::Revert);
+                        outcomes.push(CallOutcome { status, state });
                         break;
                     }
                     StepOutcome::ExceptionalHalt => {
@@ -503,7 +504,9 @@ impl SymbolicExecutor {
                         *completed_paths += 1;
                         // An exceptional halt returns no output.
                         state.return_data = SymReturnData::empty(&mut self.cx);
-                        outcomes.push(CallOutcome { status: CallStatus::ExceptionalHalt, state });
+                        let status =
+                            Self::failed_call_status(kind, &state, CallStatus::ExceptionalHalt);
+                        outcomes.push(CallOutcome { status, state });
                         break;
                     }
                     StepOutcome::Failure => {
@@ -520,6 +523,19 @@ impl SymbolicExecutor {
         }
 
         Ok(outcomes)
+    }
+
+    /// Like Forge, a sequence call that reverts still fails if an assertion failed in it.
+    const fn failed_call_status(
+        kind: CallPathKind,
+        state: &PathState,
+        status: CallStatus,
+    ) -> CallStatus {
+        if matches!(kind, CallPathKind::Sequence) && state.assertion_failed {
+            CallStatus::Failure
+        } else {
+            status
+        }
     }
 
     /// Like Forge, a sequence call fails if an expectation is unmet, an assertion failed, or the
