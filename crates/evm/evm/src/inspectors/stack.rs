@@ -470,7 +470,8 @@ pub struct InspectorStackInner {
     tx_created: AddressSet,
     /// Accounts the running nested transaction, from `executeTransaction` or an isolated call,
     /// self-destructed, including the ones it created. Captured when its root frame ends, before
-    /// the transaction destroys them.
+    /// the transaction destroys them. An isolated call that replaces the running state, such as by
+    /// switching forks, still destroys them at once.
     executed_destructs: Option<AddressMap<DestructedAccount>>,
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
@@ -1424,7 +1425,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         } else {
             Vec::new()
         };
-        // The accounts the call self-destructs keep their state until the running transaction ends.
+        // The accounts the call self-destructs keep their state until the running transaction ends,
+        // unless the call replaces the running state, such as by switching forks.
         let outer_destructs = self.inner.executed_destructs.replace(AddressMap::default());
         child.set_inspector(InspectorStackRefMut {
             cheatcodes: self.cheatcodes.as_deref_mut(),
@@ -1479,7 +1481,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             executed
                 .pending_state
                 .account_changes()
-                .filter(|change| change.created && change.current.is_some())
+                // A created account the call self-destructed is kept until the running
+                // transaction ends.
+                .filter(|change| {
+                    change.created && (change.current.is_some() || change.selfdestructed)
+                })
                 .map(|change| change.address),
         );
 

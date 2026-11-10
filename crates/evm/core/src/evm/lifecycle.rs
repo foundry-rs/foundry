@@ -1433,11 +1433,11 @@ pub fn merge_pending_changes(
     let destroyed = pending
         .account_changes()
         .filter(|change| change.selfdestructed && kept(change))
-        .map(|change| change.address)
-        .collect::<AddressSet>();
-    let filter = |address: &Address| !destroyed.contains(address);
+        .map(|change| (change.address, change.created))
+        .collect::<AddressMap<_>>();
+    let filter = |address: &Address| !destroyed.contains_key(address);
     merge_changes(state, pending.account_changes(), filter, persistent.as_deref_mut(), None)?;
-    for address in destroyed {
+    for (address, created) in destroyed {
         if let Some(DestructedAccount { info, code, slots }) = destructed.remove(&address) {
             let code = || Ok(code);
             apply_account(
@@ -1455,6 +1455,14 @@ pub fn merge_pending_changes(
             write.apply(state)?;
             if let Some(persistent) = persistent.as_deref_mut() {
                 persistent.push(write);
+            }
+        }
+        // An account the nested transaction created stays created, so that EIP-6780
+        // `SELFDESTRUCT` in a later call of the running transaction still destroys it.
+        if created {
+            let mut account = state.account(&address)?;
+            if !account.is_created() {
+                account.mark_created();
             }
         }
         let write = PersistentWrite::Destruct(address);
