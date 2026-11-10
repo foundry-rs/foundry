@@ -113,6 +113,35 @@ impl Prefetch {
     }
 }
 
+/// Starts reading `accounts` and `slots` through `backend` in the background and returns at once.
+///
+/// The backend sends each read as its own request, so reads started together are in flight
+/// together, and an EVM read of a key still in flight joins that request instead of sending
+/// another one. As with the cache prefetch, a key the EVM then does not read stays out of the cache
+/// file. Without a tokio runtime this does nothing, and the EVM reads the keys itself.
+pub(crate) fn spawn_reads<N: Network, B: ForkBlockEnv>(
+    backend: &SharedBackend<N, B>,
+    accounts: impl IntoIterator<Item = Address>,
+    slots: impl IntoIterator<Item = (Address, U256)>,
+) {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else { return };
+    let backend = backend.with_blocking_mode(BlockingMode::Block);
+    let keys = accounts
+        .into_iter()
+        .map(Key::Account)
+        .chain(slots.into_iter().map(|(address, slot)| Key::Slot(address, slot)));
+    for key in keys {
+        let backend = backend.clone();
+        runtime.spawn_blocking(move || {
+            // The EVM reads any key a failed prefetch did not fetch.
+            let _ = match key {
+                Key::Account(address) => backend.prefetch_basic(address),
+                Key::Slot(address, slot) => backend.prefetch_storage(address, slot),
+            };
+        });
+    }
+}
+
 /// Returns the cache file of the newest block below `number` in a chain cache directory.
 fn previous_cache_file(dir: &Path, number: u64) -> Option<PathBuf> {
     std::fs::read_dir(dir)

@@ -19,7 +19,7 @@ use crate::{
                 ExecutedPoolTransactions, FoundryReceiptBuilder, PoolTxGasConfig,
                 apply_ethereum_post_execution_changes, apply_ethereum_pre_execution_changes,
                 block_blob_gas_limit, build_tx_env_for_pending, execute_pool_transaction,
-                execute_pool_transactions,
+                execute_pool_transactions, system_call_prefetch_keys,
             },
             fork::{ClientFork, ForkEndpointIdentity},
             genesis::GenesisConfig,
@@ -3180,6 +3180,16 @@ impl<N: Network> Backend<N> {
         let inspector = self.build_mining_inspector();
         let transitions =
             self.ethereum_block_transitions(hardfork, parent_beacon_block_root, execution_kind);
+        if let Some(transitions) = &transitions {
+            // A fork reads each slot of the system calls with its own round trip, one after
+            // another; start them all now so the calls find them in flight or cached.
+            let (accounts, slots) = system_call_prefetch_keys(
+                transitions,
+                evm_env.block_env.number.saturating_to(),
+                evm_env.block_env.timestamp.saturating_to(),
+            );
+            db.0.prefetch(&accounts, &slots);
+        }
 
         macro_rules! execute {
             ($executor:expr) => {{
