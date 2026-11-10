@@ -156,7 +156,7 @@ pub(crate) fn exec_create<FEN: FoundryEvmNetwork>(
         message.kind,
         &message.caller,
         &message.salt,
-        &message.input,
+        ccx.evm.message_input(&message),
         nonce,
     );
     message.call_target = message.destination;
@@ -1174,7 +1174,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         gas: &mut GasTracker,
         executor: &mut dyn CheatcodesExecutor<FEN>,
     ) -> Result {
-        let decoded = decode_cheatcode_call(&message.input)?;
+        let decoded = decode_cheatcode_call(message.input.as_bytes(interp.memory()))?;
 
         let caller = message.caller;
 
@@ -1212,6 +1212,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // but only if the backend is in forking mode
         backend.backend().ensure_cheatcode_access_forking_mode(&caller)?;
 
+        let input = message.input.to_bytes(interp.memory());
         crate::monad::apply_monad_cheatcode(
             &mut CheatsCtxt {
                 state: self,
@@ -1222,7 +1223,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 is_static: message.is_static(),
                 depth: message.depth.into(),
             },
-            &message.input,
+            &input,
         )
     }
 
@@ -1361,7 +1362,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if let Some(expected) = self.core.expected_calls.get_mut(&call.call_target) {
             expect::observe_call(
                 expected,
-                &call.input,
+                call.input.as_bytes(interp.memory()),
                 transfer_value(call),
                 call.gas_limit,
                 call.kind.into(),
@@ -1402,8 +1403,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         // Handle mocked calls
         if let Some(mocks) = self.core.mocked_calls.get_mut(&call.call_target)
-            && let Some(return_data_queue) =
-                mock::find_mock_returns(mocks, &call.input.to_bytes(), transfer_value(call))
+            && let Some(return_data_queue) = mock::find_mock_returns(
+                mocks,
+                &call.input.to_bytes(interp.memory()),
+                transfer_value(call),
+            )
             && let Some(return_data) = return_data_queue.front().map(|x| x.to_owned())
         {
             if let Some(value) = transfer_value(call) {
@@ -1478,6 +1482,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 // into 1559, in the cli package, relatively easily once we
                 // know the target chain supports EIP-1559.
                 if !call.is_static() {
+                    let input = call.input.to_bytes(interp.memory());
                     let evm = interp.host();
                     // Reading the nonce warms the broadcaster.
                     let nonce = match evm.state_mut().account(&new_origin) {
@@ -1504,7 +1509,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         .with_from(new_origin)
                         .with_to(target)
                         .with_value(transfer_value(call).unwrap_or_default())
-                        .with_input(call.input.to_bytes())
+                        .with_input(input)
                         .with_nonce(nonce)
                         .with_chain_id(chain_id);
                     if is_fixed_gas_limit {
@@ -1632,7 +1637,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 oldNonce: old_nonce,
                 newNonce: 0, // updated on call_end
                 value: call.value,
-                data: call.input.to_bytes(),
+                data: call.input.to_bytes(interp.memory()),
                 reverted: false,
                 deployedCode: Bytes::new(),
                 storageAccesses: vec![], // updated on step
@@ -1821,7 +1826,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             call.depth == active.depth
                 && call.caller == CHEATCODE_ADDRESS
                 && call.destination == active.callback_target
-                && *call.input == *active.callback_input
+                && call.input.as_owned() == Some(&active.callback_input)
         })
     }
 
@@ -2176,7 +2181,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if self.persistent_writes.is_empty() {
             return;
         }
-        let root = usize::from(interp.version().initial_call_depth);
+        let root = usize::from(interp.host().initial_call_depth());
         let state = interp.host().state_mut();
         let mut failed = None;
         if !success && depth > root {
@@ -2529,7 +2534,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
             self.unrun_create_depth = Some(curr_depth);
             // Return a revert with the initcode as error data
-            return Some(message_result(input, InstrStop::Revert, input.input.to_bytes()));
+            return Some(message_result(
+                input,
+                InstrStop::Revert,
+                input.input.to_bytes(interp.memory()),
+            ));
         }
 
         let mut caller_changed = false;
@@ -2586,7 +2595,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     .with_from(broadcast.new_origin)
                     .with_kind(TxKind::Create)
                     .with_value(input.value)
-                    .with_input(input.input.to_bytes())
+                    .with_input(input.input.to_bytes(interp.memory()))
                     .with_nonce(nonce);
                 if let Some(fee_token) = self.fee_token {
                     tx_req.set_fee_token(fee_token);
@@ -2614,7 +2623,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 input.kind,
                 &input.caller,
                 &input.salt,
-                &input.input,
+                input.input.as_bytes(interp.memory()),
                 nonce,
             );
             input.call_target = input.destination;
@@ -2660,7 +2669,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 oldNonce: 0,             // new contract starts with nonce 0
                 newNonce: 1,             // updated on create_end (contracts start with nonce 1)
                 value: input.value,
-                data: input.input.to_bytes(),
+                data: input.input.to_bytes(interp.memory()),
                 reverted: false,
                 deployedCode: Bytes::new(), // updated on create_end
                 storageAccesses: vec![],    // updated on create_end
