@@ -132,6 +132,14 @@ impl SymBoolExpr {
                         Self::from_kind(cx, SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right))
                     }
                     (
+                        SymExprKind::BinOp(SymBinOp::Add, left_value, left_offset),
+                        SymExprKind::BinOp(SymBinOp::Add, right_value, right_offset),
+                    ) if left_offset == right_offset && left_offset.as_const().is_some() => {
+                        // `a + c == b + c => a == b`, so a common offset on two hashes still
+                        // reaches the Keccak rewrite below.
+                        Self::eq(cx, left_value.clone(), right_value.clone())
+                    }
+                    (
                         SymExprKind::Keccak { len: left_len, .. },
                         SymExprKind::Keccak { len: right_len, .. },
                     ) if left_len
@@ -164,9 +172,12 @@ impl SymBoolExpr {
                             algorithm: right_algorithm, bytes: right_bytes, ..
                         },
                     ) if left_algorithm == right_algorithm
+                        && matches!(*left_algorithm, "sha256" | "ripemd160")
                         && left_bytes.len() == right_bytes.len() =>
                     {
-                        // `hash(a) == hash(b) => bytes(a) == bytes(b)`.
+                        // `hash(a) == hash(b) => bytes(a) == bytes(b)` for collision-resistant
+                        // hashes. Other precompile outputs, such as modexp, BLAKE2f with zero
+                        // rounds, and ecrecover, collide, so they compare as words.
                         let conditions = left_bytes
                             .iter()
                             .cloned()

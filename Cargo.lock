@@ -6712,6 +6712,7 @@ dependencies = [
  "evm2",
  "foundry-cheatcodes-spec",
  "foundry-common",
+ "foundry-compilers",
  "foundry-config",
  "foundry-evm",
  "hashbrown 0.17.1",

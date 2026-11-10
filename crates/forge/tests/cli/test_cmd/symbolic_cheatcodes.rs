@@ -25,6 +25,8 @@ contract SymbolicAddressCheatcodes is Test {
         vm.assume(who != address(0));
         vm.assume(who != address(this));
         vm.assume(who != address(vm));
+        // `who` may be a known account, such as the sender or a system contract.
+        vm.assume(vm.getNonce(who) == 0 && who.code.length == 0);
 
         vm.deal(who, 11);
         assertEq(who.balance, 11);
@@ -147,6 +149,12 @@ contract SenderTarget {
 
     function context() external view returns (address, address) {
         return (msg.sender, tx.origin);
+    }
+
+    function rawSender() external view returns (uint256 word) {
+        assembly {
+            word := caller()
+        }
     }
 }
 
@@ -288,6 +296,14 @@ contract SymbolicPrankSender is Test {
             assert(false);
         } catch {}
     }
+
+    // The callee sees the low 160 bits of a dirty `vm.prank` address word.
+    function checkDirtyPrankWord() public {
+        uint256 dirty = uint256(uint160(0xBEEF)) | (uint256(0xdead) << 160);
+        (bool ok,) = address(vm).call(abi.encodeWithSignature("prank(address)", dirty));
+        assertTrue(ok);
+        assertEq(target.rawSender(), uint256(uint160(0xBEEF)));
+    }
 }
 "#,
     );
@@ -301,11 +317,12 @@ contract SymbolicPrankSender is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 13 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
+Ran 14 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
 [PASS] checkCreateConsumesPrank() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCreateConsumesStartPrank() ([METRICS])
 [PASS] checkDeployCodeAtMaxNonce() ([METRICS])
 [PASS] checkDeployCodeConsumesPrank() ([METRICS])
+[PASS] checkDirtyPrankWord() ([METRICS])
 [PASS] checkPrankCreate() ([METRICS])
 [FAIL: vm.prank: cannot override an ongoing prank with a single vm.prank; use vm.startPrank to override the current prank; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkPrankRejectsOngoingStartPrankOverride() ([METRICS])
 [FAIL: vm.prank: cannot overwrite a prank until it is applied at least once; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkPrankRejectsUnusedPrankOverwrite() ([METRICS])
@@ -315,7 +332,7 @@ Ran 13 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
 [PASS] checkSymbolicPrankOrigin(address,address) ([METRICS])
 [PASS] checkSymbolicStartPrank(address) ([METRICS])
 [PASS] checkSymbolicStartPrankOrigin(address,address) ([METRICS])
-Suite result: FAILED. 9 passed; 4 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 10 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -348,6 +365,19 @@ contract SymbolicBalance is Test {
         uint256 expected = who == funded ? 123 : 0;
         assertEq(who.balance, expected);
     }
+
+    function checkHighBitsBalance(uint256 w) public {
+        address funded = address(0xBEEF);
+        vm.deal(funded, 123);
+        vm.assume(w >> 160 != 0);
+        vm.assume(address(uint160(w)) == funded);
+
+        uint256 found;
+        assembly {
+            found := balance(w)
+        }
+        assertEq(found, 123);
+    }
 }
 "#,
     );
@@ -361,9 +391,10 @@ contract SymbolicBalance is Test {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicBalance.t.sol:SymbolicBalance
+Ran 2 tests for test/SymbolicBalance.t.sol:SymbolicBalance
+[PASS] checkHighBitsBalance(uint256) ([METRICS])
 [PASS] checkSymbolicBalance(address) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -389,11 +420,29 @@ import "forge-std/Test.sol";
 contract SymbolicExtcodeSize is Test {
     function checkSymbolicCodeLength(address who) public {
         address coded = address(0xC0DE);
-        vm.assume(who == coded || who == address(0xDEAD));
+        // Forge gives the cheatcode address the one-byte code 0x00, but leaves the symbolic-VM
+        // compatibility address empty, also once it holds ETH.
+        address compat = 0xF3993A62377BCd56AE39D773740A5390411E8BC9;
+        vm.assume(who == coded || who == address(0xDEAD) || who == address(vm) || who == compat);
         vm.etch(coded, hex"60006000");
+        vm.deal(compat, 1);
 
-        uint256 expected = who == coded ? 4 : 0;
+        uint256 expected = who == coded ? 4 : who == address(vm) ? 1 : 0;
         assertEq(who.code.length, expected);
+    }
+
+    // The EVM reads only the low 160 bits of an address operand.
+    function checkHighBitsCodeLength(uint256 w) public {
+        address coded = address(0xC0DE);
+        vm.etch(coded, hex"60006000");
+        vm.assume(w >> 160 != 0);
+        vm.assume(address(uint160(w)) == coded);
+
+        uint256 size;
+        assembly {
+            size := extcodesize(w)
+        }
+        assertEq(size, 4);
     }
 }
 "#,
@@ -408,9 +457,10 @@ contract SymbolicExtcodeSize is Test {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicExtcodeSize.t.sol:SymbolicExtcodeSize
+Ran 2 tests for test/SymbolicExtcodeSize.t.sol:SymbolicExtcodeSize
+[PASS] checkHighBitsCodeLength(uint256) ([METRICS])
 [PASS] checkSymbolicCodeLength(address) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -436,11 +486,34 @@ import "forge-std/Test.sol";
 contract SymbolicExtcodeHash is Test {
     function checkSymbolicCodeHash(address who) public {
         address coded = address(0xC0DE);
-        vm.assume(who == coded || who == address(0xDEAD));
+        address compat = 0xF3993A62377BCd56AE39D773740A5390411E8BC9;
+        vm.assume(who == coded || who == address(0xDEAD) || who == address(vm) || who == compat);
         vm.etch(coded, hex"60006000");
+        vm.deal(compat, 1);
 
-        bytes32 expected = who == coded ? keccak256(hex"60006000") : bytes32(0);
+        bytes32 expected = who == coded
+            ? keccak256(hex"60006000")
+            : who == address(vm)
+                ? keccak256(abi.encodePacked(address(vm)))
+                : who == compat ? keccak256("") : bytes32(0);
         assertEq(who.codehash, expected);
+    }
+
+    // EIP-161: an account that is empty again has no code hash.
+    function checkEmptiedCodeHash() public {
+        address who = address(0xA11CE);
+        vm.deal(who, 1);
+        vm.deal(who, 0);
+        assertEq(who.codehash, bytes32(0));
+        vm.etch(who, hex"00");
+        vm.etch(who, "");
+        assertEq(who.codehash, bytes32(0));
+    }
+
+    function checkSymbolicBalanceCodeHash(uint256 amount) public {
+        address who = address(0xA11CE);
+        vm.deal(who, amount);
+        assertEq(who.codehash, amount == 0 ? bytes32(0) : keccak256(""));
     }
 }
 "#,
@@ -455,9 +528,11 @@ contract SymbolicExtcodeHash is Test {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicExtcodeHash.t.sol:SymbolicExtcodeHash
+Ran 3 tests for test/SymbolicExtcodeHash.t.sol:SymbolicExtcodeHash
+[PASS] checkEmptiedCodeHash() ([METRICS])
+[PASS] checkSymbolicBalanceCodeHash(uint256) ([METRICS])
 [PASS] checkSymbolicCodeHash(address) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -554,13 +629,21 @@ contract Pinger {
     }
 }
 
+contract RevertingPinger {
+    function ping() external pure {
+        revert("ping");
+    }
+}
+
 contract SymbolicSetupAccounts is Test {
     Pinger a;
     Pinger b;
+    RevertingPinger reverter;
 
     function setUp() public {
         a = new Pinger();
         b = new Pinger();
+        reverter = new RevertingPinger();
         vm.deal(address(a), 1 ether);
         vm.deal(address(b), 1 ether);
         vm.mockCall(address(a), abi.encodeWithSelector(Pinger.price.selector), abi.encode(uint256(5)));
@@ -572,8 +655,13 @@ contract SymbolicSetupAccounts is Test {
         vm.record();
         vm.recordLogs();
         a.ping();
+        vm.expectCall(address(b), abi.encodeCall(Pinger.price, ()), 0);
         vm.startPrank(address(0xABC));
         a.ping();
+    }
+
+    function checkSetupExpectCall(bool call) public view {
+        if (call) b.price();
     }
 
     function checkSetupMock() public view {
@@ -591,6 +679,22 @@ contract SymbolicSetupAccounts is Test {
 
     function checkSetupRecordedLogs() public {
         assert(vm.getRecordedLogs().length == 0);
+    }
+
+    /// forge-config: default.symbolic.symbolic_call_targets = true
+    function checkCompatibilityAlias(address target) public {
+        vm.assume(target == 0xF3993A62377BCd56AE39D773740A5390411E8BC9 || target == address(reverter));
+        (bool ok,) = target.call(abi.encodeWithSignature("ping()"));
+        assertFalse(ok);
+    }
+
+    // Forge runs the compatibility account's code, so a symbolic target must not reach a
+    // symbolic-VM operation there.
+    function checkCompatibilityAliasSymbolicVmCall(address target) public {
+        vm.assume(target == 0xF3993A62377BCd56AE39D773740A5390411E8BC9 || target == address(reverter));
+        (bool ok, bytes memory data) =
+            target.call(abi.encodeWithSignature("createUint256(string)", "x"));
+        assert(!ok || data.length != 0);
     }
 
     // Labels, remembered keys, persistent accounts and the access record outlive setUp too.
@@ -647,9 +751,48 @@ contract SymbolicSetupAccounts is Test {
         assert(false);
     }
 
+    // The first counterexample is the cheatcode address: its unknown-selector error bubbles up.
     function checkUnconstrainedHighLevelCall(address target) public {
         Pinger(target).ping();
         assert(false);
+    }
+
+    // Forge fails an unknown-selector call to the cheatcode address with its decoder error.
+    function checkCheatcodeCallRevertData(address target) public {
+        vm.assume(target == address(vm) || target == address(a));
+        (, bytes memory data) = target.call(abi.encodeWithSignature("ping()"));
+        assert(data.length == 0);
+    }
+
+    // A cheatcode call leaves `vm.expectRevert` pending, so the later successful call fails.
+    function checkCheatcodeCallKeepsExpectRevert(address target) public {
+        vm.assume(target == address(vm) || target == address(reverter));
+        vm.expectRevert();
+        target.call(abi.encodeWithSignature("ping()"));
+        a.ping();
+    }
+
+    function checkCompatibilityEtchedCode() public {
+        address compat = address(0xF3993A62377BCd56AE39D773740A5390411E8BC9);
+        vm.etch(compat, hex"60006000fd");
+        (bool ok,) = compat.call(hex"5c36b186");
+        assert(ok);
+    }
+
+    function checkCheatcodeDelegateCall(address target) public {
+        vm.stopPrank();
+        vm.assume(target == address(vm) || target == address(reverter));
+        (bool ok,) = target.delegatecall(abi.encodeWithSignature("ping()"));
+        assert(!ok);
+    }
+
+    function checkCheatcodeCallcode(address target) public {
+        vm.assume(target == address(vm) || target == address(reverter));
+        bool ok;
+        assembly {
+            ok := callcode(gas(), target, 0, 0, 0, 0, 0)
+        }
+        assert(!ok);
     }
 }
 "#,
@@ -664,21 +807,29 @@ contract SymbolicSetupAccounts is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 13 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
+Ran 21 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkBalance(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeBalance(address) ([METRICS])
+[FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeCallKeepsExpectRevert(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeCallRevertData(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeCallcode(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeDelegateCall(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeCopy(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeHash(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeLength(address) ([METRICS])
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCompatibilityAlias(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic cheatcode CALL target] checkCompatibilityAliasSymbolicVmCall(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCompatibilityEtchedCode() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkHighLevelCall(address,bool) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupCheatcodeState() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupEmptyMock() ([METRICS])
+[FAIL: expected call to [..] with data 0xa035b1fe to be called 0 times, but was called 1 time; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupExpectCall(bool) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupMock() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupPrank() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupRecordedLogs() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupUsedPrankCanBeReplaced() ([METRICS])
-[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnconstrainedHighLevelCall(address) ([METRICS])
-Suite result: FAILED. 0 passed; 13 failed; 0 skipped; [ELAPSED]
+[FAIL: unknown cheatcode with selector 0x5c36b186; you may have a mismatch between the `Vm` interface (likely in `forge-std`) and the `forge` version; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnconstrainedHighLevelCall(address) ([METRICS])
+Suite result: FAILED. 0 passed; 21 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
@@ -1497,6 +1648,9 @@ contract SymbolicEtch is Test {
 
         assertGt(target.code.length, 0);
         assertEq(IEtchedHelper(target).value(), 99);
+
+        vm.etch(address(0xC0DE), new bytes(300));
+        assertEq(address(0xC0DE).code.length, 300);
     }
 
     function checkEtchSymbolicBytes(uint8 value) public {
@@ -1515,6 +1669,16 @@ contract SymbolicEtch is Test {
         assertEq(copied[1], bytes1(value));
         assertEq(copied[2], bytes1(0x00));
     }
+
+    // PUSH1 4; JUMP; op; JUMPDEST; STOP. A PUSH1 `op` turns the JUMPDEST into push data, so the
+    // jump table depends on the symbolic byte.
+    function checkEtchSymbolicJumpTable(bytes1 op) public {
+        address target = address(0xC0DE);
+        vm.etch(target, abi.encodePacked(hex"600456", op, hex"5b00"));
+
+        (bool ok,) = target.call("");
+        assert(ok);
+    }
 }
 "#,
     );
@@ -1525,13 +1689,14 @@ contract SymbolicEtch is Test {
         "--match-contract",
         "SymbolicEtch",
     ]))
-    .success()
+    .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicEtch.t.sol:SymbolicEtch
+Ran 3 tests for test/SymbolicEtch.t.sol:SymbolicEtch
 [PASS] checkEtch(uint256) ([METRICS])
 [PASS] checkEtchSymbolicBytes(uint8) ([METRICS])
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic bytecode jump table] checkEtchSymbolicJumpTable(bytes1) ([METRICS])
+Suite result: FAILED. 2 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -1606,10 +1771,14 @@ contract SymbolicCodeHash is Test {
         address target = address(0xBEEF);
         vm.etch(target, hex"");
 
-        bytes32 emptyHash = keccak256(new bytes(0));
         assert(target.code.length == 0);
-        assert(target.codehash == emptyHash);
+        assert(target.codehash == bytes32(0));
         assert(address(0xCAFE).codehash == bytes32(0));
+        assert(address(vm).codehash == keccak256(abi.encodePacked(address(vm))));
+
+        // `vm.etch` replaces the code hash of the cheatcode account too.
+        vm.etch(address(vm), hex"6000");
+        assert(address(vm).codehash == keccak256(hex"6000"));
     }
 }
 "#,
@@ -1799,13 +1968,20 @@ import "forge-std/Test.sol";
 /// forge-config: default.evm_version = "shanghai"
 
 contract Killable {
+    uint256 value = 42;
+
     receive() external payable {}
+
+    function set(uint256 newValue) external {
+        value = newValue;
+    }
 
     function die(address payable beneficiary) external {
         selfdestruct(beneficiary);
     }
 }
 
+// The balance moves at once; the code and storage stay until the transaction ends.
 contract SymbolicSelfdestruct is Test {
     Killable killable;
     address payable beneficiary = payable(address(0xB0B));
@@ -1814,16 +1990,17 @@ contract SymbolicSelfdestruct is Test {
         killable = new Killable();
     }
 
-    function checkSelfdestruct(uint256) public {
+    function checkSelfdestruct(uint256 value) public {
         vm.deal(address(killable), 7);
+        killable.set(value);
 
         killable.die(beneficiary);
 
         assert(address(killable).balance == 0);
         assert(beneficiary.balance == 7);
-        assert(address(killable).code.length == 0);
-        assert(address(killable).codehash == bytes32(0));
+        assert(address(killable).code.length > 0);
         assert(vm.getNonce(address(killable)) == 1);
+        assert(uint256(vm.load(address(killable), 0)) == value);
     }
 }
 "#,
@@ -1916,7 +2093,8 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
     assert!(!stdout.contains("symbolic BALANCE target"), "{stdout}");
 }
 
-// SELFDESTRUCT under Cancun keeps existing accounts and deletes same-transaction ones.
+// SELFDESTRUCT under Cancun keeps existing accounts and deletes same-transaction ones at the
+// end of the transaction.
 #[forgetest_init]
 fn symbolic_selfdestruct_cancun_semantics(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_selfdestruct_cancun_semantics");
@@ -1990,7 +2168,7 @@ contract SymbolicSelfdestructCancunSameTx is Test {
 
         assertEq(address(killable).balance, 0);
         assertEq(beneficiary.balance, 7);
-        assertEq(address(killable).code.length, 0);
+        assertGt(address(killable).code.length, 0);
     }
 }
 "#,
@@ -2696,11 +2874,53 @@ contract SymbolicAddressAlias is Test {
         assert(a.balance + b.balance == 10 ether);
     }
 
+    // A write through a free address may land on an account the run already knows.
+    function checkDealMayTargetKnownAccount(address a) public {
+        vm.deal(address(0xBEEF), 1);
+        vm.deal(a, 5);
+        assert(address(0xBEEF).balance != 5);
+    }
+
     function checkDistinctDealsAreIndependent(address a, address b) public {
         vm.assume(a != b);
         vm.deal(a, 10 ether);
         vm.deal(b, 0);
         assert(a.balance + b.balance == 10 ether);
+    }
+
+    // Two expressions of one address alias even when they are written differently.
+    function checkComputedAddressDealIsVisible(uint256 x) public {
+        vm.deal(address(uint160(x % 8 + 0x2000)), 5);
+        assert(address(uint160((x + 8) % 8 + 0x2000)).balance != 5);
+    }
+
+    function checkComputedAddressStoreIsVisible(uint256 x, uint256 y) public {
+        vm.store(address(uint160(x % 8 + 0x2000)), 0, bytes32(uint256(5)));
+        assert(uint256(vm.load(address(uint160(y % 8 + 0x2000)), 0)) != 5);
+    }
+
+    // An alias without state of its own must not shadow the real account it may denote.
+    function checkPrankPreservesBalance(uint256 x) public {
+        vm.deal(address(0x2000), 5);
+        vm.prank(address(uint160(x % 8 + 0x2000)));
+        vm.stopPrank();
+        assert(address(uint160((x + 8) % 8 + 0x2000)).balance != 5);
+    }
+
+    function checkDealPreservesCode(uint256 x) public {
+        vm.etch(address(0x2000), hex"00");
+        vm.deal(address(uint160(x % 8 + 0x2000)), 1);
+        assert(address(uint160((x + 8) % 8 + 0x2000)).code.length != 1);
+    }
+
+    // A code read through the alias caches its empty code but does not write it.
+    function checkCodeReadPreservesCode(uint256 x) public {
+        vm.etch(address(0x2000), hex"00");
+        address a = address(uint160(x % 8 + 0x2000));
+        vm.prank(a);
+        vm.stopPrank();
+        vm.assume(a.code.length < 2);
+        assert(address(uint160((x + 8) % 8 + 0x2000)).code.length != 1);
     }
 }
 "#,
@@ -2710,10 +2930,16 @@ contract SymbolicAddressAlias is Test {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicAddressAlias.t.sol:SymbolicAddressAlias
+Ran 8 tests for test/SymbolicAddressAlias.t.sol:SymbolicAddressAlias
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkCodeReadPreservesCode(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkComputedAddressDealIsVisible(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkComputedAddressStoreIsVisible(uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealMayTargetKnownAccount(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealPreservesCode(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x5b3b1d1100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 args=[0x0000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000]] checkDealsMayTargetOneAccount(address,address) ([METRICS])
 [PASS] checkDistinctDealsAreIndependent(address,address) ([METRICS])
-Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankPreservesBalance(uint256) ([METRICS])
+Suite result: FAILED. 1 passed; 7 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

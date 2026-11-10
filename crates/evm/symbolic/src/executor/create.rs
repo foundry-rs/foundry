@@ -218,7 +218,6 @@ impl SymbolicExecutor {
                     }
                     if !parent.world.is_destroyed(created) {
                         parent.world.install_code(created, runtime.to_code(&mut self.cx)?);
-                        parent.world.set_nonce(created, 1);
                     }
                     if let Some(reason) = unmet_expected_revert {
                         parent.return_data = error_string_return_data(&mut self.cx, reason);

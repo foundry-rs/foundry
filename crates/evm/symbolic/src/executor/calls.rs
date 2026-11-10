@@ -1,5 +1,6 @@
 use super::*;
 use alloy_sol_types::{SolType, sol_data};
+use foundry_cheatcodes_spec::Vm::VmCalls;
 use foundry_common::ErrorExt;
 
 impl SymbolicExecutor {
@@ -11,7 +12,9 @@ impl SymbolicExecutor {
         completed_paths: &mut usize,
         kind: CallKind,
     ) -> Result<StepOutcome, SymbolicError> {
+        let free_write_target = self.free_address_write_target(state, kind);
         let pre_call_state = (!state.function_mocks.is_empty()
+            || free_write_target.is_some()
             || !state.expected_calls.is_empty()
             || !state.call_mocks.is_empty()
             || (state.is_static && matches!(kind, CallKind::Call)))
@@ -41,6 +44,7 @@ impl SymbolicExecutor {
         }
         let target = state.stack.pop()?;
         ensure_expr_not_gasleft(&target)?;
+        let target = target.address_operand(&mut self.cx);
         let target_address = state.world.resolve_address(&target);
         let value = match (kind, target_address) {
             (CallKind::Call, Some(to))
@@ -198,6 +202,18 @@ impl SymbolicExecutor {
                 )? {
                     return Ok(StepOutcome::Forked);
                 }
+            }
+            if let Some(write_target) = &free_write_target
+                && self.branch_free_address_write_if_needed(
+                    executor,
+                    state,
+                    worklist,
+                    pre_call_state.as_ref().expect("free address writes require pre-call state"),
+                    call_pc,
+                    write_target,
+                )?
+            {
+                return Ok(StepOutcome::Forked);
             }
             return self.call_concrete_target(
                 executor,
@@ -723,6 +739,7 @@ impl SymbolicExecutor {
     pub(super) fn take_loop_jump(
         &self,
         state: &mut PathState,
+        code: &SymCode,
         source_pc: usize,
         dest: usize,
     ) -> bool {
@@ -732,7 +749,21 @@ impl SymbolicExecutor {
         if dest >= source_pc {
             return true;
         }
-        let count = state.loop_jumps.entry(dest).or_default();
+        // Key the back-edge by the return addresses on the stack, so an internal function called
+        // from different sites does not count as one loop. Each address counts once, so the return
+        // address a recursive call pushes again keeps the key and recursion stays bounded.
+        let mut return_pcs = Vec::new();
+        for pc in state
+            .stack
+            .iter()
+            .filter_map(|word| word.as_const().and_then(|word| usize::try_from(word).ok()))
+            .filter(|pc| code.is_valid_jumpdest(*pc).is_ok_and(|valid| valid))
+        {
+            if !return_pcs.contains(&pc) {
+                return_pcs.push(pc);
+            }
+        }
+        let count = state.loop_jumps.entry((dest, return_pcs)).or_default();
         if *count >= bound {
             return false;
         }
@@ -848,8 +879,30 @@ impl SymbolicExecutor {
     ) -> Result<StepOutcome, SymbolicError> {
         // Like Forge, only a CALL or STATICCALL reaches a cheatcode. A DELEGATECALL or CALLCODE
         // runs the cheatcode account's one-byte code instead.
-        if matches!(kind, CallKind::Call | CallKind::StaticCall)
-            && (to == CHEATCODE_ADDRESS || to == SYMBOLIC_VM_COMPAT_ADDRESS)
+        let compatibility_cheatcode = if matches!(kind, CallKind::Call | CallKind::StaticCall)
+            && to == SYMBOLIC_VM_COMPAT_ADDRESS
+        {
+            let (_, max_input_size, _) = in_size.parts(&mut self.cx);
+            if max_input_size < 4 {
+                false
+            } else if let Some(offset) = in_offset.as_const() {
+                let offset = usize::try_from(offset).map_err(|_| {
+                    SymbolicError::Unsupported("symbolic compatibility CALL input offset")
+                })?;
+                let selector = state.memory.read_concrete(&mut self.cx, offset, 4)?;
+                let selector: [u8; 4] = selector
+                    .try_into()
+                    .map_err(|_| SymbolicError::Unsupported("symbolic compatibility selector"))?;
+                SymbolicVmCheatcode::from_selector(selector).is_some()
+            } else {
+                // The existing symbolic-offset path checks whether the selector is pinned.
+                true
+            }
+        } else {
+            false
+        };
+        if (matches!(kind, CallKind::Call | CallKind::StaticCall) && to == CHEATCODE_ADDRESS)
+            || compatibility_cheatcode
         {
             if !state.constrained_word(&mut self.cx, &value).is_some_and(|value| value.is_zero()) {
                 return Err(SymbolicError::Unsupported("value-bearing cheatcode CALL"));
@@ -1225,8 +1278,74 @@ impl SymbolicExecutor {
                     input_len,
                 );
             }
-            let outcome =
-                execute_symbolic_precompile(&mut self.cx, code_address, input, input_len, spec_id)?;
+            let gas = self.precompile_gas(executor, state, kind, &value);
+            // A path can pin a symbolic input to one value, as `if (a == 1)` does before
+            // `sha256(abi.encode(a))`: run the precompile on that value so the result is exact
+            // and a counterexample replays, instead of an opaque term over the pinned bytes.
+            let pinned_input = input_len
+                .as_const()
+                .and_then(|len| usize::try_from(len).ok())
+                .filter(|len| *len <= input.len())
+                .and_then(|len| {
+                    let bytes = input.materialize(&mut self.cx);
+                    let symbolic = bytes[..len].iter().any(|byte| byte.as_const().is_none());
+                    constrained_bytes_at(&mut self.cx, state, &bytes, 0, len)
+                        .map(|pinned| (pinned, symbolic))
+                });
+            let outcome = match &pinned_input {
+                Some((pinned, _)) => {
+                    execute_precompile(&mut self.cx, code_address, pinned, spec_id, gas)?
+                }
+                None => execute_symbolic_precompile(
+                    &mut self.cx,
+                    code_address,
+                    input.clone(),
+                    input_len.clone(),
+                    spec_id,
+                    gas,
+                )?,
+            };
+            // A malformed signature returns no data, which replay reproduces exactly, while a
+            // well-formed one keeps the opaque recovery model. Prefer a malformed witness.
+            if pinned_input.is_none()
+                && precompile_number_for_spec(code_address, spec_id) == Some(1)
+            {
+                let sized = SymBytes::sized(&mut self.cx, input.clone(), input_len.clone(), 128);
+                let malformed =
+                    ecrecover_signature_well_formed(&mut self.cx, &sized).not(&mut self.cx);
+                if malformed.as_const().is_none() {
+                    state.witness_preferences.push(malformed);
+                }
+            }
+            // An earlier call over the same symbolic input keeps its opaque term, so tie that term
+            // to the result: repeated-call equality must survive the guard that pinned the input.
+            // A constant input has no such term.
+            if let Some((_, true)) = &pinned_input
+                && let Some(concrete) = &outcome
+                && let Ok(Some(symbolic)) = execute_symbolic_precompile(
+                    &mut self.cx,
+                    code_address,
+                    input,
+                    input_len,
+                    spec_id,
+                    gas,
+                )
+            {
+                let len_eq = SymBoolExpr::eq(
+                    &mut self.cx,
+                    symbolic.len_word.clone(),
+                    concrete.len_word.clone(),
+                );
+                let mut ties = vec![len_eq];
+                for offset in (0..concrete.len()).step_by(32) {
+                    let modeled = symbolic.bytes.word_at(&mut self.cx, offset);
+                    let actual = concrete.bytes.word_at(&mut self.cx, offset);
+                    ties.push(SymBoolExpr::eq(&mut self.cx, modeled, actual));
+                }
+                state
+                    .constraints
+                    .extend(ties.into_iter().filter(|equal| equal.as_const() != Some(true)));
+            }
             return self.apply_precompile_outcome(
                 executor,
                 state,
@@ -1423,7 +1542,10 @@ impl SymbolicExecutor {
         input: Vec<SymExpr>,
         input_len: SymExpr,
     ) -> Result<StepOutcome, SymbolicError> {
-        if let Some(outcome) = kzg_constrained_outcome(&mut self.cx, state, &input, &input_len)? {
+        let gas = self.precompile_gas(executor, state, kind, &value);
+        if let Some(outcome) =
+            kzg_constrained_outcome(&mut self.cx, state, &input, &input_len, gas)?
+        {
             return self.apply_precompile_outcome(
                 executor,
                 state,
@@ -1523,6 +1645,20 @@ impl SymbolicExecutor {
             }
             (false, false) => Err(SymbolicError::Unsupported(KZG_RESIDUAL_REASON)),
         }
+    }
+
+    /// Returns the gas a `gasleft()` call gives a precompile, with the value transfer stipend when
+    /// the call may send value.
+    fn precompile_gas(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        state: &PathState,
+        kind: CallKind,
+        value: &SymExpr,
+    ) -> u64 {
+        let sends_value = matches!(kind, CallKind::Call | CallKind::CallCode)
+            && state.constrained_word(&mut self.cx, value).is_none_or(|value| !value.is_zero());
+        precompile_call_gas(executor.gas_limit, sends_value)
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -1713,25 +1849,32 @@ impl SymbolicExecutor {
         out_size: BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
         let mut candidates = state.world.symbolic_call_targets(&mut self.cx, executor)?;
+        candidates.push(SYMBOLIC_VM_COMPAT_ADDRESS);
+        if matches!(kind, CallKind::DelegateCall | CallKind::CallCode) {
+            candidates.push(CHEATCODE_ADDRESS);
+        }
         candidates.extend(active_precompiles(executor.spec_id).as_map().addresses());
         candidates.sort();
         candidates.dedup();
-        if candidates.is_empty() {
-            return Err(SymbolicError::Unsupported(
-                "symbolic CALL target has no known contract candidates",
-            ));
-        }
 
         let candidate_constraints = candidates
             .iter()
-            .map(|address| {
-                let address = SymExpr::constant(&mut self.cx, address_word(*address));
-                SymBoolExpr::eq(&mut self.cx, target.clone(), address)
-            })
+            .map(|address| state.world.symbolic_address_condition(&mut self.cx, &target, *address))
             .collect::<Vec<_>>();
+        // Only the real cheatcode address uses Forge's decoder. The compatibility address is an
+        // ordinary call target unless its selector names a symbolic-VM operation.
+        let cheatcode_condition =
+            matches!(kind, CallKind::Call | CallKind::StaticCall).then(|| {
+                let address = SymExpr::constant(&mut self.cx, address_word(CHEATCODE_ADDRESS));
+                SymBoolExpr::eq(&mut self.cx, target.clone(), address)
+            });
         let mut outside_constraints = state.constraints.clone();
         outside_constraints.extend(
-            candidate_constraints.iter().cloned().map(|condition| condition.not(&mut self.cx)),
+            candidate_constraints
+                .iter()
+                .chain(cheatcode_condition.iter())
+                .cloned()
+                .map(|condition| condition.not(&mut self.cx)),
         );
         let outside_sat = self.is_sat_with_state(state, &outside_constraints)?;
 
@@ -1828,11 +1971,59 @@ impl SymbolicExecutor {
         }
 
         let call_input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset.clone());
+        if let Some(cheatcode_condition) = cheatcode_condition {
+            let mut cheatcode_branch = state.clone();
+            cheatcode_branch.constraints.push(cheatcode_condition);
+            if self.is_sat_with_state(&cheatcode_branch, &cheatcode_branch.constraints)? {
+                // The decoder error only depends on the selector, except for shorter calldata.
+                let input = if call_input.len() < 4 {
+                    call_input.clone()
+                } else {
+                    call_input.slice_concrete(&mut self.cx, 0, 4)
+                };
+                let input = input.concrete_bytes(&mut self.cx, "symbolic cheatcode selector")?;
+                if let Ok(selector) = <[u8; 4]>::try_from(input.as_slice())
+                    && VmCalls::signature_by_selector(selector).is_some()
+                {
+                    return Err(SymbolicError::Unsupported("symbolic cheatcode CALL target"));
+                }
+                let Err(error) = decode_cheatcode_call(&input) else {
+                    return Err(SymbolicError::Unsupported("symbolic cheatcode CALL target"));
+                };
+                // Like Forge, a cheatcode call leaves `vm.expectRevert` and `vm.assumeNoRevert`
+                // pending.
+                let return_data = error_string_return_data(&mut self.cx, &error.to_string());
+                revert_cheatcode_call(
+                    &mut self.cx,
+                    &mut cheatcode_branch,
+                    out_offset.clone(),
+                    &out_size,
+                    return_data,
+                )?;
+                parents.push_back(cheatcode_branch);
+            }
+        }
+
         for (to, constraint) in candidates.into_iter().zip(candidate_constraints) {
             let mut branch = state.clone();
             branch.constraints.push(constraint);
             if !self.is_sat_with_state(&branch, &branch.constraints)? {
                 continue;
+            }
+            // Forge treats the compatibility address as an ordinary account, so only a call that
+            // names it concretely reaches the symbolic-VM operations.
+            if to == SYMBOLIC_VM_COMPAT_ADDRESS
+                && matches!(kind, CallKind::Call | CallKind::StaticCall)
+                && call_input.len() >= 4
+            {
+                let selector = call_input
+                    .slice_concrete(&mut self.cx, 0, 4)
+                    .concrete_bytes(&mut self.cx, "symbolic compatibility selector")?;
+                if let Ok(selector) = <[u8; 4]>::try_from(selector.as_slice())
+                    && SymbolicVmCheatcode::from_selector(selector).is_some()
+                {
+                    return Err(SymbolicError::Unsupported("symbolic cheatcode CALL target"));
+                }
             }
 
             // Decide mock matches before executing either the mocked or real call.
@@ -2114,6 +2305,7 @@ fn kzg_constrained_outcome(
     state: &PathState,
     input: &[SymExpr],
     input_len: &SymExpr,
+    gas: u64,
 ) -> Result<Option<Option<SymReturnData>>, SymbolicError> {
     let Some(input_len) = state.constrained_usize(cx, input_len) else {
         return Ok(None);
@@ -2126,7 +2318,7 @@ fn kzg_constrained_outcome(
     }
 
     if let Some(input) = constrained_bytes_at(cx, state, input, 0, input_len) {
-        return execute_precompile(cx, Address::with_last_byte(10), &input, SpecId::CANCUN)
+        return execute_precompile(cx, Address::with_last_byte(10), &input, SpecId::CANCUN, gas)
             .map(Some);
     }
 
