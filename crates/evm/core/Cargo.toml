@@ -62,6 +62,7 @@ tempo-contracts.workspace = true
 
 # evm2
 evm2.workspace = true
+evm2-macros.workspace = true
 tempo-evm.workspace = true
 tempo-hardfork.workspace = true
 tempo-precompiles.workspace = true

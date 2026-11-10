@@ -364,6 +364,7 @@ evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "445ffd5db1fca4884cdbff
 evm2-inspectors = { git = "https://github.com/alloy-rs/evm2", rev = "445ffd5db1fca4884cdbff7f89b59edebf4142ce", features = [
     "serde",
 ] }
+evm2-macros = { git = "https://github.com/alloy-rs/evm2", rev = "445ffd5db1fca4884cdbff7f89b59edebf4142ce" }
 # Tempo `main` at `e178401` (tempoxyz/tempo#9141), using upstream reth and evm2.
 tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "e1784015779f9aaec0520455c4fa8fb40781d31f", default-features = false }
 tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "e1784015779f9aaec0520455c4fa8fb40781d31f", default-features = false, features = [

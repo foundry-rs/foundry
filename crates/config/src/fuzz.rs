@@ -161,6 +161,9 @@ pub struct FuzzCorpusConfig {
     /// Comparison operands then come from the compiler's `CMPLOG` (`0xC1`) probes instead of the
     /// cmp-log inspector. Instrumented artifacts only run with this on: on any other EVM `0xC0`
     /// and `0xC1` are undefined opcodes.
+    ///
+    /// Hits are keyed by ID alone, so IDs must be unique across all instrumented code: build it
+    /// in one compiler invocation.
     pub instrumented_edges: bool,
     /// Percent chance of generating fresh transaction input instead of continuing from corpus
     /// input during coverage-guided campaigns.
