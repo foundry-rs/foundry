@@ -40,7 +40,7 @@ use foundry_evm_core::{
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_networks::arbitrum;
-use foundry_evm_traces::{CallTrace, SparsedTraceArena, TraceRequirements};
+use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
 use std::{
     mem,
     ops::{Deref, DerefMut},
@@ -989,12 +989,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
                 })
                 .unwrap_or_default();
 
-            SparsedTraceArena {
+            let mut traces = SparsedTraceArena {
                 arena,
                 ignored,
                 diagnostics: trace_diagnostics,
                 debug_steps: debug_recorder.as_deref_mut().map(DebugRecorder::finish),
-            }
+            };
+            traces.lift_single_top_level_call();
+            traces
         });
 
         let (edge_coverage, evm_cmp_values) = edge_coverage
@@ -1999,16 +2001,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
 
     fn log(&mut self, log: &Log, host: &mut FoundryEvmFor<'_, FEN>) {
         let inner = &mut *self.inner;
-        // Network transaction hooks emit logs outside the root frame, when the tracer has no call
-        // to attach them to: Tempo's 2D nonce increment before it starts and its fee settlement
-        // after it ends. Only logs of running frames are traced, so they stay out of the trace.
-        // Until the root frame starts, the arena's entry node is a placeholder.
-        let tracer = inner.tracer.as_mut().filter(|tracer| {
-            tracer.traces().nodes().first().is_none_or(|root| {
-                root.trace.status.is_none() && root.trace != CallTrace::default()
-            })
-        });
-        call_inspectors!([tracer, &mut inner.log_collector], |inspector| {
+        // Network transaction hooks emit logs outside any frame, such as Tempo's 2D nonce
+        // increment and fee settlement. The tracer counts them in the log index but does not
+        // trace them.
+        call_inspectors!([&mut inner.tracer, &mut inner.log_collector], |inspector| {
             Inspector::<TypesFor<FEN>>::log(&mut **inspector, log, host)
         });
         if let Some(cheats) = self.cheatcodes.as_deref_mut()
