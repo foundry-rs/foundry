@@ -53,11 +53,15 @@ impl FoundryEvmFactory for TempoEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        inspector: I,
+        mut inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
         let is_forked = db.is_forked_mode();
         let spec = *evm_env.spec_id();
-        let hooks = inspector.evm_hooks();
+        let mut hooks = inspector.evm_hooks();
+        // From T7, Tempo's SSTORE does TIP-1060 storage-credit accounting, which the mapping-slot
+        // hook would replace with revm's default SSTORE.
+        hooks.mapping_slots &= !spec.is_t7();
+        inspector.installed_evm_hooks(hooks);
         let mut tempo_evm = Self::default().create_evm_with_inspector(db, evm_env, inspector);
         if hooks.any() {
             install_hooks(&mut tempo_evm.inner_mut().inner.instruction, hooks);

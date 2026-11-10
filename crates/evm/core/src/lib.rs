@@ -92,6 +92,13 @@ pub trait InspectorExt {
         edgecov::EvmHooks::default()
     }
 
+    /// Called with the hooks an EVM built with this inspector installed. A network installs fewer
+    /// than [`Self::evm_hooks`] asks for when a hook would replace one of its own instructions, and
+    /// the inspector then collects that signal itself.
+    fn installed_evm_hooks(&mut self, hooks: edgecov::EvmHooks) {
+        let _ = hooks;
+    }
+
     /// Whether the frame of `interpreter`, about to run or resume, may run on the interpreter's
     /// plain loop, without [`Inspector::step`], [`Inspector::step_end`] or
     /// [`Inspector::log_full`] for each instruction. Frame, call and log hooks still run, logs

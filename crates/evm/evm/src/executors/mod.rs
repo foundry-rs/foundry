@@ -2488,46 +2488,79 @@ mod tests {
     }
 
     /// Runs one call with a fresh fuzzer that records mapping slots and returns them.
-    fn fuzzer_mapping_slots(
-        executor: &Executor<EthEvmNetwork>,
+    /// mstore(0, 7); mstore(0x20, 3); sstore(keccak256(0, 0x40), 1); stop
+    const MAPPING_WRITE_CODE: &[u8] = &[
+        0x60, 0x07, 0x5f, 0x52, 0x60, 0x03, 0x60, 0x20, 0x52, 0x60, 0x40, 0x5f, 0x20, 0x60, 0x01,
+        0x90, 0x55, 0x00,
+    ];
+
+    /// Runs `target` with a mapping-slot fuzzer and returns the gas used and the mapping slots
+    /// the fuzzer recorded for `target`.
+    fn fuzzer_mapping_slots<FEN: FoundryEvmNetwork>(
+        executor: &Executor<FEN>,
         target: Address,
         instrumented: bool,
-    ) -> foundry_common::mapping_slots::MappingSlots {
+    ) -> (u64, foundry_common::mapping_slots::MappingSlots) {
         let mut stack = executor.inspector().clone();
         stack.set_fuzzer(foundry_evm_fuzz::Fuzzer::new(1024, Some(Default::default())));
         stack.collect_instrumented_edges(instrumented);
         let (mut evm_env, mut tx_env) =
             executor.prepare_call_env(CALLER, TxKind::Call(target), Bytes::new(), U256::ZERO);
-        executor.chain_context_for_synthetic_transaction(&tx_env).unwrap();
+        let chain = executor.chain_context_for_synthetic_transaction(&tx_env).unwrap();
         edgecov::reset_edges();
         let mut backend = CowBackend::new_borrowed(executor.backend());
         let result =
-            backend.inspect_with_context(&mut evm_env, &mut tx_env, (), &mut stack).unwrap();
+            backend.inspect_with_context(&mut evm_env, &mut tx_env, chain, &mut stack).unwrap();
         assert!(result.result.is_success(), "{result:?}");
-        stack.fuzzer.take().unwrap().mapping_slots.unwrap().remove(&target).unwrap()
+        let slots = stack.fuzzer.take().unwrap().mapping_slots.unwrap().remove(&target).unwrap();
+        (result.result.tx_gas_used(), slots)
+    }
+
+    fn assert_mapping_write_recorded(slots: &foundry_common::mapping_slots::MappingSlots) {
+        let slot = alloy_primitives::keccak256(
+            [B256::with_last_byte(7).as_slice(), B256::with_last_byte(3).as_slice()].concat(),
+        );
+        assert_eq!(
+            slots.seen_sha3.get(&slot),
+            Some(&(B256::with_last_byte(7), B256::with_last_byte(3)))
+        );
+        assert_eq!(slots.keys.get(&slot), Some(&B256::with_last_byte(7)));
+        assert_eq!(slots.parent_slots.get(&slot), Some(&B256::with_last_byte(3)));
     }
 
     #[test]
     fn fuzzer_mapping_hooks_match_step_recording() {
         let target = Address::repeat_byte(0x51);
-        // mstore(0, 7); mstore(0x20, 3); sstore(keccak256(0, 0x40), 1); stop
-        let code = [
-            0x60, 0x07, 0x5f, 0x52, 0x60, 0x03, 0x60, 0x20, 0x52, 0x60, 0x40, 0x5f, 0x20, 0x60,
-            0x01, 0x90, 0x55, 0x00,
-        ];
-        let slot = alloy_primitives::keccak256(
-            [B256::with_last_byte(7).as_slice(), B256::with_last_byte(3).as_slice()].concat(),
-        );
         for instrumented in [false, true] {
             let mut executor = edgecov_executor(instrumented, false);
-            executor.set_code(target, Bytecode::new_raw(Bytes::copy_from_slice(&code))).unwrap();
-            let slots = fuzzer_mapping_slots(&executor, target, instrumented);
-            assert_eq!(
-                slots.seen_sha3.get(&slot),
-                Some(&(B256::with_last_byte(7), B256::with_last_byte(3)))
-            );
-            assert_eq!(slots.keys.get(&slot), Some(&B256::with_last_byte(7)));
-            assert_eq!(slots.parent_slots.get(&slot), Some(&B256::with_last_byte(3)));
+            executor
+                .set_code(target, Bytecode::new_raw(Bytes::from_static(MAPPING_WRITE_CODE)))
+                .unwrap();
+            assert_mapping_write_recorded(&fuzzer_mapping_slots(&executor, target, instrumented).1);
+        }
+    }
+
+    /// From T7, Tempo's SSTORE charges TIP-1060 storage credits, which the mapping-slot hook must
+    /// not replace with revm's default SSTORE. Mapping slots are still recorded.
+    #[test]
+    fn instrumented_mapping_slots_keep_tempo_sstore() {
+        let target = Address::repeat_byte(0x51);
+        for spec in [TempoHardfork::T6, TempoHardfork::T7] {
+            let mut executor =
+                ExecutorBuilder::<TempoEvmNetwork>::new().spec_id(spec).gas_limit(1 << 20).build(
+                    EvmEnvFor::<TempoEvmNetwork>::default(),
+                    TxEnvFor::<TempoEvmNetwork>::default(),
+                    Backend::spawn(None).unwrap(),
+                    NetworkConfigs::with_tempo(),
+                );
+            executor.inspector_mut().enable_edgecov_opcode(true);
+            executor
+                .set_code(target, Bytecode::new_raw(Bytes::from_static(MAPPING_WRITE_CODE)))
+                .unwrap();
+            let (base_gas, _) = fuzzer_mapping_slots(&executor, target, false);
+            let (gas, slots) = fuzzer_mapping_slots(&executor, target, true);
+            assert_eq!(gas, base_gas, "{spec:?}");
+            assert_mapping_write_recorded(&slots);
         }
     }
 

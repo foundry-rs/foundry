@@ -475,6 +475,9 @@ pub struct InspectorStackInner {
     evm_cmp_log: bool,
     /// Whether comparison operands come from instruction hooks instead of the cmp-log inspector.
     cmp_log_hooks: bool,
+    /// Whether the fuzzer records mapping slots in `step` because the EVM did not install the
+    /// mapping-slot hooks.
+    fuzzer_mapping_steps: bool,
     pub enable_isolation: bool,
     pub networks: NetworkConfigs,
     /// Additional addresses installed and recognized as cheatcode contracts.
@@ -1542,15 +1545,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 }
             }
             OpcodeStepDispatch::General => {
-                // Instruction hooks replace the fuzzer's steps while instrumented edges are
-                // collected.
-                let instrumented = self.inner.instrumented_edges;
+                let fuzzer_steps = self.inner.fuzzer_steps();
                 if !storage_hook_active {
                     call_inspectors!(
                         [
                             // These are sorted in definition order.
                             &mut self.edge_coverage,
-                            self.inner.fuzzer.as_mut().filter(|_| !instrumented),
+                            self.inner.fuzzer.as_mut().filter(|_| fuzzer_steps),
                             &mut self.line_coverage,
                         ],
                         |inspector| (**inspector).step(interpreter, ecx),
@@ -2402,6 +2403,14 @@ impl<FEN: FoundryEvmNetwork> InspectorExt for InspectorStackRefMut<'_, FEN> {
         self.inner.evm_hooks()
     }
 
+    fn installed_evm_hooks(&mut self, hooks: edgecov::EvmHooks) {
+        let mapping_steps = self.inner.evm_hooks().mapping_slots && !hooks.mapping_slots;
+        if self.inner.fuzzer_mapping_steps != mapping_steps {
+            self.inner.fuzzer_mapping_steps = mapping_steps;
+            self.inner.refresh_static_step_dispatch();
+        }
+    }
+
     fn run_frame_plain(&mut self, interpreter: &mut Interpreter) -> bool {
         // Only instrumented campaigns run plain. Log hooks need a live interpreter, since
         // `expectEmit` fails the emitting frame from `log_full`, which the plain loop only calls
@@ -2551,6 +2560,10 @@ impl<FEN: FoundryEvmNetwork> InspectorExt for InspectorStack<FEN> {
         self.inner.evm_hooks()
     }
 
+    fn installed_evm_hooks(&mut self, hooks: edgecov::EvmHooks) {
+        self.as_mut().installed_evm_hooks(hooks);
+    }
+
     fn run_frame_plain(&mut self, interpreter: &mut Interpreter) -> bool {
         self.as_mut().run_frame_plain(interpreter)
     }
@@ -2614,6 +2627,12 @@ impl InspectorStackInner {
         }
     }
 
+    /// Whether the fuzzer collects in `step`. Instruction and frame hooks replace it while
+    /// instrumented edges are collected, except for mapping slots the EVM has no hooks for.
+    const fn fuzzer_steps(&self) -> bool {
+        self.fuzzer.is_some() && (!self.instrumented_edges || self.fuzzer_mapping_steps)
+    }
+
     /// Whether no inspector of the stack needs a callback for each instruction.
     const fn needs_no_steps(&self) -> bool {
         matches!(self.static_step_dispatch, OpcodeStepDispatch::None)
@@ -2636,9 +2655,7 @@ impl InspectorStackInner {
             && self.tracer.is_none()
             && self.debug_recorder.is_none()
         {
-            // Everything the fuzzer collects comes from instruction and frame hooks while
-            // instrumented edges are on.
-            if self.fuzzer.is_some() && !self.instrumented_edges {
+            if self.fuzzer_steps() {
                 OpcodeStepDispatch::FuzzerOnly
             } else {
                 OpcodeStepDispatch::None
@@ -2814,6 +2831,11 @@ mod tests {
         assert!(stack.inner.needs_no_steps());
         stack.set_fuzzer(Fuzzer::new(16, Some(Default::default())));
         assert!(stack.evm_hooks().mapping_slots);
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
+        // An EVM without the mapping-slot hooks leaves mapping slots to the fuzzer's steps.
+        stack.installed_evm_hooks(edgecov::EvmHooks { mapping_slots: false, ..stack.evm_hooks() });
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::FuzzerOnly);
+        stack.installed_evm_hooks(stack.evm_hooks());
         assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
         assert!(stack.inner.needs_no_steps());
 
