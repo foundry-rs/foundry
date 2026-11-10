@@ -939,7 +939,7 @@ impl SymbolicExecutor {
                         &out_size,
                         empty,
                     )?;
-                    worklist.push_back(passing);
+                    worklist.push_back(*passing);
                     *failing
                 } else {
                     outcome

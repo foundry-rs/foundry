@@ -29,7 +29,7 @@ pub(crate) enum CheatcodeOutcome {
     Continue(Vec<SymExpr>),
     ContinueData(SymReturnData),
     Revert(SymReturnData),
-    Fork { passing: PathState, failing: Box<CheatcodeOutcome> },
+    Fork { passing: Box<PathState>, failing: Box<Self> },
     AssumeRejected,
     Failure,
 }

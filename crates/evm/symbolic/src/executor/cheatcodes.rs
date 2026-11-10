@@ -26,12 +26,12 @@ impl SymbolicExecutor {
         fail_constraints.push(fail);
         if self.is_sat_with_state(state, &fail_constraints)? {
             let mut passing = state.clone();
-            passing.constraints.push(pass.clone());
+            passing.constraints.push(pass);
             let passing_sat = self.is_sat_with_state(state, &passing.constraints)?;
             state.constraints = fail_constraints;
             let failing = self.fail_assertion(executor, state, selector, args_offset);
             return Ok(if passing_sat {
-                CheatcodeOutcome::Fork { passing, failing: Box::new(failing) }
+                CheatcodeOutcome::Fork { passing: Box::new(passing), failing: Box::new(failing) }
             } else {
                 failing
             });
