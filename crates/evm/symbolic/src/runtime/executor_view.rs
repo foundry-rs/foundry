@@ -184,7 +184,7 @@ impl<'a> ExecutorView<'a> {
 
     /// Attaches the project artifacts and source literals that register the constant-folded
     /// mapping slots of deployed contracts before a run.
-    pub fn with_project(
+    pub const fn with_project(
         mut self,
         known_contracts: &'a ContractsByArtifact,
         literals: &'a LiteralsDictionary,

@@ -22,9 +22,15 @@ pub(crate) fn register_folded_mapping_slots(cx: &mut SymCx, executor: &ExecutorV
     let literals = executor
         .literals
         .map(|literals| {
-            literals.get().words.values().flatten().map(|word| (*word).into()).collect()
+            literals
+                .get()
+                .words
+                .values()
+                .flatten()
+                .map(|word| (*word).into())
+                .collect::<HashSet<U256>>()
         })
-        .unwrap_or_else(HashSet::<U256>::default);
+        .unwrap_or_default();
     for &address in &executor.account_addresses {
         if let Ok(Some(account)) = executor.backend.basic(address)
             && let Some(code) = &account.code
