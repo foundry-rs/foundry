@@ -5,6 +5,8 @@ use super::{hashcons::HashConsed, *};
 const MAX_CONSTANT_ITE_EQ_NODES: usize = 128;
 const MAX_CONSTANT_ITE_EQ_UNFOLDED_NODES: usize = 8 * 1024;
 
+type HashEqCache = HashMap<(SymExpr, SymExpr), SymBoolExpr>;
+
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct SymBoolExpr {
     pub(in crate::runtime::expr) kind: HashConsed<SymBoolExprKind>,
@@ -100,6 +102,11 @@ impl SymBoolExpr {
                 {
                     return condition;
                 }
+                if let Some(condition) =
+                    Self::hash_eq_preimages(cx, &left, &right, &mut HashMap::default())
+                {
+                    return condition;
+                }
                 match (left.kind(), right.kind()) {
                     // `a == a => true`.
                     _ if left == right => Self::constant(cx, true),
@@ -130,39 +137,6 @@ impl SymBoolExpr {
                         // `a == b => ordered(a, b)`.
                         let (left, right) = SymExpr::ordered_commutative_operands(left, right);
                         Self::from_kind(cx, SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right))
-                    }
-                    (
-                        SymExprKind::Keccak { len: left_len, .. },
-                        SymExprKind::Keccak { len: right_len, .. },
-                    ) if left_len
-                        .as_const()
-                        .zip(right_len.as_const())
-                        .is_some_and(|(left_len, right_len)| left_len != right_len) =>
-                    {
-                        // `keccak(a) == keccak(b) => false` for different input lengths.
-                        Self::constant(cx, false)
-                    }
-                    (
-                        SymExprKind::Keccak { len: left_len, bytes: left_bytes, .. },
-                        SymExprKind::Keccak { len: right_len, bytes: right_bytes, .. },
-                    ) if left_bytes.len() == right_bytes.len() => {
-                        // `keccak(a) == keccak(b) => len(a) == len(b) && bytes(a) == bytes(b)`.
-                        let mut conditions =
-                            vec![Self::eq(cx, left_len.clone(), right_len.clone())];
-                        conditions.extend(Self::bytes_eq(cx, left_bytes, right_bytes));
-                        Self::and(cx, conditions)
-                    }
-                    (
-                        SymExprKind::Hash { algorithm: left_algorithm, bytes: left_bytes, .. },
-                        SymExprKind::Hash {
-                            algorithm: right_algorithm, bytes: right_bytes, ..
-                        },
-                    ) if left_algorithm == right_algorithm
-                        && left_bytes.len() == right_bytes.len() =>
-                    {
-                        // `hash(a) == hash(b) => bytes(a) == bytes(b)`.
-                        let conditions = Self::bytes_eq(cx, left_bytes, right_bytes);
-                        Self::and(cx, conditions)
                     }
                     _ => {
                         // `a == b => ordered(a, b)`.
@@ -368,6 +342,68 @@ impl SymBoolExpr {
         None
     }
 
+    /// Compares hash preimages once per pair, even when both preimages contain the same nested
+    /// hash more than once.
+    fn hash_eq_preimages(
+        cx: &mut SymCx,
+        left: &SymExpr,
+        right: &SymExpr,
+        cache: &mut HashEqCache,
+    ) -> Option<Self> {
+        if left == right {
+            return Some(Self::constant(cx, true));
+        }
+        if !matches!(
+            (left.kind(), right.kind()),
+            (SymExprKind::Keccak { .. }, SymExprKind::Keccak { .. })
+                | (SymExprKind::Hash { .. }, SymExprKind::Hash { .. })
+        ) {
+            return None;
+        }
+        let key = SymExpr::ordered_commutative_operands(left.clone(), right.clone());
+        if let Some(condition) = cache.get(&key) {
+            return Some(condition.clone());
+        }
+
+        let condition = match (left.kind(), right.kind()) {
+            (
+                SymExprKind::Keccak { len: left_len, bytes: left_bytes, .. },
+                SymExprKind::Keccak { len: right_len, bytes: right_bytes, .. },
+            ) if left_len
+                .as_const()
+                .zip(right_len.as_const())
+                .is_some_and(|(left_len, right_len)| left_len != right_len) =>
+            {
+                // Different input lengths cannot have equal hashes under the hash model.
+                Self::constant(cx, false)
+            }
+            (
+                SymExprKind::Keccak { len: left_len, bytes: left_bytes, .. },
+                SymExprKind::Keccak { len: right_len, bytes: right_bytes, .. },
+            ) if left_bytes.len() == right_bytes.len() => {
+                let mut conditions = vec![Self::eq(cx, left_len.clone(), right_len.clone())];
+                conditions.extend(Self::bytes_eq(cx, left_bytes, right_bytes, cache));
+                Self::and_unique(cx, conditions)
+            }
+            (
+                SymExprKind::Hash { algorithm: left_algorithm, bytes: left_bytes, .. },
+                SymExprKind::Hash { algorithm: right_algorithm, bytes: right_bytes, .. },
+            ) if left_algorithm == right_algorithm && left_bytes.len() == right_bytes.len() => {
+                let conditions = Self::bytes_eq(cx, left_bytes, right_bytes, cache);
+                Self::and_unique(cx, conditions)
+            }
+            _ => return None,
+        };
+        cache.insert(key, condition.clone());
+        Some(condition)
+    }
+
+    fn and_unique(cx: &mut SymCx, mut conditions: Vec<Self>) -> Self {
+        conditions.sort_unstable_by(Self::stable_hash_cmp);
+        conditions.dedup();
+        Self::and(cx, conditions)
+    }
+
     /// Compares a symbolic Keccak with a hash whose preimage was computed during the run.
     ///
     /// Assuming no collisions, the hashes are equal only when the inputs are equal.
@@ -382,8 +418,9 @@ impl SymBoolExpr {
             return Some(Self::constant(cx, false));
         }
         // `keccak(a) == keccak(b) => bytes(a) == bytes(b)`.
-        let conditions = Self::bytes_eq(cx, bytes.get(..preimage.len())?, &preimage);
-        Some(Self::and(cx, conditions))
+        let conditions =
+            Self::bytes_eq(cx, bytes.get(..preimage.len())?, &preimage, &mut HashMap::default());
+        Some(Self::and_unique(cx, conditions))
     }
 
     /// Compares two byte sequences, comparing words where both sides extract the bytes of one
@@ -391,7 +428,12 @@ impl SymBoolExpr {
     ///
     /// A word comparison lets nested hashes inside a preimage go through the Keccak equality
     /// rewrite instead of leaving their bytes as free solver symbols.
-    fn bytes_eq(cx: &mut SymCx, left: &[SymExpr], right: &[SymExpr]) -> Vec<Self> {
+    fn bytes_eq(
+        cx: &mut SymCx,
+        left: &[SymExpr],
+        right: &[SymExpr],
+        cache: &mut HashEqCache,
+    ) -> Vec<Self> {
         let mut conditions = Vec::with_capacity(left.len().min(right.len()));
         let mut index = 0;
         while index < left.len().min(right.len()) {
@@ -399,7 +441,9 @@ impl SymBoolExpr {
                 word_from_extracted_bytes(&left[index..]),
                 word_from_extracted_bytes(&right[index..]),
             ) {
-                conditions.push(Self::eq(cx, left_word, right_word));
+                let condition = Self::hash_eq_preimages(cx, &left_word, &right_word, cache)
+                    .unwrap_or_else(|| Self::eq(cx, left_word, right_word));
+                conditions.push(condition);
                 index += 32;
             } else {
                 conditions.push(Self::eq(cx, left[index].clone(), right[index].clone()));
@@ -948,4 +992,26 @@ pub(crate) fn visit_unique<'a, B>(
         }
     }
     ControlFlow::Continue(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nested_keccak_equality_preserves_sharing() {
+        let mut cx = SymCx::new();
+        let mut a = SymExpr::var(&mut cx, "a");
+        let mut b = SymExpr::var(&mut cx, "b");
+        let original_equality = SymBoolExpr::eq(&mut cx, a.clone(), b.clone());
+        for _ in 0..16 {
+            let a_bytes = a.into_byte_exprs(&mut cx);
+            let b_bytes = b.into_byte_exprs(&mut cx);
+            a = keccak_word(&mut cx, [a_bytes.clone(), a_bytes].concat());
+            b = keccak_word(&mut cx, [b_bytes.clone(), b_bytes].concat());
+        }
+
+        let equal = SymBoolExpr::eq(&mut cx, a, b);
+        assert!(equal == original_equality, "nested preimage equality expanded");
+    }
 }
