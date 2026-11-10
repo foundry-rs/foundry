@@ -1350,7 +1350,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let saved_create2_redirects = std::mem::take(&mut inner.pending_create2_redirects);
 
         let out = if let Some(cheats) = cheatcodes.as_mut() {
-            cheats.with_fresh_frame_access(|cheats| {
+            // Isolation continues the outer call, so authorization must retain its ancestors.
+            cheats.with_nested_frame_access(|cheats| {
                 f(InspectorStackRefMut { cheatcodes: Some(cheats), inner: &mut inner })
             })
         } else {

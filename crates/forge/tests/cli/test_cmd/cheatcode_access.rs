@@ -17,9 +17,7 @@ async fn fork_cheatcode_access_compatibility(prj: _, cmd: _) {
             "CheatcodeAccessCompatibilityTest",
         ]);
         cmd.unset_env("FOUNDRY_ACCESS_REGRESSION_UNUSED");
-        if isolate {
-            cmd.arg("--isolate");
-        }
+        cmd.env("FOUNDRY_ISOLATE", isolate.to_string());
         cmd.assert_success().stdout_eq(str![[r#"
 ...
 Ran 12 tests for test/CheatcodeAccess.t.sol:CheatcodeAccessCompatibilityTest
@@ -77,6 +75,34 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
+}
+
+#[forgetest]
+async fn fork_cheatcode_access_root_delegation(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    prj.add_test("CheatcodeAccess.t.sol", CHEATCODE_ACCESS_COMPATIBILITY);
+    for isolate in [false, true] {
+        cmd.forge_fuse().args([
+            "test",
+            "--fork-url",
+            &handle.http_endpoint(),
+            "--evm-version",
+            "prague",
+            "--match-contract",
+            "CheatcodeAccessRootDelegationTest",
+        ]);
+        cmd.unset_env("FOUNDRY_ACCESS_REGRESSION_UNUSED");
+        cmd.env("FOUNDRY_ISOLATE", isolate.to_string());
+        cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/CheatcodeAccess.t.sol:CheatcodeAccessRootDelegationTest
+[PASS] testForkRootDelegationCannotAuthorizeFactoryChildren() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+    }
 }
 
 const CHEATCODE_ACCESS_COMPATIBILITY: &str = r#"
@@ -490,6 +516,42 @@ contract CheatcodeAccessNonForkTest is AccessFixture {
         }
         vm.etch(DELEGATOR, abi.encodePacked(hex"ef0100", READER));
         require(EnvReader(DELEGATOR).read() == 7, "nonfork delegation designator access lost");
+    }
+}
+
+contract RootDelegatedFactoryAccess is UsesVm {
+    EnvFactory internal factory;
+    bytes32[2] internal expectedErrors;
+
+    function testForkRootDelegationCannotAuthorizeFactoryChildren() public {
+        for (uint256 mode; mode < 2; mode++) {
+            address child = factory.create(mode == 1, false, bytes32(mode));
+            (bool ok, bytes memory output) = child.call(abi.encodeCall(EnvReader.read, ()));
+            require(!ok, "delegated root authorized factory child");
+            require(keccak256(output) == expectedErrors[mode], "unexpected authorization error");
+        }
+    }
+}
+
+contract CheatcodeAccessRootDelegationTest is RootDelegatedFactoryAccess {
+    function setUp() public {
+        factory = new EnvFactory();
+        address[2] memory children = [
+            vm.computeCreateAddress(address(factory), vm.getNonce(address(factory))),
+            vm.computeCreate2Address(bytes32(uint256(1)), keccak256(type(EnvReader).creationCode), address(factory))
+        ];
+        for (uint256 mode; mode < children.length; mode++) {
+            expectedErrors[mode] = keccak256(abi.encodeWithSignature(
+                "CheatcodeError(string)",
+                string.concat(
+                    "cheatcodes are not enabled for ", vm.toString(children[mode]),
+                    "; see `vm.allowCheatcodes(address)`"
+                )
+            ));
+        }
+        address implementation = address(0x1234);
+        vm.etch(implementation, type(RootDelegatedFactoryAccess).runtimeCode);
+        vm.etch(address(this), abi.encodePacked(hex"ef0100", implementation));
     }
 }
 "#;
