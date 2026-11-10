@@ -1,6 +1,7 @@
 use super::*;
 use alloy_sol_types::{Revert, SolError};
 use evm2::interpreter::gas::CALL_STIPEND;
+use foundry_evm::core::backend::GLOBAL_FAIL_SLOT;
 
 const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
 
@@ -41,6 +42,11 @@ pub(crate) struct PathState {
     /// Account of the first call, or reverting CREATE, that failed in or below this frame since
     /// it was entered or since its last `vm.expectRevert`, which Forge reports as the reverter.
     pub(crate) first_failed_callee: Option<Address>,
+    /// Account of the first call that reverted in or below this frame since it was entered,
+    /// which Forge reports as the `vm.assumeNoRevert` reverter.
+    pub(crate) first_reverted_callee: Option<Address>,
+    /// Assertion cheatcodes set this even when their revert is caught by the handler.
+    pub(crate) assertion_failed: bool,
     pub(crate) assume_no_revert_next_call: Option<AssumeNoRevert>,
     pub(crate) expected_emit: Option<ExpectedEmit>,
     pub(crate) expected_calls: Vec<ExpectedCall>,
@@ -118,6 +124,8 @@ impl PathState {
             loop_jumps: HashMap::default(),
             expected_revert: None,
             first_failed_callee: None,
+            first_reverted_callee: None,
+            assertion_failed: false,
             assume_no_revert_next_call: None,
             expected_emit: None,
             expected_calls: Vec::new(),
@@ -261,6 +269,7 @@ impl PathState {
         child.loop_jumps.clear();
         child.expected_revert = None;
         child.first_failed_callee = None;
+        child.first_reverted_callee = None;
         child.assume_no_revert_next_call = None;
         child
     }
@@ -433,6 +442,8 @@ impl PathState {
             std::mem::take(&mut child.mapping_hook_keccak_preimages);
         self.recorded_logs = child.recorded_logs.take();
         self.recorded_logs_generation = child.recorded_logs_generation;
+        self.assertion_failed |= child.assertion_failed;
+        self.expected_emit = child.expected_emit.clone();
         self.take_inspector_state(child);
         self.persistent_writes = std::mem::take(&mut child.persistent_writes);
     }
@@ -471,6 +482,8 @@ impl PathState {
         self.discard_failed_call_logs(recorded_logs_len, recorded_logs_generation);
         self.expected_revert = reverted.expected_revert;
         self.first_failed_callee = reverted.first_failed_callee;
+        self.first_reverted_callee = reverted.first_reverted_callee;
+        self.assertion_failed = reverted.assertion_failed;
         self.assume_no_revert_next_call = reverted.assume_no_revert_next_call;
         self.expected_emit = reverted.expected_emit;
         // Like Forge's pranks, the root frames' pranks survive the revert. `self.prank` is
@@ -1089,20 +1102,26 @@ impl PathState {
         }
     }
 
-    /// Ends a `count = 0` `vm.expectEmit` declared in this frame after a call from it returns
-    /// without reverting.
+    /// Checks a `vm.expectEmit` declared in this frame after a call from it returns without
+    /// reverting, and returns whether the call fails it.
     ///
-    /// Like Forge's `call_end`, static calls keep it. Callers skip calls that `vm.expectRevert`
-    /// handles, which also keep it.
-    pub(crate) fn end_expected_emit_after_call(&mut self, kind: CallKind) {
-        if !self.is_static
-            && !matches!(kind, CallKind::StaticCall)
-            && self.expected_emit.as_ref().is_some_and(|expected| {
-                expected.is_forbidden() && expected.depth == self.call_depth
-            })
-        {
-            self.expected_emit = None;
+    /// Like Forge's `call_end`, the call fails a `count >= 1` expectation it did not meet, which
+    /// stays pending, and ends a `count = 0` one. Static calls keep it. Callers skip calls that
+    /// `vm.expectRevert` handles, which also keep it.
+    pub(crate) fn check_expected_emit_after_call(&mut self, kind: CallKind) -> bool {
+        if self.is_static || matches!(kind, CallKind::StaticCall) {
+            return false;
         }
+        let Some(expected) = &mut self.expected_emit else { return false };
+        if expected.depth != self.call_depth {
+            return false;
+        }
+        if expected.is_forbidden() {
+            self.expected_emit = None;
+            return false;
+        }
+        expected.failed = true;
+        true
     }
 
     pub(crate) fn expectations_satisfied(&self) -> bool {
@@ -1378,9 +1397,9 @@ pub(crate) enum ExpectedRevertData {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum AssumeNoRevert {
-    Any,
-    Filtered(Vec<ExpectedRevert>),
+pub(crate) struct AssumeNoRevert {
+    pub(crate) filters: Option<Vec<ExpectedRevert>>,
+    pub(crate) reverted_by: Option<Address>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1658,6 +1677,8 @@ pub(crate) struct ExpectedEmit {
     anonymous: bool,
     /// Call depth of the frame that declared the expectation.
     depth: usize,
+    /// Whether a call ended with the expectation unmet, which failed that call.
+    failed: bool,
 }
 
 impl ExpectedEmit {
@@ -1668,7 +1689,12 @@ impl ExpectedEmit {
         anonymous: bool,
         depth: usize,
     ) -> Self {
-        Self { checks, emitter, remaining, template: None, anonymous, depth }
+        Self { checks, emitter, remaining, template: None, anonymous, depth, failed: false }
+    }
+
+    /// Returns whether a call ended with this expectation unmet.
+    pub(crate) const fn failed(&self) -> bool {
+        self.failed
     }
 
     /// Returns whether this expectation forbids logs matching its template (`count = 0`).
@@ -1814,6 +1840,7 @@ pub(crate) struct CallFrame {
     pub(crate) caller_word: SymExpr,
     pub(crate) callvalue: SymExpr,
     pub(crate) is_static: bool,
+    pub(crate) is_constructor: bool,
     pub(crate) calldata: SymCalldata,
     pub(crate) stack: SymStack,
     pub(crate) memory: SymMemory,
@@ -1839,6 +1866,7 @@ impl CallFrame {
             caller_word: SymExpr::constant(cx, address_word(caller)),
             callvalue,
             is_static,
+            is_constructor: false,
             calldata,
             stack: SymStack::default(),
             memory: SymMemory::default(),
@@ -2014,6 +2042,21 @@ impl SymbolicWorld {
 
     pub(crate) fn sstore(&mut self, address: Address, key: SymExpr, value: SymExpr) {
         Arc::make_mut(&mut self.state).storage.push(StorageWrite::new(address, key, value));
+    }
+
+    /// Reads the global fail slot: Forge bookkeeping, so arbitrary storage never makes it up.
+    pub(crate) fn global_fail_slot(
+        &self,
+        cx: &mut SymCx,
+        executor: &ExecutorView<'_>,
+    ) -> Result<SymExpr, SymbolicError> {
+        let base = executor
+            .backend
+            .storage(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
+            .map(|value| SymExpr::constant(cx, value))
+            .map_err(|err| SymbolicError::Backend(err.to_string()))?;
+        let key = SymExpr::constant(cx, GLOBAL_FAIL_SLOT);
+        Ok(StorageWrite::select_from(cx, &self.storage, CHEATCODE_ADDRESS, key, base))
     }
 
     pub(crate) fn tload(&self, cx: &mut SymCx, address: Address, key: SymExpr) -> SymExpr {

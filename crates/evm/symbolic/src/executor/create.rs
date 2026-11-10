@@ -130,6 +130,7 @@ impl SymbolicExecutor {
             CallFrame::new(&mut self.cx, created, created, creator, value.clone(), false, calldata);
         frame.address_word = created_word.clone();
         frame.caller_word = creator_word;
+        frame.is_constructor = true;
         // Isolation runs a CREATE, but not a CREATE2, as its own transaction.
         let isolated =
             matches!(kind, CreateKind::Create) && state.starts_isolated_transaction(executor);
@@ -210,21 +211,17 @@ impl SymbolicExecutor {
                     if isolated {
                         parent.world.restore_transient_storage(&failure_world);
                     }
-                    parent.expected_emit = child.expected_emit;
                     // Under an unmet `vm.expectRevert`, the caller sees a failed CREATE, but the
                     // code stays deployed and `expectCreate` does not count it.
-                    if !unmet_expected_revert {
+                    if unmet_expected_revert.is_none() {
                         self.observe_expected_create(&mut parent, creator, kind, runtime)?;
                     }
                     if !parent.world.is_destroyed(created) {
                         parent.world.install_code(created, runtime.to_code(&mut self.cx)?);
                         parent.world.set_nonce(created, 1);
                     }
-                    if unmet_expected_revert {
-                        parent.return_data = error_string_return_data(
-                            &mut self.cx,
-                            "next call did not revert as expected",
-                        );
+                    if let Some(reason) = unmet_expected_revert {
+                        parent.return_data = error_string_return_data(&mut self.cx, reason);
                         parent.stack.push(SymExpr::zero(&mut self.cx))?;
                     } else {
                         parent.stack.push(created_word.clone())?;

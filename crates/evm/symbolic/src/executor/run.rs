@@ -95,6 +95,28 @@ impl SymbolicExecutor {
         }
     }
 
+    /// Returns whether a path that kept running without a feasibility check, such as the rejected
+    /// branch of `vm.assume`, is feasible once it completes with `outcome`.
+    pub(super) fn completed_path_is_feasible(
+        &mut self,
+        state: &mut PathState,
+        outcome: StepOutcome,
+    ) -> Result<bool, SymbolicError> {
+        Ok(matches!(
+            outcome,
+            StepOutcome::Continue | StepOutcome::Forked | StepOutcome::AssumeRejected
+        ) || self.deferred_path_is_feasible(state)?)
+    }
+
+    /// Runs a path's deferred feasibility check, if it has one.
+    pub(super) fn deferred_path_is_feasible(
+        &mut self,
+        state: &mut PathState,
+    ) -> Result<bool, SymbolicError> {
+        Ok(!state.take_deferred_feasibility_check()
+            || self.branch_is_sat_or_defer(state, &state.constraints)?)
+    }
+
     /// Returns any deferred incomplete reason.
     fn deferred_incomplete(&self) -> Option<(SymbolicStopReason, String)> {
         match self.deferred_incomplete? {
@@ -463,6 +485,18 @@ impl SymbolicExecutor {
                         )?
                     }
                     None => StepOutcome::Halt,
+                };
+                if !self.completed_path_is_feasible(&mut state, outcome)? {
+                    break;
+                }
+                let outcome = match outcome {
+                    // Like Forge, a test that ends with the global fail slot set has failed.
+                    StepOutcome::Halt
+                        if self.global_fail_slot_set(&input.executor, &mut state)? =>
+                    {
+                        StepOutcome::Failure
+                    }
+                    outcome => outcome,
                 };
                 match outcome {
                     StepOutcome::Continue => {}

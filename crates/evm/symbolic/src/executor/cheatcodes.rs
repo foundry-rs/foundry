@@ -1,7 +1,8 @@
 use foundry_cheatcodes_spec::Vm::*;
 use foundry_common::version::SEMVER_VERSION;
 use foundry_evm::{
-    core::backend::GLOBAL_FAIL_SLOT, inspectors::cheatcodes::current_execution_context,
+    core::{backend::GLOBAL_FAIL_SLOT, decode::ASSERTION_FAILED_PREFIX},
+    inspectors::cheatcodes::current_execution_context,
 };
 
 use super::*;
@@ -9,12 +10,20 @@ use super::*;
 impl SymbolicExecutor {
     pub(super) fn handle_assertion(
         &mut self,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         pass: SymBoolExpr,
+        selector: [u8; 4],
+        args_offset: Option<usize>,
     ) -> Result<CheatcodeOutcome, SymbolicError> {
         let fail = pass.clone().not(&mut self.cx);
         match fail.as_const() {
-            Some(true) => return Ok(CheatcodeOutcome::Failure),
+            Some(true) => {
+                return Ok(match self.fail_assertion(executor, state, selector, args_offset) {
+                    Some(revert) => CheatcodeOutcome::Revert(revert),
+                    None => CheatcodeOutcome::Continue(Vec::new()),
+                });
+            }
             Some(false) => return Ok(CheatcodeOutcome::Continue(Vec::new())),
             None => {}
         }
@@ -22,16 +31,82 @@ impl SymbolicExecutor {
         let mut fail_constraints = state.constraints.clone();
         fail_constraints.push(fail);
         if self.is_sat_with_state(state, &fail_constraints)? {
+            // A caller can catch the failure, so the passing branch continues too. Its
+            // feasibility is checked when it is popped from the worklist.
+            let mut passing = state.clone();
+            passing.constraints.push(pass);
+            passing.defer_feasibility_check();
             state.constraints = fail_constraints;
-            return Ok(CheatcodeOutcome::Failure);
+            let revert = self.fail_assertion(executor, state, selector, args_offset);
+            return Ok(CheatcodeOutcome::Fork { passing: Box::new(passing), revert });
         }
 
         state.constraints.push(pass);
         Ok(CheatcodeOutcome::Continue(Vec::new()))
     }
 
+    /// Like Forge, a failed assertion reverts the cheatcode call with the returned data, or sets
+    /// the global fail slot when `assertions_revert` is off. The test checks that slot when it
+    /// ends.
+    fn fail_assertion(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        state: &mut PathState,
+        selector: [u8; 4],
+        args_offset: Option<usize>,
+    ) -> Option<SymReturnData> {
+        state.assertion_failed = true;
+        if executor.assertions_revert {
+            let message = match selector {
+                assertTrue_0Call::SELECTOR | assertFalse_0Call::SELECTOR => {
+                    Some(ASSERTION_FAILED_PREFIX.to_owned())
+                }
+                assertTrue_1Call::SELECTOR | assertFalse_1Call::SELECTOR => {
+                    args_offset.and_then(|offset| {
+                        read_abi_string_arg(
+                            &mut self.cx,
+                            &state.memory,
+                            offset,
+                            1,
+                            "symbolic assertion message",
+                        )
+                        .ok()
+                    })
+                }
+                _ => None,
+            };
+            let message = if let Some(message) = message {
+                message
+            } else {
+                self.defer_incomplete("symbolic assertion revert payload");
+                ASSERTION_FAILED_PREFIX.to_owned()
+            };
+            return Some(error_string_return_data(&mut self.cx, &message));
+        }
+        let failed_slot = SymExpr::constant(&mut self.cx, GLOBAL_FAIL_SLOT);
+        let one = SymExpr::one(&mut self.cx);
+        state.world.sstore(CHEATCODE_ADDRESS, failed_slot, one);
+        None
+    }
+
+    /// Returns whether the path can end with the global fail slot set, keeping that case.
+    pub(super) fn global_fail_slot_set(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        state: &mut PathState,
+    ) -> Result<bool, SymbolicError> {
+        let failed = state.world.global_fail_slot(&mut self.cx, executor)?;
+        let failed = failed.nonzero_bool(&mut self.cx);
+        let (constraints, sat) = self.constraints_with_condition(state, failed)?;
+        if sat {
+            state.constraints = constraints;
+        }
+        Ok(sat)
+    }
+
     pub(super) fn handle_full_word_array_assertion(
         &mut self,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         selector: [u8; 4],
         input_offset: &SymExpr,
@@ -138,7 +213,7 @@ impl SymbolicExecutor {
         ) {
             condition = condition.not(&mut self.cx);
         }
-        self.handle_assertion(state, condition)
+        self.handle_assertion(executor, state, condition, selector, None)
     }
 
     pub(super) fn set_expected_revert(
@@ -294,6 +369,7 @@ impl SymbolicExecutor {
     ) -> Result<StepOutcome, SymbolicError> {
         if state.is_static {
             state.first_failed_callee.get_or_insert(CHEATCODE_ADDRESS);
+            state.first_reverted_callee.get_or_insert(CHEATCODE_ADDRESS);
             state.return_data = SymReturnData::empty(&mut self.cx);
             return Ok(StepOutcome::Revert);
         }
@@ -339,6 +415,7 @@ impl SymbolicExecutor {
             CallFrame::new(&mut self.cx, created, created, creator, zero, false, calldata);
         frame.address_word = created_word.clone();
         frame.caller_word = creator_word;
+        frame.is_constructor = true;
         // Isolation runs a `deployCode` from the test frame as its own transaction.
         let isolated = state.starts_isolated_transaction(executor);
         let mut child = state.child(frame);
@@ -388,7 +465,7 @@ impl SymbolicExecutor {
                 None,
             )? {
                 JoinedCallOutcome::Failure(parent)
-                | JoinedCallOutcome::Success { parent, unmet_expected_revert: true, .. } => {
+                | JoinedCallOutcome::Success { parent, unmet_expected_revert: Some(_), .. } => {
                     *state = parent;
                     return Ok(StepOutcome::Failure);
                 }
@@ -415,7 +492,6 @@ impl SymbolicExecutor {
                     if isolated {
                         parent.world.restore_transient_storage(&failure_world);
                     }
-                    parent.expected_emit = child.expected_emit;
                     self.observe_expected_create(
                         &mut parent,
                         creator,
@@ -675,15 +751,29 @@ impl SymbolicExecutor {
         Ok(reverted.then_some(StepOutcome::Continue))
     }
 
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn add_call_mock(
         &mut self,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         callee: SymExpr,
         value: Option<U256>,
         data: SymBytes,
         returns: Vec<SymReturnData>,
         reverts: bool,
-    ) -> CheatcodeOutcome {
+    ) -> Result<CheatcodeOutcome, SymbolicError> {
+        // Like Forge, a codeless callee gets the one-byte code `0x00`, so Solidity's extcodesize
+        // check before a high-level call passes.
+        match state.constrained_word(&mut self.cx, &callee).map(word_to_address) {
+            Some(address) => {
+                if state.world.extcode(&mut self.cx, executor, address)?.is_empty() {
+                    let code = SymCode::concrete(&mut self.cx, vec![0]);
+                    state.world.install_code(address, code);
+                }
+            }
+            // A symbolic callee may be codeless, and that check would prune a path Forge runs.
+            None => self.defer_incomplete("symbolic vm.mockCall callee"),
+        }
         // Replace identical definitions in place to preserve mock precedence.
         if let Some(existing) = state.call_mocks.iter_mut().find(|mock| {
             mock.callee == callee
@@ -694,7 +784,7 @@ impl SymbolicExecutor {
         } else {
             state.call_mocks.push(CallMock::new(callee, value, data, returns, reverts));
         }
-        CheatcodeOutcome::Continue(Vec::new())
+        Ok(CheatcodeOutcome::Continue(Vec::new()))
     }
 
     pub(super) fn set_function_mock(
@@ -726,8 +816,9 @@ impl SymbolicExecutor {
         in_size: usize,
     ) -> Result<CheatcodeOutcome, SymbolicError> {
         if is_full_word_array_assertion(selector) {
-            return self
-                .handle_full_word_array_assertion(state, selector, in_offset, input_size, in_size);
+            return self.handle_full_word_array_assertion(
+                executor, state, selector, in_offset, input_size, in_size,
+            );
         }
         let in_offset = in_offset.as_usize_or("symbolic cheatcode CALL input offset")?;
         let args_offset = in_offset + 4;
@@ -739,8 +830,8 @@ impl SymbolicExecutor {
                 if state.assume_no_revert_next_call.is_some() {
                     return Err(SymbolicError::Unsupported("symbolic vm.assumeNoRevert overlap"));
                 }
-                let filter = if selector == assumeNoRevert_0Call::SELECTOR {
-                    AssumeNoRevert::Any
+                let filters = if selector == assumeNoRevert_0Call::SELECTOR {
+                    None
                 } else {
                     let single = selector == assumeNoRevert_1Call::SELECTOR;
                     let mut values =
@@ -748,16 +839,16 @@ impl SymbolicExecutor {
                     let value = values
                         .pop()
                         .ok_or(SymbolicError::Unsupported("symbolic vm.assumeNoRevert decode"))?;
-                    AssumeNoRevert::Filtered(if single {
+                    Some(if single {
                         vec![dyn_potential_revert(&mut self.cx, &value)?]
                     } else {
                         dyn_potential_reverts(&mut self.cx, &value)?
                     })
                 };
-                state.assume_no_revert_next_call = Some(filter);
+                state.assume_no_revert_next_call =
+                    Some(AssumeNoRevert { filters, reverted_by: None });
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
-            skip_0Call::SELECTOR | skip_1Call::SELECTOR => self.handle_skip(state, in_offset + 4),
             recordLogsCall::SELECTOR => {
                 state.recorded_logs = Some(Vec::new());
                 state.recorded_logs_generation += 1;
@@ -1103,7 +1194,7 @@ impl SymbolicExecutor {
                     message,
                 )?;
                 let data = SymBytes::exprs(&mut self.cx, data);
-                Ok(self.add_call_mock(state, callee, value, data, vec![ret], revert))
+                self.add_call_mock(executor, state, callee, value, data, vec![ret], revert)
             }
             mockCalls_0Call::SELECTOR | mockCalls_1Call::SELECTOR => {
                 let has_value = selector == mockCalls_1Call::SELECTOR;
@@ -1137,7 +1228,7 @@ impl SymbolicExecutor {
                     self.config.max_calldata_bytes as usize,
                 )?;
                 let data = SymBytes::exprs(&mut self.cx, data);
-                Ok(self.add_call_mock(state, callee, value, data, returns, false))
+                self.add_call_mock(executor, state, callee, value, data, returns, false)
             }
             mockFunctionCall::SELECTOR => {
                 let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
@@ -1397,11 +1488,6 @@ impl SymbolicExecutor {
                 }
                 let slot = state.memory.load_word(&mut self.cx, in_offset + 36)?;
                 let value = state.memory.load_word(&mut self.cx, in_offset + 68)?;
-                let failed_slot = SymExpr::constant(&mut self.cx, GLOBAL_FAIL_SLOT);
-                let one = SymExpr::one(&mut self.cx);
-                if target == CHEATCODE_ADDRESS && slot == failed_slot && value == one {
-                    return Ok(CheatcodeOutcome::Failure);
-                }
                 state.world.sstore(target, slot, value);
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
@@ -2326,12 +2412,12 @@ impl SymbolicExecutor {
             assertTrue_0Call::SELECTOR | assertTrue_1Call::SELECTOR => {
                 let word = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let condition = word.nonzero_bool(&mut self.cx);
-                self.handle_assertion(state, condition)
+                self.handle_assertion(executor, state, condition, selector, Some(args_offset))
             }
             assertFalse_0Call::SELECTOR | assertFalse_1Call::SELECTOR => {
                 let word = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let condition = word.into_zero_bool(&mut self.cx);
-                self.handle_assertion(state, condition)
+                self.handle_assertion(executor, state, condition, selector, Some(args_offset))
             }
             assertEq_2Call::SELECTOR
             | assertEq_3Call::SELECTOR
@@ -2346,7 +2432,7 @@ impl SymbolicExecutor {
                 let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
                 let condition = SymBoolExpr::eq(&mut self.cx, left, right);
-                self.handle_assertion(state, condition)
+                self.handle_assertion(executor, state, condition, selector, Some(args_offset))
             }
             assertEqDecimal_0Call::SELECTOR
             | assertEqDecimal_1Call::SELECTOR
@@ -2355,7 +2441,7 @@ impl SymbolicExecutor {
                 let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
                 let condition = SymBoolExpr::eq(&mut self.cx, left, right);
-                self.handle_assertion(state, condition)
+                self.handle_assertion(executor, state, condition, selector, Some(args_offset))
             }
             assertNotEq_2Call::SELECTOR
             | assertNotEq_3Call::SELECTOR
@@ -2371,7 +2457,7 @@ impl SymbolicExecutor {
                 let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
                 let condition = SymBoolExpr::eq(&mut self.cx, left, right);
                 let condition = condition.not(&mut self.cx);
-                self.handle_assertion(state, condition)
+                self.handle_assertion(executor, state, condition, selector, Some(args_offset))
             }
             assertEq_10Call::SELECTOR
             | assertEq_11Call::SELECTOR
@@ -2414,57 +2500,57 @@ impl SymbolicExecutor {
                 let expect_equal = VmCalls::name_by_selector(selector) == Some("assertEq");
                 let condition =
                     SymBoolExpr::constant(&mut self.cx, (values[0] == values[1]) == expect_equal);
-                self.handle_assertion(state, condition)
+                self.handle_assertion(executor, state, condition, selector, Some(args_offset))
             }
             assertLt_0Call::SELECTOR | assertLt_1Call::SELECTOR => {
                 let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
                 let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ult, left, right);
-                self.handle_assertion(state, condition)
+                self.handle_assertion(executor, state, condition, selector, Some(args_offset))
             }
             assertLe_0Call::SELECTOR | assertLe_1Call::SELECTOR => {
                 let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
                 let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, left, right);
-                self.handle_assertion(state, condition)
+                self.handle_assertion(executor, state, condition, selector, Some(args_offset))
             }
             assertGt_0Call::SELECTOR | assertGt_1Call::SELECTOR => {
                 let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
                 let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ugt, left, right);
-                self.handle_assertion(state, condition)
+                self.handle_assertion(executor, state, condition, selector, Some(args_offset))
             }
             assertGe_0Call::SELECTOR | assertGe_1Call::SELECTOR => {
                 let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
                 let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, left, right);
-                self.handle_assertion(state, condition)
+                self.handle_assertion(executor, state, condition, selector, Some(args_offset))
             }
             assertLt_2Call::SELECTOR | assertLt_3Call::SELECTOR => {
                 let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
                 let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Slt, left, right);
-                self.handle_assertion(state, condition)
+                self.handle_assertion(executor, state, condition, selector, Some(args_offset))
             }
             assertGt_2Call::SELECTOR | assertGt_3Call::SELECTOR => {
                 let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
                 let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Sgt, left, right);
-                self.handle_assertion(state, condition)
+                self.handle_assertion(executor, state, condition, selector, Some(args_offset))
             }
             assertLe_2Call::SELECTOR | assertLe_3Call::SELECTOR => {
                 let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
                 let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Sgt, left, right);
                 let condition = condition.not(&mut self.cx);
-                self.handle_assertion(state, condition)
+                self.handle_assertion(executor, state, condition, selector, Some(args_offset))
             }
             assertGe_2Call::SELECTOR | assertGe_3Call::SELECTOR => {
                 let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
                 let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Slt, left, right);
                 let condition = condition.not(&mut self.cx);
-                self.handle_assertion(state, condition)
+                self.handle_assertion(executor, state, condition, selector, Some(args_offset))
             }
             randomUint_0Call::SELECTOR => {
                 Ok(CheatcodeOutcome::Continue(vec![state.fresh_word(&mut self.cx, "vmRandomUint")]))

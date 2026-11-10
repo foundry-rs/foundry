@@ -460,6 +460,22 @@ impl SymbolicExecutor {
         completed_paths: &mut usize,
         op: u8,
     ) -> Result<StepOutcome, SymbolicError> {
+        // A path that kept running without a feasibility check, such as a caught `vm.assume`
+        // rejection, is checked before it calls out or logs: a callee, cheatcodes in particular,
+        // or a pending `vm.expectEmit` can record limitations for the whole run.
+        if matches!(
+            op,
+            opcode::CALL
+                | opcode::CALLCODE
+                | opcode::DELEGATECALL
+                | opcode::STATICCALL
+                | opcode::CREATE
+                | opcode::CREATE2
+                | opcode::LOG0..=opcode::LOG4
+        ) && !self.deferred_path_is_feasible(state)?
+        {
+            return Ok(StepOutcome::AssumeRejected);
+        }
         state.pc += 1;
 
         if executor.spec_id < opcode_activation(op) {
@@ -1539,14 +1555,38 @@ impl SymbolicExecutor {
         &mut self,
         state: &mut PathState,
     ) -> Result<StepOutcome, SymbolicError> {
+        // Forge consumes this assumption in call_end, not create_end. A constructor must leave
+        // both its revert bytes and any pending assumption for the caller to handle.
+        if !state.frame.is_constructor
+            && let Some(assumption) = state.assume_no_revert_next_call.take()
+            && self.assume_no_revert_matches(
+                state,
+                &assumption,
+                assumption.reverted_by.unwrap_or(state.address),
+                &state.return_data,
+            )?
+        {
+            state.return_data =
+                SymReturnData::from_concrete_bytes(&mut self.cx, MAGIC_ASSUME.to_vec());
+        }
         if state.call_depth != 0 {
             return Ok(StepOutcome::Revert);
         }
         let data = state.return_data.read_concrete(&mut self.cx, "symbolic revert data");
-        // Like Forge's fuzz and invariant runners, a `vm.assumeNoRevert` rejection that reaches the
-        // top frame discards the run. Invariant predicates still treat it as a revert.
-        if !state.invariant_predicate && data.as_deref().is_ok_and(|data| data == MAGIC_ASSUME) {
+        // Like Forge's fuzz and invariant runners, a `vm.assume` or `vm.assumeNoRevert` rejection
+        // or a `vm.skip` that reaches the top frame discards the run. Invariant predicates still
+        // treat it as a revert.
+        if !state.invariant_predicate
+            && data
+                .as_deref()
+                .is_ok_and(|data| data == MAGIC_ASSUME || data.starts_with(MAGIC_SKIP))
+        {
             return Ok(StepOutcome::AssumeRejected);
+        }
+        // Like Forge, a test that reverts after a failed assertion fails, even when the assertion
+        // was caught or only set the fail slot.
+        if state.root_calldata.is_some() && state.assertion_failed {
+            return Ok(StepOutcome::Failure);
         }
         // In `check*`/`prove*` tests, a `CheatcodeError` that reaches the top frame, such as an
         // unmet `vm.expectRevert`, is a failure. Invariant handlers treat it as a revert.
@@ -1575,6 +1615,13 @@ impl SymbolicExecutor {
                     return Ok(StepOutcome::Failure);
                 }
             }
+        }
+        // A call that failed a pending `vm.expectEmit` reverted with a bare string, so an
+        // uncaught failure is classified from the expectation, not from the revert data.
+        if state.root_calldata.is_some()
+            && state.expected_emit.as_ref().is_some_and(ExpectedEmit::failed)
+        {
+            return Ok(StepOutcome::Failure);
         }
         Ok(StepOutcome::Revert)
     }

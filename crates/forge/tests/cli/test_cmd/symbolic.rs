@@ -1976,7 +1976,21 @@ fn symbolic_requires_successful_path(prj: _, cmd: _) {
         r#"
 import "forge-std/Test.sol";
 
+contract Handler {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function assumeNot5(uint256 x) external pure {
+        vm.assume(x != 5);
+    }
+
+    function skipBelow5(uint256 x) external {
+        vm.skip(x < 5);
+    }
+}
+
 contract SymbolicEmptyDomain is Test {
+    Handler handler = new Handler();
+
     function checkConstantAssumption() public {
         vm.assume(false);
     }
@@ -1999,18 +2013,74 @@ contract SymbolicEmptyDomain is Test {
     function checkSkipped() public {
         vm.skip(true);
     }
+
+    // A rejected `vm.assume` reverts only the callee, which the caller catches.
+    function checkAssumeCaught(uint256 x) public {
+        try handler.assumeNot5(x) {} catch {}
+        assert(x != 5);
+    }
+
+    // `vm.skip` below the test level is an error.
+    function checkSkipNested(uint256 x) public {
+        handler.skipBelow5(x);
+    }
+
+    // A caught test-level `vm.skip` continues the test.
+    function checkSkipCaught(uint256 x) public {
+        try vm.skip(x < 5) {} catch {}
+        assert(x >= 5);
+    }
+
+    // The rejected branch of a repeated assumption is infeasible: it neither fails nor passes.
+    function checkCaughtRepeatedAssumption(uint256 x) public {
+        vm.assume(x != 5);
+        try vm.assume(x != 5) { vm.assume(false); } catch { assert(false); }
+    }
+
+    // An infeasible caught rejection never runs, so it cannot make the proof incomplete.
+    function checkInfeasibleCaughtRejection(uint256 x) public {
+        vm.assume(x != 5);
+        try vm.assume(x != 5) {} catch {
+            vm.assertEq(uint256(1), uint256(2));
+        }
+    }
+
+    // The allocation makes the cheatcode input offset symbolic.
+    function checkAssumeAfterSymbolicAlloc(uint8 n) public {
+        new bytes(n);
+        vm.assume(n != 37);
+        assert(n != 37);
+    }
+
+    function checkSkipAfterSymbolicAlloc(uint8 n) public {
+        new bytes(n);
+        vm.skip(n == 37);
+        assert(n != 37);
+    }
 }
 "#,
     );
 
-    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicEmptyDomain"]))
-        .failure()
-        .stdout_eq(str![[r#"
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicEmptyDomain",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
 ...
-Ran 5 tests for test/SymbolicEmptyDomain.t.sol:SymbolicEmptyDomain
+Ran 12 tests for test/SymbolicEmptyDomain.t.sol:SymbolicEmptyDomain
+[PASS] checkAssumeAfterSymbolicAlloc(uint8) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeCaught(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkCaughtRepeatedAssumption(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkConstantAssumption() ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkContradictoryAssumptions(uint256) ([METRICS])
+[PASS] checkInfeasibleCaughtRejection(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (RevertAll): all symbolic paths reverted] checkRejectedAndReverted(bool) ([METRICS])
+[PASS] checkSkipAfterSymbolicAlloc(uint8) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSkipCaught(uint256) ([METRICS])
+[FAIL: vm.skip: `skip` can only be used at test level; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSkipNested(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkSkipped() ([METRICS])
 [PASS] checkSomeAccepted(bool) ([METRICS])
 ...
