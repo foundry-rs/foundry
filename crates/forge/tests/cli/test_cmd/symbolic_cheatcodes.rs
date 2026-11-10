@@ -1149,6 +1149,22 @@ contract SymbolicEnvCryptoConsole is Test {
         assertEq(vm.parseInt(vm.toString(int256(-5))), -5);
         assertEq(vm.parseBytes32(vm.toString(bytes32(uint256(0x12)))), bytes32(uint256(0x12)));
         assertTrue(vm.parseBool(vm.toString(true)));
+        assertEq(vm.toString(address(0xa0Ee7A142d267C1f36714E4a8F75612F20a79720)), "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720");
+        assertTrue(vm.parseBool("tRuE"));
+        (bool ok,) = address(vm).call(abi.encodeCall(vm.parseUint, ("1_000")));
+        assertFalse(ok);
+        (ok,) = address(vm).call(abi.encodeCall(vm.parseInt, ("0x")));
+        assertFalse(ok);
+        bytes memory data;
+        (ok, data) = address(vm).call(abi.encodeCall(vm.parseUint, ("ff")));
+        assertFalse(ok);
+        assertEq(
+            data,
+            abi.encodeWithSignature(
+                "CheatcodeError(string)",
+                "vm.parseUint: failed parsing \"ff\" as type `uint256`: missing hex prefix (\"0x\") for hex string"
+            )
+        );
     }
 
     function checkStringUtilities() public {
@@ -1159,6 +1175,7 @@ contract SymbolicEnvCryptoConsole is Test {
         string[] memory parts = vm.split("a,b,c", ",");
         assertEq(parts.length, 3);
         assertEq(parts[1], "b");
+        assertEq(vm.split("abc", "").length, 5);
         assertEq(vm.indexOf("foundry", "dry"), 4);
         assertTrue(vm.contains("foundry", "ound"));
     }
@@ -5573,7 +5590,15 @@ interface SymbolicVmCompat {
     function isContext(ForgeContext context) external view returns (bool result);
 }
 
+contract CallerReader {
+    function read() external returns (SymbolicVmCompat.CallerMode, address, address) {
+        return SymbolicVmCompat(address(uint160(uint256(keccak256("hevm cheat code"))))).readCallers();
+    }
+}
+
 contract SymbolicBoundSkip is Test {
+    CallerReader reader = new CallerReader();
+
     function externalNoop() external {}
 
     function checkBoundSkipAndGasNoops(uint256 x, int256 y) public {
@@ -5598,21 +5623,39 @@ contract SymbolicBoundSkip is Test {
         SymbolicVmCompat compat = SymbolicVmCompat(address(vm));
         SymbolicVmCompat.CallerMode mode;
         address sender;
-        (mode,,) = compat.readCallers();
+        address origin;
+        (mode, sender, origin) = compat.readCallers();
         assertEq(uint256(mode), uint256(SymbolicVmCompat.CallerMode.None));
+        assertEq(sender, tx.origin);
+        assertEq(origin, tx.origin);
+        (mode, sender,) = reader.read();
+        assertEq(uint256(mode), uint256(SymbolicVmCompat.CallerMode.None));
+        assertEq(sender, tx.origin);
 
         vm.prank(address(0xB0B));
         (mode, sender,) = compat.readCallers();
         assertEq(uint256(mode), uint256(SymbolicVmCompat.CallerMode.Prank));
         assertEq(sender, address(0xB0B));
         vm.stopPrank();
+        vm.prank(address(0xB0B), address(0xA11CE));
+        (mode, sender, origin) = reader.read();
+        assertEq(uint256(mode), uint256(SymbolicVmCompat.CallerMode.Prank));
+        assertEq(sender, address(0xB0B));
+        assertEq(origin, address(0xA11CE));
 
         vm.startPrank(address(0xCAFE));
         (mode, sender,) = compat.readCallers();
         assertEq(uint256(mode), uint256(SymbolicVmCompat.CallerMode.RecurrentPrank));
         assertEq(sender, address(0xCAFE));
+        (mode, sender,) = reader.read();
+        assertEq(uint256(mode), uint256(SymbolicVmCompat.CallerMode.RecurrentPrank));
+        assertEq(sender, address(0xCAFE));
         vm.stopPrank();
 
+        assertTrue(vm.isPersistent(address(this)));
+        assertTrue(vm.isPersistent(msg.sender));
+        assertTrue(vm.isPersistent(address(vm)));
+        assertFalse(vm.isPersistent(address(reader)));
         vm.allowCheatcodes(address(this));
         vm.makePersistent(address(this));
         assertTrue(vm.isPersistent(address(this)));

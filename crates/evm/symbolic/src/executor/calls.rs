@@ -1005,6 +1005,7 @@ impl SymbolicExecutor {
                 return Ok(StepOutcome::Failure);
             }
         }
+        let inherited_prank = state.callers();
         let call_context =
             (!matches!(kind, CallKind::DelegateCall)).then(|| state.prank_for_next_call());
         // An isolated CALL is its own transaction, so it bumps the caller's nonce even when the
@@ -1196,6 +1197,7 @@ impl SymbolicExecutor {
 
         let original_world = state.world.clone();
         let mut child = state.child(frame);
+        child.prank.inherited = inherited_prank;
         if isolated {
             child.world.clear_transient_storage();
             child.call_depth_base = child.call_depth;
