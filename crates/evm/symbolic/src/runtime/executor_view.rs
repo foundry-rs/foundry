@@ -60,6 +60,8 @@ pub struct ExecutorView<'a> {
     pub(crate) spec_id: SpecId,
     pub(crate) chain_id: u64,
     pub(crate) memory_limit: u64,
+    /// Gas limit of the calls and deployments the executor runs.
+    pub(crate) gas_limit: u64,
     pub(crate) max_code_size: usize,
     pub(crate) active_fork_id: Option<U256>,
     /// Addresses cached by the active context, including committed-session reads.
@@ -136,6 +138,7 @@ impl<'a> ExecutorView<'a> {
                 .and_then(|overrides| overrides.chain_id)
                 .unwrap_or(evm_env.chain_id()),
             memory_limit: evm_env.version.memory_limit,
+            gas_limit: executor.gas_limit(),
             max_code_size: evm_env.version.max_code_size,
             active_fork_id: backend.active_fork_id(),
             account_addresses,

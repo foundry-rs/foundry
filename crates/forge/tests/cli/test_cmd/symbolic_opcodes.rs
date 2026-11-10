@@ -515,6 +515,7 @@ contract SymbolicExplicitCallGas {
         }
     }
 
+    // The 2300 gas cap is modeled for a precompile: ecrecover costs 3000, so the call fails.
     function checkTransferGasCap() public {
         payable(address(1)).transfer(0);
     }
@@ -533,7 +534,7 @@ Ran 7 tests for test/SymbolicExplicitCallGas.t.sol:SymbolicExplicitCallGas
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkCallGasZero() ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkDelegateCallGasSymbolic(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkStaticCallGasLarge() ([METRICS])
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkTransferGasCap() ([METRICS])
+[FAIL: incomplete symbolic execution (RevertAll): all symbolic paths reverted] checkTransferGasCap() ([METRICS])
 Suite result: FAILED. 0 passed; 7 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
