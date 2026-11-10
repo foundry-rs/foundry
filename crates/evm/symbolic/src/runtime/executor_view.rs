@@ -60,6 +60,7 @@ pub struct ExecutorView<'a> {
     pub(crate) pranks: Vec<Prank>,
     pub(crate) accesses: Option<&'a RecordAccess>,
     pub(crate) recording_accesses: bool,
+    /// Accounts the backend marks persistent across fork switches, which `vm.isPersistent` sees.
     pub(crate) persistent_accounts: Vec<Address>,
 }
 

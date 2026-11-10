@@ -1174,18 +1174,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         gas: &mut GasTracker,
         executor: &mut dyn CheatcodesExecutor<FEN>,
     ) -> Result {
-        // decode the cheatcode call
-        let decoded = Vm::VmCalls::abi_decode(&message.input).map_err(|e| {
-            if let alloy_sol_types::Error::UnknownSelector { name: _, selector } = e {
-                let msg = format!(
-                    "unknown cheatcode with selector {selector}; \
-                     you may have a mismatch between the `Vm` interface (likely in `forge-std`) \
-                     and the `forge` version"
-                );
-                return alloy_sol_types::Error::Other(std::borrow::Cow::Owned(msg));
-            }
-            e
-        })?;
+        let decoded = decode_cheatcode_call(&message.input)?;
 
         let caller = message.caller;
 
@@ -3710,6 +3699,21 @@ const fn cheatcode_id(cheat: &spec::Cheatcode<'static>) -> &'static str {
 
 const fn cheatcode_signature(cheat: &spec::Cheatcode<'static>) -> &'static str {
     cheat.func.signature
+}
+
+/// Decodes a cheatcode call, reporting an unknown selector as a `Vm` interface mismatch.
+pub fn decode_cheatcode_call(input: &[u8]) -> alloy_sol_types::Result<Vm::VmCalls> {
+    Vm::VmCalls::abi_decode(input).map_err(|e| {
+        if let alloy_sol_types::Error::UnknownSelector { name: _, selector } = e {
+            let msg = format!(
+                "unknown cheatcode with selector {selector}; \
+                 you may have a mismatch between the `Vm` interface (likely in `forge-std`) \
+                 and the `forge` version"
+            );
+            return alloy_sol_types::Error::Other(std::borrow::Cow::Owned(msg));
+        }
+        e
+    })
 }
 
 /// Dispatches the cheatcode call to the appropriate function.

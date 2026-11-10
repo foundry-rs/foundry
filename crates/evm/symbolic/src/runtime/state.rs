@@ -958,13 +958,13 @@ impl PathState {
     }
 
     pub(crate) fn fresh_bounded_uint(&mut self, cx: &mut SymCx, bits: U256) -> SymExpr {
+        // Like Forge, a zero-bit integer is `0`.
+        if bits.is_zero() {
+            return SymExpr::zero(cx);
+        }
         let value = self.fresh_word(cx, "symbolic");
         if bits < U256::from(256) {
-            let upper = if bits.is_zero() {
-                U256::ZERO
-            } else {
-                U256::ONE << usize::try_from(bits).expect("checked bit width")
-            };
+            let upper = U256::ONE << usize::try_from(bits).expect("checked bit width");
             self.constraints.push(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &value, upper));
         }
         value
@@ -1043,31 +1043,27 @@ impl PathState {
         }
     }
 
-    pub(crate) fn read_callers_words(&self, cx: &mut SymCx) -> Vec<SymExpr> {
-        let (mode, caller, origin) = if let Some((_, caller_word)) = self.prank.next_caller.as_ref()
-        {
-            (
-                U256::from(3),
-                caller_word.clone(),
-                self.prank
-                    .next_origin
-                    .as_ref()
-                    .map(|(_, origin_word)| origin_word.clone())
-                    .unwrap_or_else(|| self.origin_word.clone()),
-            )
-        } else if let Some((_, caller_word)) = self.prank.persistent_caller.as_ref() {
-            (
-                U256::from(4),
-                caller_word.clone(),
-                self.prank
-                    .persistent_origin
-                    .as_ref()
-                    .map(|(_, origin_word)| origin_word.clone())
-                    .unwrap_or_else(|| self.origin_word.clone()),
-            )
+    /// Returns the caller mode, sender, and origin of the nearest prank at or below this frame,
+    /// as Forge's `vm.readCallers` reports it.
+    pub(crate) fn callers(&self) -> Option<(U256, SymExpr, SymExpr)> {
+        let (mode, caller_word, origin) = if let Some((_, caller_word)) = &self.prank.next_caller {
+            (U256::from(3), caller_word, &self.prank.next_origin)
+        } else if let Some((_, caller_word)) = &self.prank.persistent_caller {
+            (U256::from(4), caller_word, &self.prank.persistent_origin)
         } else {
-            (U256::ZERO, self.caller_word.clone(), self.origin_word.clone())
+            return self.prank.inherited.clone();
         };
+        let origin_word = origin
+            .as_ref()
+            .map(|(_, origin_word)| origin_word.clone())
+            .unwrap_or_else(|| self.origin_word.clone());
+        Some((mode, caller_word.clone(), origin_word))
+    }
+
+    pub(crate) fn read_callers_words(&self, cx: &mut SymCx) -> Vec<SymExpr> {
+        let (mode, caller, origin) = self
+            .callers()
+            .unwrap_or_else(|| (U256::ZERO, self.origin_word.clone(), self.origin_word.clone()));
         vec![SymExpr::constant(cx, mode), caller, origin]
     }
 
@@ -1859,6 +1855,9 @@ pub(crate) struct SymbolicPrank {
     persistent_origin: Option<(Address, SymExpr)>,
     /// Whether a call used the `vm.startPrank` caller.
     persistent_used: bool,
+    /// The caller mode, sender, and origin a caller frame's prank gave this frame. It does not
+    /// apply to calls this frame makes, but `vm.readCallers` reports it.
+    pub(crate) inherited: Option<(U256, SymExpr, SymExpr)>,
 }
 
 impl SymbolicPrank {
@@ -1895,6 +1894,11 @@ impl SymbolicPrank {
         } else {
             None
         }
+    }
+
+    /// Ends this frame's prank. Like Forge, a caller frame's prank stays visible.
+    pub(crate) fn stop(&mut self) {
+        *self = Self { inherited: self.inherited.take(), ..Self::default() };
     }
 
     pub(crate) const fn has_active(&self) -> bool {

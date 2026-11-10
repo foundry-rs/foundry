@@ -908,17 +908,45 @@ contract SymbolicVmAssert is Test {
     function checkVmAssert(uint256 x) public {
         vm.assertNotEq(x, uint256(42));
     }
+
+    // The allocation makes the free memory pointer, and so the cheatcode input offset, symbolic.
+    function checkVmAssertAfterSymbolicAlloc(uint8 n) public pure {
+        new bytes(n);
+        vm.assertTrue(n != 37);
+    }
+
+    // Forge's argument checks still apply to an input at a symbolic offset.
+    function checkChainIdAfterSymbolicAlloc(uint8 n) public {
+        new bytes(n);
+        vm.chainId(uint256(1) << 64);
+    }
+
+    // Forge cannot decode an input this short, so its missing argument must not read as zero.
+    function checkShortCallAfterSymbolicAlloc(uint8 n, address who) public {
+        new bytes(n);
+        bytes memory data = abi.encodePacked(vm.deal.selector, uint256(uint160(who)));
+        address target = address(vm);
+        bool ok;
+        assembly {
+            ok := call(gas(), target, 0, add(data, 32), 36, 0, 0)
+        }
+        assertTrue(ok);
+    }
 }
 "#,
     );
 
-    let stdout = assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkVmAssert"]))
+    let stdout =
+        assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicVmAssert"]))
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicVmAssert.t.sol:SymbolicVmAssert
+Ran 4 tests for test/SymbolicVmAssert.t.sol:SymbolicVmAssert
+[FAIL: vm.chainId: chain ID must be less than 2^64; counterexample: 		[SENDER] [SENDER] calldata=0x304d83d50000000000000000000000000000000000000000000000000000000000000000 args=[0]] checkChainIdAfterSymbolicAlloc(uint8) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: short cheatcode CALL] checkShortCallAfterSymbolicAlloc(uint8,address) ([METRICS])
 [FAIL: assertion failed: 42 == 42; counterexample: 		[SENDER] [SENDER] calldata=0xdaaeb166000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkVmAssert(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] calldata=0x8dbe55f80000000000000000000000000000000000000000000000000000000000000025 args=[37]] checkVmAssertAfterSymbolicAlloc(uint8) ([METRICS])
+Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
         .get_output()
@@ -1096,10 +1124,24 @@ import "forge-std/Test.sol";
 import "forge-std/console2.sol";
 
 contract SymbolicEnvCryptoConsole is Test {
+    bytes32 foundryVersionHash;
+
+    function setUp() public {
+        foundryVersionHash = keccak256(bytes(vm.getFoundryVersion()));
+    }
+
+    // Like Forge, the version includes its build metadata.
+    function checkFoundryVersion() public view {
+        assertEq(keccak256(bytes(vm.getFoundryVersion())), foundryVersionHash);
+    }
+
     function checkEnvCryptoConsole(uint256 x) public {
         assertTrue(vm.envExists("FOUNDRY_SYMBOLIC_ENV_PRESENT"));
         assertEq(vm.envUint("FOUNDRY_SYMBOLIC_ENV_UINT"), 42);
         assertEq(vm.envOr("FOUNDRY_SYMBOLIC_ENV_MISSING", uint256(7)), 7);
+        assertEq(vm.envOr("FOUNDRY_SYMBOLIC_ENV_EMPTY", uint256(7)), 7);
+        assertTrue(vm.envOr("FOUNDRY_SYMBOLIC_ENV_EMPTY", true));
+        assertEq(vm.envOr("FOUNDRY_SYMBOLIC_ENV_EMPTY", string("empty")), "");
         assertEq(vm.envString("FOUNDRY_SYMBOLIC_ENV_STRING"), "hello");
 
         uint256[] memory values = vm.envUint("FOUNDRY_SYMBOLIC_ENV_UINTS", ",");
@@ -1130,6 +1172,17 @@ contract SymbolicEnvCryptoConsole is Test {
         assertTrue(s != bytes32(0));
 
         console2.log("symbolic", x);
+        // Forge's console inspector rejects a call it cannot decode, but only sees calls whose
+        // destination is the console address.
+        address consoleAddress = 0x000000000000000000636F6e736F6c652e6c6f67;
+        (bool ok,) = consoleAddress.call("");
+        assertFalse(ok);
+        (ok,) = consoleAddress.delegatecall("");
+        assertTrue(ok);
+        assembly {
+            ok := callcode(gas(), consoleAddress, 0, 0, 0, 0, 0)
+        }
+        assertTrue(ok);
     }
 
     function checkKeyUtilities() public {
@@ -1172,6 +1225,22 @@ contract SymbolicEnvCryptoConsole is Test {
         assertEq(vm.parseInt(vm.toString(int256(-5))), -5);
         assertEq(vm.parseBytes32(vm.toString(bytes32(uint256(0x12)))), bytes32(uint256(0x12)));
         assertTrue(vm.parseBool(vm.toString(true)));
+        assertEq(vm.toString(address(0xa0Ee7A142d267C1f36714E4a8F75612F20a79720)), "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720");
+        assertTrue(vm.parseBool("tRuE"));
+        (bool ok,) = address(vm).call(abi.encodeCall(vm.parseUint, ("1_000")));
+        assertFalse(ok);
+        (ok,) = address(vm).call(abi.encodeCall(vm.parseInt, ("0x")));
+        assertFalse(ok);
+        bytes memory data;
+        (ok, data) = address(vm).call(abi.encodeCall(vm.parseUint, ("ff")));
+        assertFalse(ok);
+        assertEq(
+            data,
+            abi.encodeWithSignature(
+                "CheatcodeError(string)",
+                "vm.parseUint: failed parsing \"ff\" as type `uint256`: missing hex prefix (\"0x\") for hex string"
+            )
+        );
     }
 
     function checkStringUtilities() public {
@@ -1182,6 +1251,7 @@ contract SymbolicEnvCryptoConsole is Test {
         string[] memory parts = vm.split("a,b,c", ",");
         assertEq(parts.length, 3);
         assertEq(parts[1], "b");
+        assertEq(vm.split("abc", "").length, 5);
         assertEq(vm.indexOf("foundry", "dry"), 4);
         assertTrue(vm.contains("foundry", "ound"));
     }
@@ -1191,6 +1261,7 @@ contract SymbolicEnvCryptoConsole is Test {
 
     cmd.env("FOUNDRY_SYMBOLIC_ENV_PRESENT", "1");
     cmd.env("FOUNDRY_SYMBOLIC_ENV_UINT", "42");
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_EMPTY", "");
     cmd.env("FOUNDRY_SYMBOLIC_ENV_STRING", "hello");
     cmd.env("FOUNDRY_SYMBOLIC_ENV_UINTS", "1,2,3");
     cmd.env("FOUNDRY_SYMBOLIC_ENV_STRINGS", "alpha,beta");
@@ -1205,13 +1276,14 @@ contract SymbolicEnvCryptoConsole is Test {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 5 tests for test/SymbolicEnvCryptoConsole.t.sol:SymbolicEnvCryptoConsole
+Ran 6 tests for test/SymbolicEnvCryptoConsole.t.sol:SymbolicEnvCryptoConsole
 [PASS] checkBase64Utilities() ([METRICS])
 [PASS] checkEnvCryptoConsole(uint256) ([METRICS])
+[PASS] checkFoundryVersion() ([METRICS])
 [PASS] checkKeyUtilities() ([METRICS])
 [PASS] checkParseToStringUtilities() ([METRICS])
 [PASS] checkStringUtilities() ([METRICS])
-Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 6 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -2130,13 +2202,59 @@ contract SymbolicPreparedEnvironment is Test {
 "#,
     );
 
-    assert_symbolic(cmd.args([
+    prj.add_test(
+        "SymbolicEnvironmentArgumentChecks.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+// Arguments Forge's cheatcodes reject, with a symbolic and with constant values.
+contract SymbolicEnvironmentArgumentChecks is Test {
+    function checkChainIdRejectsLargeValue(uint256 chainId) public {
+        vm.chainId(chainId);
+    }
+
+    function checkFeeRejectsLargeValue() public {
+        vm.fee(uint256(1) << 64);
+    }
+
+    function checkTxGasPriceRejectsLargeValue() public {
+        vm.txGasPrice(uint256(1) << 64);
+    }
+
+    function checkBlobBaseFeeRejectsLargeValue() public {
+        vm.blobBaseFee(uint256(1) << 128);
+    }
+
+    function checkSetBlockhashRejectsLargeBlockNumber() public {
+        vm.setBlockhash(uint256(1) << 64, bytes32(uint256(1)));
+    }
+
+    function checkDifficultyRejectedAfterParis() public {
+        vm.difficulty(1);
+    }
+
+    function checkComputeCreateAddressRejectsLargeNonce(uint256 nonce) public view {
+        try vm.computeCreateAddress(address(this), nonce) returns (address) {} catch { assert(false); }
+    }
+
+    function checkStoreRejectsPrecompile() public {
+        vm.store(address(1), bytes32(0), bytes32(uint256(1)));
+    }
+
+    function checkEtchRejectsPrecompile() public {
+        vm.etch(address(4), hex"00");
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
         "--match-test",
-        "^(checkBlockEnvironment|checkPreparedEnvironment|checkSnapshotRestoresEnvironment)\\(",
+        "^(checkBlockEnvironment|checkPreparedEnvironment|checkSnapshotRestoresEnvironment|check[A-Za-z]*Rejects[A-Za-z]*|checkDifficultyRejectedAfterParis)\\(",
     ]))
-    .success()
+    .failure()
     .stdout_eq(
         str![[r#"
 ...
@@ -2144,6 +2262,18 @@ Ran 2 tests for test/SymbolicBlockEnvironment.t.sol:SymbolicBlockEnvironment
 [PASS] checkBlockEnvironment(uint256) ([METRICS])
 [PASS] checkSnapshotRestoresEnvironment(uint256) ([METRICS])
 Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 9 tests for test/SymbolicEnvironmentArgumentChecks.t.sol:SymbolicEnvironmentArgumentChecks
+[FAIL: vm.blobBaseFee: blob base fee must be less than 2^128; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkBlobBaseFeeRejectsLargeValue() ([METRICS])
+[FAIL: vm.chainId: chain ID must be less than 2^64; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkChainIdRejectsLargeValue(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkComputeCreateAddressRejectsLargeNonce(uint256) ([METRICS])
+[FAIL: vm.difficulty: `difficulty` is not supported after the Paris hard fork, use `prevrandao` instead; see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkDifficultyRejectedAfterParis() ([METRICS])
+[FAIL: vm.etch: cannot use precompile 0x0000000000000000000000000000000000000004 as an argument; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkEtchRejectsPrecompile() ([METRICS])
+[FAIL: vm.fee: base fee must be less than 2^64; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkFeeRejectsLargeValue() ([METRICS])
+[FAIL: vm.setBlockhash: blockNumber must be less than 2^64; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetBlockhashRejectsLargeBlockNumber() ([METRICS])
+[FAIL: vm.store: cannot use precompile 0x0000000000000000000000000000000000000001 as an argument; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkStoreRejectsPrecompile() ([METRICS])
+[FAIL: vm.txGasPrice: gas price must be less than 2^64; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkTxGasPriceRejectsLargeValue() ([METRICS])
+Suite result: FAILED. 0 passed; 9 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test for test/SymbolicPreparedEnvironment.t.sol:SymbolicPreparedEnvironment
 [PASS] checkPreparedEnvironment(uint256) ([METRICS])
@@ -2291,7 +2421,8 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
-// `vm.randomBytes` with concrete and bounded symbolic lengths.
+// `vm.randomBytes` with concrete and bounded symbolic lengths, and the `vm.randomUint` edge
+// cases Forge rejects or fixes.
 #[forgetest_init]
 fn symbolic_vm_random_bytes_cheatcodes(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_vm_random_bytes_cheatcodes");
@@ -2313,6 +2444,14 @@ contract SymbolicRandomBytes is Test {
         assertTrue(data[0] == bytes1(0x11));
         assertTrue(data[1] == bytes1(0x22));
         assertTrue(data[2] == bytes1(0x33));
+    }
+
+    function checkRandomUintRangeRejectsMinAboveMax(uint256 min, uint256 max) public {
+        vm.randomUint(min, max);
+    }
+
+    function checkRandomUintZeroBitsIsZero(uint256 x) public {
+        if (x == 7) assertEq(vm.randomUint(0), 0);
     }
 }
 "#,
@@ -2336,19 +2475,21 @@ contract SymbolicRandomBytesLength is Test {
 "#,
     );
 
-    let stdout = assert_symbolic(cmd.args([
+    let stdout = assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
         "--match-test",
-        "^(checkRandomBytes|checkRandomBytesSymbolicLength)\\(",
+        "^(checkRandomBytes|checkRandomBytesSymbolicLength|checkRandomUint[A-Za-z]*)\\(",
     ]))
-    .success()
+    .failure()
     .stdout_eq(
         str![[r#"
 ...
-Ran 1 test for test/SymbolicRandomBytes.t.sol:SymbolicRandomBytes
+Ran 3 tests for test/SymbolicRandomBytes.t.sol:SymbolicRandomBytes
 [PASS] checkRandomBytes(uint256) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+[FAIL: vm.randomUint: min must be less than or equal to max; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkRandomUintRangeRejectsMinAboveMax(uint256,uint256) ([METRICS])
+[PASS] checkRandomUintZeroBitsIsZero(uint256) ([METRICS])
+Suite result: FAILED. 2 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test for test/SymbolicRandomBytesLength.t.sol:SymbolicRandomBytesLength
 [PASS] checkRandomBytesSymbolicLength(uint8) ([METRICS])
@@ -2576,7 +2717,7 @@ contract SymbolicRevertKeepsCheatcodes is Test {
 "#,
     );
 
-    let stdout = assert_symbolic(cmd.args([
+    assert_symbolic(cmd.args([
         "test",
         "--symbolic",
         "--match-contract",
@@ -2589,15 +2730,11 @@ Ran 5 tests for test/SymbolicRevertKeepsCheatcodes.t.sol:SymbolicRevertKeepsChea
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xcd02017c00000000000000000000000000000000000000000000000000000000000003e8 args=[1000]] checkGasPriceSurvivesRevertingCall(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x9389e44d0000000000000000000000000000000000000000000000000000000000000000 args=[0x0000000000000000000000000000000000000000]] checkMockSurvivesRevertingCall(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x5a97aeab0000000000000000000000000000000000000000000000010000000000000000 args=[18446744073709551616 [1.844e19]]] checkRejectedGasPriceDoesNotSurvive(uint256) ([METRICS])
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: short cheatcode CALL] checkTruncatedTxGasPriceIsNotRangeChecked() ([METRICS])
+[PASS] checkTruncatedTxGasPriceIsNotRangeChecked() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xe9b7d25400000000000000000000000000000000000000000000000000000000000003e8 args=[1000]] checkWarpSurvivesRevertingCall(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 1 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
-"#]])
-    .get_output()
-    .stdout_lossy();
-
-    assert!(!stdout.contains("[PASS]"), "{stdout}");
+"#]]);
 }
 
 #[forgetest_init]
@@ -3004,6 +3141,30 @@ contract SymbolicCheatcodeInputSize is Test {
         assert(ok);
         assertTrue(condition);
     }
+
+    // Forge fails to decode calldata shorter than the ABI arguments or with an unknown selector,
+    // so the call returns false with the decoder's error.
+    function checkShortCheatcodeCallFails() public {
+        (bool ok, bytes memory data) = address(vm).call(abi.encodePacked(vm.deal.selector, uint256(uint160(address(0xB0B)))));
+        assertFalse(ok);
+        assertEq(
+            data,
+            abi.encodeWithSignature(
+                "CheatcodeError(string)", "ABI decoding failed: buffer overrun while deserializing"
+            )
+        );
+        (ok,) = address(vm).call(abi.encodePacked(vm.assume.selector, uint8(1)));
+        assertFalse(ok);
+        (ok, data) = address(vm).call(hex"deadbeef");
+        assertFalse(ok);
+        assertEq(
+            data,
+            abi.encodeWithSignature(
+                "CheatcodeError(string)",
+                "unknown cheatcode with selector 0xdeadbeef; you may have a mismatch between the `Vm` interface (likely in `forge-std`) and the `forge` version"
+            )
+        );
+    }
 }
 "#,
     );
@@ -3011,15 +3172,16 @@ contract SymbolicCheatcodeInputSize is Test {
     let stdout = assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
-        "--match-test",
-        "checkLowLevelAssumeSize",
+        "--match-contract",
+        "SymbolicCheatcodeInputSize",
     ]))
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicCheatcodeInputSize.t.sol:SymbolicCheatcodeInputSize
+Ran 2 tests for test/SymbolicCheatcodeInputSize.t.sol:SymbolicCheatcodeInputSize
 [PASS] checkLowLevelAssumeSize(uint256,bool) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+[PASS] checkShortCheatcodeCallFails() ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -5546,7 +5708,28 @@ interface SymbolicVmCompat {
     function isContext(ForgeContext context) external view returns (bool result);
 }
 
+contract CallerReader {
+    SymbolicVmCompat constant COMPAT = SymbolicVmCompat(address(uint160(uint256(keccak256("hevm cheat code")))));
+    SymbolicVmCompat.CallerMode public constructedMode;
+
+    constructor() {
+        (constructedMode,,) = COMPAT.readCallers();
+    }
+
+    function read() external returns (SymbolicVmCompat.CallerMode, address, address) {
+        return COMPAT.readCallers();
+    }
+
+    // Like Forge, `vm.stopPrank` in a callee ends only the callee's prank.
+    function readAfterStopPrank() external returns (SymbolicVmCompat.CallerMode, address, address) {
+        Vm(address(COMPAT)).stopPrank();
+        return COMPAT.readCallers();
+    }
+}
+
 contract SymbolicBoundSkip is Test {
+    CallerReader reader = new CallerReader();
+
     function externalNoop() external {}
 
     function checkBoundSkipAndGasNoops(uint256 x, int256 y) public {
@@ -5571,21 +5754,44 @@ contract SymbolicBoundSkip is Test {
         SymbolicVmCompat compat = SymbolicVmCompat(address(vm));
         SymbolicVmCompat.CallerMode mode;
         address sender;
-        (mode,,) = compat.readCallers();
+        address origin;
+        (mode, sender, origin) = compat.readCallers();
         assertEq(uint256(mode), uint256(SymbolicVmCompat.CallerMode.None));
+        assertEq(sender, tx.origin);
+        assertEq(origin, tx.origin);
+        (mode, sender,) = reader.read();
+        assertEq(uint256(mode), uint256(SymbolicVmCompat.CallerMode.None));
+        assertEq(sender, tx.origin);
 
         vm.prank(address(0xB0B));
         (mode, sender,) = compat.readCallers();
         assertEq(uint256(mode), uint256(SymbolicVmCompat.CallerMode.Prank));
         assertEq(sender, address(0xB0B));
         vm.stopPrank();
+        vm.prank(address(0xB0B), address(0xA11CE));
+        (mode, sender, origin) = reader.read();
+        assertEq(uint256(mode), uint256(SymbolicVmCompat.CallerMode.Prank));
+        assertEq(sender, address(0xB0B));
+        assertEq(origin, address(0xA11CE));
+        vm.prank(address(0xB0B));
+        (mode,,) = reader.readAfterStopPrank();
+        assertEq(uint256(mode), uint256(SymbolicVmCompat.CallerMode.Prank));
+        vm.prank(address(0xB0B));
+        assertEq(uint256(new CallerReader().constructedMode()), uint256(SymbolicVmCompat.CallerMode.Prank));
 
         vm.startPrank(address(0xCAFE));
         (mode, sender,) = compat.readCallers();
         assertEq(uint256(mode), uint256(SymbolicVmCompat.CallerMode.RecurrentPrank));
         assertEq(sender, address(0xCAFE));
+        (mode, sender,) = reader.read();
+        assertEq(uint256(mode), uint256(SymbolicVmCompat.CallerMode.RecurrentPrank));
+        assertEq(sender, address(0xCAFE));
         vm.stopPrank();
 
+        assertTrue(vm.isPersistent(address(this)));
+        assertTrue(vm.isPersistent(msg.sender));
+        assertTrue(vm.isPersistent(address(vm)));
+        assertFalse(vm.isPersistent(address(reader)));
         vm.allowCheatcodes(address(this));
         vm.makePersistent(address(this));
         assertTrue(vm.isPersistent(address(this)));
@@ -5688,23 +5894,62 @@ contract SymbolicBoundInvalid is Test {
     function checkInvalidSignedBound(int256 x) public {
         vm.bound(x, 3, -3);
     }
+
+    function checkConstantBoundReachesInnerValues() public {
+        uint256 bounded = vm.bound(uint256(5), uint256(0), uint256(10));
+        assertTrue(bounded == 0 || bounded == 10);
+    }
+
+    function checkConstantSignedBoundReachesInnerValues() public {
+        int256 bounded = vm.bound(int256(5), int256(-10), int256(10));
+        assertTrue(bounded == -10 || bounded == 10);
+    }
+
+    function checkCaughtBoundPayload() public {
+        try vm.bound(uint256(11), 0, 10) returns (uint256) {
+            assert(false);
+        } catch (bytes memory data) {
+            assertEq(
+                data,
+                abi.encodeWithSignature(
+                    "CheatcodeError(string)", "vm.bound: cannot bound 11 in [0, 10] range"
+                )
+            );
+        }
+    }
+
+    // An out-of-range value reverts the cheatcode call; an in-range value continues.
+    function checkCaughtOutOfRangeBound(uint256 x) public view {
+        try vm.bound(x, 0, 10) returns (uint256 bounded) {
+            assert(x <= 10 && bounded <= 10 && bounded != x);
+        } catch {
+            assert(x > 10);
+        }
+    }
 }
 "#,
     );
 
+    // The concrete replay draws the bounded value from Forge's RNG, so pin the seed.
     let stdout = assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
         "--match-contract",
         "SymbolicBoundInvalid",
+        "--fuzz-seed",
+        "1",
     ]))
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicBoundInvalid.t.sol:SymbolicBoundInvalid
+Ran 6 tests for test/SymbolicBoundInvalid.t.sol:SymbolicBoundInvalid
+[PASS] checkCaughtBoundPayload() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.bound revert payload] checkCaughtOutOfRangeBound(uint256) ([METRICS])
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkConstantBoundReachesInnerValues() ([METRICS])
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkConstantSignedBoundReachesInnerValues() ([METRICS])
 [FAIL: vm.bound: cannot bound 0 in [3, -3] range; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkInvalidSignedBound(int256) ([METRICS])
 [FAIL: vm.bound: cannot bound 0 in [12, 10] range; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkInvalidUnsignedBound(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 1 passed; 5 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
