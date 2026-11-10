@@ -878,6 +878,14 @@ impl SymbolicExecutor {
             if has_symbolic_input_offset && !full_word_array_assertion {
                 return Err(SymbolicError::Unsupported("symbolic cheatcode CALL input offset"));
             }
+            // Forge rejects a shorter input as an ABI decoding error, so never read cheatcode
+            // arguments from memory past the input.
+            if !has_symbolic_in_size
+                && to == CHEATCODE_ADDRESS
+                && foundry_cheatcode_min_input_size(selector).is_some_and(|min| in_size < min)
+            {
+                return Err(SymbolicError::Unsupported("short cheatcode CALL"));
+            }
             if has_symbolic_in_size {
                 let min_size = if to == CHEATCODE_ADDRESS {
                     foundry_cheatcode_min_input_size(selector)
@@ -935,7 +943,6 @@ impl SymbolicExecutor {
                     worklist,
                     selector,
                     concrete_in_offset,
-                    in_size,
                     &out_offset,
                     &out_size,
                 )?
