@@ -345,7 +345,7 @@ impl<ExtDB> CacheDB<ExtDB> {
         if let Some(code) = &info.code
             && !code.is_empty()
         {
-            if info.code_hash == KECCAK256_EMPTY {
+            if info.is_empty_code_hash() {
                 info.code_hash = code.hash_slow();
             }
             self.cache.contracts.entry(info.code_hash).or_insert_with(|| code.clone());

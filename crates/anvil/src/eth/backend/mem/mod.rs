@@ -186,9 +186,6 @@ use tempo_primitives::{
 use tokio::sync::Notify;
 use tokio::{sync::RwLock as AsyncRwLock, task::JoinSet};
 
-#[cfg(feature = "base")]
-use evm2::bytecode::Bytecode;
-
 #[cfg(feature = "js-tracer")]
 use crate::eth::backend::evm::{TxFor, TypesFor, block_env};
 #[cfg(feature = "js-tracer")]
@@ -219,6 +216,8 @@ use base_common_rpc_types::{
 };
 #[cfg(feature = "base")]
 use base_evm2::L1BlockInfo;
+#[cfg(feature = "base")]
+use evm2::bytecode::Bytecode;
 #[cfg(feature = "base")]
 use foundry_evm_hardforks::BaseUpgrade;
 
