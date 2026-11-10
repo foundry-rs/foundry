@@ -182,6 +182,7 @@ impl<'ast> CommentGatherer<'ast> {
                 while let Some(next_comment) = cursor.peek() {
                     if !next_comment.style.is_isolated()
                         || next_comment.kind != CommentKind::Line
+                        || next_comment.is_doc != current.is_doc
                         || next_comment.format_directives().next().is_some()
                         || ref_line + 1
                             != self

@@ -1,5 +1,6 @@
 //! Integration tests for `forge fmt` command
 
+use foundry_config::fmt::DocCommentStyle;
 use foundry_test_utils::{forgetest, snapbox::IntoData};
 
 const UNFORMATTED: &str = r#"// SPDX-License-Identifier: MIT
@@ -614,5 +615,121 @@ Formatted [..]/src/Test.sol
                 expected.clone(),
             );
         }
+    }
+}
+
+#[forgetest]
+fn fmt_doc_directives_preserve_doc_runs(prj: _, cmd: _) {
+    for (source, expected) in [
+        (
+            r#"/// @notice Before.
+/// forgefmt:disable-end
+/// @dev After.
+contract  A {}
+
+contract  B {}
+"#,
+            str![[r#"
+/// @notice Before.
+/// forgefmt:disable-end
+/// @dev After.
+contract A {}
+
+contract B {}
+
+"#]],
+        ),
+        (
+            r#"/// @notice Before.
+/// forgefmt:disable-next-item
+/// @dev After.
+contract  A {}
+
+contract  B {}
+"#,
+            str![[r#"
+/// @notice Before.
+/// forgefmt:disable-next-item
+/// @dev After.
+contract  A {}
+
+contract B {}
+
+"#]],
+        ),
+    ] {
+        for wrap_comments in [false, true] {
+            prj.update_config(|config| {
+                config.fmt.wrap_comments = wrap_comments;
+                config.fmt.docs_style = DocCommentStyle::Block;
+            });
+            prj.add_raw_source("Test.sol", source);
+
+            cmd.forge_fuse()
+                .args(["fmt", "src/Test.sol"])
+                .assert_success()
+                .stdout_eq("")
+                .stderr_eq(str![[r#"
+Formatted [..]/src/Test.sol
+
+"#]]);
+            assert_data_eq!(
+                std::fs::read_to_string(prj.root().join("src/Test.sol")).unwrap(),
+                expected.clone(),
+            );
+            cmd.forge_fuse()
+                .args(["fmt", "src/Test.sol"])
+                .assert_success()
+                .stdout_eq("")
+                .stderr_eq("");
+            cmd.forge_fuse()
+                .args(["fmt", "src/Test.sol", "--check"])
+                .assert_success()
+                .stdout_eq("")
+                .stderr_eq("");
+        }
+    }
+}
+
+#[forgetest]
+fn fmt_doc_directives_preserve_compiler_documentation(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.fmt.wrap_comments = true;
+        config.fmt.docs_style = DocCommentStyle::Block;
+    });
+    prj.add_source(
+        "A.sol",
+        r#"/// @notice Before.
+/// forgefmt:disable-end
+/// @dev After.
+contract  A {}
+"#,
+    );
+
+    for attempt in 0..2 {
+        if attempt == 1 {
+            cmd.forge_fuse().args(["fmt", "src/A.sol"]).assert_success().stdout_eq("").stderr_eq(
+                str![[r#"
+Formatted [..]/src/A.sol
+
+"#]],
+            );
+        }
+        cmd.forge_fuse().args(["inspect", "A", "userdoc", "--json"]).assert_json_stdout(str![[
+            r#"
+{
+  "kind": "user",
+  "notice": "Before. forgefmt:disable-end",
+  "version": 1
+}
+"#
+        ]]);
+        cmd.forge_fuse().args(["inspect", "A", "devdoc", "--json"]).assert_json_stdout(str![[r#"
+{
+  "details": "After.",
+  "kind": "dev",
+  "version": 1
+}
+"#]]);
     }
 }

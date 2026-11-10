@@ -112,6 +112,8 @@ pub(super) struct State<'sess, 'ast> {
     config: Arc<FormatterConfig>,
     inline_config: InlineConfig<()>,
     cursor: SourcePos,
+    /// Contiguous line doc groups whose directives require preserving their style and line breaks.
+    directive_doc_groups: Vec<Span>,
 
     // FORMATTING CONTEXT:
     // Whether the source file uses CRLF (`\r\n`) line endings.
@@ -213,6 +215,7 @@ impl<'sess> State<'sess, '_> {
         inline_config: InlineConfig<()>,
         comments: Comments,
     ) -> Self {
+        let directive_doc_groups = Self::directive_doc_groups(file, &comments);
         Self {
             s: pp::Printer::new(
                 config.line_length,
@@ -224,6 +227,7 @@ impl<'sess> State<'sess, '_> {
             config,
             inline_config,
             cursor: SourcePos { pos: file.start_pos, enabled: true },
+            directive_doc_groups,
             has_crlf: false,
             contract: None,
             single_line_stmt: None,
@@ -703,13 +707,13 @@ impl<'sess> State<'sess, '_> {
             if self.config.docs_style == foundry_config::fmt::DocCommentStyle::Block
                 && cmnt.is_doc
                 && cmnt.kind == ast::CommentKind::Line
-                && cmnt.format_directives().next().is_none()
+                && !self.preserve_doc_comment(&cmnt)
             {
                 let mut ref_line = self.source_line(cmnt.span.hi());
                 while let Some(next_cmnt) = self.peek_comment() {
                     if !next_cmnt.is_doc
                         || next_cmnt.kind != ast::CommentKind::Line
-                        || next_cmnt.format_directives().next().is_some()
+                        || self.preserve_doc_comment(next_cmnt)
                         || ref_line + 1 != self.source_line(next_cmnt.span.lo())
                     {
                         break;
@@ -962,7 +966,9 @@ impl<'sess> State<'sess, '_> {
     fn print_comment(&mut self, mut cmnt: Comment, mut config: CommentConfig) {
         self.cursor.advance_to(cmnt.span.hi(), true);
 
-        if cmnt.is_doc {
+        let preserve = self.preserve_doc_comment(&cmnt);
+        let wrap_comments = self.config.wrap_comments && !preserve;
+        if cmnt.is_doc && !preserve {
             cmnt = style_doc_comment(self.config.docs_style, cmnt);
         }
 
@@ -979,7 +985,7 @@ impl<'sess> State<'sess, '_> {
                         (true, false) => (),
                     };
                 }
-                if self.config.wrap_comments {
+                if wrap_comments {
                     // Merge and wrap comments
                     if starts_line {
                         self.ibox(config.offset);
@@ -1011,7 +1017,7 @@ impl<'sess> State<'sess, '_> {
                     if config.mixed_post_glued {
                         self.nbsp();
                     } else {
-                        config.nbsp_or_space(self.config.wrap_comments, &mut self.s);
+                        config.nbsp_or_space(wrap_comments, &mut self.s);
                     }
                     self.cursor.advance(1);
                 } else if !config.mixed_no_break_post {
@@ -1025,7 +1031,7 @@ impl<'sess> State<'sess, '_> {
                     config.hardbreak_if_not_bol(self.is_bol_or_only_ind(), &mut self.s);
                 }
 
-                if self.config.wrap_comments {
+                if wrap_comments {
                     // Merge and wrap comments
                     let merged_lines = self.merge_comment_lines(&cmnt.lines, prefix);
                     for (pos, line) in merged_lines.into_iter().delimited() {
@@ -1103,9 +1109,9 @@ impl<'sess> State<'sess, '_> {
                     self.nbsp();
                 }
 
-                if !self.config.wrap_comments && cmnt.lines.len() == 1 {
+                if !wrap_comments && cmnt.lines.len() == 1 {
                     self.word(cmnt.lines.pop().unwrap());
-                } else if self.config.wrap_comments {
+                } else if wrap_comments {
                     if cmnt.is_doc || matches!(cmnt.kind, ast::CommentKind::Line) {
                         config.offset = 0;
                     } else {
@@ -1281,6 +1287,39 @@ impl<'sess> State<'sess, '_> {
                 self.hardbreak();
             }
         }
+    }
+
+    /// Keeps directive syntax and NatSpec attachment intact across all comment printing paths.
+    fn preserve_doc_comment(&self, cmnt: &Comment) -> bool {
+        self.directive_doc_groups.iter().any(|span| span.contains(cmnt.span))
+    }
+
+    fn directive_doc_groups(file: &SourceFile, comments: &Comments) -> Vec<Span> {
+        let line = |pos| file.lookup_line(file.relative_position(pos)).unwrap();
+        let mut groups = Vec::new();
+        let mut comments = comments.iter().peekable();
+        while let Some(cmnt) = comments.next() {
+            if !cmnt.is_doc || cmnt.kind != ast::CommentKind::Line {
+                continue;
+            }
+
+            let mut span = cmnt.span;
+            let mut has_directive = cmnt.format_directives().next().is_some();
+            while let Some(next) = comments.peek()
+                && next.is_doc
+                && next.kind == ast::CommentKind::Line
+                && next.style.is_isolated()
+                && line(span.hi()) + 1 == line(next.span.lo())
+            {
+                has_directive |= next.format_directives().next().is_some();
+                span = span.to(next.span);
+                comments.next();
+            }
+            if has_directive {
+                groups.push(span);
+            }
+        }
+        groups
     }
 }
 
