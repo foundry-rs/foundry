@@ -676,6 +676,16 @@ contract SymbolicKeccakPreimage {
     function checkKnownKeccakPreimage(uint256 x) public pure {
         assert(keccak256(abi.encode(x)) != keccak256(abi.encode(uint256(42))));
     }
+
+    // A common offset on two hashes, as in `keccak(key, slot) + 1`, keeps them distinct.
+    function checkKeccakPlusOffsetDiffers(uint256 a, uint256 b) public pure {
+        require(a != b);
+        assert(uint256(keccak256(abi.encode(a))) + 1 != uint256(keccak256(abi.encode(b))) + 1);
+    }
+
+    function checkKeccakPlusOffsetCanCollide(uint256 a, uint256 b) public pure {
+        assert(uint256(keccak256(abi.encode(a))) + 1 != uint256(keccak256(abi.encode(b))) + 1);
+    }
 }
 "#,
     );
@@ -684,11 +694,13 @@ contract SymbolicKeccakPreimage {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 3 tests for test/SymbolicKeccakPreimage.t.sol:SymbolicKeccakPreimage
+Ran 5 tests for test/SymbolicKeccakPreimage.t.sol:SymbolicKeccakPreimage
 [PASS] checkArrayElementSurvivesMappingWrite(address,uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [..]] checkKeccakPlusOffsetCanCollide(uint256,uint256) ([METRICS])
+[PASS] checkKeccakPlusOffsetDiffers(uint256,uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x4df8b26f000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkKnownKeccakPreimage(uint256) ([METRICS])
 [PASS] checkNestedArraySurvivesMappingWrite(address,address,uint256,uint256) ([METRICS])
-Suite result: FAILED. 2 passed; 1 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 3 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
