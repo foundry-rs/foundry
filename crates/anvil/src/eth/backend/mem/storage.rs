@@ -14,7 +14,7 @@ use alloy_eips::eip7928::BlockAccessList;
 use alloy_network::Network;
 use alloy_primitives::{
     B256, Bytes, U256,
-    map::{B256HashMap, HashMap},
+    map::{AddressMap, B256HashMap, HashMap},
 };
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo,
@@ -614,6 +614,8 @@ pub struct MinedBlockOutcome<T> {
     /// Transactions skipped because they're not yet valid (e.g., valid_after in the future).
     /// These remain in the pool and should be retried later.
     pub not_yet_valid: Vec<Arc<PoolTransaction<T>>>,
+    /// Nonces of the accounts that the block changed.
+    pub account_nonces: AddressMap<u64>,
 }
 
 impl<T> Clone for MinedBlockOutcome<T> {
@@ -624,6 +626,7 @@ impl<T> Clone for MinedBlockOutcome<T> {
             stale: self.stale.clone(),
             invalid: self.invalid.clone(),
             not_yet_valid: self.not_yet_valid.clone(),
+            account_nonces: self.account_nonces.clone(),
         }
     }
 }
@@ -636,6 +639,7 @@ impl<T> fmt::Debug for MinedBlockOutcome<T> {
             .field("stale", &self.stale.len())
             .field("invalid", &self.invalid.len())
             .field("not_yet_valid", &self.not_yet_valid.len())
+            .field("account_nonces", &self.account_nonces.len())
             .finish()
     }
 }
