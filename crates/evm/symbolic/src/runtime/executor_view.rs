@@ -62,7 +62,6 @@ pub struct ExecutorView<'a> {
     pub(crate) pranks: Vec<Prank>,
     pub(crate) accesses: Option<&'a RecordAccess>,
     pub(crate) recording_accesses: bool,
-    pub(crate) persistent_accounts: Vec<Address>,
 }
 
 /// Block environment values exposed to symbolic execution.
@@ -188,7 +187,6 @@ impl<'a> ExecutorView<'a> {
             pranks: cheats.into_iter().flat_map(|cheats| cheats.pranks.values().copied()).collect(),
             accesses: cheats.map(|cheats| &cheats.accesses),
             recording_accesses: cheats.is_some_and(|cheats| cheats.recording_accesses),
-            persistent_accounts: backend.lifecycle().forks().persistent_accounts().collect(),
         }
     }
 }

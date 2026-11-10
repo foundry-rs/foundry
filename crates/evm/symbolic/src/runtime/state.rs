@@ -156,7 +156,6 @@ impl PathState {
         self.storage_store_hooks.extend(executor.storage_store_hooks.iter().copied());
         self.mapping_storage_store_hooks
             .extend(executor.mapping_storage_store_hooks.iter().copied());
-        self.persistent_accounts.extend(executor.persistent_accounts.iter().copied());
 
         // Forge applies a `setUp` prank from the test frame, which is depth 1 in the inspector.
         for prank in &executor.pranks {
