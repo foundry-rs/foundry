@@ -518,6 +518,28 @@ contract SymbolicSetupAccounts is Test {
         target.call(abi.encodeWithSignature("ping()"));
         a.ping();
     }
+
+    function checkCompatibilityEtchedCode() public {
+        address compat = address(0xF3993A62377BCd56AE39D773740A5390411E8BC9);
+        vm.etch(compat, hex"60006000fd");
+        (bool ok,) = compat.call(hex"5c36b186");
+        assert(ok);
+    }
+
+    function checkCheatcodeDelegateCall(address target) public {
+        vm.assume(target == address(vm) || target == address(reverter));
+        (bool ok,) = target.delegatecall(abi.encodeWithSignature("ping()"));
+        assert(!ok);
+    }
+
+    function checkCheatcodeCallcode(address target) public {
+        vm.assume(target == address(vm) || target == address(reverter));
+        bool ok;
+        assembly {
+            ok := callcode(gas(), target, 0, 0, 0, 0, 0)
+        }
+        assert(!ok);
+    }
 }
 "#,
     );
@@ -531,17 +553,20 @@ contract SymbolicSetupAccounts is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 9 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
+Ran 12 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkBalance(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeBalance(address) ([METRICS])
 [FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeCallKeepsExpectRevert(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeCallRevertData(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeCallcode(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeDelegateCall(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeCopy(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeHash(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeLength(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCompatibilityEtchedCode() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkHighLevelCall(address,bool) ([METRICS])
 [FAIL: unknown cheatcode with selector 0x5c36b186; you may have a mismatch between the `Vm` interface (likely in `forge-std`) and the `forge` version; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnconstrainedHighLevelCall(address) ([METRICS])
-Suite result: FAILED. 0 passed; 9 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 12 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

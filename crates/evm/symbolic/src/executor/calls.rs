@@ -825,7 +825,9 @@ impl SymbolicExecutor {
         out_offset: SymExpr,
         out_size: BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
-        let compatibility_cheatcode = if to == SYMBOLIC_VM_COMPAT_ADDRESS {
+        let compatibility_cheatcode = if matches!(kind, CallKind::Call | CallKind::StaticCall)
+            && to == SYMBOLIC_VM_COMPAT_ADDRESS
+        {
             let (_, max_input_size, _) = in_size.parts(&mut self.cx);
             if max_input_size < 4 {
                 false
@@ -845,7 +847,9 @@ impl SymbolicExecutor {
         } else {
             false
         };
-        if to == CHEATCODE_ADDRESS || compatibility_cheatcode {
+        if (matches!(kind, CallKind::Call | CallKind::StaticCall) && to == CHEATCODE_ADDRESS)
+            || compatibility_cheatcode
+        {
             if !state.constrained_word(&mut self.cx, &value).is_some_and(|value| value.is_zero()) {
                 return Err(SymbolicError::Unsupported("value-bearing cheatcode CALL"));
             }
@@ -1581,6 +1585,9 @@ impl SymbolicExecutor {
     ) -> Result<StepOutcome, SymbolicError> {
         let mut candidates = state.world.symbolic_call_targets(&mut self.cx, executor)?;
         candidates.push(SYMBOLIC_VM_COMPAT_ADDRESS);
+        if matches!(kind, CallKind::DelegateCall | CallKind::CallCode) {
+            candidates.push(CHEATCODE_ADDRESS);
+        }
         candidates.extend(active_precompiles(executor.spec_id).as_map().addresses());
         candidates.sort();
         candidates.dedup();
@@ -1594,13 +1601,16 @@ impl SymbolicExecutor {
             .collect::<Vec<_>>();
         // Only the real cheatcode address uses Forge's decoder. The compatibility address is an
         // ordinary call target unless its selector names a symbolic-VM operation.
-        let cheatcode_address = SymExpr::constant(&mut self.cx, address_word(CHEATCODE_ADDRESS));
-        let cheatcode_condition = SymBoolExpr::eq(&mut self.cx, target.clone(), cheatcode_address);
+        let cheatcode_condition =
+            matches!(kind, CallKind::Call | CallKind::StaticCall).then(|| {
+                let address = SymExpr::constant(&mut self.cx, address_word(CHEATCODE_ADDRESS));
+                SymBoolExpr::eq(&mut self.cx, target.clone(), address)
+            });
         let mut outside_constraints = state.constraints.clone();
         outside_constraints.extend(
             candidate_constraints
                 .iter()
-                .chain([&cheatcode_condition])
+                .chain(cheatcode_condition.iter())
                 .cloned()
                 .map(|condition| condition.not(&mut self.cx)),
         );
@@ -1699,35 +1709,37 @@ impl SymbolicExecutor {
         }
 
         let call_input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset.clone());
-        let mut cheatcode_branch = state.clone();
-        cheatcode_branch.constraints.push(cheatcode_condition);
-        if self.is_sat_with_state(&cheatcode_branch, &cheatcode_branch.constraints)? {
-            // The decoder error only depends on the selector, except for shorter calldata.
-            let input = if call_input.len() < 4 {
-                call_input.clone()
-            } else {
-                call_input.slice_concrete(&mut self.cx, 0, 4)
-            };
-            let input = input.concrete_bytes(&mut self.cx, "symbolic cheatcode selector")?;
-            if let Ok(selector) = <[u8; 4]>::try_from(input.as_slice())
-                && VmCalls::signature_by_selector(selector).is_some()
-            {
-                return Err(SymbolicError::Unsupported("symbolic cheatcode CALL target"));
+        if let Some(cheatcode_condition) = cheatcode_condition {
+            let mut cheatcode_branch = state.clone();
+            cheatcode_branch.constraints.push(cheatcode_condition);
+            if self.is_sat_with_state(&cheatcode_branch, &cheatcode_branch.constraints)? {
+                // The decoder error only depends on the selector, except for shorter calldata.
+                let input = if call_input.len() < 4 {
+                    call_input.clone()
+                } else {
+                    call_input.slice_concrete(&mut self.cx, 0, 4)
+                };
+                let input = input.concrete_bytes(&mut self.cx, "symbolic cheatcode selector")?;
+                if let Ok(selector) = <[u8; 4]>::try_from(input.as_slice())
+                    && VmCalls::signature_by_selector(selector).is_some()
+                {
+                    return Err(SymbolicError::Unsupported("symbolic cheatcode CALL target"));
+                }
+                let Err(error) = decode_cheatcode_call(&input) else {
+                    return Err(SymbolicError::Unsupported("symbolic cheatcode CALL target"));
+                };
+                // Like Forge, a cheatcode call leaves `vm.expectRevert` and `vm.assumeNoRevert`
+                // pending.
+                let return_data = error_string_return_data(&mut self.cx, &error.to_string());
+                revert_cheatcode_call(
+                    &mut self.cx,
+                    &mut cheatcode_branch,
+                    out_offset.clone(),
+                    &out_size,
+                    return_data,
+                )?;
+                parents.push_back(cheatcode_branch);
             }
-            let Err(error) = decode_cheatcode_call(&input) else {
-                return Err(SymbolicError::Unsupported("symbolic cheatcode CALL target"));
-            };
-            // Like Forge, a cheatcode call leaves `vm.expectRevert` and `vm.assumeNoRevert`
-            // pending.
-            let return_data = error_string_return_data(&mut self.cx, &error.to_string());
-            revert_cheatcode_call(
-                &mut self.cx,
-                &mut cheatcode_branch,
-                out_offset.clone(),
-                &out_size,
-                return_data,
-            )?;
-            parents.push_back(cheatcode_branch);
         }
 
         for (to, constraint) in candidates.into_iter().zip(candidate_constraints) {

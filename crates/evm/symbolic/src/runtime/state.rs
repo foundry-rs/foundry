@@ -2402,9 +2402,6 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
         address: Address,
     ) -> Result<SymCode, SymbolicError> {
-        if address == CHEATCODE_ADDRESS || address == SYMBOLIC_VM_COMPAT_ADDRESS {
-            return Ok(SymCode::concrete(cx, vec![0]));
-        }
         if self.destroyed_accounts.contains(&address) {
             return Ok(SymCode::empty(cx));
         }
@@ -2421,6 +2418,13 @@ impl SymbolicWorld {
                 || account.code.as_ref().is_some_and(|code| !code.is_empty()))
         {
             Arc::make_mut(&mut self.state).existing_accounts.insert(address);
+        }
+        if (address == CHEATCODE_ADDRESS || address == SYMBOLIC_VM_COMPAT_ADDRESS)
+            && account.as_ref().is_none_or(|account| account.code.is_none())
+        {
+            let code = SymCode::concrete(cx, vec![0]);
+            Arc::make_mut(&mut self.state).code_cache.insert(address, code.clone());
+            return Ok(code);
         }
         let bytecode = account.as_ref().and_then(|account| account.code.as_ref());
         let code = bytecode
