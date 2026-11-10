@@ -2020,6 +2020,9 @@ pub(crate) struct SymbolicWorldState {
     arbitrary_storage_copies: HashMap<Address, Address>,
     arbitrary_storage_all: bool,
     zero_init_symbolic_storage: bool,
+    /// First zero-init base read of each symbolic key. Which `setUp` slot a key selects depends
+    /// on the slot hashes the run has seen, so later reads reuse it.
+    zero_init_base_reads: HashMap<(Address, SymExpr), SymExpr>,
     symbolic_address_aliases: HashMap<SymExpr, Address>,
     replay_storage_slots: HashMap<Symbol, Vec<SymbolicReplayStorageSlot>>,
     replay_symbolic_storage_keys: HashMap<Symbol, Vec<(Address, SymExpr)>>,
@@ -2292,6 +2295,9 @@ impl SymbolicWorld {
                 .map(|value| SymExpr::constant(cx, value))
                 .map_err(|err| SymbolicError::Backend(err.to_string()))
         } else if self.zero_init_symbolic_storage {
+            if let Some(value) = self.zero_init_base_reads.get(&(address, key.clone())) {
+                return Ok(value.clone());
+            }
             // Unwritten slots are zero, but the slots `setUp` wrote are known concrete state.
             let mut value = SymExpr::zero(cx);
             for (slot, slot_value) in executor.backend.storage_slots(address) {
@@ -2302,6 +2308,9 @@ impl SymbolicWorld {
                 let slot_value = SymExpr::constant(cx, slot_value);
                 value = key.clone().select_storage_write(cx, slot, slot_value, value);
             }
+            Arc::make_mut(&mut self.state)
+                .zero_init_base_reads
+                .insert((address, key.clone()), value.clone());
             Ok(value)
         } else {
             let name = symbolic_storage_symbol(cx, address, key);
