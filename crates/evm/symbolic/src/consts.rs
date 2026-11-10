@@ -4,7 +4,8 @@ use std::time::Duration;
 // HD wallet key derivation
 pub(crate) const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 pub(crate) const MAX_REMEMBER_KEYS: u32 = 64;
-pub(crate) const SYMBOLIC_VM_COMPAT_ADDRESS: Address =
+/// Address of the Halmos-style symbolic VM helpers (`svm.*`).
+pub const SYMBOLIC_VM_COMPAT_ADDRESS: Address =
     address!("0xF3993A62377BCd56AE39D773740A5390411E8BC9");
 
 // Symbolic exponentiation limits

@@ -1097,6 +1097,11 @@ impl SymbolicExecutor {
                     selector,
                     concrete_in_offset.expect("symbolic vm input offset is concrete"),
                 )
+                .inspect(|outcome| {
+                    if let CheatcodeOutcome::ContinueData(ret) = outcome {
+                        state.svm_returns.push(ret.clone());
+                    }
+                })
             } else {
                 Err(SymbolicError::Unsupported("symbolic cheatcode address"))
             };

@@ -32,6 +32,7 @@ use alloy_primitives::{
     map::{Entry, HashMap, HashSet},
 };
 use evm2::{
+    bytecode::Bytecode,
     evm::{Cache, InMemoryDB},
     interpreter::op as opcode,
 };
@@ -76,8 +77,8 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkVariant;
 use foundry_evm_symbolic::{
-    ExecutorView, SymbolicBranchTarget, SymbolicConcreteInput, SymbolicExecutor,
-    SymbolicInvariantCandidateInput, SymbolicInvariantCounterexampleKind,
+    ExecutorView, SYMBOLIC_VM_COMPAT_ADDRESS, SymbolicBranchTarget, SymbolicConcreteInput,
+    SymbolicExecutor, SymbolicInvariantCandidateInput, SymbolicInvariantCounterexampleKind,
     SymbolicInvariantRunInput, SymbolicInvariantRunResult, SymbolicInvariantStep,
     SymbolicInvariantTarget, SymbolicRunInput, SymbolicRunResult, SymbolicStats,
     SymbolicStopReason, SymbolicStorageAssignment,
@@ -1410,9 +1411,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return Err("candidate replay has no stable failure reason to compare".to_string());
         };
 
-        let mut executor = self.clone_executor();
+        let mut executor = self
+            .clone_executor_with_svm_returns(&call.svm_returns)
+            .map_err(|err| err.to_string())?;
         let raw = execute_tx(&mut executor, &call.to_basic_tx_details())
             .map_err(|err| err.to_string())?;
+        if svm_returns_exhausted(&call.svm_returns, &raw) {
+            return Err("candidate replay ran out of `svm` values".to_string());
+        }
         if executor.is_raw_call_success(self.address, Cow::Borrowed(&raw.state_changeset), &raw) {
             return Err("candidate replay succeeded".to_string());
         }
@@ -2414,7 +2420,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return None;
         }
         let args = func.abi_decode_input(&calldata[4..]).ok()?;
-        Some(SymbolicConcreteInput { args, calldata: calldata.clone() })
+        Some(SymbolicConcreteInput { args, calldata: calldata.clone(), svm_returns: Vec::new() })
     }
 
     /// Runs a symbolic test and replays any discovered counterexample concretely.
@@ -2470,9 +2476,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     None,
                 ),
             ),
-            SymbolicRunResult::Counterexample { args, calldata, stats } => {
-                self.replay_symbolic_counterexample(func, args, calldata, stats, &symbolic_config)
-            }
+            SymbolicRunResult::Counterexample { args, calldata, svm_returns, stats } => self
+                .replay_symbolic_counterexample(
+                    func,
+                    args,
+                    calldata,
+                    svm_returns,
+                    stats,
+                    &symbolic_config,
+                ),
         };
         let symbolic_result = match corpus_seed_metadata {
             Some(metadata) => symbolic_result.with_corpus_seeds(metadata),
@@ -2489,12 +2501,18 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         func: &Function,
         args: Vec<DynSolValue>,
         calldata: Bytes,
+        svm_returns: Vec<Bytes>,
         stats: SymbolicStats,
         symbolic_config: &SymbolicConfig,
     ) -> (TestStatus, Option<String>, Option<CounterExample>, SymbolicResult) {
-        let symbolic_counterexample = SymbolicCounterexample::from(
-            &BaseCounterExample::from_fuzz_call(calldata.clone(), args.clone(), None),
-        );
+        let symbolic_counterexample = SymbolicCounterexample {
+            svm_returns: svm_returns.clone(),
+            ..SymbolicCounterexample::from(&BaseCounterExample::from_fuzz_call(
+                calldata.clone(),
+                args.clone(),
+                None,
+            ))
+        };
         let incomplete = |reason: String, replay, call_trace| {
             SymbolicResult::incomplete(
                 symbolic_config,
@@ -2507,14 +2525,20 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             )
         };
 
-        let (raw, reason) = match self.executor.call(
-            self.sender,
-            self.address,
-            func,
-            &args,
-            U256::ZERO,
-            Some(self.revert_decoder()),
-        ) {
+        let replay = self
+            .clone_executor_with_svm_returns(&svm_returns)
+            .map_err(EvmError::from)
+            .and_then(|executor| {
+                executor.call(
+                    self.sender,
+                    self.address,
+                    func,
+                    &args,
+                    U256::ZERO,
+                    Some(self.revert_decoder()),
+                )
+            });
+        let (raw, reason) = match replay {
             Ok(res) => (res.raw, None),
             Err(EvmError::Execution(err)) => (err.raw, Some(err.reason)),
             Err(EvmError::Skip(reason)) => {
@@ -2541,7 +2565,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             BaseCounterExample::from_fuzz_call(calldata, args, raw.traces.clone());
         // Concrete replay rejected the input as an assumption, as fuzzing does.
         let rejected_by_assume = raw.result.as_ref() == MAGIC_ASSUME;
+        // A replay that runs out of `svm` values left the solver path, so its failure proves
+        // nothing.
+        let svm_exhausted = svm_returns_exhausted(&svm_returns, &raw);
         if rejected_by_assume
+            || svm_exhausted
             || self.executor.is_raw_call_success(
                 self.address,
                 Cow::Borrowed(&raw.state_changeset),
@@ -2554,6 +2582,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.result.extend(raw);
             let reason = if rejected_by_assume {
                 "symbolic counterexample did not replay: rejected by `vm.assume`"
+            } else if svm_exhausted {
+                "symbolic counterexample did not replay: ran out of `svm` values"
             } else {
                 "symbolic counterexample did not replay"
             }
@@ -2567,11 +2597,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return (TestStatus::Failure, Some(display_reason), None, symbolic_result);
         }
 
-        let original_call = SymbolicCounterexampleCall::from_base_counterexample(
-            &base_counterexample,
-            self.sender,
-            self.address,
-        );
+        let original_call = SymbolicCounterexampleCall {
+            svm_returns,
+            ..SymbolicCounterexampleCall::from_base_counterexample(
+                &base_counterexample,
+                self.sender,
+                self.address,
+            )
+        };
         let mut final_call = original_call.clone();
         let mut final_raw = raw;
         let mut final_reason = reason;
@@ -2622,7 +2655,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             symbolic_config,
             stats,
             call_trace,
-            SymbolicCounterexample::from(&base_counterexample),
+            SymbolicCounterexample {
+                svm_returns: final_call.svm_returns.clone(),
+                ..SymbolicCounterexample::from(&base_counterexample)
+            },
         );
         let minimized_artifact = self.write_symbolic_artifact(
             &signature,
@@ -2738,14 +2774,22 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 }
 
                 let counterexample = || CounterExample::Single(call.to_base_counterexample());
-                let mut executor = self.clone_executor();
-                let raw = match execute_tx(&mut executor, &call.to_basic_tx_details()) {
-                    Ok(raw) => raw,
+                let (executor, raw) = match self
+                    .clone_executor_with_svm_returns(&call.svm_returns)
+                    .and_then(|mut executor| {
+                        let raw = execute_tx(&mut executor, &call.to_basic_tx_details())?;
+                        Ok((executor, raw))
+                    }) {
+                    Ok(replay) => replay,
                     Err(err) => {
                         self.result.counterexample = Some(counterexample());
                         return Err(err.to_string());
                     }
                 };
+                if svm_returns_exhausted(&call.svm_returns, &raw) {
+                    self.result.counterexample = Some(counterexample());
+                    return Err("symbolic artifact replay ran out of `svm` values".to_string());
+                }
                 if executor.is_raw_call_success(
                     self.address,
                     Cow::Borrowed(&raw.state_changeset),
@@ -3060,8 +3104,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     );
                     continue;
                 }
-                SymbolicRunResult::Counterexample { args, calldata, .. } => {
-                    (SymbolicConcreteInput { args, calldata }, true)
+                SymbolicRunResult::Counterexample { args, calldata, svm_returns, .. } => {
+                    (SymbolicConcreteInput { args, calldata, svm_returns }, true)
                 }
             };
 
@@ -3433,8 +3477,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 continue;
             };
 
-            let input =
-                SymbolicConcreteInput { args, calldata: call.call_details.calldata.clone() };
+            let input = SymbolicConcreteInput {
+                args,
+                calldata: call.call_details.calldata.clone(),
+                svm_returns: Vec::new(),
+            };
             let property_target_reported = if invariant_contract.call_after_invariant {
                 reported_invariants.contains(&invariant_contract.anchor_idx)
                     || after_invariant_reported
@@ -5434,6 +5481,22 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         self.executor.clone().into_owned()
     }
 
+    /// Clones the executor and answers the `svm.*` helper calls with `svm_returns` in order, as
+    /// the symbolic path did.
+    fn clone_executor_with_svm_returns(&self, svm_returns: &[Bytes]) -> Result<Executor<FEN>> {
+        let mut executor = self.clone_executor();
+        if svm_returns.is_empty() {
+            return Ok(executor);
+        }
+        // Like the symbolic model, the helper address reports one byte of code.
+        executor
+            .set_code(SYMBOLIC_VM_COMPAT_ADDRESS, Bytecode::new_raw(Bytes::from_static(&[0])))?;
+        if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut() {
+            cheats.core.mock_call_sequence(SYMBOLIC_VM_COMPAT_ADDRESS, svm_returns);
+        }
+        Ok(executor)
+    }
+
     fn clone_executor_with_symbolic_storage(
         &self,
         storage: &[SymbolicStorageAssignment],
@@ -5748,6 +5811,17 @@ fn symbolic_invariant_counterexample_calls(
             )
         })
         .collect()
+}
+
+/// Returns whether a replay answered with `svm_returns` made an `svm.*` call past them.
+fn svm_returns_exhausted<FEN: FoundryEvmNetwork>(
+    svm_returns: &[Bytes],
+    raw: &RawCallResult<FEN>,
+) -> bool {
+    !svm_returns.is_empty()
+        && raw.cheatcodes.as_ref().is_none_or(|cheats| {
+            cheats.core.mock_call_sequence_exhausted(SYMBOLIC_VM_COMPAT_ADDRESS)
+        })
 }
 
 fn frontier_selector(frontier: &FuzzBranchFrontierRecord) -> Option<Selector> {
@@ -6151,6 +6225,7 @@ fn solve_live_invariant_frontier<FEN: FoundryEvmNetwork>(
         corpus_seeds: vec![SymbolicConcreteInput {
             args,
             calldata: call.call_details.calldata.clone(),
+            svm_returns: Vec::new(),
         }],
         branch_target: Some(SymbolicBranchTarget::new(cmp.address, cmp.pc, cmp.opcode, result)),
     });

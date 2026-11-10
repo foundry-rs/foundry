@@ -27,6 +27,9 @@ pub(crate) struct PathState {
     /// Conditions a counterexample model meets when it can, so that replay reproduces it.
     pub(crate) witness_preferences: Vec<SymBoolExpr>,
     pub(crate) next_symbol: usize,
+    /// Return data of each `svm.*` helper call on this path, in call order. Like Forge's mocked
+    /// call queue, which replay uses to answer these calls, it survives reverts.
+    pub(crate) svm_returns: Vec<SymReturnData>,
     pub(crate) recorded_logs: Option<Vec<SymbolicLog>>,
     /// Bumped by `recordLogs` and `getRecordedLogs*` so open frame checkpoints know the buffer
     /// was reset.
@@ -116,6 +119,7 @@ impl PathState {
             constraints: Vec::new(),
             witness_preferences: Vec::new(),
             next_symbol: 0,
+            svm_returns: Vec::new(),
             recorded_logs: None,
             recorded_logs_generation: 0,
             access_record: None,
@@ -458,6 +462,7 @@ impl PathState {
         self.constraints = std::mem::take(&mut check.constraints);
         self.witness_preferences = std::mem::take(&mut check.witness_preferences);
         self.next_symbol = self.next_symbol.max(check.next_symbol);
+        self.svm_returns = std::mem::take(&mut check.svm_returns);
         self.world.merge_replay_metadata_from(&check.world);
         self.storage_load_hooks = std::mem::take(&mut check.storage_load_hooks);
         self.storage_store_hooks = std::mem::take(&mut check.storage_store_hooks);
@@ -468,6 +473,7 @@ impl PathState {
         self.constraints = std::mem::take(&mut child.constraints);
         self.witness_preferences = std::mem::take(&mut child.witness_preferences);
         self.next_symbol = child.next_symbol;
+        self.svm_returns = std::mem::take(&mut child.svm_returns);
         self.inherit_branch_target_progress(child);
         self.storage_load_hooks = std::mem::take(&mut child.storage_load_hooks);
         self.storage_store_hooks = std::mem::take(&mut child.storage_store_hooks);

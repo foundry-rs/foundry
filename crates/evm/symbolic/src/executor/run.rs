@@ -175,10 +175,14 @@ impl SymbolicExecutor {
         }
 
         let execution = self.execute_run(input, Some(&mut candidates));
-        if let SymbolicRunResult::Counterexample { args, calldata, .. } = &execution {
+        if let SymbolicRunResult::Counterexample { args, calldata, svm_returns, .. } = &execution {
             candidates.insert(
                 0,
-                SymbolicConcreteInput { args: args.clone(), calldata: calldata.clone() },
+                SymbolicConcreteInput {
+                    args: args.clone(),
+                    calldata: calldata.clone(),
+                    svm_returns: svm_returns.clone(),
+                },
             );
         }
         SymbolicBranchTargetSearchResult { candidates, execution }
@@ -542,11 +546,12 @@ impl SymbolicExecutor {
                             constraint_count = state.constraints.len(),
                             "materializing counterexample from solver model"
                         );
-                        let SymbolicConcreteInput { args, calldata } =
+                        let SymbolicConcreteInput { args, calldata, svm_returns } =
                             self.materialize_root_input(input.function, &state)?;
                         return Ok(SymbolicRunResult::Counterexample {
                             args,
                             calldata,
+                            svm_returns,
                             stats: self.stats_with_paths(*completed_paths + 1),
                         });
                     }
@@ -641,7 +646,12 @@ impl SymbolicExecutor {
         let model = self.witness_model(state)?;
         let args = calldata.model_to_args(&mut self.cx, &model)?;
         let calldata_bytes = Bytes::from(function.abi_encode_input(&args)?);
-        Ok(SymbolicConcreteInput { args, calldata: calldata_bytes })
+        let svm_returns = state
+            .svm_returns
+            .iter()
+            .map(|ret| ret.bytes.eval_model(&mut self.cx, &model).map(Bytes::from))
+            .collect::<Result<_, _>>()?;
+        Ok(SymbolicConcreteInput { args, calldata: calldata_bytes, svm_returns })
     }
 
     pub(super) fn run_invariant_inner(

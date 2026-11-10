@@ -432,7 +432,7 @@ contract SymbolicGenericStorage {
 ...
 Ran 2 tests for test/SymbolicGenericStorage.t.sol:SymbolicGenericStorage
 [FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkNativeGenericStorage(address) ([METRICS])
-[FAIL: EvmError: Revert; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmArbitraryStorage(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkSvmArbitraryStorage(address) ([METRICS])
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]])

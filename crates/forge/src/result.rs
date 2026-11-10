@@ -977,6 +977,9 @@ pub struct SymbolicCounterexample {
     pub raw_args: Option<String>,
     /// Ether value sent with the call, when any.
     pub value: Option<U256>,
+    /// Return data of each `svm.*` helper call, in call order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub svm_returns: Vec<Bytes>,
 }
 
 impl From<&BaseCounterExample> for SymbolicCounterexample {
@@ -986,6 +989,7 @@ impl From<&BaseCounterExample> for SymbolicCounterexample {
             args: counterexample.args.clone(),
             raw_args: counterexample.raw_args.clone(),
             value: counterexample.value,
+            svm_returns: Vec::new(),
         }
     }
 }
@@ -1174,6 +1178,10 @@ pub struct SymbolicCounterexampleCall {
     pub args: Option<String>,
     /// Raw ABI arguments, when decoded.
     pub raw_args: Option<String>,
+    /// Return data of each `svm.*` helper call, in call order, which replay answers these calls
+    /// with.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub svm_returns: Vec<Bytes>,
 }
 
 impl SymbolicCounterexampleCall {
@@ -1195,6 +1203,7 @@ impl SymbolicCounterexampleCall {
             signature: counterexample.signature.clone(),
             args: counterexample.args.clone(),
             raw_args: counterexample.raw_args.clone(),
+            svm_returns: Vec::new(),
         }
     }
 
