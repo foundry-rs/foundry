@@ -1557,6 +1557,9 @@ contract SymbolicEtch is Test {
 
         assertGt(target.code.length, 0);
         assertEq(IEtchedHelper(target).value(), 99);
+
+        vm.etch(address(0xC0DE), new bytes(300));
+        assertEq(address(0xC0DE).code.length, 300);
     }
 
     function checkEtchSymbolicBytes(uint8 value) public {

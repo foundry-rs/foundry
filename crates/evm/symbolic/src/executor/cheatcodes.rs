@@ -1534,15 +1534,27 @@ impl SymbolicExecutor {
                         &format!("vm.etch: cannot use precompile {target} as an argument"),
                     )));
                 }
-                let code = read_abi_symbolic_dynamic_byte_exprs_arg(
+                // Constant code of any length is read whole; only symbolic code is bounded.
+                let code = if let Ok(code) = read_abi_dynamic_bytes_arg(
                     &mut self.cx,
-                    state,
+                    &state.memory,
                     args_offset,
                     1,
-                    self.config.max_dynamic_length as usize,
                     "symbolic vm.etch",
-                )?;
-                let code = SymCode::from_byte_exprs(&mut self.cx, code);
+                ) {
+                    let code = SymBytes::concrete(&mut self.cx, code);
+                    SymCode::from_bytes(&mut self.cx, code)
+                } else {
+                    let code = read_abi_symbolic_dynamic_byte_exprs_arg(
+                        &mut self.cx,
+                        state,
+                        args_offset,
+                        1,
+                        self.config.max_dynamic_length as usize,
+                        "symbolic vm.etch",
+                    )?;
+                    SymCode::from_byte_exprs(&mut self.cx, code)
+                };
                 let delegation_prefix = SymBytes::concrete(&mut self.cx, vec![0xef, 0x01]);
                 let delegation = code
                     .read_bytes(&mut self.cx, 0, delegation_prefix.len())
