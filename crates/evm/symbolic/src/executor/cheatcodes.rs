@@ -599,9 +599,15 @@ impl SymbolicExecutor {
         worklist: &mut VecDeque<PathState>,
         selector: [u8; 4],
         in_offset: usize,
+        in_size: usize,
         out_offset: &SymExpr,
         out_size: &BoundedCopySize,
     ) -> Result<Option<StepOutcome>, SymbolicError> {
+        // The check reads ABI words of the input. Forge rejects a shorter input as an ABI
+        // decoding error, so never validate memory past the input.
+        if foundry_cheatcode_min_input_size(selector).is_some_and(|min_size| in_size < min_size) {
+            return Err(SymbolicError::Unsupported("short cheatcode CALL"));
+        }
         let args_offset = in_offset + 4;
         let (invalid, message) = match selector {
             randomUint_1Call::SELECTOR => {
