@@ -2286,6 +2286,18 @@ contract SymbolicRevertKeepsCheatcodes is Test {
         try this.setGasPrice(p) {} catch {}
         assert(tx.gasprice == p);
     }
+
+    // Forge rejects calldata that holds only the selector as an ABI decoding error, so the range
+    // check must not read the argument from memory past the input.
+    function checkTruncatedTxGasPriceIsNotRangeChecked() public {
+        bytes memory data = abi.encodeCall(vm.txGasPrice, (type(uint256).max));
+        address cheatcode = address(vm);
+        bool ok;
+        assembly {
+            ok := call(gas(), cheatcode, 0, add(data, 32), 4, 0, 0)
+        }
+        assertFalse(ok);
+    }
 }
 "#,
     );
@@ -2299,12 +2311,13 @@ contract SymbolicRevertKeepsCheatcodes is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 4 tests for test/SymbolicRevertKeepsCheatcodes.t.sol:SymbolicRevertKeepsCheatcodes
+Ran 5 tests for test/SymbolicRevertKeepsCheatcodes.t.sol:SymbolicRevertKeepsCheatcodes
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xcd02017c00000000000000000000000000000000000000000000000000000000000003e8 args=[1000]] checkGasPriceSurvivesRevertingCall(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x9389e44d0000000000000000000000000000000000000000000000000000000000000000 args=[0x0000000000000000000000000000000000000000]] checkMockSurvivesRevertingCall(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x5a97aeab0000000000000000000000000000000000000000000000010000000000000000 args=[18446744073709551616 [1.844e19]]] checkRejectedGasPriceDoesNotSurvive(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: short cheatcode CALL] checkTruncatedTxGasPriceIsNotRangeChecked() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xe9b7d25400000000000000000000000000000000000000000000000000000000000003e8 args=[1000]] checkWarpSurvivesRevertingCall(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
