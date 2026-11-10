@@ -1420,11 +1420,13 @@ impl SymbolicExecutor {
             self.constraints_with_condition(state, malformed)?;
         let (well_formed_constraints, well_formed_sat) =
             self.constraints_with_condition(state, well_formed)?;
+        // A malformed signature returns no data, unless the precompile call itself fails.
+        let outcome =
+            execute_symbolic_precompile(&mut self.cx, code_address, input, input_len, spec_id)?;
+        let malformed_outcome = outcome.as_ref().map(|_| SymReturnData::empty(&mut self.cx));
         if malformed_sat && well_formed_sat {
             let mut recovering = state.clone();
             recovering.constraints = well_formed_constraints;
-            let outcome =
-                execute_symbolic_precompile(&mut self.cx, code_address, input, input_len, spec_id)?;
             match self.apply_precompile_outcome(
                 executor,
                 &mut recovering,
@@ -1443,7 +1445,6 @@ impl SymbolicExecutor {
                 }
             }
             state.constraints = malformed_constraints;
-            let outcome = Some(SymReturnData::empty(&mut self.cx));
             return self.apply_precompile_outcome(
                 executor,
                 state,
@@ -1453,13 +1454,15 @@ impl SymbolicExecutor {
                 value,
                 out_offset,
                 out_size,
-                outcome,
+                malformed_outcome,
             );
         }
-        state.constraints =
-            if malformed_sat { malformed_constraints } else { well_formed_constraints };
-        let outcome =
-            execute_symbolic_precompile(&mut self.cx, code_address, input, input_len, spec_id)?;
+        let (constraints, outcome) = if malformed_sat {
+            (malformed_constraints, malformed_outcome)
+        } else {
+            (well_formed_constraints, outcome)
+        };
+        state.constraints = constraints;
         self.apply_precompile_outcome(
             executor,
             state,
