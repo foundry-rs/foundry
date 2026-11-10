@@ -4594,6 +4594,19 @@ contract SymbolicExpectCall is Test {
         );
     }
 
+    // Like Forge, one call counts for the full-calldata expectation and the forbidden
+    // selector-prefix one.
+    function checkExpectCallCountsEveryMatch(uint256) public {
+        vm.expectCall(
+            address(target),
+            abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(5))
+        );
+        vm.expectCall(
+            address(target), abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector), 0
+        );
+        assertEq(target.ping(5), 6);
+    }
+
     function checkSymbolicCalleeExpectedCallMismatch(address expectedCallee) public {
         vm.expectCall(
             expectedCallee,
@@ -4758,6 +4771,21 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 Ran 1 test for test/SymbolicExpectCall.t.sol:SymbolicExpectCall
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkExpectCallMinGasMissing(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkExpectCallCountsEveryMatch",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectCall.t.sol:SymbolicExpectCall
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x773acdef to be called 0 times, but was called 1 time; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectCallCountsEveryMatch(uint256) ([METRICS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
