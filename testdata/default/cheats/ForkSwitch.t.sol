@@ -399,12 +399,14 @@ contract ForkSwitchCreatedAccountTest is Test {
 
 /// forge-config: default.isolate = true
 contract ForkSwitchCreatedAccountIsolatedTest is ForkSwitchCreatedAccountTest {
-    // Only an isolated call ends its transaction, which deletes the contract.
+    // The isolated call ends its transaction, but the contract keeps its code and storage until
+    // the running transaction ends and deletes it.
     function testForkKillAfterSwitch() public {
         ForkSwitchBox box = new ForkSwitchBox();
         roundTrip();
         box.kill();
-        assertEq(address(box).code.length, 0);
+        assertGt(address(box).code.length, 0);
+        assertEq(box.value(), 7);
     }
 }
 
