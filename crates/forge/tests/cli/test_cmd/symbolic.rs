@@ -7535,6 +7535,11 @@ contract NormalizerBoundariesTest {
             assert(x + y >= x);
         }
     }
+
+    // solc guards checked `x * 2` with `(x * 2) / x == 2`, and `x * 2` is built as `x << 1`.
+    function checkCheckedDoublingGuard(uint256 x) external pure {
+        assert(x * 2 != 30);
+    }
 }
 
 "#,
@@ -7549,6 +7554,7 @@ contract NormalizerBoundariesTest {
         "checkWrappedRoundUpDivision(uint256)",
         "checkRoundTripWithoutRateLowerBound(uint128,uint256)",
         "checkNonnegativeSignedAdditionOverflows(int256,int256)",
+        "checkCheckedDoublingGuard(uint256)",
     ];
     for optimized in [false, true] {
         prj.update_config(|config| config.optimizer = Some(optimized));
