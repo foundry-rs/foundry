@@ -1335,6 +1335,38 @@ impl SymExpr {
         }
     }
 
+    /// Evaluates `self` under `model` and records the concrete preimage of every Keccak node it
+    /// folds, so a hash key pinned by path constraints still compares as a hash base.
+    pub(crate) fn eval_model_recording_keccak_preimages<M: SymbolicModelLookup + ?Sized>(
+        &self,
+        cx: &mut SymCx,
+        model: &M,
+    ) -> Result<U256, SymbolicError> {
+        let mut evaluator = ModelEvaluator::new(model);
+        let value = evaluator.eval_word(self)?;
+        let hashes = evaluator
+            .words
+            .iter()
+            .filter(|(expr, _)| matches!(expr.kind(), SymExprKind::Keccak { .. }))
+            .map(|(expr, hash)| (expr.clone(), *hash))
+            .collect::<Vec<_>>();
+        for (expr, hash) in hashes {
+            let SymExprKind::Keccak { len, bytes, .. } = expr.kind() else {
+                unreachable!("filtered keccak node")
+            };
+            let len = usize::try_from(evaluator.eval_word(len)?).expect("checked keccak length");
+            let bytes = bytes[..len]
+                .iter()
+                .map(|byte| {
+                    let byte = evaluator.eval_word(byte)? & U256::from(0xff);
+                    Ok(Self::constant(cx, byte))
+                })
+                .collect::<Result<Arc<[Self]>, SymbolicError>>()?;
+            cx.record_concrete_keccak_preimage(hash, bytes);
+        }
+        Ok(value)
+    }
+
     pub(crate) fn assign_model_value(&self, model: &mut SymbolicModel, value: U256) -> bool {
         match self.kind() {
             SymExprKind::Const(existing) => *existing == value,

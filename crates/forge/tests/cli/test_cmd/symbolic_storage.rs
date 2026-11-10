@@ -686,6 +686,13 @@ contract SymbolicKeccakPreimage {
     function checkKeccakPlusOffsetCanCollide(uint256 a, uint256 b) public pure {
         assert(uint256(keccak256(abi.encode(a))) + 1 != uint256(keccak256(abi.encode(b))) + 1);
     }
+
+    // The pinned key folds to a constant slot that must still alias the symbolic-key write.
+    function checkPinnedKeyAliasesSymbolicWrite(address who) public {
+        require(who == address(4));
+        balances[who] = 39;
+        assert(balances[who] != 39);
+    }
 }
 "#,
     );
@@ -701,6 +708,8 @@ Ran 5 tests for test/SymbolicKeccakPreimage.t.sol:SymbolicKeccakPreimage
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x4df8b26f000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkKnownKeccakPreimage(uint256) ([METRICS])
 [PASS] checkNestedArraySurvivesMappingWrite(address,address,uint256,uint256) ([METRICS])
 Suite result: FAILED. 3 passed; 2 failed; 0 skipped; [ELAPSED]
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[0x0000000000000000000000000000000000000004]] checkPinnedKeyAliasesSymbolicWrite(address) ([METRICS])
+Suite result: FAILED. 2 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
