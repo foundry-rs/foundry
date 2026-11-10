@@ -137,11 +137,14 @@ struct CommentGatherer<'ast> {
     comments: Vec<Comment>,
     code_to_the_left: bool,
     disabled_block_depth: usize,
+    /// A nonzero baseline keeps normalization disabled regardless of formatting directives.
+    min_disabled_block_depth: usize,
     tab_width: Option<usize>,
 }
 
 impl<'ast> CommentGatherer<'ast> {
     fn new(sf: &'ast SourceFile, normalize_cmnts: bool, tab_width: Option<usize>) -> Self {
+        let min_disabled_block_depth = if normalize_cmnts { 0 } else { 1 };
         Self {
             sf,
             text: sf.src.as_str(),
@@ -149,7 +152,8 @@ impl<'ast> CommentGatherer<'ast> {
             pos: 0,
             comments: Vec::new(),
             code_to_the_left: false,
-            disabled_block_depth: if normalize_cmnts { 0 } else { 1 },
+            disabled_block_depth: min_disabled_block_depth,
+            min_disabled_block_depth,
             tab_width,
         }
     }
@@ -215,8 +219,10 @@ impl<'ast> CommentGatherer<'ast> {
         // Keep track of disabled blocks, ignoring unmatched ends.
         if token_text.trim_start().contains(DISABLE_START) {
             self.disabled_block_depth += 1;
-        } else if token_text.trim_start().contains(DISABLE_END) {
-            self.disabled_block_depth = self.disabled_block_depth.saturating_sub(1);
+        } else if token_text.trim_start().contains(DISABLE_END)
+            && self.disabled_block_depth > self.min_disabled_block_depth
+        {
+            self.disabled_block_depth -= 1;
         }
 
         #[allow(clippy::collapsible_match)]
