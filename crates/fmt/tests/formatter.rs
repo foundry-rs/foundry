@@ -1,7 +1,7 @@
 use forge_fmt::{DocCommentStyle, FormatterConfig};
 use foundry_config::fmt::IndentStyle;
 use foundry_test_utils::init_tracing;
-use snapbox::{Data, assert_data_eq};
+use snapbox::{Data, assert_data_eq, str};
 use solar::sema::Compiler;
 use std::{
     fs,
@@ -538,6 +538,78 @@ fn return_expression_comment_is_idempotent() {
         Arc::new(FormatterConfig { line_length: 60, wrap_comments: true, ..Default::default() });
 
     assert_eq!(format(source, Path::new("test.sol"), config), expected);
+}
+
+#[test]
+fn unmatched_disable_end_preserves_doc_comments() {
+    let source = r#"// forgefmt: disable-end
+// forgefmt: disable-end
+/**@notice First contract.*/
+contract A {}
+/* Another comment. */
+/**
+ * @notice Second contract.
+ */
+contract B {}
+"#;
+
+    for wrap_comments in [false, true] {
+        let config = Arc::new(FormatterConfig { wrap_comments, ..Default::default() });
+        assert_data_eq!(
+            format(source, Path::new("test.sol"), config),
+            str![[r#"
+// forgefmt: disable-end
+// forgefmt: disable-end
+/**
+ * @notice First contract.
+ */
+contract A {}
+
+/* Another comment. */
+/**
+ * @notice Second contract.
+ */
+contract B {}
+
+"#]]
+        );
+    }
+}
+
+#[test]
+fn unmatched_disable_end_preserves_nested_disabled_blocks() {
+    let source = r#"// forgefmt: disable-end
+// forgefmt: disable-start
+contract  OuterDisabled {}
+// forgefmt: disable-start
+contract  InnerDisabled {}
+// forgefmt: disable-end
+contract  StillDisabled {}
+// forgefmt: disable-end
+// forgefmt: disable-end
+/**@notice Enabled documentation.*/
+contract  Enabled {}
+"#;
+
+    assert_data_eq!(
+        format(source, Path::new("test.sol"), Arc::new(FormatterConfig::default())),
+        str![[r#"
+// forgefmt: disable-end
+// forgefmt: disable-start
+contract  OuterDisabled {}
+// forgefmt: disable-start
+contract  InnerDisabled {}
+// forgefmt: disable-end
+contract  StillDisabled {}
+// forgefmt: disable-end
+// forgefmt: disable-end
+/**
+ * @notice Enabled documentation.
+ */
+contract Enabled {}
+
+"#]]
+    );
 }
 
 fn tests_dir() -> PathBuf {

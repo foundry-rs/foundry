@@ -212,11 +212,11 @@ impl<'ast> CommentGatherer<'ast> {
         let span = self.make_span(token_range.clone());
         let token_text = &self.text[token_range];
 
-        // Keep track of disabled blocks
+        // Keep track of disabled blocks, ignoring unmatched ends.
         if token_text.trim_start().contains(DISABLE_START) {
             self.disabled_block_depth += 1;
         } else if token_text.trim_start().contains(DISABLE_END) {
-            self.disabled_block_depth -= 1;
+            self.disabled_block_depth = self.disabled_block_depth.saturating_sub(1);
         }
 
         #[allow(clippy::collapsible_match)]

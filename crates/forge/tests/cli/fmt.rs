@@ -515,3 +515,39 @@ fn fmt_skips_symlinked_configured_file(prj: _, cmd: _) {
     cmd.forge_fuse().arg("fmt").assert_success();
     assert_data_eq!(std::fs::read_to_string(outside_file).unwrap(), UNFORMATTED);
 }
+
+#[forgetest]
+fn fmt_unmatched_disable_end_preserves_doc_comments(prj: _, cmd: _) {
+    prj.add_raw_source(
+        "Test.sol",
+        r#"// forgefmt: disable-end
+// forgefmt: disable-end
+/**
+ * First contract.
+ */
+contract  A {}
+/* Regular comment. */
+contract  B {}
+"#,
+    );
+
+    cmd.args(["fmt", "src/Test.sol"]).assert_success().stdout_eq("").stderr_eq(str![[r#"
+Formatted [..]/src/Test.sol
+
+"#]]);
+    assert_data_eq!(
+        std::fs::read_to_string(prj.root().join("src/Test.sol")).unwrap(),
+        str![[r#"
+// forgefmt: disable-end
+// forgefmt: disable-end
+/**
+ * First contract.
+ */
+contract A {}
+
+/* Regular comment. */
+contract B {}
+
+"#]],
+    );
+}
