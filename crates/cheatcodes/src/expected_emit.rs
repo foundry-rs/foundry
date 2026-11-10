@@ -547,7 +547,7 @@ impl UnmetEmit {
 }
 
 /// Formats the failure of an unmet expectation whose last checked log was `actual`, as
-/// [`UnmetEmit::Unmatched`] encodes it: the log mismatch against `expected`, or the emitter
+/// `UnmetEmit::Unmatched` encodes it: the log mismatch against `expected`, or the emitter
 /// mismatch when the log itself matched.
 pub fn unmatched_emit_message<'a>(
     identifier: impl FnOnce() -> Option<&'a SignaturesIdentifier>,
