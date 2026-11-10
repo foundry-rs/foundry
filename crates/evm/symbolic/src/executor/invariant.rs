@@ -17,7 +17,6 @@ fn record_candidate_limitation(
 }
 
 impl SymbolicExecutor {
-    #[expect(clippy::too_many_arguments)]
     pub(super) fn execute_invariant_check(
         &mut self,
         executor: &ExecutorView<'_>,
