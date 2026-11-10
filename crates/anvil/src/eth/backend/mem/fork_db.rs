@@ -111,7 +111,7 @@ pub struct ForkedDatabase<N: Network> {
 }
 
 impl<N: Network> ForkedDatabase<N> {
-    /// Creates a new instance of this DB
+    /// Creates a new instance of this DB.
     pub fn new(backend: SharedBackend<N>, db: BlockchainDb) -> Self {
         Self {
             cache_db: CacheDB::new(RemoteDb::new(backend.clone(), ForkCode::default())),
@@ -125,27 +125,27 @@ impl<N: Network> ForkedDatabase<N> {
         &self.cache_db
     }
 
-    /// Reset the fork to a fresh forked state, and optionally update the fork config
+    /// Reset the fork to a fresh forked state, and optionally update the fork config.
     pub fn reset(
         &mut self,
         _urls: Vec<String>,
         block_number: impl Into<BlockId>,
     ) -> Result<(), String> {
         self.backend.set_pinned_block(block_number).map_err(|err| err.to_string())?;
-        // wipe the storage retrieved from remote
+        // wipe the storage retrieved from remote.
         self.inner().db().clear();
-        // create a fresh `CacheDB`, effectively wiping modified state
+        // create a fresh `CacheDB`, effectively wiping modified state.
         self.cache_db = CacheDB::new(RemoteDb::new(self.backend.clone(), ForkCode::default()));
         trace!(target: "backend::forkdb", "Cleared database");
         Ok(())
     }
 
-    /// Flushes the cache to disk if configured
+    /// Flushes the cache to disk if configured.
     pub fn flush_cache(&self) {
         self.db.cache().flush()
     }
 
-    /// Returns the database that holds the remote state
+    /// Returns the database that holds the remote state.
     pub const fn inner(&self) -> &BlockchainDb {
         &self.db
     }
@@ -169,7 +169,7 @@ impl<N: Network> ForkedDatabase<N> {
         id
     }
 
-    /// Removes the snapshot from the tracked snapshot and sets it as the current state
+    /// Removes the snapshot from the tracked snapshot and sets it as the current state.
     pub fn revert_state_snapshot(&mut self, id: U256, action: RevertStateSnapshotAction) -> bool {
         let state_snapshot = self.state_snapshots.lock().remove(id);
         let Some(state_snapshot) = state_snapshot else {

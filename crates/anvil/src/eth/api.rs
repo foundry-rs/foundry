@@ -5886,7 +5886,7 @@ fn execution_error(exit: InstrStop) -> Option<String> {
     }
 }
 
-/// Keeps result of a call to the EVM used for gas estimation
+/// Keeps result of a call to the EVM used for gas estimation.
 enum GasEstimationCallResult {
     Success(u128),
     OutOfGas,
