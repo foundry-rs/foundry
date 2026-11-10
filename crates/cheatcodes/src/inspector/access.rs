@@ -115,26 +115,6 @@ mod tests {
     }
 
     #[test]
-    fn nested_frame_access_restores_cleared_parent() {
-        for inherited in [false, true] {
-            let mut cheats = Cheatcodes::default();
-            cheats.frame_access.push(frame(1));
-            let parent = identities(&cheats.frame_access);
-            let clear = |cheats: &mut Cheatcodes| {
-                cheats.frame_access.clear();
-                Err::<(), _>("expected nested failure")
-            };
-            let result = if inherited {
-                cheats.with_nested_frame_access(clear)
-            } else {
-                cheats.with_fresh_frame_access(clear)
-            };
-            assert_eq!(result, Err("expected nested failure"));
-            assert_eq!(identities(&cheats.frame_access), parent);
-        }
-    }
-
-    #[test]
     fn mixed_nested_frame_access_preserves_each_suspended_parent() {
         for inherited in [false, true] {
             let mut cheats = Cheatcodes::default();
@@ -164,12 +144,14 @@ mod tests {
                 assert_eq!(result, Err("expected inner failure"));
                 assert_eq!(identities(&cheats.frame_access), suspended);
                 cheats.frame_access.clear();
+                result
             };
-            if inherited {
-                cheats.with_nested_frame_access(nested);
+            let result = if inherited {
+                cheats.with_nested_frame_access(nested)
             } else {
-                cheats.with_fresh_frame_access(nested);
-            }
+                cheats.with_fresh_frame_access(nested)
+            };
+            assert_eq!(result, Err("expected inner failure"));
             assert_eq!(identities(&cheats.frame_access), parent);
         }
     }

@@ -2490,22 +2490,20 @@ impl InspectorStackInner {
         cheats: &mut Cheatcodes<FEN>,
         f: impl FnOnce(&mut Self, &mut Cheatcodes<FEN>) -> R,
     ) -> R {
-        cheats.with_fresh_frame_access(|cheats| {
-            let tracking = std::mem::replace(&mut cheats.track_isolated_snapshots, true);
-            let isolation = std::mem::replace(&mut cheats.in_isolation_context, false);
-            let capture = std::mem::replace(&mut cheats.capture_isolated_snapshot_restore, true);
-            let restores = std::mem::take(&mut cheats.isolated_snapshot_restores);
-            let pending = cheats.pending_isolated_snapshot_journal.take();
-            let frames = std::mem::take(&mut self.isolated_frame_checkpoints);
-            let result = f(self, cheats);
-            self.isolated_frame_checkpoints = frames;
-            cheats.pending_isolated_snapshot_journal = pending;
-            cheats.isolated_snapshot_restores = restores;
-            cheats.capture_isolated_snapshot_restore = capture;
-            cheats.in_isolation_context = isolation;
-            cheats.track_isolated_snapshots = tracking;
-            result
-        })
+        let tracking = std::mem::replace(&mut cheats.track_isolated_snapshots, true);
+        let isolation = std::mem::replace(&mut cheats.in_isolation_context, false);
+        let capture = std::mem::replace(&mut cheats.capture_isolated_snapshot_restore, true);
+        let restores = std::mem::take(&mut cheats.isolated_snapshot_restores);
+        let pending = cheats.pending_isolated_snapshot_journal.take();
+        let frames = std::mem::take(&mut self.isolated_frame_checkpoints);
+        let result = cheats.with_fresh_frame_access(|cheats| f(self, cheats));
+        self.isolated_frame_checkpoints = frames;
+        cheats.pending_isolated_snapshot_journal = pending;
+        cheats.isolated_snapshot_restores = restores;
+        cheats.capture_isolated_snapshot_restore = capture;
+        cheats.in_isolation_context = isolation;
+        cheats.track_isolated_snapshots = tracking;
+        result
     }
 }
 
