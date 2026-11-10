@@ -612,11 +612,11 @@ impl SymbolicExecutor {
             // `vm.expectRevert`.
             state.first_failed_callee.get_or_insert(reverter);
         }
-        // Forge encodes this failure without an error selector. A `CheatcodeError` fails the test
-        // when the revert reaches the top frame, as any revert fails a Forge test.
+        // Like Forge, the failure is a bare string; `classify_revert` reads it from the pending
+        // expectation when the revert reaches the top frame.
         if unmet_expected_emit {
             success = false;
-            return_data = error_string_return_data(&mut self.cx, "log != expected log");
+            return_data = unmet_expected_emit_return_data(&mut self.cx);
         }
         state.return_data = return_data;
         state.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;
@@ -1210,7 +1210,7 @@ impl SymbolicExecutor {
                 }
                 JoinedCallOutcome::ExceptionalHalt(mut parent) => {
                     parent.return_data = if parent.check_expected_emit_after_call(kind) {
-                        error_string_return_data(&mut self.cx, "log != expected log")
+                        unmet_expected_emit_return_data(&mut self.cx)
                     } else {
                         SymReturnData::empty(&mut self.cx)
                     };
@@ -1241,7 +1241,7 @@ impl SymbolicExecutor {
                             "next call did not revert as expected",
                         )
                     } else if unmet_expected_emit {
-                        error_string_return_data(&mut self.cx, "log != expected log")
+                        unmet_expected_emit_return_data(&mut self.cx)
                     } else {
                         child.frame.return_data
                     };

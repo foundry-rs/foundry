@@ -7701,6 +7701,16 @@ contract SymbolicRecordAndEmitCount {
         store.setA(value);
     }
 
+    // Like Forge, the failure is an ABI-encoded string without an error selector.
+    function checkExpectEmitFailureHasNoErrorSelector(uint256 value) public {
+        vm.expectEmit();
+        emit Set(value);
+        (bool success, bytes memory data) = address(store).call(abi.encodeCall(Store.noop, ()));
+        assert(!success);
+        store.setA(value);
+        assert(bytes4(data) == bytes4(keccak256("CheatcodeError(string)")));
+    }
+
     function testStopRecordKeepsAndPausesAccesses() public {
         checkStopRecordKeepsAndPausesAccesses(1);
     }
@@ -7759,10 +7769,11 @@ contract SymbolicRecordAndEmitCount {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 21 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCount
+Ran 22 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCount
 [PASS] checkExpectEmitAnonymousMatches(uint256) ([METRICS])
 [FAIL: use vm.expectEmitAnonymous to match anonymous events; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitAnonymousTemplate(uint256) ([METRICS])
 [PASS] checkExpectEmitCaughtFailureKeepsExpectation(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitFailureHasNoErrorSelector(uint256) ([METRICS])
 [FAIL: log != expected log; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitInLaterCall(uint256) ([METRICS])
 [FAIL: Set indexed topic count mismatch: expected 1, got 0; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectEmitRequiresSameTopicCount(uint256) ([METRICS])
 [PASS] checkExpectNoEmitAllowsOtherEvent(uint256) ([METRICS])
@@ -7781,7 +7792,7 @@ Ran 21 tests for test/SymbolicRecordAndEmitCount.t.sol:SymbolicRecordAndEmitCoun
 [PASS] checkExpectNoEmitUnderExpectRevert(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectEmit with a pending expectation] checkQueuedExpectEmitFailsClosed(uint256) ([METRICS])
 [PASS] checkStopRecordKeepsAndPausesAccesses(uint256) ([METRICS])
-Suite result: FAILED. 10 passed; 11 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 10 passed; 12 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

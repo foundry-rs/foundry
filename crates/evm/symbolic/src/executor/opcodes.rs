@@ -1560,6 +1560,13 @@ impl SymbolicExecutor {
         if data.is_ok_and(|data| is_assertion_revert(&data)) {
             return Ok(StepOutcome::Failure);
         }
+        // A call that failed a pending `vm.expectEmit` reverted with a bare string, so an
+        // uncaught failure is classified from the expectation, not from the revert data.
+        if state.root_calldata.is_some()
+            && state.expected_emit.as_ref().is_some_and(ExpectedEmit::failed)
+        {
+            return Ok(StepOutcome::Failure);
+        }
         Ok(StepOutcome::Revert)
     }
 }

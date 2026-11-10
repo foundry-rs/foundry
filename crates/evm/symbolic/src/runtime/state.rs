@@ -979,7 +979,7 @@ impl PathState {
         if self.is_static || matches!(kind, CallKind::StaticCall) {
             return false;
         }
-        let Some(expected) = &self.expected_emit else { return false };
+        let Some(expected) = &mut self.expected_emit else { return false };
         if expected.depth != self.call_depth {
             return false;
         }
@@ -987,6 +987,7 @@ impl PathState {
             self.expected_emit = None;
             return false;
         }
+        expected.failed = true;
         true
     }
 
@@ -1537,6 +1538,8 @@ pub(crate) struct ExpectedEmit {
     anonymous: bool,
     /// Call depth of the frame that declared the expectation.
     depth: usize,
+    /// Whether a call ended with the expectation unmet, which failed that call.
+    failed: bool,
 }
 
 impl ExpectedEmit {
@@ -1547,7 +1550,12 @@ impl ExpectedEmit {
         anonymous: bool,
         depth: usize,
     ) -> Self {
-        Self { checks, emitter, remaining, template: None, anonymous, depth }
+        Self { checks, emitter, remaining, template: None, anonymous, depth, failed: false }
+    }
+
+    /// Returns whether a call ended with this expectation unmet.
+    pub(crate) const fn failed(&self) -> bool {
+        self.failed
     }
 
     /// Returns whether this expectation forbids logs matching its template (`count = 0`).
