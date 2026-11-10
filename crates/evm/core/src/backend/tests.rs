@@ -6,8 +6,11 @@ use crate::evm::{
     tests::{ETHER, STORE, STORE_ADDRESS, balance, db_with, nonce, slot, store_request},
 };
 use alloy_consensus::{Signed, TxEnvelope, TxLegacy};
-use alloy_network::{AnyHeader, AnyRpcHeader, AnyTxEnvelope};
+use alloy_network::{
+    AnyHeader, AnyRpcHeader, AnyTxEnvelope, AnyTxType, UnknownTxEnvelope, UnknownTypedTransaction,
+};
 use alloy_primitives::{Bytes, Signature};
+use alloy_provider::Provider;
 use alloy_rpc_types::{Block, Transaction as RpcTransaction};
 use alloy_serde::WithOtherFields;
 use evm2::NoopInspector;
@@ -206,8 +209,6 @@ fn select_fork_carries_running_spec_and_fee_policy() {
 /// unknown non-system transaction types.
 #[test]
 fn ethereum_replay_skips_unknown_system_envelopes_before_conversion() {
-    use alloy_network::{AnyTxType, UnknownTxEnvelope, UnknownTypedTransaction};
-
     let transaction = |ty| {
         let unknown = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
             hash: B256::ZERO,
@@ -239,8 +240,6 @@ fn ethereum_replay_skips_unknown_system_envelopes_before_conversion() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn refresh_fork_account_updates_loaded_journals() {
-    use alloy_provider::Provider;
-
     let (api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
     let target = alloy_primitives::address!("0x0000000000000000000000000000000000001331");
     let code = Bytes::from_static(&[0x60, 0x2a, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3]);
