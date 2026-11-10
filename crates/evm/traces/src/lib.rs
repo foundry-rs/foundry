@@ -292,6 +292,9 @@ impl SparsedTraceArena {
     /// A transaction handler can run the top-level calls one level below the transaction, such as
     /// Tempo's for the calls of an AA transaction. The tracer then keeps an empty root node above
     /// them. With more than one top-level call, that root groups the calls and stays.
+    ///
+    /// The debug recorder already records the steps of a single such call one level up, so only
+    /// its frames move here.
     pub fn lift_single_top_level_call(&mut self) {
         let nodes = self.arena.nodes_mut();
         if nodes.len() < 2 || nodes[0].children.len() != 1 || nodes[0].trace != CallTrace::default()
