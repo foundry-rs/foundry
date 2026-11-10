@@ -6,15 +6,19 @@ use alloy_network::{
     AnyRpcTransaction, AnyTxEnvelope, AnyTxType, NetworkTransactionBuilder, TransactionBuilder,
     TransactionResponse, TxSignerSync, UnknownTxEnvelope, UnknownTypedTransaction,
 };
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256, bytes};
 use alloy_rpc_types::Transaction as RpcTransaction;
 use alloy_serde::WithOtherFields;
+use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use evm2::{
     EvmFeatures, SpecId,
     bytecode::Bytecode,
     evm::{AccountInfo, InMemoryDB},
 };
+use std::num::NonZeroU64;
+use tempo_alloy::primitives::{TempoTransaction, TempoTxEnvelope, transaction::Call};
+use tempo_primitives::TempoSignature;
 
 const GWEI: u128 = 1_000_000_000;
 pub(crate) const ETHER: u128 = 1_000_000_000_000_000_000;
@@ -630,10 +634,6 @@ fn from_any_rpc_transaction_for_tempo_eth_envelope() {
 
 #[test]
 fn from_any_rpc_transaction_for_tempo_aa() {
-    use alloy_signer::SignerSync;
-    use std::num::NonZeroU64;
-    use tempo_alloy::primitives::{TempoTransaction, TempoTxEnvelope, transaction::Call};
-
     let sender = PrivateKeySigner::random();
     let sponsor = PrivateKeySigner::random();
     let fee_token = Some(Address::random());
@@ -730,8 +730,6 @@ fn tempo_calls(tx: &tempo_evm::TempoTxEnv) -> Vec<(TxKind, U256, Bytes)> {
 
 #[test]
 fn from_any_rpc_transaction_for_captured_sponsored_tempo_aa_batch() {
-    use alloy_primitives::{address, b256, bytes};
-
     let tx = captured_tempo_aa(include_str!("../../test-data/tempo-aa-sponsored-batch.json"));
     assert_eq!(tx.signer(), address!("0x0a0d9bc4dda3a659699ce05153ffe9298f99ce89"));
     assert_eq!(tx.nonce(), 0);
@@ -779,8 +777,6 @@ fn from_any_rpc_transaction_for_captured_sponsored_tempo_aa_batch() {
 
 #[test]
 fn from_any_rpc_transaction_for_captured_nonce_lane_tempo_aa() {
-    use alloy_primitives::{address, b256};
-
     let tx = captured_tempo_aa(include_str!("../../test-data/tempo-aa-nonce-lane.json"));
     let sender = address!("0xfdd1c606b498f5fcaaf27bd318b14caf52e8f6c2");
     assert_eq!(tx.signer(), sender);
@@ -810,9 +806,6 @@ fn from_any_rpc_transaction_for_captured_nonce_lane_tempo_aa() {
 
 #[test]
 fn from_any_rpc_transaction_for_captured_keychain_tempo_aa() {
-    use alloy_primitives::{address, b256};
-    use tempo_primitives::TempoSignature;
-
     let tx = captured_tempo_aa(include_str!("../../test-data/tempo-aa-keychain.json"));
     let sender = address!("0x5f704c6c7075acd14ee36527f03b5b5dcb4a966f");
     let key_id = address!("0x240a31713e851acdc0c590fe45ef72baeff55f91");
@@ -852,8 +845,6 @@ fn from_any_rpc_transaction_for_captured_keychain_tempo_aa() {
 
 #[test]
 fn from_any_rpc_transaction_for_captured_authorization_list_tempo_aa() {
-    use alloy_primitives::{address, b256};
-
     let tx = captured_tempo_aa(include_str!("../../test-data/tempo-aa-authorization-list.json"));
     let sender = address!("0xd410bcea80de9214e0e49df7d19c4c5e3db60f2a");
     assert_eq!(tx.signer(), sender);

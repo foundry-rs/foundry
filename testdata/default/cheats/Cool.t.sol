@@ -119,9 +119,9 @@ contract CoolPersistenceTest is Test {
         assertLt(balanceGas(address(this)), 2600);
     }
 
-    // Like REVM's `WarmAddresses`, precompiles and the coinbase the transaction started with stay
-    // warm (EIP-2929, EIP-3651), while `vm.coinbase` and `vm.accessList` only apply to later
-    // transactions, including after an isolated call installed and restored its own.
+    // Precompiles and the coinbase the transaction started with stay warm (EIP-2929, EIP-3651),
+    // while `vm.coinbase` and `vm.accessList` only apply to later transactions, including after an
+    // isolated call installed and restored its own.
     function testCool_keepsTransactionStartWarmth() public {
         address coinbase = block.coinbase;
         vm.coinbase(address(this));
@@ -153,8 +153,7 @@ contract CoolPersistenceTest is Test {
         assertGe(balanceGas(address(this)), 2600);
     }
 
-    // Like REVM's per-fork journals, cooling a non-persistent account only cools it on the active
-    // fork.
+    // Cooling a non-persistent account only cools it on the active fork.
     function testCool_forkNonPersistentPerContext() public {
         address target = address(0xbeef);
         uint256 first = vm.createSelectFork("mainnet");
