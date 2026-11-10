@@ -6254,6 +6254,7 @@ where
                 next_block_base_fee,
                 next_block_blob_fees,
                 block_access_list,
+                account_nonces,
             ) = {
                 let mut db = self.db.write().await;
 
@@ -6334,6 +6335,12 @@ where
                 let invalid = pool_result.invalid;
                 let not_yet_valid = pool_result.not_yet_valid;
 
+                let account_nonces = block_state
+                    .accounts()
+                    .filter_map(|(address, account)| {
+                        Some((address, account.current.as_ref()?.nonce))
+                    })
+                    .collect();
                 let parent_state = self
                     .prune_state_history_config
                     .is_state_history_supported()
@@ -6439,6 +6446,7 @@ where
                     next_block_base_fee,
                     next_block_blob_fees,
                     block_access_list,
+                    account_nonces,
                 )
             };
 
@@ -6587,8 +6595,14 @@ where
                 node_info!("    Block Time: {:?}\n", timestamp.to_rfc2822());
             }
 
-            let outcome =
-                MinedBlockOutcome { block_number, included, stale, invalid, not_yet_valid };
+            let outcome = MinedBlockOutcome {
+                block_number,
+                included,
+                stale,
+                invalid,
+                not_yet_valid,
+                account_nonces,
+            };
 
             (outcome, header, block_hash)
         };

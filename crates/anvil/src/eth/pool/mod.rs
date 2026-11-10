@@ -32,18 +32,18 @@ use crate::{
         fees::FeeManager,
         pool::transactions::{
             PendingPoolTransaction, PendingTransactions, PoolTransaction, ReadyTransactions,
-            TransactionsIterator, TxMarker,
+            TransactionsIterator, TxMarker, to_marker,
         },
     },
     mem::storage::MinedBlockOutcome,
 };
 use alloy_consensus::Transaction;
-use alloy_primitives::{Address, TxHash};
+use alloy_primitives::{Address, TxHash, map::AddressMap};
 use alloy_rpc_types::txpool::TxpoolStatus;
 use anvil_core::eth::transaction::PendingTransaction;
 use futures::channel::mpsc::{Receiver, Sender, channel};
 use parking_lot::{Mutex, RwLock};
-use std::{collections::VecDeque, fmt, sync::Arc};
+use std::{cmp::Ordering, collections::VecDeque, fmt, sync::Arc};
 
 #[cfg(feature = "base")]
 use alloy_consensus::Typed2718;
@@ -281,7 +281,14 @@ impl<T: Transaction> Pool<T> {
     /// Returns `true` if ready transactions left behind by the block can be included by mining
     /// again right away, e.g. because the block hit `max_transactions` or ran out of gas.
     pub fn on_mined_block(self: &Arc<Self>, outcome: MinedBlockOutcome<T>) -> bool {
-        let MinedBlockOutcome { block_number, included, stale, invalid, not_yet_valid } = outcome;
+        let MinedBlockOutcome {
+            block_number,
+            included,
+            stale,
+            invalid,
+            not_yet_valid,
+            account_nonces,
+        } = outcome;
         // Requiring txs to leave the pool keeps this retry from mining empty blocks for txs that
         // can never be included. Not-yet-valid txs and their dependents are retried by the delayed
         // re-notify.
@@ -290,6 +297,9 @@ impl<T: Transaction> Pool<T> {
 
         // remove invalid transactions from the pool
         self.remove_invalid(invalid.into_iter().map(|tx| tx.hash()).collect());
+
+        // Execution can consume nonces without a sender transaction, e.g. through EIP-7702.
+        self.prune_account_nonces(&account_nonces);
 
         // Prune mined and stale markers; both are satisfied by the resulting state.
         let res = self.prune_markers(
@@ -330,6 +340,16 @@ impl<T: Transaction> Pool<T> {
             self.notify_ready(tx);
         }
         res
+    }
+
+    /// Drops queued transactions below the given account nonces and promotes those at them.
+    ///
+    /// Nonces can move without a pool transaction, e.g. through EIP-7702 or `anvil_setNonce`.
+    pub fn prune_account_nonces(&self, nonces: &AddressMap<u64>) {
+        let res = self.inner.write().prune_account_nonces(nonces);
+        for tx in &res.promoted {
+            self.notify_ready(tx);
+        }
     }
 
     /// Adds a new transaction to the pool
@@ -570,6 +590,30 @@ impl<T: Transaction> PoolInner<T> {
 
         PruneResult { pruned, failed, promoted }
     }
+
+    /// Drops queued transactions below the account nonce and promotes the queued transaction at it.
+    ///
+    /// Mining prunes stale ready transactions. Custom nonce lanes don't follow the account nonce.
+    fn prune_account_nonces(&mut self, nonces: &AddressMap<u64>) -> PruneResult<T> {
+        let mut stale = Vec::new();
+        let mut markers = Vec::new();
+        for tx in self.pending_transactions.transactions() {
+            let sender = *tx.pending_transaction.sender();
+            let nonce = tx.pending_transaction.nonce();
+            if let Some(&state_nonce) = nonces.get(&sender)
+                && tx.provides == [to_marker(nonce, sender)]
+            {
+                match nonce.cmp(&state_nonce) {
+                    Ordering::Less => stale.push(tx.hash()),
+                    Ordering::Equal => markers.extend(tx.requires.iter().cloned()),
+                    Ordering::Greater => {}
+                }
+            }
+        }
+        // Keep the successors of stale transactions; the one at the account nonce is promoted.
+        self.pending_transactions.remove(stale);
+        self.prune_markers(markers)
+    }
 }
 
 /// Represents the outcome of a prune
@@ -647,7 +691,8 @@ impl<T> AddedTransaction<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::U256;
+    use alloy_consensus::{SignableTransaction, TxEnvelope, TxLegacy};
+    use alloy_primitives::{Signature, U256};
     use futures::StreamExt;
     use std::task::{Context, Poll, Waker};
 
@@ -683,5 +728,37 @@ mod tests {
         let hash = TxHash::from(U256::MAX);
         pool.notify_listener(hash);
         assert_eq!(ordinary.poll_next_unpin(&mut cx), Poll::Ready(Some(hash)));
+    }
+
+    #[test]
+    fn account_nonces_drop_stale_and_promote_queued_transactions() {
+        let pool = Pool::default();
+        let sender = Address::with_last_byte(1);
+        let add = |nonce, requires, provides| {
+            let transaction = TxEnvelope::Legacy(
+                TxLegacy { nonce, ..Default::default() }.into_signed(Signature::test_signature()),
+            );
+            let mut tx =
+                PoolTransaction::new(PendingTransaction::with_impersonated(transaction, sender));
+            tx.requires = requires;
+            tx.provides = provides;
+            *pool.add_transaction(tx).unwrap().hash()
+        };
+        // Nonce 2 waits for nonce 1, which is not in the pool, and nonce 3 waits for nonce 2.
+        let stale = add(2, vec![to_marker(1, sender)], vec![to_marker(2, sender)]);
+        let next = add(3, vec![to_marker(2, sender)], vec![to_marker(3, sender)]);
+        // Custom lanes and ready transactions are left alone.
+        let lane = add(1, vec![b"lane:0".to_vec()], vec![b"lane:1".to_vec()]);
+        let ready_stale = add(0, vec![], vec![to_marker(0, sender)]);
+        let mut ready = pool.add_ready_listener();
+
+        pool.prune_account_nonces(&[(sender, 3)].into_iter().collect());
+
+        assert!(!pool.contains(&stale));
+        assert!(pool.contains(&lane));
+        assert!(pool.contains(&ready_stale));
+        assert_eq!(pool.txpool_status(), TxpoolStatus { pending: 2, queued: 1 });
+        assert_eq!(ready.try_recv().unwrap(), next);
+        assert!(ready.try_recv().is_err());
     }
 }
