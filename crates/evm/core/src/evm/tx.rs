@@ -3,11 +3,9 @@
 //! Transactions stay in their network's Alloy form until execution: tools keep the selected
 //! [`TransactionRequest`](alloy_network::Network::TransactionRequest) or signed
 //! [`TxEnvelope`](alloy_network::Network::TxEnvelope), mutate common fields through Alloy's
-//! [`TransactionBuilder`], and convert once, right before
-//! execution, into the family's evm2 transaction with
-//! [`FoundryTxConversion`]. Signed, resumed and replayed transactions
-//! convert from exactly the payload that was signed; nothing is rebuilt from Ethereum-shaped
-//! fields.
+//! [`TransactionBuilder`], and convert once, right before execution, into the family's evm2
+//! transaction with [`FoundryTxConversion`]. Signed, resumed and replayed transactions convert
+//! from exactly the payload that was signed; nothing is rebuilt from Ethereum-shaped fields.
 
 use super::{ChainFor, FoundryEvmExt, FoundryEvmNetwork, TxFor, TypesFor};
 use alloy_chains::NamedChain;
