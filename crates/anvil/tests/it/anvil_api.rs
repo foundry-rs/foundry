@@ -1246,9 +1246,27 @@ async fn flaky_test_reorg() {
         .get_receipt()
         .await
         .unwrap();
+    let height = provider.get_block_number().await.unwrap();
+    let hashes = || async {
+        let mut hashes = vec![];
+        for number in height - 2..=height {
+            hashes.push(provider.get_block(number.into()).await.unwrap().unwrap().header.hash);
+        }
+        hashes
+    };
+    let before = hashes().await;
     api.anvil_reorg(ReorgOptions { depth: 3, tx_block_pairs: vec![] }).await.unwrap();
     let value = storage.getValue().call().await.unwrap();
     assert_eq!("initial value".to_string(), value);
+    // Replacement blocks differ from the replaced ones, also when both are empty, and a second
+    // reorg over the same heights differs from the first.
+    let first_reorg = hashes().await;
+    assert!(before.iter().zip(&first_reorg).all(|(old, new)| old != new));
+    api.anvil_reorg(ReorgOptions { depth: 3, tx_block_pairs: vec![] }).await.unwrap();
+    let second_reorg = hashes().await;
+    assert!(first_reorg.iter().zip(&second_reorg).all(|(old, new)| old != new));
+    let block = provider.get_block(height.into()).await.unwrap().unwrap();
+    assert_eq!(block.header.parent_hash, second_reorg[1]);
 
     api.mine_one().await.unwrap();
     api.mine_one().await.unwrap();

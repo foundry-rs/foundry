@@ -4644,6 +4644,14 @@ impl EthApi<FoundryNetwork> {
         let common_block =
             self.rollback_block(common_height).await?.ok_or(BlockchainError::BlockNotFound)?;
 
+        // Remember the blocks about to be replaced, so the replacement blocks differ from them
+        // even when they hold the same transactions.
+        let replaced_blocks = (common_height + 1..=current_height)
+            .map(|number| {
+                self.backend.block_hash_by_number(number).ok_or(BlockchainError::BlockNotFound)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
         #[cfg(feature = "monad")]
         let fee_defaults = if self.backend.is_monad() {
             self.backend
@@ -4785,7 +4793,7 @@ impl EthApi<FoundryNetwork> {
         };
 
         self.rollback_backend(common_block, &mining_guard).await?;
-        self.backend.reorg(depth, block_pool_txs, &mining_guard).await?;
+        self.backend.reorg(depth, block_pool_txs, &replaced_blocks, &mining_guard).await?;
         Ok(())
     }
 
