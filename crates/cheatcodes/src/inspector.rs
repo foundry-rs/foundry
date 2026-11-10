@@ -156,7 +156,7 @@ pub(crate) fn exec_create<FEN: FoundryEvmNetwork>(
         message.kind,
         &message.caller,
         &message.salt,
-        &message.input,
+        ccx.evm.message_input(&message),
         nonce,
     );
     message.call_target = message.destination;
@@ -636,6 +636,14 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// transaction instead.
     pub root_call_target: Option<Address>,
 
+    /// Call depth of the running transaction's top-level calls, set by the inspector stack when
+    /// each one starts.
+    ///
+    /// This is the EVM's initial call depth, which is zero unless the transaction handler runs
+    /// the calls below the transaction, such as Tempo's for the calls of an AA transaction.
+    /// Nested transactions, such as isolated calls and replays, keep the running transaction's.
+    pub root_depth: usize,
+
     /// The EIP-3651 coinbase and access-list addresses the running transaction warmed when it
     /// started, which `vm.cool` keeps warm.
     ///
@@ -849,6 +857,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             fork_epoch: Default::default(),
             snapshot_restores: Default::default(),
             root_call_target: Default::default(),
+            root_depth: Default::default(),
             tx_warm_addresses: Default::default(),
             pranks: Default::default(),
             expected_revert: Default::default(),
@@ -1174,7 +1183,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         gas: &mut GasTracker,
         executor: &mut dyn CheatcodesExecutor<FEN>,
     ) -> Result {
-        let decoded = decode_cheatcode_call(&message.input)?;
+        let decoded = decode_cheatcode_call(message.input.as_bytes(interp.memory()))?;
 
         let caller = message.caller;
 
@@ -1212,6 +1221,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // but only if the backend is in forking mode
         backend.backend().ensure_cheatcode_access_forking_mode(&caller)?;
 
+        let input = message.input.to_bytes(interp.memory());
         crate::monad::apply_monad_cheatcode(
             &mut CheatsCtxt {
                 state: self,
@@ -1222,7 +1232,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 is_static: message.is_static(),
                 depth: message.depth.into(),
             },
-            &message.input,
+            &input,
         )
     }
 
@@ -1283,12 +1293,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) -> Option<MessageResultFor<FEN>> {
         let tx_origin = interp.host().tx_env().origin;
         let curr_depth = usize::from(call.depth);
-        self.start_created_accounts_frame(
-            curr_depth == 0,
-            CreatedAccountsFrameKind::Call,
-            curr_depth,
-        );
-        if curr_depth == 0 {
+        let is_root = curr_depth == self.root_depth;
+        self.start_created_accounts_frame(is_root, CreatedAccountsFrameKind::Call, curr_depth);
+        if is_root {
             self.root_call_target = Some(call.destination);
             self.applied_access_list = None;
         }
@@ -1296,7 +1303,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // At the root call to test function or script `run()`/`setUp()` functions, we are
         // decreasing sender nonce to ensure that it matches on-chain nonce once we start
         // broadcasting.
-        if curr_depth == 0 {
+        if is_root {
             let result = interp.host().state_mut().account(&tx_origin).map(|mut account| {
                 let prev = account.nonce();
                 account.set_nonce(prev.saturating_sub(1));
@@ -1361,7 +1368,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if let Some(expected) = self.core.expected_calls.get_mut(&call.call_target) {
             expect::observe_call(
                 expected,
-                &call.input,
+                call.input.as_bytes(interp.memory()),
                 transfer_value(call),
                 call.gas_limit,
                 call.kind.into(),
@@ -1402,8 +1409,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         // Handle mocked calls
         if let Some(mocks) = self.core.mocked_calls.get_mut(&call.call_target)
-            && let Some(return_data_queue) =
-                mock::find_mock_returns(mocks, &call.input.to_bytes(), transfer_value(call))
+            && let Some(return_data_queue) = mock::find_mock_returns(
+                mocks,
+                &call.input.to_bytes(interp.memory()),
+                transfer_value(call),
+            )
             && let Some(return_data) = return_data_queue.front().map(|x| x.to_owned())
         {
             if let Some(value) = transfer_value(call) {
@@ -1478,6 +1488,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 // into 1559, in the cli package, relatively easily once we
                 // know the target chain supports EIP-1559.
                 if !call.is_static() {
+                    let input = call.input.to_bytes(interp.memory());
                     let evm = interp.host();
                     // Reading the nonce warms the broadcaster.
                     let nonce = match evm.state_mut().account(&new_origin) {
@@ -1504,7 +1515,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         .with_from(new_origin)
                         .with_to(target)
                         .with_value(transfer_value(call).unwrap_or_default())
-                        .with_input(call.input.to_bytes())
+                        .with_input(input)
                         .with_nonce(nonce)
                         .with_chain_id(chain_id);
                     if is_fixed_gas_limit {
@@ -1632,7 +1643,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 oldNonce: old_nonce,
                 newNonce: 0, // updated on call_end
                 value: call.value,
-                data: call.input.to_bytes(),
+                data: call.input.to_bytes(interp.memory()),
                 reverted: false,
                 deployedCode: Bytes::new(),
                 storageAccesses: vec![], // updated on step
@@ -1821,7 +1832,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             call.depth == active.depth
                 && call.caller == CHEATCODE_ADDRESS
                 && call.destination == active.callback_target
-                && *call.input == *active.callback_input
+                && call.input.as_owned() == Some(&active.callback_input)
         })
     }
 
@@ -2176,7 +2187,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if self.persistent_writes.is_empty() {
             return;
         }
-        let root = usize::from(interp.version().initial_call_depth);
+        let root = usize::from(interp.host().initial_call_depth());
         let state = interp.host().state_mut();
         let mut failed = None;
         if !success && depth > root {
@@ -2349,7 +2360,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 let needs_processing = expected_revert.needs_processing(
                     cheatcode_call,
                     call_failed,
-                    curr_depth,
+                    curr_depth - self.root_depth,
                     self.core.config.internal_expect_revert,
                 );
 
@@ -2412,7 +2423,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // previous call depth's recorded accesses, if any
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // The root call cannot be recorded.
-            if curr_depth > 0
+            if curr_depth > self.root_depth
                 && let Some(mut last_recorded_depth) = recorded_account_diffs_stack.pop()
             {
                 // Update the reverted status of all deeper calls if this call reverted, in
@@ -2478,8 +2489,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             }
         }
 
-        // If the depth is 0, then this is the root call terminating
-        if curr_depth == 0 {
+        // The root call is terminating.
+        if curr_depth == self.root_depth {
             // Match expected calls
             if let Some(msg) =
                 expect::first_unmet_call(&self.core.expected_calls, outcome.is_success())
@@ -2512,12 +2523,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) -> Option<MessageResultFor<FEN>> {
         let tx_origin = interp.host().tx_env().origin;
         let curr_depth = usize::from(input.depth);
-        self.start_created_accounts_frame(
-            curr_depth == 0,
-            CreatedAccountsFrameKind::Create,
-            curr_depth,
-        );
-        if curr_depth == 0 {
+        let is_root = curr_depth == self.root_depth;
+        self.start_created_accounts_frame(is_root, CreatedAccountsFrameKind::Create, curr_depth);
+        if is_root {
             self.root_call_target = None;
             self.applied_access_list = None;
         }
@@ -2529,7 +2537,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
             self.unrun_create_depth = Some(curr_depth);
             // Return a revert with the initcode as error data
-            return Some(message_result(input, InstrStop::Revert, input.input.to_bytes()));
+            return Some(message_result(
+                input,
+                InstrStop::Revert,
+                input.input.to_bytes(interp.memory()),
+            ));
         }
 
         let mut caller_changed = false;
@@ -2586,7 +2598,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     .with_from(broadcast.new_origin)
                     .with_kind(TxKind::Create)
                     .with_value(input.value)
-                    .with_input(input.input.to_bytes())
+                    .with_input(input.input.to_bytes(interp.memory()))
                     .with_nonce(nonce);
                 if let Some(fee_token) = self.fee_token {
                     tx_req.set_fee_token(fee_token);
@@ -2603,7 +2615,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
 
         // The creator changed, so the created address derives from the new creator.
-        if caller_changed && curr_depth > 0 {
+        if caller_changed && curr_depth > self.root_depth {
             let nonce = match interp.host().state_mut().account(&input.caller) {
                 Ok(account) => account.nonce(),
                 Err(err) => {
@@ -2614,7 +2626,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 input.kind,
                 &input.caller,
                 &input.salt,
-                &input.input,
+                input.input.as_bytes(interp.memory()),
                 nonce,
             );
             input.call_target = input.destination;
@@ -2622,7 +2634,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         // Allow cheatcodes from the address of the new contract
         let address = input.destination;
-        Self::allow_cheatcodes_on_create(backend, curr_depth, input.caller, address);
+        Self::allow_cheatcodes_on_create(
+            backend,
+            curr_depth - self.root_depth,
+            input.caller,
+            address,
+        );
 
         self.record_created_account(backend.backend().active_fork_id(), address);
 
@@ -2660,7 +2677,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 oldNonce: 0,             // new contract starts with nonce 0
                 newNonce: 1,             // updated on create_end (contracts start with nonce 1)
                 value: input.value,
-                data: input.input.to_bytes(),
+                data: input.input.to_bytes(interp.memory()),
                 reverted: false,
                 deployedCode: Bytes::new(), // updated on create_end
                 storageAccesses: vec![],    // updated on create_end
@@ -2775,7 +2792,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             }
         }
 
-        if curr_depth > 0 {
+        if curr_depth > self.root_depth {
             // Record the gas usage of the create frame, this allows the `lastFrameGas` cheatcode to
             // retrieve the gas usage of the last call or create.
             self.gas_metering.last_frame_gas = Some(frame_gas(outcome.stop, &outcome.gas));

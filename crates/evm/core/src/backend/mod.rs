@@ -920,7 +920,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             self.networks,
         );
         apply_chain_specific_tx_replay_env_changes_for_chain(&mut env, source_chain_id);
-        env.version.initial_call_depth = depth;
+        env.initial_call_depth = depth - TypesFor::<FEN>::tx_call_depth_offset(&tx);
 
         // Networks with block-position state only replay the transaction that immediately follows
         // the fork's canonical position, and advance the position past it.

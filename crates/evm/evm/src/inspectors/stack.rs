@@ -549,7 +549,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
         let mut env = env.unwrap_or_else(|| evm_env(evm));
-        env.version.initial_call_depth = depth;
+        env.initial_call_depth = depth - TypesFor::<FEN>::tx_call_depth_offset(tx);
         TypesFor::<FEN>::sync_transaction(evm);
         let mut child = backend.backend().lifecycle().nested_evm(evm, tx, Some(env), None);
         let previous = self.enter_inner_context(InnerRoot {
@@ -658,7 +658,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
         let mut env = env.unwrap_or_else(|| evm_env(evm));
-        env.version.initial_call_depth = depth + 1;
+        env.initial_call_depth = depth + 1 - TypesFor::<FEN>::tx_call_depth_offset(tx);
         let (prepared, mut replay) = backend.backend().prepare_nested(tx.clone(), evm, Some(env));
         let mut executed = self.replay(cheats, &mut replay, evm, depth, prepared, true)?;
         drop(replay);
@@ -1036,12 +1036,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         Some((cheats, &mut *self.backend, &mut *self.inner))
     }
 
-    /// Whether a frame at `depth` runs as an isolated transaction: a top-level frame, or a
-    /// synthetic `deployCode` create rewritten to a CREATE2 factory call.
-    fn isolates(&self, depth: u16) -> bool {
+    /// Whether a frame at `depth` runs as an isolated transaction: a top-level frame one level
+    /// below the transaction's root at `root`, or a synthetic `deployCode` create rewritten to a
+    /// CREATE2 factory call.
+    fn isolates(&self, root: u16, depth: u16) -> bool {
         self.inner.enable_isolation
             && !self.inner.in_inner_context
-            && (depth == 1 || self.inner.synthetic_create_depth == Some(depth))
+            && (depth == root + 1 || self.inner.synthetic_create_depth == Some(depth))
     }
 
     /// Converts the result of a CREATE frame redirected to the CREATE2 factory, if `message` is
@@ -1225,6 +1226,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         if let Some(recorder) = self.inner.debug_recorder.as_deref_mut() {
             recorder.end_step_before_frame(interp);
         }
+        // The frame EVM's hooks see their own interpreter, not the caller's memory the input of
+        // a call instruction's message is a range of.
+        message.input = message.input.to_bytes(interp.memory()).into();
         let evm = interp.host();
         let cheatcodes = self.cheatcodes.as_deref_mut();
         let result = self.inner.execute_on_frame_evm(cheatcodes, backend, evm, env, message);
@@ -1267,6 +1271,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let tx_origin = interp.host().tx_env().origin;
         let is_create = matches!(message.kind, MessageKind::Create | MessageKind::Create2);
         let kind = if is_create { TxKind::Create } else { TxKind::Call(message.destination) };
+        let input = message.input.to_bytes(interp.memory());
         let evm = interp.host();
         let version = *evm.version();
 
@@ -1283,7 +1288,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             &version,
             message.caller,
             kind,
-            &message.input.to_bytes(),
+            &input,
             al_accounts,
             al_keys,
             message.value,
@@ -1311,7 +1316,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             gas_limit = gas_limit.min(env.block.gas_limit.saturating_to());
         }
         // The root keeps its depth in the surrounding trace, with a fresh call-depth budget.
-        env.version.initial_call_depth = message.depth;
+        env.initial_call_depth = message.depth;
         let outer_basefee = env.block.basefee;
         env.block.basefee = U256::ZERO;
         env.set_feature(EvmFeatures::FEE_CHARGE, false);
@@ -1332,7 +1337,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let mut request = TransactionRequestFor::<FEN>::default()
             .with_from(message.caller)
             .with_kind(kind)
-            .with_input(message.input.to_bytes())
+            .with_input(input)
             .with_value(message.value)
             .with_nonce(nonce)
             .with_chain_id(env.chain_id())
@@ -1359,6 +1364,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             Ok(tx) => tx,
             Err(err) => return not_executed(err.to_string().into_bytes().into()),
         };
+        env.initial_call_depth -= TypesFor::<FEN>::tx_call_depth_offset(&tx);
 
         let backend = &mut *self.backend;
         let source_fork = backend.backend().active_fork_id();
@@ -1614,11 +1620,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         outcome
     }
 
-    /// Invoked at the beginning of a new top-level (0 depth) frame.
+    /// Invoked at the beginning of a new top-level frame, at the EVM's initial call depth.
     fn top_level_frame_start(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
         warm_arbitrum_system_contract::<FEN>(interp);
         self.inner.tx_created.clear();
         if let Some(cheatcodes) = &mut self.cheatcodes {
+            cheatcodes.root_depth = usize::from(interp.host().initial_call_depth());
             // Transactions run from the test or script carry no access list.
             cheatcodes.tx_warm_addresses = tx_warm_addresses(&evm_env(interp.host()), None);
             cheatcodes.clear_storage_hook_mapping_slots();
@@ -1859,6 +1866,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         };
 
         let create2_deployer = self.inner.create2_deployer;
+        let initcode = message.input.to_bytes(interp.memory());
         let state = interp.host().state_mut();
         let Ok(mut account) = state.account(&create2_deployer) else { return false };
         let code_hash = account.code_hash();
@@ -1873,9 +1881,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let Ok(code) = account.load_code() else { return false };
         account.warm();
 
-        let mut input = Vec::with_capacity(32 + message.input.len());
+        let mut input = Vec::with_capacity(32 + initcode.len());
         input.extend_from_slice(&B256::from(salt).0);
-        input.extend_from_slice(&message.input);
+        input.extend_from_slice(&initcode);
 
         message.kind = MessageKind::Call;
         message.destination = create2_deployer;
@@ -2027,7 +2035,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         }
 
         let depth = message.depth;
-        if depth == 0 && !self.inner.in_inner_context {
+        // A transaction handler can run the top-level calls below the transaction, such as
+        // Tempo's for the calls of an AA transaction.
+        let root = interp.host().initial_call_depth();
+        if depth == root && !self.inner.in_inner_context {
             self.top_level_frame_start(interp);
         }
 
@@ -2093,8 +2104,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         // and broadcasts. Keep the trace lifecycle ordering, but remember the node so its caller
         // can be synchronized with the inputs that are actually executed.
         let trace_idx = self.inner.tracer.as_ref().map(|tracer| tracer.traces().nodes().len() - 1);
-        let isolate = self.isolates(depth);
-        let precharged_state = if isolate && depth == 1 && message.kind == MessageKind::Call {
+        let isolate = self.isolates(root, depth);
+        let precharged_state = if isolate && depth == root + 1 && message.kind == MessageKind::Call
+        {
             account_creation_state_gas::<FEN>(interp, message)
         } else {
             0
@@ -2214,7 +2226,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         }
 
         let depth = message.depth;
-        if depth == 0 && !self.inner.in_inner_context {
+        // A transaction handler can run the top-level calls below the transaction, such as
+        // Tempo's for the calls of an AA transaction.
+        let root = interp.host().initial_call_depth();
+        if depth == root && !self.inner.in_inner_context {
             self.top_level_frame_start(interp);
         }
 
@@ -2249,7 +2264,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         // charge first. A synthetic `deployCode` create carries the charge of the cheatcode.
         let precharged_state = if self.inner.synthetic_create_depth == Some(depth) {
             self.cheatcodes.as_deref().map_or(0, |cheats| cheats.deploy_code_create_state_gas)
-        } else if depth == 1
+        } else if depth == root + 1
             && message.kind == MessageKind::Create
             && self.inner.enable_isolation
             && !self.inner.in_inner_context
@@ -2282,7 +2297,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
             return Some(message_result(message, InstrStop::Revert, error));
         }
 
-        if message.kind != MessageKind::Create2 && self.isolates(depth) {
+        if message.kind != MessageKind::Create2 && self.isolates(root, depth) {
             return Some(self.transact_inner(interp, message, precharged_state));
         }
 
@@ -2566,11 +2581,11 @@ fn apply_mocked_function<FEN: FoundryEvmNetwork>(
     message: &mut MessageFor<FEN>,
 ) {
     if let Some(mocks) = cheatcodes.core.mocked_functions.get(&message.code_address) {
+        let input = message.input.as_bytes(interp.memory());
         // Check if any mock function set for call data or if catch-all mock function set
         // for selector.
-        if let Some(target) = mocks
-            .get(&*message.input)
-            .or_else(|| message.input.get(..4).and_then(|selector| mocks.get(selector)))
+        if let Some(target) =
+            mocks.get(input).or_else(|| input.get(..4).and_then(|selector| mocks.get(selector)))
         {
             let target = *target;
             let code = interp
@@ -2668,6 +2683,8 @@ fn handle_arbitrum_system_call<FEN: FoundryEvmNetwork>(
     message: &MessageFor<FEN>,
     fork_block_number: Option<u64>,
 ) -> Option<MessageResultFor<FEN>> {
+    let selector = message.input.as_bytes(interp.memory()).get(..4);
+    let is_arb_block_number = selector == Some(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR[..]);
     let evm = interp.host();
     if message.destination != arbitrum::ARB_SYS_ADDRESS
         || message.code_address != arbitrum::ARB_SYS_ADDRESS
@@ -2676,7 +2693,7 @@ fn handle_arbitrum_system_call<FEN: FoundryEvmNetwork>(
         return None;
     }
 
-    if message.input.get(..4) != Some(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR) {
+    if !is_arb_block_number {
         return None;
     }
 

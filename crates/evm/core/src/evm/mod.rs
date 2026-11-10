@@ -203,8 +203,8 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
     ) -> Evm<'a, Self::Types> {
         db.set_eip161(env.version.feature(evm2::EvmFeatures::EIP161));
         let precompiles = self.precompiles(&env, &ext);
-        let EvmEnv { spec, version, block } = env;
-        Evm::new_with_execution_config_and_ext(
+        let EvmEnv { spec, version, block, initial_call_depth } = env;
+        let mut evm = Evm::new_with_execution_config_and_ext(
             self.execution_config(spec, version),
             spec,
             block,
@@ -212,14 +212,18 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
             db,
             precompiles,
             ext,
-        )
+        );
+        evm.set_initial_call_depth(initial_call_depth);
+        evm
     }
 
     /// Returns `env` with `spec`, keeping Foundry's execution toggles and limits.
     fn env_with_spec(&self, env: EvmEnv<Self::Types>, spec: SpecOf<Self>) -> EvmEnv<Self::Types> {
         let current_default = self.version(env.spec, env.chain_id());
         let next = self.version(spec, env.chain_id());
-        EvmEnv::new(spec, carry_execution_policy(&current_default, &env.version, next), env.block)
+        let version = carry_execution_policy(&current_default, &env.version, next);
+        // A nested transaction's root, such as a `vm.transact` replay, keeps its depth.
+        EvmEnv { version, spec, ..env }
     }
 
     /// Switches `evm` to `env`: its block, spec and chain ID, keeping Foundry's execution toggles
@@ -248,7 +252,12 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
 
 /// Returns the environment `evm` currently executes with.
 pub const fn evm_env<T: EvmTypes>(evm: &Evm<'_, T>) -> EvmEnv<T> {
-    EvmEnv::new(evm.config_spec_id(), *evm.version(), *evm.block())
+    EvmEnv {
+        spec: evm.config_spec_id(),
+        version: *evm.version(),
+        block: *evm.block(),
+        initial_call_depth: evm.initial_call_depth(),
+    }
 }
 
 /// Convenience type aliases for accessing associated types through [`FoundryEvmNetwork`].

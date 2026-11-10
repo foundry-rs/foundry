@@ -32,9 +32,10 @@ impl LogCollector {
     #[cold]
     fn do_hardhat_log<T: EvmTypesHost>(
         &mut self,
+        interp: &Interpreter<'_, '_, T>,
         message: &Message<T>,
     ) -> Option<MessageResult<T>> {
-        if let Err(err) = self.hardhat_log(&message.input) {
+        if let Err(err) = self.hardhat_log(message.input.as_bytes(interp.memory())) {
             return Some(message_result(message, InstrStop::Revert, err.abi_encode_revert()));
         }
         None
@@ -80,11 +81,11 @@ impl<T: EvmTypesHost> Inspector<T> for LogCollector {
 
     fn call(
         &mut self,
-        _interp: &mut Interpreter<'_, '_, T>,
+        interp: &mut Interpreter<'_, '_, T>,
         message: &mut Message<T>,
     ) -> Option<MessageResult<T>> {
         if message.destination == HARDHAT_CONSOLE_ADDRESS {
-            return self.do_hardhat_log::<T>(message);
+            return self.do_hardhat_log::<T>(interp, message);
         }
         None
     }
