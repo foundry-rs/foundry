@@ -98,8 +98,8 @@ fn symbolic_live_two_step(prj: _, cmd: _) {
     assert_eq!(replayed["invariant_failures"][0]["name"], "invariant_z");
 }
 
-// Every call carries a warp and a roll once delays are configured; the worker applies them
-// concretely instead of rejecting the frontier.
+// Calls carry warps and rolls once delays are configured; the worker applies them concretely
+// instead of rejecting the frontier.
 #[forgetest_init]
 fn symbolic_live_solves_delayed_calls(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_live_solves_delayed_calls");
@@ -250,4 +250,98 @@ fn symbolic_live_one_second_budget(prj: _, cmd: _) {
         .clone();
     let result = json_test_result(&output, "invariant_a()");
     assert!(result["symbolic_live"]["solver_queries"].as_u64().unwrap() > 0, "{result}");
+}
+
+// Many handlers add dispatcher comparisons whose other side fuzzing already reaches. They must
+// not crowd the gates out of the worker's backlog.
+#[forgetest_init]
+fn symbolic_live_wide_target(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_live_wide_target");
+    let handlers = (0..24)
+        .map(|i| {
+            format!(
+                "    function f{i}(uint256 a) external {{ if (a % {} == {i}) counter += 1; }}\n",
+                i + 7
+            )
+        })
+        .collect::<String>();
+    let source = TWO_STEP.replacen(
+        "    uint256 public stage;\n",
+        &format!("    uint256 public stage;\n    uint256 public counter;\n{handlers}"),
+        1,
+    );
+    prj.add_test("LiveWide.t.sol", &source);
+    prj.update_config(|config| {
+        config.invariant.runs = u32::MAX;
+        config.invariant.timeout = Some(10);
+        config.invariant.depth = 100;
+        config.invariant.dictionary.dictionary_weight = 0;
+        config.symbolic.live = true;
+        config.symbolic.timeout = Some(10);
+    });
+    let output = cmd
+        .args(["test", "--json", "--threads", "1", "--fuzz-seed", "0x1234"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_a()");
+    assert_eq!(result["invariant_failures"][0]["name"], "invariant_z", "{result}");
+    assert!(result["symbolic_live"]["scheduled"].as_u64().unwrap() >= 2, "{result}");
+}
+
+// One equality guards every stage through a stored secret, so each later attempt must run from
+// the state left by the previous solve even though both sides of the site were already reached.
+// Random depths end some runs right after a solve, so resumed runs must also retry the gate.
+#[forgetest_init]
+fn symbolic_live_retries_shared_gate(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_live_retries_shared_gate");
+    let source = TWO_STEP
+        .replacen(
+            "    uint256 public stage;\n",
+            "    uint256 public stage;
+    uint256[3] secrets = [
+        uint256(0xdeadbeef123456789abcdef01234567890),
+        0xabcdef019876543210fedcba9876543210,
+        0x1234567890abcdef1234567890abcdef12
+    ];
+",
+            1,
+        )
+        .replacen(
+            "            if (stage == 0 && x * 3 + y * 5 == 0xdeadbeef123456789abcdef01234567890) {
+                stage = 1;
+            } else if (stage == 1 && x * 3 + y * 5 == 0xabcdef019876543210fedcba9876543210) {
+                stage = 2;
+            }
+",
+            "            if (stage < 3 && x * 3 + y * 5 == secrets[stage]) stage++;\n",
+            1,
+        )
+        .replacen("assertLt(target.stage(), 2)", "assertLt(target.stage(), 3)", 1);
+    assert!(source.contains("stage++") && source.contains("stage(), 3"));
+    prj.add_test("LiveSharedGate.t.sol", &source);
+    prj.update_config(|config| {
+        config.invariant.runs = u32::MAX;
+        config.invariant.timeout = Some(10);
+        config.invariant.depth = 3;
+        config.invariant.min_depth = 1;
+        config.invariant.depth_mode = InvariantDepthMode::Random;
+        config.invariant.dictionary.dictionary_weight = 0;
+        config.symbolic.live = true;
+        config.symbolic.timeout = Some(10);
+    });
+    let output = cmd
+        .args(["test", "--json", "--threads", "1", "--fuzz-seed", "0x1234"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_a()");
+    assert_eq!(result["invariant_failures"][0]["name"], "invariant_z", "{result}");
+    assert_eq!(
+        result["invariant_failures"][0]["counterexample"]["Sequence"][1].as_array().unwrap().len(),
+        3,
+        "{result}"
+    );
 }

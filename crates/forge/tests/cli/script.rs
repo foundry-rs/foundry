@@ -15,6 +15,7 @@ use alloy_rpc_types::{AccessList, AccessListItem, Authorization, TransactionRequ
 use alloy_signer::SignerSync;
 use anvil::{NodeConfig, spawn};
 use axum::{Router, body::Bytes as BodyBytes, http::StatusCode, response::IntoResponse};
+use evm2::interpreter::op as opcode;
 use forge_script_sequence::ScriptSequence;
 use foundry_compilers::{PathStyle, artifacts::EvmVersion};
 use foundry_evm::{constants::CALLER, hardfork::TempoHardfork};
@@ -29,7 +30,6 @@ use foundry_test_utils::{
     util::{OTHER_SOLC_VERSION, SOLC_VERSION, TestCommand, TestProject},
 };
 use regex::Regex;
-use revm::bytecode::opcode;
 use serde_json::Value;
 use std::{
     env, fs,
@@ -2516,6 +2516,45 @@ async fn cannot_deploy_with_nonexist_create2(prj: _, cmd: _) {
         .add_sig("BroadcastTestNoLinking", "deployCreate2()")
         .simulate(ScriptOutcome::ScriptFailed)
         .broadcast(ScriptOutcome::ScriptFailed);
+}
+
+// Tests that broadcast salted creates go through the CREATE2 factory on Optimism, with Ethereum as
+// the control.
+// <https://github.com/foundry-rs/foundry/issues/18048>
+#[forgetest]
+fn broadcast_create2_uses_factory_on_optimism(prj: _, cmd: _) {
+    prj.add_script(
+        "Create2Factory.s.sol",
+        r#"
+interface Vm {
+    function startBroadcast() external;
+    function stopBroadcast() external;
+    function computeCreate2Address(bytes32 salt, bytes32 initCodeHash) external pure returns (address);
+}
+
+contract C {}
+
+contract Create2Factory {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        vm.startBroadcast();
+        address deployed = address(new C{salt: 0}());
+        vm.stopBroadcast();
+        require(
+            deployed == vm.computeCreate2Address(0, keccak256(type(C).creationCode)),
+            "not deployed through the CREATE2 factory"
+        );
+    }
+}
+"#,
+    );
+
+    for network in ["ethereum", "optimism"] {
+        cmd.forge_fuse()
+            .args(["script", "script/Create2Factory.s.sol:Create2Factory", "--network", network])
+            .assert_success();
+    }
 }
 
 #[forgetest]
@@ -7909,6 +7948,42 @@ contract TempoScript is Script {
         "18446744073709551615",
     ]);
     cmd.assert_success();
+}
+
+// A Tempo transaction that fails validation in an isolated call after `vm.createSelectFork`
+// fails the script cleanly instead of crashing.
+#[forgetest_init]
+async fn tempo_isolated_fork_rejected_value_transfer_fails_script(prj: _, cmd: _) {
+    prj.update_config(|config| config.isolate = true);
+    let script = prj.add_script(
+        "TempoForkTransfer.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract TempoForkTransfer is Script {
+    function run(string memory rpc) external {
+        vm.createSelectFork(rpc);
+        vm.broadcast();
+        // Tempo rejects native value transfers.
+        payable(address(0xdEaD)).transfer(1);
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    cmd.arg("script").arg(script).args([
+        "--sig",
+        "run(string)",
+        &handle.http_endpoint(),
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--network",
+        "tempo",
+    ]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: script failed: EvmError: Revert
+
+"#]]);
 }
 
 #[forgetest_init]

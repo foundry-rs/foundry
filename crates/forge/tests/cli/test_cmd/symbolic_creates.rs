@@ -33,11 +33,37 @@ contract SymbolicInvalidInitcode {
         assert(returnSize == 0);
         assert(marker == 19);
     }
+
+    // Runtime code `0x60` is a PUSH1 whose data byte is cut off: the EVM zero-pads it and stops.
+    function checkTruncatedPushRuntimeStops() public {
+        address created;
+        assembly ("memory-safe") {
+            mstore(0, hex"60605f5360015ff3")
+            created := create(0, 0, 8)
+        }
+        assert(created != address(0));
+        (bool ok,) = created.call("");
+        assert(ok);
+    }
 }
 "#,
     );
 
-    cmd.args(["test", "--symbolic", "--match-test", "checkInvalidInitcode"]).assert_success();
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicInvalidInitcode",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicInvalidInitcode.t.sol:SymbolicInvalidInitcode
+[PASS] checkInvalidInitcode() ([METRICS])
+[PASS] checkTruncatedPushRuntimeStops() ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -573,6 +599,14 @@ contract SymbolicCreate2 {
         CreatedHelper helper = new CreatedHelper{salt: bytes32(uint256(123))}();
         assert(helper.inc(x) != 11);
     }
+
+    function checkCreate2PredictedAddress(bytes32 salt) public {
+        CreatedHelper helper = new CreatedHelper{salt: salt}();
+        address predicted = address(uint160(uint256(keccak256(abi.encodePacked(
+            bytes1(0xff), address(this), salt, keccak256(type(CreatedHelper).creationCode)
+        )))));
+        assert(address(helper) == predicted);
+    }
 }
 "#,
     );
@@ -582,9 +616,10 @@ contract SymbolicCreate2 {
             .failure()
             .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicCreate2.t.sol:SymbolicCreate2
+Ran 2 tests for test/SymbolicCreate2.t.sol:SymbolicCreate2
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCreate2(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+[PASS] checkCreate2PredictedAddress(bytes32) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
             .get_output()
@@ -889,11 +924,34 @@ contract SymbolicCreateRevertData {
 "#,
     );
 
+    prj.add_test(
+        "SymbolicCreateNonceLimit.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicCreateNonceLimit is Test {
+    // EIP-2681: a creator nonce at `type(uint64).max` fails CREATE and CREATE2.
+    function checkCreateNonceLimit() public {
+        vm.setNonce(address(this), type(uint64).max);
+        address first;
+        address second;
+        assembly {
+            first := create(0, 0, 0)
+            second := create2(0, 0, 0, 0)
+        }
+        assert(first == address(0));
+        assert(second == address(0));
+        assert(vm.getNonce(address(this)) == type(uint64).max);
+    }
+}
+"#,
+    );
+
     assert_symbolic(cmd.args([
         "test",
         "--symbolic",
         "--match-test",
-        "^(checkCreate2Collision|checkCreateFailureNonce|checkCreateRevertData)\\(",
+        "^(checkCreate2Collision|checkCreateFailureNonce|checkCreateRevertData|checkCreateNonceLimit)\\(",
     ]))
     .success()
     .stdout_eq(
@@ -909,6 +967,10 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test for test/SymbolicCreateFailureNonce.t.sol:SymbolicCreateFailureNonce
 [PASS] checkCreateFailureNonce(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicCreateNonceLimit.t.sol:SymbolicCreateNonceLimit
+[PASS] checkCreateNonceLimit() ([METRICS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]
@@ -1051,6 +1113,12 @@ import "forge-std/Test.sol";
 
 contract NonceTarget {}
 
+contract NonceFactory {
+    constructor() {
+        new NonceTarget();
+    }
+}
+
 contract SymbolicNonceCheatcodes is Test {
     function checkSetNonceCheatcodes(uint256) public {
         address account = address(0x1234);
@@ -1075,6 +1143,11 @@ contract SymbolicNonceCheatcodes is Test {
         assertEq(vm.getNonce(address(target)), 1);
     }
 
+    // Like revm, a CREATE in the constructor bumps the new contract's nonce.
+    function checkConstructorCreateBumpsNonce(uint256) public {
+        assertEq(vm.getNonce(address(new NonceFactory())), 2);
+        assertEq(vm.getNonce(vm.deployCode("SymbolicNonceCheatcodes.t.sol:NonceFactory")), 2);
+    }
 }
 "#,
     );
@@ -1082,16 +1155,17 @@ contract SymbolicNonceCheatcodes is Test {
     assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
-        "--match-test",
-        "checkSetNonceCheatcodes|checkResetNonceCheatcode",
+        "--match-contract",
+        "SymbolicNonceCheatcodes",
     ]))
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicNonceCheatcodes.t.sol:SymbolicNonceCheatcodes
+Ran 3 tests for test/SymbolicNonceCheatcodes.t.sol:SymbolicNonceCheatcodes
+[PASS] checkConstructorCreateBumpsNonce(uint256) ([METRICS])
 [PASS] checkResetNonceCheatcode(uint256) ([METRICS])
 [PASS] checkSetNonceCheatcodes(uint256) ([METRICS])
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

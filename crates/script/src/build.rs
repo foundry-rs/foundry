@@ -1,14 +1,15 @@
 use crate::{
     ScriptArgs, ScriptConfig,
     broadcast::{
-        BundledState, remaining_operation_indices, remaining_unsigned_transactions_for_recovery,
+        BundledState, refused_after_revert, remaining_operation_indices,
+        remaining_unsigned_transactions_for_recovery,
     },
     execute::LinkedState,
     multi_sequence::MultiChainSequence,
     progress::ScriptProgress,
     receipts::is_mined_receipt_for,
     recovery::recovery_exists,
-    sequence::{ScriptSequenceKind, blocked_pending},
+    sequence::{DelegatedResolution, ScriptSequenceKind, blocked_pending},
     session::{SignerScope, script_session_expected_sender_if_configured},
 };
 use alloy_network::{AnyNetwork, ReceiptResponse};
@@ -358,11 +359,11 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             sequence.set_rpc_override(fork_url);
         }
 
-        let resolution = sequence.restore_delegated_pending(
+        let resolution = sequence.restore_delegated_pending(DelegatedResolution::new(
             self.args.resume_attempt,
             self.args.resume_tx_hash,
             self.args.resume_retry,
-        )?;
+        )?)?;
         if !self.args.batch {
             if let Some((sequence_index, _, attempt_id, hash)) = resolution {
                 let provider = ProviderBuilder::<FEN::Network>::from_config_with_url(
@@ -441,20 +442,16 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 _ => eyre::bail!("{}", errors.iter().format("\n")),
             }
         }
-        for (index, deployment) in sequence.sequences().iter().enumerate() {
-            // The script stops at a failed call, so it never planned to send the operations left
-            // after a revert, and resume must not send them for it.
-            if !deployment.reverted.is_empty()
-                && !remaining_operation_indices(&sequence, index).is_empty()
-            {
-                return Err(sequence.label_error(
-                    index,
-                    eyre::eyre!(
-                        "transaction {} reverted, so the script would not have sent the operations after it; resume will not send them. Pass `--broadcast --start-fresh` to archive this broadcast and run the script again",
-                        deployment.reverted.iter().format(", ")
-                    ),
-                ));
-            }
+        // Resume refuses new operations after a recorded revert. Saved attempts after it are still
+        // recovered, so it refuses here only once nothing is left to recover, and otherwise after
+        // the broadcast.
+        if let Some(err) = refused_after_revert(&sequence)
+            && (0..sequence.sequences().len())
+                .all(|index| remaining_operation_indices(&sequence, index).is_empty())
+        {
+            return Err(err);
+        }
+        for deployment in sequence.sequences() {
             for hash in &deployment.reverted {
                 sh_warn!(
                     "Transaction {hash} on chain {} reverted; resume will not resubmit it.",

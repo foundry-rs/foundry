@@ -4,7 +4,17 @@ use super::FoundryReceiptEnvelope;
 use alloy_primitives::{B256, U256};
 use alloy_serde::OtherFields;
 use op_alloy_consensus::OpDepositReceipt;
-use op_revm::transaction::deposit::DepositTransactionParts;
+
+/// OP-stack deposit fields that are not part of a regular transaction request.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DepositTransactionParts {
+    /// Hash that uniquely identifies the deposit's source.
+    pub source_hash: B256,
+    /// ETH minted to the sender on L2, if any.
+    pub mint: Option<u128>,
+    /// Whether the deposit is a system transaction.
+    pub is_system_transaction: bool,
+}
 
 /// Converts `OtherFields` to `DepositTransactionParts`, produces error with missing fields.
 pub fn get_deposit_tx_parts(

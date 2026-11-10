@@ -1,5 +1,5 @@
 use super::*;
-use foundry_evm::revm::interpreter::STACK_LIMIT;
+use evm2::{constants::STACK_LIMIT, interpreter::opcode::OpCode};
 
 enum MappingStorageProvenance {
     None,
@@ -214,6 +214,7 @@ impl SymbolicExecutor {
         for mut outcome in outcomes {
             let mut parent = state.clone();
             parent.constraints = std::mem::take(&mut outcome.state.constraints);
+            parent.witness_preferences = std::mem::take(&mut outcome.state.witness_preferences);
             parent.next_symbol = outcome.state.next_symbol;
             parent.storage_load_hooks = std::mem::take(&mut outcome.state.storage_load_hooks);
             parent.storage_store_hooks = std::mem::take(&mut outcome.state.storage_store_hooks);
@@ -221,6 +222,7 @@ impl SymbolicExecutor {
                 std::mem::take(&mut outcome.state.mapping_storage_store_hooks);
             parent.mapping_hook_keccak_preimages =
                 std::mem::take(&mut outcome.state.mapping_hook_keccak_preimages);
+            parent.persistent_writes = std::mem::take(&mut outcome.state.persistent_writes);
             parent.storage_hook_active = false;
 
             match outcome.status {
@@ -229,6 +231,9 @@ impl SymbolicExecutor {
                     parent.block = outcome.state.block;
                 }
                 CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {
+                    parent.world.merge_replay_metadata_from(&outcome.state.world);
+                    let start = state.persistent_writes.len();
+                    parent.replay_persistent_writes(&mut self.cx, executor, start)?;
                     parent.return_data = outcome.state.frame.return_data;
                     parent.pending_storage_hook_revert = true;
                 }
@@ -445,17 +450,31 @@ impl SymbolicExecutor {
         Ok(outcome)
     }
 
-    #[expect(clippy::too_many_arguments)]
     pub(super) fn step(
         &mut self,
         executor: &ExecutorView<'_>,
         code: &SymCode,
-        jumpdests: &JumpTable,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         completed_paths: &mut usize,
         op: u8,
     ) -> Result<StepOutcome, SymbolicError> {
+        // A path that kept running without a feasibility check, such as a caught `vm.assume`
+        // rejection, is checked before it calls out or logs: a callee, cheatcodes in particular,
+        // or a pending `vm.expectEmit` can record limitations for the whole run.
+        if matches!(
+            op,
+            opcode::CALL
+                | opcode::CALLCODE
+                | opcode::DELEGATECALL
+                | opcode::STATICCALL
+                | opcode::CREATE
+                | opcode::CREATE2
+                | opcode::LOG0..=opcode::LOG4
+        ) && !self.deferred_path_is_feasible(state)?
+        {
+            return Ok(StepOutcome::AssumeRejected);
+        }
         state.pc += 1;
 
         if executor.spec_id < opcode_activation(op) {
@@ -465,7 +484,7 @@ impl SymbolicExecutor {
 
         // The EVM halts a frame exceptionally before it runs an undefined opcode or one whose
         // stack inputs or outputs do not fit, so the handlers below never see such a stack.
-        let fits = opcode::OpCode::new(op).is_some_and(|opcode| {
+        let fits = OpCode::new(op).is_some_and(|opcode| {
             let height = state.stack.len();
             let inputs = opcode.inputs() as usize;
             height >= inputs && height - inputs + opcode.outputs() as usize <= STACK_LIMIT
@@ -481,12 +500,9 @@ impl SymbolicExecutor {
             }
             opcode::PUSH1..=opcode::PUSH32 => {
                 let n = (op - opcode::PUSH1 + 1) as usize;
-                let end = state.pc.saturating_add(n);
-                if end > code.len() {
-                    return Err(SymbolicError::InvalidBytecode("truncated PUSH data"));
-                }
+                // Data cut off by the end of the code is zero-padded, and the frame then stops.
                 let value = code.push_data_word(&mut self.cx, state.pc, n);
-                state.pc = end;
+                state.pc = state.pc.saturating_add(n);
                 state.stack.push(value)?;
             }
             opcode::DUP1..=opcode::DUP16 => {
@@ -935,6 +951,11 @@ impl SymbolicExecutor {
             opcode::SLOAD => {
                 let key = state.stack.pop()?;
                 state.record_sload(state.storage_address, key.clone());
+                if let Some(slot) = key.as_const()
+                    && !self.folded_slots.resolve_nested(&mut self.cx, slot, self.deadline)
+                {
+                    self.defer_incomplete("folded mapping slot search incomplete");
+                }
                 let concrete_key = state.constrained_word(&mut self.cx, &key);
                 let value = state.world.sload(
                     &mut self.cx,
@@ -973,6 +994,11 @@ impl SymbolicExecutor {
                 }
                 let key = state.stack.peek(0)?.clone();
                 state.stack.peek(1)?;
+                if let Some(slot) = key.as_const()
+                    && !self.folded_slots.resolve_nested(&mut self.cx, slot, self.deadline)
+                {
+                    self.defer_incomplete("folded mapping slot search incomplete");
+                }
                 let hook = (!state.storage_hook_active)
                     .then(|| state.storage_store_hooks.get(&state.storage_address).copied())
                     .flatten();
@@ -1080,17 +1106,13 @@ impl SymbolicExecutor {
             }
             opcode::JUMP => {
                 let dest = state.stack.pop()?;
-                let Some(dest) = self.resolve_jump_destination(
-                    state,
-                    jumpdests,
-                    dest,
-                    "symbolic JUMP destination",
-                )?
+                let Some(dest) =
+                    self.resolve_jump_destination(state, code, dest, "symbolic JUMP destination")?
                 else {
                     state.return_data = SymReturnData::empty(&mut self.cx);
                     return Ok(StepOutcome::ExceptionalHalt);
                 };
-                if !self.take_loop_jump(state, state.pc, dest) {
+                if !self.take_loop_jump(state, code, state.pc, dest) {
                     return Ok(StepOutcome::AssumeRejected);
                 }
                 state.pc = dest;
@@ -1102,7 +1124,7 @@ impl SymbolicExecutor {
                     Some(true) => {
                         let Some(dest) = self.resolve_jump_destination(
                             state,
-                            jumpdests,
+                            code,
                             dest,
                             "symbolic JUMPI destination",
                         )?
@@ -1110,7 +1132,7 @@ impl SymbolicExecutor {
                             state.return_data = SymReturnData::empty(&mut self.cx);
                             return Ok(StepOutcome::ExceptionalHalt);
                         };
-                        if !self.take_loop_jump(state, state.pc, dest) {
+                        if !self.take_loop_jump(state, code, state.pc, dest) {
                             return Ok(StepOutcome::AssumeRejected);
                         }
                         state.pc = dest;
@@ -1120,7 +1142,7 @@ impl SymbolicExecutor {
                         let true_cond = cond.nonzero_bool(&mut self.cx);
                         let dest = match self.resolve_jump_destination(
                             state,
-                            jumpdests,
+                            code,
                             dest,
                             "symbolic JUMPI destination",
                         ) {
@@ -1156,7 +1178,8 @@ impl SymbolicExecutor {
                         false_state.set_corpus_seed_models(false_seed_models);
                         false_state.pc = fallthrough;
 
-                        let true_pending = self.take_loop_jump(&mut true_state, fallthrough, dest);
+                        let true_pending =
+                            self.take_loop_jump(&mut true_state, code, fallthrough, dest);
                         if true_pending {
                             true_state.defer_feasibility_check();
                         }
@@ -1293,8 +1316,14 @@ impl SymbolicExecutor {
                     return Ok(StepOutcome::ExceptionalHalt);
                 }
                 let spec_id = executor.spec_id;
-                let (beneficiary_word, beneficiary) =
-                    state.pop_address_word_or_symbolic_slot(&mut self.cx)?;
+                // A fresh symbolic beneficiary slot never aliases an existing account, so the
+                // credit would ignore the balance the beneficiary already holds.
+                let beneficiary = state.stack.pop()?;
+                let beneficiary = word_to_address(state.expect_constrained_word(
+                    &mut self.cx,
+                    beneficiary,
+                    "symbolic SELFDESTRUCT beneficiary",
+                )?);
                 if spec_id < SpecId::CANCUN
                     || state.world.was_created_in_current_transaction(state.address)
                 {
@@ -1305,11 +1334,6 @@ impl SymbolicExecutor {
                         beneficiary,
                     )?;
                 } else {
-                    if state.constrained_word(&mut self.cx, &beneficiary_word).is_none() {
-                        return Err(SymbolicError::Unsupported(
-                            "symbolic SELFDESTRUCT beneficiary",
-                        ));
-                    }
                     state.world.selfdestruct_cancun_existing(
                         &mut self.cx,
                         executor,
@@ -1334,12 +1358,17 @@ impl SymbolicExecutor {
             }
             opcode::BLOBHASH => {
                 let index = state.stack.pop()?;
-                let index = state.expect_constrained_usize(
+                let index = state.expect_constrained_word(
                     &mut self.cx,
                     index,
                     "symbolic BLOBHASH index",
                 )?;
-                let hash = state.block.blob_hashes.get(index).copied().unwrap_or_default();
+                // An index past the blob list, including one beyond `usize`, reads zero.
+                let hash = usize::try_from(index)
+                    .ok()
+                    .and_then(|index| state.block.blob_hashes.get(index))
+                    .copied()
+                    .unwrap_or_default();
                 let hash = SymExpr::constant(&mut self.cx, U256::from_be_slice(hash.as_slice()));
                 state.stack.push(hash)?;
             }
@@ -1441,13 +1470,13 @@ impl SymbolicExecutor {
     fn resolve_jump_destination(
         &mut self,
         state: &PathState,
-        jumpdests: &JumpTable,
+        code: &SymCode,
         dest: SymExpr,
         unsupported: &'static str,
     ) -> Result<Option<usize>, SymbolicError> {
         let dest = state.expect_constrained_word(&mut self.cx, dest, unsupported)?;
         let Ok(dest) = usize::try_from(dest) else { return Ok(None) };
-        Ok(jumpdests.is_valid(dest).then_some(dest))
+        Ok(code.is_valid_jumpdest(dest)?.then_some(dest))
     }
 
     fn branch_invalid_jumpi(
@@ -1533,14 +1562,38 @@ impl SymbolicExecutor {
         &mut self,
         state: &mut PathState,
     ) -> Result<StepOutcome, SymbolicError> {
+        // Forge consumes this assumption in call_end, not create_end. A constructor must leave
+        // both its revert bytes and any pending assumption for the caller to handle.
+        if !state.frame.is_constructor
+            && let Some(assumption) = state.assume_no_revert_next_call.take()
+            && self.assume_no_revert_matches(
+                state,
+                &assumption,
+                assumption.reverted_by.unwrap_or(state.address),
+                &state.return_data,
+            )?
+        {
+            state.return_data =
+                SymReturnData::from_concrete_bytes(&mut self.cx, MAGIC_ASSUME.to_vec());
+        }
         if state.call_depth != 0 {
             return Ok(StepOutcome::Revert);
         }
         let data = state.return_data.read_concrete(&mut self.cx, "symbolic revert data");
-        // Like Forge's fuzz and invariant runners, a `vm.assumeNoRevert` rejection that reaches the
-        // top frame discards the run. Invariant predicates still treat it as a revert.
-        if !state.invariant_predicate && data.as_deref().is_ok_and(|data| data == MAGIC_ASSUME) {
+        // Like Forge's fuzz and invariant runners, a `vm.assume` or `vm.assumeNoRevert` rejection
+        // or a `vm.skip` that reaches the top frame discards the run. Invariant predicates still
+        // treat it as a revert.
+        if !state.invariant_predicate
+            && data
+                .as_deref()
+                .is_ok_and(|data| data == MAGIC_ASSUME || data.starts_with(MAGIC_SKIP))
+        {
             return Ok(StepOutcome::AssumeRejected);
+        }
+        // Like Forge, a test that reverts after a failed assertion fails, even when the assertion
+        // was caught or only set the fail slot.
+        if state.root_calldata.is_some() && state.assertion_failed {
+            return Ok(StepOutcome::Failure);
         }
         // In `check*`/`prove*` tests, a `CheatcodeError` that reaches the top frame, such as an
         // unmet `vm.expectRevert`, is a failure. Invariant handlers treat it as a revert.
@@ -1553,7 +1606,28 @@ impl SymbolicExecutor {
             state.constraints = constraints;
             return Ok(StepOutcome::Failure);
         }
-        if data.is_ok_and(|data| is_assertion_revert(&data)) {
+        match data {
+            Ok(data) => {
+                if is_assertion_revert(&data) {
+                    return Ok(StepOutcome::Failure);
+                }
+            }
+            // Symbolic revert data fails on the paths where it decodes as an assertion failure.
+            Err(_) => {
+                if let Some(condition) =
+                    assertion_revert_condition(&mut self.cx, &state.return_data)
+                    && let Some(constraints) = self.constraints_for_condition(state, condition)?
+                {
+                    state.constraints = constraints;
+                    return Ok(StepOutcome::Failure);
+                }
+            }
+        }
+        // A call that failed a pending `vm.expectEmit` reverted with a bare string, so an
+        // uncaught failure is classified from the expectation, not from the revert data.
+        if state.root_calldata.is_some()
+            && state.expected_emit.as_ref().is_some_and(ExpectedEmit::failed)
+        {
             return Ok(StepOutcome::Failure);
         }
         Ok(StepOutcome::Revert)

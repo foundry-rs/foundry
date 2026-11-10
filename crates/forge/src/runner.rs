@@ -11,14 +11,15 @@ use crate::{
     },
     progress::TestsProgress,
     result::{
-        InvariantFailure, InvariantOutcome, InvariantPredicateResult, SuiteResult,
-        SymbolicArtifactRef, SymbolicCallTrace, SymbolicCorpusSeedMetadata, SymbolicCorpusSeedRef,
-        SymbolicCounterexample, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind,
-        SymbolicCounterexampleCall, SymbolicCounterexampleMinimization,
-        SymbolicCounterexampleReplaySemantics, SymbolicCounterexampleTestIdentity,
-        SymbolicInvariantArtifactFailure, SymbolicInvariantFailureSite, SymbolicReplayMetadata,
-        SymbolicReplayStatus, SymbolicResult, TestKind, TestResult, TestSetup, TestStatus,
-        invariant_campaign_display_name, invariant_kind,
+        InvariantFailure, InvariantOutcome, InvariantPredicateResult, SetupOutcome, SetupStorage,
+        SuiteResult, SymbolicArtifactRef, SymbolicCallTrace, SymbolicCorpusSeedMetadata,
+        SymbolicCorpusSeedRef, SymbolicCounterexample, SymbolicCounterexampleArtifact,
+        SymbolicCounterexampleArtifactKind, SymbolicCounterexampleCall,
+        SymbolicCounterexampleMinimization, SymbolicCounterexampleReplaySemantics,
+        SymbolicCounterexampleTestIdentity, SymbolicInvariantArtifactFailure,
+        SymbolicInvariantFailureSite, SymbolicReplayMetadata, SymbolicReplayStatus, SymbolicResult,
+        TestKind, TestResult, TestSetup, TestStatus, invariant_campaign_display_name,
+        invariant_kind,
     },
     symbolic_minimizer::{
         MinimizedSequence, minimize_sequence_counterexample, minimize_single_call_counterexample,
@@ -29,6 +30,10 @@ use alloy_json_abi::{Function, JsonAbi, StateMutability};
 use alloy_primitives::{
     Address, B256, Bytes, I256, Selector, U256, address, hex, keccak256,
     map::{Entry, HashMap, HashSet},
+};
+use evm2::{
+    evm::{Cache, InMemoryDB},
+    interpreter::op as opcode,
 };
 use eyre::Result;
 use foundry_common::{
@@ -41,7 +46,7 @@ use foundry_config::{
 };
 use foundry_evm::{
     constants::{CALLER, MAGIC_ASSUME},
-    core::{backend::DatabaseExt, evm::FoundryEvmNetwork},
+    core::evm::FoundryEvmNetwork,
     decode::{RevertDecoder, SkipReason},
     executors::{
         CallResult, DynamicTargetCtx, EvmError, Executor, ITest, InvariantReplayOptions,
@@ -67,7 +72,6 @@ use foundry_evm::{
         strategies::EvmFuzzState,
     },
     inspectors::{CmpOperands, EdgeCovConfig, EdgeCovKind, cheatcodes::Vm::AccountAccess},
-    revm::{bytecode::opcode, primitives::hardfork::SpecId},
     traces::{TraceKind, TraceRequirements, load_contracts},
 };
 use foundry_evm_networks::NetworkVariant;
@@ -492,6 +496,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         name: &'a str,
         contract: &'a TestContract,
         executor: Executor<FEN>,
+        tcfg: Cow<'a, TestRunnerConfig<FEN>>,
         span: Span,
         mcr: &'a MultiContractRunner<FEN>,
         context: ContractRunnerContext<'a>,
@@ -503,7 +508,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             progress: context.progress,
             tokio_handle: context.tokio_handle,
             span,
-            tcfg: Cow::Borrowed(&mcr.tcfg),
+            tcfg,
             mcr,
             num_invariant_campaign_anchors: context.num_invariant_campaign_anchors,
         }
@@ -526,7 +531,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
     pub fn setup(&mut self, call_setup: bool) -> TestSetup {
-        self._setup(call_setup).unwrap_or_else(|err| {
+        self.executor.set_collect_setup_storage(true);
+        let result = self._setup(call_setup);
+        self.executor.set_collect_setup_storage(false);
+        result.unwrap_or_else(|err| {
             if matches!(err.downcast_ref::<EvmError<FEN>>(), Some(EvmError::Skip(_))) {
                 TestSetup::skipped(err.to_string())
             } else {
@@ -576,10 +584,14 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
                     let (raw, reason) =
                         RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
-                    result.extend(raw, TraceKind::Deployment);
-                    if reason.is_some() {
-                        debug!(?reason, "deployment of library failed");
-                        result.reason = reason;
+                    result.extend(
+                        raw,
+                        TraceKind::Deployment,
+                        self.executor.backend().active_fork_id(),
+                    );
+                    if let Some(reason) = reason {
+                        debug!(%reason, "deployment of library failed");
+                        result.outcome = SetupOutcome::Failed(reason);
                         return Ok(result);
                     }
                 }
@@ -612,14 +624,18 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                         } else {
                             (raw, None)
                         };
-                        result.extend(raw, TraceKind::Deployment);
-                        if reason.is_some() {
-                            debug!(?reason, "CREATE2 deployment of library failed");
-                            result.reason = reason;
+                        result.extend(
+                            raw,
+                            TraceKind::Deployment,
+                            self.executor.backend().active_fork_id(),
+                        );
+                        if let Some(reason) = reason {
+                            debug!(%reason, "CREATE2 deployment of library failed");
+                            result.outcome = SetupOutcome::Failed(reason);
                             return Ok(result);
                         }
                         if self.executor.is_empty_code(address)? {
-                            result.reason = Some(format!(
+                            result.outcome = SetupOutcome::Failed(format!(
                                 "CREATE2 library deployment succeeded but no code was found at {address}"
                             ));
                             return Ok(result);
@@ -664,16 +680,14 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         let deploy_result =
             self.executor.deploy(self.sender, self.contract.bytecode.clone(), U256::ZERO, Some(rd));
 
-        result.deployment_failure = deploy_result.is_err();
-
         if let Ok(dr) = &deploy_result {
             debug_assert_eq!(dr.address, address);
         }
         let (raw, reason) = RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
-        result.extend(raw, TraceKind::Deployment);
-        if reason.is_some() {
-            debug!(?reason, "deployment of test contract failed");
-            result.reason = reason;
+        result.extend(raw, TraceKind::Deployment, self.executor.backend().active_fork_id());
+        if let Some(reason) = reason {
+            debug!(%reason, "deployment of test contract failed");
+            result.outcome = SetupOutcome::DeploymentFailed(reason);
             return Ok(result);
         }
 
@@ -693,8 +707,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             trace!("calling setUp");
             let res = self.executor.setup(None, address, Some(rd));
             let (raw, reason) = RawCallResult::from_evm_result(res)?;
-            result.extend(raw, TraceKind::Setup);
-            result.reason = reason;
+            result.extend(raw, TraceKind::Setup, self.executor.backend().active_fork_id());
+            if let Some(reason) = reason {
+                result.outcome = SetupOutcome::Failed(reason);
+            }
         }
 
         Ok(result)
@@ -735,12 +751,15 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
     /// Configures this runner with the inline configuration for the contract.
     fn apply_contract_inline_config(&mut self) -> Result<()> {
         if self.inline_config.contains_contract(self.name) {
-            let new_config = Arc::new(self.inline_config(None)?);
-            self.tcfg.to_mut().reconfigure_with(new_config);
+            // The multi-contract runner already resolved it, unless it failed to.
+            if matches!(self.tcfg, Cow::Borrowed(_)) {
+                let new_config = Arc::new(self.inline_config(None)?);
+                self.tcfg.to_mut().reconfigure_with(new_config);
+            }
             let prev_tracer = self.executor.inspector_mut().tracer.take();
             self.tcfg.configure_executor(&mut self.executor);
             // Don't set tracer here.
-            self.executor.inspector_mut().tracer = prev_tracer;
+            self.executor.inspector_mut().set_tracer(prev_tracer);
         }
         Ok(())
     }
@@ -943,6 +962,8 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         let should_override_setup_tracing =
             !self.tcfg.debug && (self.executor.inspector().tracer.is_some() || has_invariants);
 
+        // The call-level requirements also install a revert diagnostic; `set_tracer` drops it again
+        // with the tracer, so tests of a contract with invariants do not run the diagnostic.
         let prev_tracer = should_override_setup_tracing.then(|| {
             let prev_tracer = self.executor.inspector_mut().tracer.take();
             self.executor.set_trace_requirements(TraceRequirements::none().with_calls(true));
@@ -954,12 +975,12 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         debug!("finished setting up in {:?}", setup_time.elapsed());
 
         if let Some(prev_tracer) = prev_tracer {
-            self.executor.inspector_mut().tracer = prev_tracer;
+            self.executor.inspector_mut().set_tracer(prev_tracer);
         }
 
-        if setup.reason.is_some() {
+        if !setup.outcome.is_success() {
             // The setup failed, so we return a single test result for `setUp`
-            let name = if setup.deployment_failure { "constructor()" } else { "setUp()" };
+            let name = setup.outcome.function_name();
             return self.failed_suite(
                 start,
                 warnings,
@@ -1184,6 +1205,8 @@ struct FunctionRunner<'a, FEN: FoundryEvmNetwork> {
     address: Address,
     /// The test setup result.
     setup: &'a TestSetup,
+    /// Setup storage observations, extended by function-specific setup without changing siblings.
+    fuzz_storage: Cow<'a, SetupStorage>,
     /// The test result. Returned after running the test.
     result: TestResult,
 }
@@ -1245,6 +1268,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             cr,
             address: setup.address,
             setup,
+            fuzz_storage: Cow::Borrowed(&setup.fuzz_storage),
             result: TestResult::new(setup),
         }
     }
@@ -1396,7 +1420,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return Err(format!("vm.skip during concrete replay: {reason}"));
         }
 
-        let reason = (raw.reverted || raw.exit_reason.is_some_and(|reason| !reason.is_ok()))
+        let reason = (raw.reverted || raw.exit_reason.is_some_and(|reason| !reason.is_success()))
             .then(|| self.revert_decoder().decode(&raw.result, raw.exit_reason));
         if reason.as_deref() != Some(expected_reason) {
             return Err(format!(
@@ -1973,7 +1997,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         branch_target: Option<SymbolicBranchTarget>,
     ) -> SymbolicRunInput<'f> {
         SymbolicRunInput {
-            executor: ExecutorView::new(self.executor.as_ref()),
+            executor: ExecutorView::new(self.executor.as_ref())
+                .with_project(&self.cr.mcr.known_contracts, &self.cr.mcr.fuzz_literals),
             target: self.address,
             sender,
             function: func,
@@ -3225,7 +3250,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             .collect::<Vec<_>>();
         let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
         let result = symbolic.search_invariant_candidates(SymbolicInvariantCandidateInput {
-            executor: ExecutorView::new(prefix_executor),
+            executor: ExecutorView::new(prefix_executor)
+                .with_project(&self.cr.mcr.known_contracts, &self.cr.mcr.invariant_literals),
             invariant_address: invariant_contract.address,
             invariants: &invariants,
             after_invariant,
@@ -3489,7 +3515,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 frontier.operands.result,
             );
             let search = symbolic.search_branch_target(SymbolicRunInput {
-                executor: ExecutorView::new(&prefix_executor),
+                executor: ExecutorView::new(&prefix_executor)
+                    .with_project(&self.cr.mcr.known_contracts, &self.cr.mcr.invariant_literals),
                 target: call.call_details.target,
                 sender: call.sender,
                 function,
@@ -3865,9 +3892,19 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             live_invariants.iter().position(|(invariant, _)| *invariant == func).unwrap_or(0);
 
         let mut executor = self.clone_executor();
-        // Every campaign call would append its steps to the shared step table. The replays that
-        // the debugger shows run on clones of the test executor, which keeps its recorder.
-        executor.inspector_mut().debug_recorder = None;
+        if invariant_config.gas_report_samples == 0 {
+            // The campaign never reads its call traces or revert diagnostics: a failure and the
+            // last run are replayed on a fresh clone of the test executor, which keeps them. The
+            // gas report samples are the one consumer, so the tracer stays only while samples
+            // are requested. This also drops the revert diagnostic that the setUp pass installed
+            // with its temporary tracer, which otherwise runs on every campaign opcode.
+            executor.set_trace_requirements(TraceRequirements::none());
+        } else {
+            // Every campaign call would append its steps to the shared step table. The replays
+            // that the debugger shows run on clones of the test executor, which keeps its
+            // recorder.
+            executor.inspector_mut().debug_recorder = None;
+        }
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
         // metrics (useful for benchmarking the fuzzer).
         executor.inspector_mut().collect_edge_coverage_with_config(&invariant_config.corpus);
@@ -4343,7 +4380,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             };
             let mut symbolic = SymbolicExecutor::new(symbolic_config.clone());
             match symbolic.run_invariant(SymbolicInvariantRunInput {
-                executor: ExecutorView::new(&evm.executor),
+                executor: ExecutorView::new(&evm.executor)
+                    .with_project(&self.cr.mcr.known_contracts, &self.cr.mcr.invariant_literals),
                 invariant_address: self.address,
                 sender: self.sender,
                 invariant: anchor,
@@ -5273,19 +5311,21 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 address,
                 &ITest::beforeTestSetupCall { testSelector: func.selector() },
             ) {
-                let spec_id: SpecId = self.executor.spec_id().into();
-                debug!(?calldata, spec=%spec_id, "applying before_test_setup");
+                debug!(?calldata, spec=?self.executor.spec_id(), "applying before_test_setup");
                 // Apply before test configured calldata.
-                let Ok(call_result) = self.executor.to_mut().transact_raw(
-                    self.tcfg.sender,
-                    address,
-                    calldata,
-                    U256::ZERO,
-                ) else {
+                let executor = self.executor.to_mut();
+                executor.set_collect_setup_storage(true);
+                let call_result =
+                    executor.transact_raw(self.tcfg.sender, address, calldata, U256::ZERO);
+                executor.set_collect_setup_storage(false);
+                let Ok(call_result) = call_result else {
                     self.result.single_fail(None);
                     return Err(());
                 };
                 let reverted = call_result.reverted;
+                self.fuzz_storage
+                    .to_mut()
+                    .extend(self.executor.backend().active_fork_id(), &call_result);
                 // Merge tx result traces in unit test result.
                 self.result.extend_setup(call_result);
                 // To continue unit test execution the call should not revert.
@@ -5439,12 +5479,37 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     ) -> EvmFuzzState {
         let literals =
             if invariant { &self.cr.mcr.invariant_literals } else { &self.cr.mcr.fuzz_literals };
-        if let Some(db) = self.executor.backend().active_fork_db() {
-            EvmFuzzState::new(&self.setup.deployed_libs, db, config, Some(literals))
-        } else {
-            let db = self.executor.backend().mem_db();
-            EvmFuzzState::new(&self.setup.deployed_libs, db, config, Some(literals))
+        // Seed from the state setup accepted, including function-specific setup.
+        let backend = self.executor.backend();
+        let mut db = InMemoryDB::default();
+        if let Some(cache) = &backend.lifecycle().active().cache {
+            db.cache = Cache::clone(cache);
         }
+        // evm2 can leave loaded-but-unchanged slots implicit in the execution cache. Retain their
+        // keys for guidance in this seed-only copy, resolving values from the accepted state,
+        // not from an earlier setup call. Like other dictionary hints, unavailable reads are
+        // skipped.
+        if config.include_storage {
+            for ((fork, address), slots) in &self.fuzz_storage.slots {
+                if !slots.is_empty()
+                    && (*fork == backend.active_fork_id() || backend.is_persistent(address))
+                    && let Ok(Some(_)) = backend.basic(*address)
+                {
+                    for &slot in slots {
+                        if !db
+                            .cache
+                            .storage
+                            .get(address)
+                            .is_some_and(|s| s.slots.contains_key(&slot))
+                            && let Ok(value) = backend.storage(*address, slot)
+                        {
+                            db.insert_account_storage(address, &slot, &value);
+                        }
+                    }
+                }
+            }
+        }
+        EvmFuzzState::new(&self.setup.deployed_libs, &db, config, Some(literals))
     }
 }
 

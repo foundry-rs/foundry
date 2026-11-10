@@ -637,3 +637,85 @@ Transfer(address,address,uint256)
 
 "#]]);
 }
+
+#[casttest]
+async fn raw_calldata_rejects_trailing_args(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
+
+    for (command, args) in [
+        ("call", &["0xdead000000000000000000000000000000000000", "0x12345678", "123"][..]),
+        ("send", &["0xdead000000000000000000000000000000000000", "0x12345678", "123"][..]),
+        ("mktx", &["0xdead000000000000000000000000000000000000", "0x12345678", "123"][..]),
+        ("call", &["--create", "0x6000", "0x12345678", "123"][..]),
+        ("send", &["--create", "0x6000", "0x12345678", "123"][..]),
+        ("mktx", &["--create", "0x6000", "0x12345678", "123"][..]),
+        (
+            "call",
+            &["--curl", "0xdead000000000000000000000000000000000000", "0x12345678", "123"][..],
+        ),
+    ] {
+        cmd.cast_fuse()
+            .arg(command)
+            .args(["--chain", "1", "--rpc-url", &handle.http_endpoint()])
+            .args(args)
+            .assert_failure()
+            .stdout_eq(str![""])
+            .stderr_eq(str![[r#"
+Error: Arguments cannot be used with raw calldata. Use a function signature to encode arguments, or provide the complete calldata without arguments.
+
+"#]]);
+    }
+}
+
+#[casttest]
+fn raw_calldata_matches_typed_signature(cmd: _) {
+    for (sig, args) in [
+        ("0x3fb5c1cb000000000000000000000000000000000000000000000000000000000000007b", &[][..]),
+        ("setNumber(uint256)", &["123"][..]),
+    ] {
+        cmd.cast_fuse()
+            .args([
+                "mktx",
+                "--chain",
+                "1",
+                "--rpc-url",
+                "http://127.0.0.1:1",
+                "--legacy",
+                "--raw-unsigned",
+                "--nonce",
+                "0",
+                "--gas-limit",
+                "100000",
+                "--gas-price",
+                "1",
+                "0xdead000000000000000000000000000000000000",
+                sig,
+            ])
+            .args(args)
+            .assert_success()
+            .stderr_eq(str![""])
+            .stdout_eq(str![[r#"
+0xf8448001830186a094dead00000000000000000000000000000000000080a43fb5c1cb000000000000000000000000000000000000000000000000000000000000007b018080
+
+"#]]);
+
+        cmd.cast_fuse()
+            .args([
+                "call",
+                "--chain",
+                "1",
+                "--rpc-url",
+                "http://127.0.0.1:1",
+                "--curl",
+                "0xdead000000000000000000000000000000000000",
+                sig,
+            ])
+            .args(args)
+            .assert_success()
+            .stderr_eq(str![""])
+            .stdout_eq(str![[r#"
+curl -X POST -H 'Content-Type: application/json' --data-raw '{"jsonrpc":"2.0","method":"eth_call","params":[{"to":"0xdead000000000000000000000000000000000000","data":"0x3fb5c1cb000000000000000000000000000000000000000000000000000000000000007b"},"latest"],"id":1}' 'http://127.0.0.1:1'
+
+"#]]);
+    }
+}
