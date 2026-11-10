@@ -1489,19 +1489,16 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             loadCall::SELECTOR => {
-                let target =
-                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
+                let target = read_abi_address_word_arg(&mut self.cx, state, args_offset, 0)?;
                 let slot = state.memory.load_word(&mut self.cx, in_offset + 36)?;
                 let concrete_slot = state.constrained_word(&mut self.cx, &slot);
                 let value =
-                    state.world.sload(&mut self.cx, executor, target, slot, concrete_slot)?;
+                    state.world.sload_word(&mut self.cx, executor, target, slot, concrete_slot)?;
                 Ok(CheatcodeOutcome::Continue(vec![value]))
             }
             getNonce_0Call::SELECTOR => {
-                let target =
-                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
-                let nonce = state.world.nonce(executor, target)?;
-                let nonce = SymExpr::constant(&mut self.cx, U256::from(nonce));
+                let target = read_abi_address_word_arg(&mut self.cx, state, args_offset, 0)?;
+                let nonce = state.world.nonce_word(&mut self.cx, executor, target)?;
                 Ok(CheatcodeOutcome::Continue(vec![nonce]))
             }
             computeCreateAddressCall::SELECTOR => {

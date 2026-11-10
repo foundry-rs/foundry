@@ -2686,6 +2686,41 @@ contract SymbolicAddressAlias is Test {
         vm.deal(b, 0);
         assert(a.balance + b.balance == 10 ether);
     }
+
+    // Two expressions of one address alias even when they are written differently.
+    function checkComputedAddressDealIsVisible(uint256 x) public {
+        vm.deal(address(uint160(x % 8 + 0x2000)), 5);
+        assert(address(uint160((x + 8) % 8 + 0x2000)).balance != 5);
+    }
+
+    function checkComputedAddressStoreIsVisible(uint256 x, uint256 y) public {
+        vm.store(address(uint160(x % 8 + 0x2000)), 0, bytes32(uint256(5)));
+        assert(uint256(vm.load(address(uint160(y % 8 + 0x2000)), 0)) != 5);
+    }
+
+    // An alias without state of its own must not shadow the real account it may denote.
+    function checkPrankPreservesBalance(uint256 x) public {
+        vm.deal(address(0x2000), 5);
+        vm.prank(address(uint160(x % 8 + 0x2000)));
+        vm.stopPrank();
+        assert(address(uint160((x + 8) % 8 + 0x2000)).balance != 5);
+    }
+
+    function checkDealPreservesCode(uint256 x) public {
+        vm.etch(address(0x2000), hex"00");
+        vm.deal(address(uint160(x % 8 + 0x2000)), 1);
+        assert(address(uint160((x + 8) % 8 + 0x2000)).code.length != 1);
+    }
+
+    // A code read through the alias caches its empty code but does not write it.
+    function checkCodeReadPreservesCode(uint256 x) public {
+        vm.etch(address(0x2000), hex"00");
+        address a = address(uint160(x % 8 + 0x2000));
+        vm.prank(a);
+        vm.stopPrank();
+        vm.assume(a.code.length < 2);
+        assert(address(uint160((x + 8) % 8 + 0x2000)).code.length != 1);
+    }
 }
 "#,
     );
@@ -2694,10 +2729,15 @@ contract SymbolicAddressAlias is Test {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicAddressAlias.t.sol:SymbolicAddressAlias
+Ran 7 tests for test/SymbolicAddressAlias.t.sol:SymbolicAddressAlias
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkCodeReadPreservesCode(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkComputedAddressDealIsVisible(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkComputedAddressStoreIsVisible(uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealPreservesCode(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x5b3b1d1100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 args=[0x0000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000]] checkDealsMayTargetOneAccount(address,address) ([METRICS])
 [PASS] checkDistinctDealsAreIndependent(address,address) ([METRICS])
-Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankPreservesBalance(uint256) ([METRICS])
+Suite result: FAILED. 1 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

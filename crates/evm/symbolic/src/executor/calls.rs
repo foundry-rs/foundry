@@ -1754,10 +1754,7 @@ impl SymbolicExecutor {
 
         let candidate_constraints = candidates
             .iter()
-            .map(|address| {
-                let address = SymExpr::constant(&mut self.cx, address_word(*address));
-                SymBoolExpr::eq(&mut self.cx, target.clone(), address)
-            })
+            .map(|address| state.world.symbolic_address_condition(&mut self.cx, &target, *address))
             .collect::<Vec<_>>();
         let mut outside_constraints = state.constraints.clone();
         outside_constraints.extend(
