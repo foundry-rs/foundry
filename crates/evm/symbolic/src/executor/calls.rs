@@ -1060,21 +1060,39 @@ impl SymbolicExecutor {
         if is_precompile_for_spec(code_address, spec_id) {
             let input_len = in_size.size_word(&mut self.cx);
             let input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset);
-            if precompile_number_for_spec(code_address, spec_id) == Some(10) {
-                let input_bytes = input.materialize(&mut self.cx);
-                return self.execute_kzg_precompile_call(
-                    executor,
-                    state,
-                    worklist,
-                    kind,
-                    to,
-                    call_caller,
-                    value,
-                    out_offset,
-                    &out_size,
-                    input_bytes,
-                    input_len,
-                );
+            match precompile_number_for_spec(code_address, spec_id) {
+                Some(1) => {
+                    return self.execute_ecrecover_precompile_call(
+                        executor,
+                        state,
+                        worklist,
+                        kind,
+                        to,
+                        call_caller,
+                        value,
+                        out_offset,
+                        &out_size,
+                        input,
+                        input_len,
+                    );
+                }
+                Some(10) => {
+                    let input_bytes = input.materialize(&mut self.cx);
+                    return self.execute_kzg_precompile_call(
+                        executor,
+                        state,
+                        worklist,
+                        kind,
+                        to,
+                        call_caller,
+                        value,
+                        out_offset,
+                        &out_size,
+                        input_bytes,
+                        input_len,
+                    );
+                }
+                _ => {}
             }
             let outcome =
                 execute_symbolic_precompile(&mut self.cx, code_address, input, input_len, spec_id)?;
@@ -1370,6 +1388,85 @@ impl SymbolicExecutor {
             }
             (false, false) => Err(SymbolicError::Unsupported(KZG_RESIDUAL_REASON)),
         }
+    }
+
+    /// Forks a symbolic ECRECOVER call on whether the signature is well-formed.
+    ///
+    /// A malformed signature returns no data, which concrete replay reproduces exactly, so that
+    /// path continues first and its counterexamples replay. The well-formed path keeps the opaque
+    /// recovery model, whose failures depend on curve facts the solver does not know.
+    #[expect(clippy::too_many_arguments)]
+    fn execute_ecrecover_precompile_call(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        state: &mut PathState,
+        worklist: &mut VecDeque<PathState>,
+        kind: CallKind,
+        to: Address,
+        call_caller: Address,
+        value: SymExpr,
+        out_offset: SymExpr,
+        out_size: &BoundedCopySize,
+        input: SymBytes,
+        input_len: SymExpr,
+    ) -> Result<StepOutcome, SymbolicError> {
+        let spec_id = executor.spec_id;
+        let sized = SymBytes::sized(&mut self.cx, input.clone(), input_len.clone(), 128);
+        let well_formed = ecrecover_signature_well_formed(&mut self.cx, &sized);
+        let malformed = well_formed.clone().not(&mut self.cx);
+        let (malformed_constraints, malformed_sat) =
+            self.constraints_with_condition(state, malformed)?;
+        let (well_formed_constraints, well_formed_sat) =
+            self.constraints_with_condition(state, well_formed)?;
+        if malformed_sat && well_formed_sat {
+            let mut recovering = state.clone();
+            recovering.constraints = well_formed_constraints;
+            let outcome = execute_symbolic_precompile(&mut self.cx, to, input, input_len, spec_id)?;
+            match self.apply_precompile_outcome(
+                executor,
+                &mut recovering,
+                kind,
+                to,
+                call_caller,
+                value.clone(),
+                out_offset.clone(),
+                out_size,
+                outcome,
+            )? {
+                StepOutcome::Continue => worklist.push_back(recovering),
+                outcome => {
+                    *state = recovering;
+                    return Ok(outcome);
+                }
+            }
+            state.constraints = malformed_constraints;
+            let outcome = Some(SymReturnData::empty(&mut self.cx));
+            return self.apply_precompile_outcome(
+                executor,
+                state,
+                kind,
+                to,
+                call_caller,
+                value,
+                out_offset,
+                out_size,
+                outcome,
+            );
+        }
+        state.constraints =
+            if malformed_sat { malformed_constraints } else { well_formed_constraints };
+        let outcome = execute_symbolic_precompile(&mut self.cx, to, input, input_len, spec_id)?;
+        self.apply_precompile_outcome(
+            executor,
+            state,
+            kind,
+            to,
+            call_caller,
+            value,
+            out_offset,
+            out_size,
+            outcome,
+        )
     }
 
     #[expect(clippy::too_many_arguments)]
