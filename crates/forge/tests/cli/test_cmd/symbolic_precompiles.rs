@@ -225,9 +225,7 @@ fn symbolic_ecrecover_return_data_conformance(prj: _, cmd: _) {
     prj.add_test(
         "EcrecoverReturnData.t.sol",
         r#"
-import "forge-std/Test.sol";
-
-contract EcrecoverReturnData is Test {
+contract EcrecoverReturnData {
     function checkInvalidRecoveryId(bytes32 digest, bytes32 r, bytes32 s) public view {
         bytes memory input = abi.encode(digest, uint256(29), r, s);
         bool ok;
@@ -254,34 +252,16 @@ contract EcrecoverReturnData is Test {
         }
     }
 
-    // ECRECOVER costs 3000 gas for any input.
-    function checkEcrecoverGasCap(bytes32 digest, uint8 v, bytes32 r, bytes32 s) public view {
-        (bool ok,) = address(1).staticcall{gas: 2999}(abi.encode(digest, v, r, s));
-        assert(!ok);
-        (ok,) = address(1).staticcall{gas: 3000}(abi.encode(digest, v, r, s));
-        assert(ok);
-    }
-
     // A signature with `r = 0` or `s = 0` never recovers.
     function checkZeroScalarRecoversNothing(bytes32 digest, bytes32 r, bytes32 s) public pure {
         assert(ecrecover(digest, 27, bytes32(0), s) == address(0));
         assert(ecrecover(digest, 28, r, bytes32(0)) == address(0));
     }
 
-    function checkRedirectedEcrecover() public {
-        bytes memory input = abi.encode(bytes32(0), uint256(27), bytes32(0), bytes32(0));
-        vm.mockFunction(address(4), address(1), input);
-        (bool ok, bytes memory output) = address(4).staticcall(input);
-        assertTrue(ok);
-        assertEq(output, bytes(""));
-    }
-
-    function testFuzzConformance(bytes32 digest, uint8 v, bytes32 r, bytes32 s) public {
+    function testFuzzConformance(bytes32 digest, uint8 v, bytes32 r, bytes32 s) public view {
         checkInvalidRecoveryId(digest, r, s);
         checkRecoveryOutput(digest, v, r, s);
-        checkEcrecoverGasCap(digest, v, r, s);
         checkZeroScalarRecoversNothing(digest, r, s);
-        checkRedirectedEcrecover();
     }
 }
 "#,
@@ -298,10 +278,8 @@ contract EcrecoverReturnData is Test {
         .success()
         .stdout_eq(str![[r#"
 ...
-[PASS] checkEcrecoverGasCap(bytes32,uint8,bytes32,bytes32) ([METRICS])
 [PASS] checkInvalidRecoveryId(bytes32,bytes32,bytes32) ([METRICS])
 [PASS] checkRecoveryOutput(bytes32,uint8,bytes32,bytes32) ([METRICS])
-[PASS] checkRedirectedEcrecover() ([METRICS])
 [PASS] checkZeroScalarRecoversNothing(bytes32,bytes32,bytes32) ([METRICS])
 ...
 "#]]);
@@ -331,14 +309,6 @@ contract SymbolicIdentityPrecompileInput is Test {
             assert(out[i] == data[i]);
         }
     }
-
-    // Identity costs 15 gas plus 3 per word, so 32 bytes cost 18.
-    function checkIdentityGasCap(bytes32 data) public view {
-        (bool ok,) = address(4).staticcall{gas: 17}(abi.encode(data));
-        assert(!ok);
-        (ok,) = address(4).staticcall{gas: 18}(abi.encode(data));
-        assert(ok);
-    }
 }
 "#,
     );
@@ -346,16 +316,15 @@ contract SymbolicIdentityPrecompileInput is Test {
     let stdout = assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
-        "--match-contract",
-        "SymbolicIdentityPrecompileInput",
+        "--match-test",
+        "checkSymbolicIdentity",
     ]))
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicIdentityPrecompileInput.t.sol:SymbolicIdentityPrecompileInput
-[PASS] checkIdentityGasCap(bytes32) ([METRICS])
+Ran 1 test for test/SymbolicIdentityPrecompileInput.t.sol:SymbolicIdentityPrecompileInput
 [PASS] checkSymbolicIdentity(bytes) ([METRICS])
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -428,36 +397,26 @@ contract SymbolicAdvancedPrecompileInput is Test {
         assert(!ok);
     }
 
-    // 64-byte base and modulus with an all-ones 32-byte exponent cost 5440 gas under EIP-2565.
-    function checkModexpGasOperand(uint256 base) public view {
-        bytes memory input = abi.encodePacked(
-            uint256(64), uint256(32), uint256(64), uint256(0), base, type(uint256).max, uint256(0), uint256(7)
-        );
-        (bool ok,) = address(5).staticcall{gas: 5000}(input);
-        assert(!ok);
-        (ok,) = address(5).staticcall{gas: 6000}(input);
-        assert(ok);
-    }
-
-    // A symbolic length header bounds the cost by its range on the path.
-    function checkModexpSymbolicLengthFits(uint256 baseLen) public view {
-        require(baseLen <= 64);
-        (bool ok,) = address(5).staticcall(abi.encodePacked(baseLen, uint256(1), uint256(32), new bytes(97)));
-        assert(ok);
-    }
-
-    function checkModexpSymbolicLengthOutOfGas(uint256 expLen) public view {
-        require(expLen >= 1 << 28 && expLen < 1 << 40);
-        (bool ok,) = address(5).staticcall(abi.encodePacked(uint256(32), expLen, uint256(32), new bytes(96)));
-        assert(!ok);
-    }
-
     // 2^32 - 1 rounds cost 4.29e9 gas.
     function checkBlake2fOutOfGas(uint256 m0) public view {
         (bool ok,) = address(9).staticcall(
             abi.encodePacked(type(uint32).max, new bytes(64), m0, new bytes(96), uint64(3), uint64(0), uint8(1))
         );
         assert(!ok);
+    }
+
+    // With zero rounds BLAKE2f ignores the state words, so different inputs collide.
+    function checkBlake2fZeroRoundsCollide(bytes32 a, bytes32 b) public view {
+        require(a != b);
+        assert(blake2fZeroRounds(a) != blake2fZeroRounds(b));
+    }
+
+    function blake2fZeroRounds(bytes32 h0) internal view returns (bytes32) {
+        (bool ok, bytes memory out) = address(9).staticcall(
+            abi.encodePacked(uint32(0), h0, new bytes(160), uint64(0), uint64(0), uint8(1))
+        );
+        require(ok);
+        return abi.decode(out, (bytes32));
     }
 
     function modexp(uint256 b, uint256 e, uint256 m) internal view returns (uint256 r) {
@@ -496,17 +455,15 @@ contract SymbolicModexpOsakaLimit {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 9 tests for test/SymbolicAdvancedPrecompileInput.t.sol:SymbolicAdvancedPrecompileInput
+Ran 7 tests for test/SymbolicAdvancedPrecompileInput.t.sol:SymbolicAdvancedPrecompileInput
 [PASS] checkBlake2fOutOfGas(uint256) ([METRICS])
-[PASS] checkModexpGasOperand(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkBlake2fZeroRoundsCollide(bytes32,bytes32) ([METRICS])
 [PASS] checkModexpHugeExponentLength() ([METRICS])
 [PASS] checkModexpOutOfGas(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkModexpOutputsMayCollide(uint256) ([METRICS])
-[PASS] checkModexpSymbolicLengthFits(uint256) ([METRICS])
-[PASS] checkModexpSymbolicLengthOutOfGas(uint256) ([METRICS])
 [PASS] checkSymbolicBlake2f(bytes1) ([METRICS])
 [PASS] checkSymbolicModexp(bytes1) ([METRICS])
-Suite result: FAILED. 8 passed; 1 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 5 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -756,18 +713,6 @@ contract SymbolicKzgPrecompileInput is Test {
 
         assert(ok);
     }
-
-    // KZG costs 50000 gas. A cap of 48000 fits only with the 2300 stipend a non-zero value adds,
-    // and a symbolic input length leaves the outcome to the symbolic KZG model.
-    function checkSymbolicKzgStipendSymbolicValue(uint256 value, uint256 len) public {
-        require(value <= 1 ether);
-        require(len <= 192);
-        bool ok;
-        assembly {
-            ok := call(48000, 0x0a, value, 0, len, 0, 0)
-        }
-        assert(!ok);
-    }
 }
 "#,
     );
@@ -781,16 +726,15 @@ contract SymbolicKzgPrecompileInput is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 8 tests for test/SymbolicKzgPrecompileInput.t.sol:SymbolicKzgPrecompileInput
+Ran 7 tests for test/SymbolicKzgPrecompileInput.t.sol:SymbolicKzgPrecompileInput
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicKzgCommitmentMismatchReturnsCounterexample(bytes32,bytes16) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicKzgInvalidWitnessReturnsCounterexample(bytes32) ([METRICS])
 [PASS] checkSymbolicKzgKnownVersionMismatchFails(bytes32) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicKzgProofInvalidWitnessReturnsCounterexample(bytes32,bytes16) ([METRICS])
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: precompile gas with a symbolic call value] checkSymbolicKzgStipendSymbolicValue(uint256,uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicKzgSuccessWitnessReturnsCounterexample(bytes32,bytes32,bytes32,bytes32,bytes16,bytes32,bytes16) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicKzgVersionedHashMismatchReturnsCounterexample(bytes31) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): symbolic depth limit exceeded (10000)] checkTaikoStylePackedBytes1ArrayKzgCallReturnsCounterexample(uint256) ([METRICS])
-Suite result: FAILED. 1 passed; 7 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 1 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
