@@ -1863,7 +1863,7 @@ import "forge-std/Test.sol";
 /// forge-config: default.evm_version = "shanghai"
 
 contract Killable {
-    uint256 public value = 3;
+    uint256 value = 42;
 
     receive() external payable {}
 
@@ -1876,6 +1876,7 @@ contract Killable {
     }
 }
 
+// The balance moves at once; the code and storage stay until the transaction ends.
 contract SymbolicSelfdestruct is Test {
     Killable killable;
     address payable beneficiary = payable(address(0xB0B));
@@ -1884,24 +1885,17 @@ contract SymbolicSelfdestruct is Test {
         killable = new Killable();
     }
 
-    function checkSelfdestruct(uint256) public {
+    function checkSelfdestruct(uint256 value) public {
         vm.deal(address(killable), 7);
+        killable.set(value);
 
         killable.die(beneficiary);
 
         assert(address(killable).balance == 0);
         assert(beneficiary.balance == 7);
-        assert(address(killable).code.length == 0);
-        assert(address(killable).codehash == bytes32(0));
+        assert(address(killable).code.length > 0);
         assert(vm.getNonce(address(killable)) == 1);
-    }
-
-    // The storage is deleted, so the slot must not read the stale value from `setUp`.
-    function checkSelfdestructKeepsStorage(uint8 value) public {
-        vm.assume(value != 3);
-        killable.set(value);
-        killable.die(beneficiary);
-        assert(uint256(vm.load(address(killable), 0)) == 3);
+        assert(uint256(vm.load(address(killable), 0)) == value);
     }
 }
 "#,
@@ -1915,13 +1909,12 @@ contract SymbolicSelfdestruct is Test {
         "--match-test",
         "checkSelfdestruct",
     ]))
-    .failure()
+    .success()
     .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicSelfdestruct.t.sol:SymbolicSelfdestruct
+Ran 1 test for test/SymbolicSelfdestruct.t.sol:SymbolicSelfdestruct
 [PASS] checkSelfdestruct(uint256) ([METRICS])
-[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSelfdestructKeepsStorage(uint8) ([METRICS])
-Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -1995,7 +1988,8 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
     assert!(!stdout.contains("symbolic BALANCE target"), "{stdout}");
 }
 
-// SELFDESTRUCT under Cancun keeps existing accounts and deletes same-transaction ones.
+// SELFDESTRUCT under Cancun keeps existing accounts and deletes same-transaction ones at the
+// end of the transaction.
 #[forgetest_init]
 fn symbolic_selfdestruct_cancun_semantics(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_selfdestruct_cancun_semantics");
@@ -2069,7 +2063,7 @@ contract SymbolicSelfdestructCancunSameTx is Test {
 
         assertEq(address(killable).balance, 0);
         assertEq(beneficiary.balance, 7);
-        assertEq(address(killable).code.length, 0);
+        assertGt(address(killable).code.length, 0);
     }
 }
 "#,

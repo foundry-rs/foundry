@@ -2027,6 +2027,7 @@ pub(crate) struct SymbolicWorldState {
     nonces: HashMap<Address, u64>,
     existing_accounts: HashSet<Address>,
     destroyed_accounts: HashSet<Address>,
+    pending_selfdestructs: HashSet<Address>,
     arbitrary_storage_accounts: HashMap<Address, bool>,
     arbitrary_storage_copies: HashMap<Address, Address>,
     arbitrary_storage_all: bool,
@@ -2059,6 +2060,24 @@ pub(crate) struct SymbolicWorld {
     state: Arc<SymbolicWorldState>,
     snapshots: HashMap<U256, SymbolicSnapshot>,
     next_snapshot_id: u64,
+}
+
+impl SymbolicWorldState {
+    /// Deletes the accounts that self-destructed in the transaction that just ended.
+    fn apply_pending_selfdestructs(&mut self, cx: &mut SymCx) {
+        for address in std::mem::take(&mut self.pending_selfdestructs) {
+            self.balances.insert(address, SymExpr::zero(cx));
+            self.nonces.insert(address, 0);
+            self.code_cache.insert(address, SymCode::empty(cx));
+            self.written_code.insert(address);
+            self.storage.retain(|write| write.address != address);
+            self.transient_storage.retain(|write| write.address != address);
+            // A deleted account reads zero storage like a fresh one.
+            self.created_accounts.insert(address);
+            self.existing_accounts.remove(&address);
+            self.destroyed_accounts.insert(address);
+        }
+    }
 }
 
 impl Deref for SymbolicWorld {
@@ -2124,8 +2143,9 @@ impl SymbolicWorld {
     }
 
     /// Clears transaction-scoped state at a top-level call boundary.
-    pub(crate) fn clear_transaction_scoped_state(&mut self) {
+    pub(crate) fn clear_transaction_scoped_state(&mut self, cx: &mut SymCx) {
         let state = Arc::make_mut(&mut self.state);
+        state.apply_pending_selfdestructs(cx);
         state.transient_storage.clear();
         state.current_transaction_created_accounts.clear();
     }
@@ -2607,7 +2627,9 @@ impl SymbolicWorld {
         state.destroyed_accounts.remove(&address);
     }
 
-    /// Implements legacy `SELFDESTRUCT` semantics.
+    /// Implements legacy `SELFDESTRUCT` semantics: the balance moves at once, and the account
+    /// is deleted when the running transaction ends, also for a call that ran as its own
+    /// transaction, as Forge does.
     pub(crate) fn selfdestruct_legacy(
         &mut self,
         cx: &mut SymCx,
@@ -2622,27 +2644,10 @@ impl SymbolicWorld {
                 SymMemory::saturating_add_word(cx, beneficiary_balance, balance);
             self.set_balance_word(beneficiary, beneficiary_balance);
         }
-        let nonce = if self.nonces.contains_key(&address) {
-            None
-        } else {
-            Some(self.nonce(executor, address)?)
-        };
         let zero = SymExpr::zero(cx);
-        let empty_code = SymCode::empty(cx);
         let state = Arc::make_mut(&mut self.state);
         state.balances.insert(address, zero);
-        state.code_cache.insert(address, empty_code);
-        state.written_code.insert(address);
-        if let Some(nonce) = nonce {
-            state.nonces.insert(address, nonce);
-        }
-        state.storage.retain(|write| write.address != address);
-        state.transient_storage.retain(|write| write.address != address);
-        // The account's storage is gone, so later reads see zero, not its pre-run storage.
-        state.created_accounts.insert(address);
-        state.current_transaction_created_accounts.remove(&address);
-        state.existing_accounts.remove(&address);
-        state.destroyed_accounts.insert(address);
+        state.pending_selfdestructs.insert(address);
         Ok(())
     }
 
