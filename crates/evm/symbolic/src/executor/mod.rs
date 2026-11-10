@@ -171,6 +171,7 @@ impl SymbolicExecutor {
                 state.recorded_logs_generation,
             );
             parent.world = failure_world.clone();
+            parent.world.take_snapshots_from(&mut outcome.state.world);
             // The path keeps the failed call's constraints, so keep its replay metadata too,
             // including the symbolic address aliases the replayed writes resolve through.
             parent.world.merge_replay_metadata_from(&outcome.state.world);

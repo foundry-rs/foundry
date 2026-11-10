@@ -1,5 +1,4 @@
 use super::*;
-use foundry_evm::revm::interpreter::instructions::i256::i256_cmp;
 
 impl SymbolicExecutor {
     pub(super) fn handle_assume(
@@ -184,7 +183,9 @@ impl SymbolicExecutor {
         let value = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
         let min = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
         let max = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 2)?;
-        let order = |a: &U256, b: &U256| if signed { i256_cmp(a, b) } else { a.cmp(b) };
+        let order = |a: &U256, b: &U256| {
+            if signed { I256::from_raw(*a).cmp(&I256::from_raw(*b)) } else { a.cmp(b) }
+        };
 
         if let (Some(value), Some(min), Some(max)) =
             (value.as_const(), min.as_const(), max.as_const())

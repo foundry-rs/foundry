@@ -10,10 +10,9 @@ use clap::{Parser, ValueEnum};
 use eyre::Result;
 use foundry_cli::opts::RpcOpts;
 use foundry_common::provider::RetryProvider;
-use foundry_evm::hardfork::TempoHardfork;
 use serde_json::{Value, json};
 use std::str::FromStr;
-use tempo_alloy::TempoNetwork;
+use tempo_alloy::{TempoNetwork, chainspec::hardfork::TempoHardfork};
 use tempo_contracts::precompiles::{IStorageCredits, STORAGE_CREDITS_ADDRESS};
 
 /// T7 storage credits operations (Tempo).

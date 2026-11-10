@@ -150,11 +150,53 @@ contract SenderTarget {
     }
 }
 
+contract CreatedBySender {
+    address public creator;
+    address public origin;
+
+    constructor() payable {
+        creator = msg.sender;
+        origin = tx.origin;
+    }
+}
+
 contract SymbolicPrankSender is Test {
     SenderTarget target;
 
     function setUp() public {
         target = new SenderTarget();
+    }
+
+    // A prank also sets the creator of a CREATE, and a one-shot prank ends with it.
+    function checkPrankCreate() public {
+        address who = address(0xBEEF);
+        vm.deal(who, 5);
+        vm.prank(who);
+        CreatedBySender created = new CreatedBySender{value: 5}();
+        assertEq(created.creator(), who);
+        assertEq(address(created), vm.computeCreateAddress(who, 0));
+        assertEq(vm.getNonce(who), 1);
+        assertEq(who.balance, 0);
+        assertEq(address(created).balance, 5);
+        assertEq(target.sender(), address(this));
+    }
+
+    function checkStartPrankCreate2(address origin) public {
+        address who = address(0xBEEF);
+        vm.startPrank(who, origin);
+        CreatedBySender created = new CreatedBySender{salt: bytes32(uint256(7))}();
+        assertEq(created.creator(), who);
+        assertEq(created.origin(), origin);
+        assertEq(target.sender(), who);
+        vm.stopPrank();
+    }
+
+    // A symbolic creator can alias this funded contract, so the CREATE is not modeled.
+    function checkSymbolicPrankCreateIsIncomplete(address who) public {
+        vm.prank(who);
+        try new CreatedBySender{value: 1}() {
+            assert(false);
+        } catch {}
     }
 
     function checkSymbolicPrank(address who) public {
@@ -200,6 +242,52 @@ contract SymbolicPrankSender is Test {
         assertEq(target.origin(), origin);
         vm.stopPrank();
     }
+
+    function checkPrankRejectsUnusedPrankOverwrite() public {
+        vm.prank(address(0xA));
+        vm.prank(address(0xB));
+    }
+
+    function checkPrankRejectsOngoingStartPrankOverride() public {
+        vm.startPrank(address(0xA));
+        target.sender();
+        vm.prank(address(0xB));
+    }
+
+    function checkDeployCodeConsumesPrank() public {
+        vm.prank(address(0xA), address(0xB));
+        CreatedBySender created =
+            CreatedBySender(vm.deployCode("SymbolicPrankSender.t.sol:CreatedBySender"));
+        vm.prank(address(0xC));
+        assertEq(created.creator(), address(0xA));
+        assertEq(created.origin(), address(0xB));
+    }
+
+    // EIP-2681: the pranked creator's nonce is at its limit, so the create fails.
+    function checkDeployCodeAtMaxNonce() public {
+        vm.setNonceUnsafe(address(0xA), type(uint64).max);
+        vm.prank(address(0xA));
+        try vm.deployCode("SymbolicPrankSender.t.sol:CreatedBySender") returns (address) {
+            assert(false);
+        } catch (bytes memory err) {
+            assertEq(err.length, 0);
+        }
+    }
+
+    function checkCreateConsumesPrank() public {
+        vm.prank(address(0xA));
+        new SenderTarget();
+        vm.prank(address(0xB));
+        assertEq(target.sender(), address(0xB));
+    }
+
+    function checkCreateConsumesStartPrank() public {
+        vm.startPrank(address(this));
+        new SenderTarget();
+        try vm.startPrank(address(0xB)) {
+            assert(false);
+        } catch {}
+    }
 }
 "#,
     );
@@ -210,15 +298,24 @@ contract SymbolicPrankSender is Test {
         "--match-contract",
         "SymbolicPrankSender",
     ]))
-    .success()
+    .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 4 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
+Ran 13 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
+[PASS] checkCreateConsumesPrank() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCreateConsumesStartPrank() ([METRICS])
+[PASS] checkDeployCodeAtMaxNonce() ([METRICS])
+[PASS] checkDeployCodeConsumesPrank() ([METRICS])
+[PASS] checkPrankCreate() ([METRICS])
+[FAIL: vm.prank: cannot override an ongoing prank with a single vm.prank; use vm.startPrank to override the current prank; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkPrankRejectsOngoingStartPrankOverride() ([METRICS])
+[FAIL: vm.prank: cannot overwrite a prank until it is applied at least once; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkPrankRejectsUnusedPrankOverwrite() ([METRICS])
+[PASS] checkStartPrankCreate2(address) ([METRICS])
 [PASS] checkSymbolicPrank(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic CREATE prank] checkSymbolicPrankCreateIsIncomplete(address) ([METRICS])
 [PASS] checkSymbolicPrankOrigin(address,address) ([METRICS])
 [PASS] checkSymbolicStartPrank(address) ([METRICS])
 [PASS] checkSymbolicStartPrankOrigin(address,address) ([METRICS])
-Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 9 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -435,7 +532,26 @@ fn symbolic_account_queries_see_setup_accounts(prj: _, cmd: _) {
 import "forge-std/Test.sol";
 
 contract Pinger {
-    function ping() external {}
+    event Pinged();
+
+    uint256 public pings;
+
+    function ping() external {
+        pings++;
+        emit Pinged();
+    }
+
+    function price() external pure returns (uint256) {
+        return 1;
+    }
+
+    function value(uint256) external pure returns (uint256) {
+        return 42;
+    }
+
+    function sender() external view returns (address) {
+        return msg.sender;
+    }
 }
 
 contract SymbolicSetupAccounts is Test {
@@ -447,6 +563,50 @@ contract SymbolicSetupAccounts is Test {
         b = new Pinger();
         vm.deal(address(a), 1 ether);
         vm.deal(address(b), 1 ether);
+        vm.mockCall(address(a), abi.encodeWithSelector(Pinger.price.selector), abi.encode(uint256(5)));
+        vm.mockCall(address(b), abi.encodeWithSelector(Pinger.value.selector), abi.encode(uint256(5)));
+        vm.mockCalls(address(b), abi.encodeWithSelector(Pinger.value.selector, uint256(7)), new bytes[](0));
+        vm.label(address(a), "a");
+        vm.rememberKey(1);
+        vm.makePersistent(address(a));
+        vm.record();
+        vm.recordLogs();
+        a.ping();
+        vm.startPrank(address(0xABC));
+        a.ping();
+    }
+
+    function checkSetupMock() public view {
+        assert(a.price() != 5);
+    }
+
+    function checkSetupPrank() public view {
+        assert(a.sender() != address(0xABC));
+    }
+
+    // The most specific mock wins, and its empty return queue runs the real callee.
+    function checkSetupEmptyMock() public view {
+        assert(b.value(7) == 5);
+    }
+
+    function checkSetupRecordedLogs() public {
+        assert(vm.getRecordedLogs().length == 0);
+    }
+
+    // Labels, remembered keys, persistent accounts and the access record outlive setUp too.
+    function checkSetupCheatcodeState() public {
+        (bytes32[] memory reads,) = vm.accesses(address(a));
+        assert(
+            keccak256(bytes(vm.getLabel(address(a)))) != keccak256("a") || vm.getWallets().length != 1
+                || !vm.isPersistent(address(a)) || reads.length == 0
+        );
+    }
+
+    // `setUp` applied its `startPrank`, so the test may replace it.
+    function checkSetupUsedPrankCanBeReplaced() public {
+        try vm.startPrank(address(0xDEF)) {
+            assert(false);
+        } catch {}
     }
 
     function checkBalance(address target) public view {
@@ -504,15 +664,21 @@ contract SymbolicSetupAccounts is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 7 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
+Ran 13 tests for test/SymbolicSetupAccounts.t.sol:SymbolicSetupAccounts
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkBalance(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCheatcodeBalance(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeCopy(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeHash(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCodeLength(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkHighLevelCall(address,bool) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupCheatcodeState() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupEmptyMock() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupMock() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupPrank() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupRecordedLogs() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetupUsedPrankCanBeReplaced() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnconstrainedHighLevelCall(address) ([METRICS])
-Suite result: FAILED. 0 passed; 7 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 13 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
@@ -1777,6 +1943,24 @@ contract SymbolicBlockhash is Test {
         assertEq(blockhash(299), previousHash);
         assertEq(blockhash(300), bytes32(0));
         assertEq(blockhash(43), bytes32(0));
+
+        // Like Forge, the BLOCKHASH window applies when reading, not when setting.
+        vm.roll(301);
+        assertEq(blockhash(300), bytes32(uint256(0xdead)));
+        vm.roll(299);
+        assertEq(blockhash(43), bytes32(uint256(0xbeef)));
+
+        (bool ok, bytes memory data) = address(vm).call(
+            abi.encodeWithSignature("setBlockhash(uint256,bytes32)", 300, previousHash)
+        );
+        assertFalse(ok);
+        assertEq(
+            data,
+            abi.encodeWithSignature(
+                "CheatcodeError(string)",
+                "vm.setBlockhash: block number must be less than or equal to the current block number"
+            )
+        );
     }
 }
 "#,
@@ -1892,6 +2076,25 @@ contract SymbolicBlockEnvironment is Test {
         assertEq(got[0], hashes[0]);
         assertEq(got[1], hashes[1]);
     }
+
+    // Concretely `revertToState` restores the block environment and gas price with the state.
+    function checkSnapshotRestoresEnvironment(uint256) public {
+        vm.chainId(5);
+        vm.roll(100);
+        vm.warp(1000);
+        vm.txGasPrice(7);
+        uint256 snapshotId = vm.snapshotState();
+        vm.chainId(6);
+        vm.roll(200);
+        vm.warp(2000);
+        vm.txGasPrice(8);
+
+        assertTrue(vm.revertToState(snapshotId));
+        assertEq(block.chainid, 5);
+        assertEq(block.number, 100);
+        assertEq(block.timestamp, 1000);
+        assertEq(tx.gasprice, 7);
+    }
 }
 "#,
     );
@@ -1931,15 +2134,16 @@ contract SymbolicPreparedEnvironment is Test {
         "test",
         "--symbolic",
         "--match-test",
-        "^(checkBlockEnvironment|checkPreparedEnvironment)\\(",
+        "^(checkBlockEnvironment|checkPreparedEnvironment|checkSnapshotRestoresEnvironment)\\(",
     ]))
     .success()
     .stdout_eq(
         str![[r#"
 ...
-Ran 1 test for test/SymbolicBlockEnvironment.t.sol:SymbolicBlockEnvironment
+Ran 2 tests for test/SymbolicBlockEnvironment.t.sol:SymbolicBlockEnvironment
 [PASS] checkBlockEnvironment(uint256) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+[PASS] checkSnapshotRestoresEnvironment(uint256) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test for test/SymbolicPreparedEnvironment.t.sol:SymbolicPreparedEnvironment
 [PASS] checkPreparedEnvironment(uint256) ([METRICS])
@@ -1948,6 +2152,51 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]
         .unordered(),
     );
+}
+
+// Pre-Cancun, Forge rejects `blobBaseFee` before it checks the value's range.
+#[forgetest_init]
+fn symbolic_blob_base_fee_checks_hard_fork_first(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_blob_base_fee_checks_hard_fork_first");
+
+    prj.add_test(
+        "SymbolicPreCancunBlobBaseFee.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicPreCancunBlobBaseFee is Test {
+    function checkPreCancunBlobBaseFee() public {
+        (bool ok, bytes memory data) =
+            address(vm).call(abi.encodeCall(vm.blobBaseFee, (type(uint256).max)));
+        assertFalse(ok);
+        assertEq(
+            data,
+            abi.encodeWithSignature(
+                "CheatcodeError(string)",
+                "vm.blobBaseFee: `blobBaseFee` is not supported before the Cancun hard fork; see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
+            )
+        );
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--evm-version",
+        "shanghai",
+        "--match-test",
+        "checkPreCancunBlobBaseFee",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicPreCancunBlobBaseFee.t.sol:SymbolicPreCancunBlobBaseFee
+[PASS] checkPreCancunBlobBaseFee() ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -1996,6 +2245,30 @@ contract SymbolicStateSnapshots is Test {
         assertFalse(vm.revertToState(clearedSnapshot));
     }
 
+    function snapshotThenRevert() external {
+        vm.snapshotState();
+        revert("boom");
+    }
+
+    function deleteThenRevert(uint256 snapshotId) external {
+        vm.deleteStateSnapshot(snapshotId);
+        revert("boom");
+    }
+
+    // Concretely snapshots taken or deleted in a reverted call stay taken or deleted.
+    function checkSnapshotsSurviveRevertingCall(uint256) public {
+        try this.snapshotThenRevert() {} catch {}
+        value = 7;
+        assertTrue(vm.revertToState(0));
+        assertEq(value, 0);
+
+        uint256 snapshotId = vm.snapshotState();
+        value = 8;
+        try this.deleteThenRevert(snapshotId) {} catch {}
+        assertFalse(vm.revertToState(snapshotId));
+        assertEq(value, 8);
+    }
+
     receive() external payable {}
 }
 "#,
@@ -2005,14 +2278,15 @@ contract SymbolicStateSnapshots is Test {
         "test",
         "--symbolic",
         "--match-test",
-        "checkStateSnapshots",
+        "^(checkStateSnapshots|checkSnapshotsSurviveRevertingCall)\\(",
     ]))
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicStateSnapshots.t.sol:SymbolicStateSnapshots
+Ran 2 tests for test/SymbolicStateSnapshots.t.sol:SymbolicStateSnapshots
+[PASS] checkSnapshotsSurviveRevertingCall(uint256) ([METRICS])
 [PASS] checkStateSnapshots(uint256) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
@@ -2252,6 +2526,15 @@ contract SymbolicRevertKeepsCheatcodes is Test {
         revert("boom");
     }
 
+    function gasPriceThenRevert(uint256 p) external {
+        vm.txGasPrice(p);
+        revert("boom");
+    }
+
+    function setGasPrice(uint256 p) external {
+        vm.txGasPrice(p);
+    }
+
     // Concretely the warp outlives the revert, so any t >= DEADLINE breaks this.
     function checkWarpSurvivesRevertingCall(uint256 t) public {
         try this.warpThenRevert(t) {} catch {}
@@ -2262,6 +2545,32 @@ contract SymbolicRevertKeepsCheatcodes is Test {
     function checkMockSurvivesRevertingCall(address user) public {
         try this.mockThenRevert(user) {} catch {}
         assert(token.balanceOf(user) == 7);
+    }
+
+    // Concretely the gas price outlives the revert, so any p >= DEADLINE breaks this.
+    function checkGasPriceSurvivesRevertingCall(uint256 p) public {
+        try this.gasPriceThenRevert(p) {} catch {}
+        assert(tx.gasprice < DEADLINE);
+    }
+
+    // Concretely `vm.txGasPrice` rejects a price above uint64.max, so the helper reverts before
+    // it changes the price.
+    function checkRejectedGasPriceDoesNotSurvive(uint256 p) public {
+        vm.assume(p == uint256(type(uint64).max) + 1);
+        try this.setGasPrice(p) {} catch {}
+        assert(tx.gasprice == p);
+    }
+
+    // Forge rejects calldata that holds only the selector as an ABI decoding error, so the range
+    // check must not read the argument from memory past the input.
+    function checkTruncatedTxGasPriceIsNotRangeChecked() public {
+        bytes memory data = abi.encodeCall(vm.txGasPrice, (type(uint256).max));
+        address cheatcode = address(vm);
+        bool ok;
+        assembly {
+            ok := call(gas(), cheatcode, 0, add(data, 32), 4, 0, 0)
+        }
+        assertFalse(ok);
     }
 }
 "#,
@@ -2276,10 +2585,13 @@ contract SymbolicRevertKeepsCheatcodes is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicRevertKeepsCheatcodes.t.sol:SymbolicRevertKeepsCheatcodes
+Ran 5 tests for test/SymbolicRevertKeepsCheatcodes.t.sol:SymbolicRevertKeepsCheatcodes
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xcd02017c00000000000000000000000000000000000000000000000000000000000003e8 args=[1000]] checkGasPriceSurvivesRevertingCall(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x9389e44d0000000000000000000000000000000000000000000000000000000000000000 args=[0x0000000000000000000000000000000000000000]] checkMockSurvivesRevertingCall(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x5a97aeab0000000000000000000000000000000000000000000000010000000000000000 args=[18446744073709551616 [1.844e19]]] checkRejectedGasPriceDoesNotSurvive(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: short cheatcode CALL] checkTruncatedTxGasPriceIsNotRangeChecked() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xe9b7d25400000000000000000000000000000000000000000000000000000000000003e8 args=[1000]] checkWarpSurvivesRevertingCall(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -3560,16 +3872,22 @@ Suite result: FAILED. 9 passed; 8 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
-// Like revm, a value transfer fails with a revert when the sender is short and with a halt when the
-// recipient balance would overflow, so only the former matches `vm.assumeNoRevert`.
+// A value transfer reverts when the sender is short, which matches `vm.assumeNoRevert`, and
+// saturates the recipient balance, as does a `SELFDESTRUCT` beneficiary.
 #[forgetest_init]
-fn symbolic_vm_assume_no_revert_transfer_overflow_halts(prj: _, cmd: _) {
-    skip_unless_z3!("symbolic_vm_assume_no_revert_transfer_overflow_halts");
+fn symbolic_vm_assume_no_revert_transfer_overflow_saturates(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_assume_no_revert_transfer_overflow_saturates");
 
     prj.add_test(
         "SymbolicTransferOverflow.t.sol",
         r#"
 import "forge-std/Test.sol";
+
+contract SymbolicSelfDestructTo {
+    constructor(address to) payable {
+        selfdestruct(payable(to));
+    }
+}
 
 contract SymbolicTransferOverflow is Test {
     address constant DST = address(0x1234);
@@ -3579,8 +3897,14 @@ contract SymbolicTransferOverflow is Test {
         vm.deal(DST, type(uint256).max);
         vm.assumeNoRevert();
         (bool ok, bytes memory data) = DST.call{value: 1}("");
-        assertFalse(ok);
+        assertTrue(ok);
         assertEq(data.length, 0);
+        assertEq(address(this).balance, 1);
+        assertEq(DST.balance, type(uint256).max);
+
+        new SymbolicSelfDestructTo{value: 1}(DST);
+        assertEq(address(this).balance, 0);
+        assertEq(DST.balance, type(uint256).max);
     }
 
     function checkSymbolicValue(uint256 value) public {
@@ -3588,8 +3912,10 @@ contract SymbolicTransferOverflow is Test {
         vm.deal(DST, type(uint256).max - 1);
         vm.assumeNoRevert();
         (bool ok, bytes memory data) = DST.call{value: value}("");
-        assertEq(ok, value < 2);
+        assertEq(ok, value <= 2);
         assertEq(data.length == 0, value <= 2);
+        assertEq(address(this).balance, ok ? 2 - value : 2);
+        assertEq(DST.balance, ok && value != 0 ? type(uint256).max : type(uint256).max - 1);
     }
 }
 "#,

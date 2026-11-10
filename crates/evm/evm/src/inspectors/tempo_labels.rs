@@ -1,10 +1,7 @@
 use alloy_primitives::{U256, keccak256, map::AddressMap};
-use foundry_evm_core::backend::DatabaseError;
-use revm::{
-    Database, Inspector,
-    context::ContextTr,
-    inspector::JournalExt,
-    interpreter::{CallInputs, CallOutcome, interpreter::EthInterpreter},
+use evm2::{
+    EvmTypes, Inspector,
+    interpreter::{Interpreter, Message, MessageResult},
 };
 use tempo_primitives::TempoAddressExt;
 
@@ -21,19 +18,20 @@ pub struct TempoLabels {
     pub(crate) labels: AddressMap<String>,
 }
 
-impl<CTX, D> Inspector<CTX, EthInterpreter> for TempoLabels
-where
-    D: Database<Error = DatabaseError>,
-    CTX: ContextTr<Db = D>,
-    CTX::Journal: JournalExt,
-{
-    fn call(&mut self, ctx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
-        if inputs.transfer_to().is_tip20() && !self.labels.contains_key(&inputs.transfer_to()) {
+impl<T: EvmTypes> Inspector<T> for TempoLabels {
+    fn call(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, T>,
+        message: &mut Message<T>,
+    ) -> Option<MessageResult<T>> {
+        let address = message.destination;
+        if address.is_tip20() && !self.labels.contains_key(&address) {
+            let state = interp.host().state_mut();
             let name = 'decode: {
-                let db = ctx.db_mut();
-                let address = inputs.transfer_to();
                 let slot = tempo_precompiles::tip20::slots::NAME;
-                let Ok(value) = db.storage(address, slot) else { break 'decode None };
+                let Ok(value) = state.storage_slot_untracked(&address, &slot) else {
+                    break 'decode None;
+                };
                 let bytes = value.to_be_bytes::<32>();
                 if bytes[31] & 1 == 0 {
                     let len = usize::from(bytes[31] / 2);
@@ -51,7 +49,9 @@ where
                 let start = Into::<U256>::into(keccak256(slot.to_be_bytes::<32>()));
                 let mut data = Vec::with_capacity(len);
                 for i in 0..len.div_ceil(32) {
-                    let Ok(chunk) = db.storage(address, start + U256::from(i)) else {
+                    let Ok(chunk) =
+                        state.storage_slot_untracked(&address, &(start + U256::from(i)))
+                    else {
                         break 'decode None;
                     };
                     let chunk = chunk.to_be_bytes::<32>();
@@ -60,7 +60,7 @@ where
                 Some(String::from_utf8_lossy(&data).into_owned())
             }
             .unwrap_or_else(|| "TIP20".to_string());
-            self.labels.insert(inputs.transfer_to(), name);
+            self.labels.insert(address, name);
         }
 
         None

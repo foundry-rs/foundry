@@ -21,13 +21,13 @@ pub(crate) fn precompile_number_for_spec(address: Address, spec_id: SpecId) -> O
 }
 
 /// Returns the canonical precompiles active under `spec_id`.
-pub(crate) fn active_precompiles(spec_id: SpecId) -> &'static Precompiles {
-    Precompiles::new(PrecompileSpecId::from_spec_id(spec_id))
+pub(crate) fn active_precompiles(spec_id: SpecId) -> Precompiles {
+    Precompiles::base(spec_id)
 }
 
 /// Returns whether `address` is a canonical precompile active under `spec_id`.
 pub(crate) fn is_precompile_for_spec(address: Address, spec_id: SpecId) -> bool {
-    active_precompiles(spec_id).contains(&address)
+    active_precompiles(spec_id).as_map().contains(&address)
 }
 
 /// Executes a canonical precompile on concrete input with effectively unlimited gas.
@@ -39,14 +39,41 @@ pub(crate) fn execute_precompile(
     input: &[u8],
     spec_id: SpecId,
 ) -> Result<Option<SymReturnData>, SymbolicError> {
-    let Some(precompile) = active_precompiles(spec_id).get(&address) else {
+    if !is_precompile_for_spec(address, spec_id) {
         return Err(SymbolicError::Unsupported("unsupported precompile"));
+    }
+    // evm2's precompile table runs these through an EVM; select the same input-only
+    // implementations the base table registers for `spec_id`.
+    let run = match u16::from_be_bytes([address[18], address[19]]) {
+        0x01 => secp256k1::run,
+        0x02 => hash::run_sha256,
+        0x03 => hash::run_ripemd160,
+        0x04 => identity::run,
+        0x05 if spec_id.enables(SpecId::OSAKA) => modexp::run_osaka,
+        0x05 if spec_id.enables(SpecId::BERLIN) => modexp::run_berlin,
+        0x05 => modexp::run_byzantium,
+        0x06 if spec_id.enables(SpecId::ISTANBUL) => bn254::add::run_istanbul,
+        0x06 => bn254::add::run_byzantium,
+        0x07 if spec_id.enables(SpecId::ISTANBUL) => bn254::mul::run_istanbul,
+        0x07 => bn254::mul::run_byzantium,
+        0x08 if spec_id.enables(SpecId::ISTANBUL) => bn254::pair::run_istanbul,
+        0x08 => bn254::pair::run_byzantium,
+        0x09 => blake2::run,
+        0x0a => kzg_point_evaluation::run,
+        0x0b => bls12_381::g1_add::run,
+        0x0c => bls12_381::g1_msm::run,
+        0x0d => bls12_381::g2_add::run,
+        0x0e => bls12_381::g2_msm::run,
+        0x0f => bls12_381::pairing::run,
+        0x10 => bls12_381::map_fp_to_g1::run,
+        0x11 => bls12_381::map_fp2_to_g2::run,
+        0x100 => secp256r1::run_osaka,
+        _ => return Err(SymbolicError::Unsupported("unsupported precompile")),
     };
-    match precompile.execute(input, u64::MAX, 0) {
-        Ok(output) if output.is_success() => {
-            Ok(Some(SymReturnData::from_concrete_bytes(cx, output.bytes.to_vec())))
-        }
-        _ => Ok(None),
+
+    match run(input, &mut GasTracker::new(u64::MAX)) {
+        Ok(output) => Ok(Some(SymReturnData::from_concrete_bytes(cx, output.bytes().to_vec()))),
+        Err(_) => Ok(None),
     }
 }
 

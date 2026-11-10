@@ -1,9 +1,13 @@
 //! Tests for OP chain support.
 
 use crate::utils::{http_provider, http_provider_with_signer};
-use alloy_consensus::{Eip658Value, Receipt, proofs::calculate_receipt_root};
+use alloy_consensus::{
+    Eip658Value, Receipt, SidecarBuilder, SimpleCoder, proofs::calculate_receipt_root,
+};
 use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip2718::Encodable2718};
-use alloy_network::{EthereumWallet, NetworkTransactionBuilder, TransactionBuilder};
+use alloy_network::{
+    EthereumWallet, NetworkTransactionBuilder, TransactionBuilder, TransactionBuilder4844,
+};
 use alloy_primitives::{Address, B256, Bloom, Bytes, TxHash, TxKind, U256, address, b256, bytes};
 use alloy_provider::{Provider, ext::TraceApi};
 use alloy_rpc_types::{
@@ -13,7 +17,7 @@ use alloy_serde::{OtherFields, WithOtherFields};
 use anvil::{NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
 use axum::{Json, Router, routing::post};
 use foundry_common::provider::redact_url;
-use foundry_evm::hardfork::OpHardfork;
+use foundry_evm_hardforks::OpHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryReceiptEnvelope;
 use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom, TxDeposit};
@@ -21,7 +25,7 @@ use op_alloy_rpc_types::OpTransactionFields;
 use serde_json::{Value, json};
 
 #[cfg(feature = "base")]
-use foundry_evm::hardforks::BaseUpgrade;
+use foundry_evm_hardforks::BaseUpgrade;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn inferred_optimism_forks_require_op_stack_source_resets() {
@@ -980,4 +984,38 @@ async fn test_trace_transaction_omits_nested_op_precompile_calls() {
 
     let replay = provider.trace_replay_transaction(hash).trace().await.unwrap();
     assert_eq!(replay.trace, traces);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_rejects_blob_transaction() {
+    let mut networks = vec![NetworkConfigs::with_optimism()];
+    #[cfg(feature = "base")]
+    networks.push(NetworkConfigs::with_base());
+    for networks in networks {
+        let (_api, handle) = spawn(NodeConfig::test().with_networks(networks)).await;
+        let wallet = handle.dev_wallets().next().unwrap();
+        let from = wallet.address();
+        let provider = http_provider_with_signer(&handle.http_endpoint(), wallet.into());
+        let gas_price = provider.get_gas_price().await.unwrap();
+
+        let sidecar = SidecarBuilder::<SimpleCoder>::from_slice(b"blob").build().unwrap();
+        let tx = TransactionRequest::default()
+            .with_from(from)
+            .with_to(from)
+            .with_nonce(0)
+            .with_gas_limit(21_000)
+            .with_max_fee_per_gas(gas_price * 2)
+            .with_max_priority_fee_per_gas(1)
+            .with_max_fee_per_blob_gas(1)
+            .with_blob_sidecar_4844(sidecar);
+        let error = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap_err();
+        assert_eq!(
+            serde_json::to_value(error.as_error_resp().unwrap()).unwrap(),
+            json!({
+                "code": -32003,
+                "message": "EIP-4844 blob transactions are not supported on OP Stack chains",
+                "data": null,
+            }),
+        );
+    }
 }

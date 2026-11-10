@@ -1607,14 +1607,15 @@ contract SymbolicCallcodeValue is Test {
         vm.deal(caller, 1);
         vm.prank(caller);
 
+        bytes memory input = abi.encodeWithSelector(SymbolicCallcodeValueTarget.echoValue.selector);
         bool ok;
         address callTarget = address(target);
         assembly {
-            ok := callcode(gas(), callTarget, 1, 0, 0, 0, 0)
+            ok := callcode(gas(), callTarget, 1, add(input, 0x20), mload(input), 0, 0)
         }
 
-        assert(!ok);
-        assertEq(caller.balance, 1);
+        assert(ok);
+        assertEq(caller.balance, 0);
         assertEq(address(this).balance, type(uint256).max);
     }
 

@@ -6,6 +6,7 @@ use alloy_provider::Provider;
 use anvil::{EthereumHardfork, NodeConfig, spawn};
 use foundry_common::LIBRARY_DEPLOYER;
 use foundry_config::{CompilationRestrictions, SettingsOverrides, filter::GlobMatcher};
+use foundry_evm_networks::NetworkConfigs;
 use foundry_test_utils::{
     TestCommand,
     rpc::{self, next_etherscan_api_key, rpc_endpoints},
@@ -513,6 +514,7 @@ contract DecodeDelegatecallStorageTest is Test {
         Implementation implementation = new Implementation();
         Proxy proxy = new Proxy(address(implementation));
 
+        vm.chainId(42);
         vm.startStateDiffRecording();
         Implementation(address(proxy)).setValue(42);
         string memory diff = vm.getStateDiffJson();
@@ -1837,6 +1839,55 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
+// `vm.transact` executes a Celo CIP-64 transaction as its EIP-1559 body with native fees.
+#[forgetest]
+async fn fork_transact_celo_cip64(prj: _, cmd: _) {
+    let config = NodeConfig::test().with_chain_id(Some(42_220u64));
+    let (api, handle) = spawn(config.with_networks(NetworkConfigs::with_celo())).await;
+    let sender = handle.dev_wallets().next().unwrap().address();
+    let request = serde_json::json!({
+        "from": sender,
+        "to": "0x0000000000000000000000000000000000001234",
+        "value": "0x1",
+        "feeCurrency": "0x2222222222222222222222222222222222222222",
+    });
+    let hash = api.send_transaction(serde_json::from_value(request).unwrap()).await.unwrap();
+    let tx = handle.http_provider().get_transaction_by_hash(hash).await.unwrap().unwrap();
+    assert_eq!(serde_json::to_value(tx).unwrap()["type"], "0x7b");
+
+    prj.add_test(
+        "Cip64Transact.t.sol",
+        &r#"
+interface Vm {
+    function createSelectFork(string calldata url, bytes32 txHash) external returns (uint256);
+    function getNonce(address account) external view returns (uint64);
+    function transact(bytes32 txHash) external;
+}
+
+contract Cip64TransactTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testTransact() external {
+        vm.createSelectFork("<rpc>", <hash>);
+        require(address(0x1234).balance == 0, "recipient before");
+        vm.transact(<hash>);
+        require(address(0x1234).balance == 1, "recipient after");
+        require(vm.getNonce(<sender>) == 1, "sender nonce");
+    }
+}
+"#
+        .replace("<rpc>", &handle.http_endpoint())
+        .replace("<hash>", &hash.to_string())
+        .replace("<sender>", &sender.to_checksum(None)),
+    );
+
+    cmd.args(["test", "--match-test", "testTransact"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS] testTransact() ([GAS])
+...
+"#]]);
+}
+
 // A cheatcode fork whose alias auth differs from the `--fork-url` credentials must not reuse the
 // endpoint identity discovered for the same URL, since the credentials may reach another backend.
 #[forgetest]
@@ -2246,6 +2297,44 @@ contract TransientTest is Test {
     );
 
     cmd.args(["test", "-vvvv", "--isolate", "--evm-version", "cancun"]).assert_success();
+}
+
+// An isolated call restarts the call-depth limit at its nested transaction.
+#[forgetest_init]
+fn can_test_call_depth_limit_with_isolation(prj: _, cmd: _) {
+    prj.add_test(
+        "CallDepth.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Descender {
+    function descend(uint256 remaining) external returns (uint256) {
+        if (remaining == 0) return 0;
+        (bool ok, bytes memory out) = address(this).call(abi.encodeCall(this.descend, (remaining - 1)));
+        return ok ? abi.decode(out, (uint256)) + 1 : 0;
+    }
+}
+
+contract CallDepthTest is Test {
+    /// forge-config: default.isolate = true
+    function testIsolatedCallDepth() public {
+        assertEq(new Descender().descend(1025), 1024);
+    }
+
+    /// forge-config: default.isolate = false
+    function testCallDepth() public {
+        assertEq(new Descender().descend(1025), 1023);
+    }
+}
+   "#,
+    );
+    // Leave enough gas after the 63/64 rule at every depth.
+    prj.update_config(|config| {
+        config.gas_limit = (1u64 << 60).into();
+        config.block_gas_limit = Some((1u64 << 60).into());
+    });
+
+    cmd.args(["test", "--evm-version", "cancun"]).assert_success();
 }
 
 #[forgetest_init]
@@ -5913,7 +6002,7 @@ Traces:
     │   ├─  storage changes:
     │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
-    ├─ [..] SLOAD
+    ├─ [..] SLOAD 0x1f → (0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f01)
     ├─ [..] MLOAD
     ├─ [..] MLOAD
     ├─ [..] Counter::number() [staticcall]
@@ -7302,6 +7391,112 @@ Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing te
     assert_eq!(diagnostic_nodes[0]["trace"]["output"], "0x");
 }
 
+// After `vm.chainId`, calls run on a frame EVM built with the new chain ID, and the diagnostic
+// still explains the caller's empty revert.
+#[forgetest_init]
+fn detailed_revert_when_calling_non_contract_address_after_chain_id(prj: _, cmd: _) {
+    prj.add_test(
+        "NonContractCallAfterChainIdTest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface ICounter {
+    function number() external returns (uint256);
+}
+
+contract NonContractCallAfterChainIdTest is Test {
+    function test_non_contract_call_after_chain_id() public {
+        vm.chainId(5);
+        ICounter(0xdEADBEeF00000000000000000000000000000000).number();
+    }
+}
+     "#,
+    );
+
+    cmd.args(["test", "--mc", "NonContractCallAfterChainIdTest", "-vvv"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: EvmError: Revert] test_non_contract_call_after_chain_id() ([GAS])
+Traces:
+  [..] NonContractCallAfterChainIdTest::test_non_contract_call_after_chain_id()
+    ├─ [0] VM::chainId(5)
+    │   └─ ← [Return]
+    ├─ [..] 0xdEADBEeF00000000000000000000000000000000::number()
+    │   └─ ← [Stop]
+    └─ ← [Revert] call to non-contract address 0xdEADBEeF00000000000000000000000000000000
+...
+"#]]);
+}
+
+// After `vm.chainId`, calls run on a frame EVM, and the debugger records the calling step with the
+// caller's stack and gas.
+#[forgetest]
+fn debug_dump_records_call_step_after_chain_id(prj: _, cmd: _) {
+    prj.add_test(
+        "DebugCallAfterChainId.t.sol",
+        r#"
+interface Vm {
+    function chainId(uint256 newChainId) external;
+}
+
+contract Counter {
+    function number() external pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract DebugCallAfterChainIdTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testCallAfterChainId() public {
+        Counter counter = new Counter();
+        vm.chainId(5);
+        counter.number();
+    }
+}
+"#,
+    );
+
+    let dump_path = prj.root().join("chain_id_dump");
+    cmd.args([
+        "test",
+        "--mt",
+        "testCallAfterChainId",
+        "--debug",
+        "--dump",
+        dump_path.to_str().unwrap(),
+    ])
+    .assert_success();
+
+    let dump: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dump_path.join("trace.json")).unwrap())
+            .unwrap();
+    let steps = dump["steps"].as_array().unwrap();
+    let call = steps.iter().find(|step| step["op"] == "STATICCALL").unwrap();
+    // The call costs the gas it forwards and the account access, and the stack holds the caller's
+    // words and the call inputs.
+    assert_eq!(call["gas_cost"], 1056819103, "{call:#}");
+    assert_eq!(
+        call["stack"],
+        serde_json::json!([
+            "0x9f09e3a1",
+            "0x35",
+            "0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f",
+            "0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f",
+            "0x8381f58a",
+            "0x84",
+            "0x20",
+            "0x80",
+            "0x4",
+            "0x80",
+            "0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f",
+            "0x3ffdbe97"
+        ]),
+        "{call:#}"
+    );
+}
+
 #[forgetest_init]
 fn detailed_revert_when_delegatecalling_unlinked_library(prj: _, cmd: _) {
     prj.add_test(
@@ -7977,5 +8172,42 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
+"#]]);
+}
+
+// Rolling the active fork keeps the state of a non-default test sender, which is not persistent
+// by default, as the caller of the test.
+#[forgetest_init]
+fn fork_roll_keeps_sender_state(prj: _, cmd: _) {
+    let endpoint = rpc::next_http_archive_rpc_url();
+    prj.add_test(
+        "ForkRollSender.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForkRollSenderTest is Test {
+    function test_rollKeepsSenderBalance() public {
+        vm.createSelectFork("<url>", 21_000_000);
+        vm.deal(msg.sender, 123 ether);
+        vm.rollFork(21_000_001);
+        assertEq(msg.sender.balance, 123 ether);
+    }
+}
+   "#
+        .replace("<url>", &endpoint),
+    );
+
+    cmd.args([
+        "test",
+        "--mt",
+        "test_rollKeepsSenderBalance",
+        "--sender",
+        "0x000000000000000000000000000000000000Ab0B",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+[PASS] test_rollKeepsSenderBalance() ([GAS])
+...
 "#]]);
 }

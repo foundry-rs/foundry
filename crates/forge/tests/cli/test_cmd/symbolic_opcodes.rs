@@ -265,6 +265,11 @@ contract SymbolicExpExponent {
             assert(y == 243);
         }
     }
+
+    function checkRequireLeBoundsExponent(uint256 exponent) public pure {
+        require(exponent <= 6);
+        assert(uint256(3) ** exponent <= 729);
+    }
 }
 "#,
     );
@@ -272,15 +277,16 @@ contract SymbolicExpExponent {
     let stdout = assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
-        "--match-test",
-        "checkSymbolicExpExponent",
+        "--match-contract",
+        "SymbolicExpExponent",
     ]))
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicExpExponent.t.sol:SymbolicExpExponent
+Ran 2 tests for test/SymbolicExpExponent.t.sol:SymbolicExpExponent
+[PASS] checkRequireLeBoundsExponent(uint256) ([METRICS])
 [PASS] checkSymbolicExpExponent(uint8) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()

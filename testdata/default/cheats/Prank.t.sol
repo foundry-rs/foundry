@@ -108,6 +108,19 @@ contract NestedCreatePranker {
             )
         );
     }
+
+    function prankWithOrigin(address origin, bool create) public returns (address) {
+        address sender = address(0xB0B);
+        vm.prank(sender, origin);
+        if (create) {
+            new ConstructorVictim(sender, "nested constructor sender", origin, "nested constructor origin");
+        } else {
+            (bool success,) = address(0x1234).call("");
+            require(success, "nested call failed");
+        }
+        // Read the restored origin before another message can refresh the inspector state.
+        return tx.origin;
+    }
 }
 
 contract ImplementationTest {
@@ -650,6 +663,19 @@ contract PrankTest is Test {
         victim.assertCallerAndOrigin(
             address(this), "nested callback call was pranked", expectedOrigin, "nested callback origin was incorrect"
         );
+    }
+
+    /// forge-config: default.isolate = false
+    function testPrankNestedOriginRestoration() public {
+        address oldOrigin = tx.origin;
+        address outerOrigin = address(0xdeadbeef);
+        NestedCreatePranker pranker = new NestedCreatePranker();
+
+        for (uint256 i; i < 2; ++i) {
+            vm.prank(address(0xA11CE), outerOrigin);
+            address restoredOrigin = pranker.prankWithOrigin(oldOrigin, i == 1);
+            assertEq(restoredOrigin, outerOrigin);
+        }
     }
 }
 

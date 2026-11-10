@@ -1,5 +1,5 @@
 use super::*;
-use foundry_evm::revm::interpreter::STACK_LIMIT;
+use evm2::{constants::STACK_LIMIT, interpreter::opcode::OpCode};
 
 enum MappingStorageProvenance {
     None,
@@ -469,7 +469,7 @@ impl SymbolicExecutor {
 
         // The EVM halts a frame exceptionally before it runs an undefined opcode or one whose
         // stack inputs or outputs do not fit, so the handlers below never see such a stack.
-        let fits = opcode::OpCode::new(op).is_some_and(|opcode| {
+        let fits = OpCode::new(op).is_some_and(|opcode| {
             let height = state.stack.len();
             let inputs = opcode.inputs() as usize;
             height >= inputs && height - inputs + opcode.outputs() as usize <= STACK_LIMIT
@@ -485,12 +485,9 @@ impl SymbolicExecutor {
             }
             opcode::PUSH1..=opcode::PUSH32 => {
                 let n = (op - opcode::PUSH1 + 1) as usize;
-                let end = state.pc.saturating_add(n);
-                if end > code.len() {
-                    return Err(SymbolicError::InvalidBytecode("truncated PUSH data"));
-                }
+                // Data cut off by the end of the code is zero-padded, and the frame then stops.
                 let value = code.push_data_word(&mut self.cx, state.pc, n);
-                state.pc = end;
+                state.pc = state.pc.saturating_add(n);
                 state.stack.push(value)?;
             }
             opcode::DUP1..=opcode::DUP16 => {
@@ -1338,12 +1335,17 @@ impl SymbolicExecutor {
             }
             opcode::BLOBHASH => {
                 let index = state.stack.pop()?;
-                let index = state.expect_constrained_usize(
+                let index = state.expect_constrained_word(
                     &mut self.cx,
                     index,
                     "symbolic BLOBHASH index",
                 )?;
-                let hash = state.block.blob_hashes.get(index).copied().unwrap_or_default();
+                // An index past the blob list, including one beyond `usize`, reads zero.
+                let hash = usize::try_from(index)
+                    .ok()
+                    .and_then(|index| state.block.blob_hashes.get(index))
+                    .copied()
+                    .unwrap_or_default();
                 let hash = SymExpr::constant(&mut self.cx, U256::from_be_slice(hash.as_slice()));
                 state.stack.push(hash)?;
             }
@@ -1557,8 +1559,22 @@ impl SymbolicExecutor {
             state.constraints = constraints;
             return Ok(StepOutcome::Failure);
         }
-        if data.is_ok_and(|data| is_assertion_revert(&data)) {
-            return Ok(StepOutcome::Failure);
+        match data {
+            Ok(data) => {
+                if is_assertion_revert(&data) {
+                    return Ok(StepOutcome::Failure);
+                }
+            }
+            // Symbolic revert data fails on the paths where it decodes as an assertion failure.
+            Err(_) => {
+                if let Some(condition) =
+                    assertion_revert_condition(&mut self.cx, &state.return_data)
+                    && let Some(constraints) = self.constraints_for_condition(state, condition)?
+                {
+                    state.constraints = constraints;
+                    return Ok(StepOutcome::Failure);
+                }
+            }
         }
         Ok(StepOutcome::Revert)
     }

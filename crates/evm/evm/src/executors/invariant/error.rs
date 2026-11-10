@@ -216,17 +216,6 @@ pub fn snapshot_edge_fingerprint<FEN: FoundryEvmNetwork>(
     }
     match edges {
         EdgeCoverage::Hash(edges) => Some(keccak256(edges)),
-        EdgeCoverage::Instrumented(hits) => {
-            // Hits are in first-hit order; sort for a fingerprint independent of it.
-            let mut sorted = hits.clone();
-            sorted.sort_unstable();
-            let mut bytes = Vec::with_capacity(sorted.len() * 5);
-            for hit in sorted {
-                bytes.extend_from_slice(&hit.id.to_le_bytes());
-                bytes.push(hit.count);
-            }
-            Some(keccak256(bytes))
-        }
         EdgeCoverage::CollisionFree(hits) => {
             // `From<EdgeCovInspector>` does not sort on the per-call drain path,
             // so sort here for a deterministic fingerprint across runs regardless

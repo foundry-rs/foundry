@@ -18,6 +18,10 @@ contract Issue2629Test is Test {
         vm.selectFork(f2);
 
         assertEq(block.number, 10);
-        assertEq(coinbase.balance, 16250000000000000000);
+        // Only the coinbase the transaction started with is warm (EIP-3651).
+        uint256 start = gasleft();
+        uint256 balance = coinbase.balance;
+        assertGt(start - gasleft(), 2600);
+        assertEq(balance, 16250000000000000000);
     }
 }

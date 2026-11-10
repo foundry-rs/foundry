@@ -1143,6 +1143,16 @@ contract SymbolicSaturatingMul {
             assert(SaturatingMath.saturatingMul(x, y) == 0);
         }
     }
+
+    // Division on narrow operands runs at their width in the solver.
+    function checkNarrowDivision(uint8 x, uint8 d) public pure {
+        require(d != 0);
+        uint256 z;
+        assembly {
+            z := div(x, d)
+        }
+        assert(z == x / d);
+    }
 }
 "#,
     );
@@ -1162,6 +1172,16 @@ contract SymbolicSaturatingMul {
 
     let output = cmd
         .forge_fuse()
+        .args(["test", "--symbolic", "--json", "--match-test", "checkNarrowDivision"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkNarrowDivision(uint8,uint8)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+
+    let output = cmd
+        .forge_fuse()
         .args([
             "test",
             "--symbolic",
@@ -1177,6 +1197,44 @@ contract SymbolicSaturatingMul {
     let result = json_test_result(&output, "checkWrongOverflowResult(uint256,uint256)");
     assert_eq!(result["symbolic"]["status"], "fail_counterexample");
     assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+}
+
+#[forgetest_init]
+fn symbolic_shares_nested_narrow_divisors(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_shares_nested_narrow_divisors");
+
+    let steps = "q := add(1, div(x, q))\n".repeat(12);
+    let source = format!(
+        r#"
+contract SymbolicNestedDivisors {{
+    function checkNestedDivisors(uint8 x, uint8 d) public pure {{
+        uint256 q;
+        assembly {{
+            q := add(d, 1)
+            {steps}
+            q := div(x, q)
+        }}
+        // A divisor of one keeps `x`, and any larger divisor at least halves it. The normalizer
+        // does not decide this, so the property reaches the SMT solver.
+        assert(q == x || q <= x / 2);
+    }}
+}}
+"#
+    );
+    prj.add_test("SymbolicNestedDivisors.t.sol", &source);
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "checkNestedDivisors"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkNestedDivisors(uint8,uint8)");
+    assert_eq!(result["symbolic"]["status"], "pass", "{result}");
+    let max_query_bytes = result["symbolic"]["solver"]["stats"]["smt_max_query_bytes"]
+        .as_u64()
+        .expect("SMT query size");
+    assert!(max_query_bytes > 0 && max_query_bytes < 100_000, "{result}");
 }
 
 #[forgetest_init]
@@ -1375,18 +1433,54 @@ contract SymbolicAssert {
     function checkRejectsFortyTwo(uint256 x) public pure {
         assert(x != 42);
     }
+
+    // The revert data stays symbolic, but the path pins it to an assertion failure.
+    function checkRejectsSymbolicAssertionMessage(uint256 x) public pure {
+        if (x == 42) revert(string(abi.encodePacked("assertion failed: ", bytes32(x))));
+    }
+
+    function checkRejectsSymbolicPanicCode(uint256 x) public pure {
+        assembly {
+            if eq(x, 1) {
+                mstore(0, shl(224, 0x4e487b71))
+                mstore(4, x)
+                revert(0, 0x24)
+            }
+        }
+    }
+
+    // Like the concrete decoder, the message must be valid UTF-8 within its encoded length.
+    function checkIgnoresInvalidUtf8AssertionMessage(uint256 x) public pure {
+        if (x == 255) revert(string(abi.encodePacked("assertion failed: ", bytes1(uint8(x)))));
+    }
+
+    function checkIgnoresTrailingAssertionMessage(uint256 x) public pure {
+        assembly {
+            if eq(x, 1) {
+                mstore(0, shl(224, 0x08c379a0))
+                mstore(4, 0x20)
+                mstore(36, sub(x, 1))
+                mstore(68, "assertion failed")
+                revert(0, 100)
+            }
+        }
+    }
 }
 "#,
     );
 
     let stderr =
-        assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkRejectsFortyTwo"]))
+        assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicAssert"]))
             .failure()
             .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicAssert.t.sol:SymbolicAssert
+Ran 5 tests for test/SymbolicAssert.t.sol:SymbolicAssert
+[PASS] checkIgnoresInvalidUtf8AssertionMessage(uint256) ([METRICS])
+[PASS] checkIgnoresTrailingAssertionMessage(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xf24fa427000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkRejectsFortyTwo(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL: assertion failed: [..]; counterexample: 		[SENDER] [SENDER] calldata=[..] args=[42]] checkRejectsSymbolicAssertionMessage(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[1]] checkRejectsSymbolicPanicCode(uint256) ([METRICS])
+Suite result: FAILED. 2 passed; 3 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
             .get_output()
@@ -1841,18 +1935,30 @@ contract SymbolicRiddle {
 
         assert(false);
     }
+
+    // The query shares `add(a, b)` through a solver helper definition, which the model echoes
+    // without a literal value; the model parser must not give it the next variable's value.
+    function check_shared_subterm_model(uint256 a, uint256 b) external pure {
+        uint256 r;
+        assembly {
+            r := add(mod(0, add(a, b)), sub(iszero(a), b))
+        }
+        require(a != 0);
+        assert(r != type(uint256).max - 244);
+    }
 }
 "#,
     );
 
     let stdout =
-        assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "check_riddle"]))
+        assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicRiddle"]))
             .failure()
             .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicRiddle.t.sol:SymbolicRiddle
+Ran 2 tests for test/SymbolicRiddle.t.sol:SymbolicRiddle
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] check_riddle(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] check_shared_subterm_model(uint256,uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
             .get_output()
@@ -7356,6 +7462,31 @@ contract RoundedProductTest {
             assert(rounded - value < 37);
         }
     }
+
+    function checkSymbolicDivisorFacts(uint256 value, uint256 divisor) external pure {
+        if (divisor == 0) return;
+        uint256 rounded;
+        assembly {
+            rounded := mul(div(value, divisor), divisor)
+        }
+        assert(value % divisor < divisor);
+        assert(rounded <= value);
+    }
+
+    function checkEuclideanIdentities(uint256 value) external pure {
+        assert(value / 7 * 7 + value % 7 == value);
+        assert(value - value % 1e18 == value / 1e18 * 1e18);
+    }
+
+    function checkNarrowFloorError(uint128 value) external pure {
+        uint128 rounded = value / 1000 * 1000;
+        assert(rounded <= value);
+    }
+
+    function checkBasisPointsFee(uint64 amount, uint16 bps) external pure {
+        require(bps <= 10000);
+        assert(uint256(amount) * bps / 10000 <= amount);
+    }
 }
 "#,
     );
@@ -7367,7 +7498,7 @@ contract RoundedProductTest {
             "--symbolic-timeout",
             "30",
             "--match-test",
-            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip)",
+            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|NarrowFloorError|BasisPointsFee)",
         ])
         .assert_success();
         let output = cmd
@@ -7487,6 +7618,11 @@ contract NormalizerBoundariesTest {
             assert(x + y >= x);
         }
     }
+
+    // solc guards checked `x * 2` with `(x * 2) / x == 2`, and `x * 2` is built as `x << 1`.
+    function checkCheckedDoublingGuard(uint256 x) external pure {
+        assert(x * 2 != 30);
+    }
 }
 
 "#,
@@ -7501,6 +7637,7 @@ contract NormalizerBoundariesTest {
         "checkWrappedRoundUpDivision(uint256)",
         "checkRoundTripWithoutRateLowerBound(uint128,uint256)",
         "checkNonnegativeSignedAdditionOverflows(int256,int256)",
+        "checkCheckedDoublingGuard(uint256)",
     ];
     for optimized in [false, true] {
         prj.update_config(|config| config.optimizer = Some(optimized));

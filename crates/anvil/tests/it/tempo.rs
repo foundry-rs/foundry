@@ -16,7 +16,8 @@ use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_genesis::Genesis;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{
-    Address, B256, Bytes, Signature, TxKind, U256, address, aliases::U96, bytes, hex, keccak256,
+    Address, B256, Bytes, Signature, TxKind, U256, address, aliases::U96, b256, bytes, hex,
+    keccak256,
 };
 use alloy_provider::{
     Provider,
@@ -27,7 +28,7 @@ use alloy_rpc_types::{
     Authorization, BlockId, BlockNumberOrTag, EIP1186AccountProofResponse, TransactionRequest,
     anvil::Forking,
     trace::{
-        geth::{GethDebugTracingOptions, GethTrace},
+        geth::{CallConfig, GethDebugTracingOptions, GethTrace, TraceResult},
         parity::Action,
     },
 };
@@ -53,10 +54,10 @@ use foundry_common::{
     FoundryTransactionBuilder,
     provider::{RetryProvider, redact_url},
 };
-use foundry_evm::core::tempo::{
+use foundry_evm_core::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, ITIP20ChannelReserve, PATH_USD_ADDRESS,
     TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, THETA_USD_ADDRESS,
-    active_tempo_precompile_addresses,
+    active_tempo_precompile_addresses, tempo_genesis_contracts,
 };
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::{
@@ -74,16 +75,20 @@ use std::{
     time::Duration,
 };
 use tempo_alloy::{TempoNetwork, primitives::TempoTxEnvelope, rpc::TempoHeaderResponse};
+use tempo_contracts::{
+    CREATEX_ADDRESS,
+    precompiles::{IConfigurableAccount, configurable_account::IConfigurableAccountShim},
+};
 use tempo_dkg_onchain_artifacts::OnchainDkgOutcome;
 use tempo_hardfork::{
     TempoHardfork,
     constants::gas::{TEMPO_T1_BASE_FEE, TEMPO_T7_BASE_FEE_CAP, TEMPO_T7_BASE_FEE_FLOOR},
 };
 use tempo_precompiles::{
-    ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, DEFAULT_FEE_TOKEN,
-    NONCE_PRECOMPILE_ADDRESS, RECEIVE_POLICY_GUARD_ADDRESS, STABLECOIN_DEX_ADDRESS,
-    TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
-    TIP403_REGISTRY_ADDRESS,
+    ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, CONFIGURABLE_ACCOUNT_ADDRESS,
+    DEFAULT_FEE_TOKEN, NONCE_PRECOMPILE_ADDRESS, RECEIVE_POLICY_GUARD_ADDRESS,
+    STABLECOIN_DEX_ADDRESS, TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS,
+    TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
     account_keychain::{
         KeyRestrictions, SignatureType as KeychainSignatureType, TokenLimit as KeychainTokenLimit,
         authorizeKeyCall,
@@ -97,8 +102,11 @@ use tempo_precompiles::{
 use tempo_primitives::{
     AASigned, TempoHeader, TempoSignature, TempoTransaction,
     transaction::{
-        Call, FEE_PAYER_SIGNATURE_MARKER, KeyAuthorization, KeychainSignature, PrimitiveSignature,
-        SignatureType, TEMPO_GAS_PRICE_SCALING_FACTOR, TokenLimit, calc_gas_balance_spending,
+        CONFIGURABLE_ACCOUNT_UPGRADE_DOMAIN, Call, ConfigurableAccountConfig,
+        ConfigurableAccountOwner, ConfigurableAccountSignature, FEE_PAYER_SIGNATURE_MARKER,
+        KeyAuthorization, KeychainSignature, PrimitiveSignature,
+        SIGNATURE_TYPE_CONFIGURABLE_ACCOUNT, SignatureType, TEMPO_GAS_PRICE_SCALING_FACTOR,
+        TokenLimit, calc_gas_balance_spending, configurable_account_digest,
     },
 };
 use tokio::sync::Notify;
@@ -859,7 +867,7 @@ async fn test_tempo_precompiles_have_code() {
     );
 
     // Tempo precompiles should have sentinel bytecode (0xef)
-    for addr in active_tempo_precompile_addresses(TempoHardfork::T5) {
+    for addr in active_tempo_precompile_addresses(tempo_hardfork::TempoHardfork::T5) {
         let code = api.get_code(addr, None).await.unwrap();
         assert!(!code.is_empty(), "Precompile {addr} should have code");
     }
@@ -2186,7 +2194,8 @@ async fn test_tempo_eip7702_replay_signature_override() {
 
 /// The pool admits a Tempo transaction only once the fee payer can cover the maximum fee,
 /// rounded up to a whole fee token unit like the execution precharge: one unit short is rejected,
-/// the exact amount is admitted and mined.
+/// the exact amount is admitted and mined. Calls, estimates and simulations report the shortfall
+/// as missing funds.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_pool_requires_max_fee_rounded_up_in_fee_token() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
@@ -2208,13 +2217,14 @@ async fn test_tempo_pool_requires_max_fee_rounded_up_in_fee_token() {
         "the fee must round up for the boundary to matter"
     );
 
+    let to = Address::random();
     let tx = TxEip1559 {
         chain_id,
         nonce: 0,
         gas_limit,
         max_fee_per_gas,
         max_priority_fee_per_gas: gas_price / 10,
-        to: TxKind::Call(Address::random()),
+        to: TxKind::Call(to),
         ..Default::default()
     };
     let signature = signer.sign_hash(&tx.signature_hash()).await.unwrap();
@@ -2222,7 +2232,45 @@ async fn test_tempo_pool_requires_max_fee_rounded_up_in_fee_token() {
 
     api.anvil_deal_tip20(sender, PATH_USD, required - U256::ONE).await.unwrap();
     let err = provider.send_raw_transaction(&raw).await.unwrap_err();
-    assert!(err.to_string().contains("insufficient fee token balance"), "unexpected error: {err}");
+    let err = err.as_error_resp().unwrap();
+    assert_eq!(err.code, -32003);
+    assert_eq!(
+        err.message,
+        format!("insufficient fee token balance: have {}, need {required}", required - U256::ONE)
+    );
+
+    // Only pool admission names the fee token balance; calls, estimates and simulations report
+    // the shortfall as missing funds.
+    let mut request = WithOtherFields::new(
+        TransactionRequest::default()
+            .with_from(sender)
+            .with_to(to)
+            .with_gas_limit(gas_limit)
+            .with_max_fee_per_gas(max_fee_per_gas)
+            .with_max_priority_fee_per_gas(gas_price / 10),
+    );
+    request.other.insert("feeToken".into(), serde_json::to_value(PATH_USD).unwrap());
+    for err in [
+        provider.call(request.clone()).await.unwrap_err(),
+        provider.estimate_gas(request.clone()).await.unwrap_err(),
+    ] {
+        let err = err.as_error_resp().unwrap();
+        assert_eq!(err.code, -32003);
+        assert_eq!(err.message, "Insufficient funds for gas * price + value");
+    }
+    let err = provider
+        .raw_request::<_, serde_json::Value>(
+            "eth_simulateV1".into(),
+            (
+                serde_json::json!({ "blockStateCalls": [{ "calls": [request] }], "validation": true }),
+                "latest",
+            ),
+        )
+        .await
+        .unwrap_err();
+    let err = err.as_error_resp().unwrap();
+    assert_eq!(err.code, -38014);
+    assert_eq!(err.message, "err: Insufficient funds for gas * price + value");
 
     api.anvil_deal_tip20(sender, PATH_USD, required).await.unwrap();
     let receipt = provider.send_raw_transaction(&raw).await.unwrap().get_receipt().await.unwrap();
@@ -3684,7 +3732,545 @@ async fn test_tempo_simulate_rejects_expiring_nonce_replay_with_different_fee_pa
         .raw_request::<_, serde_json::Value>("eth_simulateV1".into(), (payload,))
         .await
         .unwrap_err();
-    assert!(error.to_string().contains("ExpiringNonceReplay"), "unexpected error: {error}");
+    assert!(
+        error.to_string().contains("expiring nonce transaction already included"),
+        "unexpected error: {error}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_simulate_rejects_configurable_account_witness_without_key_type() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let mut accounts = handle.dev_accounts();
+    let from = accounts.next().unwrap();
+    let owner = accounts.next().unwrap();
+    let config = ConfigurableAccountConfig {
+        salt: B256::ZERO,
+        version: 0,
+        threshold: 1,
+        owners: vec![ConfigurableAccountOwner { owner, weight: 1 }],
+    };
+    let witness = serde_json::json!({
+        "config": Bytes::from(alloy_rlp::encode(&config)),
+        "approvals": [{ "owner": owner, "keyType": "secp256k1" }],
+    });
+
+    // Without a keyType hint the witness alone must still reject, instead of estimating with a
+    // primitive placeholder that omits the quorum's verification and registration costs.
+    for field in ["configurableAccountSimulation", "keyAuthorizationSimulation"] {
+        let request = serde_json::json!({ "from": from, "to": Address::random(), field: witness });
+        for method in ["eth_call", "eth_estimateGas"] {
+            let error = provider
+                .raw_request::<_, serde_json::Value>(
+                    method.into(),
+                    serde_json::json!([request.clone()]),
+                )
+                .await
+                .unwrap_err();
+            assert!(
+                error.to_string().contains("not supported for simulation"),
+                "unexpected {method} error for {field}: {error}"
+            );
+        }
+    }
+}
+
+// ============================================================================
+// T14 Configurable Accounts (TIP-1107, TIP-1111, TIP-1113)
+// ============================================================================
+
+/// Gas limit for configurable account transactions, which pay for the owner quorum and, on the
+/// account's first transaction, for its registration.
+const CONFIGURABLE_ACCOUNT_GAS: u64 = 5_000_000;
+
+// Reference values from viem's Tempo configurable account code: `accounts/Config.ts` derives and
+// commits configurations with `AccountConfig` from `ox/tempo` 0.14.63, the version viem 2.57.17
+// pins. The fixture's owners are the secp256k1 keys `0x11..11` and `0x22..22`, each with weight
+// one, its salt is `0x5a..5a`, and its threshold is two.
+const VIEM_CA_ACCOUNT: Address = address!("0xca35691e6caba70cc9ac71a436d97c20f8313455");
+const VIEM_CA_COMMITMENT_V0: B256 =
+    b256!("0xe8dcac29bbf08814f137469ec65486e7ba3a64802fd8e6459f5d976eaa7d59f3");
+/// The commitment after `updateConfig` to threshold one over the keys `0x22..22` and `0x44..44`.
+const VIEM_CA_COMMITMENT_V1: B256 =
+    b256!("0x842aa9620d9c6703c9f0090711eaaf70008fcd2c28ecb9bbfa94c2571717718f");
+/// The salt and commitment that `upgradeAccount` installs for the account of key `0x33..33`, with
+/// threshold one over key `0x44..44`.
+const VIEM_UPGRADE_SALT: B256 =
+    b256!("0x6de5292500c3e47833fb0914f267172191775513b5aa2dee58955506b04a2477");
+const VIEM_UPGRADE_COMMITMENT: B256 =
+    b256!("0x0961dc1a91395cf4c3be7f43e94cf5b8e27cc94e883f7c7e1dc97e80ea957a8f");
+/// The digests owners approve for the inner digest `0xab..ab` at configuration versions zero and
+/// one of the fixture account.
+const VIEM_CA_DIGEST_V0: B256 =
+    b256!("0xcccee0fa20dc7b2b4f237eb9b602bd1c10380fc32337eeba222f270f5d821421");
+const VIEM_CA_DIGEST_V1: B256 =
+    b256!("0xaf6de5ac7d9ac8ff9f0d0c120a21bc6d3faf5707937c31ba8fafc6afde3ecc36");
+/// The `0x05` signature in which both fixture owners approve the inner digest `0xab..ab`.
+const VIEM_CA_SIGNATURE_V0: Bytes = bytes!(
+    "05f8f194ca35691e6caba70cc9ac71a436d97c20f8313455f852a05a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a8002eed6941563915e194d8cfba1943570603f7606a311550801d69419e7e376e7c213b7e7e7e46cc70a5dd086daff2a01f886b8412643a5fc2750436644b331c3015fbc04c92cd32e71a8721b18f095559bb2f4f931a303884e089bb4b647afe7ab6f33b0964ae15ca3d2825ddb72e4afb26c63c51bb84185964d7a066d5facab3dc86e3ea724a77c3f6d1c93f283af7e2c459b19c0c55c4d119639dbef67a5c6685e2226ed69fe4ec953cc0f36ac35f543d7153efe04101c"
+);
+
+/// A configurable account and the owner keys these tests hold for it.
+struct TestConfigurableAccount {
+    address: Address,
+    config: ConfigurableAccountConfig,
+    keys: Vec<PrivateKeySigner>,
+}
+
+impl TestConfigurableAccount {
+    /// The fixture account that the viem reference values describe.
+    fn fixture() -> Self {
+        let keys = vec![seeded_key(0x11), seeded_key(0x22)];
+        let config = configurable_account_config(B256::repeat_byte(0x5a), 0, 2, &keys);
+        Self { address: config.derive_account().unwrap(), config, keys }
+    }
+
+    /// The configuration that the primitive account `root` installs with `upgradeAccount`.
+    fn upgraded(root: Address, keys: Vec<PrivateKeySigner>) -> Self {
+        let salt = keccak256([CONFIGURABLE_ACCOUNT_UPGRADE_DOMAIN, root.as_slice()].concat());
+        let config = configurable_account_config(salt, 1, 1, &keys);
+        Self { address: root, config, keys }
+    }
+
+    /// The `upgradeAccount` call that commits this configuration for its address.
+    fn upgrade_call(&self) -> Call {
+        configurable_account_call(IConfigurableAccount::upgradeAccountCall {
+            threshold: self.config.threshold,
+            owners: abi_owners(&self.config),
+        })
+    }
+
+    /// The `updateConfig` call that replaces the owners with `keys` at threshold one, and the
+    /// account as it stands after that call, holding only `signers` of the new owners.
+    fn update(&self, keys: &[PrivateKeySigner], signers: Vec<PrivateKeySigner>) -> (Call, Self) {
+        let config =
+            configurable_account_config(self.config.salt, self.config.version + 1, 1, keys);
+        let call = configurable_account_call(IConfigurableAccount::updateConfigCall {
+            current: IConfigurableAccount::ConfigurableAccountConfig {
+                salt: self.config.salt,
+                version: self.config.version,
+                threshold: self.config.threshold,
+                owners: abi_owners(&self.config),
+            },
+            threshold: config.threshold,
+            owners: abi_owners(&config),
+        });
+        (call, Self { address: self.address, config, keys: signers })
+    }
+
+    /// Returns the approvals of every owner whose key this account holds over `inner`, signed
+    /// for the current configuration version.
+    async fn approve(&self, inner: B256) -> ConfigurableAccountSignature {
+        let digest = configurable_account_digest(inner, self.address, self.config.version);
+        let mut signatures = Vec::new();
+        for owner in &self.config.owners {
+            if let Some(key) = self.keys.iter().find(|key| key.address() == owner.owner) {
+                signatures
+                    .push(PrimitiveSignature::Secp256k1(key.sign_hash(&digest).await.unwrap()));
+            }
+        }
+        ConfigurableAccountSignature::try_new(self.address, self.config.clone(), signatures)
+            .unwrap()
+    }
+
+    async fn sign(&self, tx: &TempoTransaction) -> TempoSignature {
+        TempoSignature::ConfigurableAccount(self.approve(tx.signature_hash()).await)
+    }
+}
+
+fn seeded_key(byte: u8) -> PrivateKeySigner {
+    PrivateKeySigner::from_bytes(&B256::repeat_byte(byte)).unwrap()
+}
+
+/// A configuration in which each key in `keys` is an owner of weight one.
+fn configurable_account_config(
+    salt: B256,
+    version: u64,
+    threshold: u8,
+    keys: &[PrivateKeySigner],
+) -> ConfigurableAccountConfig {
+    let mut owners = keys
+        .iter()
+        .map(|key| ConfigurableAccountOwner { owner: key.address(), weight: 1 })
+        .collect::<Vec<_>>();
+    owners.sort_by_key(|owner| owner.owner);
+    ConfigurableAccountConfig { salt, version, threshold, owners }
+}
+
+fn abi_owners(
+    config: &ConfigurableAccountConfig,
+) -> Vec<IConfigurableAccount::ConfigurableAccountOwner> {
+    config
+        .owners
+        .iter()
+        .map(|owner| IConfigurableAccount::ConfigurableAccountOwner {
+            owner: owner.owner,
+            weight: owner.weight,
+        })
+        .collect()
+}
+
+fn configurable_account_call(call: impl SolCall) -> Call {
+    Call {
+        to: TxKind::Call(CONFIGURABLE_ACCOUNT_ADDRESS),
+        value: U256::ZERO,
+        input: call.abi_encode().into(),
+    }
+}
+
+/// A protocol-lane Tempo transaction with `nonce` that pays its fees in AlphaUSD.
+async fn configurable_account_tx(
+    provider: &RetryProvider,
+    nonce: u64,
+    calls: Vec<Call>,
+) -> TempoTransaction {
+    let base_fee = provider.get_gas_price().await.unwrap();
+    TempoTransaction {
+        chain_id: provider.get_chain_id().await.unwrap(),
+        fee_token: Some(ALPHA_USD),
+        max_priority_fee_per_gas: base_fee / 10,
+        max_fee_per_gas: base_fee * 2,
+        gas_limit: CONFIGURABLE_ACCOUNT_GAS,
+        calls,
+        access_list: Default::default(),
+        nonce_key: U256::ZERO,
+        nonce,
+        fee_payer_signature: None,
+        valid_before: None,
+        valid_after: None,
+        key_authorization: None,
+        tempo_authorization_list: vec![],
+    }
+}
+
+/// Sends `tx` signed with `signature` and returns its receipt, or the error the RPC rejected it
+/// with.
+async fn send_signed_tempo_tx(
+    provider: &RetryProvider,
+    tx: TempoTransaction,
+    signature: TempoSignature,
+) -> Result<alloy_network::AnyTransactionReceipt, String> {
+    let encoded = TempoTxEnvelope::AA(tx.into_signed(signature)).encoded_2718();
+    let pending = provider.send_raw_transaction(&encoded).await.map_err(|err| err.to_string())?;
+    Ok(pending.get_receipt().await.unwrap())
+}
+
+async fn config_commitment(provider: &RetryProvider, account: Address) -> B256 {
+    IConfigurableAccount::new(CONFIGURABLE_ACCOUNT_ADDRESS, provider)
+        .getConfigCommitment(account)
+        .call()
+        .await
+        .unwrap()
+}
+
+/// Returns the revert data of a Tempo `eth_call` of `call` from `from`.
+async fn tempo_call_revert_data(provider: &RetryProvider, from: Address, call: Call) -> Bytes {
+    let error = provider
+        .raw_request::<_, Bytes>("eth_call".into(), (tempo_call_request(from, [call]),))
+        .await
+        .unwrap_err();
+    error
+        .as_error_resp()
+        .and_then(|payload| payload.as_revert_data())
+        .unwrap_or_else(|| panic!("expected a revert with data, got {error}"))
+}
+
+/// Foundry's configurable account derivation, commitments, approval digests and `0x05` encoding
+/// match viem's.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_configurable_account_matches_viem_reference() {
+    let account = TestConfigurableAccount::fixture();
+    assert_eq!(account.address, VIEM_CA_ACCOUNT);
+    assert_eq!(account.config.commitment().unwrap(), VIEM_CA_COMMITMENT_V0);
+
+    let inner = B256::repeat_byte(0xab);
+    assert_eq!(configurable_account_digest(inner, account.address, 0), VIEM_CA_DIGEST_V0);
+    assert_eq!(configurable_account_digest(inner, account.address, 1), VIEM_CA_DIGEST_V1);
+    let signature = TempoSignature::ConfigurableAccount(account.approve(inner).await);
+    assert_eq!(signature.to_bytes(), VIEM_CA_SIGNATURE_V0);
+
+    let (_, updated) = account.update(&[seeded_key(0x22), seeded_key(0x44)], vec![]);
+    assert_eq!(updated.config.commitment().unwrap(), VIEM_CA_COMMITMENT_V1);
+
+    let upgraded =
+        TestConfigurableAccount::upgraded(seeded_key(0x33).address(), vec![seeded_key(0x44)]);
+    assert_eq!(upgraded.config.salt, VIEM_UPGRADE_SALT);
+    assert_eq!(upgraded.config.commitment().unwrap(), VIEM_UPGRADE_COMMITMENT);
+}
+
+/// A derived configurable account registers on its first `0x05` transaction and rotates its
+/// owners with `updateConfig`, and a single-key account migrates in place with `upgradeAccount`.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_t14_configurable_account_lifecycle() {
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let provider = handle.http_provider();
+    let observer = Address::repeat_byte(0x73);
+    let noop = Call { to: TxKind::Call(observer), value: U256::ZERO, input: Bytes::new() };
+
+    // Derivation needs no state: the account is unregistered and has no code until its first
+    // transaction.
+    let account = TestConfigurableAccount::fixture();
+    assert_eq!(account.address, VIEM_CA_ACCOUNT);
+    let registry = IConfigurableAccount::new(CONFIGURABLE_ACCOUNT_ADDRESS, &provider);
+    assert_eq!(
+        registry
+            .deriveAccount(
+                account.config.salt,
+                account.config.threshold,
+                abi_owners(&account.config)
+            )
+            .call()
+            .await
+            .unwrap(),
+        VIEM_CA_ACCOUNT
+    );
+    assert_eq!(config_commitment(&provider, account.address).await, B256::ZERO);
+    assert!(provider.get_code_at(account.address).await.unwrap().is_empty());
+    provider
+        .raw_request::<_, ()>(
+            "anvil_dealTIP20".into(),
+            (account.address, ALPHA_USD, U256::from(1_000_000_000_000u64)),
+        )
+        .await
+        .unwrap();
+
+    // The first transaction carries the version-zero quorum and registers the account.
+    let tx = configurable_account_tx(&provider, 0, vec![noop.clone()]).await;
+    let signature = account.sign(&tx).await;
+    assert_eq!(signature.to_bytes()[0], SIGNATURE_TYPE_CONFIGURABLE_ACCOUNT);
+    let receipt = send_signed_tempo_tx(&provider, tx, signature).await.unwrap();
+    assert!(receipt.status(), "registration should succeed: {receipt:?}");
+    assert_eq!(receipt.from, VIEM_CA_ACCOUNT);
+    assert_eq!(config_commitment(&provider, account.address).await, VIEM_CA_COMMITMENT_V0);
+    assert_eq!(provider.get_transaction_count(account.address).await.unwrap(), 1);
+
+    // Registration installs the account shim, which answers ERC-1271 for the current owners.
+    assert_eq!(provider.get_code_at(account.address).await.unwrap(), bytes!("ef"));
+    let hash = B256::repeat_byte(0x5a);
+    let is_valid_signature = IConfigurableAccountShim::isValidSignatureCall {
+        hash,
+        signature: TempoSignature::ConfigurableAccount(account.approve(hash).await).to_bytes(),
+    };
+    let magic = provider
+        .call(
+            WithOtherFields::new(TransactionRequest::default())
+                .with_to(account.address)
+                .with_input(is_valid_signature.abi_encode()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(magic[..4], IConfigurableAccountShim::isValidSignatureCall::SELECTOR);
+
+    // The version-zero quorum rotates to threshold one over keys `0x22..22` and `0x44..44`.
+    let (update, rotated) =
+        account.update(&[seeded_key(0x22), seeded_key(0x44)], vec![seeded_key(0x44)]);
+    let tx = configurable_account_tx(&provider, 1, vec![update]).await;
+    let signature = account.sign(&tx).await;
+    let receipt = send_signed_tempo_tx(&provider, tx, signature).await.unwrap();
+    assert!(receipt.status(), "updateConfig should succeed: {receipt:?}");
+    assert_eq!(config_commitment(&provider, account.address).await, VIEM_CA_COMMITMENT_V1);
+    let updated = receipt
+        .inner
+        .logs()
+        .iter()
+        .find_map(|log| {
+            IConfigurableAccount::ConfigurableAccountConfigUpdated::decode_log(&log.inner).ok()
+        })
+        .expect("updateConfig should emit ConfigurableAccountConfigUpdated");
+    assert_eq!(updated.address, CONFIGURABLE_ACCOUNT_ADDRESS);
+    assert_eq!(updated.account, account.address);
+    assert_eq!(updated.version, 1);
+    assert_eq!(updated.threshold, 1);
+    assert_eq!(updated.owners, abi_owners(&rotated.config));
+
+    // The retired version-zero quorum no longer authorizes, and key `0x44..44` alone now does.
+    let tx = configurable_account_tx(&provider, 2, vec![noop.clone()]).await;
+    let signature = account.sign(&tx).await;
+    let error = send_signed_tempo_tx(&provider, tx.clone(), signature).await.unwrap_err();
+    assert!(
+        error.ends_with(&format!(
+            "account configuration commitment mismatch: expected {VIEM_CA_COMMITMENT_V1}, actual \
+             {VIEM_CA_COMMITMENT_V0}"
+        )),
+        "unexpected error: {error}"
+    );
+    let signature = rotated.sign(&tx).await;
+    let receipt = send_signed_tempo_tx(&provider, tx, signature).await.unwrap();
+    assert!(receipt.status(), "the rotated owner should authorize: {receipt:?}");
+
+    // A single-key account migrates in place, keeping its address.
+    let root = seeded_key(0x33);
+    let upgraded = TestConfigurableAccount::upgraded(root.address(), vec![seeded_key(0x44)]);
+    provider
+        .raw_request::<_, ()>(
+            "anvil_dealTIP20".into(),
+            (root.address(), ALPHA_USD, U256::from(1_000_000_000_000u64)),
+        )
+        .await
+        .unwrap();
+    let tx = configurable_account_tx(&provider, 0, vec![upgraded.upgrade_call()]).await;
+    let signature = root.sign_hash(&tx.signature_hash()).await.unwrap();
+    let receipt = send_signed_tempo_tx(&provider, tx, signature.into()).await.unwrap();
+    assert!(receipt.status(), "upgradeAccount should succeed: {receipt:?}");
+    assert_eq!(config_commitment(&provider, root.address()).await, VIEM_UPGRADE_COMMITMENT);
+    let event = receipt
+        .inner
+        .logs()
+        .iter()
+        .find_map(|log| IConfigurableAccount::AccountUpgraded::decode_log(&log.inner).ok())
+        .expect("upgradeAccount should emit AccountUpgraded");
+    assert_eq!(event.account, root.address());
+    assert_eq!(event.commitment, VIEM_UPGRADE_COMMITMENT);
+    assert_eq!(event.salt, VIEM_UPGRADE_SALT);
+
+    // The root key is retired (TIP-1113), and the new owner signs for the same address.
+    let tx = configurable_account_tx(&provider, 1, vec![noop]).await;
+    let signature = root.sign_hash(&tx.signature_hash()).await.unwrap();
+    let error = send_signed_tempo_tx(&provider, tx.clone(), signature.into()).await.unwrap_err();
+    assert!(
+        error.ends_with(&format!(
+            "root key of {} is retired and cannot act as the transaction sender",
+            root.address()
+        )),
+        "unexpected error: {error}"
+    );
+    let signature = upgraded.sign(&tx).await;
+    let receipt = send_signed_tempo_tx(&provider, tx, signature).await.unwrap();
+    assert!(receipt.status(), "the upgraded account's owner should authorize: {receipt:?}");
+    assert_eq!(receipt.from, root.address());
+}
+
+/// From T14 a channel's voucher signer must not be a retired root key: `open` and a nonzero
+/// `topUp` revert with `RootKeyRetired` for a configurable account and for an upgraded account,
+/// while a zero `topUp` stays allowed.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_t14_channel_reserve_rejects_retired_voucher_signers() {
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let provider = handle.http_provider();
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let (payer, payee) = (accounts[0], accounts[1]);
+    let reserve = ITIP20ChannelReserve::new(TIP20_CHANNEL_RESERVE_ADDRESS, &provider);
+    let account = TestConfigurableAccount::fixture();
+    let root = seeded_key(0x33);
+    let upgraded = TestConfigurableAccount::upgraded(root.address(), vec![seeded_key(0x44)]);
+    for signer in [account.address, root.address()] {
+        provider
+            .raw_request::<_, ()>(
+                "anvil_dealTIP20".into(),
+                (signer, ALPHA_USD, U256::from(1_000_000_000_000u64)),
+            )
+            .await
+            .unwrap();
+    }
+    let open = |signer: Address, salt: u8| Call {
+        to: TxKind::Call(TIP20_CHANNEL_RESERVE_ADDRESS),
+        value: U256::ZERO,
+        input: reserve
+            .open(payee, Address::ZERO, PATH_USD, U96::from(1_000), B256::repeat_byte(salt), signer)
+            .calldata()
+            .clone(),
+    };
+
+    // Before they retire, both signers can be named on new channels.
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    let mut tx = configurable_account_tx(
+        &provider,
+        0,
+        vec![open(account.address, 0x01), open(root.address(), 0x02)],
+    )
+    .await;
+    tx.nonce_key = U256::MAX;
+    tx.valid_before = NonZeroU64::new(block.header.timestamp + 25);
+    let signature = dev_key(0).sign_hash(&tx.signature_hash()).await.unwrap();
+    let receipt = send_signed_tempo_tx(&provider, tx, signature.into()).await.unwrap();
+    assert!(receipt.status(), "opening channels should succeed: {receipt:?}");
+    let descriptors = receipt
+        .inner
+        .logs()
+        .iter()
+        .filter_map(|log| ITIP20ChannelReserve::ChannelOpened::decode_log(&log.inner).ok())
+        .map(|opened| ITIP20ChannelReserve::ChannelDescriptor {
+            payer: opened.payer,
+            payee: opened.payee,
+            operator: opened.operator,
+            token: opened.token,
+            salt: opened.salt,
+            authorizedSigner: opened.authorizedSigner,
+            expiringNonceHash: opened.expiringNonceHash,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        descriptors.iter().map(|descriptor| descriptor.authorizedSigner).collect::<Vec<_>>(),
+        [account.address, root.address()]
+    );
+
+    // Register the configurable account and upgrade the single-key account.
+    let noop = Call { to: TxKind::Call(payee), value: U256::ZERO, input: Bytes::new() };
+    let tx = configurable_account_tx(&provider, 0, vec![noop]).await;
+    let signature = account.sign(&tx).await;
+    assert!(send_signed_tempo_tx(&provider, tx, signature).await.unwrap().status());
+    let tx = configurable_account_tx(&provider, 0, vec![upgraded.upgrade_call()]).await;
+    let signature = root.sign_hash(&tx.signature_hash()).await.unwrap();
+    assert!(send_signed_tempo_tx(&provider, tx, signature.into()).await.unwrap().status());
+
+    for (descriptor, signer) in descriptors.iter().zip([account.address, root.address()]) {
+        let retired =
+            Bytes::from(ITIP20ChannelReserve::RootKeyRetired { account: signer }.abi_encode());
+        assert_eq!(tempo_call_revert_data(&provider, payer, open(signer, 0x03)).await, retired);
+
+        let top_up = |amount: u64| Call {
+            to: TxKind::Call(TIP20_CHANNEL_RESERVE_ADDRESS),
+            value: U256::ZERO,
+            input: reserve.topUp(descriptor.clone(), U96::from(amount)).calldata().clone(),
+        };
+        assert_eq!(tempo_call_revert_data(&provider, payer, top_up(1)).await, retired);
+        provider
+            .raw_request::<_, Bytes>("eth_call".into(), (tempo_call_request(payer, [top_up(0)]),))
+            .await
+            .unwrap();
+    }
+
+    // A retired account that opens a channel without an authorized signer is its own voucher
+    // signer.
+    let retired =
+        Bytes::from(ITIP20ChannelReserve::RootKeyRetired { account: account.address }.abi_encode());
+    assert_eq!(
+        tempo_call_revert_data(&provider, account.address, open(Address::ZERO, 0x04)).await,
+        retired
+    );
+
+    // A mined top-up reverts too and leaves the deposit unchanged.
+    let channel_id = reserve
+        .computeChannelId(
+            descriptors[0].payer,
+            descriptors[0].payee,
+            descriptors[0].operator,
+            descriptors[0].token,
+            descriptors[0].salt,
+            descriptors[0].authorizedSigner,
+            descriptors[0].expiringNonceHash,
+        )
+        .call()
+        .await
+        .unwrap();
+    let nonce = provider.get_transaction_count(payer).await.unwrap();
+    let tx = configurable_account_tx(
+        &provider,
+        nonce,
+        vec![Call {
+            to: TxKind::Call(TIP20_CHANNEL_RESERVE_ADDRESS),
+            value: U256::ZERO,
+            input: reserve.topUp(descriptors[0].clone(), U96::from(1)).calldata().clone(),
+        }],
+    )
+    .await;
+    let signature = dev_key(0).sign_hash(&tx.signature_hash()).await.unwrap();
+    let receipt = send_signed_tempo_tx(&provider, tx, signature.into()).await.unwrap();
+    assert!(!receipt.status(), "a top-up for a retired signer should revert: {receipt:?}");
+    assert_eq!(reserve.getChannelState(channel_id).call().await.unwrap().deposit, U96::from(1_000));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -7069,18 +7655,18 @@ async fn tempo_finalization(provider: &RetryProvider, height: u64) -> TempoCerti
 fn assert_tempo_certificate(identity: &TempoConsensusIdentity, certified: &TempoCertifiedBlock) {
     let bytes = hex::decode(&certified.certificate).unwrap();
     assert_eq!(certified.certificate, hex::encode(&bytes));
-    let mut cursor = bytes.as_slice();
+    let mut cursor = commonware_codec::Copying(bytes.as_slice());
     assert_eq!(UInt::<u64>::read(&mut cursor).unwrap().0, certified.epoch);
     assert_eq!(UInt::<u64>::read(&mut cursor).unwrap().0, certified.view);
-    let round_length = bytes.len() - cursor.len();
+    let round_length = bytes.len() - cursor.0.len();
     assert_eq!(UInt::<u64>::read(&mut cursor).unwrap().0, certified.view - 1);
-    assert_eq!(&cursor[..32], certified.digest.as_slice());
-    cursor = &cursor[32..];
-    let proposal_length = bytes.len() - cursor.len();
+    assert_eq!(&cursor.0[..32], certified.digest.as_slice());
+    cursor.0 = &cursor.0[32..];
+    let proposal_length = bytes.len() - cursor.0.len();
     let vote = G1::read(&mut cursor).unwrap();
     let seed = G1::read(&mut cursor).unwrap();
-    assert!(cursor.is_empty());
-    let public = G2::decode(identity.identity.as_ref()).unwrap();
+    assert!(cursor.0.is_empty());
+    let public = G2::decode(commonware_codec::Copying(identity.identity.as_ref())).unwrap();
     ops::verify_message::<MinSig>(&public, b"TEMPO_FINALIZE", &bytes[..proposal_length], &vote)
         .unwrap();
     ops::verify_message::<MinSig>(&public, b"TEMPO_SEED", &bytes[..round_length], &seed).unwrap();
@@ -7911,9 +8497,10 @@ async fn tempo_consensus_context_obeys_hardfork_boundary() {
             assert_eq!(finalization.block.header.consensus_context.is_some(), hardfork.is_t4());
             assert_tempo_certificate(&identity, &finalization);
             if height == 2 {
-                let outcome =
-                    OnchainDkgOutcome::decode(finalization.block.header.extra_data().as_ref())
-                        .unwrap();
+                let outcome = OnchainDkgOutcome::decode(commonware_codec::Copying(
+                    finalization.block.header.extra_data().as_ref(),
+                ))
+                .unwrap();
                 assert_eq!(outcome.epoch, 1);
                 assert_eq!(
                     outcome.network_identity().encode().as_ref(),
@@ -8080,13 +8667,19 @@ async fn tempo_consensus_rotation_after_boundary_waits_for_full_dkg() {
         assert_eq!(subscriptions::next_event(&mut events).await.certified, finalized);
     }
     let boundary = tempo_finalization(&provider, 5).await;
-    let ceremony = OnchainDkgOutcome::decode(boundary.block.header.extra_data().as_ref()).unwrap();
+    let ceremony = OnchainDkgOutcome::decode(commonware_codec::Copying(
+        boundary.block.header.extra_data().as_ref(),
+    ))
+    .unwrap();
     assert_eq!(ceremony.epoch, 2);
     assert!(ceremony.is_next_full_dkg);
     assert_eq!(ceremony.network_identity().encode().as_ref(), initial.identity.as_ref());
     assert_ne!(ceremony.next_players, *ceremony.output.players());
     let boundary = tempo_finalization(&provider, 8).await;
-    let outcome = OnchainDkgOutcome::decode(boundary.block.header.extra_data().as_ref()).unwrap();
+    let outcome = OnchainDkgOutcome::decode(commonware_codec::Copying(
+        boundary.block.header.extra_data().as_ref(),
+    ))
+    .unwrap();
     assert_eq!(outcome.epoch, 3);
     assert!(!outcome.is_next_full_dkg);
     assert_eq!(outcome.network_identity().encode().as_ref(), rotated.identity.as_ref());
@@ -8117,7 +8710,10 @@ async fn tempo_consensus_single_block_epochs_announce_before_rotation() {
     let boundary = tempo_finalization(&provider, 1).await;
     assert_eq!((boundary.epoch, boundary.view), (1, 1));
     assert_tempo_certificate(&initial, &boundary);
-    let outcome = OnchainDkgOutcome::decode(boundary.block.header.extra_data().as_ref()).unwrap();
+    let outcome = OnchainDkgOutcome::decode(commonware_codec::Copying(
+        boundary.block.header.extra_data().as_ref(),
+    ))
+    .unwrap();
     assert_eq!(outcome.epoch, 2);
     assert!(outcome.is_next_full_dkg);
     assert_eq!(outcome.network_identity().encode().as_ref(), initial.identity.as_ref());
@@ -8125,7 +8721,10 @@ async fn tempo_consensus_single_block_epochs_announce_before_rotation() {
     api.mine_one().await.unwrap();
     let boundary = tempo_finalization(&provider, 2).await;
     assert_tempo_certificate(&initial, &boundary);
-    let outcome = OnchainDkgOutcome::decode(boundary.block.header.extra_data().as_ref()).unwrap();
+    let outcome = OnchainDkgOutcome::decode(commonware_codec::Copying(
+        boundary.block.header.extra_data().as_ref(),
+    ))
+    .unwrap();
     assert_eq!(outcome.epoch, 3);
     assert!(!outcome.is_next_full_dkg);
     assert_eq!(outcome.network_identity().encode().as_ref(), rotated.identity.as_ref());
@@ -8591,6 +9190,69 @@ async fn tempo_consensus_fork_infers_epoch_length_from_chain_config() {
             }
             Err(expected) => assert_eq!(result.err().unwrap().to_string(), expected),
         }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_genesis_contract_nonces() {
+    let (api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+    let provider = handle.http_provider();
+
+    for reset in [false, true] {
+        if reset {
+            api.anvil_set_nonce(CREATEX_ADDRESS, U256::from(7)).await.unwrap();
+            api.anvil_set_nonce(PATH_USD, U256::from(7)).await.unwrap();
+            api.anvil_reset(None).await.unwrap();
+        }
+
+        for (address, code) in tempo_genesis_contracts() {
+            assert_eq!(provider.get_transaction_count(address).await.unwrap(), 1, "{address}");
+            assert_eq!(provider.get_code_at(address).await.unwrap(), code, "{address}");
+        }
+        for address in active_tempo_precompile_addresses(TempoHardfork::T14).chain([
+            PATH_USD,
+            ALPHA_USD_ADDRESS,
+            BETA_USD_ADDRESS,
+            THETA_USD_ADDRESS,
+        ]) {
+            assert_eq!(provider.get_transaction_count(address).await.unwrap(), 1, "{address}");
+        }
+
+        // Independent of the shared table: CreateX derives CREATE addresses from its nonce.
+        assert_eq!(provider.get_transaction_count(CREATEX_ADDRESS).await.unwrap(), 1);
+    }
+}
+
+/// Call traces with logs skip the fee token transfers Tempo emits outside any call frame, both for
+/// a transaction and for a block of several, which replays them together.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_call_tracer_with_logs() {
+    let (api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let mut hashes = Vec::new();
+    for _ in 0..2 {
+        let transfer = IERC20::transferCall { to: Address::random(), amount: U256::from(1) };
+        let request = TransactionRequest::default()
+            .from(sender)
+            .to(PATH_USD)
+            .with_input(transfer.abi_encode());
+        let pending = provider.send_transaction(WithOtherFields::new(request)).await.unwrap();
+        hashes.push(*pending.tx_hash());
+    }
+    api.mine_one().await.unwrap();
+
+    let options = GethDebugTracingOptions::call_tracer(CallConfig::default().with_log());
+    let block_traces = provider
+        .debug_trace_block_by_number(BlockNumberOrTag::Latest, options.clone())
+        .await
+        .unwrap();
+    let tx_trace = provider.debug_trace_transaction(hashes[0], options).await.unwrap();
+    assert_eq!(block_traces.len(), 2);
+    for trace in block_traces.iter().map(TraceResult::success).chain([Some(&tx_trace)]) {
+        let Some(GethTrace::CallTracer(frame)) = trace else { panic!("expected call trace") };
+        assert_eq!(frame.logs.len(), 1);
+        assert_eq!(frame.logs[0].address, Some(PATH_USD));
     }
 }
 

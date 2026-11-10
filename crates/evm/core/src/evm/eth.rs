@@ -1,240 +1,297 @@
-use alloy_evm::{
-    EthEvmFactory, Evm, EvmEnv, EvmFactory, eth::EthEvmContext, precompiles::PrecompilesMap,
+//! Ethereum on evm2.
+
+use super::{
+    EvmEnv, FoundryEvmFactory, FoundryEvmNetwork, FoundryExecutionHooks, FoundryTxConversion,
+    TxPayload, eth_envelope_from_any_rpc, eth_tx, with_eip7702_delegations,
 };
-use alloy_network::Ethereum;
-use alloy_primitives::{Address, Bytes};
-use foundry_evm_networks::apply_bsc_p256_precompile;
-use foundry_fork_db::DatabaseError;
-use revm::{
-    ExecuteEvm, SystemCallEvm,
-    context::{
-        BlockEnv, CfgEnv, Context, Evm as RevmEvm, Journal, TxEnv,
-        result::{EVMError, HaltReason, ResultAndState},
-    },
-    handler::{EthFrame, EvmTr, FrameResult, instructions::EthInstructions},
-    inspector::InspectorHandler,
-    interpreter::{FrameInput, InstructionResult, interpreter::EthInterpreter},
-    primitives::hardfork::SpecId,
+use alloy_consensus::transaction::Recovered;
+use alloy_network::{AnyRpcTransaction, Ethereum};
+use alloy_primitives::{Address, Bytes, U256, address};
+use evm2::{
+    BaseEvmTypes, Evm, EvmTypes, PrecompileError, Precompiles, SpecId, TxResult, Version,
+    ethereum::TxEnvelope,
+    evm::precompile::{PrecompileOutput, PrecompileProvider},
+    interpreter::{GasTracker, Message},
+    precompiles::{MovePrecompileError, PrecompileHalt, PrecompileId, PrecompileResult},
+    registry::TxRegistry,
+};
+use foundry_evm_networks::{
+    NetworkConfigs,
+    celo::transfer::{CELO_TRANSFER_ADDRESS, CELO_TRANSFER_PRECOMPILE_NAME},
 };
 
-use crate::{
-    FoundryContextExt, FoundryInspectorExt,
-    backend::{DatabaseExt, JournaledState},
-    edgecov::install_hooks,
-    evm::{
-        FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm, NestedEvmFor,
-        plain::PlainLoopHandler, run_inspected_frame,
-    },
-};
+/// Gas Celo's transfer precompile charges.
+const CELO_TRANSFER_GAS_COST: u64 = 9000;
 
+/// Address of BSC's `P256VERIFY` precompile.
+const BSC_P256_ADDRESS: Address = address!("0x0000000000000000000000000000000000000100");
+
+const BSC_MAINNET_CHAIN_ID: u64 = 56;
+const BSC_TESTNET_CHAIN_ID: u64 = 97;
+const BSC_MAINNET_HABER_TIMESTAMP: u64 = 1_718_863_500;
+const BSC_TESTNET_HABER_TIMESTAMP: u64 = 1_716_962_820;
+const BSC_MAINNET_OSAKA_TIMESTAMP: u64 = 1_777_343_400;
+const BSC_TESTNET_OSAKA_TIMESTAMP: u64 = 1_774_319_400;
+
+/// Ethereum evm2 factory over evm2's stock type family.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EthEvmFactory {
+    /// Whether Celo's transfer precompile is installed.
+    celo: bool,
+}
+
+/// Ethereum EVM network.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct EthEvmNetwork;
+
 impl FoundryEvmNetwork for EthEvmNetwork {
     type Network = Ethereum;
     type EvmFactory = EthEvmFactory;
 }
 
-type EthEvmHandler<'db, I> =
-    PlainLoopHandler<EthRevmEvm<'db, I>, EVMError<DatabaseError>, EthFrame>;
+impl FoundryExecutionHooks for BaseEvmTypes {}
 
-pub type EthRevmEvm<'db, I> = RevmEvm<
-    EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>,
-    I,
-    EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>>,
-    PrecompilesMap,
-    EthFrame,
->;
-
-/// The Ethereum EVM of Foundry's executors: alloy's `EthEvm`, except that inspected transactions
-/// run on [`PlainLoopHandler`], so frames skip the per-instruction callbacks the inspector does not
-/// need.
-pub struct FoundryEthEvm<'db, I> {
-    inner: EthRevmEvm<'db, I>,
-    inspect: bool,
-}
-
-impl<'db, I> FoundryEthEvm<'db, I> {
-    /// Wraps a revm EVM; `inspect` selects whether [`Evm::transact`] calls the inspector.
-    pub const fn new(inner: EthRevmEvm<'db, I>, inspect: bool) -> Self {
-        Self { inner, inspect }
+impl FoundryTxConversion<Ethereum> for BaseEvmTypes {
+    fn evm_tx(
+        envelope: alloy_consensus::TxEnvelope,
+        sender: Address,
+        _payload: TxPayload,
+    ) -> eyre::Result<Recovered<TxEnvelope>> {
+        Ok(Recovered::new_unchecked(eth_tx(envelope), sender))
     }
 
-    /// Consumes self and returns the revm EVM.
-    pub fn into_inner(self) -> EthRevmEvm<'db, I> {
-        self.inner
-    }
-}
-
-impl<'db, I> std::ops::Deref for FoundryEthEvm<'db, I> {
-    type Target = EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner.ctx
-    }
-}
-
-impl<I> std::ops::DerefMut for FoundryEthEvm<'_, I> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner.ctx
-    }
-}
-
-impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>>> Evm
-    for FoundryEthEvm<'db, I>
-{
-    type DB = &'db mut dyn DatabaseExt<EthEvmFactory>;
-    type Tx = TxEnv;
-    type Error = EVMError<DatabaseError>;
-    type HaltReason = HaltReason;
-    type Spec = SpecId;
-    type BlockEnv = BlockEnv;
-    type Precompiles = PrecompilesMap;
-    type Inspector = I;
-
-    fn block(&self) -> &BlockEnv {
-        &self.inner.ctx.block
-    }
-
-    fn cfg_env(&self) -> &CfgEnv<Self::Spec> {
-        &self.inner.ctx.cfg
-    }
-
-    fn chain_id(&self) -> u64 {
-        self.inner.ctx.cfg.chain_id
-    }
-
-    fn transact_raw(&mut self, tx: TxEnv) -> Result<ResultAndState, Self::Error> {
-        if !self.inspect {
-            return self.inner.transact(tx);
-        }
-        self.inner.set_tx(tx);
-        let output = EthEvmHandler::<I>::default().inspect_run(&mut self.inner);
-        // Finalize even on error, so the warm set and state do not leak into the next
-        // transaction, as revm's `inspect_tx` does.
-        let state = self.inner.finalize();
-        Ok(ResultAndState::new(output?, state))
-    }
-
-    fn transact_system_call(
-        &mut self,
-        caller: Address,
-        contract: Address,
-        data: Bytes,
-    ) -> Result<ResultAndState, Self::Error> {
-        self.inner.system_call_with_caller(caller, contract, data)
-    }
-
-    fn finish(self) -> (Self::DB, EvmEnv<Self::Spec>) {
-        let Context { block: block_env, cfg: cfg_env, journaled_state, .. } = self.inner.ctx;
-        (journaled_state.database, EvmEnv { block_env, cfg_env })
-    }
-
-    fn set_inspector_enabled(&mut self, enabled: bool) {
-        self.inspect = enabled;
-    }
-
-    fn components(&self) -> (&Self::DB, &Self::Inspector, &Self::Precompiles) {
-        (&self.inner.ctx.journaled_state.database, &self.inner.inspector, &self.inner.precompiles)
-    }
-
-    fn components_mut(&mut self) -> (&mut Self::DB, &mut Self::Inspector, &mut Self::Precompiles) {
-        (
-            &mut self.inner.ctx.journaled_state.database,
-            &mut self.inner.inspector,
-            &mut self.inner.precompiles,
-        )
-    }
-}
-
-impl IntoInstructionResult for HaltReason {
-    fn into_instruction_result(self) -> InstructionResult {
-        self.into()
+    fn envelope_from_any_rpc(tx: &AnyRpcTransaction) -> eyre::Result<alloy_consensus::TxEnvelope> {
+        eth_envelope_from_any_rpc(tx, "TxEnv")
     }
 }
 
 impl FoundryEvmFactory for EthEvmFactory {
-    type Chain = ();
-    type FoundryContext<'db> = EthEvmContext<&'db mut dyn DatabaseExt<Self>>;
+    type Types = BaseEvmTypes;
 
-    type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> = FoundryEthEvm<'db, I>;
-
-    fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
-        &self,
-        db: &'db mut dyn DatabaseExt<Self>,
-        evm_env: EvmEnv,
-        inspector: I,
-    ) -> Self::FoundryEvm<'db, I> {
-        let chain_id = evm_env.cfg_env.chain_id;
-        let timestamp = evm_env.block_env.timestamp.saturating_to();
-        let hooks = inspector.evm_hooks();
-        let mut inner =
-            Self::default().create_evm_with_inspector(db, evm_env, inspector).into_inner();
-        if hooks.any() {
-            install_hooks(&mut inner.instruction, hooks);
-        }
-        let mut eth_evm = FoundryEthEvm::new(inner, true);
-        eth_evm.cfg.tx_chain_id_check = true;
-        let networks = eth_evm.inspector().get_networks();
-        networks.inject_precompiles(eth_evm.precompiles_mut());
-        apply_bsc_p256_precompile(eth_evm.precompiles_mut(), chain_id, timestamp);
-        eth_evm
+    fn version(&self, spec: SpecId, chain_id: u64) -> Version {
+        let mut version = Version::new(spec);
+        version.chain_id = chain_id;
+        with_eip7702_delegations(version)
     }
 
-    fn create_nested_evm_with_inspector<'db, I>(
+    fn tx_registry(&self, spec: SpecId) -> TxRegistry<BaseEvmTypes, TxResult<BaseEvmTypes>> {
+        evm2::ethereum::ethereum_tx_registry(spec)
+    }
+
+    fn precompiles(
         &self,
-        db: &'db mut dyn DatabaseExt<Self>,
-        evm_env: EvmEnv,
-        inspector: I,
-    ) -> NestedEvmFor<'db, Self>
-    where
-        I: FoundryInspectorExt<Self::FoundryContext<'db>> + 'db,
-    {
-        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_inner())
+        env: &EvmEnv<BaseEvmTypes>,
+        _ext: &(),
+    ) -> Box<dyn PrecompileProvider<BaseEvmTypes>> {
+        let inner = Precompiles::base(env.spec);
+        let p256 = bsc_p256(env.chain_id(), env.block.timestamp.saturating_to());
+        if !self.celo && p256.is_none() {
+            return Box::new(inner);
+        }
+        Box::new(EthPrecompiles { inner, celo: self.celo, p256 })
+    }
+
+    fn with_networks(&self, networks: NetworkConfigs) -> Self {
+        Self { celo: networks.is_celo() }
     }
 }
 
-impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>>> NestedEvm
-    for EthRevmEvm<'db, I>
-{
-    type Spec = SpecId;
-    type Block = BlockEnv;
-    type Tx = TxEnv;
-    type Chain = ();
-    type Journal = Journal<&'db mut dyn DatabaseExt<EthEvmFactory>>;
+/// Ethereum precompiles with network additions: Celo's transfer precompile and BSC's
+/// `P256VERIFY` rules.
+struct EthPrecompiles {
+    inner: Precompiles<BaseEvmTypes>,
+    celo: bool,
+    /// BSC's `P256VERIFY`, see [`bsc_p256`].
+    p256: Option<Option<bool>>,
+}
 
-    fn tx_mut(&mut self) -> &mut Self::Tx {
-        self.ctx_mut().tx_mut()
+impl PrecompileProvider<BaseEvmTypes> for EthPrecompiles {
+    fn addresses(&self) -> Vec<Address> {
+        let mut addresses = self.inner.addresses();
+        if self.celo {
+            addresses.push(CELO_TRANSFER_ADDRESS);
+        }
+        if self.p256.is_some() {
+            addresses.retain(|address| *address != BSC_P256_ADDRESS);
+        }
+        if let Some(Some(_)) = self.p256 {
+            addresses.push(BSC_P256_ADDRESS);
+        }
+        addresses
     }
 
-    fn journal_inner_mut(&mut self) -> &mut JournaledState {
-        &mut self.ctx_mut().journaled_state.inner
+    fn precompile_ids(&self) -> Vec<(Address, PrecompileId)> {
+        let mut ids = self.inner.precompile_ids();
+        if self.celo {
+            ids.push((CELO_TRANSFER_ADDRESS, PrecompileId::custom(CELO_TRANSFER_PRECOMPILE_NAME)));
+        }
+        if self.p256.is_some() {
+            ids.retain(|(address, _)| *address != BSC_P256_ADDRESS);
+        }
+        if let Some(Some(_)) = self.p256 {
+            ids.push((BSC_P256_ADDRESS, PrecompileId::P256Verify));
+        }
+        ids
     }
 
-    fn chain_mut(&mut self) -> &mut Self::Chain {
-        &mut self.ctx_mut().chain
+    fn contains(&self, address: &Address) -> bool {
+        if self.celo && *address == CELO_TRANSFER_ADDRESS {
+            return true;
+        }
+        if self.p256.is_some() && *address == BSC_P256_ADDRESS {
+            return self.p256.flatten().is_some();
+        }
+        self.inner.contains(address)
     }
 
-    fn precompiles_mut(&mut self) -> &mut alloy_evm::precompiles::PrecompilesMap {
-        &mut self.precompiles
+    fn move_precompiles(
+        &mut self,
+        moves: &[(Address, Address)],
+    ) -> Result<(), MovePrecompileError> {
+        self.inner.move_precompiles(moves)
     }
 
-    fn journal_mut(&mut self) -> &mut Self::Journal {
-        &mut self.ctx_mut().journaled_state
+    fn execute(
+        &mut self,
+        evm: &mut Evm<'_, BaseEvmTypes>,
+        message: &Message<BaseEvmTypes>,
+        gas: &mut GasTracker,
+    ) -> Option<PrecompileResult> {
+        let target = message.call_target;
+        if target == CELO_TRANSFER_ADDRESS {
+            return self.celo.then(|| celo_transfer(evm, &message.input, gas));
+        }
+        if target == BSC_P256_ADDRESS
+            && let Some(p256) = self.p256
+        {
+            return p256.map(|osaka| {
+                if osaka {
+                    evm2::precompiles::secp256r1::run_osaka(&message.input, gas)
+                } else {
+                    evm2::precompiles::secp256r1::run(&message.input, gas)
+                }
+            });
+        }
+        self.inner.execute(evm, message, gas)
+    }
+}
+
+/// Runs Celo's native token transfer precompile.
+///
+/// See <https://specs.celo.org/token_duality.html#the-transfer-precompile>
+pub fn celo_transfer<T: EvmTypes>(
+    evm: &mut Evm<'_, T>,
+    input: &[u8],
+    gas: &mut GasTracker,
+) -> PrecompileResult {
+    let halt =
+        |reason: &'static str| Err(PrecompileError::Halt(PrecompileHalt::Other(reason.into())));
+    gas.spend(CELO_TRANSFER_GAS_COST)?;
+    if input.len() != 96 {
+        return halt("invalid input length for Celo transfer precompile");
+    }
+    let from = Address::from_slice(&input[12..32]);
+    let to = Address::from_slice(&input[44..64]);
+    let value = U256::from_be_slice(&input[64..96]);
+    let state = evm.state_mut();
+    let balance = {
+        let mut account = state.account(&from)?;
+        account.warm();
+        account.balance()
+    };
+    if balance < value {
+        return halt("insufficient balance");
+    }
+    state.account(&to)?.warm();
+    if !state.transfer(&from, &to, &value)? {
+        return halt("balance overflow in to account");
+    }
+    Ok(PrecompileOutput::new(Bytes::new()))
+}
+
+/// Returns BSC's `P256VERIFY` on `chain_id` at `timestamp`. The outer option distinguishes BSC
+/// chains from unrelated chains, while the inner option disables P256 before Haber and otherwise
+/// tells whether it uses the Osaka gas schedule.
+pub const fn bsc_p256(chain_id: u64, timestamp: u64) -> Option<Option<bool>> {
+    let (haber_timestamp, osaka_timestamp) = match chain_id {
+        BSC_MAINNET_CHAIN_ID => (BSC_MAINNET_HABER_TIMESTAMP, BSC_MAINNET_OSAKA_TIMESTAMP),
+        BSC_TESTNET_CHAIN_ID => (BSC_TESTNET_HABER_TIMESTAMP, BSC_TESTNET_OSAKA_TIMESTAMP),
+        _ => return None,
+    };
+    if timestamp < haber_timestamp { Some(None) } else { Some(Some(timestamp >= osaka_timestamp)) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_sol_types::SolValue;
+    use evm2::{
+        evm::{AccountInfo, InMemoryDB},
+        interpreter::{Host, InstrStop},
+    };
+
+    fn ids(factory: EthEvmFactory, spec: SpecId, chain_id: u64, timestamp: u64) -> Vec<Address> {
+        let block = evm2::env::BlockEnv::<BaseEvmTypes> {
+            timestamp: U256::from(timestamp),
+            ..Default::default()
+        };
+        let env = EvmEnv::new(spec, factory.version(spec, chain_id), block);
+        factory.precompiles(&env, &()).precompile_ids().into_iter().map(|(a, _)| a).collect()
     }
 
-    fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
-        run_inspected_frame(self, EthEvmHandler::<I>::default(), frame)
+    #[test]
+    fn bsc_precompile_overrides_stock_p256() {
+        let eth = EthEvmFactory::default();
+        // Osaka includes P256, but BSC removes it before Haber and adds it from Haber on.
+        assert!(ids(eth, SpecId::OSAKA, 1, 0).contains(&BSC_P256_ADDRESS));
+        assert!(
+            !ids(eth, SpecId::OSAKA, 56, BSC_MAINNET_HABER_TIMESTAMP - 1)
+                .contains(&BSC_P256_ADDRESS)
+        );
+        assert!(
+            ids(eth, SpecId::CANCUN, 56, BSC_MAINNET_HABER_TIMESTAMP).contains(&BSC_P256_ADDRESS)
+        );
+        assert!(
+            !ids(eth, SpecId::CANCUN, 1, BSC_MAINNET_HABER_TIMESTAMP).contains(&BSC_P256_ADDRESS)
+        );
     }
 
-    fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState> {
-        self.set_tx(tx);
+    #[test]
+    fn celo_transfer_warms_accounts() {
+        let from = Address::with_last_byte(0xa1);
+        let recipient = Address::with_last_byte(0xb2);
+        let factory = EthEvmFactory::default().with_networks(NetworkConfigs::with_celo());
+        let spec = SpecId::OSAKA;
+        let env = EvmEnv::new(spec, factory.version(spec, 42220), Default::default());
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(&from, AccountInfo::default().with_balance(U256::from(10)));
+        let mut evm = factory.create_evm(db, env);
 
-        let result = EthEvmHandler::<I>::default().inspect_run(self)?;
+        for (to, value) in [(recipient, 0), (recipient, 3), (from, 3)] {
+            let checkpoint = evm.state().checkpoint();
+            let mut message = Message::<BaseEvmTypes> {
+                destination: CELO_TRANSFER_ADDRESS,
+                call_target: CELO_TRANSFER_ADDRESS,
+                code_address: CELO_TRANSFER_ADDRESS,
+                gas_limit: 9000,
+                input: Bytes::from((from, to, U256::from(value)).abi_encode()).into(),
+                ..Default::default()
+            };
 
-        Ok(ResultAndState::new(result, self.ctx.journaled_state.inner.state.clone()))
-    }
+            assert_eq!(
+                Host::execute_message(&mut evm, &mut message).unwrap().stop,
+                InstrStop::Return
+            );
+            for address in [from, to] {
+                assert!(evm.state_mut().account(&address).unwrap().is_warm());
+            }
 
-    fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block> {
-        self.ctx_ref().evm_clone()
+            // An enclosing revert must undo the transfer's warmth.
+            let features = evm.version().features;
+            evm.state_mut().rollback(checkpoint, features);
+            for address in [from, to] {
+                assert!(!evm.state_mut().account(&address).unwrap().is_warm());
+            }
+        }
     }
 }
