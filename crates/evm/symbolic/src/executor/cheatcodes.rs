@@ -377,7 +377,10 @@ impl SymbolicExecutor {
         // Like Forge, the CREATE applies and consumes a pending prank.
         let inherited_prank = state.callers();
         let (creator, creator_word, pranked_origin) = state.prank_for_next_call();
-        if creator_word.as_const().is_none() {
+        if creator != state.address
+            && state.constrained_word(&mut self.cx, &creator_word).map(word_to_address)
+                != Some(creator)
+        {
             return Err(SymbolicError::Unsupported("symbolic vm.deployCode prank"));
         }
         self.stateless_retry_safe = false;
@@ -386,6 +389,12 @@ impl SymbolicExecutor {
         let initcode = SymCode::concrete(&mut self.cx, initcode);
 
         let nonce = state.world.nonce(executor, creator)?;
+        // EIP-2681: the create fails at a `u64::MAX` creator nonce, so the cheatcode reverts.
+        if nonce == u64::MAX {
+            let return_data = SymReturnData::empty(&mut self.cx);
+            revert_cheatcode_call(&mut self.cx, state, out_offset, out_size, return_data)?;
+            return Ok(StepOutcome::Continue);
+        }
         let created = creator.create(nonce);
         let created_word = SymExpr::constant(&mut self.cx, address_word(created));
 
@@ -684,6 +693,7 @@ impl SymbolicExecutor {
     #[expect(clippy::too_many_arguments)]
     pub(super) fn branch_cheatcode_argument_check_if_needed(
         &mut self,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         selector: [u8; 4],
@@ -694,45 +704,40 @@ impl SymbolicExecutor {
     ) -> Result<Option<StepOutcome>, SymbolicError> {
         let memory = input.unwrap_or(&state.memory);
         let args_offset = in_offset + 4;
-        let above = |cx: &mut SymCx, memory: &SymMemory, index: usize, max: U256| {
-            let word = read_abi_word_arg(cx, memory, args_offset, index)?;
-            Ok::<_, SymbolicError>(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ugt, &word, max))
-        };
-        let u64_max = U256::from(u64::MAX);
-        let (invalid, message) = match selector {
-            chainIdCall::SELECTOR => (
-                above(&mut self.cx, memory, 0, u64_max)?,
-                "vm.chainId: chain ID must be less than 2^64",
-            ),
-            feeCall::SELECTOR => (
-                above(&mut self.cx, memory, 0, u64_max)?,
-                "vm.fee: base fee must be less than 2^64",
-            ),
-            txGasPriceCall::SELECTOR => (
-                above(&mut self.cx, memory, 0, u64_max)?,
-                "vm.txGasPrice: gas price must be less than 2^64",
-            ),
-            blobBaseFeeCall::SELECTOR => (
-                above(&mut self.cx, memory, 0, U256::from(u128::MAX))?,
-                "vm.blobBaseFee: blob base fee must be less than 2^128",
-            ),
-            setBlockhashCall::SELECTOR => (
-                above(&mut self.cx, memory, 0, u64_max)?,
-                "vm.setBlockhash: blockNumber must be less than 2^64",
-            ),
-            computeCreateAddressCall::SELECTOR => (
-                above(&mut self.cx, memory, 1, u64_max)?,
-                "vm.computeCreateAddress: nonce must be less than 2^64",
-            ),
-            randomUint_1Call::SELECTOR => {
-                let min = read_abi_word_arg(&mut self.cx, memory, args_offset, 0)?;
-                let max = read_abi_word_arg(&mut self.cx, memory, args_offset, 1)?;
-                (
-                    SymBoolExpr::cmp_word_expr(&mut self.cx, SymCmpOp::Ugt, &min, max),
-                    "vm.randomUint: min must be less than or equal to max",
-                )
-            }
-            _ => return Ok(None),
+        let (invalid, message) = if selector == randomUint_1Call::SELECTOR {
+            let min = read_abi_word_arg(&mut self.cx, memory, args_offset, 0)?;
+            let max = read_abi_word_arg(&mut self.cx, memory, args_offset, 1)?;
+            (
+                SymBoolExpr::cmp_word_expr(&mut self.cx, SymCmpOp::Ugt, &min, max),
+                "vm.randomUint: min must be less than or equal to max",
+            )
+        } else {
+            let u64_max = U256::from(u64::MAX);
+            let (index, max, message) = match selector {
+                chainIdCall::SELECTOR => {
+                    (0, u64_max, "vm.chainId: chain ID must be less than 2^64")
+                }
+                feeCall::SELECTOR => (0, u64_max, "vm.fee: base fee must be less than 2^64"),
+                txGasPriceCall::SELECTOR => {
+                    (0, u64_max, "vm.txGasPrice: gas price must be less than 2^64")
+                }
+                // Like Forge, the hard fork check comes first, in the cheatcode.
+                blobBaseFeeCall::SELECTOR if executor.spec_id < SpecId::CANCUN => return Ok(None),
+                blobBaseFeeCall::SELECTOR => (
+                    0,
+                    U256::from(u128::MAX),
+                    "vm.blobBaseFee: blob base fee must be less than 2^128",
+                ),
+                setBlockhashCall::SELECTOR => {
+                    (0, u64_max, "vm.setBlockhash: blockNumber must be less than 2^64")
+                }
+                computeCreateAddressCall::SELECTOR => {
+                    (1, u64_max, "vm.computeCreateAddress: nonce must be less than 2^64")
+                }
+                _ => return Ok(None),
+            };
+            let word = read_abi_word_arg(&mut self.cx, memory, args_offset, index)?;
+            (SymBoolExpr::cmp_word_const(&mut self.cx, SymCmpOp::Ugt, &word, max), message)
         };
 
         let reverted = self.fork_cheatcode_revert(
@@ -1293,15 +1298,19 @@ impl SymbolicExecutor {
                         )
                     })
                     .transpose()?;
-                if let Some(error) = state.prank.overwrite_error(persistent) {
+                // Like Forge, root frames share one prank slot, so a prank parked for another root
+                // frame also blocks an overwrite, and a new prank ends it.
+                let parked = state.root_pranks.values().filter(|_| state.call_depth == 0);
+                if let Some(error) = std::iter::once(&state.prank)
+                    .chain(parked)
+                    .find_map(|prank| prank.overwrite_error(persistent))
+                {
                     let name = if persistent { "startPrank" } else { "prank" };
                     return Ok(CheatcodeOutcome::Revert(error_string_return_data(
                         &mut self.cx,
                         &format!("vm.{name}: {error}"),
                     )));
                 }
-                // Like Forge, root frames share one prank slot, so a new or stopped prank also
-                // ends a prank parked for another root frame.
                 if state.call_depth == 0 {
                     state.root_pranks.clear();
                 }
@@ -1313,6 +1322,7 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             stopPrankCall::SELECTOR => {
+                // A stopped prank also ends a prank parked for another root frame.
                 if state.call_depth == 0 {
                     state.root_pranks.clear();
                 }
@@ -1862,6 +1872,13 @@ impl SymbolicExecutor {
             feeCall::SELECTOR => {
                 state.block.basefee = state.memory.load_word(&mut self.cx, in_offset + 4)?;
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
+            }
+            blobBaseFeeCall::SELECTOR if executor.spec_id < SpecId::CANCUN => {
+                Ok(CheatcodeOutcome::Revert(error_string_return_data(
+                    &mut self.cx,
+                    "vm.blobBaseFee: `blobBaseFee` is not supported before the Cancun hard fork; \
+                     see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844",
+                )))
             }
             blobBaseFeeCall::SELECTOR => {
                 state.block.blob_basefee = state.memory.load_word(&mut self.cx, in_offset + 4)?;
