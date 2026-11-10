@@ -810,7 +810,8 @@ fn dynamic_inspector_records_resumed_caller(prj: _, cmd: _) {
             .replace("utils/Test.sol", "forge-std/Test.sol"),
     );
 
-    // Default verbosity and no coverage/gas instrumentation: pre-enabled stepping hides the bug.
+    // Default verbosity, without coverage or gas instrumentation: their stepping would hide a
+    // resumed frame that does not step the recorded opcodes.
     for network in ["ethereum", "monad"] {
         cmd.forge_fuse().args(["test", "--network", network]).assert_success().stdout_eq(str![[
             r#"

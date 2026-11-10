@@ -1,4 +1,4 @@
-//! Anvil specific [`evm2::Inspector`] implementation
+//! Anvil specific [`evm2::Inspector`] implementation.
 
 use crate::eth::macros::node_info;
 use alloy_primitives::{Address, B256, Log, LogData, U256};
@@ -18,7 +18,7 @@ use foundry_evm_core::{
 use foundry_evm_traces::{CallTraceDecoder, SparsedTraceArena, render_trace_arena_inner};
 use std::sync::Arc;
 
-/// The [`evm2::Inspector`] used when transacting in the evm
+/// The [`evm2::Inspector`] used when transacting in the evm.
 #[derive(Clone, Debug, Default)]
 pub struct AnvilInspector {
     /// Collects all traces
@@ -217,25 +217,25 @@ impl AnvilInspector {
         }
     }
 
-    /// Configures the `Tracer` [`evm2::Inspector`]
+    /// Configures the `Tracer` [`evm2::Inspector`].
     pub fn with_tracing(mut self) -> Self {
         self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().set_steps(false)));
         self
     }
 
-    /// Configures the `TracingInspector` [`evm2::Inspector`]
+    /// Configures the `TracingInspector` [`evm2::Inspector`].
     pub fn with_tracing_config(mut self, config: TracingInspectorConfig) -> Self {
         self.tracer = Some(TracingInspector::new(config));
         self
     }
 
-    /// Configures the `Tracer` [`evm2::Inspector`] with a log collector
+    /// Configures the `Tracer` [`evm2::Inspector`] with a log collector.
     pub fn with_log_collector(mut self) -> Self {
         self.log_collector = Some(LogCollector::default());
         self
     }
 
-    /// Configures the `Tracer` [`evm2::Inspector`] with a transfer event collector
+    /// Configures the `Tracer` [`evm2::Inspector`] with a transfer event collector.
     pub fn with_transfers(mut self) -> Self {
         self.transfer = Some(TransferInspector::new(false).with_logs(true));
         self
@@ -269,7 +269,7 @@ impl AnvilInspector {
         })
     }
 
-    /// Configures the `Tracer` [`evm2::Inspector`] with a trace printer
+    /// Configures the `Tracer` [`evm2::Inspector`] with a trace printer.
     pub fn with_trace_printer(mut self) -> Self {
         self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().with_state_diffs()));
         self
