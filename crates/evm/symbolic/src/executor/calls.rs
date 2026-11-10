@@ -930,6 +930,20 @@ impl SymbolicExecutor {
                     &in_size_word,
                     in_size,
                 )?;
+                let outcome = if let CheatcodeOutcome::Fork { mut passing, failing } = outcome {
+                    let empty = SymReturnData::empty(&mut self.cx);
+                    complete_cheatcode_call(
+                        &mut self.cx,
+                        &mut passing,
+                        out_offset.clone(),
+                        &out_size,
+                        empty,
+                    )?;
+                    worklist.push_back(passing);
+                    *failing
+                } else {
+                    outcome
+                };
                 match outcome {
                     CheatcodeOutcome::Continue(ret) => SymReturnData::from_words(&mut self.cx, ret),
                     CheatcodeOutcome::ContinueData(ret) => ret,
@@ -942,6 +956,7 @@ impl SymbolicExecutor {
                     }
                     CheatcodeOutcome::AssumeRejected => return Ok(StepOutcome::AssumeRejected),
                     CheatcodeOutcome::Failure => return Ok(StepOutcome::Failure),
+                    CheatcodeOutcome::Fork { .. } => unreachable!("assertion fork is unwrapped"),
                 }
             } else if to == SYMBOLIC_VM_COMPAT_ADDRESS {
                 self.handle_symbolic_vm_cheatcode(

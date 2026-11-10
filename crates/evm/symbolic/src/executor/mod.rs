@@ -453,8 +453,8 @@ impl SymbolicExecutor {
         Ok(outcomes)
     }
 
-    /// Like Forge, a sequence call that ends with an unmet expectation or with the global fail
-    /// slot set has failed.
+    /// Like Forge, a sequence call fails if an expectation is unmet, an assertion failed, or the
+    /// global fail slot is set.
     fn successful_call_status(
         &mut self,
         executor: &ExecutorView<'_>,
@@ -462,7 +462,9 @@ impl SymbolicExecutor {
         state: &mut PathState,
     ) -> Result<CallStatus, SymbolicError> {
         if matches!(kind, CallPathKind::External)
-            || (state.expectations_satisfied() && !self.global_fail_slot_set(executor, state)?)
+            || (state.expectations_satisfied()
+                && !state.assertion_failed
+                && !self.global_fail_slot_set(executor, state)?)
         {
             Ok(CallStatus::Success)
         } else {

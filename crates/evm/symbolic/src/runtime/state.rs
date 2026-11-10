@@ -39,6 +39,8 @@ pub(crate) struct PathState {
     /// Account of the first call, or reverting CREATE, that failed in or below this frame since
     /// it was entered or since its last `vm.expectRevert`, which Forge reports as the reverter.
     pub(crate) first_failed_callee: Option<Address>,
+    /// Assertion cheatcodes set this even when their revert is caught by the handler.
+    pub(crate) assertion_failed: bool,
     pub(crate) assume_no_revert_next_call: Option<AssumeNoRevert>,
     pub(crate) expected_emit: Option<ExpectedEmit>,
     pub(crate) expected_calls: Vec<ExpectedCall>,
@@ -115,6 +117,7 @@ impl PathState {
             loop_jumps: HashMap::default(),
             expected_revert: None,
             first_failed_callee: None,
+            assertion_failed: false,
             assume_no_revert_next_call: None,
             expected_emit: None,
             expected_calls: Vec::new(),
@@ -332,6 +335,7 @@ impl PathState {
         self.recorded_logs = child.recorded_logs.take();
         self.recorded_logs_generation = child.recorded_logs_generation;
         self.access_record = child.access_record.take();
+        self.assertion_failed |= child.assertion_failed;
         // Inspector state survives child reverts and exceptional halts.
         self.block = child.block.clone();
         self.expected_calls = std::mem::take(&mut child.expected_calls);
@@ -361,6 +365,7 @@ impl PathState {
         self.access_record = reverted.access_record;
         self.expected_revert = reverted.expected_revert;
         self.first_failed_callee = reverted.first_failed_callee;
+        self.assertion_failed = reverted.assertion_failed;
         self.assume_no_revert_next_call = reverted.assume_no_revert_next_call;
         self.expected_emit = reverted.expected_emit;
         self.expected_calls = reverted.expected_calls;

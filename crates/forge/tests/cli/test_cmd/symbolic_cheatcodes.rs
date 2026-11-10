@@ -789,6 +789,82 @@ Suite result: FAILED. 2 passed; 1 failed; 0 skipped; [ELAPSED]
 }
 
 #[forgetest_init]
+fn symbolic_vm_caught_assertions_preserve_failures(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_caught_assertions_preserve_failures because z3 is not available"
+        );
+        return;
+    }
+    prj.update_config(|config| config.invariant.runs = 0);
+    prj.add_test(
+        "SymbolicCaughtAssertions.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicCaughtAssertions is Test {
+    function checkPassingBranchSurvives(uint256 x) public {
+        try vm.assertTrue(x == 0) { assert(false); } catch {}
+    }
+
+    function checkCustomPayload() public {
+        try vm.assertTrue(false, "custom") {} catch (bytes memory data) {
+            bytes memory expected = abi.encodeWithSignature("CheatcodeError(string)", "custom");
+            assert(keccak256(data) != keccak256(expected));
+        }
+    }
+}
+
+contract SymbolicCaughtAssertionHandler is Test {
+    function caught() external {
+        try vm.assertTrue(false) {} catch {}
+    }
+}
+
+contract SymbolicCaughtAssertionInvariant is Test {
+    SymbolicCaughtAssertionHandler handler = new SymbolicCaughtAssertionHandler();
+
+    function setUp() public { targetContract(address(handler)); }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_caughtAssertionFailsHandler() public {}
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test", "--symbolic", "--match-contract", "SymbolicCaughtAssertions$",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicCaughtAssertions.t.sol:SymbolicCaughtAssertions
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCustomPayload() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkPassingBranchSurvives(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    assert_symbolic_witness(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicCaughtAssertionInvariant$",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicCaughtAssertions.t.sol:SymbolicCaughtAssertionInvariant
+Assertion Tests: 1 assertion bug(s) found
+[FAIL: <empty revert data>] test/SymbolicCaughtAssertions.t.sol:SymbolicCaughtAssertionHandler::caught
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=caught() [ARGS]
+ invariant_caughtAssertionFailsHandler() ([METRICS])
+...
+"#]]);
+}
+
+#[forgetest_init]
 fn symbolic_vm_recorded_logs_round_trip(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(

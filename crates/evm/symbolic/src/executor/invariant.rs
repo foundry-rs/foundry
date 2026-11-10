@@ -304,6 +304,7 @@ impl SymbolicExecutor {
         let code = state.world.extcode(&mut self.cx, executor, target)?;
         state.call_depth = 0;
         state.call_depth_base = 0;
+        state.assertion_failed = false;
         // Like Forge, expectations end with the root call; only a met count 0 one can remain.
         state.expected_emit = None;
         state.origin = sender;
