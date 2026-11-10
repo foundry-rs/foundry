@@ -468,8 +468,9 @@ pub struct InspectorStackInner {
     env_handoff_ended: bool,
     /// Accounts the running top-level transaction created, directly or through isolated calls.
     tx_created: AddressSet,
-    /// Existing accounts the running `executeTransaction` transaction self-destructed, captured
-    /// when its root frame ends, before the transaction destroys them.
+    /// Accounts the running nested transaction, from `executeTransaction` or an isolated call,
+    /// self-destructed, including the ones it created. Captured when its root frame ends, before
+    /// the transaction destroys them.
     executed_destructs: Option<AddressMap<DestructedAccount>>,
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
@@ -1622,8 +1623,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
     }
 
-    /// Captures the accounts an `executeTransaction` transaction self-destructed when its root
-    /// frame ends, before the transaction destroys them. See [`destructed_accounts`].
+    /// Captures the accounts a nested transaction self-destructed, including the ones it created,
+    /// when its root frame ends, before the transaction destroys them. See
+    /// [`destructed_accounts`].
     fn capture_executed_destructs(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
         if let Some(destructs) = &mut self.inner.executed_destructs {
             match destructed_accounts(interp.host().state_mut()) {

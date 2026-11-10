@@ -208,8 +208,8 @@ pub enum PersistentWrite {
     Destruct(Address),
 }
 
-/// The state a nested transaction left an existing account in before the transaction ended and
-/// destroyed it, which the running transaction keeps until it ends itself.
+/// The state a nested transaction left an account in before the transaction ended and destroyed
+/// it, which the running transaction keeps until it ends itself.
 #[derive(Clone, Debug)]
 pub struct DestructedAccount {
     info: AccountInfo,
