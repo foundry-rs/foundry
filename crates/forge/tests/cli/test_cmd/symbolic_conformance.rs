@@ -191,7 +191,7 @@ contract SymbolicConformanceHalmosFeatureMatrix is Test {
 
     /// forge-config: default.symbolic.max_calldata_bytes = 36
     function checkMatrixCreateCalldataDispatch() public {
-        bytes memory data = MatrixSvm(SVM_ADDRESS).createCalldata("matrix-dispatch");
+        bytes memory data = MatrixSvm(SVM_ADDRESS).createCalldata("MatrixDispatcher");
         (bool ok,) = address(dispatcher).call(data);
         ok;
 
@@ -223,13 +223,13 @@ contract SymbolicConformanceHalmosFeatureMatrix is Test {
     .stdout_eq(str![[r#"
 ...
 Ran 6 tests for test/SymbolicConformanceHalmosFeatureMatrix.t.sol:SymbolicConformanceHalmosFeatureMatrix
-[PASS] checkMatrixCreateCalldataDispatch() ([METRICS])
+[FAIL: EvmError: Revert; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMatrixCreateCalldataDispatch() ([METRICS])
 [PASS] checkMatrixDynamicAbi(bytes,string,(bytes,string,uint256[])) ([METRICS])
 [PASS] checkMatrixEmptyUnknownTarget(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkMatrixErc20SupplyAccounting(uint256,address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMatrixErc721ClearsApproval(address,address) ([METRICS])
 [FAIL: incomplete symbolic execution (RevertAll): all symbolic paths reverted] checkMatrixRevertAll(uint256) ([METRICS])
-Suite result: FAILED. 3 passed; 3 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 2 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
 "#]].unordered());
 }

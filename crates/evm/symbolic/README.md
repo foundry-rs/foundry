@@ -743,6 +743,11 @@ interface Svm {
     function createString(uint256 length, string calldata name) external returns (string memory);
     function createBytes4(string calldata name) external returns (bytes4);
     function createCalldata(string calldata name) external returns (bytes memory);
+    function createCalldata(string calldata name, bool includeViewAndPureFunctions) external returns (bytes memory);
+    function createCalldata(string calldata filename, string calldata name) external returns (bytes memory);
+    function createCalldata(string calldata filename, string calldata name, bool includeViewAndPureFunctions) external returns (bytes memory);
+    function createCalldata(address target) external returns (bytes memory);
+    function createCalldata(address target, bool includeViewAndPureFunctions) external returns (bytes memory);
     function enableSymbolicStorage(address target) external;
     function setArbitraryStorage(address target) external;
     function snapshotStorage(address target) external returns (uint256);
@@ -755,6 +760,17 @@ Only a call that names the helper address concretely reaches these helpers, and
 passes. Forge itself leaves the address empty, so a symbolic address that may
 denote it sees an ordinary account, and a symbolic call that may reach a helper
 selector there reports incomplete.
+
+`createCalldata` looks up the ABI of a project contract or interface by name, by
+source file and name, or by the deployed code at a concrete address. Like Halmos,
+it forks one path for each calldata shape: empty calldata, a selector outside the
+ABI followed by 1024 arbitrary bytes for `fallback`, and each function with
+symbolic arguments. View and pure functions are left out unless
+`includeViewAndPureFunctions` is true. Dynamic arguments use the same named and
+default lengths as test parameters. The fallback bytes are cut to fit
+`symbolic.max_calldata_bytes`. An unknown or ambiguous name, a function whose
+calldata does not fit, or an ABI type that symbolic calldata does not support
+makes the result incomplete.
 
 Forge also treats several `vm.random*` cheatcodes as symbolic value creators when
 running symbolically. Dynamic byte and string creators use the same dynamic ABI

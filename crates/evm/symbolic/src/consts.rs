@@ -14,6 +14,9 @@ pub(crate) const CONCRETE_BASE_SYMBOLIC_EXPONENT_LIMIT: u64 = 256;
 // ABI encoding lengths
 pub(crate) const ERROR_DATA_MIN_LEN: usize = 68; // selector (4) + offset (32) + length (32)
 
+// `svm.createCalldata` fallback calldata: a selector and the 1024 arbitrary bytes Halmos uses.
+pub(crate) const CREATE_CALLDATA_FALLBACK_LEN: usize = 4 + 1024;
+
 // Precompile address layout
 pub(crate) const PRECOMPILE_ADDRESS_LEADING_ZEROS: usize = 19;
 

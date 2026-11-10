@@ -1092,11 +1092,11 @@ impl SymbolicExecutor {
                 )
             } else if to == SYMBOLIC_VM_COMPAT_ADDRESS {
                 self.handle_symbolic_vm_cheatcode(
+                    executor,
                     state,
                     selector,
                     concrete_in_offset.expect("symbolic vm input offset is concrete"),
                 )
-                .map(CheatcodeOutcome::ContinueData)
             } else {
                 Err(SymbolicError::Unsupported("symbolic cheatcode address"))
             };
@@ -1130,6 +1130,24 @@ impl SymbolicExecutor {
                         }
                         None => SymReturnData::from_words(&mut self.cx, Vec::new()),
                     }
+                }
+                CheatcodeOutcome::Choices(choices) => {
+                    let mut choices = choices.into_iter();
+                    let (constraints, return_data) = choices.next().expect("nonempty choices");
+                    for (choice_constraints, choice_return_data) in choices {
+                        let mut choice = state.clone();
+                        choice.constraints.extend(choice_constraints);
+                        complete_cheatcode_call(
+                            &mut self.cx,
+                            &mut choice,
+                            out_offset.clone(),
+                            &out_size,
+                            choice_return_data,
+                        )?;
+                        worklist.push_back(choice);
+                    }
+                    state.constraints.extend(constraints);
+                    return_data
                 }
             };
 

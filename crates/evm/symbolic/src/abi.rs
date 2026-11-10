@@ -132,8 +132,73 @@ impl SymbolicCalldata {
         Ok(out)
     }
 
+    /// Builds the calldata shapes of a contract ABI, as Halmos `createCalldata` does: empty
+    /// calldata for `receive` and `fallback`, a selector outside the ABI with arbitrary bytes for
+    /// `fallback`, and each function with symbolic arguments. View and pure functions are left
+    /// out unless `include_view` is set.
+    pub(super) fn contract_variants(
+        abi: &JsonAbi,
+        include_view: bool,
+        config: &SymbolicConfig,
+        cx: &mut SymCx,
+        prefix: &str,
+    ) -> Result<Vec<Self>, SymbolicError> {
+        let max_len = config.max_calldata_bytes as usize;
+        if max_len < 4 {
+            return Err(SymbolicError::Unsupported(
+                "symbolic calldata size exceeds configured max",
+            ));
+        }
+        let empty =
+            Self { bytes: SymBytes::empty(cx), inputs: Vec::new(), constraints: Vec::new() };
+
+        let mut builder = SymbolicAbiBuilder { config, cx };
+        let mut state = SymbolicAbiState::default();
+        let bytes = (0..CREATE_CALLDATA_FALLBACK_LEN.min(max_len))
+            .map(|idx| builder.fresh_byte(&mut state, &format!("{prefix}_fallback_{idx}"), false))
+            .collect();
+        let bytes = SymBytes::exprs(cx, bytes);
+        let selector = bytes.right_aligned_word(cx, 0, 4);
+        for function in abi.functions() {
+            let selector = SymBoolExpr::eq_word_const(
+                cx,
+                &selector,
+                U256::from_be_slice(function.selector().as_slice()),
+            );
+            state.constraints.push(selector.not(cx));
+        }
+        let fallback = Self { bytes, inputs: Vec::new(), constraints: state.constraints };
+
+        let mut variants = vec![empty, fallback];
+        for (idx, function) in abi.functions().enumerate() {
+            if include_view
+                || !matches!(
+                    function.state_mutability,
+                    StateMutability::Pure | StateMutability::View
+                )
+            {
+                variants.extend(Self::variants_with_prefix(
+                    function,
+                    config,
+                    cx,
+                    &format!("{prefix}_{idx}"),
+                )?);
+            }
+        }
+        Ok(variants)
+    }
+
     pub(super) fn call_data(&self, cx: &mut SymCx) -> SymCalldata {
         SymCalldata::from_bytes(cx, self.bytes.clone())
+    }
+
+    /// Returns this calldata ABI-encoded as a single `bytes` value.
+    pub(super) fn abi_encoded_bytes(&self, cx: &mut SymCx) -> SymBytes {
+        let value = SymbolicAbiValue::Bytes {
+            len: SymExpr::constant(cx, U256::from(self.bytes.len())),
+            bytes: self.bytes.clone(),
+        };
+        encode_sequence(cx, [&value])
     }
 
     /// Returns symbolic calldata constraints.

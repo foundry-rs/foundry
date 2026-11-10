@@ -3,7 +3,7 @@
 #![warn(unused_crate_dependencies)]
 
 use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
-use alloy_json_abi::Function;
+use alloy_json_abi::{Function, JsonAbi, StateMutability};
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{
     Address, B256, Bytes, I256, Keccak256, U256, hex, keccak256,
@@ -69,7 +69,12 @@ enum SymbolicVmCheatcode {
     CreateBytes,
     CreateBytesSized,
     CreateBytesFixed(usize),
-    CreateCalldata,
+    /// `createCalldata` for a contract named by `target`, with a trailing view and pure function
+    /// flag when `view_flag` is set.
+    CreateCalldata {
+        target: CreateCalldataTarget,
+        view_flag: bool,
+    },
     CreateInt,
     CreateIntBits(usize),
     CreateString,
@@ -88,7 +93,28 @@ impl SymbolicVmCheatcode {
             SymbolicVm::createBoolCall::SELECTOR => Some(Self::CreateBool),
             SymbolicVm::createBytes_0Call::SELECTOR => Some(Self::CreateBytes),
             SymbolicVm::createBytes_1Call::SELECTOR => Some(Self::CreateBytesSized),
-            SymbolicVm::createCalldataCall::SELECTOR => Some(Self::CreateCalldata),
+            SymbolicVm::createCalldata_0Call::SELECTOR => {
+                Some(Self::CreateCalldata { target: CreateCalldataTarget::Name, view_flag: false })
+            }
+            SymbolicVm::createCalldata_1Call::SELECTOR => {
+                Some(Self::CreateCalldata { target: CreateCalldataTarget::Name, view_flag: true })
+            }
+            SymbolicVm::createCalldata_2Call::SELECTOR => Some(Self::CreateCalldata {
+                target: CreateCalldataTarget::FileAndName,
+                view_flag: false,
+            }),
+            SymbolicVm::createCalldata_3Call::SELECTOR => Some(Self::CreateCalldata {
+                target: CreateCalldataTarget::FileAndName,
+                view_flag: true,
+            }),
+            SymbolicVm::createCalldata_4Call::SELECTOR => Some(Self::CreateCalldata {
+                target: CreateCalldataTarget::Address,
+                view_flag: false,
+            }),
+            SymbolicVm::createCalldata_5Call::SELECTOR => Some(Self::CreateCalldata {
+                target: CreateCalldataTarget::Address,
+                view_flag: true,
+            }),
             SymbolicVm::createIntCall::SELECTOR => Some(Self::CreateInt),
             SymbolicVm::createString_0Call::SELECTOR => Some(Self::CreateString),
             SymbolicVm::createString_1Call::SELECTOR => Some(Self::CreateStringSized),
@@ -120,15 +146,36 @@ impl SymbolicVmCheatcode {
             | Self::CreateStringSized
             | Self::EnableSymbolicStorage
             | Self::SnapshotStorage => 1,
+            Self::CreateCalldata { target, view_flag } => target.words() + view_flag as usize,
             Self::CreateAddress
             | Self::CreateBool
             | Self::CreateBytes
             | Self::CreateBytesFixed(_)
-            | Self::CreateCalldata
             | Self::CreateIntBits(_)
             | Self::CreateString
             | Self::CreateUintBits(_)
             | Self::SnapshotState => 0,
+        }
+    }
+}
+
+/// How a `createCalldata` call names its contract.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CreateCalldataTarget {
+    /// A deployed contract address.
+    Address,
+    /// A contract or interface name.
+    Name,
+    /// A source file name and a contract or interface name.
+    FileAndName,
+}
+
+impl CreateCalldataTarget {
+    /// Returns the number of ABI head words that name the contract.
+    const fn words(self) -> usize {
+        match self {
+            Self::Address | Self::Name => 1,
+            Self::FileAndName => 2,
         }
     }
 }
