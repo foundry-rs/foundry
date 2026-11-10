@@ -1398,7 +1398,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
             if let Some(changes) = prank.changes_for(curr_depth, call.caller) {
                 if let Some(new_caller) = changes.caller {
-                    // Ensure new caller is loaded, warm and touched
+                    // Ensure new caller is loaded, warm and touched.
                     let _ = touch_account(interp.host().state_mut(), new_caller);
                     call.caller = new_caller;
                 }
@@ -2550,7 +2550,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             && let Some(changes) = prank.changes_for(curr_depth, input.caller)
         {
             if let Some(new_caller) = changes.caller {
-                // Ensure new caller is loaded, warm and touched
+                // Ensure new caller is loaded, warm and touched.
                 let _ = touch_account(interp.host().state_mut(), new_caller);
                 input.caller = new_caller;
                 caller_changed = true;
