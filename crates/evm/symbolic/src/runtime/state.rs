@@ -153,7 +153,6 @@ impl PathState {
     ) -> Result<(), SymbolicError> {
         self.block = SymbolicBlock::from_executor(cx, executor);
         self.gas_price = SymExpr::constant(cx, U256::from(executor.gas_price));
-        self.persistent_accounts.extend(executor.persistent_accounts.iter().copied());
         for &(target, overwrite) in &executor.arbitrary_storage_targets {
             self.world.enable_arbitrary_storage(target, overwrite);
         }
@@ -164,6 +163,7 @@ impl PathState {
         self.storage_store_hooks.extend(executor.storage_store_hooks.iter().copied());
         self.mapping_storage_store_hooks
             .extend(executor.mapping_storage_store_hooks.iter().copied());
+        self.persistent_accounts.extend(executor.persistent_accounts.iter().copied());
 
         // Forge applies a `setUp` prank from the test frame, which is depth 1 in the inspector.
         for prank in &executor.pranks {
@@ -1918,6 +1918,11 @@ impl SymbolicPrank {
         } else {
             None
         }
+    }
+
+    /// Ends this frame's prank. Like Forge, a caller frame's prank stays visible.
+    pub(crate) fn stop(&mut self) {
+        *self = Self { inherited: self.inherited.take(), ..Self::default() };
     }
 
     pub(crate) const fn has_active(&self) -> bool {

@@ -48,6 +48,7 @@ impl SymbolicExecutor {
         // Like Forge, a prank sets the creator: the constructor's `msg.sender`, the account whose
         // nonce derives the address and increments, and the account that pays the value. The
         // CREATE consumes the pending prank, so a later prank can replace it.
+        let inherited_prank = state.callers();
         let (creator, creator_word, pranked_origin) = state.prank_for_next_call();
 
         // A create beyond the call depth limit fails before it increments the creator's
@@ -129,6 +130,7 @@ impl SymbolicExecutor {
         let isolated =
             matches!(kind, CreateKind::Create) && state.starts_isolated_transaction(executor);
         let mut child = state.child(frame);
+        child.prank.inherited = inherited_prank;
         child.world = failure_world.clone();
         if isolated {
             child.world.clear_transient_storage();

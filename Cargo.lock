@@ -6711,7 +6711,6 @@ dependencies = [
  "alloy-sol-types",
  "base64 0.23.1",
  "evm2",
- "foundry-cheatcodes",
  "foundry-cheatcodes-spec",
  "foundry-common",
  "foundry-config",
