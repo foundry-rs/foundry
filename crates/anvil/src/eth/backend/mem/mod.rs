@@ -125,7 +125,10 @@ use anvil_core::eth::{
 use anvil_rpc::error::{ErrorCode, RpcError};
 use chrono::Datelike;
 use evm2::{
-    AccountInfo,
+    AccountInfo, Version,
+    ethereum::{
+        access_list_counts, intrinsic_and_floor_gas, validate_floor_gas, validate_intrinsic_gas,
+    },
     evm::{BalContext, BlockAccessIndex, BlockStateAccumulator, PendingState, StateChangeSource},
     interpreter::InstrStop,
     registry::HandlerError,
@@ -10360,6 +10363,35 @@ where
             if tx.gas_limit() < min_gas {
                 debug!(target: "backend", "[{:?}] gas too low", tx.hash());
                 return Err(InvalidTransactionError::GasTooLow);
+            }
+
+            // Execution rejects a transaction whose gas limit does not cover its calldata
+            // intrinsic gas or EIP-7623 floor, so reject it here instead of dropping it after
+            // admission. Tempo and Monad, and deposit and EIP-8130 transactions, follow their own
+            // gas rules.
+            if !self.is_tempo()
+                && !self.is_monad()
+                && !is_deposit_tx
+                && !is_eip8130_tx
+                && !is_tempo_tx
+            {
+                let (accounts, storage_keys) =
+                    tx.access_list().map(access_list_counts).unwrap_or_default();
+                let (intrinsic_gas, floor_gas) = intrinsic_and_floor_gas(
+                    &Version::new(evm_env.cfg_env.spec),
+                    *pending.sender(),
+                    tx.kind(),
+                    tx.input(),
+                    accounts,
+                    storage_keys,
+                    tx.value(),
+                );
+                validate_intrinsic_gas(tx.gas_limit(), intrinsic_gas, 0)
+                    .and_then(|()| validate_floor_gas(tx.gas_limit(), floor_gas))
+                    .map_err(|err| {
+                        debug!(target: "backend", "[{:?}] {err}", tx.hash());
+                        InvalidTransactionError::from(err)
+                    })?;
             }
 
             // Check tx gas limit against block gas limit, if block gas limit is set.
