@@ -424,6 +424,7 @@ pub(crate) fn revert_cheatcode_call(
     return_data: SymReturnData,
 ) -> Result<(), SymbolicError> {
     state.first_failed_callee.get_or_insert(CHEATCODE_ADDRESS);
+    state.first_reverted_callee.get_or_insert(CHEATCODE_ADDRESS);
     state.return_data = return_data;
     state.copy_call_output_offset(cx, out_offset, out_size)?;
     state.stack.push(SymExpr::zero(cx))?;

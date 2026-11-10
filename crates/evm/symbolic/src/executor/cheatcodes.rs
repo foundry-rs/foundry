@@ -294,6 +294,7 @@ impl SymbolicExecutor {
     ) -> Result<StepOutcome, SymbolicError> {
         if state.is_static {
             state.first_failed_callee.get_or_insert(CHEATCODE_ADDRESS);
+            state.first_reverted_callee.get_or_insert(CHEATCODE_ADDRESS);
             state.return_data = SymReturnData::empty(&mut self.cx);
             return Ok(StepOutcome::Revert);
         }

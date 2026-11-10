@@ -586,6 +586,9 @@ impl SymbolicExecutor {
             && state.check_expected_emit_after_call(kind);
         let assumption = state.assume_no_revert_next_call.take();
         let assumed_revert = status == CallStatus::Revert && assumption.is_some();
+        if status == CallStatus::Revert {
+            state.first_reverted_callee.get_or_insert(reverter);
+        }
         if let Some(assumption) = &assumption
             && assumed_revert
             && self.assume_no_revert_matches(state, assumption, reverter, &return_data)?
@@ -1280,9 +1283,12 @@ impl SymbolicExecutor {
 
         let assume_no_revert = state.assume_no_revert_next_call.take();
         let mut parents = VecDeque::with_capacity(outcomes.len());
-        for outcome in outcomes {
+        for mut outcome in outcomes {
             let failed_callee =
                 (!matches!(outcome.status, CallStatus::Success)).then_some(outcome.state.address);
+            if matches!(outcome.status, CallStatus::Revert) {
+                outcome.state.first_reverted_callee.get_or_insert(outcome.state.address);
+            }
             match self.join_call_outcome(
                 executor,
                 state,

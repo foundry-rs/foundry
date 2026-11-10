@@ -41,6 +41,9 @@ pub(crate) struct PathState {
     /// Account of the first call, or reverting CREATE, that failed in or below this frame since
     /// it was entered or since its last `vm.expectRevert`, which Forge reports as the reverter.
     pub(crate) first_failed_callee: Option<Address>,
+    /// Account of the first call that reverted in or below this frame since it was entered,
+    /// which Forge reports as the `vm.assumeNoRevert` reverter.
+    pub(crate) first_reverted_callee: Option<Address>,
     pub(crate) assume_no_revert_next_call: Option<AssumeNoRevert>,
     pub(crate) expected_emit: Option<ExpectedEmit>,
     pub(crate) expected_calls: Vec<ExpectedCall>,
@@ -118,6 +121,7 @@ impl PathState {
             loop_jumps: HashMap::default(),
             expected_revert: None,
             first_failed_callee: None,
+            first_reverted_callee: None,
             assume_no_revert_next_call: None,
             expected_emit: None,
             expected_calls: Vec::new(),
@@ -259,6 +263,7 @@ impl PathState {
         child.loop_jumps.clear();
         child.expected_revert = None;
         child.first_failed_callee = None;
+        child.first_reverted_callee = None;
         child.assume_no_revert_next_call = None;
         child
     }
@@ -470,6 +475,7 @@ impl PathState {
         self.access_record = reverted.access_record;
         self.expected_revert = reverted.expected_revert;
         self.first_failed_callee = reverted.first_failed_callee;
+        self.first_reverted_callee = reverted.first_reverted_callee;
         self.assume_no_revert_next_call = reverted.assume_no_revert_next_call;
         self.expected_emit = reverted.expected_emit;
         self.expected_calls = reverted.expected_calls;

@@ -5915,6 +5915,10 @@ contract SymbolicAssumeNoRevertOtherTarget {
     function onlyExpected(uint256 x) external pure {
         if (x == 7) revert Expected(7);
     }
+
+    function callOther(SymbolicAssumeNoRevertFilterTarget target) external view {
+        target.anyExpected(7);
+    }
 }
 
 contract SymbolicAssumeNoRevertFilters is Test {
@@ -6024,6 +6028,23 @@ contract SymbolicAssumeNoRevertFilters is Test {
         (bool ok,) = address(target).call(abi.encodeWithSelector(target.onlyExpected.selector, x));
         assertTrue(ok);
     }
+
+    // Like Forge, the filter names the first contract that reverted inside the call, not the callee.
+    function filterNestedRevert(address reverter) internal {
+        bytes memory reason = abi.encodeWithSelector(Expected.selector, uint256(7));
+        symbolicVm.assumeNoRevert(SymbolicVm.PotentialRevert(reverter, false, reason));
+        try other.callOther(target) {} catch (bytes memory data) {
+            assertEq(data, reason);
+        }
+    }
+
+    function checkAssumeNoRevertNestedReverterFilterCaughtFails(uint256) public {
+        filterNestedRevert(address(target));
+    }
+
+    function checkAssumeNoRevertCalleeFilterSkipsNestedRevert(uint256) public {
+        filterNestedRevert(address(other));
+    }
 }
 
 contract SymbolicAssumeNoRevertHandler {
@@ -6058,17 +6079,18 @@ contract SymbolicAssumeNoRevertPredicate is Test {
         "test",
         "--symbolic",
         "--match-test",
-        "^checkAssumeNoRevert(.*Prunes|CaughtReturnsMagic|SkipsCreate)\\(",
+        "^checkAssumeNoRevert(.*Prunes|CaughtReturnsMagic|SkipsCreate|CalleeFilterSkipsNestedRevert)\\(",
     ]))
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 4 tests for test/SymbolicAssumeNoRevertFilters.t.sol:SymbolicAssumeNoRevertFilters
+Ran 5 tests for test/SymbolicAssumeNoRevertFilters.t.sol:SymbolicAssumeNoRevertFilters
 [PASS] checkAssumeNoRevertArrayFilterPrunes(uint256) ([METRICS])
+[PASS] checkAssumeNoRevertCalleeFilterSkipsNestedRevert(uint256) ([METRICS])
 [PASS] checkAssumeNoRevertCaughtReturnsMagic(uint256) ([METRICS])
 [PASS] checkAssumeNoRevertExactFilterPrunes(uint256) ([METRICS])
 [PASS] checkAssumeNoRevertSkipsCreate(uint256) ([METRICS])
-Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -6081,18 +6103,19 @@ Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
         "test",
         "--symbolic",
         "--match-test",
-        "^checkAssumeNoRevert(Caught|FilteredCaught|WrongData|WrongReverter)Fails\\(",
+        "^checkAssumeNoRevert(Caught|FilteredCaught|NestedReverterFilterCaught|WrongData|WrongReverter)Fails\\(",
     ]))
     .failure()
     .stdout_eq(
         str![[r#"
 ...
-Ran 4 tests for test/SymbolicAssumeNoRevertFilters.t.sol:SymbolicAssumeNoRevertFilters
+Ran 5 tests for test/SymbolicAssumeNoRevertFilters.t.sol:SymbolicAssumeNoRevertFilters
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertCaughtFails(uint256) ([METRICS])
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertFilteredCaughtFails(uint256) ([METRICS])
+[FAIL: assertion failed: 0x464f554e4452593a3a415353554d45 != 0x080982c60000000000000000000000000000000000000000000000000000000000000007; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertNestedReverterFilterCaughtFails(uint256) ([METRICS])
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertWrongDataFails(uint256) ([METRICS])
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertWrongReverterFails(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
 ...
 "#]]
         .unordered(),
