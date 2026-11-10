@@ -975,7 +975,7 @@ mod tests {
                 NamedChain::Tempo as u64,
                 NetworkConfigs::with_ethereum(),
             ),
-            AccountFetchPolicy::RequireAccountInfo,
+            AccountFetchPolicy::RequireAccountInfoWithExtension,
         );
         assert_eq!(
             crate::backend::account_fetch_policy_for_source(
@@ -986,8 +986,25 @@ mod tests {
         );
         assert_eq!(
             crate::backend::account_fetch_policy_for_source(123_456, NetworkConfigs::with_tempo(),),
-            AccountFetchPolicy::RequireAccountInfo,
+            AccountFetchPolicy::RequireAccountInfoWithExtension,
         );
+        // Local development chain IDs do not identify a family; the endpoint profile does.
+        for chain in [NamedChain::Dev, NamedChain::AnvilHardhat] {
+            assert_eq!(
+                crate::backend::account_fetch_policy_for_source(
+                    chain as u64,
+                    NetworkConfigs::with_tempo(),
+                ),
+                AccountFetchPolicy::RequireAccountInfoWithExtension,
+            );
+            assert_eq!(
+                crate::backend::account_fetch_policy_for_source(
+                    chain as u64,
+                    NetworkConfigs::with_ethereum(),
+                ),
+                AccountFetchPolicy::Auto,
+            );
+        }
     }
 
     #[test]

@@ -7,7 +7,7 @@ use alloy_eips::{
     },
 };
 use alloy_network::{AnyHeader, AnyRpcHeader};
-use alloy_primitives::{Address, Bytes, bytes};
+use alloy_primitives::{Address, bytes};
 use alloy_provider::{ProviderBuilder, mock::Asserter};
 use alloy_rpc_types::{Block, BlockTransactions};
 use foundry_config::FoundryHardfork;

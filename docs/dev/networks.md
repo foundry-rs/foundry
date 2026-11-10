@@ -175,6 +175,13 @@ or journal boundary. Do not rely on cloning the ordinary account database to pre
 another component. Do not add optional custom-family state to a generic context or return generic
 "context update" signals when only one concrete family can use them.
 
+Account state can include a chain-specific extension (evm2's `AccountInfo::extension`), such as
+the configuration commitment of a Tempo configurable account from T14. The fork source's account
+fetch policy, chosen at fork creation, decides whether the fork cache fetches it with
+`eth_getAccountInfo` and stores it; Anvil carries it through state dumps, historical states, and its
+`eth_getAccount` and `eth_getAccountInfo` responses. A path that rebuilds accounts from balance,
+nonce, and code alone drops it.
+
 Isolated calls, `vm.executeTransaction`, and `vm.transact` run as nested transactions on an EVM
 that [`ExecutionLifecycle::nested_evm`](../../crates/evm/core/src/evm/lifecycle.rs) builds from
 the running transaction's state, with network extension state derived from the running EVM. Their

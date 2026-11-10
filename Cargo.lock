@@ -6772,10 +6772,11 @@ dependencies = [
 [[package]]
 name = "foundry-fork-db"
 version = "0.27.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=a611430808f484546ce36a90b33d91780ec81ea7#a611430808f484546ce36a90b33d91780ec81ea7"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=b7b6c96a0dd2c8c774a106b83e4fb9aedc1821bb#b7b6c96a0dd2c8c774a106b83e4fb9aedc1821bb"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
+ "alloy-json-rpc",
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types",
@@ -6786,6 +6787,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "tower",
  "tracing",
  "url",
  "zstd 0.14.3",

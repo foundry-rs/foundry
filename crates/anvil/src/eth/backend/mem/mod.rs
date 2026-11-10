@@ -117,7 +117,9 @@ use alloy_rpc_types_eth::{AccountInfo as RpcAccountInfo, Bundle, EthCallResponse
 use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse, EthCallBundleTransactionResult};
 use alloy_serde::{OtherFields, WithOtherFields};
 use alloy_sol_types::SolCall;
-use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer, root::state_root_ref_unhashed};
+use alloy_trie::{
+    AccountExtension, HashBuilder, Nibbles, proof::ProofRetainer, root::state_root_ref_unhashed,
+};
 use anvil_core::eth::{
     block::{Block, BlockInfo, canonical_block, create_block},
     transaction::{MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo},
@@ -7344,7 +7346,8 @@ where
             let code_hash = account.info.code_hash;
             let balance = account.info.balance;
             let nonce = account.info.nonce;
-            Ok(TrieAccount::new(nonce, balance, storage_root, code_hash))
+            Ok(TrieAccount::new(nonce, balance, storage_root, code_hash)
+                .with_extension(AccountExtension::copy_from_slice(&account.info.extension)))
         })
         .await?
     }
@@ -7357,7 +7360,7 @@ where
         self.with_database_at(block_request, |db, _| {
             let account = db.basic_ref(address)?.unwrap_or_default();
             let code = self.get_code_with_state(&db, address)?;
-            Ok(RpcAccountInfo { balance: account.balance, nonce: account.nonce, code })
+            Ok(rpc_account_info(&account, code))
         })
         .await?
     }
@@ -7699,7 +7702,7 @@ where
             )?;
             let account = cache_db.basic_ref(address)?.unwrap_or_default();
             let code = self.get_code_with_state(&cache_db, address)?;
-            Ok(RpcAccountInfo { balance: account.balance, nonce: account.nonce, code })
+            Ok(rpc_account_info(&account, code))
         };
 
         let read_guard = self.states.upgradable_read();
@@ -10990,6 +10993,17 @@ fn block_blobs(block: &Block) -> impl Iterator<Item = (&Blob, B256)> {
         .iter()
         .filter_map(|tx| tx.as_ref().sidecar())
         .flat_map(|sidecar| sidecar.sidecar.blobs().iter().zip(sidecar.sidecar.versioned_hashes()))
+}
+
+/// Returns `account`, whose code is `code`, as `eth_getAccountInfo` reports it, including its
+/// extension, as Tempo nodes do.
+fn rpc_account_info(account: &AccountInfo, code: Bytes) -> RpcAccountInfo {
+    RpcAccountInfo {
+        balance: account.balance,
+        nonce: account.nonce,
+        code,
+        extension: AccountExtension::copy_from_slice(&account.extension),
+    }
 }
 
 #[cfg(test)]

@@ -39,7 +39,7 @@ use crate::{
         apply_chain_specific_tx_replay_env_changes_for_chain, block_env_from_header,
     },
 };
-use alloy_chains::Chain;
+use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::{BlockHeader, Transaction as _, Typed2718, transaction::Recovered};
 use alloy_eips::BlockNumHash;
 use alloy_genesis::GenesisAccount;
@@ -1641,13 +1641,22 @@ fn is_contract(account: Option<AccountInfo>) -> bool {
 /// Returns the account-loading policy required by a fork source.
 ///
 /// A recognized source chain ID is authoritative. The endpoint's execution profile is only a
-/// source hint for custom chain IDs, where the chain ID cannot identify the RPC semantics.
+/// source hint for custom chain IDs, where the chain ID cannot identify the RPC semantics, and for
+/// local development chain IDs, which nodes of any family use, such as Anvil and Tempo dev nodes.
+/// A dev node of another family that reports no Anvil node info therefore needs an execution
+/// profile that matches it: selecting Tempo for it requires `eth_getAccountInfo`.
 pub fn account_fetch_policy_for_source(
     source_chain_id: ChainId,
     network_profile: NetworkConfigs,
 ) -> AccountFetchPolicy {
     let source_chain = Chain::from_id(source_chain_id);
-    let is_tempo =
-        source_chain.is_tempo() || (source_chain.named().is_none() && network_profile.is_tempo());
-    if is_tempo { AccountFetchPolicy::RequireAccountInfo } else { AccountFetchPolicy::Auto }
+    let identifies_family = source_chain
+        .named()
+        .is_some_and(|chain| !matches!(chain, NamedChain::Dev | NamedChain::AnvilHardhat));
+    let is_tempo = source_chain.is_tempo() || (!identifies_family && network_profile.is_tempo());
+    if is_tempo {
+        AccountFetchPolicy::RequireAccountInfoWithExtension
+    } else {
+        AccountFetchPolicy::Auto
+    }
 }
