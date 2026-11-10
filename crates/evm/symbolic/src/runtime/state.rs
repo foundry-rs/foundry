@@ -2904,6 +2904,11 @@ impl SymbolicWorld {
         Ok(targets)
     }
 
+    /// Returns the concrete accounts the run knows, in address order.
+    pub(crate) fn concrete_alias_candidates(&self, executor: &ExecutorView<'_>) -> Vec<Address> {
+        self.candidate_addresses(executor, |_, _| false)
+    }
+
     /// Returns the accounts a symbolic address may alias, in address order.
     ///
     /// Includes accounts that exist only in the backend, such as contracts deployed in `setUp`,

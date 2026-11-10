@@ -25,6 +25,8 @@ contract SymbolicAddressCheatcodes is Test {
         vm.assume(who != address(0));
         vm.assume(who != address(this));
         vm.assume(who != address(vm));
+        // `who` may be a known account, such as the sender or a system contract.
+        vm.assume(vm.getNonce(who) == 0 && who.code.length == 0);
 
         vm.deal(who, 11);
         assertEq(who.balance, 11);
@@ -180,6 +182,8 @@ contract SymbolicPrankSender is Test {
         vm.assume(who != address(vm));
         vm.assume(who != address(target));
         vm.assume(uint160(who) > 0xff);
+        // `who` may be a known account whose nonce is not zero.
+        vm.assume(vm.getNonce(who) == 0);
 
         vm.deal(who, 5);
         vm.prank(who);
@@ -2758,6 +2762,13 @@ contract SymbolicAddressAlias is Test {
         assert(a.balance + b.balance == 10 ether);
     }
 
+    // A write through a free address may land on an account the run already knows.
+    function checkDealMayTargetKnownAccount(address a) public {
+        vm.deal(address(0xBEEF), 1);
+        vm.deal(a, 5);
+        assert(address(0xBEEF).balance != 5);
+    }
+
     function checkDistinctDealsAreIndependent(address a, address b) public {
         vm.assume(a != b);
         vm.deal(a, 10 ether);
@@ -2807,15 +2818,16 @@ contract SymbolicAddressAlias is Test {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 7 tests for test/SymbolicAddressAlias.t.sol:SymbolicAddressAlias
+Ran 8 tests for test/SymbolicAddressAlias.t.sol:SymbolicAddressAlias
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkCodeReadPreservesCode(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkComputedAddressDealIsVisible(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkComputedAddressStoreIsVisible(uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealMayTargetKnownAccount(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealPreservesCode(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x5b3b1d1100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 args=[0x0000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000]] checkDealsMayTargetOneAccount(address,address) ([METRICS])
 [PASS] checkDistinctDealsAreIndependent(address,address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankPreservesBalance(uint256) ([METRICS])
-Suite result: FAILED. 1 passed; 6 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 1 passed; 7 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

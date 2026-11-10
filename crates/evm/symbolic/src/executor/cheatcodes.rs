@@ -566,6 +566,82 @@ impl SymbolicExecutor {
         Ok(())
     }
 
+    /// Returns the target of a cheatcode write, such as `vm.deal`, made through a free symbolic
+    /// address by the CALL on top of the stack.
+    pub(super) fn free_address_write_target(
+        &mut self,
+        state: &PathState,
+        kind: CallKind,
+    ) -> Option<SymExpr> {
+        let in_offset_idx = match kind {
+            CallKind::Call => 3,
+            CallKind::StaticCall => 2,
+            CallKind::CallCode | CallKind::DelegateCall => return None,
+        };
+        if state.stack.peek(1).ok()?.as_const() != Some(address_word(CHEATCODE_ADDRESS)) {
+            return None;
+        }
+        let in_offset = usize::try_from(state.stack.peek(in_offset_idx).ok()?.as_const()?).ok()?;
+        let selector = state.memory.read_concrete(&mut self.cx, in_offset, 4).ok()?;
+        if ![
+            dealCall::SELECTOR,
+            etchCall::SELECTOR,
+            storeCall::SELECTOR,
+            setNonceCall::SELECTOR,
+            setNonceUnsafeCall::SELECTOR,
+        ]
+        .contains(&selector.as_slice().try_into().ok()?)
+        {
+            return None;
+        }
+        let target = read_abi_word_arg(&mut self.cx, &state.memory, in_offset + 4, 0).ok()?;
+        state.constrained_word(&mut self.cx, &target).is_none().then_some(target)
+    }
+
+    /// Forks a cheatcode write through a free symbolic address over the concrete accounts the run
+    /// knows, so the write can land on one of them. Accounts the run has not seen yet stay
+    /// outside.
+    pub(super) fn branch_free_address_write_if_needed(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        state: &mut PathState,
+        worklist: &mut VecDeque<PathState>,
+        pre_call_state: &PathState,
+        call_pc: usize,
+        target: &SymExpr,
+    ) -> Result<bool, SymbolicError> {
+        let candidates = state.world.concrete_alias_candidates(executor);
+        if candidates.len() > MAX_FREE_ADDRESS_ALIAS_CANDIDATES {
+            return Err(SymbolicError::Unsupported(
+                "symbolic cheatcode address with too many alias candidates",
+            ));
+        }
+        for candidate in candidates {
+            let eq = SymBoolExpr::eq_word_const(&mut self.cx, target, address_word(candidate));
+            let (eq_constraints, eq_sat) = self.constraints_with_condition(state, eq.clone())?;
+            let neq = eq.not(&mut self.cx);
+            let (neq_constraints, neq_sat) = self.constraints_with_condition(state, neq)?;
+            match (eq_sat, neq_sat) {
+                (true, true) => {
+                    for constraints in [eq_constraints, neq_constraints] {
+                        let mut branch = pre_call_state.clone();
+                        branch.pc = call_pc;
+                        branch.constraints = constraints;
+                        worklist.push_back(branch);
+                    }
+                    return Ok(true);
+                }
+                (true, false) => {
+                    state.constraints = eq_constraints;
+                    return Ok(false);
+                }
+                (false, true) => state.constraints = neq_constraints,
+                (false, false) => return Ok(false),
+            }
+        }
+        Ok(false)
+    }
+
     pub(super) fn branch_accesses_cheatcode_if_needed(
         &mut self,
         state: &mut PathState,
@@ -2776,3 +2852,6 @@ impl SymbolicExecutor {
         }
     }
 }
+
+/// Bounds the concrete accounts a cheatcode write through a free symbolic address forks over.
+const MAX_FREE_ADDRESS_ALIAS_CANDIDATES: usize = 32;
