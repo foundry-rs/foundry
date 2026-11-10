@@ -939,6 +939,14 @@ impl SymbolicExecutor {
             opcode::SLOAD => {
                 let key = state.stack.pop()?;
                 state.record_sload(state.storage_address, key.clone());
+                if let Some(slot) = key.as_const() {
+                    self.folded_slots.resolve_nested(
+                        &mut self.cx,
+                        state.storage_address,
+                        slot,
+                        self.deadline,
+                    );
+                }
                 let concrete_key = state.constrained_word(&mut self.cx, &key);
                 let value = state.world.sload(
                     &mut self.cx,
@@ -977,6 +985,14 @@ impl SymbolicExecutor {
                 }
                 let key = state.stack.peek(0)?.clone();
                 state.stack.peek(1)?;
+                if let Some(slot) = key.as_const() {
+                    self.folded_slots.resolve_nested(
+                        &mut self.cx,
+                        state.storage_address,
+                        slot,
+                        self.deadline,
+                    );
+                }
                 let hook = (!state.storage_hook_active)
                     .then(|| state.storage_store_hooks.get(&state.storage_address).copied())
                     .flatten();

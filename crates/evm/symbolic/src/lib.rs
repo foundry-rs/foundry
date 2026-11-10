@@ -415,6 +415,7 @@ pub struct SymbolicExecutor {
     deadline: Option<Instant>,
     nested_deferred_mode: DeferredPathMode,
     stateless_retry_safe: bool,
+    folded_slots: runtime::FoldedSlots,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -646,7 +646,7 @@ fn symbolic_keccak_known_preimage_bases_do_not_alias(prj: _, cmd: _) {
     prj.update_config(|config| config.optimizer = Some(true));
     prj.add_test(
         "SymbolicKeccakPreimage.t.sol",
-        r#"
+        &r#"
 contract SymbolicKeccakPreimage {
     address constant KEY = address(0xD00D);
 
@@ -654,6 +654,7 @@ contract SymbolicKeccakPreimage {
     address[] holders;
     mapping(address => uint256[]) deposits;
     mapping(address => mapping(uint256 => uint256)) nested;
+    mapping(uint256 => mapping(uint256 => uint256)) unused;
 
     constructor() {
         holders.push(address(1));
@@ -692,21 +693,38 @@ contract SymbolicKeccakPreimage {
         nested[who][id] = 3;
         assert(nested[KEY][1] == 0);
     }
+
+    // Thousands of integer constants and an unused nested mapping: the nested key product is
+    // searched only for a slot the run accesses, so this stays fast.
+    function checkManyConstantsStayFast(uint256 x) public pure {
+        assembly {
+MANY_CONSTANTS
+        }
+        assert(x == x);
+    }
 }
-"#,
+"#
+        .replace(
+            "MANY_CONSTANTS",
+            &(0..2000)
+                .map(|idx| format!("            mstore(0, {})", 0x1000_0000 + idx))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
     );
 
     assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicKeccakPreimage"]))
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 5 tests for test/SymbolicKeccakPreimage.t.sol:SymbolicKeccakPreimage
+Ran 6 tests for test/SymbolicKeccakPreimage.t.sol:SymbolicKeccakPreimage
 [PASS] checkArrayElementSurvivesMappingWrite(address,uint256,uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x622f5688000000000000000000000000000000000000000000000000000000000000d00d args=[0x000000000000000000000000000000000000D00d]] checkFoldedConstantKeySlotAliases(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x8633f2c7000000000000000000000000000000000000000000000000000000000000d00d0000000000000000000000000000000000000000000000000000000000000001 args=[0x000000000000000000000000000000000000D00d, 1]] checkFoldedNestedConstantKeySlotAliases(address,uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x4df8b26f000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkKnownKeccakPreimage(uint256) ([METRICS])
+[PASS] checkManyConstantsStayFast(uint256) ([METRICS])
 [PASS] checkNestedArraySurvivesMappingWrite(address,address,uint256,uint256) ([METRICS])
-Suite result: FAILED. 2 passed; 3 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 3 passed; 3 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
