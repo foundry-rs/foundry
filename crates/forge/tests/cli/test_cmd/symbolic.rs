@@ -2037,6 +2037,14 @@ contract SymbolicEmptyDomain is Test {
         try vm.assume(x != 5) { vm.assume(false); } catch { assert(false); }
     }
 
+    // An infeasible caught rejection never runs, so it cannot make the proof incomplete.
+    function checkInfeasibleCaughtRejection(uint256 x) public {
+        vm.assume(x != 5);
+        try vm.assume(x != 5) {} catch {
+            vm.assertEq(uint256(1), uint256(2));
+        }
+    }
+
     // The allocation makes the cheatcode input offset symbolic.
     function checkAssumeAfterSymbolicAlloc(uint8 n) public {
         new bytes(n);
@@ -2062,12 +2070,13 @@ contract SymbolicEmptyDomain is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 11 tests for test/SymbolicEmptyDomain.t.sol:SymbolicEmptyDomain
+Ran 12 tests for test/SymbolicEmptyDomain.t.sol:SymbolicEmptyDomain
 [PASS] checkAssumeAfterSymbolicAlloc(uint8) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeCaught(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkCaughtRepeatedAssumption(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkConstantAssumption() ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkContradictoryAssumptions(uint256) ([METRICS])
+[PASS] checkInfeasibleCaughtRejection(uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (RevertAll): all symbolic paths reverted] checkRejectedAndReverted(bool) ([METRICS])
 [PASS] checkSkipAfterSymbolicAlloc(uint8) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSkipCaught(uint256) ([METRICS])

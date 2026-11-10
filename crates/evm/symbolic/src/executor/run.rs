@@ -105,7 +105,15 @@ impl SymbolicExecutor {
         Ok(matches!(
             outcome,
             StepOutcome::Continue | StepOutcome::Forked | StepOutcome::AssumeRejected
-        ) || !state.take_deferred_feasibility_check()
+        ) || self.deferred_path_is_feasible(state)?)
+    }
+
+    /// Runs a path's deferred feasibility check, if it has one.
+    pub(super) fn deferred_path_is_feasible(
+        &mut self,
+        state: &mut PathState,
+    ) -> Result<bool, SymbolicError> {
+        Ok(!state.take_deferred_feasibility_check()
             || self.branch_is_sat_or_defer(state, &state.constraints)?)
     }
 

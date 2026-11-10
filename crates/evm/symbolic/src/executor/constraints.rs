@@ -98,7 +98,7 @@ impl SymbolicExecutor {
                 )?;
                 worklist.push_back(accepted_state);
                 // The rejected branch runs in place: an uncaught revert discards it without a
-                // solver query, and a caught one is checked when its frame completes.
+                // solver query. A caught one is checked before it calls out or completes.
                 state.constraints.push(accepted.not(&mut self.cx));
                 state.set_corpus_seed_models(rejected_seed_models);
                 state.defer_feasibility_check();
