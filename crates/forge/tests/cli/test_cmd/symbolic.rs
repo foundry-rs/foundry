@@ -1877,18 +1877,30 @@ contract SymbolicRiddle {
 
         assert(false);
     }
+
+    // The query shares `add(a, b)` through a solver helper definition, which the model echoes
+    // without a literal value; the model parser must not give it the next variable's value.
+    function check_shared_subterm_model(uint256 a, uint256 b) external pure {
+        uint256 r;
+        assembly {
+            r := add(mod(0, add(a, b)), sub(iszero(a), b))
+        }
+        require(a != 0);
+        assert(r != type(uint256).max - 244);
+    }
 }
 "#,
     );
 
     let stdout =
-        assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "check_riddle"]))
+        assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicRiddle"]))
             .failure()
             .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicRiddle.t.sol:SymbolicRiddle
+Ran 2 tests for test/SymbolicRiddle.t.sol:SymbolicRiddle
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] check_riddle(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] check_shared_subterm_model(uint256,uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
             .get_output()
