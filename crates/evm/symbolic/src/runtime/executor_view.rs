@@ -88,6 +88,7 @@ pub struct ExecutorView<'a> {
     pub(crate) known_contracts: Option<&'a ContractsByArtifact>,
     /// Source literals, used as candidate keys of constant-folded mapping slots.
     pub(crate) literals: Option<&'a LiteralsDictionary>,
+    pub(crate) expects_safe_memory: bool,
     /// Accounts the backend marks persistent across fork switches, which `vm.isPersistent` sees.
     pub(crate) persistent_accounts: Vec<Address>,
 }
@@ -218,6 +219,7 @@ impl<'a> ExecutorView<'a> {
             recording_accesses: cheats.is_some_and(|cheats| cheats.recording_accesses),
             known_contracts: None,
             literals: None,
+            expects_safe_memory: cheats.is_some_and(|cheats| !cheats.allowed_mem_writes.is_empty()),
             persistent_accounts: backend.lifecycle().forks().persistent_accounts().collect(),
         }
     }

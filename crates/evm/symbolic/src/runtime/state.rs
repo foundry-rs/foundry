@@ -1,7 +1,7 @@
 use super::*;
 use alloy_sol_types::{Revert, SolError};
 use evm2::interpreter::gas::CALL_STIPEND;
-use foundry_evm::core::backend::GLOBAL_FAIL_SLOT;
+use foundry_evm::{core::backend::GLOBAL_FAIL_SLOT, inspectors::cheatcodes::ExpectedCallType};
 
 const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
 
@@ -167,6 +167,11 @@ impl PathState {
         self.storage_store_hooks.extend(executor.storage_store_hooks.iter().copied());
         self.mapping_storage_store_hooks
             .extend(executor.mapping_storage_store_hooks.iter().copied());
+        if executor.expects_safe_memory {
+            return Err(SymbolicError::Unsupported(
+                "symbolic vm.expectSafeMemory inherited from setUp",
+            ));
+        }
         self.persistent_accounts.extend(executor.persistent_accounts.iter().copied());
 
         // Forge applies a `setUp` prank from the test frame, which is depth 1 in the inspector.
@@ -252,6 +257,29 @@ impl PathState {
                 })
                 .collect();
             self.recorded_logs = Some(logs);
+        }
+        let mut expected_calls = cheats
+            .expected_calls
+            .iter()
+            .flat_map(|(callee, calls)| calls.iter().map(move |(key, call)| (callee, key, call)))
+            .collect::<Vec<_>>();
+        expected_calls.sort_by(|a, b| (a.0, &a.1.0).cmp(&(b.0, &b.1.0)));
+        for (callee, (data, scheme), (expected, observed)) in expected_calls {
+            if scheme.is_some() {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic vm.expectCall scheme inherited from setUp",
+                ));
+            }
+            self.expected_calls.push(ExpectedCall {
+                callee: SymExpr::constant(cx, address_word(*callee)),
+                value: expected.value,
+                gas: expected.gas,
+                min_gas: expected.min_gas,
+                data: SymBytes::concrete(cx, data.to_vec()),
+                expected: expected.count,
+                observed: *observed,
+                exact: expected.call_type == ExpectedCallType::Count,
+            });
         }
         if let Some(wallets) = &cheats.wallets {
             let wallets = wallets
@@ -1982,6 +2010,7 @@ pub(crate) struct SymbolicWorldState {
     nonces: HashMap<Address, u64>,
     existing_accounts: HashSet<Address>,
     destroyed_accounts: HashSet<Address>,
+    pending_selfdestructs: HashSet<Address>,
     arbitrary_storage_accounts: HashMap<Address, bool>,
     arbitrary_storage_copies: HashMap<Address, Address>,
     arbitrary_storage_all: bool,
@@ -2014,6 +2043,24 @@ pub(crate) struct SymbolicWorld {
     state: Arc<SymbolicWorldState>,
     snapshots: HashMap<U256, SymbolicSnapshot>,
     next_snapshot_id: u64,
+}
+
+impl SymbolicWorldState {
+    /// Deletes the accounts that self-destructed in the transaction that just ended.
+    fn apply_pending_selfdestructs(&mut self, cx: &mut SymCx) {
+        for address in std::mem::take(&mut self.pending_selfdestructs) {
+            self.balances.insert(address, SymExpr::zero(cx));
+            self.nonces.insert(address, 0);
+            self.code_cache.insert(address, SymCode::empty(cx));
+            self.written_code.insert(address);
+            self.storage.retain(|write| write.address != address);
+            self.transient_storage.retain(|write| write.address != address);
+            // A deleted account reads zero storage like a fresh one.
+            self.created_accounts.insert(address);
+            self.existing_accounts.remove(&address);
+            self.destroyed_accounts.insert(address);
+        }
+    }
 }
 
 impl Deref for SymbolicWorld {
@@ -2079,8 +2126,9 @@ impl SymbolicWorld {
     }
 
     /// Clears transaction-scoped state at a top-level call boundary.
-    pub(crate) fn clear_transaction_scoped_state(&mut self) {
+    pub(crate) fn clear_transaction_scoped_state(&mut self, cx: &mut SymCx) {
         let state = Arc::make_mut(&mut self.state);
+        state.apply_pending_selfdestructs(cx);
         state.transient_storage.clear();
         state.current_transaction_created_accounts.clear();
     }
@@ -2552,7 +2600,9 @@ impl SymbolicWorld {
         state.destroyed_accounts.remove(&address);
     }
 
-    /// Implements legacy `SELFDESTRUCT` semantics.
+    /// Implements legacy `SELFDESTRUCT` semantics: the balance moves at once, and the account
+    /// is deleted when the running transaction ends, also for a call that ran as its own
+    /// transaction, as Forge does.
     pub(crate) fn selfdestruct_legacy(
         &mut self,
         cx: &mut SymCx,
@@ -2567,27 +2617,10 @@ impl SymbolicWorld {
                 SymMemory::saturating_add_word(cx, beneficiary_balance, balance);
             self.set_balance_word(beneficiary, beneficiary_balance);
         }
-        let nonce = if self.nonces.contains_key(&address) {
-            None
-        } else {
-            Some(self.nonce(executor, address)?)
-        };
         let zero = SymExpr::zero(cx);
-        let empty_code = SymCode::empty(cx);
         let state = Arc::make_mut(&mut self.state);
         state.balances.insert(address, zero);
-        state.code_cache.insert(address, empty_code);
-        state.written_code.insert(address);
-        if let Some(nonce) = nonce {
-            state.nonces.insert(address, nonce);
-        }
-        state.storage.retain(|write| write.address != address);
-        state.transient_storage.retain(|write| write.address != address);
-        // The account's storage is gone, so later reads see zero, not its pre-run storage.
-        state.created_accounts.insert(address);
-        state.current_transaction_created_accounts.remove(&address);
-        state.existing_accounts.remove(&address);
-        state.destroyed_accounts.insert(address);
+        state.pending_selfdestructs.insert(address);
         Ok(())
     }
 
@@ -2656,6 +2689,17 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
         address: Address,
     ) -> Result<SymExpr, SymbolicError> {
+        // Cheatcode accounts keep Forge's fixed code hash, not the hash of their stub code,
+        // until `vm.etch` or a self-destruct writes their code.
+        if (address == CHEATCODE_ADDRESS || address == SYMBOLIC_VM_COMPAT_ADDRESS)
+            && !self.written_code.contains(&address)
+            && let Some(account) = executor
+                .backend
+                .basic(address)
+                .map_err(|err| SymbolicError::Backend(err.to_string()))?
+        {
+            return Ok(SymExpr::constant(cx, account.code_hash.into()));
+        }
         if self.destroyed_accounts.contains(&address) {
             return Ok(SymExpr::zero(cx));
         }
@@ -2814,6 +2858,11 @@ impl SymbolicWorld {
             }
         }
         Ok(targets)
+    }
+
+    /// Returns the concrete accounts the run knows, in address order.
+    pub(crate) fn concrete_alias_candidates(&self, executor: &ExecutorView<'_>) -> Vec<Address> {
+        self.candidate_addresses(executor, |_, _| false)
     }
 
     /// Returns the accounts a symbolic address may alias, in address order.

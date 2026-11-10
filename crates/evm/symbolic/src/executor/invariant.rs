@@ -291,7 +291,7 @@ impl SymbolicExecutor {
         calldata: SymCalldata,
         constraints: Vec<SymBoolExpr>,
     ) -> Result<SequenceCall, SymbolicError> {
-        state.world.clear_transaction_scoped_state();
+        state.world.clear_transaction_scoped_state(&mut self.cx);
         state.mapping_hook_keccak_preimages.clear();
         let code = state.world.extcode(&mut self.cx, executor, target)?;
         state.call_depth = 0;

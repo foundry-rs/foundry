@@ -7655,6 +7655,19 @@ contract RoundedProductTest {
         require(bps <= 10000);
         assert(uint256(amount) * bps / 10000 <= amount);
     }
+
+    mapping(address => uint256) balances;
+
+    function checkTransferConservation(address from, address to, uint256 amount) external {
+        uint256 fromBefore = balances[from];
+        uint256 toBefore = balances[to];
+        require(fromBefore >= amount);
+        balances[from] = fromBefore - amount;
+        balances[to] += amount;
+        unchecked {
+            assert(balances[from] + balances[to] == fromBefore + toBefore);
+        }
+    }
 }
 "#,
     );
@@ -7666,7 +7679,7 @@ contract RoundedProductTest {
             "--symbolic-timeout",
             "30",
             "--match-test",
-            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|NarrowFloorError|BasisPointsFee)",
+            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|NarrowFloorError|BasisPointsFee|TransferConservation)",
         ])
         .assert_success();
         let output = cmd

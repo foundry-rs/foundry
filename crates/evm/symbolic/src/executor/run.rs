@@ -410,7 +410,7 @@ impl SymbolicExecutor {
             root.set_branch_target(input.branch_target);
             root.apply_executor_env(&mut self.cx, &input.executor)?;
             root.world.set_storage_layout(self.config.storage_layout);
-            root.world.clear_transaction_scoped_state();
+            root.world.clear_transaction_scoped_state(&mut self.cx);
             roots.push(root);
         }
         order_roots_by_corpus_seed_count(&mut roots, self.config.exploration_order);
