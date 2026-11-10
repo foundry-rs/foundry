@@ -1767,6 +1767,36 @@ contract SymbolicHandlerPrankInvariant is Test {
     }
 }
 
+contract StartingHandler {
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    SenderReporter reporter;
+    bool started;
+    bool public violated;
+
+    constructor(SenderReporter reporter_) {
+        reporter = reporter_;
+    }
+
+    function start() external {
+        started = true;
+        VM.startPrank(address(0x777));
+    }
+
+    function query() external {
+        if (started && reporter.who() != address(0x777)) {
+            violated = true;
+        }
+    }
+}
+
+contract StoppingHandler {
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function stop() external {
+        VM.stopPrank();
+    }
+}
+
 contract SymbolicRepeatHandlerPrankInvariant is Test {
     RepeatPrankingHandler handler;
 
@@ -1781,6 +1811,24 @@ contract SymbolicRepeatHandlerPrankInvariant is Test {
     /// forge-config: default.invariant.runs = 0
     function invariant_prankStaysWithHandler() public view {
         assert(!handler.violated());
+    }
+}
+
+contract SymbolicStoppedPrankInvariant is Test {
+    StartingHandler starter;
+
+    function setUp() public {
+        starter = new StartingHandler(new SenderReporter());
+        targetContract(address(starter));
+        targetContract(address(new StoppingHandler()));
+    }
+
+    // Concretely root frames share one prank slot, so another handler's stopPrank ends the
+    // prank. No fuzz runs, so only the symbolic phase can find it.
+    /// forge-config: default.symbolic.invariant_depth = 3
+    /// forge-config: default.invariant.runs = 0
+    function invariant_stoppedPrankStaysStopped() public view {
+        assert(!starter.violated());
     }
 }
 "#,
@@ -1850,6 +1898,32 @@ Encountered 1 failing test in test/SymbolicHandlerPrankInvariant.t.sol:SymbolicR
 		[SENDER] [SENDER] calldata=act() [ARGS]
 		[SENDER] [SENDER] calldata=act() [ARGS]
  invariant_prankStaysWithHandler() ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_stoppedPrankStaysStopped",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/SymbolicHandlerPrankInvariant.t.sol:SymbolicStoppedPrankInvariant
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 3, shrunk: 3)
+		[SENDER] [SENDER] calldata=start() [ARGS]
+		[SENDER] [SENDER] calldata=stop() [ARGS]
+		[SENDER] [SENDER] calldata=query() [ARGS]
+ invariant_stoppedPrankStaysStopped() ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 

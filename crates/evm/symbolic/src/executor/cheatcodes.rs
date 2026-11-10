@@ -1122,6 +1122,11 @@ impl SymbolicExecutor {
                         )
                     })
                     .transpose()?;
+                // Like Forge, root frames share one prank slot, so a new or stopped prank also
+                // ends a prank parked for another root frame.
+                if state.call_depth == 0 {
+                    state.root_pranks.clear();
+                }
                 if persistent {
                     state.prank.set_persistent(caller, origin);
                 } else {
@@ -1130,6 +1135,9 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             stopPrankCall::SELECTOR => {
+                if state.call_depth == 0 {
+                    state.root_pranks.clear();
+                }
                 state.prank = SymbolicPrank::default();
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
