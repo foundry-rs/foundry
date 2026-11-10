@@ -487,7 +487,6 @@ impl SymbolicExecutor {
                         parent
                             .world
                             .install_code(created, child.frame.return_data.to_code(&mut self.cx)?);
-                        parent.world.set_nonce(created, 1);
                     }
                     let return_data =
                         SymReturnData::from_words(&mut self.cx, vec![created_word.clone()]);
