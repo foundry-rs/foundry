@@ -21,6 +21,8 @@ pub struct EvmEnv<T: EvmTypesHost> {
     pub version: Version,
     /// Block environment.
     pub block: BlockEnv<T>,
+    /// Inspector-visible depth of top-level messages, such as a nested transaction's root.
+    pub initial_call_depth: u16,
 }
 
 impl<T: EvmTypesHost<SpecId: Debug>> Debug for EvmEnv<T> {
@@ -29,6 +31,7 @@ impl<T: EvmTypesHost<SpecId: Debug>> Debug for EvmEnv<T> {
             .field("spec", &self.spec)
             .field("version", &self.version)
             .field("block", &self.block)
+            .field("initial_call_depth", &self.initial_call_depth)
             .finish()
     }
 }
@@ -44,7 +47,7 @@ impl<T: EvmTypesHost> Copy for EvmEnv<T> {}
 impl<T: EvmTypesHost> EvmEnv<T> {
     /// Creates an environment.
     pub const fn new(spec: T::SpecId, version: Version, block: BlockEnv<T>) -> Self {
-        Self { spec, version, block }
+        Self { spec, version, block, initial_call_depth: 0 }
     }
 
     /// Returns the chain ID.
@@ -101,8 +104,6 @@ pub fn carry_execution_policy(
     let enabled = current.features & FOUNDRY_POLICY_FEATURES & !current_default.features;
     next.features = (next.features & !disabled) | enabled;
     next.chain_id = current.chain_id;
-    // A nested transaction's root, such as a `vm.transact` replay, keeps its depth.
-    next.initial_call_depth = current.initial_call_depth;
     macro_rules! carry_overridden {
         ($($field:ident),*) => {$(
             if current.$field != current_default.$field {
@@ -142,6 +143,13 @@ pub trait FoundryExecutionHooks: EvmTypes {
         _original: &AddressMap<Option<AccountInfo>>,
     ) {
         Self::refresh_transaction(evm);
+    }
+
+    /// Returns how many levels below the transaction its handler runs `tx`'s top-level calls,
+    /// such as one for Tempo's AA transactions. A nested transaction lowers its initial call
+    /// depth by it, so its calls keep their depth in the surrounding trace.
+    fn tx_call_depth_offset(_tx: &Self::Tx) -> u16 {
+        0
     }
 }
 

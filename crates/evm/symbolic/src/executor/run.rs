@@ -19,6 +19,7 @@ impl SymbolicExecutor {
             deadline: None,
             nested_deferred_mode: DeferredPathMode::Skip,
             stateless_retry_safe: true,
+            folded_slots: FoldedSlots::default(),
         }
     }
 
@@ -389,6 +390,7 @@ impl SymbolicExecutor {
             .ok_or(SymbolicError::MissingAccount(input.target))?;
         let bytecode = account.code.ok_or(SymbolicError::MissingCode(input.target))?;
         let code = SymCode::from_bytecode(&mut self.cx, &bytecode);
+        self.folded_slots = FoldedSlots::register(&mut self.cx, &input.executor, self.deadline);
         let mut roots = Vec::new();
         for calldata in SymbolicCalldata::variants(input.function, &self.config, &mut self.cx)? {
             let corpus_seed_models = input
@@ -408,7 +410,7 @@ impl SymbolicExecutor {
             root.set_branch_target(input.branch_target);
             root.apply_executor_env(&mut self.cx, &input.executor)?;
             root.world.set_storage_layout(self.config.storage_layout);
-            root.world.clear_transaction_scoped_state();
+            root.world.clear_transaction_scoped_state(&mut self.cx);
             roots.push(root);
         }
         order_roots_by_corpus_seed_count(&mut roots, self.config.exploration_order);
@@ -477,7 +479,6 @@ impl SymbolicExecutor {
                         self.step(
                             &input.executor,
                             &code,
-                            code.jump_table(),
                             &mut state,
                             &mut worklist,
                             completed_paths,
@@ -603,6 +604,30 @@ impl SymbolicExecutor {
         Ok(Some(input))
     }
 
+    /// Returns a model for `state`, meeting its witness preferences when it can.
+    pub(super) fn witness_model(
+        &mut self,
+        state: &PathState,
+    ) -> Result<SymbolicModel, SymbolicError> {
+        let replayable_storage = state.world.replay_storage_symbols();
+        if !state.witness_preferences.is_empty() {
+            let mut constraints = state.constraints.clone();
+            constraints.extend(state.witness_preferences.iter().cloned());
+            if let Ok(model) = self.solver.model_with_replayable_storage(
+                &mut self.cx,
+                &constraints,
+                &replayable_storage,
+            ) {
+                return Ok(model);
+            }
+        }
+        self.solver.model_with_replayable_storage(
+            &mut self.cx,
+            &state.constraints,
+            &replayable_storage,
+        )
+    }
+
     /// Materializes the root call input for `state` from a solver model.
     fn materialize_root_input(
         &mut self,
@@ -613,12 +638,7 @@ impl SymbolicExecutor {
             .root_calldata
             .as_ref()
             .ok_or(SymbolicError::Unsupported("missing root symbolic calldata"))?;
-        let replayable_storage = state.world.replay_storage_symbols();
-        let model = self.solver.model_with_replayable_storage(
-            &mut self.cx,
-            &state.constraints,
-            &replayable_storage,
-        )?;
+        let model = self.witness_model(state)?;
         let args = calldata.model_to_args(&mut self.cx, &model)?;
         let calldata_bytes = Bytes::from(function.abi_encode_input(&args)?);
         Ok(SymbolicConcreteInput { args, calldata: calldata_bytes })
@@ -650,6 +670,7 @@ impl SymbolicExecutor {
         );
         initial_state.apply_executor_env(&mut self.cx, &input.executor)?;
         initial_state.world.set_storage_layout(self.config.storage_layout);
+        self.folded_slots = FoldedSlots::register(&mut self.cx, &input.executor, self.deadline);
         let initial = SequencePath { state: initial_state, steps: Vec::new() };
 
         // Like Forge, check the state right after `setUp` before any sequence call.

@@ -1113,6 +1113,12 @@ import "forge-std/Test.sol";
 
 contract NonceTarget {}
 
+contract NonceFactory {
+    constructor() {
+        new NonceTarget();
+    }
+}
+
 contract SymbolicNonceCheatcodes is Test {
     function checkSetNonceCheatcodes(uint256) public {
         address account = address(0x1234);
@@ -1137,6 +1143,11 @@ contract SymbolicNonceCheatcodes is Test {
         assertEq(vm.getNonce(address(target)), 1);
     }
 
+    // Like revm, a CREATE in the constructor bumps the new contract's nonce.
+    function checkConstructorCreateBumpsNonce(uint256) public {
+        assertEq(vm.getNonce(address(new NonceFactory())), 2);
+        assertEq(vm.getNonce(vm.deployCode("SymbolicNonceCheatcodes.t.sol:NonceFactory")), 2);
+    }
 }
 "#,
     );
@@ -1144,16 +1155,17 @@ contract SymbolicNonceCheatcodes is Test {
     assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
-        "--match-test",
-        "checkSetNonceCheatcodes|checkResetNonceCheatcode",
+        "--match-contract",
+        "SymbolicNonceCheatcodes",
     ]))
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicNonceCheatcodes.t.sol:SymbolicNonceCheatcodes
+Ran 3 tests for test/SymbolicNonceCheatcodes.t.sol:SymbolicNonceCheatcodes
+[PASS] checkConstructorCreateBumpsNonce(uint256) ([METRICS])
 [PASS] checkResetNonceCheatcode(uint256) ([METRICS])
 [PASS] checkSetNonceCheatcodes(uint256) ([METRICS])
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

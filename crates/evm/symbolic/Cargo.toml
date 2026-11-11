@@ -17,6 +17,7 @@ workspace = true
 foundry-common.workspace = true
 foundry-config.workspace = true
 foundry-cheatcodes-spec.workspace = true
+foundry-compilers.workspace = true
 foundry-evm.workspace = true
 
 evm2.workspace = true

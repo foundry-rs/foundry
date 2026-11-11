@@ -33,7 +33,7 @@ use eyre::{ContextCompat, Result, eyre};
 use foundry_common::{
     TestFunctionExt,
     contracts::{ContractsByAddress, ContractsByArtifact},
-    sh_eprintln, sh_println,
+    sh_eprintln,
 };
 use foundry_config::{FuzzCorpusConfig, InvariantConfig, InvariantDepthMode, InvariantWorkers};
 use foundry_evm_core::{
@@ -1662,7 +1662,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     &corpus_manager.metrics,
                     &failure_metrics,
                 );
-                let _ = sh_println!("{}", serde_json::to_string(&metrics)?);
+                let _ = sh_eprintln!("{}", serde_json::to_string(&metrics)?);
             }
 
             if stop_after_run {
