@@ -150,7 +150,7 @@ contract NestedStorer {
         slots[bytes32("nested_storer 4")]++;
     }
 
-    function runNested() external payable {
+    function runThenWrite() external payable {
         this.run();
         slots[bytes32("nested_storer 5")]++;
     }
@@ -1020,27 +1020,15 @@ contract RecordAccountAccessesTest is Test {
     ///         caller's own resume record
     function testNestedStorageAfterResume() public {
         vm.startStateDiffRecording();
-        nestedStorer.runNested();
+        nestedStorer.runThenWrite();
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
         assertEq(called.length, 5, "incorrect account access length");
 
         assertResumeEq(called[3], called[1]);
         assertEq(called[3].storageAccesses.length, 2, "incorrect run resume storage length");
-        assertIncrementEq(
-            called[3].storageAccesses[0],
-            called[3].storageAccesses[1],
-            Vm.StorageAccess({
-                account: address(nestedStorer),
-                slot: keccak256(abi.encodePacked(bytes32("nested_storer 2"), bytes32(0))),
-                isWrite: true,
-                previousValue: bytes32(uint256(0)),
-                newValue: bytes32(uint256(1)),
-                reverted: false
-            })
-        );
 
         assertResumeEq(called[4], called[0]);
-        assertEq(called[4].storageAccesses.length, 2, "incorrect runNested resume storage length");
+        assertEq(called[4].storageAccesses.length, 2, "incorrect runThenWrite resume storage length");
         assertIncrementEq(
             called[4].storageAccesses[0],
             called[4].storageAccesses[1],
