@@ -70,6 +70,7 @@ use foundry_evm_fuzz::{
     },
     sequence::{ComparisonHint, CorpusEntryView, SequenceGenerator, SequencePlan},
 };
+use parking_lot::{Condvar, Mutex};
 use proptest::test_runner::TestRunner;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -78,7 +79,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -558,43 +559,77 @@ pub(crate) struct GlobalCorpusMetrics {
     favored_items: AtomicUsize,
 }
 
+/// A barrier between the fuzz workers of one campaign, each on its own thread, that a worker
+/// error can abort.
 pub(crate) struct CorpusSyncCoordinator {
     workers: usize,
-    arrived: AtomicUsize,
-    phase: AtomicUsize,
-    aborted: AtomicBool,
+    state: Mutex<CorpusSyncState>,
+    condvar: Condvar,
+}
+
+struct CorpusSyncState {
+    arrived: usize,
+    phase: usize,
+    aborted: bool,
 }
 
 impl CorpusSyncCoordinator {
     pub(crate) const fn new(workers: usize) -> Self {
         Self {
             workers,
-            arrived: AtomicUsize::new(0),
-            phase: AtomicUsize::new(0),
-            aborted: AtomicBool::new(false),
+            state: Mutex::new(CorpusSyncState { arrived: 0, phase: 0, aborted: false }),
+            condvar: Condvar::new(),
         }
     }
 
     pub(crate) fn abort(&self) {
-        self.aborted.store(true, Ordering::Release);
+        self.state.lock().aborted = true;
+        self.condvar.notify_all();
     }
 
     fn wait(&self) -> bool {
-        if self.aborted.load(Ordering::Acquire) {
+        let mut state = self.state.lock();
+        if state.aborted {
             return false;
         }
 
-        let phase = self.phase.load(Ordering::Acquire);
-        if self.arrived.fetch_add(1, Ordering::AcqRel) + 1 == self.workers {
-            self.arrived.store(0, Ordering::Release);
-            self.phase.fetch_add(1, Ordering::AcqRel);
+        state.arrived += 1;
+        if state.arrived == self.workers {
+            state.arrived = 0;
+            state.phase += 1;
+            self.condvar.notify_all();
             return true;
         }
 
-        while self.phase.load(Ordering::Acquire) == phase && !self.aborted.load(Ordering::Acquire) {
-            rayon::yield_now();
-        }
-        !self.aborted.load(Ordering::Acquire)
+        let phase = state.phase;
+        self.condvar.wait_while(&mut state, |state| state.phase == phase && !state.aborted);
+        !state.aborted
+    }
+
+    /// Runs the workers, releasing waiting peers if a thread cannot be started.
+    pub(crate) fn run_workers<T: Send>(
+        &self,
+        workers: impl IntoIterator<Item = (std::thread::Builder, impl FnOnce() -> Result<T> + Send)>,
+    ) -> Result<Vec<T>> {
+        std::thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for (builder, worker) in workers {
+                match builder.spawn_scoped(scope, worker) {
+                    Ok(handle) => handles.push(handle),
+                    Err(err) => {
+                        // The scope joins started workers before returning, so wake them first.
+                        self.abort();
+                        return Err(err.into());
+                    }
+                }
+            }
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+                })
+                .collect()
+        })
     }
 }
 
@@ -1907,6 +1942,11 @@ impl WorkerCorpus {
         target: ReplayTarget<'_>,
         coordinator: &CorpusSyncCoordinator,
     ) -> Result<()> {
+        // Worker 0 creates the sync directory that the others export to.
+        if !coordinator.wait() {
+            return Ok(());
+        }
+
         if self.id != 0 {
             self.export_to_master()?;
             if self.worker_dir.is_some() && !self.new_entry_indices.is_empty() {
@@ -2129,7 +2169,6 @@ mod tests {
         strategies::{EvmFuzzState, TxGenerator},
     };
     use proptest::prelude::{Just, Strategy};
-    use rayon::prelude::*;
     use std::fs;
 
     fn basic_tx() -> BasicTxDetails {
@@ -2540,16 +2579,6 @@ mod tests {
 
         assert!(master.new_entry_indices.is_empty());
         assert!(worker2_destination.is_file());
-    }
-
-    #[test]
-    fn final_sync_coordinator_yields_to_nested_rayon_workers() {
-        rayon::ThreadPoolBuilder::new().num_threads(2).build().unwrap().install(|| {
-            (0..2usize).into_par_iter().for_each(|_| {
-                let coordinator = CorpusSyncCoordinator::new(2);
-                (0..2usize).into_par_iter().for_each(|_| assert!(coordinator.wait()));
-            });
-        });
     }
 
     #[test]
@@ -3704,6 +3733,45 @@ mod tests {
                 assert!(seed.optimization_best_sequence.is_empty());
             }
         }
+    }
+
+    #[test]
+    fn final_sync_abort_wakes_waiting_workers() {
+        let coordinator = CorpusSyncCoordinator::new(2);
+
+        std::thread::scope(|scope| {
+            let waiter = scope.spawn(|| coordinator.wait());
+            while coordinator.state.lock().arrived == 0 {
+                std::thread::yield_now();
+            }
+            coordinator.abort();
+            assert!(!waiter.join().unwrap());
+        });
+    }
+
+    #[test]
+    fn final_sync_spawn_failure_releases_started_workers() {
+        let coordinator = CorpusSyncCoordinator::new(2);
+        let completed = AtomicUsize::new(0);
+        let workers =
+            [std::thread::Builder::new(), std::thread::Builder::new().stack_size(usize::MAX)]
+                .into_iter()
+                .enumerate()
+                .map(|(worker_id, builder)| {
+                    if worker_id == 1 {
+                        while coordinator.state.lock().arrived == 0 {
+                            std::thread::yield_now();
+                        }
+                    }
+                    (builder, || {
+                        assert!(!coordinator.wait());
+                        completed.fetch_add(1, Ordering::Relaxed);
+                        Ok(())
+                    })
+                });
+
+        assert!(coordinator.run_workers(workers).is_err());
+        assert_eq!(completed.load(Ordering::Relaxed), 1);
     }
 
     #[test]
