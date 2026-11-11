@@ -1985,7 +1985,7 @@ mod tests {
         let fade = abi.function("fade").unwrap()[0].clone();
         let (func, calldata) = method("fade").unwrap();
         assert_eq!(func, fade);
-        assert_eq!(calldata, Bytes::from(fade.selector().to_vec()));
+        assert_eq!(calldata, Bytes::from(fade.selector()));
 
         for sig in ["", "0x12"] {
             assert_eq!(
@@ -1998,7 +1998,7 @@ mod tests {
         let run = abi.function("run").unwrap()[0].clone();
         let (func, calldata) = method(&hex::encode(run.selector())).unwrap();
         assert_eq!(func, run);
-        assert_eq!(calldata, Bytes::from(run.selector().to_vec()));
+        assert_eq!(calldata, Bytes::from(run.selector()));
     }
 
     #[test]

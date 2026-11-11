@@ -44,7 +44,8 @@ use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
 use std::{
     mem,
     ops::{Deref, DerefMut},
-    sync::Arc,
+    sync::{Arc, atomic::AtomicBool},
+    time::Instant,
 };
 
 use crate::executors::{EarlyExit, EvmExecutionCancellation};
@@ -608,9 +609,10 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         cheats.frame_rollback = frame_rollback;
         let result = result.and_then(|(result, mut persistent)| {
             if !result.is_success() {
-                let merged = persistent.len();
-                persistent.extend(writes.into_iter().map(|(.., write)| write));
-                PersistentWrite::apply_all(&persistent[merged..], evm.state_mut())?;
+                let writes = writes.into_iter().map(|(.., write)| write).collect::<Vec<_>>();
+                let applied = PersistentWrite::apply_all(&writes, evm.state_mut())?;
+                persistent
+                    .extend(writes.into_iter().filter(|write| !write.is_delta()).chain(applied));
             }
             cheats.record_persistent(usize::from(depth).saturating_sub(1), evm.state(), persistent);
             Ok(result)
@@ -715,6 +717,16 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     #[inline]
     pub(crate) fn set_early_exit(&mut self, early_exit: EarlyExit) {
         self.set_execution_cancellation(EvmExecutionCancellation::early_exit(early_exit));
+    }
+
+    /// Stops EVM execution at `deadline`, or earlier on the process-wide early-exit signal.
+    #[inline]
+    pub fn set_execution_deadline(&mut self, early_exit: EarlyExit, deadline: Instant) {
+        self.set_execution_cancellation(EvmExecutionCancellation::campaign(
+            early_exit,
+            Arc::new(AtomicBool::new(false)),
+            Some(deadline),
+        ));
     }
 
     /// Set the complete cancellation state checked during EVM execution.

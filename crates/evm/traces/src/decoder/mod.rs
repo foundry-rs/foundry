@@ -37,7 +37,7 @@ use foundry_evm_networks::{
     NetworkConfigs, NetworkVariant, TEMPO_PRECOMPILES, celo::transfer::CELO_TRANSFER_LABEL,
 };
 use itertools::Itertools;
-use std::{collections::BTreeMap, sync::OnceLock};
+use std::{borrow::Cow, collections::BTreeMap, sync::OnceLock};
 use tempo_contracts::precompiles::{
     CURRENT_COMMITTEE_ADDRESS, IAccountKeychain, IAddressRegistry, ICurrentCommittee, IFeeManager,
     INonce, IReceivePolicyGuard, ISignatureVerifier, IStablecoinDEX, IStorageCredits, ITIP20,
@@ -646,7 +646,10 @@ impl CallTraceDecoder {
 
     /// Adds a single event to the decoder.
     pub fn push_event(&mut self, event: Event) {
-        self.events.entry((event.selector(), indexed_inputs(&event))).or_default().push(event);
+        push_unique(
+            self.events.entry((event.selector(), indexed_inputs(&event))).or_default(),
+            Cow::Owned(event),
+        );
     }
 
     /// Adds a single event to the decoder for a specific contract address.
@@ -658,17 +661,18 @@ impl CallTraceDecoder {
             .or_default()
             .entry(((!event.anonymous).then(|| event.selector()), indexed_inputs(&event)))
             .or_default();
-        if !events.contains(&event) {
-            events.push(event);
-        }
+        push_unique(events, Cow::Owned(event));
     }
 
     /// Adds a single function to the decoder.
     pub fn push_function(&mut self, function: Function) {
-        let selector = function.selector();
+        self.push_function_with_selector(function.selector(), Cow::Owned(function));
+    }
+
+    fn push_function_with_selector(&mut self, selector: Selector, function: Cow<'_, Function>) {
         let functions = self.functions.entry(selector).or_default();
 
-        if Self::push_function_to(functions, function) && functions.len() > 1 {
+        if push_unique(functions, function) && functions.len() > 1 {
             let function = functions.last().expect("function was just inserted");
             let signature = function.signature();
             trace!(target: "evm::traces", %selector, new=%signature, "duplicate function selector");
@@ -683,16 +687,7 @@ impl CallTraceDecoder {
             .or_default()
             .entry(function.selector())
             .or_default();
-        Self::push_function_to(functions, function);
-    }
-
-    fn push_function_to(functions: &mut Vec<Function>, function: Function) -> bool {
-        if functions.contains(&function) {
-            false
-        } else {
-            functions.push(function);
-            true
-        }
+        push_unique(functions, Cow::Owned(function));
     }
 
     /// Returns the functions registered for `selector` at `address`.
@@ -981,12 +976,21 @@ impl CallTraceDecoder {
             return;
         }
         trace!(target: "evm::traces", len, ?address, "collecting ABI");
+        let mut selectors = HashSet::default();
         for function in abi.functions() {
+            let selector = function.selector();
             if let Some(address) = address {
-                self.push_address_function(address, function.clone());
+                let functions = self
+                    .functions_by_address
+                    .entry(address)
+                    .or_default()
+                    .entry(selector)
+                    .or_default();
+                push_unique(functions, Cow::Borrowed(function));
+                selectors.insert(selector);
             }
             if global {
-                self.push_function(function.clone());
+                self.push_function_with_selector(selector, Cow::Borrowed(function));
             }
         }
         if let Some(address) = address
@@ -996,7 +1000,10 @@ impl CallTraceDecoder {
         }
         if global {
             for event in abi.events() {
-                self.push_event(event.clone());
+                push_unique(
+                    self.events.entry((event.selector(), indexed_inputs(event))).or_default(),
+                    Cow::Borrowed(event),
+                );
             }
             for error in abi.errors() {
                 self.push_error(error.clone());
@@ -1008,11 +1015,9 @@ impl CallTraceDecoder {
             }
 
             if abi.fallback.is_some() {
-                self.fallback_contracts
-                    .insert(address, abi.functions().map(|f| f.selector()).collect());
+                self.fallback_contracts.insert(address, selectors);
             } else {
-                self.non_fallback_contracts
-                    .insert(address, abi.functions().map(|f| f.selector()).collect());
+                self.non_fallback_contracts.insert(address, selectors);
             }
         }
     }
@@ -1024,40 +1029,31 @@ impl CallTraceDecoder {
         for node in traces {
             if !self.opcodes.is_empty() {
                 for step in &mut node.trace.steps {
-                    if step.decoded.is_some() {
+                    if step.decoded.is_some() || !self.opcodes.contains(&step.op) {
                         continue;
                     }
-                    for opcode in &self.opcodes {
-                        if step.op == *opcode {
-                            let res = match &step.storage_change {
-                                Some(change) if step.op == OpCode::SSTORE => {
-                                    if let Some(had_value) = change.had_value {
-                                        format!(
-                                            "[{}] {} 0x{:x}: 0x{:x} → 0x{:x}",
-                                            step.gas_cost,
-                                            opcode,
-                                            change.key,
-                                            had_value,
-                                            change.value
-                                        )
-                                    } else {
-                                        format!(
-                                            "[{}] {} 0x{:x} → (0x{:x})",
-                                            step.gas_cost, opcode, change.key, change.value
-                                        )
-                                    }
-                                }
-                                Some(change) => format!(
-                                    "[{}] {} 0x{:x} → (0x{:x})",
-                                    step.gas_cost, opcode, change.key, change.value
-                                ),
-                                None => format!("[{}] {}", step.gas_cost, opcode),
-                            };
-
-                            step.decoded = Some(Box::new(DecodedTraceStep::Line(res)));
-                            break;
+                    let res = match &step.storage_change {
+                        Some(change) if step.op == OpCode::SSTORE => {
+                            if let Some(had_value) = change.had_value {
+                                format!(
+                                    "[{}] {} {:#x}: {:#x} → {:#x}",
+                                    step.gas_cost, step.op, change.key, had_value, change.value
+                                )
+                            } else {
+                                format!(
+                                    "[{}] {} {:#x} → ({:#x})",
+                                    step.gas_cost, step.op, change.key, change.value
+                                )
+                            }
                         }
-                    }
+                        Some(change) => format!(
+                            "[{}] {} {:#x} → ({:#x})",
+                            step.gas_cost, step.op, change.key, change.value
+                        ),
+                        None => format!("[{}] {}", step.gas_cost, step.op),
+                    };
+
+                    step.decoded = Some(Box::new(DecodedTraceStep::Line(res)));
                 }
             }
 
@@ -1936,6 +1932,16 @@ fn constructor_signature(constructor: &Constructor) -> String {
     )
 }
 
+/// Appends `item` unless an equal value is already present, and returns whether it was appended.
+fn push_unique<T: Clone + PartialEq>(items: &mut Vec<T>, item: Cow<'_, T>) -> bool {
+    if items.contains(&item) {
+        false
+    } else {
+        items.push(item.into_owned());
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1943,7 +1949,6 @@ mod tests {
     use alloy_primitives::{address, aliases::U96, bytes, hex};
     use alloy_sol_types::{SolCall, SolError, SolEvent};
     use foundry_evm_core::{abi::Vm, precompiles::P256_VERIFY, tempo::TEMPO_PRECOMPILE_ADDRESSES};
-    use std::borrow::Cow;
     use tempo_contracts::precompiles::{
         ACCOUNT_KEYCHAIN_ADDRESS, SIGNATURE_VERIFIER_ADDRESS, STORAGE_CREDITS_ADDRESS,
         TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
@@ -3834,6 +3839,21 @@ mod tests {
 
         assert_eq!(decoder.functions.get(&selector).unwrap().len(), global_functions);
         assert_eq!(decoder.functions_by_address[&address][&selector], [function]);
+    }
+
+    #[test]
+    fn repeated_identification_does_not_duplicate_global_events() {
+        let abi = JsonAbi::parse(["event Scoped(uint256 value)"]).unwrap();
+        let event = abi.events().next().unwrap().clone();
+        let mut decoder = CallTraceDecoder::new().clone();
+
+        let mut arena = CallTraceArena::default();
+        for byte in [0x42, 0x43] {
+            arena.nodes_mut()[0].trace.address = Address::repeat_byte(byte);
+            decoder.identify(&arena, &mut AbiIdentifier { abi: abi.clone() });
+        }
+
+        assert_eq!(decoder.events[&(event.selector(), 0)], [event]);
     }
 
     #[tokio::test]

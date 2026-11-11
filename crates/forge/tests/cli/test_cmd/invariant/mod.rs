@@ -400,17 +400,73 @@ Compiler run successful!
 
 Ran 1 test for test/TimeoutTest.t.sol:TimeoutTest
 [PASS] invariant_counter_timeout() (runs: 0, calls: 0, reverts: 0)
-
-╭----------------+-----------+-------+---------+----------╮
-| Contract       | Selector  | Calls | Reverts | Discards |
-+=========================================================+
-| TimeoutHandler | increment | [..]| [..]| [..]|
-╰----------------+-----------+-------+---------+----------╯
-
+...
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
+"#]]);
+}
+
+// Tests that a timed campaign still checks the initial state when its timeout expires during the
+// check.
+#[forgetest_init]
+fn should_check_initial_state_of_timed_campaign(prj: _, cmd: _) {
+    prj.add_test(
+        "TimeoutInitialStateTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Counter {
+    uint256 public count;
+
+    function increment() public {
+        count++;
+    }
+}
+
+contract TimeoutInitialStateTest is Test {
+    Counter counter;
+
+    function setUp() public {
+        counter = new Counter();
+        counter.increment();
+    }
+
+    /// forge-config: default.invariant.timeout = 0
+    function invariant_initial_state() public view {
+        // Runs long enough for the campaign deadline to be polled during the initial check.
+        uint256 sum;
+        for (uint256 i; i < 100; ++i) {
+            sum += counter.count();
+        }
+        require(sum == 0, "initial state broken");
+    }
+}
+     "#,
+    );
+
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/TimeoutInitialStateTest.t.sol:TimeoutInitialStateTest
+[FAIL: initial state broken] invariant_initial_state() (runs: 0, calls: 0, reverts: 0)
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/TimeoutInitialStateTest.t.sol:TimeoutInitialStateTest
+[FAIL: initial state broken] invariant_initial_state() (runs: 0, calls: 0, reverts: 0)
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+...
 "#]]);
 }
 

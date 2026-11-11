@@ -47,7 +47,7 @@ pub fn block_on_handle<F: std::future::Future>(
 /// ```
 pub fn erc7201(id: &str) -> B256 {
     let x = Into::<U256>::into(keccak256(id)) - U256::ONE;
-    keccak256(x.to_be_bytes::<32>()) & B256::from(!U256::from(0xff))
+    keccak256(B256::from(x)) & B256::from(!U256::from(0xff))
 }
 
 /// Utility function to find the start of the metadata in the bytecode.

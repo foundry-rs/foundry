@@ -156,7 +156,7 @@ impl figment::Provider for EtherscanOpts {
 impl EtherscanOpts {
     /// Returns true if the Etherscan API key is set.
     pub fn has_key(&self) -> bool {
-        self.key.as_ref().filter(|key| !key.trim().is_empty()).is_some()
+        self.key.as_ref().is_some_and(|key| !key.trim().is_empty())
     }
 
     /// Returns the Etherscan API key.

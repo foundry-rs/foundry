@@ -24,7 +24,7 @@ use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network::{Ethereum, Network, TransactionBuilder};
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, hex,
-    map::{AddressHashMap, AddressMap, HashMap, HashSet},
+    map::{AddressHashMap, HashMap, HashSet},
 };
 use alloy_rpc_types::AccessList;
 use alloy_sol_types::{SolCall, SolInterface};
@@ -736,11 +736,11 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// was taken.
     pub persistent_write_snapshots: HashMap<U256, usize>,
 
-    /// Whether a `vm.assert*` cheatcode failed during the current call.
+    /// Message of the first `vm.assert*` cheatcode that failed during the current call.
     ///
     /// Unlike the global failure slot, this survives reverts, so callers still see the failure
     /// when the asserting call reverts afterwards.
-    pub assertion_failed: bool,
+    pub failed_assertion: Option<String>,
 
     /// Gas metering state.
     pub gas_metering: GasMetering,
@@ -883,7 +883,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             persistent_writes: Default::default(),
             frame_rollback: Default::default(),
             persistent_write_snapshots: Default::default(),
-            assertion_failed: false,
+            failed_assertion: None,
             gas_metering: Default::default(),
             gas_snapshots: Default::default(),
             pc: Default::default(),
@@ -2219,31 +2219,21 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             let undone = |&(write_depth, len, _): &(usize, usize, PersistentWrite)| {
                 write_depth >= depth && rollback.is_none_or(|rollback| len > rollback)
             };
-            // The nonces after the rollback, to collapse each account's replayed nonce writes into
-            // the one change the replay made, so an enclosing replay does not undo the saturation.
-            let mut nonces = AddressMap::<u64>::default();
-            for (.., write) in self.persistent_writes.iter().filter(|entry| undone(entry)) {
-                if let PersistentWrite::Nonce { address, .. } = write
-                    && let Ok(account) = state.account(address)
-                {
-                    nonces.entry(*address).or_insert(account.nonce());
-                }
-            }
             let writes = self.persistent_writes.iter().filter(|entry| undone(entry));
-            failed = PersistentWrite::apply_all(writes.map(|(_, _, write)| write), state).err();
+            let applied = PersistentWrite::apply_all(writes.map(|(_, _, write)| write), state);
             let len = state.checkpoint().journal_len();
             self.persistent_writes.retain_mut(|entry| {
                 if !undone(entry) {
                     return true;
                 }
                 entry.1 = len;
-                !matches!(entry.2, PersistentWrite::Nonce { .. })
+                !entry.2.is_delta()
             });
-            for (address, previous) in nonces {
-                if let Ok(account) = state.account(&address) {
-                    let write = PersistentWrite::nonce(&account, previous);
-                    self.persistent_writes.push((depth, len, write));
-                }
+            match applied {
+                Ok(applied) => self
+                    .persistent_writes
+                    .extend(applied.into_iter().map(|write| (depth, len, write))),
+                Err(err) => failed = Some(err),
             }
         }
         for (write_depth, ..) in &mut self.persistent_writes {
