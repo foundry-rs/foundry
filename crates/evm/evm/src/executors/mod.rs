@@ -758,7 +758,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         } else {
             Vec::new()
         };
-        evm.commit_source(&execution.state);
+        // Later transactions read the slots an account created here never wrote as zero.
+        evm.overlay_db_mut().commit_pending(&execution.state);
         backend.park(evm);
         let mut result = convert_executed_result(execution, stack, &*backend)?;
         result.suspended_storage = suspended_storage;

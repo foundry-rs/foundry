@@ -1618,14 +1618,16 @@ fn merge_changes<'c>(
         if !filter(&address) {
             continue;
         }
-        {
+        let created = {
             let mut account = state.account(&address)?;
             account.touch();
             // An account the running transaction already created keeps the storage it holds.
-            if change.created && !account.is_created() {
+            let created = change.created && !account.is_created();
+            if created {
                 account.mark_created();
             }
-        }
+            created
+        };
         let code = || match (change.code, change.current, source.as_deref_mut()) {
             (Some((_, code)), ..) => Ok(code.clone()),
             (None, Some(info), Some(source)) if !info.is_empty_code_hash() => {
@@ -1633,7 +1635,8 @@ fn merge_changes<'c>(
             }
             _ => Ok(Bytecode::default()),
         };
-        let wiped = change.current.is_none() || change.storage.wiped;
+        // An account the nested transaction created starts from empty storage, as it did there.
+        let wiped = created || change.current.is_none() || change.storage.wiped;
         let slots = change.storage.changed_slots().map(|(key, slot)| (*key, slot.current));
         apply_account(
             state,

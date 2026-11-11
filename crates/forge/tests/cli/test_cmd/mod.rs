@@ -8713,3 +8713,82 @@ contract ForkRollSenderTest is Test {
 ...
 "#]]);
 }
+
+// Slots that an account created in an earlier transaction, or by an isolated call that switched
+// forks, never wrote read as zero on a fork rather than as the fork's storage at its address.
+#[forgetest]
+async fn fork_created_account_unwritten_storage(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    // The test contract and the contracts it creates: at nonce 1 in `setUp`, and at nonce 2, or 3
+    // when the switching call is an isolated transaction.
+    let test = address!("0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496");
+    for account in [test, test.create(1), test.create(2), test.create(3)] {
+        api.anvil_set_storage_at(account, U256::from(100), B256::with_last_byte(1)).await.unwrap();
+    }
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+
+    prj.add_test(
+        "CreatedStorage.t.sol",
+        &r#"
+interface Vm {
+    function createFork(string calldata url) external returns (uint256);
+    function selectFork(uint256 forkId) external;
+    function makePersistent(address account) external;
+}
+
+contract Store {
+    uint256 public written = 1;
+
+    function get() external view returns (uint256 value) {
+        assembly {
+            value := sload(100)
+        }
+    }
+}
+
+contract CreatedStorageForkTest is Store {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    Store created;
+    uint256 fork;
+
+    function setUp() public {
+        created = new Store();
+        vm.makePersistent(address(created));
+        fork = vm.createFork("<url>");
+    }
+
+    function selectAndCreate() external returns (Store) {
+        vm.selectFork(fork);
+        return new Store();
+    }
+
+    function testForkCreatedInEarlierTransaction() public {
+        vm.selectFork(fork);
+        require(created.get() == 0, "created in setUp");
+        require(created.written() == 1, "written in setUp");
+        require(this.get() == 0, "test contract");
+    }
+
+    function testForkCreatedInSwitchingCall() public {
+        Store store = this.selectAndCreate();
+        require(store.get() == 0, "created in a switching call");
+        require(store.written() == 1, "written in a switching call");
+    }
+}
+"#
+        .replace("<url>", &handle.http_endpoint()),
+    );
+
+    let output = str![[r#"
+...
+Ran 2 tests for test/CreatedStorage.t.sol:CreatedStorageForkTest
+[PASS] testForkCreatedInEarlierTransaction() ([GAS])
+[PASS] testForkCreatedInSwitchingCall() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]];
+    cmd.args(["test"]).assert_success().stdout_eq(output.clone());
+    cmd.forge_fuse().args(["test", "--isolate"]).assert_success().stdout_eq(output);
+}
