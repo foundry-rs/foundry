@@ -158,15 +158,10 @@ impl DebugRecorder {
         self.pending = None;
         let exit_step = self.table().len() - self.first_step;
         if let Some(open) = self.open.pop() {
-            let frame = &mut self.frames[open.frame];
-            frame.exit_step = exit_step;
-            // The caller's stack shares nothing with the last stack of a frame that ran steps.
-            // A frame without steps, such as a precompile or a cheatcode call, leaves the
-            // caller's call step as the one appended last, and a frame's first step has an
-            // empty stack, so entering a frame shares nothing on its own.
-            if frame.exit_step != frame.entry_step {
-                self.shared = 0;
-            }
+            self.frames[open.frame].exit_step = exit_step;
+            // The step appended last may be the frame's, whose stack is not the caller's. A
+            // frame's first step has an empty stack, so entering a frame shares nothing either.
+            self.shared = 0;
             self.table().end_memory_frame();
         }
     }
@@ -609,6 +604,28 @@ mod tests {
             );
             assert_reconstructs(db, target, SpecId::AMSTERDAM);
         }
+    }
+
+    #[test]
+    fn stack_reconstructs_across_dup_swap_and_call_return() {
+        let target = Address::with_last_byte(0x40);
+        let child = Address::with_last_byte(0x20);
+        let mut db = InMemoryDB::default();
+        // `PUSH1 0xaa; PUSH1 0xbb; SWAP1; DUP1`, a call to the child, and `STOP`, which must
+        // show the words below the call's arguments and its result, not the child's stack.
+        db.insert_account_info(
+            &target,
+            AccountInfo::default().with_code(Bytecode::new_legacy(
+                hex::decode("60aa60bb90805f5f5f5f5f60205af100").unwrap().into(),
+            )),
+        );
+        // `PUSH1 1; PUSH1 2; STOP`.
+        db.insert_account_info(
+            &child,
+            AccountInfo::default()
+                .with_code(Bytecode::new_legacy(hex::decode("6001600200").unwrap().into())),
+        );
+        assert_reconstructs(db, target, SpecFor::<EthEvmNetwork>::default());
     }
 
     /// Calls `target` under `spec` and checks that each recorded step has the interpreter's

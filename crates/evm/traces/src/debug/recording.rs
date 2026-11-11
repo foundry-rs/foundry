@@ -101,8 +101,10 @@ pub struct StepStorage {
 }
 
 impl StepConverter {
-    /// The hex encoding of the return data `buffer`, or `None` if it is the buffer of the last
-    /// call, so a step record with it keeps the previous step's return data.
+    /// The hex encoding of the return data `buffer`, or `None` if it is the buffer passed last,
+    /// so a step record with it keeps the previous step's return data.
+    ///
+    /// The step of each call must be appended to the same table, in order.
     pub fn return_data(&mut self, buffer: &Bytes) -> Option<Arc<str>> {
         match &self.return_data {
             // Unchanged return data is the same buffer, so comparing the pointers first skips
