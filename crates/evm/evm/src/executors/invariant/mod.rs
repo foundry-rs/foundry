@@ -88,7 +88,8 @@ mod shrink;
 pub use shrink::{
     CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome, HandlerReplayOutcome,
     SequenceShrink, ShrinkCandidateKeys, ShrinkRun, ShrinkRunStats, check_sequence,
-    check_sequence_value, replay_handler_failure_sequence, shrink_sequence_by_removing,
+    check_sequence_value, deadline_passed, replay_handler_failure_sequence,
+    shrink_sequence_by_removing,
 };
 
 mod snapshot;

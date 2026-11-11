@@ -3,7 +3,7 @@ use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, Bytes, Function as SolFunction, I256, U256};
 use foundry_evm::executors::invariant::{
-    SequenceShrink, ShrinkCandidateKeys, ShrinkRun, shrink_sequence_by_removing,
+    SequenceShrink, ShrinkCandidateKeys, ShrinkRun, deadline_passed, shrink_sequence_by_removing,
 };
 use itertools::Itertools;
 use std::time::Instant;
@@ -147,7 +147,10 @@ impl<'a> SequenceMinimizer<'a> {
             return false;
         }
 
-        if self.run.try_candidate(|| (self.still_fails)(&candidate_calls)) {
+        // A replay after the deadline may have been cancelled, so it never confirms a candidate.
+        let deadline = self.run.deadline();
+        let still_fails = &mut self.still_fails;
+        if self.run.try_candidate(|| still_fails(&candidate_calls) && !deadline_passed(deadline)) {
             self.current_calls = candidate_calls;
             true
         } else {
@@ -164,6 +167,7 @@ impl<'a> SequenceMinimizer<'a> {
         let current_calls = &mut self.current_calls;
         let tried_candidates = &mut self.tried_candidates;
         let still_fails = &mut self.still_fails;
+        let deadline = self.run.deadline();
 
         shrink_sequence_by_removing(
             base_calls.len(),
@@ -181,7 +185,9 @@ impl<'a> SequenceMinimizer<'a> {
                     return None;
                 }
 
-                if (*still_fails)(&candidate_calls) {
+                // A replay after the deadline may have been cancelled, so it never confirms a
+                // candidate.
+                if (*still_fails)(&candidate_calls) && !deadline_passed(deadline) {
                     *current_calls = candidate_calls;
                     Some(true)
                 } else {

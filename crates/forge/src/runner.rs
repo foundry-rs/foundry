@@ -57,8 +57,9 @@ use foundry_evm::{
             CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome,
             HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError, LiveInvariantSolution,
             LiveInvariantSolver, ReplayErrorResult, apply_invariant_call_delay, check_sequence,
-            did_fail_on_assert, execute_and_commit_tx, execute_tx, execute_tx_and_register_created,
-            handler_edge_fingerprint, replay_error, replay_handler_failure_sequence, replay_run,
+            deadline_passed, did_fail_on_assert, execute_and_commit_tx, execute_tx,
+            execute_tx_and_register_created, handler_edge_fingerprint, replay_error,
+            replay_handler_failure_sequence, replay_run,
         },
         persist_corpus_seed, read_corpus_dir, replay_corpus_to_showmap,
         replay_sequence_for_minimization, should_ignore_revert,
@@ -1598,7 +1599,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         identified_contracts: &ContractsByAddress,
         current_settings: &InvariantSettings,
     ) -> Option<MinimizedSequence> {
-        if !self.config.symbolic.enabled || calls.is_empty() {
+        // With the shrink budget spent, skip the replays that set up and confirm minimization.
+        if !self.config.symbolic.enabled
+            || calls.is_empty()
+            || deadline_passed(replay.shrink_deadline)
+        {
             return None;
         }
 
@@ -1620,7 +1625,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             replay.shrink_deadline,
             preserves,
         )?;
-        preserves(&minimization.minimized_calls).then_some(minimization)
+        (!deadline_passed(replay.shrink_deadline) && preserves(&minimization.minimized_calls))
+            .then_some(minimization)
     }
 
     fn symbolic_sequence_sender_candidates(
@@ -1652,8 +1658,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let txes =
             calls.iter().map(SymbolicCounterexampleCall::to_basic_tx_details).collect::<Vec<_>>();
         let sequence = (0..txes.len()).collect::<Vec<_>>();
+        let mut executor = self.clone_executor_with_symbolic_storage(replay.storage).ok()?;
+        if let Some(deadline) = replay.shrink_deadline {
+            executor.inspector_mut().set_execution_deadline(self.tcfg.early_exit.clone(), deadline);
+        }
         let outcome = check_sequence(
-            self.clone_executor_with_symbolic_storage(replay.storage).ok()?,
+            executor,
             &txes,
             &sequence,
             replay.invariant_contract.address,
