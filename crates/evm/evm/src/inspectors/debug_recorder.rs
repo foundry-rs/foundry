@@ -6,8 +6,10 @@ use evm2::{
     evm::JournalEntry,
     interpreter::{InstrStop, Interpreter, Message, MessageResult, opcode::OpCode},
 };
-use foundry_evm_traces::debug::{DebugRecording, DebugStepSink, RecordedFrame, StepConverter};
-use soldb_core::{EvmWord, StepRecord, StepTable};
+use foundry_evm_traces::debug::{
+    DebugRecording, DebugStepSink, RecordedFrame, StepConverter, step_record,
+};
+use soldb_core::{Bytes, EvmWord, StepRecord, StepTable};
 use std::{fmt, sync::Arc};
 
 /// The most stack words one instruction reads: `SWAP16` reads 17.
@@ -30,6 +32,12 @@ pub struct DebugRecorder {
     frames: Vec<RecordedFrame>,
     /// The frames that run now, innermost last.
     open: Vec<OpenFrame>,
+    /// The calls that started below the transaction with no frame open, under the empty root
+    /// node, or `None` once a call at depth zero replaced that node.
+    ///
+    /// The trace arena lifts a single such call into the root, see
+    /// `SparsedTraceArena::lift_single_top_level_call`, so its steps record one level up.
+    calls_below_root: Option<usize>,
     /// The step that started and did not end yet.
     pending: Option<PendingStep>,
     /// Converts the return data and storage of the steps.
@@ -74,6 +82,7 @@ impl DebugRecorder {
             // The arena of a new tracer starts with an empty root node.
             frames: vec![RecordedFrame::default()],
             open: Vec::new(),
+            calls_below_root: Some(0),
             pending: None,
             converter: StepConverter::default(),
         }
@@ -106,6 +115,18 @@ impl DebugRecorder {
 
     /// Opens a frame at journal depth `depth`, as the tracer opens a node.
     fn enter(&mut self, depth: usize) {
+        if depth == 0 {
+            self.calls_below_root = None;
+        } else if self.open.is_empty()
+            && let Some(calls) = &mut self.calls_below_root
+        {
+            *calls += 1;
+            // With a second call, the empty root stays to group the calls, so the steps of the
+            // first one go back down a level.
+            if *calls == 2 {
+                self.lower_recorded_steps();
+            }
+        }
         let entry_step = self.table().len() - self.first_step;
         let frame = RecordedFrame { depth, entry_step, exit_step: entry_step };
         // The tracer replaces the root node with the call at depth zero.
@@ -129,6 +150,20 @@ impl DebugRecorder {
             self.frames[open.frame].exit_step = exit_step;
             self.table().end_memory_frame();
         }
+    }
+
+    /// Records the steps this recorder appended one level deeper.
+    ///
+    /// A step table cannot change a step in place, so the table is copied, with the steps of
+    /// earlier recorders as they are.
+    fn lower_recorded_steps(&mut self) {
+        let Some(table) = self.table.as_mut().filter(|table| table.len() > self.first_step) else {
+            return;
+        };
+        let mut lowered = StepTable::with_capacity(table.len());
+        copy_steps(table, 0..self.first_step, &mut lowered, 0);
+        copy_steps(table, self.first_step..table.len(), &mut lowered, 1);
+        *table = lowered;
     }
 
     /// Starts a step.
@@ -167,7 +202,8 @@ impl DebugRecorder {
         let mut inputs = [U256::ZERO; MAX_INPUTS];
         inputs[..inputs_len].copy_from_slice(&stack[stack.len() - inputs_len..]);
 
-        let depth = self.frames[open.frame].depth as u64 + 1;
+        let lifted = self.calls_below_root == Some(1);
+        let depth = self.frames[open.frame].depth as u64 + 1 - u64::from(lifted);
         let height = stack.len();
         let pc = interp.pc() as u64;
         let gas = interp.gas().remaining();
@@ -370,6 +406,61 @@ impl<T: EvmTypes> Inspector<T> for DebugRecorder {
     }
 }
 
+/// Appends `steps` of `source` to `target`, `deeper` levels deeper.
+///
+/// Memory is written as it changes, within a frame for each depth, as the recorder writes it,
+/// so the copy does not store the memory of every step in full.
+fn copy_steps(
+    source: &StepTable,
+    steps: std::ops::Range<usize>,
+    target: &mut StepTable,
+    deeper: u64,
+) {
+    // The memory last written to each frame open in `target`, by depth.
+    let mut frames = Vec::<Bytes>::new();
+    for index in steps {
+        let step = source.step(index);
+        let mut record = step_record(&step);
+        let memory = record.memory.take().unwrap_or_default();
+        record.depth += deeper;
+
+        let level = step.depth() as usize + 1;
+        // Memory never shrinks within a frame, so shorter memory at the same depth is another
+        // frame's.
+        while frames.len() > level
+            || (frames.len() == level
+                && frames.last().is_some_and(|last| last.len() > memory.len()))
+        {
+            target.end_memory_frame();
+            frames.pop();
+        }
+        while frames.len() < level {
+            target.start_memory_frame();
+            frames.push(Bytes::new());
+        }
+        let last = frames.last_mut().expect("a frame is open");
+        if *last != memory {
+            let differs = |&at: &usize| memory[at] != last.get(at).copied().unwrap_or(0);
+            let size = memory.len() as u64;
+            match (0..memory.len()).find(differs) {
+                Some(start) => {
+                    let end = (start..memory.len()).rfind(differs).unwrap() + 1;
+                    target
+                        .write_memory(start as u64, &memory[start..end], size)
+                        .expect("the write is bounded by the memory");
+                }
+                // Only the size grew.
+                None => target.write_memory(0, &[], size).expect("memory only grows"),
+            }
+            *last = memory;
+        }
+        target.append(record, step.stack().iter());
+    }
+    for _ in frames {
+        target.end_memory_frame();
+    }
+}
+
 /// The destination a memory-writing opcode takes from its pre-execution stack.
 /// Memory-reading opcodes can expand memory but leave all new bytes zero.
 fn memory_write(op: OpCode, stack: &[U256]) -> Option<std::ops::Range<usize>> {
@@ -503,6 +594,87 @@ mod tests {
                 "memory at {index}"
             );
             assert_eq!(step.stack().to_vec(), steps[index].1, "stack at {index}");
+        }
+    }
+
+    #[test]
+    fn second_call_below_root_lowers_recorded_steps() {
+        /// Appends a step at `pc` and `depth`, with `pc` as its stack.
+        fn step(table: &mut StepTable, pc: u8, depth: u64) {
+            let record = StepRecord { pc: pc.into(), depth, ..Default::default() };
+            table.append(record, [EvmWord([pc; 32])]);
+        }
+
+        // A step of an earlier recorder that shares the table, which stays as it is.
+        let mut earlier = StepTable::new();
+        earlier.start_memory_frame();
+        earlier.write_memory(0, &[9; 2], 32).unwrap();
+        step(&mut earlier, 0, 1);
+        earlier.end_memory_frame();
+        let sink = DebugStepSink::new();
+        sink.put(earlier);
+        let mut recorder = DebugRecorder::new(sink);
+
+        // The first call records one level up, as the arena lifts it into the root.
+        recorder.enter(1);
+        step(recorder.table(), 1, 1);
+        recorder.table().write_memory(0, &[1; 32], 32).unwrap();
+        step(recorder.table(), 2, 1);
+        recorder.table().write_memory(40, &[2; 8], 64).unwrap();
+        step(recorder.table(), 3, 1);
+        recorder.enter(2);
+        step(recorder.table(), 4, 2);
+        recorder.table().write_memory(0, &[3; 32], 32).unwrap();
+        step(recorder.table(), 5, 2);
+        recorder.exit();
+        // The caller resumes with the call's output.
+        recorder.table().write_memory(0, &[4; 4], 64).unwrap();
+        step(recorder.table(), 6, 1);
+        // Two calls in a row, the second with less memory than the first.
+        recorder.enter(2);
+        recorder.table().write_memory(0, &[], 96).unwrap();
+        step(recorder.table(), 7, 2);
+        recorder.exit();
+        recorder.enter(2);
+        step(recorder.table(), 8, 2);
+        recorder.exit();
+        step(recorder.table(), 9, 1);
+        recorder.exit();
+        // A second call keeps the root, so both calls record below it.
+        recorder.enter(1);
+        recorder.table().write_memory(0, &[5; 32], 32).unwrap();
+        step(recorder.table(), 10, 2);
+        recorder.exit();
+
+        let recording = recorder.finish();
+        assert_eq!(recording.steps, 1..11);
+        assert_eq!(
+            recording.frames.iter().map(|frame| frame.depth).collect::<Vec<_>>(),
+            [0, 1, 2, 2, 2, 1]
+        );
+        let caller = [vec![1; 32], vec![0; 8], vec![2; 8], vec![0; 16]].concat();
+        let resumed = [vec![4; 4], caller[4..].to_vec()].concat();
+        let expected = [
+            (0, 1, [vec![9; 2], vec![0; 30]].concat()),
+            (1, 2, vec![]),
+            (2, 2, vec![1; 32]),
+            (3, 2, caller),
+            (4, 3, vec![]),
+            (5, 3, vec![3; 32]),
+            (6, 2, resumed.clone()),
+            (7, 3, vec![0; 96]),
+            (8, 3, vec![]),
+            (9, 2, resumed),
+            (10, 2, vec![5; 32]),
+        ];
+        let table = recorder.table.as_ref().unwrap();
+        assert_eq!(table.len(), expected.len());
+        for index in (0..table.len()).rev().chain(0..table.len()) {
+            let step = table.step(index);
+            let (pc, depth, memory) = &expected[index];
+            assert_eq!((step.pc(), step.depth()), (*pc, *depth), "step {index}");
+            assert_eq!(step.memory().as_deref(), Some(memory.as_slice()), "memory at {index}");
+            assert_eq!(step.stack().to_vec(), [EvmWord([*pc as u8; 32])], "stack at {index}");
         }
     }
 }

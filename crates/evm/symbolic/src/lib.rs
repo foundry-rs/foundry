@@ -347,6 +347,109 @@ pub struct SymbolicInvariantStep {
     pub calldata: Bytes,
 }
 
+/// Input for a symbolic equivalence check of two runtime bytecodes.
+pub struct SymbolicEquivalenceInput<'a> {
+    /// Read-only view of the concrete Foundry executor that supplies the environment and the
+    /// pre-state both codes start from.
+    pub executor: ExecutorView<'a>,
+    /// Address both codes run at, so they share one storage pre-state.
+    pub address: Address,
+    /// Runtime bytecode of the first contract.
+    pub code_a: Bytes,
+    /// Runtime bytecode of the second contract.
+    pub code_b: Bytes,
+    /// Account that stands for the sender of the top-level call, whose address is symbolic.
+    pub sender: Address,
+    /// Fixed call value of the top-level call; symbolic when `None`.
+    pub value: Option<U256>,
+    /// When set, calldata is limited to ABI-encoded calls of this function.
+    pub function: Option<&'a Function>,
+    /// Fixed lengths of raw calldata to explore when `function` is `None`. When empty, the
+    /// calldata length is symbolic, up to `max_calldata` bytes.
+    pub calldata_lengths: Vec<usize>,
+    /// Largest symbolic calldata, in bytes.
+    pub max_calldata: usize,
+    /// Largest return data of a call into unknown code, in bytes.
+    pub max_returndata: usize,
+    /// Assume calls into unknown code never re-enter the programs, like hevm's
+    /// `--promise-no-reent`. Without it a state-changing CALL into unknown code is incomplete.
+    pub promise_no_reent: bool,
+    /// Compare the programs modulo gas, like hevm: inputs on which either program runs out of
+    /// memory gas are left out instead of counting as a difference.
+    pub ignore_out_of_gas: bool,
+}
+
+/// Concrete transaction and block environment of an equivalence counterexample.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SymbolicEquivalenceEnv {
+    /// Address both programs run at.
+    pub address: Address,
+    /// Sender of the call.
+    pub caller: Address,
+    /// Origin of the transaction.
+    pub origin: Address,
+    /// Call value.
+    pub value: U256,
+    /// Block timestamp.
+    pub timestamp: U256,
+    /// Block number.
+    pub number: U256,
+    /// `PREVRANDAO` / `DIFFICULTY`.
+    pub prevrandao: U256,
+    /// Block gas limit.
+    pub gas_limit: U256,
+    /// Base fee.
+    pub basefee: U256,
+    /// Blob base fee.
+    pub blob_basefee: U256,
+    /// Chain ID.
+    pub chain_id: U256,
+    /// Block beneficiary.
+    pub coinbase: Address,
+    /// Gas price.
+    pub gas_price: U256,
+    /// Starting balances of the accounts the counterexample reads, keyed by the account that
+    /// stands for them in the check.
+    pub balances: Vec<(Address, U256)>,
+}
+
+/// Outcome of a symbolic equivalence check.
+#[derive(Clone, Debug)]
+pub enum SymbolicEquivalenceResult {
+    /// Every explored pair of paths agreed on success, output and storage.
+    Equivalent {
+        /// Execution counters collected during the run.
+        stats: SymbolicStats,
+    },
+    /// The solver found an input on which the two codes differ. Callers must replay it
+    /// concretely before reporting it.
+    Counterexample {
+        /// Calldata that distinguishes the two codes.
+        calldata: Bytes,
+        /// ABI-typed arguments, when the check was limited to a function.
+        args: Vec<DynSolValue>,
+        /// Pre-state storage values the counterexample needs.
+        storage: Vec<SymbolicStorageAssignment>,
+        /// Transaction and block environment of the counterexample.
+        env: Box<SymbolicEquivalenceEnv>,
+        /// Calls into unknown code on the two paths, whose answers come from the model.
+        unknown_calls: usize,
+        /// Whether a path read `GAS`, which the model chooses freely.
+        reads_gas: bool,
+        /// Execution counters collected before the counterexample was found.
+        stats: SymbolicStats,
+    },
+    /// The check stopped before it could establish equivalence.
+    Incomplete {
+        /// Category describing why the check stopped.
+        kind: SymbolicStopReason,
+        /// Human-readable explanation.
+        reason: String,
+        /// Execution counters collected before the check stopped.
+        stats: SymbolicStats,
+    },
+}
+
 /// High-level reason a symbolic run stopped without a proof or replayed counterexample.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SymbolicStopReason {
@@ -417,6 +520,21 @@ pub struct SymbolicExecutor {
     nested_deferred_mode: DeferredPathMode,
     stateless_retry_safe: bool,
     folded_slots: runtime::FoldedSlots,
+    /// Set while an equivalence check runs.
+    equivalence: Option<EquivalenceMode>,
+}
+
+/// Settings of a running equivalence check.
+#[derive(Clone, Copy, Debug)]
+struct EquivalenceMode {
+    /// Assume unknown code never calls back into the programs, so CALLs into it are abstracted.
+    promise_no_reent: bool,
+    /// Largest return data of a call into unknown code, in bytes.
+    max_returndata: usize,
+    /// Whether a program read GAS, which counterexamples may then depend on.
+    reads_gas: bool,
+    /// Leave out inputs on which a program runs out of memory gas.
+    ignore_out_of_gas: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
