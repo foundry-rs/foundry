@@ -1314,24 +1314,26 @@ pub(crate) fn shrink_handler_sequence<FEN: FoundryEvmNetwork>(
         },
     );
 
-    // Nothing to verify when no call was removed, such as when the deadline already passed.
-    if shrinker.included_count() == calls.len() {
+    // Nothing to verify when no call was removed, and no verification starts once the budget is
+    // spent: the original sequence is the fallback.
+    if shrinker.included_count() == calls.len() || deadline_passed(deadline) {
         return Ok(calls.to_vec());
     }
     let shrunk = build_shrunk_sequence(calls, &shrinker, accumulate_warp_roll);
 
-    // Verify shrunk repro; fall back to original on any failure.
+    // Verify shrunk repro; fall back to original on any failure, including a verification that
+    // the deadline cancelled.
     sequence.clear();
     sequence.extend(shrinker.current());
     let verified = handler_sequence_still_triggers_bug(
-        executor.clone(),
+        candidates.as_ref().clone(),
         calls,
         &sequence,
         accumulate_warp_roll,
         expected_fingerprint,
     )
     .unwrap_or(false);
-    if verified { Ok(shrunk) } else { Ok(calls.to_vec()) }
+    if verified && !deadline_passed(deadline) { Ok(shrunk) } else { Ok(calls.to_vec()) }
 }
 
 /// Shrink predicate: anchor asserts on the same path as the originally recorded bug.
