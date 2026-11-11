@@ -830,6 +830,10 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 
     /// Code that issued the CREATE being handed off to a new frame EVM.
     pub env_handoff_creator: Option<Address>,
+
+    /// Automatic CREATE2 redirects: factory call depth, original issuing code, and whether the
+    /// original create grants cheatcode access. The grant is resolved after caller overrides.
+    pub pending_create2_redirects: Vec<(u16, Option<Address>, bool)>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -917,6 +921,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             applied_access_list: None,
             unrun_create_depth: None,
             env_handoff_creator: None,
+            pending_create2_redirects: Vec::new(),
         }
     }
 
@@ -1264,17 +1269,29 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ///
     /// Constructors need access before the new contract's runtime code has been deployed.
     fn allow_cheatcodes_on_create(
+        &self,
         backend: &mut dyn CheatcodesBackend<FEN>,
         depth: usize,
         caller: Address,
         created_address: Address,
         creator: Option<Address>,
     ) {
-        let db = backend.backend();
-        if (depth <= 1 || db.has_cheatcode_access(&caller))
-            && (!db.is_forked_mode() || creator.is_none_or(|code| db.has_cheatcode_access(&code)))
-            && !db.has_cheatcode_access(&created_address)
-        {
+        let allowed = self
+            .pending_create2_redirects
+            .last()
+            .filter(|(factory_depth, ..)| usize::from(*factory_depth) + 1 == depth)
+            .map_or_else(
+                || {
+                    Self::can_grant_cheatcodes_on_create(
+                        backend,
+                        depth - self.root_depth,
+                        caller,
+                        creator,
+                    )
+                },
+                |(.., allowed)| *allowed,
+            );
+        if allowed && !backend.backend().has_cheatcode_access(&created_address) {
             backend.backend_mut().allow_cheatcode_access(created_address);
         }
     }
@@ -1317,7 +1334,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) -> Option<MessageResultFor<FEN>> {
         let tx_origin = interp.host().tx_env().origin;
         let curr_depth = usize::from(call.depth);
-        // A root call, including a redirected CREATE2, has no issuing CREATE frame.
+        // A root call has no issuing CREATE frame. Redirects saved theirs separately.
         if interp.message().depth == call.depth {
             self.env_handoff_creator = None;
         }
@@ -1678,6 +1695,18 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 depth: curr_depth as u64,
             };
             recorded_account_diffs_stack.push(vec![access]);
+        }
+
+        // The factory call keeps the original create's authorization after caller overrides.
+        if let Some((depth, creator, allowed)) = self.pending_create2_redirects.last_mut()
+            && *depth == call.depth
+        {
+            *allowed = Self::can_grant_cheatcodes_on_create(
+                backend,
+                curr_depth - self.root_depth,
+                call.caller,
+                *creator,
+            );
         }
 
         None
@@ -2551,10 +2580,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) -> Option<MessageResultFor<FEN>> {
         let tx_origin = interp.host().tx_env().origin;
         let curr_depth = usize::from(input.depth);
-        let creator = self.env_handoff_creator.take().or_else(|| {
-            let message = interp.message();
-            (message.depth < input.depth).then_some(message.code_address)
-        });
+        let creator = self.take_create_creator(interp, input);
         let is_root = curr_depth == self.root_depth;
         self.start_created_accounts_frame(is_root, CreatedAccountsFrameKind::Create, curr_depth);
         if is_root {
@@ -2668,13 +2694,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         // Allow cheatcodes from the address of the new contract.
         let address = input.destination;
-        Self::allow_cheatcodes_on_create(
-            backend,
-            curr_depth - self.root_depth,
-            input.caller,
-            address,
-            creator,
-        );
+        self.allow_cheatcodes_on_create(backend, curr_depth, input.caller, address, creator);
 
         self.record_created_account(backend.backend().active_fork_id(), address);
 
@@ -2929,6 +2949,38 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// Returns the CREATE2 deployer address.
     pub fn create2_deployer(&self) -> Address {
         self.core.config.evm_opts.create2_deployer
+    }
+
+    /// Preserves the original CREATE authorization before redirecting it to the factory.
+    pub fn start_create2_redirect(
+        &mut self,
+        interp: &InterpreterFor<'_, '_, FEN>,
+        message: &MessageFor<FEN>,
+    ) {
+        let creator = self.take_create_creator(interp, message);
+        self.pending_create2_redirects.push((message.depth, creator, false));
+    }
+
+    fn take_create_creator(
+        &mut self,
+        interp: &InterpreterFor<'_, '_, FEN>,
+        input: &MessageFor<FEN>,
+    ) -> Option<Address> {
+        self.env_handoff_creator.take().or_else(|| {
+            let message = interp.message();
+            (message.depth < input.depth).then_some(message.code_address)
+        })
+    }
+
+    fn can_grant_cheatcodes_on_create(
+        backend: &dyn CheatcodesBackend<FEN>,
+        depth: usize,
+        caller: Address,
+        creator: Option<Address>,
+    ) -> bool {
+        let db = backend.backend();
+        (depth <= 1 || db.has_cheatcode_access(&caller))
+            && (!db.is_forked_mode() || creator.is_none_or(|code| db.has_cheatcode_access(&code)))
     }
 
     #[cold]

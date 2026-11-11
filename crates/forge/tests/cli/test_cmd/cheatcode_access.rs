@@ -90,6 +90,54 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 }
 
+#[forgetest]
+async fn fork_create2_redirect_preserves_cheatcode_access(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_code(
+        foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER,
+        Bytes::from_static(foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE),
+    )
+    .await
+    .unwrap();
+    prj.add_test("Create2Access.t.sol", CREATE2_REDIRECT_ACCESS);
+    for rewrite in [false, true] {
+        prj.update_config(|config| config.always_use_create_2_factory = rewrite);
+        for factory_authorized in ["0", "1"] {
+            for isolate in ["false", "true"] {
+                cmd.forge_fuse();
+                cmd.unset_env("FOUNDRY_ACCESS_REGRESSION_UNUSED");
+                cmd.unset_env("FOUNDRY_ALWAYS_USE_CREATE_2_FACTORY");
+                cmd.env("FOUNDRY_ACCESS_FACTORY_AUTHORIZED", factory_authorized);
+                cmd.env("FOUNDRY_ISOLATE", isolate);
+                cmd.args([
+                    "test",
+                    "--fork-url",
+                    &handle.http_endpoint(),
+                    "--evm-version",
+                    "prague",
+                    "--match-contract",
+                    "Create2RedirectTest",
+                    "-j1",
+                ])
+                .assert_success()
+                .stdout_eq(str![[r#"
+...
+Ran 1 test for test/Create2Access.t.sol:AuthorizedCreate2RedirectTest
+[PASS] testForkCreate2RedirectAuthorization() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/Create2Access.t.sol:UntrustedCreate2RedirectTest
+[PASS] testForkCreate2RedirectAuthorization() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 2 test suites [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+            }
+        }
+    }
+}
+
 const CHEATCODE_ACCESS_COMPATIBILITY: &str = r#"
 interface Vm {
     function prank(address sender) external;
@@ -448,6 +496,111 @@ contract CheatcodeAccessNonForkTest is AccessFixture {
         }
         vm.etch(DELEGATOR, abi.encodePacked(hex"ef0100", READER));
         require(EnvReader(DELEGATOR).read() == 7, "nonfork delegation designator access lost");
+    }
+}
+
+"#;
+
+const CREATE2_REDIRECT_ACCESS: &str = r#"
+interface Vm {
+    function prank(address sender) external;
+    function etch(address target, bytes calldata code) external;
+    function allowCheatcodes(address target) external;
+    function chainId(uint256 newChainId) external;
+    function envOr(string calldata name, uint256 defaultValue) external view returns (uint256);
+}
+
+abstract contract UsesVm {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function readDefault() internal view returns (uint256) {
+        return vm.envOr("FOUNDRY_ACCESS_REGRESSION_UNUSED", uint256(7));
+    }
+}
+
+contract EnvReader is UsesVm {
+    function read() external view returns (uint256) {
+        return readDefault();
+    }
+}
+
+contract ConstructorReader is EnvReader {
+    uint256 public constructorValue;
+
+    constructor() {
+        constructorValue = readDefault();
+    }
+}
+
+contract Create2EnvChanger is UsesVm {
+    function change() external {
+        vm.chainId(block.chainid + 1);
+    }
+}
+
+contract Create2RedirectImplementation is UsesVm {
+    address constant CREATE2_FACTORY = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+    Create2EnvChanger internal changer;
+    bool internal issuerAuthorized;
+    bool internal factoryAuthorized;
+
+    function testForkCreate2RedirectAuthorization() public {
+        for (uint256 mode; mode < 4; mode++) {
+            if (mode >= 2) changer.change();
+            if (issuerAuthorized && mode % 2 == 1) vm.prank(address(0xbeef));
+            bytes32 salt = bytes32(mode);
+            if (mode % 2 == 0) {
+                EnvReader child = new EnvReader{salt: salt}();
+                checkAccess(child, issuerAuthorized);
+            } else {
+                bool created;
+                try new ConstructorReader{salt: salt}() returns (ConstructorReader child) {
+                    created = true;
+                    require(child.constructorValue() == 7, "constructor value lost");
+                    checkAccess(child, true);
+                } catch {}
+                require(created == issuerAuthorized, "constructor authorization changed");
+            }
+
+            // Explicit factory calls retain their own authorization after successful or failed creates.
+            (bool ok, bytes memory output) = CREATE2_FACTORY.call(
+                abi.encodePacked(bytes32(mode + 4), type(EnvReader).creationCode)
+            );
+            require(ok && output.length == 20, "explicit factory creation failed");
+            checkAccess(EnvReader(address(bytes20(output))), factoryAuthorized);
+        }
+    }
+
+    function checkAccess(EnvReader child, bool authorized) internal {
+        (bool ok, bytes memory output) = address(child).call(abi.encodeCall(EnvReader.read, ()));
+        require(ok == authorized, "runtime authorization changed");
+        if (ok) require(abi.decode(output, (uint256)) == 7, "runtime value lost");
+    }
+}
+
+abstract contract Create2RedirectFixture is Create2RedirectImplementation {
+    function setUpImplementation(bool authorized) internal {
+        factoryAuthorized = vm.envOr("FOUNDRY_ACCESS_FACTORY_AUTHORIZED", uint256(0)) == 1;
+        if (factoryAuthorized) vm.allowCheatcodes(CREATE2_FACTORY);
+        changer = new Create2EnvChanger();
+        issuerAuthorized = authorized;
+        address implementation = address(0x1234);
+        vm.etch(implementation, type(Create2RedirectImplementation).runtimeCode);
+        if (authorized) vm.allowCheatcodes(implementation);
+        // EIP-7702 keeps the issuing implementation at the root, where automatic rewriting applies.
+        vm.etch(address(this), abi.encodePacked(hex"ef0100", implementation));
+    }
+}
+
+contract AuthorizedCreate2RedirectTest is Create2RedirectFixture {
+    function setUp() public {
+        setUpImplementation(true);
+    }
+}
+
+contract UntrustedCreate2RedirectTest is Create2RedirectFixture {
+    function setUp() public {
+        setUpImplementation(false);
     }
 }
 
