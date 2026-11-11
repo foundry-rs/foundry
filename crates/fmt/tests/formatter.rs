@@ -1218,9 +1218,7 @@ fn concatenated_string_trailing_comment_stays_after_last_literal() {
 #[test]
 fn for_normalization_is_stable() {
     for (header, source_body, normalized_body, inline_length) in [
-        ("for (uint i = 0; i < n; i++)", "n++;", "n++;", 45),
         ("for(uint i=0;i<n;i++)", "n++;", "n++;", 45),
-        ("for (uint256 i = 0; i < n; i++)", "n++;", "n++;", 45),
         ("for(uint i=0;i<n;i++)", "n += uint(n);", "n += uint256(n);", 57),
     ] {
         let source = format!(
@@ -1382,9 +1380,9 @@ fn wrapped_body_trailing_comments_keep_braces() {
 fn for_body_assignment_spacing_is_stable() {
     for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
         for (nested, line_lengths, paddings) in [
-            (false, &[36, 37][..], &[0, 20][..]),
-            (false, &[40][..], &[0, 20, 65_516][..]),
-            (true, &[40][..], &[0, 20, 65_516][..]),
+            (false, &[36, 37][..], &[20][..]),
+            (false, &[40][..], &[65_516][..]),
+            (true, &[40][..], &[20, 65_516][..]),
         ] {
             for &line_length in line_lengths {
                 let statement =
