@@ -209,8 +209,9 @@ pub enum PersistentWrite {
     Destruct(Address),
     /// Reloads the slots that the running transaction read while a merged creation discarded an
     /// account's storage, other than the listed ones it had loaded before, once a revert undid the
-    /// creation. evm2 keeps the zero those slots read, with a zero original, so they are reread
-    /// from the committed state as both their original and current values.
+    /// creation. evm2 keeps the zero those slots read, with a zero original, so their committed
+    /// values are written back as journaled writes. Their originals stay zero, so `SSTORE` gas
+    /// and refunds can differ, and the transaction rewrites their committed values.
     ReloadDiscarded(Address, Vec<U256>),
 }
 
@@ -300,7 +301,8 @@ impl PersistentWrite {
                     if !slot.original().is_zero() || !slot.current().is_zero() {
                         continue;
                     }
-                    state.reload_storage_slot(address, &key)?;
+                    let value = state.read_committed_storage(address, &key)?;
+                    state.storage_slot(address, key)?.set(value);
                 }
             }
         }
