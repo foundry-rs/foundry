@@ -597,8 +597,8 @@ impl SymbolicExecutor {
     ) -> Result<Vec<(SymExpr, Vec<Address>)>, SymbolicError> {
         let Ok(target) = state.stack.peek(1) else { return Ok(Vec::new()) };
         let Some(to) = target.as_const().map(word_to_address) else {
-            let target = target.clone().address_operand(&mut self.cx);
-            return Ok(self.guarded_address_word(state, target).into_iter().collect());
+            let target = target.clone();
+            return Ok(self.guarded_words(state, &target, Vec::new()));
         };
         let in_offset_idx = match kind {
             CallKind::Call => 3,
@@ -675,20 +675,30 @@ impl SymbolicExecutor {
         };
         for index in first_scanned..in_size.saturating_sub(4) / 32 {
             let word = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, index)?;
-            words.extend(self.guarded_address_word(state, word));
+            words = self.guarded_words(state, &word, words);
         }
         Ok(words)
     }
 
-    /// Returns a word a guarded cheatcode write went through, with the accounts it may still
-    /// denote, unless the path constraints already fix it.
-    fn guarded_address_word(
+    /// Adds to `words` the guarded words that `expr`, a call target or cheatcode argument the
+    /// path constraints do not fix, mentions and the path does not fix either.
+    fn guarded_words(
         &mut self,
         state: &PathState,
-        word: SymExpr,
-    ) -> Option<(SymExpr, Vec<Address>)> {
-        let candidates = state.world.guarded_candidates(&word)?;
-        state.constrained_word(&mut self.cx, &word).is_none().then_some((word, candidates))
+        expr: &SymExpr,
+        mut words: Vec<(SymExpr, Vec<Address>)>,
+    ) -> Vec<(SymExpr, Vec<Address>)> {
+        if state.constrained_word(&mut self.cx, expr).is_some() {
+            return words;
+        }
+        for (word, candidates) in state.world.guarded_words_in(expr) {
+            if !words.iter().any(|(known, _)| *known == word)
+                && state.constrained_word(&mut self.cx, &word).is_none()
+            {
+                words.push((word, candidates));
+            }
+        }
+        words
     }
 
     /// Forks an address word over `candidates`, concrete accounts the run knows, so a cheatcode

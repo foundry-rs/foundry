@@ -2417,13 +2417,33 @@ impl SymbolicWorld {
         !self.guarded_symbolic_addresses.is_empty()
     }
 
-    /// Returns the concrete accounts a guarded word may still denote.
-    pub(crate) fn guarded_candidates(&self, expr: &SymExpr) -> Option<Vec<Address>> {
+    /// Returns the guarded words whose variables `expr` mentions, such as the word itself or a
+    /// value cast from it, each with the concrete accounts it may still denote, in the order of
+    /// their representative accounts.
+    pub(crate) fn guarded_words_in(&self, expr: &SymExpr) -> Vec<(SymExpr, Vec<Address>)> {
         if !self.has_guarded_addresses() {
-            return None;
+            return Vec::new();
         }
-        let (alias, _) = self.alias_entry(expr)?;
-        Some(self.guarded_symbolic_addresses.get(alias)?.iter().copied().collect())
+        let mut vars = SymbolicVars::default();
+        expr.collect_eval_vars(&mut vars);
+        if vars.is_empty() {
+            return Vec::new();
+        }
+        let mut words = self
+            .guarded_symbolic_addresses
+            .iter()
+            .filter(|(word, _)| {
+                let mut word_vars = SymbolicVars::default();
+                word.collect_eval_vars(&mut word_vars);
+                word_vars.iter().any(|var| vars.contains(var))
+            })
+            .map(|(word, candidates)| {
+                let representative = self.symbolic_address_aliases.get(word).copied();
+                (representative, word.clone(), candidates.iter().copied().collect())
+            })
+            .collect::<Vec<_>>();
+        words.sort_by_key(|(representative, ..)| *representative);
+        words.into_iter().map(|(_, word, candidates)| (word, candidates)).collect()
     }
 
     /// Records that the path rules out `excluded` for a guarded word; once it rules out every

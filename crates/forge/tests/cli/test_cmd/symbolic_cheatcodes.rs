@@ -3034,6 +3034,13 @@ contract SymbolicFreeAddressWrites is Test {
         assert(vm.getNonce(address(vault)) != 7);
     }
 
+    // A cheatcode argument cast from the address decides it, as the address itself does.
+    function checkDerivedArgumentDecidesAddress(address a) public {
+        vm.deal(a, 1);
+        vm.setNonceUnsafe(address(vault), uint64(uint160(a)));
+        assert(vm.getNonce(address(vault)) != uint64(uint160(address(vault))));
+    }
+
     function checkPrankAfterDeal(address a) public {
         vm.deal(a, 1);
         vm.prank(a);
@@ -3080,8 +3087,9 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 8 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
+Ran 9 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealKeepsCode(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDerivedArgumentDecidesAddress(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDirtyWordKeepsGuard(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkLaterDealShowsThrough(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkLaterStoreShowsThrough(address) ([METRICS])
@@ -3089,7 +3097,7 @@ Ran 8 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreKeepsNonce(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreMayTargetSetUpContract(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSymbolicSizeSetNonce(address,uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 8 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 9 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
