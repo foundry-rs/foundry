@@ -31,6 +31,7 @@ use foundry_evm_core::{
         DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
     decode::{RevertDecoder, SkipReason},
+    edgecov::{self, EdgeCovGuard},
     eip2935::{
         HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE, history_storage_slot, history_storage_value,
         history_window_start,
@@ -1247,6 +1248,9 @@ fn execute<FEN: FoundryEvmNetwork>(
 ) -> eyre::Result<(Execution<FEN>, FoundryEvmFor<'static, FEN>)> {
     let sancov_edges = stack.inner.sancov_edges;
     let sancov_trace_cmp = stack.inner.sancov_trace_cmp;
+    let edgecov_opcode = stack.inner.edgecov_opcode;
+    let instrumented_edges = stack.inner.instrumented_edges;
+    let instrumented_cmp_log = stack.inner.instrumented_cmp_log;
     let mut evm = backend.backend().create_evm();
     install_env::<FEN>(backend.backend(), &mut evm, env);
     match ext {
@@ -1256,6 +1260,8 @@ fn execute<FEN: FoundryEvmNetwork>(
     let executed = {
         let _guard = (sancov_edges || sancov_trace_cmp)
             .then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
+        let _edgecov =
+            edgecov_opcode.then(|| EdgeCovGuard::new(instrumented_edges, instrumented_cmp_log));
         evm.set_inspector(stack.as_inspector(&mut *backend));
         evm.transact(tx).map(|executed| executed.detach())
     };
@@ -1589,6 +1595,21 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
                         *curr = 0;
                     }
                 }
+                EdgeCoverage::Instrumented(hits) => {
+                    // Instrumented edge IDs are dense, so they index the history map directly.
+                    for hit in hits.drain(..) {
+                        let index = hit.id as usize;
+                        if history_map.len() <= index {
+                            history_map.resize(index + 1, 0);
+                        }
+                        Self::merge_edge_count(
+                            hit.count,
+                            &mut history_map[index],
+                            &mut new_coverage,
+                            &mut is_edge,
+                        );
+                    }
+                }
                 EdgeCoverage::CollisionFree(hits) => {
                     for hit in hits.drain(..) {
                         let edge_index = edge_indices.edge_index(hit.edge);
@@ -1755,6 +1776,8 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
 
     let sancov_edges = inspector.inner.sancov_edges;
     let sancov_trace_cmp = inspector.inner.sancov_trace_cmp;
+    let instrumented_edges = inspector.inner.instrumented_edges;
+    let instrumented_cmp_log = inspector.inner.instrumented_cmp_log;
     let observed_calls = inspector
         .inner
         .fuzzer
@@ -1767,8 +1790,8 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         labels,
         traces,
         line_coverage,
-        edge_coverage,
-        evm_cmp_values,
+        mut edge_coverage,
+        mut evm_cmp_values,
         mut cheatcodes,
         chisel_state,
         reverter,
@@ -1781,6 +1804,13 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
 
     if logs.is_empty() {
         logs = tx_result.logs;
+    }
+    // Compiler instrumentation replaces the edge and cmp-log inspectors, which are then off.
+    if instrumented_edges {
+        edge_coverage = Some(EdgeCoverage::Instrumented(edgecov::take_edges()));
+    }
+    if instrumented_cmp_log {
+        evm_cmp_values = Some(edgecov::take_cmp_log()).filter(|cmps| !cmps.is_empty());
     }
 
     let transactions = cheatcodes
@@ -2023,7 +2053,12 @@ mod tests {
         },
     };
     use foundry_config::Config;
-    use foundry_evm_core::{constants::MAGIC_SKIP, evm::TempoEvmNetwork, opts::EvmOpts};
+    use foundry_evm_core::{
+        constants::MAGIC_SKIP,
+        edgecov::{InstrumentedEdgeHit, MAX_CMP_OBSERVATIONS_PER_SITE},
+        evm::TempoEvmNetwork,
+        opts::EvmOpts,
+    };
     use foundry_evm_traces::InternalTraceMode;
     use std::{sync::mpsc, thread};
 
@@ -2160,6 +2195,180 @@ mod tests {
             (true, true)
         );
         assert_eq!(history, [0, 1]);
+    }
+
+    #[test]
+    fn instrumented_edge_merge_indexes_history_by_id() {
+        let mut history = Vec::new();
+        let mut edge_indices = EdgeIndexMap::default();
+        let mut merge = |hits: &[(u32, u8)]| {
+            let hits = hits.iter().map(|&(id, count)| InstrumentedEdgeHit { id, count }).collect();
+            RawCallResult::<EthEvmNetwork> {
+                edge_coverage: Some(EdgeCoverage::Instrumented(hits)),
+                ..Default::default()
+            }
+            .merge_edge_coverage(&mut history, &mut edge_indices)
+        };
+
+        // First hit of an ID is a new edge, a higher hit-count bucket only a new feature.
+        assert_eq!(merge(&[(3, 1)]), (true, true));
+        assert_eq!(merge(&[(3, 1)]), (false, false));
+        assert_eq!(merge(&[(3, 2)]), (true, false));
+        assert_eq!(merge(&[(1, 1), (3, 1)]), (true, true));
+        assert_eq!(history, [0, 1, 0, 2]);
+        // The ID space is independent of the inspector's edge indices.
+        assert_eq!(edge_indices.edge_count(), 0);
+    }
+
+    /// Runtime code that hits edge 5 twice and edge 7 once, then stops.
+    const EDGECOV_CODE: &[u8] = &[
+        0x61, 0x00, 0x05, 0xc0, // PUSH2 5; EDGECOV
+        0x61, 0x00, 0x07, 0xc0, // PUSH2 7; EDGECOV
+        0x61, 0x00, 0x05, 0xc0, // PUSH2 5; EDGECOV
+        0x00, // STOP
+    ];
+
+    /// An executor that runs the instrumentation opcodes when `opcode` is set, and collects their
+    /// edges like a campaign with `instrumented_edges` when `collect` is set.
+    fn edgecov_executor(opcode: bool, collect: bool) -> Executor<EthEvmNetwork> {
+        let mut executor = eth_executor(ExecutorBuilder::default().gas_limit(1 << 20));
+        let corpus = foundry_config::FuzzCorpusConfig {
+            corpus_dir: Some("corpus".into()),
+            instrumented_edges: collect,
+            ..Default::default()
+        };
+        executor.inspector_mut().collect_edge_coverage_with_config(&corpus);
+        executor.inspector_mut().enable_edgecov_opcode(opcode);
+        executor
+    }
+
+    fn instrumented_hits(result: &RawCallResult) -> Vec<(u32, u8)> {
+        match &result.edge_coverage {
+            Some(EdgeCoverage::Instrumented(hits)) => {
+                hits.iter().map(|hit| (hit.id, hit.count)).collect()
+            }
+            other => panic!("expected instrumented edges, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn edgecov_opcode_collects_instrumented_edges() {
+        let mut executor = edgecov_executor(true, true);
+        let target = Address::repeat_byte(0x11);
+        executor.set_code(target, Bytecode::new_raw(Bytes::from_static(EDGECOV_CODE))).unwrap();
+        let stop = Address::repeat_byte(0x12);
+        executor.set_code(stop, Bytecode::new_raw(Bytes::from_static(&[0x00]))).unwrap();
+
+        let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.exit_reason, Some(InstrStop::Stop));
+        assert_eq!(instrumented_hits(&result), [(5, 2), (7, 1)]);
+
+        // Instrumentation is gas-neutral: the same as a bare STOP.
+        let bare = executor.call_raw(CALLER, stop, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.gas_used, bare.gas_used);
+        // Hits are reset between calls.
+        assert!(instrumented_hits(&bare).is_empty());
+        let again = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(instrumented_hits(&again), [(5, 2), (7, 1)]);
+    }
+
+    #[test]
+    fn edgecov_opcode_is_undefined_unless_enabled() {
+        let target = Address::repeat_byte(0x11);
+
+        let mut executor = edgecov_executor(false, false);
+        executor.set_code(target, Bytecode::new_raw(Bytes::from_static(EDGECOV_CODE))).unwrap();
+        let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert!(result.reverted);
+        assert_eq!(result.exit_reason, Some(InstrStop::OpcodeNotFound));
+
+        // Executing without collecting runs the code and reports no instrumented coverage.
+        let mut executor = edgecov_executor(true, false);
+        executor.set_code(target, Bytecode::new_raw(Bytes::from_static(EDGECOV_CODE))).unwrap();
+        let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.exit_reason, Some(InstrStop::Stop));
+        assert!(!matches!(result.edge_coverage, Some(EdgeCoverage::Instrumented(_))));
+    }
+
+    /// Runtime code with each comparison opcode once, then a loop whose `EQ` site runs 11 times.
+    const CMP_CODE: &[u8] = &[
+        0x60, 0x02, 0x60, 0x01, 0x14, 0x50, // EQ(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x10, 0x50, // LT(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x11, 0x50, // GT(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x12, 0x50, // SLT(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x13, 0x50, // SGT(1, 2)
+        0x60, 0x00, 0x15, 0x50, // ISZERO(0)
+        0x60, 0x00, // i = 0
+        0x5b, // 36: JUMPDEST
+        0x80, 0x60, 0x0a, 0x14, // EQ(10, i)
+        0x60, 0x32, 0x57, // JUMPI to 50 when i == 10
+        0x60, 0x01, 0x01, // i += 1
+        0x60, 0x24, 0x56, // JUMP to 36
+        0x5b, 0x50, 0x00, // 50: JUMPDEST; POP; STOP
+    ];
+
+    /// [`CMP_CODE`] as a coverage build instruments it: `PUSH2 <site << 8 | opcode>; CMPLOG` before
+    /// each comparison but `ISZERO`, with sites 1 to 6.
+    const CMP_PROBED_CODE: &[u8] = &[
+        0x60, 0x02, 0x60, 0x01, 0x61, 0x01, 0x14, 0xc1, 0x14, 0x50, // EQ(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x61, 0x02, 0x10, 0xc1, 0x10, 0x50, // LT(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x61, 0x03, 0x11, 0xc1, 0x11, 0x50, // GT(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x61, 0x04, 0x12, 0xc1, 0x12, 0x50, // SLT(1, 2)
+        0x60, 0x02, 0x60, 0x01, 0x61, 0x05, 0x13, 0xc1, 0x13, 0x50, // SGT(1, 2)
+        0x60, 0x00, 0x15, 0x50, // ISZERO(0)
+        0x60, 0x00, // i = 0
+        0x5b, // 56: JUMPDEST
+        0x80, 0x60, 0x0a, 0x61, 0x06, 0x14, 0xc1, 0x14, // EQ(10, i)
+        0x60, 0x4a, 0x57, // JUMPI to 74 when i == 10
+        0x60, 0x01, 0x01, // i += 1
+        0x60, 0x38, 0x56, // JUMP to 56
+        0x5b, 0x50, 0x00, // 74: JUMPDEST; POP; STOP
+    ];
+
+    fn cmp_values(executor: &Executor<EthEvmNetwork>, target: Address) -> Vec<CmpOperands> {
+        let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.exit_reason, Some(InstrStop::Stop));
+        result.evm_cmp_values.unwrap_or_default()
+    }
+
+    #[test]
+    fn instrumented_cmp_log_matches_inspector() {
+        let target = Address::repeat_byte(0x31);
+        let mut inspected = edgecov_executor(false, false);
+        inspected.inspector_mut().collect_evm_cmp_log(true);
+        inspected.set_code(target, Bytecode::new_raw(Bytes::from_static(CMP_CODE))).unwrap();
+        let expected = cmp_values(&inspected, target);
+        // Each opcode once, and the loop site capped at its observation limit.
+        assert_eq!(expected.len(), 6 + usize::from(MAX_CMP_OBSERVATIONS_PER_SITE));
+        assert_eq!(
+            expected[..6].iter().map(|cmp| cmp.opcode).collect::<Vec<_>>(),
+            [0x14, 0x10, 0x11, 0x12, 0x13, 0x15]
+        );
+        assert_eq!((expected[0].op1, expected[0].op2), (U256::from(1), U256::from(2)));
+        assert_eq!(expected[0].address, target);
+
+        // Instrumented code reports the same operands from its `CMPLOG` probes, with each site ID
+        // in place of the comparison's program counter. `ISZERO` is not probed. No inspector steps
+        // opcodes for them.
+        let mut instrumented = edgecov_executor(true, true);
+        instrumented.inspector_mut().collect_evm_cmp_log(true);
+        assert!(instrumented.inspector().edge_coverage.is_none());
+        instrumented
+            .set_code(target, Bytecode::new_raw(Bytes::from_static(CMP_PROBED_CODE)))
+            .unwrap();
+        let sites =
+            (1..=5).chain(std::iter::repeat_n(6, usize::from(MAX_CMP_OBSERVATIONS_PER_SITE)));
+        let probed = expected
+            .iter()
+            .filter(|cmp| cmp.opcode != 0x15)
+            .zip(sites)
+            .map(|(cmp, site)| CmpOperands { pc: site, ..*cmp })
+            .collect::<Vec<_>>();
+        assert_eq!(cmp_values(&instrumented, target), probed);
+
+        // Without cmp-log, the probes still run and record nothing.
+        instrumented.inspector_mut().collect_evm_cmp_log(false);
+        assert!(cmp_values(&instrumented, target).is_empty());
     }
 
     #[test]
