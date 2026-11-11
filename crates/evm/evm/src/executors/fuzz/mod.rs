@@ -283,32 +283,40 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         let worker_ids = self.worker_ids();
         debug!(n = worker_ids.len(), "spawning workers");
         let final_sync = (worker_ids.len() > 1 && self.config.corpus.corpus_dir.is_some())
-            .then(|| Arc::new(CorpusSyncCoordinator::new(worker_ids.len())));
-        let workers = worker_ids
-            .into_par_iter()
-            .map(|worker_id| {
-                let _guard = tokio_handle.enter();
-                let _guard = info_span!("fuzz_worker", id = worker_id).entered();
-                let timer = Instant::now();
-                let r = self.run_worker(
-                    worker_id,
-                    func,
-                    fuzz_fixtures,
-                    address,
-                    rd,
-                    &shared_state,
-                    progress,
-                    final_sync.as_deref(),
-                );
-                if r.is_err()
-                    && let Some(final_sync) = &final_sync
-                {
-                    final_sync.abort();
-                }
-                debug!("finished in {:?}", timer.elapsed());
-                r
-            })
-            .collect::<Result<Vec<_>>>();
+            .then(|| CorpusSyncCoordinator::new(worker_ids.len()));
+        let run_worker = |worker_id| {
+            let _guard = tokio_handle.enter();
+            let _guard = info_span!("fuzz_worker", id = worker_id).entered();
+            let timer = Instant::now();
+            let r = self.run_worker(
+                worker_id,
+                func,
+                fuzz_fixtures,
+                address,
+                rd,
+                &shared_state,
+                progress,
+                final_sync.as_ref(),
+            );
+            if r.is_err()
+                && let Some(final_sync) = &final_sync
+            {
+                final_sync.abort();
+            }
+            debug!("finished in {:?}", timer.elapsed());
+            r
+        };
+        let workers = if let Some(final_sync) = &final_sync {
+            // Corpus-syncing workers block until every peer reaches the barrier, so each needs its
+            // own thread: on the rayon pool a waiting job can hold the thread a peer needs.
+            final_sync.run_workers(
+                worker_ids
+                    .into_iter()
+                    .map(|worker_id| (std::thread::Builder::new(), move || run_worker(worker_id))),
+            )
+        } else {
+            worker_ids.into_par_iter().map(run_worker).collect::<Result<Vec<_>>>()
+        };
         self.executor_f.inspector_mut().debug_recorder = recorder;
 
         let (mut result, shown_case) = self.aggregate_results(workers?, func, &shared_state);

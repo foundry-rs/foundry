@@ -587,6 +587,69 @@ symbolic execution. Dependency storage keyed by symbolic calldata is still
 explored symbolically, but it can replay-filter to `Incomplete` or `mismatch`
 instead of a confirmed counterexample if the required slot is not concrete.
 
+## Equivalence Checking
+
+`forge equivalence` checks whether two runtime bytecodes behave the same for
+every input, like `hevm equivalence`. Both codes run at one account from the
+same pre-state, on shared symbolic calldata and a shared symbolic environment.
+On every pair of feasible paths it compares:
+
+- whether the call succeeded or reverted,
+- the return or revert data,
+- when both succeed, the emitted logs (emitter, topics and data, in order) and
+  the storage, balance, nonce and code of every account either code changed.
+
+```sh
+forge equivalence --code-a "$(forge inspect A deployedBytecode)" \
+  --code-b "$(forge inspect B deployedBytecode)"
+forge equivalence --code-a-file a.hex --code-b-file b.hex --sig "transfer(address,uint256)"
+```
+
+The model matches hevm's:
+
+- Calldata has a symbolic length of at most `--max-calldata` bytes (default
+  1024), and reads past its end are zero. `--sig` limits it to ABI-encoded calls
+  of one function, and `--calldata-lengths` to fixed lengths.
+- Storage starts arbitrary; `--empty-storage` starts it empty, as for a freshly
+  deployed contract.
+- The sender, the origin, the call value (unless `--value` fixes it), the
+  block number, timestamp, prevrandao, gas limit, base fee, chain ID and
+  coinbase, the gas price, and the balances, code sizes and code hashes of
+  accounts without known code are symbolic. The contracts run at one fixed
+  address, so an address read from calldata can be their own, where each sees
+  its own code.
+- Each code reads its own unconstrained `GAS`.
+- Calls into unknown code answer with fresh success flags and return data (at
+  most `--max-returndata` bytes), as one fixed unknown function of the call's
+  inputs: the n-th call of either code with the same target, value, calldata,
+  caller storage and balance, and state of unknown code gets the same answer. A
+  `STATICCALL` is always abstracted. A state-changing `CALL` may re-enter, so
+  it stops the check unless `--promise-no-reent` promises that it doesn't; the
+  callee then gets the value if it succeeds and may send ether back.
+  `DELEGATECALL` and `CALLCODE` into unknown code stop the check.
+- Stack overflow and underflow, invalid jumps and undefined opcodes end the call
+  as exceptional halts, and `PUSH` data past the end of code reads as zero.
+- `keccak256` of a region whose size may exceed the modeled bound is a symbol
+  named by the whole memory, the offset and the size.
+
+Gas is not priced, so balances only move by value transfers and
+self-destructs, and code that spends more gas to do the same thing is
+equivalent. Running out of memory gas is modeled, so a code that runs out of
+gas where the other doesn't is not equivalent; `--ignore-out-of-gas` leaves
+those inputs out, which compares the codes modulo gas as hevm and the Solidity
+optimizer do.
+
+A counterexample is replayed through the concrete executor with the model's
+environment and pre-state, and printed with both results and every storage
+slot, balance, nonce and code that differs; the command then exits with a
+non-zero status. A model that plain execution does not reproduce, such as one
+that answers calls into unknown code, depends on `GAS`, or needs `tx.origin` to
+differ from the sender, is reported as an incomplete check, never as a
+counterexample. `--json` prints the same result as JSON. `Equivalent` is scoped
+to the modeled EVM surface and the configured bounds (calldata and return-data
+sizes, loop iterations, depth and paths); a check that cannot finish reports an
+incomplete result instead.
+
 ## Configuration
 
 The primary configuration path is native Foundry config.
@@ -889,8 +952,8 @@ Known incomplete, bounded, or approximate surfaces include:
 | Dynamic memory and copy bounds | Many symbolic memory, calldata, returndata, and `MCOPY`/`RETURNDATACOPY` sizes are supported when bounded by configuration or solver-proved limits. Accesses beyond the configured `memory_limit`, and `RETURNDATACOPY` ranges beyond the return data, halt exceptionally as in concrete execution. Symbolic sizes that stay within memory but exceed the configured copy bounds report incomplete. |
 | Opcode activation | Implemented opcodes follow the active EVM version. An opcode used before its activation fork causes an exceptional halt, matching concrete execution. |
 | Concrete-required operands and bytecode | Symbolic data can flow through calldata, memory, storage, logs, and returndata, but some control/metadata values must resolve to concrete or solver-constrained values: `JUMP`/`JUMPI` destinations, `BLOBHASH` indices, cheatcode selectors, many cheatcode ABI decodes, fork IDs/block numbers, nonces, and created runtime bytecode opcodes. Symbolic bytecode opcodes, symbolic runtime sizes, or unconstrained control operands report incomplete. |
-| Symbolic hashing and `KECCAK256` | Concrete hashes are computed exactly. Symbolic `KECCAK256` is represented by deterministic opaque terms plus Solidity-storage-layout heuristics for common mapping and dynamic-array keys. For storage keys `keccak(...) + offset`, offsets below `2^64` are assumed not to alias fixed slots or other hash bases; larger offsets are compared exactly, so an index bounded only by an abstract array length may report incomplete. A constant slot only counts as `keccak(...) + offset` when the run computed that hash concretely or when it is a mapping root from a deployed contract's storage layout hashed with a source literal or bytecode constant, which covers slots the optimizer folds for constant keys (one nested level); other constants are fixed slots. A symbolic hash of constant input length compared with a hash computed concretely during the run, or with a symbolic hash over a different constant input length, is decided by comparing inputs, assuming no collisions. Proof obligations that depend on cryptographic facts such as non-zero hashes, collision resistance, or preimage resistance are not proof-grade and may report incomplete or produce replay-filtered candidates. |
-| Symbolic storage base values | Writes and later reads through symbolic keys are modeled, with Solidity-layout heuristics for common mapping/dynamic-array keys. Reads of previously-unwritten symbolic keys are abstract storage variables by default. Under the zero-init storage layout they select among the backend's cached slots of the account and read zero elsewhere; a cached mapping entry is only found when the run has computed its slot hash, and the engine does not enumerate arbitrary concrete backend storage slots for a symbolic key otherwise. Proofs involving unknown existing storage are scoped to the selected `symbolic.storage_layout`. |
+| Symbolic hashing and `KECCAK256` | Concrete hashes are computed exactly. Symbolic `KECCAK256` is represented by deterministic opaque terms plus Solidity-storage-layout heuristics for common mapping and dynamic-array keys. For storage keys `keccak(...) + offset`, offsets below `2^64` are assumed not to alias fixed slots or other hash bases; larger offsets are compared exactly, so an index bounded only by an abstract array length may report incomplete. A constant slot only counts as `keccak(...) + offset` when the run computed that hash concretely or when it is a mapping root from a deployed contract's storage layout hashed with a source literal, a backend account address, or a bytecode constant, which covers slots the optimizer folds for constant keys (one nested level) and first-level mapping entries that `setUp` wrote at such keys; other constants are fixed slots. A symbolic hash of constant input length compared with a hash computed concretely during the run, or with a symbolic hash over a different constant input length, is decided by comparing inputs, assuming no collisions. Proof obligations that depend on cryptographic facts such as non-zero hashes, collision resistance, or preimage resistance are not proof-grade and may report incomplete or produce replay-filtered candidates. |
+| Symbolic storage base values | Writes and later reads through symbolic keys are modeled, with Solidity-layout heuristics for common mapping/dynamic-array keys. Reads of previously-unwritten symbolic keys select among the backend's cached slots of the account, such as the slots `setUp` wrote, and read an abstract storage variable elsewhere by default, or zero under the zero-init storage layout. A cached mapping entry is only matched when its slot hash is known as described for `KECCAK256`; other cached slots and storage the backend has not loaded read the fallback value. Proofs involving unknown existing storage are scoped to the selected `symbolic.storage_layout`. |
 | Precompiles | Canonical precompiles are recognized according to the active EVM version, including the Prague BLS12-381 precompiles `0x0b`-`0x11` and Osaka P256VERIFY `0x100`; an address that is not a precompile on the active hardfork, such as KZG `0x0a` before Cancun, falls back to normal empty-account behavior. Precompile addresses use normal account emptiness checks for `EXTCODEHASH`. Concrete inputs for every active precompile execute the corresponding revm precompile for the active hardfork with the most gas a `gasleft()` call can forward under the test gas limit, plus the stipend when it may send value. A precompile that costs more fails as out of gas; costs below that bound are assumed to fit the gas the caller has left. Symbolic modexp and BLAKE2f inputs are checked against the same gas, with each symbolic byte of a length header or round count taken over its full range; other symbolic precompile costs are assumed to fit. Symbolic identity is byte-precise; symbolic hash/modexp outputs are deterministic opaque terms or fixed-length symbolic outputs, not full cryptographic/algebraic models. Symbolic ecrecover returns empty data for invalid recovery IDs and models both empty and 32-byte returndata when recovery is uncertain; the recovered address remains an opaque term. Symbolic modexp and BLAKE2f inputs whose cost may or may not exceed that bound, symbolic BN254 inputs, and symbolic BLAKE2f final flags report incomplete because precompile success depends on validity checks the symbolic model does not prove. KZG `0x0a` concrete inputs execute the revm KZG precompile exactly. Symbolic KZG calls model broad exact failures such as invalid input length and version/hash mismatches where known, plus selected replayable success/failure witnesses. Any remaining feasible symbolic KZG space reports incomplete rather than being treated as proved safe. Symbolic inputs to BLS12-381 and P256VERIFY report incomplete. Other symbolic length headers, symbolic modexp output lengths, out-of-bounds symbolic inputs, and future/custom precompiles are not fully modeled. |
 | Hard arithmetic | Bit-vector arithmetic is modeled through SMT. Forge canonicalizes small polynomial equalities over the exact 256-bit EVM word ring, including identities that wrap, and proves unsigned monotonic product and same-divisor quotient comparisons when path bounds show that every product fits in 256 bits. It first explores branches decided by those local checks and bounded concrete witnesses, then sends the remaining hard-arithmetic branches to the configured SMT solver. Expansion and fallback time are deliberately bounded; division, unsupported `EXP` base/exponent shapes, larger polynomials, and other solver-intractable nonlinear expressions can report incomplete or timeout. |
 | Cheatcode surface | The common testing cheatcodes listed below are modeled for safe concrete/symbolic forms. Unsupported Foundry/VM compatibility cheatcodes, value-bearing cheatcode calls, delegatecall prank forms, symbolic `expectCall` gas, unsupported symbolic `vm.bound` ranges, and unsupported symbolic `assumeNoRevert` decodes/overlaps or ambiguous matches report incomplete. |

@@ -1,5 +1,5 @@
 use crate::{CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::{B256, I256, U256, U512, keccak256, uint};
+use alloy_primitives::{Address, B256, Bytes, I256, U256, U512, keccak256, uint};
 use alloy_sol_types::SolCall;
 use evm2::interpreter::{InstrStop, op, opcode::OpCode};
 use foundry_evm_core::{
@@ -220,7 +220,7 @@ fn handle_assertion_result_mono<FEN: FoundryEvmNetwork>(
     executor: &mut dyn CheatcodesExecutor<FEN>,
     msg: Cow<'_, str>,
 ) -> Result {
-    ccx.state.assertion_failed = true;
+    ccx.state.failed_assertion.get_or_insert_with(|| msg.to_string());
     if ccx.state.core.config.assertions_revert {
         Err(msg.into_owned().into())
     } else {
@@ -663,8 +663,16 @@ struct SiteFrame {
     entry: B256,
     /// For each stack slot, the pc of the `PUSH` its value was copied from, if any.
     pushed_at: Vec<Option<usize>>,
+    /// Address and code of this frame, to identify the instruction that halted it.
+    destination: Address,
+    /// See [`Self::destination`].
+    code: Bytes,
+    /// Whether this frame runs initcode.
+    is_create: bool,
     /// Highest pc executed so far, used to hash the executed part of initcode.
     max_pc: usize,
+    /// Pc of the latest instruction, which halted the frame if it halted.
+    last_pc: usize,
     /// Pc of the latest `JUMPI`, taken or not.
     last_jumpi: usize,
     /// Number of failure events recorded before this frame started.
@@ -677,14 +685,15 @@ impl SiteFrame {
     /// Returns the site of the instruction about to execute: the frame's entry, the executing
     /// code and pc, and the return labels of the internal functions that led to it. Values that
     /// are not pushed constants, such as inputs, are ignored.
-    fn site<FEN: FoundryEvmNetwork>(&self, interpreter: &mut InterpreterFor<'_, '_, FEN>) -> B256 {
+    fn site<FEN: FoundryEvmNetwork>(&self, interpreter: &InterpreterFor<'_, '_, FEN>) -> B256 {
         let code = interpreter.original_bytecode_slice();
         let mut preimage = self.entry.to_vec();
-        preimage.extend_from_slice(interpreter.message().destination.as_slice());
-        // Initcode embeds constructor arguments, so constructors only hash executed code.
-        let code_hash = if interpreter.message().kind.is_create() {
+        // Initcode embeds constructor arguments, so constructors only hash executed code, and
+        // their address can derive from those arguments, so the entry identifies them instead.
+        let code_hash = if self.is_create {
             keccak256(code.get(..=self.max_pc).unwrap_or(code))
         } else {
+            preimage.extend_from_slice(interpreter.message().destination.as_slice());
             interpreter.original_bytecode_hash()
         };
         preimage.extend_from_slice(code_hash.as_slice());
@@ -698,6 +707,22 @@ impl SiteFrame {
         }
         keccak256(preimage)
     }
+
+    /// Returns the site of the latest instruction, which halted the frame, without the return
+    /// labels on its stack.
+    fn halt_site(&self) -> B256 {
+        let mut preimage = self.entry.to_vec();
+        let code_hash = if self.is_create {
+            keccak256(self.code.get(..=self.max_pc).unwrap_or(&self.code))
+        } else {
+            preimage.extend_from_slice(self.destination.as_slice());
+            keccak256(&self.code)
+        };
+        preimage.extend_from_slice(code_hash.as_slice());
+        preimage.extend_from_slice(&self.last_pc.to_be_bytes());
+        preimage.extend_from_slice(&self.last_jumpi.to_be_bytes());
+        keccak256(preimage)
+    }
 }
 
 /// A failure recorded by [`FailureTrace`].
@@ -707,13 +732,17 @@ enum FailureEvent {
     /// the hash of its revert data when assertions revert.
     Assertion { identity: B256, revert: Option<B256> },
     /// A call or create that reverted or halted, identified by the site where it failed, or of
-    /// the call when it halted elsewhere, with the number of failure events recorded within it.
+    /// the call when it ran no instructions, with the number of failure events recorded within it.
     Frame { site: B256, stop: InstrStop, events: usize },
 }
 
 impl FailureTrace {
-    /// Starts tracking a new frame at `depth`.
-    pub(crate) fn enter_frame(&mut self, depth: usize) {
+    /// Starts tracking the frame of `interpreter` at `depth`.
+    pub(crate) fn enter_frame<FEN: FoundryEvmNetwork>(
+        &mut self,
+        interpreter: &InterpreterFor<'_, '_, FEN>,
+        depth: usize,
+    ) {
         let frame = SiteFrame {
             entry: self.pending,
             events_before: self.events.len(),
@@ -722,7 +751,12 @@ impl FailureTrace {
         // Frames entered without an interpreter, such as cheatcode calls, were entered at
         // `pending` too.
         self.frames.resize(depth, frame.clone());
-        self.frames.push(frame);
+        self.frames.push(SiteFrame {
+            destination: interpreter.message().destination,
+            code: interpreter.original_bytecode(),
+            is_create: interpreter.message().kind.is_create(),
+            ..frame
+        });
     }
 
     /// Records the site of external calls and tracks which stack values are pushed constants.
@@ -736,6 +770,7 @@ impl FailureTrace {
         frame.pushed_at.resize(height, None);
         let pc = interpreter.pc();
         frame.max_pc = frame.max_pc.max(pc);
+        frame.last_pc = pc;
         let opcode = interpreter.opcode();
         match opcode {
             op::PUSH0..=op::PUSH32 => return frame.pushed_at.push(Some(pc)),
@@ -777,8 +812,13 @@ impl FailureTrace {
         }
     }
 
-    /// Records a failed assertion made by the latest call.
-    fn record_assertion(&mut self, selector: [u8; 4], message: &str, revert: Option<B256>) {
+    /// Records a failed assertion, or a `fail()`, made by the latest call.
+    pub(crate) fn record_assertion(
+        &mut self,
+        selector: [u8; 4],
+        message: &str,
+        revert: Option<B256>,
+    ) {
         let identity = keccak256([self.pending.as_slice(), &selector, message.as_bytes()].concat());
         self.events.push(FailureEvent::Assertion { identity, revert });
     }
@@ -793,7 +833,7 @@ impl FailureTrace {
             // Frames without an interpreter, such as cheatcode calls, were entered at `pending`.
             let (site, events_before) =
                 self.frames.get(depth + 1).map_or((self.pending, self.events.len()), |frame| {
-                    (frame.failed_at.unwrap_or(frame.entry), frame.events_before)
+                    (frame.failed_at.unwrap_or_else(|| frame.halt_site()), frame.events_before)
                 });
             let events = self.events.len() - events_before;
             self.events.push(FailureEvent::Frame { site, stop: result.stop, events });
@@ -805,8 +845,9 @@ impl FailureTrace {
     /// returned `output`, and starts recording the next call.
     ///
     /// The identity is unknown when a snapshot restore discarded part of the history, when the
-    /// call succeeded without a failed assertion, such as after a `fail()` that only wrote the
-    /// global failure slot, or when several failed assertions could have produced the revert data.
+    /// call succeeded without a failed assertion or `fail()`, such as after a legacy DSTest failure
+    /// that only wrote its own flag, or when several failed assertions could have produced the
+    /// revert data.
     pub fn take_identity(&mut self, exit: InstrStop, output: &[u8]) -> Option<B256> {
         let Self { events, snapshot_restored, .. } = std::mem::take(self);
         if snapshot_restored {
@@ -865,9 +906,12 @@ pub struct FailureProvenance {
     /// Frame index and site of the `REVERT` or `INVALID` instruction about to end a frame.
     pending_revert: Option<(usize, B256)>,
     /// Identity of the failed assertion made by the cheatcode call in progress.
-    pending_assertion: Option<B256>,
+    pub(crate) pending_assertion: Option<B256>,
     /// Hash of the failed assertions and failed frames so far, in execution order.
     hash: B256,
+    /// Whether a frame halted at an instruction that is not recorded, so the call has no
+    /// provenance.
+    unknown: bool,
 }
 
 impl FailureProvenance {
@@ -923,8 +967,14 @@ impl FailureProvenance {
         let stop = result.stop as u8;
         let site = match pending_revert {
             Some((frame, site)) if frame == depth + 1 => site,
-            // Halts and frames without instructions, such as cheatcode and precompile calls, are
-            // identified by the call that entered them.
+            // Halts such as invalid jumps or running out of gas can happen at any instruction,
+            // which is not recorded.
+            _ if result.stop != InstrStop::Revert => {
+                self.unknown = true;
+                return;
+            }
+            // Frames without instructions, such as cheatcode calls, are identified by the call
+            // that entered them.
             _ => {
                 let entry = if usize::from(interpreter.message().depth) < depth {
                     Self::site::<FEN>(interpreter)
@@ -938,9 +988,10 @@ impl FailureProvenance {
         self.fold(keccak256([site.as_slice(), &[stop], output.as_slice()].concat()));
     }
 
-    /// Returns the provenance of the finished call and starts recording the next call.
-    pub fn take(&mut self) -> B256 {
-        std::mem::take(self).hash
+    /// Returns the provenance of the finished call, if known, and starts recording the next call.
+    pub fn take(&mut self) -> Option<B256> {
+        let this = std::mem::take(self);
+        (!this.unknown).then_some(this.hash)
     }
 
     /// Appends a failure event to the hash.

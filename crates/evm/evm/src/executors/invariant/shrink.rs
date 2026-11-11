@@ -972,11 +972,10 @@ fn finish_sequence_check<FEN: FoundryEvmNetwork>(
             let site = terminal_failure_site(site_kind, test_address, &calldata, &call_result);
             let (raw_failure, failure_identity) =
                 (call_result.raw_failure(), call_result.failure_identity);
-            let reason = if options.expect_assertion_failure {
-                assertion_failure_reason(call_result, options.rd)
-            } else {
-                call_failure_reason(call_result, options.rd)
-            };
+            // Terminal calls follow the live rule: a revert after a caught assertion wins.
+            let reason = call_failure_reason(call_result, options.rd).or_else(|| {
+                options.expect_assertion_failure.then(|| "assertion failed".to_string())
+            });
 
             outcome(false, reason, Some(site), raw_failure, failure_identity)
         };
@@ -1052,19 +1051,24 @@ fn selector_from_calldata(calldata: &Bytes) -> Selector {
 }
 
 fn call_failure_reason<FEN: FoundryEvmNetwork>(
-    call_result: RawCallResult<FEN>,
+    mut call_result: RawCallResult<FEN>,
     rd: Option<&RevertDecoder>,
 ) -> Option<String> {
+    // A caught `vm.assert*` failure only explains a call that did not revert.
+    let failed_assertion = call_result.failed_assertion.take().filter(|_| !call_result.reverted);
     match call_result.into_evm_error(rd) {
-        EvmError::Execution(err) => Some(err.reason),
+        EvmError::Execution(err) => Some(failed_assertion.unwrap_or(err.reason)),
         _ => None,
     }
 }
 
 fn assertion_failure_reason<FEN: FoundryEvmNetwork>(
-    call_result: RawCallResult<FEN>,
+    mut call_result: RawCallResult<FEN>,
     rd: Option<&RevertDecoder>,
 ) -> Option<String> {
+    if let Some(message) = call_result.failed_assertion.take() {
+        return Some(message);
+    }
     call_failure_reason(call_result, rd).or_else(|| Some("assertion failed".to_string()))
 }
 
@@ -1400,6 +1404,7 @@ mod tests {
     use super::*;
     use crate::executors::ExecutorBuilder;
     use alloy_primitives::hex;
+    use alloy_sol_types::{Revert, SolError};
     use evm2::bytecode::Bytecode;
     use foundry_cheatcodes::{CheatsConfig, Vm};
     use foundry_evm_core::{constants::CHEATCODE_ADDRESS, evm::EthEvmNetwork};
@@ -1699,7 +1704,7 @@ mod tests {
 
         let (kind, result) = execute_invariant_replay_tx(&mut executor.clone(), &calls[1]).unwrap();
         assert_eq!(kind, CampaignCallKind::AssumptionRejected);
-        assert!(result.assertion_failed);
+        assert!(result.failed_assertion.is_some());
         let full = replay_handler_failure_sequence(executor.clone(), &calls, &[0, 1], false, None)
             .unwrap();
         assert!(full.anchor_asserted);
@@ -1719,5 +1724,58 @@ mod tests {
         .unwrap();
         assert_eq!(shrunk, calls);
         assert!(!replay.anchor_asserted);
+    }
+
+    #[test]
+    fn terminal_replay_reports_revert_after_caught_assertion() {
+        let mut executor = crate::executors::test_executor(
+            ExecutorBuilder::<EthEvmNetwork>::default()
+                .inspectors(|stack| stack.cheatcodes(Arc::new(CheatsConfig::default())))
+                .gas_limit(1 << 24),
+            Default::default(),
+        );
+        let test_address = Address::repeat_byte(0x11);
+        let assertion =
+            Vm::assertTrue_1Call { condition: false, err: "assert message".into() }.abi_encode();
+        let revert = Revert::from("revert message").abi_encode();
+        let (a, r) = (assertion.len() as u16, revert.len() as u16);
+        // Calls the assertion and ignores its result, then reverts with another reason. Both
+        // payloads are appended after the 59-byte code.
+        let mut code = vec![0x61];
+        code.extend_from_slice(&a.to_be_bytes());
+        code.extend_from_slice(&hex!("61003b6000396000600061"));
+        code.extend_from_slice(&a.to_be_bytes());
+        code.extend_from_slice(&hex!("6000600073"));
+        code.extend_from_slice(CHEATCODE_ADDRESS.as_slice());
+        code.extend_from_slice(&hex!("5af15061"));
+        code.extend_from_slice(&r.to_be_bytes());
+        code.push(0x61);
+        code.extend_from_slice(&(59 + a).to_be_bytes());
+        code.extend_from_slice(&hex!("60003961"));
+        code.extend_from_slice(&r.to_be_bytes());
+        code.extend_from_slice(&hex!("6000fd"));
+        assert_eq!(code.len(), 59);
+        code.extend_from_slice(&assertion);
+        code.extend_from_slice(&revert);
+        executor.set_code(test_address, Bytecode::new_raw(code.into())).unwrap();
+
+        let rd = RevertDecoder::new();
+        let outcome = check_sequence(
+            executor,
+            &[],
+            &[],
+            test_address,
+            Bytes::new(),
+            CheckSequenceOptions {
+                accumulate_warp_roll: false,
+                fail_on_revert: true,
+                expect_assertion_failure: true,
+                call_after_invariant: false,
+                rd: Some(&rd),
+            },
+        )
+        .unwrap();
+        assert!(!outcome.success);
+        assert_eq!(outcome.reason.as_deref(), Some("revert message"));
     }
 }

@@ -122,12 +122,19 @@ impl<'a> InvariantRunCtx<'a> {
     }
 
     /// Decodes the revert/assert reason without allocating a full [`FailedInvariantCaseData`].
-    /// Used by callers that only need the reason (e.g. handler-bug recording).
+    /// Used by callers that only need the reason (e.g. handler-bug recording). A failed
+    /// `vm.assert*` reports its own message when it caused the failure, since the revert data may
+    /// come from a later revert.
     pub fn decode_revert_reason<FEN: FoundryEvmNetwork>(
         &self,
         call_result: &RawCallResult<FEN>,
         assertion_failure: bool,
     ) -> String {
+        if (assertion_failure || !call_result.reverted)
+            && let Some(message) = &call_result.failed_assertion
+        {
+            return message.clone();
+        }
         let revert_reason = RevertDecoder::new()
             .with_abis(self.targeted_contracts.targets().values().map(|c| &c.abi))
             .with_abi(self.contract.abi)
@@ -236,6 +243,17 @@ pub fn snapshot_edge_fingerprint<FEN: FoundryEvmNetwork>(
     }
     match edges {
         EdgeCoverage::Hash(edges) => Some(keccak256(edges)),
+        EdgeCoverage::Instrumented(hits) => {
+            // Hits are in first-hit order; sort for a fingerprint independent of it.
+            let mut sorted = hits.clone();
+            sorted.sort_unstable();
+            let mut bytes = Vec::with_capacity(sorted.len() * 5);
+            for hit in sorted {
+                bytes.extend_from_slice(&hit.id.to_le_bytes());
+                bytes.push(hit.count);
+            }
+            Some(keccak256(bytes))
+        }
         EdgeCoverage::CollisionFree(hits) => {
             // `From<EdgeCovInspector>` does not sort on the per-call drain path,
             // so sort here for a deterministic fingerprint across runs regardless

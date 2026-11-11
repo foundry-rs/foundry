@@ -1938,7 +1938,7 @@ contract InvariantFailOnVmAssertGlobalFlag is Test {
 ...
 Ran 1 test for test/InvariantFailOnVmAssertGlobalFlag.t.sol:InvariantFailOnVmAssertGlobalFlag
 Assertion Tests: 1 assertion bug(s) found
-[FAIL: assertion failed][..]
+[FAIL: assertion failed: 1 != 2] test/InvariantFailOnVmAssertGlobalFlag.t.sol:VmAssertHandler::alwaysVmAssert
 ...
  invariant_fail_on_vm_assert_global_flag() ([RUNS])
 ...
@@ -1986,7 +1986,7 @@ contract InvariantIgnoreVmAssertGlobalFlagWhenFlagOff is Test {
 ...
 Ran 1 test for test/InvariantIgnoreVmAssertGlobalFlagWhenFlagOff.t.sol:InvariantIgnoreVmAssertGlobalFlagWhenFlagOff
 Assertion Tests: 1 assertion bug(s) found
-[FAIL: assertion failed][..]
+[FAIL: assertion failed: 1 != 2] test/InvariantIgnoreVmAssertGlobalFlagWhenFlagOff.t.sol:VmAssertHandler::alwaysVmAssert
 ...
  invariant_vm_assert_global_flag_discarded() ([RUNS])
 ...
@@ -2074,13 +2074,62 @@ contract InvariantFailOnVmAssertBeforeRevert is Test {
 "#,
     );
 
-    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+    // The second run replays the persisted failure, so both report paths are covered.
+    for _ in 0..2 {
+        assert_invariant(cmd.forge_fuse().args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantFailOnVmAssertBeforeRevert.t.sol:InvariantFailOnVmAssertBeforeRevert
 Assertion Tests: 1 assertion bug(s) found
-[FAIL: EvmError: Revert] test/InvariantFailOnVmAssertBeforeRevert.t.sol:VmAssertHandler::vmAssertThenRevert
+[FAIL: custom message: 1 != 2] test/InvariantFailOnVmAssertBeforeRevert.t.sol:VmAssertHandler::vmAssertThenRevert
 ...
  invariant_vm_assert_before_revert() ([RUNS])
+...
+"#]]);
+    }
+}
+
+// A failed `vm.assert*` in an invariant reports its message, not the invariant's return data,
+// unless the invariant then reverts for another reason.
+#[forgetest_init]
+fn invariant_vm_assert_message_is_reason(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.assertions_revert = false;
+    });
+
+    prj.add_test(
+        "InvariantVmAssertMessage.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Handler {
+    function noop() external {}
+}
+
+contract InvariantVmAssertMessage is Test {
+    function setUp() public {
+        targetContract(address(new Handler()));
+    }
+
+    function invariant_vm_assert_message() public returns (bool) {
+        assertTrue(false, "invariant message");
+        return true;
+    }
+
+    function invariant_vm_assert_then_revert() public {
+        assertTrue(false, "assert message");
+        require(false, "revert message");
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+InvariantVmAssertMessage invariants: 2/2 invariants broken
+[FAIL: invariant message] invariant_vm_assert_message
+[FAIL: revert message] invariant_vm_assert_then_revert
 ...
 "#]]);
 }
@@ -2138,7 +2187,7 @@ contract InvariantCaughtVmAssertInterval2 is Test {
         .stdout_eq(str![[r#"
 ...
 Assertion Tests: 1 assertion bug(s) found
-[FAIL: assertion failed] test/InvariantFailOnCaughtVmAssert.t.sol:VmAssertHandler::caughtVmAssert
+[FAIL: custom message] test/InvariantFailOnCaughtVmAssert.t.sol:VmAssertHandler::caughtVmAssert
 ...
 "#]]);
     }
@@ -3991,7 +4040,7 @@ contract LegacyPoisonTest is RecordedFailureTest {
 	[SEQUENCE]
 
 Assertion Tests: 1 assertion bug(s) found
-[FAIL: assertion failed] test/RecordedFailure.t.sol:OncePoisonHandler::step
+[FAIL: assertion failed: 1 != 2] test/RecordedFailure.t.sol:OncePoisonHandler::step
 	[SEQUENCE]
  invariant_counter_below_three() (runs: 1, calls: 3, reverts: 0)
 ...

@@ -6955,7 +6955,7 @@ contract DeployScript is Script {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Traces:
-  [12182] DeployScript::run()
+  [37182] DeployScript::run()
     ├─ [2300] 0x0000000000000000000000000000000000000000::receive{value: 1000000000000000000}()
     │   └─ ← [Stop]
     ├─ [0] VM::stopBroadcast()
@@ -7521,6 +7521,56 @@ async fn tempo_batch_resume_fee_token_flag_overrides_recorded(prj: _, cmd: _) {
         ("BetaUSD", beta_usd),
     )
     .await;
+}
+
+// With a fee token, the script runs as a Tempo AA transaction, whose calls run one level below the
+// transaction. The trace keeps `run()` as its root and records its events.
+#[forgetest]
+fn tempo_fee_token_script_traces(prj: _, cmd: _) {
+    prj.add_source(
+        "Emit.s.sol",
+        r#"
+contract Child {
+    event Pong(uint256 x);
+
+    function ping(uint256 x) external {
+        emit Pong(x);
+    }
+}
+
+contract EmitScript {
+    event Hello(uint256 x);
+
+    function run() external {
+        emit Hello(42);
+        new Child().ping(7);
+    }
+}
+"#,
+    );
+
+    cmd.args(["script", "EmitScript", "--network", "tempo", "-vvvv"])
+        .args(["--tempo.fee-token", "0x20C0000000000000000000000000000000000000"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Traces:
+  [..] EmitScript::run()
+    ├─ emit Hello(x: 42)
+    ├─ [..] → new Child@0x5aAdFB43eF8dAF45DD80F4676345b7676f1D70e3
+    │   └─ ← [Return] 300 bytes of code
+    ├─ [..] Child::ping(7)
+    │   ├─ emit Pong(x: 7)
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+
+Script ran successfully.
+[GAS]
+
+"#]]);
 }
 
 #[forgetest_init]

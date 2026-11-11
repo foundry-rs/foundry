@@ -737,11 +737,11 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// was taken.
     pub persistent_write_snapshots: HashMap<U256, usize>,
 
-    /// Whether a `vm.assert*` cheatcode failed during the current call.
+    /// Message of the first `vm.assert*` cheatcode that failed during the current call.
     ///
     /// Unlike the global failure slot, this survives reverts, so callers still see the failure
     /// when the asserting call reverts afterwards.
-    pub assertion_failed: bool,
+    pub failed_assertion: Option<String>,
     /// Records failures by call site while set, so minimizers can tell failures apart.
     pub failure_trace: Option<FailureTrace>,
     /// Records where each call failed while set, so a replay can check it failed the same way.
@@ -888,7 +888,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             persistent_writes: Default::default(),
             frame_rollback: Default::default(),
             persistent_write_snapshots: Default::default(),
-            assertion_failed: false,
+            failed_assertion: None,
             failure_trace: Default::default(),
             failure_provenance: Default::default(),
             gas_metering: Default::default(),
@@ -1929,7 +1929,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
 
         if let Some(trace) = &mut self.failure_trace {
-            trace.enter_frame(usize::from(interp.message().depth) + 1);
+            trace.enter_frame::<FEN>(interp, usize::from(interp.message().depth) + 1);
         }
     }
 

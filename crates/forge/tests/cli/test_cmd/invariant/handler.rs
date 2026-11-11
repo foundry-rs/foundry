@@ -1110,7 +1110,7 @@ Ran 1 test for test/HandlerVmAssertPoisonTest.t.sol:HandlerVmAssertPoisonTest
 		sender=[..] addr=[test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step() args=[]
 
 Assertion Tests: 1 assertion bug(s) found
-[FAIL: assertion failed] test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler::step
+[FAIL: assertion failed: 1 != 2] test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler::step
 	[Sequence] (original: 1, shrunk: 1)
 		sender=[..] addr=[test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step() args=[]
  invariant_counter_below_three() (runs: 1, calls: 3, reverts: 0)
@@ -1134,7 +1134,7 @@ Encountered 1 failing test in test/HandlerVmAssertPoisonTest.t.sol:HandlerVmAsse
 		sender=[..] addr=[test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step() args=[]
 
 Assertion Tests: 1 assertion bug(s) found
-[FAIL: assertion failed] test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler::step
+[FAIL: assertion failed: 1 != 2] test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler::step
 	[Sequence] (original: 1, shrunk: 1)
 		sender=[..] addr=[test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step() args=[]
  invariant_counter_below_three() (runs: 1, calls: 3, reverts: 0)
